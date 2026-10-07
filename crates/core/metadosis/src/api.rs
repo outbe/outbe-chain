@@ -89,10 +89,9 @@ pub fn has_active_ocomp_profile(storage: StorageHandle<'_>) -> Result<bool> {
         .map(|profile| profile.is_some())
 }
 
-/// True only when the complete immutable fork installation matches `install`.
-/// This semantic predicate keeps callers away from the storage facade while
-/// still allowing production-route persistence checks to verify both halves of
-/// the authority atomically.
+/// Compare the request profile and protocol bundle with `install`.
+/// This predicate does not compare classification, activation height, or founder registrations.
+/// It keeps callers away from the storage facade.
 pub fn is_active_ocomp_fork_install(
     storage: StorageHandle<'_>,
     install: &crate::config::OcompForkInstallV1,

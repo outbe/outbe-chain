@@ -7,18 +7,18 @@
 //! one more thing for the two sides to keep in agreement.
 //!
 //! What the enclave does NOT do (stays on the host):
-//!   - worldwide-day calendar validity and OFFERING status (one `WorldwideDay`
-//!     check on the node, whose `(owner, day)` identity recompute then rejects
-//!     any day the enclave was fed that disagrees with it);
-//!   - tribute-already-exists check;
-//!   - SU-hash used-marking (replay prevention);
+//!   - worldwide-day calendar validity and OFFERING status. The node does one
+//!     `WorldwideDay` check. The node's `(owner, day)` identity recompute then rejects
+//!     any day that the enclave received and that disagrees with it.
+//!   - tribute-already-exists check.
+//!   - SU-hash used-marking (replay prevention).
 //!   - agent-reward (wallet/SRA) increments.
 //!
-//! The host applies those after receiving the public results. SU-hash markers
+//! The host applies those after it receives the public results. SU-hash markers
 //! and agent-reward routing in a privacy-preserving form are a later slice.
 //!
-//! Determinism: each offer's price is supplied by the node from committed Oracle
-//! state (identical on every validator), and every step here is pure integer/hash
+//! Determinism: the node supplies each offer's price from committed Oracle
+//! state (identical on every validator). Every step here is pure integer/hash
 //! math, so all validators produce byte-identical results. A forged price
 //! surfaces as a state-root mismatch on re-execution.
 
@@ -118,7 +118,7 @@ fn process_one(
     })
 }
 
-/// Build a `Rejected` result. Nothing is known beyond the reason - every field
+/// Build a `Rejected` result. Nothing is known beyond the reason. Every field
 /// the host sent stays on the host, and everything else needed decryption to
 /// have succeeded. `owner` is zero rather than echoed for the same reason.
 fn rejected(reason: String) -> TributeOfferResult {
@@ -153,7 +153,7 @@ mod tests {
     const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
     const NIFLHEIM_CHAIN_ID: u64 = 9_900_501;
     /// Encrypt a payload the way a client would (ephemeral_secret x tribute_offer_pub).
-    /// Day, currencies and price are cleartext offer fields; tests that care mutate
+    /// Day, currencies and price are cleartext offer fields. Tests that care mutate
     /// them on the returned struct.
     fn make_tribute_offer(owner: Address, json: &str) -> EncryptedTributeOffer {
         let tribute_offer_pub = PublicKey::from(&StaticSecret::from(OFFER_SK)).to_bytes();
@@ -185,7 +185,7 @@ mod tests {
         }
     }
 
-    /// The encrypted payload carries only the confidential fields - the day and
+    /// The encrypted payload carries only the confidential fields. The day and
     /// the issuance currency are cleartext ABI arguments.
     const GOOD_JSON: &str = r#"{
         "creator": "alice",
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn zero_price_is_rejected_not_aborted() {
         // Distinct owners so both offers are independent (one owner = at most one
-        // Tribute per day); only the zero-price one is rejected.
+        // Tribute per day). Only the zero-price one is rejected.
         let mut bad = make_tribute_offer(Address::repeat_byte(0x01), GOOD_JSON);
         bad.issuance_wwd_vwap_minor = U256::ZERO;
         let good = make_tribute_offer(Address::repeat_byte(0x0B), GOOD_JSON);

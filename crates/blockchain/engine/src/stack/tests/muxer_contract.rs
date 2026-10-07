@@ -2,15 +2,15 @@
 // T0 - Commonware Muxer drop vs backup-capture contract.
 //
 // The Outbe consensus stack uses `Muxer::new(...)` (no backup) for vote / cert
-// / resolver / dkg sub-channels and registers a fresh sub-channel for every
-// new epoch (see stack.rs:513-549, 1009-1017). If a peer sends a message on
-// epoch N's sub-channel before the receiver has registered that sub-channel
-// on its end, the message is dropped - there is no replay path back into the
-// late registrant.
+// / resolver / dkg sub-channels. It registers a fresh sub-channel for every
+// new epoch (see `stack::epoch::transport` and `stack::epoch::supervisor`).
+// If a peer sends a message on epoch N's sub-channel before the receiver has
+// registered that sub-channel on its end, the receiver muxer drops the
+// message. There is no replay path back into the late registrant.
 //
 // These two tests pin the Muxer contract for the pinned commonware-p2p tag
-// (v2026.3.0) so that any future bump to a tag with different semantics fails
-// loudly rather than silently changing the boundary-race surface.
+// (v2026.3.0). The purpose is that any future bump to a tag with different
+// semantics fails loudly and does not silently change the boundary-race surface.
 // =============================================================================
 
 use commonware_consensus::types::Epoch;
@@ -141,14 +141,14 @@ fn same_epoch_routes_are_reacquired_only_after_old_receivers_drop() {
     });
 }
 
-/// Without `.with_backup()`, a message sent to a sub-channel that the
-/// receiver has not yet registered is dropped. Even if the receiver
+/// Without `.with_backup()`, the receiver drops a message sent to a
+/// sub-channel that it has not yet registered. Even if the receiver
 /// registers later, it never observes the early message.
 #[test]
 fn mux_drops_messages_to_unregistered_subchannel() {
     let executor = deterministic::Runner::timed(Duration::from_secs(10));
     executor.start(|context| async move {
-        // 2026.5.0: `deterministic::Context` is no longer `Clone`; pass a
+        // 2026.5.0: `deterministic::Context` is no longer `Clone`. Pass a
         // child context to the network and keep `context` for the test body
         // (labels via `child` need `Supervisor` in scope).
         let mut oracle = start_network(context.child("network_owner"));
@@ -201,7 +201,7 @@ fn mux_drops_messages_to_unregistered_subchannel() {
 
         // Bound the wait. With LINK latency = 0 and SubReceiver mailbox
         // empty, recv() will block forever on the contract this test
-        // pins; we treat any receipt within the bound as a contract break.
+        // pins. We treat any receipt within the bound as a contract break.
         let timed = context.sleep(Duration::from_millis(500));
         tokio::pin!(timed);
         tokio::select! {
@@ -219,15 +219,15 @@ fn mux_drops_messages_to_unregistered_subchannel() {
     });
 }
 
-/// With `.with_backup()`, the same early message is captured into the
-/// backup receiver as `(subchannel, (peer_pk, payload))`. The late-
-/// registrant of the sub-channel still does **not** see it - backup is
+/// With `.with_backup()`, the muxer captures the same early message into the
+/// backup receiver as `(subchannel, (peer_pk, payload))`. The late
+/// registrant of the sub-channel still does **not** see it. Backup is
 /// a capture surface, not an auto-replay mechanism.
 #[test]
 fn mux_with_backup_captures_unrouted_message_but_does_not_replay() {
     let executor = deterministic::Runner::timed(Duration::from_secs(10));
     executor.start(|context| async move {
-        // 2026.5.0: `deterministic::Context` is no longer `Clone`; pass a
+        // 2026.5.0: `deterministic::Context` is no longer `Clone`. Pass a
         // child context to the network and keep `context` for the test body.
         let mut oracle = start_network(context.child("network_owner"));
 

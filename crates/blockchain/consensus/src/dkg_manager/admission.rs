@@ -1,6 +1,6 @@
-//! Header-artifact admission: the one place that decides which consensus header
-//! artifact a block at `(parent, round)` must carry (proposer) and which carried
-//! artifact is admissible (verifier).
+//! Header-artifact admission: the one place that decides two things. It decides
+//! which consensus header artifact a block at `(parent, round)` must carry
+//! (proposer). It also decides which carried artifact is admissible (verifier).
 //!
 //! Both paths resolve the same [`ResolvedBoundary`] from the parent ancestry and
 //! the locally pending DKG boundary, then apply one rule table:
@@ -16,9 +16,12 @@
 //! | AlreadyCommitted/NoPending | none                             | admit                                                |
 //!
 //! A proposer in the same local state emits exactly what the table admits:
-//! the pending boundary under `MustEmit`, nothing under `AlreadyCommitted`, and
-//! under `NoPending` the successor pre-announce, else a dealer log, else nothing
-//! (block 1 forfeits instead, because it must carry the genesis boundary).
+//!
+//! - under `MustEmit`: the pending boundary.
+//! - under `AlreadyCommitted`: nothing.
+//! - under `NoPending`: the successor pre-announce, else a dealer log, else
+//!   nothing (block 1 forfeits instead, because it must carry the genesis
+//!   boundary).
 
 use std::fmt;
 
@@ -54,9 +57,9 @@ impl From<BoundaryRequirementError> for ProposalForfeit {
 /// Why a carried header artifact was not admitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArtifactAdmissionError {
-    /// Parent ancestry could not be read; the verifier does not vote.
+    /// Parent ancestry could not be read. The verifier does not vote.
     Unavailable(String),
-    /// The carried artifact violates the admission table; the verifier votes no.
+    /// The carried artifact violates the admission table. The verifier votes no.
     Rejected(String),
 }
 

@@ -20,8 +20,8 @@ const TRANSFER_NOT_ALLOWED: &str = "gratis token transfers are not allowed";
 /// This surface is **read-only + the non-transferable ERC-20 stubs**. Balances
 /// are confidential: `balanceOf` returns the account's ciphertext blob
 /// (`version || AEAD-ct`) for the caller to decrypt with its view key. All state
-/// changes go through the enclave-backed [`crate::api`] (called cross-crate by the
-/// factories), never this ABI.
+/// changes go through the enclave-backed [`crate::api`] (the factories call it
+/// cross-crate), never through this ABI.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
     data: &[u8],
@@ -40,7 +40,7 @@ pub fn dispatch(
                 metadata::<IGratis::pledgedTotalSupplyCall>(|| gratis.pledged_total_supply())
             }
 
-            // Confidential reads - return ciphertext; decrypt client-side.
+            // Confidential reads return ciphertext. Decrypt it client-side.
             balanceOf(c) => view(c, |c| gratis.balance_ct_of(c.account).map(Bytes::from)),
             opNonceOf(c) => view(c, |c| gratis.op_nonce_of(c.account)),
 

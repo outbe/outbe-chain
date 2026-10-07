@@ -64,8 +64,9 @@ impl Staking<'_> {
     /// Stakes `amount` on behalf of `validator`.
     ///
     /// - Adds amount to stake_amount[validator] and total_staked.
-    /// - If the validator is registered in ValidatorSet and the new stake meets
-    ///   min_stake, activates the validator (Phase 1 auto-activation).
+    /// - If the validator is registered and the new stake meets min_stake,
+    ///   moves it to PENDING (`WaitingForReadiness`).
+    ///   ACTIVE comes later, from reshare activation.
     /// - Enforces max_stake_percent if configured.
     /// - Updates val_stake in ValidatorSet.
     pub fn stake(&mut self, caller: Address, validator: Address, amount: U256) -> Result<()> {
@@ -73,7 +74,7 @@ impl Staking<'_> {
             return Err(PrecompileError::Revert("amount must be non-zero".into()));
         }
 
-        // Enforce self-stake only - no third-party delegation.
+        // Enforce self-stake only. Third-party delegation is not allowed.
         // Without full delegation accounting, a delegator's funds would be
         // locked with no protocol-level withdrawal mechanism.
         if caller != validator {
@@ -121,10 +122,10 @@ impl Staking<'_> {
         self.total_staked.write(total + amount)?;
 
         // PoS staking: when a REGISTERED validator reaches min_stake it becomes
-        // PENDING (admitted to the validator set, syncing, not yet voting). The next
-        // DKG reshare grants it a share and activate_reshared_set promotes
-        // PENDING->ACTIVE. The ValidatorSet facade also mirrors the authoritative
-        // bonded value and raises pending_set_change when the threshold is crossed.
+        // PENDING (`WaitingForReadiness`). It is admitted, not yet voting.
+        // A later reshare activation promotes PENDING to ACTIVE.
+        // The ValidatorSet facade mirrors the bonded value and raises
+        // pending_set_change when the stake crosses the threshold.
         let min_stake = self.config_min_stake.read()?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.record_stake_increase(validator, new_stake, min_stake)?;
@@ -228,8 +229,8 @@ impl Staking<'_> {
         self.total_staked.write(total - amount)?;
 
         // Staking owns the accounting and queue. The ValidatorSet facade records
-        // the complete projection only after those authoritative writes succeed;
-        // the outer call-frame checkpoint keeps the sequence atomic on failure.
+        // the complete projection only after those authoritative writes succeed.
+        // The outer call-frame checkpoint keeps the sequence atomic on failure.
         self.enqueue_unbonding(caller, amount, complete_time)?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.record_unstake(caller, new_stake, min_stake, complete_time)?;
@@ -238,12 +239,17 @@ impl Staking<'_> {
     }
 
     /// Unjails the caller's JAILED validator back to PENDING. Requires the
-    /// caller's bonded stake to be >= min_stake (top up via `stake` first if a
-    /// felony slash dropped it below). The JAILED->PENDING transition, the unjail
-    /// cooldown, the readiness reset, and the reshare signal live in ValidatorSet
-    /// (`unjail_after_stake_check`); afterwards the validator re-confirms readiness
-    /// and is promoted PENDING->ACTIVE by the next DKG reshare. Self-only: `caller`
-    /// is the validator (the precompile passes the tx sender).
+    /// caller's bonded stake to be >= min_stake. If a felony slash dropped it
+    /// below, top up via `stake` first. ValidatorSet (`unjail_after_stake_check`)
+    /// holds these steps:
+    /// - the JAILED->PENDING transition
+    /// - the unjail cooldown
+    /// - the readiness reset
+    /// - the reshare signal
+    ///
+    /// After that, the validator re-confirms readiness, and the next DKG reshare
+    /// promotes it PENDING->ACTIVE. Self-only: `caller` is the validator (the
+    /// precompile passes the tx sender).
     pub fn unjail_validator(&mut self, caller: Address) -> Result<()> {
         let registry = outbe_teeregistry::TeeRegistry::new(self.storage.clone());
         if !registry.enclave_upgrade_v1()?.proposal_id.is_zero()
@@ -284,16 +290,16 @@ impl Staking<'_> {
             let complete_time = self.unbonding_complete_time.read(&idx)?;
 
             if timestamp >= complete_time {
-                // Mature - claim it
+                // Mature: claim it
                 let amount = self.unbonding_amount.read(&idx)?;
                 total_claimable += amount;
-                // Zero out entry (for tail-trim compaction by process_unbonding)
+                // Zero the entry (for tail-trim compaction by process_unbonding)
                 self.unbonding_validator.write(&idx, Address::ZERO)?;
                 self.unbonding_amount.write(&idx, U256::ZERO)?;
                 self.unbonding_complete_time.write(&idx, 0)?;
                 self.unbonding_next.write(&idx, 0)?;
             } else {
-                // Not mature - keep in list
+                // Not mature: keep in list
                 if new_head_stored == 0 {
                     new_head_stored = current_stored;
                 } else {
@@ -332,8 +338,9 @@ impl Staking<'_> {
     /// - Burns slashed tokens from STAKING_ADDRESS native balance.
     /// - Updates val_stake in ValidatorSet.
     /// - Returns the total slashed amount (for evidence reward calculation).
-    /// - Does NOT change validator status - severe faults are handled by
-    ///   `SlashIndicator::slash_proposer()` via `force_exit_validator()`.
+    /// - Can change lifecycle when the remaining stake falls below the minimum.
+    ///   PENDING moves to `WaitingForStake`. ACTIVE moves to EXITING.
+    ///   SlashIndicator felony paths jail the validator. They do not force-exit it.
     pub fn slash_stake(&mut self, validator: Address, percent: u64) -> Result<U256> {
         if percent > 100 {
             return Err(PrecompileError::Revert(
@@ -388,8 +395,8 @@ impl Staking<'_> {
         }
 
         // Cross-call: mirror the authoritative stake after all stake, claim, and
-        // burn accounting has succeeded. Preserve the existing unbonding-end hint;
-        // individual Staking claim timestamps remain authoritative.
+        // burn accounting succeeds. Preserve the existing unbonding-end hint.
+        // Individual Staking claim timestamps remain authoritative.
         let remaining_stake = self.stake_amount.read(&validator)?;
         let min_stake = self.config_min_stake.read()?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
@@ -516,7 +523,7 @@ impl Staking<'_> {
     }
 
     /// Checks every open OCOMP recovery window once per block. Valid registry
-    /// state is bounded by the existing consensus committee/codec maximum; a
+    /// state is bounded by the existing consensus committee/codec maximum. A
     /// corrupt over-bound count fails before address materialization.
     pub fn close_due_ocomp_recovery_windows(&mut self) -> Result<OcompRecoverySweep> {
         let guard = self.storage.checkpoint_guard();
@@ -600,15 +607,15 @@ impl Staking<'_> {
 
     /// Processes validator lifecycle transitions and trims zeroed tail entries.
     ///
-    /// Called each block in pre-execution. Does NOT zero out mature entries -
-    /// that is done by [`claim_unbonded`] when the validator claims their funds.
+    /// Called each block in pre-execution. Does NOT zero mature entries.
+    /// [`claim_unbonded`] zeroes them when the validator claims their funds.
     /// This function only trims zeroed tail entries to reclaim queue space.
     ///
     /// Uses tail-trim instead of swap-remove to preserve stable indices for
     /// the per-validator linked list.
     ///
     /// Capped at [`MAX_COMPACTION_PER_BLOCK`] operations per call to bound
-    /// per-block cost. Remaining entries are trimmed in subsequent blocks.
+    /// per-block cost. Subsequent blocks trim the remaining entries.
     pub fn process_unbonding(&mut self, timestamp: u64) -> Result<()> {
         let mut val_set = ValidatorSet::new(self.storage.clone());
         let validators = val_set.registered_validator_addresses()?;

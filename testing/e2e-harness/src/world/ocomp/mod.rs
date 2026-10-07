@@ -1,7 +1,7 @@
 //! Scenario-owned OCOMP process topology.
 //!
 //! The handle exposes only fixed roles and typed fault operations. It has no
-//! method that can insert a JobIntent, result, root or chain state; scenarios
+//! method that can insert a JobIntent, result, root or chain state. Scenarios
 //! must observe those values through the production RPC/control/artifact path.
 
 use std::collections::BTreeMap;

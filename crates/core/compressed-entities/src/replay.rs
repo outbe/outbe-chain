@@ -1,8 +1,8 @@
 //! Canonical ADR-007 body-event decoding for authenticated tree recovery.
 //!
-//! Recovery never trusts an event signature alone. Stored events are decoded
-//! through the canonical body codec and their advertised leaf is recomputed;
-//! event transitions are then checked against the exact parent SMT leaves.
+//! Recovery never trusts an event signature alone. Recovery decodes stored events
+//! through the canonical body codec and recomputes their advertised leaf. Then it
+//! checks the event transitions against the exact parent SMT leaves.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -160,7 +160,7 @@ pub fn decode_canonical_body_event(
 ///
 /// The first transition for every entity must extend the exact authenticated
 /// parent leaf and every later transition must extend the preceding event.
-/// Parent-equal net no-ops are intentionally omitted.
+/// This function intentionally omits parent-equal net no-ops.
 pub fn reconstruct_effective_final_mutations(
     events: &[CanonicalBodyEvent],
     parent_leaves: &BTreeMap<EntityRef, Option<Commitment>>,

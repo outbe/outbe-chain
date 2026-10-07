@@ -38,7 +38,7 @@ where
         // Witness validate-without-reexec: if Phase 1
         // was already committed in `apply_pre_execution_changes::apply_phase1_commit_in_preexec`,
         // the cursor carries the cached witness `tx_hash`. Body[0] in the
-        // main tx loop is the proposer-supplied Phase 1 tx - validate it
+        // main tx loop is the proposer-supplied Phase 1 tx. Validate that it
         // matches the cache (signature hash) and skip re-execution.
         // Receipt + state already exist from the pre-exec commit.
         if self.consume_preexecuted_phase1_witness(tx, &block_artifacts)? {
@@ -49,8 +49,7 @@ where
         // `self.inner.receipts.len()` derivation. The cursor was
         // initialised in `apply_pre_execution_changes` and advances
         // exactly once per consumed begin-zone system tx (see the
-        // `advance_after_commit` call below). This is the only
-        // production reader of `self.system_tx_phase_cursor`.
+        // `advance_after_commit` call below).
         let ValidatedReservedSystemTx {
             body_index,
             expected_phase,
@@ -86,20 +85,22 @@ where
             finalized_summary,
             allow_boundary_proposer: self.boundary_allows_proposer(&block_artifacts, proposer),
             // same VRF-proof-hash plumbing as the
-            // pre-exec commit path. Cached by the preflight; falls
-            // back to `B256::ZERO` only when the preflight was
+            // pre-exec commit path. The preflight caches it. The fallback
+            // value `B256::ZERO` is used only when the preflight was
             // skipped (which never co-occurs with this main-loop
             // path entering Phase 1 in production).
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
         };
-        // Phase 1-4 EVM result failures (`Revert` / `Halt`) are converted
-        // into a `status=0` synthetic receipt with one `OutbeFailure(code, reason)`
-        // log emitted from `OUTBE_SYSTEM_TX_ADDRESS`; revm did not commit the call so no
-        // state change leaks. Raw `Err` from the system-call engine remains fatal because
-        // upstream revm documents that the journal may be inconsistent on that path.
-        // Body-parity validation above (decode / phase / calldata / signature / signer)
-        // also remains fatal: those are validator-side checks that the proposer never
-        // produces for itself.
+        // An EVM result failure (`Revert` / `Halt`) in a phase where
+        // `revert_fails_block()` is true fails the whole block. In a soft phase
+        // (RewardsGemDelivery, OracleSlashWindow), the failure becomes a
+        // `status=0` synthetic receipt with one `OutbeFailure(code, reason)`
+        // log emitted from `OUTBE_SYSTEM_TX_ADDRESS`. revm did not commit the call, so
+        // no state change leaks. Raw `Err` from the system-call engine remains fatal
+        // because upstream revm documents that the journal may be inconsistent on that
+        // path. Body-parity validation above (decode / phase / calldata / signature /
+        // signer) also remains fatal: those are validator-side checks that the proposer
+        // never produces for itself.
         let ce_gas_limit = visible_gas_limit
             .checked_sub(visible_base_gas)
             .ok_or_else(|| {
@@ -132,7 +133,7 @@ where
         // precompute the boundary-outcome flag so the cursor
         // advance below stays consistent with the resolved expected set
         // for this block (block 1 always carries the boundary outcome
-        // under V2; other blocks depend on the header artifact).
+        // under V2, and other blocks depend on the header artifact).
         let has_boundary_outcome = matches!(
             block_artifacts.consensus_header_artifact,
             Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
@@ -176,9 +177,9 @@ where
             // revert permanently loses it (stranded fee escrow, dropped
             // emission/reshare, unrecorded parent accounting). The revert is a
             // deterministic function of committed chain state, so every
-            // validator rejects the same block identically - no state-root
-            // split. Non-critical phases (OracleSlashWindow, HookEvents)
-            // keep the soft-receipt skip for failures that fit within the
+            // validator rejects the same block identically. There is no
+            // state-root split. Non-critical phases (RewardsGemDelivery,
+            // OracleSlashWindow) keep the soft-receipt skip for failures that fit within the
             // aggregate internal-work budget. An OOG consumes the full
             // system-call gas limit and therefore remains a hard aggregate
             // budget failure once earlier mandatory phases have run.
@@ -235,7 +236,7 @@ where
             tx_type: tx.tx_type(),
         };
         if !f(&output).should_commit() {
-            // Cursor does not advance: caller has chosen not to commit,
+            // Cursor does not advance: the caller chose not to commit,
             // so the body-index slot remains owned by this phase.
             return Ok(None);
         }
@@ -280,7 +281,8 @@ where
                     ),
                 ));
                 }
-                // Advance cursor past Phase 1; CycleTick body_index=1 next.
+                // Advance cursor past Phase 1. The mandatory LateFinalizeCredits
+                // phase (body_index=1) is next.
                 let has_boundary_outcome = matches!(
                     block_artifacts.consensus_header_artifact,
                     Some(ConsensusHeaderArtifact::BoundaryOutcome(_))

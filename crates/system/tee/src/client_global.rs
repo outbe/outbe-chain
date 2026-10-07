@@ -1,16 +1,17 @@
 //! Process-global enclave client shared by every enclave-using module.
 //!
 //! Production installs an [`AuthorizedEnclaveClient`] after node-signed,
-//! write-once initialization; the separate dev/mock path may install the development
-//! [`EnclaveClient`]. Both expose only requests and the manifest/quote-bound
-//! attestation key needed by runtime consumers. The offer-decrypt and key-delivery
-//! paths reach the single connection through [`try_with_enclave`]. TEE transport
-//! infrastructure lives here rather than in a business module.
+//! write-once initialization. The separate dev/mock path may install the
+//! development [`EnclaveClient`]. Both expose only requests and the
+//! manifest/quote-bound attestation key needed by runtime consumers. The
+//! offer-decrypt and key-delivery paths reach the single connection through
+//! [`try_with_enclave`]. TEE transport infrastructure lives here rather than in a
+//! business module.
 //!
 //! Determinism: the enclave returns byte-identical output across validators (same
 //! resident keys), so routing a request through this global does not affect
 //! consensus determinism. The call is a blocking UDS/TCP round-trip made straight
-//! from the execution path; it never holds a `StorageHandle` across it and never
+//! from the execution path. It never holds a `StorageHandle` across it and never
 //! spawns a thread.
 
 use std::sync::{Mutex, OnceLock};
@@ -27,9 +28,9 @@ use crate::protocol::{EnclaveRequest, EnclaveResponse};
 use crate::session::EnclaveSession;
 use outbe_primitives::tee_attestation_v1::RegistrationIntentV1;
 
-// Stored once in a process-global OnceLock<Mutex<_>> - a single instance for the
-// node's lifetime, never passed by value in bulk, so boxing the larger variant
-// would add indirection for no benefit.
+// Stored once in a process-global OnceLock<Mutex<_>>. It is a single instance for
+// the node's lifetime and is never passed by value in bulk. Boxing the larger
+// variant would therefore add indirection for no benefit.
 #[allow(clippy::large_enum_variant)]
 pub enum RuntimeEnclaveClient {
     Development(Box<EnclaveClient>),
@@ -118,9 +119,8 @@ pub fn is_enclave_configured() -> bool {
     ENCLAVE_SESSION.get().is_some()
 }
 
-/// Install the separate dev/mock client once. `endpoint` is retained so the
-/// session can reconnect (with identity re-validation) after an enclave
-/// sidecar restart.
+/// Install the separate dev/mock client once. The session keeps `endpoint` so it
+/// can reconnect (with identity re-validation) after an enclave sidecar restart.
 pub fn install_enclave_client(client: EnclaveClient, endpoint: String) -> Result<(), InstallError> {
     let session = EnclaveSession::development(client, endpoint)?;
     ENCLAVE_SESSION
@@ -128,8 +128,8 @@ pub fn install_enclave_client(client: EnclaveClient, endpoint: String) -> Result
         .map_err(|_| InstallError::AlreadyInitialized)
 }
 
-/// Install a production NodeHost-authorized client once. Initialization and
-/// manifest validation are completed by `AuthorizedEnclaveClient` before this;
+/// Install a production NodeHost-authorized client once. `AuthorizedEnclaveClient`
+/// completes initialization and manifest validation before this call.
 /// `manifest` + `node_host` are the committed session material
 /// (`committed_node_host_session_material`) the session reconnects with.
 pub fn install_authorized_enclave_client(
@@ -146,25 +146,27 @@ pub fn install_authorized_enclave_client(
 }
 
 /// Run `f` against the process-global enclave session. Returns `None` ONLY when
-/// no session is configured. A poisoned mutex is recovered: the interrupted
-/// request's connection is dropped once and the next request reconnects cleanly
+/// no session is configured. This call recovers a poisoned mutex. It drops the
+/// interrupted request's connection once, and the next request reconnects cleanly
 /// (poison no longer masquerades as "not configured").
 ///
-/// TODO(tee-perf): every enclave call - consensus-path ops (gratis/promis,
+/// TODO(tee-perf): every enclave call serializes on this single Mutex-guarded
+/// blocking connection. This includes consensus-path ops (gratis/promis,
 /// begin-block sweeps, per-WWD snapshot batches) and read-only queries (e.g.
-/// eth_call fidelity index with signed auth) - serializes on this single
-/// Mutex-guarded blocking connection, and a request that times out (30s),
-/// reconnects and retries can hold it for two timeout windows. A query storm on
-/// an RPC node can stall block execution behind it. Future optimization: split
-/// read-only traffic onto a separate enclave connection (or a small pool),
-/// and/or rate-limit query-path calls so consensus-path requests never queue
-/// behind them.
+/// eth_call fidelity index with signed auth). A request that times out (30s),
+/// reconnects and retries can hold the connection for two timeout windows. A
+/// query storm on an RPC node can stall block execution behind it. Future
+/// optimization, one or both of:
+/// - split read-only traffic onto a separate enclave connection (or a small
+///   pool).
+/// - rate-limit query-path calls so consensus-path requests never queue behind
+///   them.
 pub fn try_with_enclave<R>(f: impl FnOnce(&mut EnclaveSession) -> R) -> Option<R> {
     Some(ENCLAVE_SESSION.get()?.with_execution(f))
 }
 
 /// Run only the canary's existing read-only probes on its own authenticated
-/// connection. No execution-session mutex is acquired, including reconnects.
+/// connection. It acquires no execution-session mutex, including on reconnects.
 pub fn canary_request(request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
     ENCLAVE_SESSION
         .get()

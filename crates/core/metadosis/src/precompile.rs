@@ -75,12 +75,12 @@ pub fn dispatch(
                 )
                 .map(Bytes::from)
             }),
-            // Reachable from arbitrary calldata whenever the OCOMP lifecycle is
-            // inactive: the EVM dispatcher routes this selector to
+            // Arbitrary calldata can reach this arm whenever the OCOMP lifecycle
+            // is inactive. The EVM dispatcher routes this selector to
             // `commands::submit_verified_result_vote` only while
-            // `ocomp_lifecycle_active` is true, so with the lifecycle active this
+            // `ocomp_lifecycle_active` is true. With the lifecycle active, this
             // arm is structurally unreachable. Caller-supplied ingress must
-            // revert, never `Fatal` - a `Fatal` here aborts the whole payload
+            // revert, never `Fatal`. A `Fatal` here aborts the whole payload
             // build for a transaction any external account can submit.
             submitLysisResult(_) => Err(crate::errors::result_vote_rejection(
                 crate::errors::vote_rejection_code::LIFECYCLE_INACTIVE,

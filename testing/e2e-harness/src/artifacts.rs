@@ -825,7 +825,7 @@ mod tests {
     fn untagged_sidecar_is_rechecked_before_final_evidence() {
         let (directory, mut env, feature, mut manifest) = manifest_fixture();
         // Keep a complete preflight/snapshot check with the actual running
-        // executable; the independent sidecar negatives use small fixtures.
+        // executable. The independent sidecar negatives use small fixtures.
         manifest.artifacts.insert(
             "outbe_e2e".to_owned(),
             identify(&std::env::current_exe().unwrap(), true).unwrap(),

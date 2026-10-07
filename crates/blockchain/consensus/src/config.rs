@@ -2,13 +2,13 @@
 
 use std::time::Duration;
 
-/// Chain-bound consensus namespace source of truth lives in
-/// [`crate::proof::constants`] so the signer (this crate) and the deterministic
-/// V2 verifier read the identical chain-bound bytes. Re-exported here for the
-/// historical `config::*` call sites.
+/// The source of truth for the chain-bound consensus namespace is
+/// [`crate::proof::constants`]. Thus the signer (this crate) and the deterministic
+/// V2 verifier read the identical chain-bound bytes. This module re-exports it for
+/// the historical `config::*` call sites.
 ///
-/// `outbe_app_namespace()` returns `b"outbe" || chain_id_be`; the chain id is
-/// installed once at startup via `init_consensus_chain_id`.
+/// `outbe_app_namespace()` returns `b"outbe" || chain_id_be`. `init_consensus_chain_id`
+/// installs the chain id once at startup.
 pub use crate::proof::constants::{
     init_consensus_chain_id, outbe_app_namespace, simplex_namespace,
 };
@@ -27,9 +27,9 @@ pub const DKG_CHANNEL: u64 = 5;
 /// signature exchange), run once at startup like the DKG.
 pub const TEE_BOOTSTRAP_CHANNEL: u64 = 6;
 /// P2P channel for the one-time TEE DKG ceremony (enclave identity exchange +
-/// dealer/player gossip + offer-key partial-signature exchange), run once at
-/// startup to derive the shared tribute offer key. Distinct from the consensus
-/// DKG channel (5) and the TEE bootstrap channel (6).
+/// dealer/player gossip + offer-key partial-signature exchange). The ceremony runs
+/// once at startup to derive the shared tribute offer key. This channel is distinct
+/// from the consensus DKG channel (5) and the TEE bootstrap channel (6).
 pub const TEE_DKG_CHANNEL: u64 = 7;
 /// Signed Radicle endpoint request/response channel.
 pub const RADICLE_ENDPOINT_CHANNEL: u64 = 8;
@@ -41,11 +41,11 @@ pub const MAX_EXTRA_DATA_SIZE: usize = 256;
 
 /// Default timeouts for Simplex consensus.
 ///
-/// These re-export the single source of truth in [`crate::timing`] so the values
-/// (and the gas<->consensus-timeout contract) are documented in one place. The
-/// live values come from `genesis.json` with these as fallbacks; there is no CLI
-/// override. `DEFAULT_PROPOSAL_TIMEOUT_MS` == `timing::DEFAULT_LEADER_TIMEOUT_MS`
-/// (leader window); `DEFAULT_NOTARIZATION_TIMEOUT_MS` ==
+/// These constants re-export the single source of truth in [`crate::timing`]. Thus
+/// one place documents the values and the gas<->consensus-timeout contract. The
+/// live values come from `genesis.json`, with these constants as fallbacks. There is
+/// no CLI override. `DEFAULT_PROPOSAL_TIMEOUT_MS` == `timing::DEFAULT_LEADER_TIMEOUT_MS`
+/// (leader window). `DEFAULT_NOTARIZATION_TIMEOUT_MS` ==
 /// `timing::DEFAULT_CERTIFICATION_TIMEOUT_MS` (certification window).
 pub const DEFAULT_PROPOSAL_TIMEOUT_MS: u64 = crate::timing::DEFAULT_LEADER_TIMEOUT_MS;
 pub const DEFAULT_NOTARIZATION_TIMEOUT_MS: u64 = crate::timing::DEFAULT_CERTIFICATION_TIMEOUT_MS;
@@ -75,12 +75,12 @@ pub const MAX_P2P_MESSAGE_SIZE: u32 = 2 * 1024 * 1024;
 /// Internal mailbox size for consensus engine actors.
 pub const ENGINE_MAILBOX_SIZE: usize = 256;
 
-/// Default epoch length in blocks, used when genesis.json does not specify
-/// `config.epochLengthBlocks`. ~1 hour at a ~3s block - the cadence for DKG
-/// reshare, active-set rotation, and the per-epoch slash-counter reset. A felony
-/// threshold must stay below this (see `outbe_slashindicator`). The DKG
-/// prepare/grace windows below are lookback/fallback bounds and stay < this epoch;
-/// the operational windows come from `config.dkg{Prepare,Grace}*` in genesis.
+/// Default epoch length in blocks. The node uses it when genesis.json does not
+/// specify `config.epochLengthBlocks`. This is ~1 hour at a ~3s block. It is the
+/// cadence for DKG reshare, active-set rotation, and the per-epoch slash-counter
+/// reset. A felony threshold must stay below this (see `outbe_slashindicator`). The
+/// DKG prepare/grace windows below are lookback/fallback bounds and stay < this
+/// epoch. The operational windows come from `config.dkg{Prepare,Grace}*` in genesis.
 pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u32 = 1_200;
 
 /// Activity timeout in views (track this many behind finalized tip).
@@ -101,12 +101,12 @@ pub const PAGE_CACHE_SIZE: usize = 32 * 1024 * 1024;
 // ---------------------------------------------------------------------------
 // Marshal block-resolution timing
 //
-// Read cross-module by the application handler, finalization actor, and the
-// verify / epoch-boundary resolution paths - so they live here rather than
-// inside the handler implementation module.
+// The application handler, the finalization actor, and the verify /
+// epoch-boundary resolution paths read these constants across modules. Thus they
+// live here and not inside the handler implementation module.
 // ---------------------------------------------------------------------------
 
-/// Maximum retry attempts for marshal block resolution before structured application failure.
+/// Maximum attempts for marshal block resolution in one finalization retry cycle.
 pub const FINALIZE_MAX_RETRIES: u32 = 5;
 /// Delay between retry attempts for marshal block resolution.
 pub const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(2);
@@ -116,11 +116,11 @@ pub const VERIFY_RESOLUTION_TIMEOUT: Duration = DEFAULT_PEER_RESPONSE_TIMEOUT;
 pub const PROPOSE_RESOLUTION_TIMEOUT: Duration = DEFAULT_PEER_RESPONSE_TIMEOUT;
 /// Per-attempt time budget for marshal block resolution during finalization.
 ///
-/// Without this bound, a `subscribe_by_digest` waiter that never completes can
-/// wedge the application handler's serial event loop, blocking propose/verify
-/// indefinitely (see `retry_with_backoff` comment for the wedge mechanism).
-/// Exhaustion is surfaced as a structured application failure, not a direct
-/// process kill from inside the handler.
+/// `FinalizationActor` uses this bound. Without it, a `subscribe_by_digest`
+/// waiter that never completes can hold one attempt forever, and finalization
+/// cannot advance. With the bound, the attempt times out and the next attempt
+/// starts. An exhausted retry cycle records a stall metric, and the actor
+/// starts a new cycle. It does not return a fatal error.
 pub const FINALIZE_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(10);
 
 // ---------------------------------------------------------------------------

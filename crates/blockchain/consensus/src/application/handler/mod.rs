@@ -19,8 +19,8 @@ use outbe_primitives::runtime_audit_v1::{
 };
 
 // Marshal block-resolution timing constants (FINALIZE_*, VERIFY_RESOLUTION_TIMEOUT,
-// PROPOSE_RESOLUTION_TIMEOUT) moved to `crate::config` - they are read cross-module
-// by the finalization actor, verify, and epoch-boundary resolution paths.
+// PROPOSE_RESOLUTION_TIMEOUT) moved to `crate::config`. The finalization actor, verify,
+// and epoch-boundary resolution paths read them cross-module.
 
 use alloy_primitives::Address;
 use alloy_primitives::B256;
@@ -104,9 +104,9 @@ pub(crate) struct ApplicationShared {
     /// Epoch-scoped verifier schemes for carried finalized-parent certificates.
     certificate_scheme_provider: HybridSchemeProvider<MinSig>,
 
-    /// Epoch-scoped leader elector configs. removed the
-    /// stateful verify-time elector use; kept on the surface for ctor
-    /// stability with `stack.rs` and for the upcoming V2 verifier hook.
+    /// Epoch-scoped leader elector configs. The stateful verify-time elector
+    /// use was removed. The field stays on the surface for ctor stability with
+    /// the `outbe-engine` stack and for the upcoming V2 verifier hook.
     #[allow(dead_code)]
     elector_config_provider: HybridElectorConfigProvider<MinSig>,
 
@@ -123,9 +123,9 @@ pub(crate) struct ApplicationShared {
     epoch_fence: ApplicationEpochFence,
 
     /// Fast local readiness bit for startup/crash backfill. When false,
-    /// ancestry checks fail before opening marshal subscriptions that would
-    /// otherwise wait until timeout while the executor is replaying durable
-    /// consensus blocks into Reth.
+    /// ancestry checks fail before they open marshal subscriptions. Those
+    /// subscriptions would otherwise wait until timeout while the executor
+    /// replays durable consensus blocks into Reth.
     ancestry_readiness: AncestryReadiness,
 
     /// Exact durable Mongo projection checkpoint used to gate every execution
@@ -135,9 +135,10 @@ pub(crate) struct ApplicationShared {
     /// Time to give the payload builder to execute transactions before resolving.
     payload_resolve_time: std::time::Duration,
 
-    /// Proposer-side minimum block-time floor (liveness pacing only; never
-    /// affects block contents or validation). Read in the `Message::Propose`
-    /// closure via `shared.min_block_time`. Always > 0 (validated at startup).
+    /// Proposer-side minimum block-time floor. It is for liveness pacing only
+    /// and never affects block contents or validation. The `Message::Propose`
+    /// closure reads it via `shared.min_block_time`. Always > 0 (validated at
+    /// startup).
     min_block_time: std::time::Duration,
 
     /// Proposer EVM identity used to sign system transaction artifacts.
@@ -148,10 +149,10 @@ pub(crate) struct ApplicationShared {
 
     /// Shared canonical view of the last finalization (forkchoice,
     /// `last_finalized_*`, `prev_randao`, monotonic clock floor).
-    /// Written by the FinalizationActor; read here for `build_block`.
+    /// The FinalizationActor writes it. This handler reads it for `build_block`.
     finalization_view: FinalizationViewHandle,
 
-    /// Shared block cache: proposer inserts on local build, the
+    /// Shared block cache. The proposer inserts on local build. The
     /// FinalizationActor evicts entries below the new finalized height.
     block_cache: BlockCache,
 
@@ -172,18 +173,19 @@ pub(crate) struct ApplicationShared {
     /// shared late-finalize signature store. On proposal the
     /// handler reads it (`build_artifact`) to pack the in-window
     /// `LateFinalizeCreditsArtifact` into `header.extra_data`. The reporter
-    /// writes votes into it and the `FinalizationActor` resolves them. Best-
-    /// effort, process-local - the resulting artifact is re-verified by every
-    /// validator, so it never affects determinism.
+    /// writes votes into it and the `FinalizationActor` resolves them. The store
+    /// is best-effort and process-local. Every validator re-verifies the
+    /// resulting artifact, so the store never affects determinism.
     late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
 }
 
 /// Named dependencies for [`ApplicationHandler::new`].
 ///
-/// Replaces a 25-positional-argument constructor (mirrors `FinalizationActorDeps`,
-/// used a few lines later in `stack.rs`), so the single production caller and the
-/// test fixtures cannot transpose arguments - the wiring order lives in the type
-/// system rather than in a call-site convention.
+/// Replaces a 25-positional-argument constructor, so the single production
+/// caller and the test fixtures cannot transpose arguments. The wiring order
+/// lives in the type system rather than in a call-site convention. It mirrors
+/// `FinalizationActorDeps`, which the same `outbe-engine` call site
+/// (`stack::epoch::run`) uses a few lines later.
 pub struct ApplicationDeps {
     pub unix_time_source: Arc<dyn UnixTimeSource>,
     pub rx: futures::channel::mpsc::Receiver<Message>,
@@ -219,11 +221,11 @@ impl ApplicationHandler {
     ///
     /// The application no longer owns a private finalization view copy.
     /// Forkchoice / last-finalized / prev-randao / monotonic-clock-floor
-    /// state lives in the shared [`FinalizationViewHandle`], written by
-    /// the `FinalizationActor` and read here under a short-lived guard.
-    /// Recovery is performed by `new_finalization_view(...)` at the call
-    /// site (`stack.rs`); this constructor takes the already-initialized
-    /// handle.
+    /// state lives in the shared [`FinalizationViewHandle`]. The
+    /// `FinalizationActor` writes it, and this handler reads it under a
+    /// short-lived guard. `new_finalization_view(...)` performs recovery at
+    /// the call site in `outbe-engine` (`stack::epoch::run`). This constructor
+    /// takes the already-initialized handle.
     pub fn new(deps: ApplicationDeps) -> Self {
         let ApplicationDeps {
             unix_time_source,
@@ -305,7 +307,7 @@ impl ApplicationHandler {
         // Step 21: the per-finalization side effects no longer run in
         // this handler. Finalization events flow voter -> OutbeReporter ->
         // FinalizationActor (via the unbounded
-        // `finalization::ingress::Mailbox`); the application handler's
+        // `finalization::ingress::Mailbox`). The application handler's
         // mailbox handles only Genesis / Propose / Verify.
         loop {
             let msg = match self.rx.next().await {
@@ -345,20 +347,14 @@ impl ApplicationShared {
     ///   `FinalizationView`. That value is the *continuity anchor*: the
     ///   first block produced in the new epoch must extend it.
     ///
-    /// Commonware Simplex caches the value returned here as the parent of
-    /// `view = 1` for the duration of the engine instance. Returning a stale
-    /// or default value (e.g. `B256::ZERO`) would permanently lock the
-    /// engine on a non-existent parent and cause every proposal to be
-    /// rejected. To avoid that:
-    ///   1. We bound-wait up to `GENESIS_ANCHOR_WAIT_TIMEOUT` for the
-    ///      finalization view to publish the anchor.
-    ///   2. The `stack.rs` pre-restart guard ensures the anchor is already
-    ///      present before `engine.start(...)` runs, so the wait below
-    ///      should resolve immediately in steady-state operation.
-    ///   3. If the wait expires we log `error!` and respond with
-    ///      `B256::ZERO` as a terminal-failure signal. The node operator
-    ///      is expected to investigate; the bounded wait keeps the
-    ///      handler responsive instead of stalling Simplex indefinitely.
+    /// Simplex does not call `Automaton::genesis`. The genesis digest feeds
+    /// `simplex::Config.floor`. No production code sends `Message::Genesis`,
+    /// so only tests reach this handler.
+    ///
+    /// For `epoch > 0`, the handler waits up to `GENESIS_ANCHOR_WAIT_TIMEOUT`
+    /// for the finalization view to publish the anchor. If the wait expires,
+    /// it logs `error!` and responds with `B256::ZERO` as a terminal-failure
+    /// signal. The bounded wait keeps the handler responsive.
     async fn handle_genesis(
         &self,
         clock: &impl commonware_runtime::Clock,
@@ -371,9 +367,9 @@ impl ApplicationShared {
             return;
         }
 
-        // Bounded wait driven by the runtime clock so the deadline and the poll
-        // sleep below share one time source (works on both the tokio and the
-        // deterministic runtimes; no wall-clock on the consensus path).
+        // The runtime clock drives this bounded wait, so the deadline and the
+        // poll sleep below share one time source. This works on both the tokio
+        // and the deterministic runtimes. No wall-clock on the consensus path.
         let deadline = clock.current() + GENESIS_ANCHOR_WAIT_TIMEOUT;
         loop {
             let anchor = self.finalization_view.finalized_anchor();

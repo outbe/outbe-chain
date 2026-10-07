@@ -1,8 +1,17 @@
 //! Bounded, authenticated Tribute body stream for the LYSIS_V1 exporter.
 //!
-//! Projection storage is used only to discover candidate identities and transport canonical
-//! body bytes. Every candidate is reconciled with the exact CE partition view,
-//! and final completeness closes against CE count plus JobIntent nominal total.
+//! The exporter uses projection storage only to discover candidate identities and
+//! transport canonical body bytes. It recomputes the canonical body commitment of
+//! every candidate. The source has two stream modes:
+//!
+//! - [`FinalizedTributeSource::stream`] reconciles every candidate with the exact
+//!   CE partition view.
+//! - [`FinalizedTributeSource::reconstruction_stream`] does no CE lookup for each
+//!   candidate. The caller must close the ordered leaves to the finalized
+//!   collection root before it publishes an authoritative manifest.
+//!
+//! In both modes, final completeness closes against the expected count and the
+//! expected nominal total.
 
 use std::collections::VecDeque;
 
@@ -49,7 +58,7 @@ impl FinalizedTributeSource {
     /// used for body discovery.
     ///
     /// The checkpoint is availability evidence only. It cannot authorize a
-    /// body; every accepted body still closes against the exact CE snapshot.
+    /// body. Every accepted body still closes against the exact CE snapshot.
     pub fn projection_state(
         &self,
         config: ProjectionConfig,

@@ -8,7 +8,7 @@ use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 ///
 /// Earlier DSL collections occupy more than one slot, so this is deliberately
 /// not the field's `order = 8`. OCM finality proof construction and verification
-/// use this fixed consensus path; the storage behavior test pins it to the
+/// use this fixed consensus path. The storage behavior test pins it to the
 /// macro-generated contract layout.
 pub const OCOMP_JOB_RECORDS_BASE_SLOT: u64 = 19;
 
@@ -110,7 +110,7 @@ pub struct DayLimitFormationReceiptState {
     pub block_number: u64,
 }
 
-/// Fork-initialized OCOMP state owned by Metadosis for one WorldwideDay.
+/// OCOMP state that Metadosis initializes when it prepares a READY WorldwideDay.
 ///
 /// The detailed pre-admission values remain owned by Tribute, Fidelity and
 /// Oracle. Metadosis commits their terminal canonical envelope and advances a
@@ -147,18 +147,19 @@ pub struct MetadosisContract {
 
     /// Bounded FIFO of terminal (COMPLETED/FAILED) WorldwideDays, newest at the
     /// back. Capped at `MAX_RECORDS_KEPT`: when a new terminal day pushes past
-    /// the cap, the oldest is popped from the front and its record deleted.
+    /// the cap, the contract pops the oldest day from the front and deletes its
+    /// record.
     #[attribute(order = 4)]
     pub closed_wwd: outbe_primitives::storage::dsl::Deque<WorldwideDayKey>,
 
-    /// Inert before the OCOMP fresh-devnet fork initializes an entry.
+    /// Empty for a day until READY-day processing initializes its entry.
     #[attribute(order = 5)]
     pub ocomp_pre_admission:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompPreAdmissionState>,
 
     /// Exact bounded live-Job registry. Empty while no OCOMP intent is pending.
-    /// READY work is kept in the separately bounded ordered index below; each
-    /// live entry retains an independent per-WWD FSM and IntentId.
+    /// The separately bounded ordered index below keeps READY work. Each live
+    /// entry retains an independent per-WWD FSM and IntentId.
     #[attribute(order = 7)]
     pub ocomp_scheduler: outbe_primitives::storage::types::StorageBytes,
 
@@ -187,7 +188,7 @@ pub struct MetadosisContract {
     /// Per-WorldwideDay terminal IntentId, keyed
     /// by `keccak(OUTBE_OCOMP_TERMINAL_INDEX_V1 || wwd_be || index_be)` (see
     /// `ocomp::terminal_index`). The single-attempt FSM permits exactly one
-    /// immutable entry, deleted together with the day on retirement.
+    /// immutable entry. Retirement deletes the entry together with the day.
     #[attribute(order = 11)]
     pub ocomp_terminal_intents: outbe_primitives::storage::types::Mapping<B256, B256>,
 
@@ -201,7 +202,7 @@ pub struct MetadosisContract {
     >,
 
     /// Canonical ordered READY keys `(next_check_height, WWD, pending_nonce)`.
-    /// The encoded vector is bounded by `MAX_RECORDS_KEPT`; terminal request
+    /// `MAX_RECORDS_KEPT` bounds the encoded vector. Terminal request
     /// processing reads only its first key.
     #[attribute(order = 13)]
     pub ocomp_ready_index: outbe_primitives::storage::types::StorageBytes,
@@ -223,21 +224,22 @@ pub struct MetadosisContract {
     #[attribute(order = 19)]
     pub ocomp_response_deadline_index: StorageBytes,
 
-    /// Per-owner Fidelity league snapshot for one WorldwideDay, written once by
-    /// the OCOMP prepare phase. Keyed by
-    /// `outbe_ocomp_protocol::league_snapshot::league_snapshot_key(wwd, owner)`,
-    /// it stores one league word per owner so the OCOMP openings MPT-prove a
+    /// Per-owner Fidelity league snapshot for one WorldwideDay. The OCOMP
+    /// prepare phase writes it once. Key:
+    /// `outbe_ocomp_protocol::league_snapshot::league_snapshot_key(wwd, owner)`.
+    /// It stores one league word per owner, so the OCOMP openings MPT-prove a
     /// single league slot per owner instead of the raw Fidelity cohort ledger.
-    /// Base slot 28; `league_snapshot::METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT` is
-    /// pinned to this layout by test.
+    /// Base slot 28. A test pins
+    /// `league_snapshot::METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT` to this layout.
     #[attribute(order = 20)]
     pub ocomp_fidelity_league_snapshot: Mapping<B256, u16>,
 
-    /// Ordered commitment over one day's snapshotted `(owner, league)` pairs,
-    /// written alongside the per-owner snapshot during the active-phase prepare
-    /// step. The post-seal terminal request reads it (a plain storage read valid
-    /// in any lifecycle phase) to bind into the sealed pre-admission envelope. A
-    /// non-zero value also marks the day's snapshot as already built.
+    /// Ordered commitment over one day's snapshotted `(owner, league)` pairs.
+    /// The active-phase prepare step writes it together with the per-owner
+    /// snapshot. The post-seal terminal request reads it and binds it into the
+    /// sealed pre-admission envelope. This read is a plain storage read, valid
+    /// in any lifecycle phase. A non-zero value also marks the day's snapshot
+    /// as already built.
     #[attribute(order = 21)]
     pub ocomp_fidelity_league_snapshot_root:
         outbe_primitives::storage::types::Mapping<WorldwideDayKey, B256>,

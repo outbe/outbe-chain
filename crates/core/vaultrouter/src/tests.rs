@@ -1,9 +1,9 @@
 //! Unit tests for the vaultrouter precompile.
 //!
-//! Cross-contract interaction is exercised through `HashMapStorageProvider`'s
-//! sub-call stubs: `stub_sub_call_at(target, bytes)` pins a target's return
-//! payload and `enable_sub_call_stub()` makes every other sub-call succeed with
-//! empty returndata (matching the convention in `outbe_credisfactory::tests`).
+//! The tests exercise cross-contract interaction through the sub-call stubs of
+//! `HashMapStorageProvider`. `stub_sub_call_at(target, bytes)` pins the return payload of
+//! a target. `enable_sub_call_stub()` makes every other sub-call succeed with empty
+//! returndata. This matches the convention in `outbe_credisfactory::tests`.
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
@@ -85,10 +85,10 @@ fn word_addr(value: Address) -> Bytes {
 }
 
 /// Publishes a `COEN/iso_code` rate directly through the Oracle's own storage
-/// schema (a Rust cross-module read, not an EVM sub-call - `OracleContract` is
-/// bound to `ORACLE_ADDRESS` in this same provider). `timestamp` must be
-/// non-zero and within `FX_RATE_MAX_AGE_SECONDS` of the provider's clock for
-/// `fresh_currency_cross_rate` to accept it.
+/// schema. This is a Rust cross-module read, not an EVM sub-call. `OracleContract` is
+/// bound to `ORACLE_ADDRESS` in this same provider. `timestamp` must be non-zero and
+/// within `FX_RATE_MAX_AGE_SECONDS` of the provider's clock. Otherwise
+/// `fresh_currency_cross_rate` does not accept it.
 fn write_oracle_rate(
     storage: &StorageHandle<'_>,
     iso_code: u16,
@@ -151,7 +151,7 @@ fn management_methods_reject_non_owner() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
-        // onlyOwner is checked before any sub-call, so no stubs are needed.
+        // The precompile checks onlyOwner before any sub-call, so the test needs no stubs.
         let err = runtime::add_liquidity_source(storage.clone(), stranger(), source_account(), 1)
             .unwrap_err();
         assert!(err.to_string().contains("unauthorized"), "{err}");
@@ -765,13 +765,13 @@ fn add_vault_rejects_a_vault_with_an_owner() {
 fn deposit_happy_path_and_rejects_unknown_source() {
     let shares = U256::from(123u64);
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    // vault.deposit(...) returns `shares`; transferFrom on `asset` succeeds generically.
+    // vault.deposit(...) returns `shares`. transferFrom on `asset` succeeds generically.
     storage.stub_sub_call_at(vault(), word(shares));
     storage.enable_sub_call_stub();
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
 
-        // An Unknown source discriminant is rejected before any sub-call.
+        // The precompile rejects an Unknown source discriminant before any sub-call.
         let err = runtime::deposit(
             storage.clone(),
             source_account(),
@@ -785,9 +785,9 @@ fn deposit_happy_path_and_rejects_unknown_source() {
             "{err}"
         );
 
-        // Register a vault for the asset (seed the set directly to avoid the
-        // vault.asset() stub colliding with vault.deposit()), then deposit
-        // declaring a valid source.
+        // Register a vault for the asset. Seed the set directly so that the
+        // vault.asset() stub does not collide with vault.deposit(). Then deposit
+        // and declare a valid source.
         let contract = VaultRouterContract::new(storage.clone());
         contract.asset_vault_set(asset()).insert(vault()).unwrap();
         contract.assets.insert(asset()).unwrap();
@@ -836,7 +836,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
 
-        // Zero receiver rejected first.
+        // The precompile rejects a zero receiver first.
         let err = runtime::withdraw(
             storage.clone(),
             target_account(),
@@ -848,7 +848,7 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
         .unwrap_err();
         assert!(err.to_string().contains("zero address"), "{err}");
 
-        // An Unknown target discriminant is rejected before sub-calls.
+        // The precompile rejects an Unknown target discriminant before sub-calls.
         let err = runtime::withdraw(
             storage.clone(),
             target_account(),
@@ -1077,10 +1077,10 @@ fn reference_currency_assets_dispatch() {
 
 // --- rebalance ----------------------------------------------------------------
 
-/// Registers `vault` for `asset` directly through the schema, matching the
-/// `deposit`/`withdraw` tests' convention of bypassing `add_vault` (and its own
+/// Registers `vault` for `asset` directly through the schema. This matches the convention
+/// of the `deposit`/`withdraw` tests: they bypass `add_vault` (and its own
 /// `vault.owner()`/`isoCode()` sub-calls) when the test only cares about the
-/// registry membership `rebalance` actually reads.
+/// registry membership that `rebalance` actually reads.
 fn register_vault(storage: &StorageHandle<'_>, asset: Address, vault: Address) {
     VaultRouterContract::new(storage.clone())
         .asset_vault_set(asset)
@@ -1189,10 +1189,10 @@ fn rebalance_rejects_an_unregistered_destination_vault() {
     });
 }
 
-/// `rebalance` gates registration on `asset_vault_set`, not
-/// `vault_reference_currencies` - which `remove_vault` (see `runtime.rs`)
-/// documents as unset for vaults registered before the ISO index existed.
-/// This pins that the rebalance path does not regress that upgrade path.
+/// `rebalance` gates registration on `asset_vault_set`, not on
+/// `vault_reference_currencies`. `remove_vault` (see `runtime.rs`) documents
+/// `vault_reference_currencies` as unset for vaults registered before the ISO index
+/// existed. This test pins that the rebalance path does not regress that upgrade path.
 #[test]
 fn rebalance_accepts_a_vault_whose_reference_currency_index_is_unset() {
     let shares = U256::from(50u64);
@@ -1308,8 +1308,8 @@ fn rebalance_rejects_when_the_required_input_exceeds_max() {
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_from(), vault_to());
 
-        // Same asset prices 1:1, so `amount_to == amount`; a max one wei below
-        // that must be rejected before any vault is touched.
+        // Same asset prices 1:1, so `amount_to == amount`. The precompile must reject
+        // a max one wei below that before it touches any vault.
         let err = runtime::rebalance(
             storage.clone(),
             cca(),
@@ -1324,8 +1324,8 @@ fn rebalance_rejects_when_the_required_input_exceeds_max() {
 }
 
 /// Same asset short-circuits at 1:1 with no oracle read and no decimal
-/// scaling - the identity path `rebalance_amount_to` takes before touching
-/// `erc20_decimals`/`asset_iso_code` at all.
+/// scaling. This is the identity path that `rebalance_amount_to` takes before
+/// it touches `erc20_decimals`/`asset_iso_code` at all.
 #[test]
 fn rebalance_prices_an_identical_asset_pair_one_to_one() {
     let shares = U256::from(100u64);
@@ -1363,9 +1363,10 @@ fn rebalance_prices_an_identical_asset_pair_one_to_one() {
     });
 }
 
-/// Two different assets that happen to share a currency: the oracle short
-/// circuits internally (`from_iso == to_iso`) so no rate needs to be
-/// published - proven here by never seeding the Oracle contract at all.
+/// Two different assets that happen to share a currency. The oracle short
+/// circuits internally (`from_iso == to_iso`), so the test does not need to
+/// publish a rate. The test proves this because it never seeds the Oracle
+/// contract at all.
 #[test]
 fn rebalance_prices_a_same_currency_pair_one_to_one() {
     let shares = U256::from(100u64);
@@ -1410,8 +1411,8 @@ fn rebalance_prices_a_same_currency_pair_one_to_one() {
         register_vault(&storage, asset_from(), vault_from());
         register_vault(&storage, asset_to(), vault_to());
 
-        // No oracle pair registered for USD anywhere - if the implementation
-        // read one despite the equal ISO codes this would revert instead.
+        // No oracle pair is registered for USD anywhere. If the implementation
+        // read one despite the equal ISO codes, this would revert instead.
         let amount_to = runtime::rebalance(
             storage.clone(),
             cca(),
@@ -1607,9 +1608,9 @@ fn rebalance_scales_across_asset_decimals() {
             register_vault(&storage, asset_from(), vault_from());
             register_vault(&storage, asset_to(), vault_to());
 
-            // 10^13 wei of an 18-decimal asset is 0.00001; ceil-scaled to 6
-            // decimals that is 10 minor units, not 9 (10^13 / 10^12 = 10 exactly
-            // here, so bump by one wei to force the rounding to bite).
+            // 10^13 wei of an 18-decimal asset is 0.00001. Ceil-scaled to 6
+            // decimals, that is 10 minor units, not 9. Here 10^13 / 10^12 = 10
+            // exactly, so add one wei to force the rounding to bite.
             let amount = U256::from(10u64).pow(U256::from(13u64)) + U256::from(1);
             let amount_to = runtime::rebalance(
                 storage.clone(),
@@ -1643,8 +1644,8 @@ fn rebalance_rejects_assets_with_more_than_eighteen_decimals() {
         IERC20::decimalsCall::SELECTOR,
         word(U256::from(19u8)),
     );
-    // Both decimals are read before either is checked, so the destination's must
-    // resolve too even though this test only cares about the source's bound.
+    // `rebalance` reads both decimals before it checks either. So the destination's
+    // decimals must resolve too, even though this test only cares about the source's bound.
     storage.stub_sub_call_at_selector(
         asset_to(),
         IERC20::decimalsCall::SELECTOR,
@@ -1672,7 +1673,7 @@ fn rebalance_rejects_assets_with_more_than_eighteen_decimals() {
     });
 }
 
-/// The pull (receive) is the first external call `rebalance` makes; if the
+/// The pull (receive) is the first external call `rebalance` makes. If the
 /// caller has not approved the destination asset, nothing downstream ever
 /// runs.
 #[test]
@@ -1709,8 +1710,8 @@ fn rebalance_reverts_when_the_caller_has_not_approved_the_destination_asset() {
         word(U256::from(USD_ISO_CODE)),
     );
     storage.stub_sub_call_at(vault_from(), word(U256::from(100u64)));
-    // `asset_to()::transferFromCall` is deliberately left unstubbed, and the
-    // global stub is off, so the pull fails closed.
+    // The test deliberately leaves `asset_to()::transferFromCall` unstubbed, and
+    // the global stub is off. So the pull fails closed.
 
     StorageHandle::enter(&mut storage, |storage| {
         bond_cca(&storage);
@@ -1747,7 +1748,7 @@ fn rebalance_rolls_back_when_the_destination_deposit_fails() {
     );
     storage.stub_sub_call_at(vault_from(), word(U256::from(100u64)));
     storage.stub_sub_call_at(asset_from(), word(U256::from(1u64)));
-    // `vault_to()::depositCall` is deliberately left unstubbed.
+    // The test deliberately leaves `vault_to()::depositCall` unstubbed.
 
     StorageHandle::enter(&mut storage, |storage| {
         bond_cca(&storage);
@@ -1768,8 +1769,8 @@ fn rebalance_rolls_back_when_the_destination_deposit_fails() {
 }
 
 /// If the source withdraw fails after the destination deposit already
-/// succeeded, the payout transfer - coded after it - never runs, and no
-/// event is emitted for the half-completed swap.
+/// succeeded, the payout transfer (coded after it) never runs. `rebalance`
+/// also emits no event for the half-completed swap.
 #[test]
 fn rebalance_rolls_back_when_the_source_withdraw_fails() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -1799,7 +1800,7 @@ fn rebalance_rolls_back_when_the_source_withdraw_fails() {
         word(U256::from(10u64)),
     );
     storage.stub_sub_call_at(asset_from(), word(U256::from(1u64)));
-    // `vault_from()::withdrawCall` is deliberately left unstubbed.
+    // The test deliberately leaves `vault_from()::withdrawCall` unstubbed.
 
     StorageHandle::enter(&mut storage, |storage| {
         bond_cca(&storage);

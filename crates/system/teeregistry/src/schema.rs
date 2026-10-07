@@ -4,10 +4,13 @@ use outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
 
 /// EVM storage layout for the TEE Registry.
 ///
-/// Global scalars (slots 0..=8) hold the block-1 OST3 bootstrap result that clients
-/// and verifiers read. Bootstrap committee projections occupy slots 9..=18. Active
-/// V1 policy and leased-binding state occupies slots 19..=44. The layout is
-/// append-only; new fields take the next `order`.
+/// Slots 0..=7 hold the block-1 bootstrap scalars.
+/// Slot 8 is a per-validator map, not a bootstrap scalar.
+/// Slots 9..=10 hold the founding DKG group public key.
+/// Slots 11..=18 hold the active V1 policy and binding state.
+/// Slots 19..=44 continue the append-only registry state.
+/// Slots 45..=59 hold strict-upgrade and upgrade-candidate state.
+/// The layout is append-only. New fields take the next `order`.
 #[storage_schema]
 #[contract(addr = TEE_REGISTRY_ADDRESS)]
 pub struct TeeRegistry {
@@ -35,20 +38,18 @@ pub struct TeeRegistry {
     #[attribute(order = 5)]
     pub dkg_transcript_hash: outbe_primitives::storage::dsl::Value<B256>,
 
-    /// slot 6: committee snapshot block bootstrap read from.
+    /// slot 6: committee snapshot block that bootstrap read from.
     #[attribute(order = 6)]
     pub committee_snapshot_block: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// slot 7: committee snapshot hash bootstrap was bound to.
+    /// slot 7: committee snapshot hash that bootstrap was bound to.
     #[attribute(order = 7)]
     pub committee_snapshot_hash: outbe_primitives::storage::dsl::Value<B256>,
 
-    /// slot 8: recipient X25519 pubkey announced via `BoundaryOutcome`
-    /// (`DkgBoundaryArtifact::tee_recipient_pubkeys`), per validator. Distinct
-    /// from slot 9 (`recipient_x25519`), the authoritative key written by the
-    /// full `TeeBootstrap` registration: this is the boundary-channel
-    /// announcement (key rotation / pre-bootstrap delivery), recorded
-    /// independently of a full registration bundle.
+    /// slot 8: recipient X25519 pubkey announced via `BoundaryOutcome`,
+    /// per validator. Slot 9 is `group_public_key`, not a recipient key.
+    /// Per-node recipient keys live in slot 26 (`v1_node_recipient_x25519`).
+    /// V1 registration writes that slot. `TeeBootstrap` does not.
     #[attribute(order = 8)]
     pub announced_recipient_x25519: outbe_primitives::storage::dsl::Map<Address, B256>,
 

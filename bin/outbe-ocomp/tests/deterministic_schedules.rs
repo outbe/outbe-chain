@@ -616,8 +616,8 @@ fn raw_fidelity_opening(
     wwd: u32,
 ) -> RawContractOpeningProofV1 {
     // One per-owner league word in Metadosis storage, in owner order (the node's
-    // canonical slot plan). `fixture_league` fabricates an opaque valid value;
-    // the real league derivation lives in `outbe_fidelity`.
+    // canonical slot plan). `fixture_league` fabricates an opaque valid value.
+    // The real league derivation lives in `outbe_fidelity`.
     let ordered_slots = subjects
         .owners
         .iter()

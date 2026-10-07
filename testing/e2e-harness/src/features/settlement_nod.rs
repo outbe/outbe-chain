@@ -1,4 +1,4 @@
-//! The successor public Nod pays through ERC20; the original retains PayNote coverage.
+//! A third party pays the successor public Nod by ERC20. Its owner paid the original.
 use super::*;
 use alloy_sol_types::{SolCall as _, SolError as _, SolValue as _};
 use outbe_compressed_entities::{
@@ -81,7 +81,7 @@ pub(super) fn run_relayed_mining(world: &mut World, owner_index: usize, day: u32
             index: U256::ZERO,
         },
     )
-    .expect("PayNote scenario registered USD reserve");
+    .expect("the owner's Nod settlement registered the USD reserve");
     assert_ne!(vault, Address::ZERO);
     let asset =
         eth::read_call(&url, vault, &ISettlementVault::assetCall {}).expect("reserve asset");
@@ -124,7 +124,6 @@ pub(super) fn run_relayed_mining(world: &mut World, owner_index: usize, day: u32
             owner,
             nodId: id.to_u256(),
             asset,
-            nullifier: B256::ZERO,
             paymentMinor: body.settlementCostMinor,
         },
     );
@@ -463,7 +462,7 @@ pub(super) fn run_relayed_mining(world: &mut World, owner_index: usize, day: u32
             compressed_body(world, peer, 2, id, minted_height).is_none(),
             "mined Nod must have authenticated absence"
         );
-        // The V2 fixture issued a singleton bucket; mining its one paid right
+        // The V2 fixture issued a singleton bucket. Mining its one paid right
         // must remove the bucket instead of leaving an orphan settled counter.
         assert_eq!(paid.1.settled_nods, 1);
         assert!(
@@ -652,7 +651,7 @@ pub(super) fn qualify_public_nod(
     let mut first_boundary_day = None;
     // The first closed day can be the partial issuance day or contain earlier
     // low-price samples. The next entire UTC day uses only the declared quote.
-    // Two transitions are sufficient; no Nod state or Oracle history is injected.
+    // Two transitions are sufficient. No Nod state or Oracle history is injected.
     for boundary in 0..2 {
         crate::features::price_oracle::publish_controlled_quote(world, rate);
         let publication = world
@@ -948,7 +947,7 @@ fn assert_live_nod_revert<C: alloy_sol_types::SolCall>(
 }
 
 /// Observe an actual failed transaction without assigning it a revert reason.
-/// Wrong-MAC authorization is established separately by the controlled retry.
+/// The controlled retry establishes wrong-MAC authorization separately.
 fn assert_mined_nod_rejection<C: alloy_sol_types::SolCall>(
     world: &World,
     call: &C,

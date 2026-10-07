@@ -239,8 +239,8 @@ impl EmbeddedOcompDomainV1 {
         }
         let cas_limits = CasLimits {
             max_object_bytes: CAS_MAX_OBJECT_BYTES,
-            // CAS is disk-backed and chunked. Capacity is governed by the
-            // filesystem/operator, never by a product-level total-job cap.
+            // CAS is disk-backed and chunked. The filesystem/operator governs
+            // capacity, never a product-level total-job cap.
             max_total_bytes: u64::MAX,
         };
         let local_results = Arc::new(
@@ -576,7 +576,7 @@ impl EmbeddedOcompDomainV1 {
         Ok(())
     }
 
-    /// Drives one payout tick over `days`; without it a node-embedded domain
+    /// Drives one payout tick over `days`. Without it, a node-embedded domain
     /// certifies contributors that nobody ever pays.
     pub fn spawn_validator_payout(
         &self,

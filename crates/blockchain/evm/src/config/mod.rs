@@ -49,8 +49,8 @@ pub use builder::OutbeExecutorBuilder;
 /// Outbe EVM configuration.
 ///
 /// Wraps [`EthEvmConfig`] parametrised with [`OutbeEvmFactory`] and overrides
-/// the block executor factory so that every block is processed by
-/// [`crate::executor::OutbeBlockExecutor`], including reserved-address system tx verification in
+/// the block executor factory. As a result, [`crate::executor::OutbeBlockExecutor`]
+/// processes every block, including reserved-address system tx verification in
 /// the normal ordered transaction loop.
 #[derive(Clone)]
 pub struct OutbeEvmConfig {
@@ -102,14 +102,16 @@ impl OutbeEvmConfig {
     /// consensus-namespace source of truth BEFORE any block
     /// execution or proof verification.
     ///
-    /// Called from EVERY `OutbeEvmConfig` constructor so the binding is live no
-    /// matter which one the running node uses: `new_with_bridge` for the offline
-    /// reth subcommands, and `new_with_bridge_and_summary_provider` /
-    /// `new_with_provider_only` via [`OutbeExecutorBuilder::build_evm`] for the
-    /// live validator and full node. Previously only `::new` installed it, but
-    /// production never builds via `::new`, so `consensus_chain_id()` stayed at
-    /// its default `0` and the signing namespace collapsed to `b"outbe" || 0` on
-    /// every chain - silently disabling the cross-chain-replay binding.
+    /// EVERY `OutbeEvmConfig` constructor calls this function, so the binding is
+    /// live no matter which constructor the running node uses. The offline reth
+    /// subcommands use `new_with_bridge`. The live validator and full node use
+    /// `new_with_bridge_and_summary_provider` /
+    /// `new_with_provider_and_runtime_body_readers` via
+    /// [`OutbeExecutorBuilder::build_evm`]. Previously only `::new` installed it,
+    /// but production never builds via `::new`. As a result, `consensus_chain_id()`
+    /// stayed at its default `0`, and the signing namespace collapsed to
+    /// `b"outbe" || 0` on every chain. This silently disabled the
+    /// cross-chain-replay binding.
     ///
     /// Reinstalling the same genesis-fixed id is idempotent. A conflicting
     /// construction is a process configuration error and fails immediately
@@ -265,13 +267,14 @@ impl OutbeEvmConfig {
         }
     }
 
-    /// full-node constructor. Installs an
+    /// Full-node constructor. Installs an
     /// [`AccountedParentArtifactProvider`] backed solely by a Reth
-    /// [`reth_provider::HeaderProvider`] (no consensus bridge / proof cache). Used by
-    /// `OutbeExecutorBuilder` when the node runs without a consensus bridge -
-    /// e.g., a full node syncing the chain. Without this path the executor's
-    /// Phase 1 lookup would fail with "missing provider" on every block, and
-    /// full nodes would be unable to re-execute the chain.
+    /// [`reth_provider::HeaderProvider`] (no consensus bridge / proof cache).
+    /// It installs no runtime body readers. `OutbeExecutorBuilder` does not use
+    /// it. The no-bridge production path uses
+    /// `new_with_provider_and_runtime_body_readers`. Without a provider, the
+    /// executor's Phase 1 lookup would fail with "missing provider" on every
+    /// block.
     pub fn new_with_provider_only(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
@@ -303,10 +306,10 @@ impl OutbeEvmConfig {
     /// Creates the provider-backed full-node configuration with the typed
     /// runtime body readers required by production precompile execution.
     ///
-    /// This is the no-bridge counterpart of the live node configuration: the
-    /// exact accounted-parent artifact is resolved from the header provider,
-    /// while Tribute and Nod bodies remain available through their read-only
-    /// runtime capabilities.
+    /// This is the no-bridge counterpart of the live node configuration. The
+    /// exact accounted-parent artifact comes from the header provider. Tribute
+    /// and Nod bodies remain available through their read-only runtime
+    /// capabilities.
     pub fn new_with_provider_and_runtime_body_readers(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
@@ -381,8 +384,8 @@ impl OutbeEvmConfig {
 
     /// Installs the explicitly owned CE tree service used by every block scope
     /// and by candidate publication. ADR-008's unsharded stage is not activated
-    /// before ADR-009/010 benchmarking, so work accounting stays in the named
-    /// prebenchmark mode below rather than inventing network limits here.
+    /// before ADR-009/010 benchmarking. Work accounting therefore stays in the
+    /// named prebenchmark mode below rather than inventing network limits here.
     pub fn with_compressed_tree_service(mut self, service: Arc<CompressedTreeService>) -> Self {
         self.inner
             .executor_factory

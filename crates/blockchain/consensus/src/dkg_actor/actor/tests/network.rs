@@ -260,8 +260,8 @@ fn should_drop_message_once(
 // -----------------------------------------------------------------------
 
 /// Helper: run DKG with `n` total keys but only spawn tasks for the first
-/// `online` nodes. Offline nodes' receivers are dropped so they never
-/// participate. Returns results from online nodes only.
+/// `online` nodes. The helper drops the receivers of offline nodes, so they
+/// never participate. Returns results from online nodes only.
 pub(super) async fn run_partial_dkg(
     clock: &commonware_runtime::deterministic::Context,
     n: usize,
@@ -289,7 +289,7 @@ pub(super) async fn run_partial_dkg(
     let (senders, receivers) = build_mock_network(&keys);
 
     // Only spawn DKG tasks for the first `online` nodes.
-    // The remaining nodes' receivers are dropped (simulating offline).
+    // This drops the receivers of the remaining nodes (simulates offline nodes).
     let mut handles = Vec::new();
     for (key, sender, receiver) in keys
         .iter()
@@ -312,8 +312,8 @@ pub(super) async fn run_partial_dkg(
         }));
     }
     // Drop remaining receivers explicitly (offline nodes).
-    // (They're already dropped by the `take(online)` iterators above,
-    // but this documents intent.)
+    // (The `take(online)` iterators above already drop them. This comment
+    // documents intent.)
 
     let mut results = Vec::new();
     for handle in handles {

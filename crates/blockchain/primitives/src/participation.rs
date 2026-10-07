@@ -1,7 +1,11 @@
-//! Participation bitmap encoding/decoding for block `extra_data`.
+//! Legacy participation bitmap codec (the "OUTB" format).
 //!
-//! Encodes which validators participated in the previous block's finalization
-//! as a compact bitmap in the current block's `extra_data` field.
+//! The codec encodes which validators participated in a block's finalization
+//! as a compact bitmap. No production path writes this format into block
+//! `extra_data`. Participation travels in the Phase 1
+//! [`crate::consensus_metadata::CertifiedParentAccountingMetadata`] system tx,
+//! and `extra_data` carries `OutbeBlockArtifacts`. Tests and the fuzz target
+//! use this codec.
 //!
 //! # Format
 //!
@@ -12,9 +16,11 @@
 //! [ceil(validator_count / 8) bytes: signer bitmap]
 //! [1 byte:  missed_proposer_count]
 //! [20 * missed_proposer_count bytes: missed proposer addresses]
+//! [1 byte:  byzantine_count]
+//! [20 * byzantine_count bytes: byzantine validator addresses]
 //! ```
 //!
-//! For 128 validators with 0 missed: 4 + 1 + 2 + 16 + 1 = 24 bytes.
+//! For 128 validators with 0 missed and 0 byzantine: 4 + 1 + 2 + 16 + 1 + 1 = 25 bytes.
 
 use alloy_primitives::{Address, Bytes};
 
@@ -398,8 +404,8 @@ mod tests {
         let decoded = decode_participation(&encoded, &sorted_decode_order).unwrap();
 
         // BUG: bitmap says positions 0,1 are signers -> maps to a,b in sorted order.
-        // But the ACTUAL signers were b,d. So 'a' is falsely marked as voter
-        // and 'd' is falsely marked as absent - wrong slashing!
+        // But the ACTUAL signers were b,d. So the decoder falsely marks 'a' as
+        // voter and 'd' as absent. This causes wrong slashing!
         assert!(
             decoded.voters.contains(&a), // WRONG: a didn't vote
             "old bug: a falsely marked as voter"
@@ -535,7 +541,7 @@ mod proptests {
             prop_assert_eq!(decoded.missed_proposers, expected_missed);
         }
 
-        /// Encoding is deterministic - same inputs always produce identical bytes.
+        /// Encoding is deterministic. Same inputs always produce identical bytes.
         #[test]
         fn encoding_deterministic(
             (validators, signers) in validators_and_signers(),
@@ -558,7 +564,7 @@ mod proptests {
             prop_assert!(decode_participation(&encoded, &wrong).is_none());
         }
 
-        /// Random garbage bytes never panic - they return None.
+        /// Random garbage bytes never panic. They return None.
         #[test]
         fn random_bytes_no_panic(
             data in proptest::collection::vec(any::<u8>(), 0..512),

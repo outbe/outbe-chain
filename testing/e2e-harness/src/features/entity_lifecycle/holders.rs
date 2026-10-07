@@ -1,5 +1,5 @@
 //! The owners a lifecycle issues its gems or Nods to: one holding each, on real keys,
-//! so every owner pays its own note, mines and redeems for itself.
+//! so every owner can pay, mine and redeem for itself.
 
 use alloy_primitives::Address;
 
@@ -35,7 +35,7 @@ pub(crate) fn address(seed: u64, index: usize) -> Address {
     eth::address_of(&key(seed, index)).expect("holder address")
 }
 
-/// Gas for the notes, mining and redemptions each owner sends itself.
+/// Gas for the payments, mining and redemptions each owner sends itself.
 pub(crate) fn fund(world: &World, seed: u64) {
     let url = world.rpc.url(world.validators.primary_port());
     let funder = world

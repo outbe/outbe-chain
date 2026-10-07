@@ -1,10 +1,11 @@
 use crate::transport::*;
 
-/// The tribute offer key derived once from the DKG group threshold signature
-/// (Seam F): the secret stays resident, clients encrypt to `public`. Written on
-/// the founding DKG connection's `DkgFinalizeTributeOffer`, then read by the
-/// offer-decrypt path on other connections. Also carries the resident group
-/// threshold signature so the restart fast-path restores the same permanent key.
+/// The tribute offer key, derived once from the DKG group threshold signature
+/// (Seam F). The secret stays resident, and clients encrypt to `public`. The
+/// founding DKG connection writes it on `DkgFinalizeTributeOffer`. The
+/// offer-decrypt path on other connections then reads it. It also carries the
+/// resident group threshold signature so the restart fast-path restores the same
+/// permanent key.
 pub struct DerivedTributeOfferKey {
     secret: Zeroizing<[u8; 32]>,
     pub(in crate::transport) public: [u8; 32],
@@ -82,8 +83,8 @@ impl DerivedTributeOfferKey {
 }
 
 /// Process-wide, write-once slot for the DKG-derived offer key, shared across
-/// every connection thread. `OnceLock` makes the first ceremony's key canonical;
-/// a divergent founding finalization is rejected by the enclave request arm. No
+/// every connection thread. `OnceLock` makes the first ceremony's key canonical.
+/// The enclave request arm rejects a divergent founding finalization. No
 /// `StorageHandle` exists in this binary, so std sync primitives apply here.
 pub type SharedTributeOfferKey = Arc<OnceLock<DerivedTributeOfferKey>>;
 

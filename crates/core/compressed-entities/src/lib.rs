@@ -15,6 +15,7 @@ mod lifecycle;
 mod persistence;
 mod proof;
 mod protobuf;
+mod readers;
 mod replay;
 mod runtime;
 mod schema;
@@ -85,6 +86,7 @@ pub use protobuf::{
     CanonicalBodyError, NodBucketBodyV1, NodItemBodyV1, NodItemBodyV2, StoredBody, TributeBodyV1,
     BODY_SCHEMA_V1, NOD_BODY_SCHEMA_V2, TRIBUTE_BODY_SCHEMA_V2,
 };
+pub use readers::ExecutionReaders;
 pub use replay::{
     decode_canonical_body_event, decode_partition_retirement,
     reconstruct_effective_final_mutations, CanonicalBodyEvent, ReplayEventError,

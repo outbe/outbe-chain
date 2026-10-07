@@ -115,8 +115,8 @@ impl World {
         Self::build(factory, payer, registered, None).0
     }
 
-    /// Like [`World::new`]; `gem_called_at` stamps the bucket's `called_at` and returns the
-    /// settlement deadline (`called_at + notice`).
+    /// Like [`World::new`]. `gem_called_at` stamps the bucket's `called_at`, and the function
+    /// returns the settlement deadline (`called_at + notice`).
     fn build(
         factory: Factory,
         payer: Address,

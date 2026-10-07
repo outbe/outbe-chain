@@ -11,8 +11,8 @@ use std::fmt;
 
 use crate::errors::IntexError;
 
-/// Series lifecycle state. `Issued -> Called -> Expired`, where `Expired` means
-/// the call window closed.
+/// Series lifecycle state: `Issued -> Called -> Expired`.
+/// A Called series becomes Expired after its notice-period deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
@@ -177,14 +177,14 @@ impl From<FixedBytes<SERIES_ID_LEN>> for SeriesId {
 
 /// Identity parameters captured once at series creation.
 ///
-/// `promis_load_minor` is `u128` to mirror the Origin `uint128` ABI; storage
+/// `promis_load_minor` is `u128` to mirror the Origin `uint128` ABI. Storage
 /// widens it to `U256` (the storage DSL has no `u128` codec), always lossless.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateSeriesParams {
     pub series_id: SeriesId,
     pub worldwide_day: WorldwideDay,
     pub issued_units: u32,
-    /// PROMIS-units per Intex unit (1e6); bounded by source `uint128`.
+    /// PROMIS-units per Intex unit (1e6). Bounded by source `uint128`.
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference ISO stable-units, 1e6). Primary
     /// anchor; cost/floor/call derive from it.
@@ -194,7 +194,7 @@ pub struct CreateSeriesParams {
     /// Call price level that arms the forced call, in reference ISO stable-units (1e6).
     pub call_price_minor: U256,
     pub call_trigger: IntexCallTrigger,
-    /// Creation timestamp (UNIX seconds); non-zero, doubles as existence sentinel.
+    /// Creation timestamp (UNIX seconds). Non-zero. It is also the existence sentinel.
     pub issued_at: u32,
     pub issuance_currency: u16,
     pub reference_currency: u16,
@@ -229,8 +229,8 @@ pub struct SeriesRecord {
     #[attribute(order = 6)]
     pub call_price_minor: U256,
 
-    // call_trigger group - stored flat (the storage DSL has no nested-struct codec),
-    // exposed nested via `call_trigger()`.
+    // call_trigger group. Storage keeps it flat (the storage DSL has no nested-struct
+    // codec). `call_trigger()` exposes it nested.
     #[attribute(order = 7)]
     pub call_window_seconds: u32,
 
@@ -250,7 +250,7 @@ pub struct SeriesRecord {
     #[attribute(order = 12)]
     pub state: u8,
 
-    /// Worldwide day whose tributes fed this series; also the id's leading digits.
+    /// Worldwide day whose tributes fed this series. It is also the id's leading digits.
     #[attribute(order = 13, default = WorldwideDay::new(0))]
     pub worldwide_day: WorldwideDay,
 }
@@ -283,12 +283,14 @@ impl SeriesRecord {
 
 /// Open payout round over a certified contributor root.
 ///
-/// `amount` is frozen when the round opens (the proceeds pot at that moment) so
+/// `amount` is frozen when the round opens (the proceeds pot at that moment), so
 /// every share derives from the same denominator regardless of when a batch
-/// lands; `active != 0` is the existence sentinel. The record outlives the
-/// payout: once `paid_leaf_count` reaches the certified contributor count the
-/// caller burns what floor rounding left and the paid bitmap refuses further
-/// batches, but the counters stay readable as the day's final accounting.
+/// lands. `active != 0` is the existence sentinel. The record outlives the
+/// payout. Once `paid_leaf_count` reaches the certified contributor count:
+/// - the caller burns what floor rounding left.
+/// - the paid bitmap refuses further batches.
+///
+/// The counters stay readable as the day's final accounting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = active)]
 pub struct CertifiedPayoutRound {
@@ -299,11 +301,11 @@ pub struct CertifiedPayoutRound {
     #[attribute(order = 0)]
     pub amount: U256,
 
-    /// sum of the shares paid so far; feeds the round cap and the close remainder.
+    /// sum of the shares paid so far. It feeds the round cap and the close remainder.
     #[attribute(order = 1)]
     pub paid_so_far: U256,
 
-    /// Number of leaves paid so far; the completion gate for closing the round.
+    /// Number of leaves paid so far. It is the completion gate for closing the round.
     #[attribute(order = 2)]
     pub paid_leaf_count: u32,
 
@@ -312,9 +314,9 @@ pub struct CertifiedPayoutRound {
     pub active: u8,
 }
 
-/// Constant-size certified contributor authority for one Intex series.
+/// Constant-size certified contributor authority for one WorldwideDay.
 ///
-/// Contributor bodies remain in authenticated result chunks; activation stores
+/// Contributor bodies remain in authenticated result chunks. Activation stores
 /// only the proof root and exact aggregate scalars.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertifiedContributorGenerationProjection {
@@ -375,7 +377,7 @@ pub struct IntexContract {
     /// dense index -> worldwide_day.
     #[attribute(order = 19)]
     pub awaiting_proceeds_at: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// worldwide_day -> (awaiting index + 1); 0 = not awaiting.
+    /// worldwide_day -> (awaiting index + 1). 0 = not awaiting.
     #[attribute(order = 20)]
     pub awaiting_proceeds_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
@@ -420,7 +422,7 @@ pub struct IntexContract {
     pub exercised_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
     // Per-owner history. The two current classes are the owner's Issued- and
-    // Settled-class token balances, so only what the token no longer holds is kept.
+    // Settled-class token balances, so the ledger keeps only what the token no longer holds.
     /// `owner_units_key` -> units this owner exercised in the series.
     #[attribute(order = 30)]
     pub owner_exercised_units: outbe_primitives::storage::dsl::Map<B256, u32>,

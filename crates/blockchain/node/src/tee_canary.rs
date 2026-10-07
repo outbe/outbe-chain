@@ -2,17 +2,17 @@
 //! consensus path (`ProcessTributeOfferBatch`) plus the `Health` telemetry
 //! probe, published to [`TeeEnclaveHealthChannel`] and Prometheus.
 //!
-//! Signal only - a failing canary never gates consensus participation; it
+//! Signal only. A failing canary never gates consensus participation. It
 //! surfaces through `outbe_consensusStatus.enclave`, `outbe-cli monitor
 //! readiness` and the `outbe_tee_canary_*` / `outbe_tee_heap_*` metric series.
 //!
-//! The probe uses a separate connection to the same pinned enclave identity;
-//! it never holds the execution session's mutex. The blocking round-trip runs
-//! on `spawn_blocking`; an `in_flight`
+//! The probe uses a separate connection to the same pinned enclave identity.
+//! It never holds the execution session's mutex. The blocking round-trip runs
+//! on `spawn_blocking`. An `in_flight`
 //! latch guarantees at most one outstanding probe, so a wedged enclave wedges
 //! one canary task, never a growing pile of mutex waiters.
 //! Shutdown stops observing the read-only probe without waiting for enclave I/O.
-//! An already running socket operation retains its transport deadline; it cannot
+//! An already running socket operation retains its transport deadline. It cannot
 //! start another request after cancellation or publish a late health result.
 
 mod probe;
@@ -33,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Fixed canary identity: a marker owner address and a fixed worldwide day so
 /// the payload (and its Poseidon `token_id`) is identical on every tick and
-/// every validator. The offer is never submitted as a transaction - it exists
+/// every validator. The offer is never submitted as a transaction. It exists
 /// only inside the probe request.
 const CANARY_OWNER: Address = Address::repeat_byte(0xCA);
 const CANARY_DAY: u32 = 20250115;
@@ -57,7 +57,7 @@ pub struct TeeCanaryConfig {
 /// against a scripted fake instead of the global.
 pub trait EnclaveRequester: Send + Sync + 'static {
     fn request(&self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError>;
-    /// The pinned enclave attestation key; `None` when no session is installed.
+    /// The pinned enclave attestation key. It is `None` when no session is installed.
     fn attestation_pub(&self) -> Option<[u8; 32]>;
 }
 
@@ -106,13 +106,16 @@ pub enum CanaryTickOutcome {
     /// (pre-DKG) - not a failure.
     OfferKeyNotReady,
     /// The probe failed. `unreachable` = transport-level (connect/socket/session
-    /// revoked) as opposed to a bad answer.
+    /// revoked) as opposed to a bad answer. One stage-dependent exception: an
+    /// `EnclaveError` answer to the `GetPublicKeys` stage also counts as
+    /// `unreachable`. In the canary decrypt stage it does not.
     Failure { unreachable: bool, reason: String },
 }
 
-/// Pure state decision (ExecutionWatchdogDecision style): failures below the
-/// threshold keep the previous state (grace); reaching it is `Degraded`;
-/// transport-unreachable is `Unavailable` immediately.
+/// Pure state decision (ExecutionWatchdogDecision style):
+/// - Failures below the threshold keep the previous state (grace).
+/// - Reaching the threshold is `Degraded`.
+/// - Transport-unreachable is `Unavailable` immediately.
 pub fn canary_state(
     previous: TeeEnclaveHealthState,
     outcome: &CanaryTickOutcome,
@@ -211,8 +214,8 @@ struct CanaryWorkerState<'a> {
 impl CanaryWorkerState<'_> {
     fn skip_in_flight(&mut self) -> bool {
         if self.in_flight.load(Ordering::Acquire) {
-            // A previous probe is still blocked (wedged enclave holding the
-            // session mutex). Never stack a second one; degrade by staleness.
+            // A previous probe is still blocked on its own canary connection
+            // (wedged enclave). Never stack a second one. Degrade by staleness.
             *self.skipped = self.skipped.saturating_add(1);
             if *self.skipped >= STUCK_SKIPPED_TICKS {
                 self.snapshot.state = TeeEnclaveHealthState::Unavailable;
@@ -248,8 +251,8 @@ impl CanaryWorkerState<'_> {
                 self.status.publish(self.snapshot.clone());
             }
             Err(join_error) => {
-                // The blocking probe panicked or was cancelled; the in_flight
-                // latch may still be set - clear it so the canary keeps going.
+                // The blocking probe panicked or was cancelled. The in_flight
+                // latch may still be set. Clear it so the canary keeps going.
                 self.in_flight.store(false, Ordering::Release);
                 self.snapshot.last_failure =
                     Some(format!("canary probe task failed: {join_error}"));
@@ -262,7 +265,7 @@ impl CanaryWorkerState<'_> {
     }
 }
 
-/// Long-running canary loop; spawn with `tokio::spawn`, stop via `shutdown`.
+/// Long-running canary loop. Spawn it with `tokio::spawn` and stop it via `shutdown`.
 pub async fn run_tee_canary_worker(
     requester: impl EnclaveRequester,
     config: TeeCanaryConfig,

@@ -41,8 +41,8 @@ impl MiningDomain {
     }
 }
 
-/// Proof-of-work failure modes. Factories map these onto their own error enums;
-/// kept exhaustive so a new variant forces every mapping site to handle it.
+/// Proof-of-work failure modes. Factories map these onto their own error enums.
+/// The enum stays exhaustive, so a new variant forces every mapping site to handle it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PowError {
     /// The computed hash does not have [`POW_DIFFICULTY`] leading zero bytes.

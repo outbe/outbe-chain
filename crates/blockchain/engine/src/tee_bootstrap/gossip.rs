@@ -55,30 +55,31 @@ where
 /// Adapts the consensus P2P channel to the TEE-DKG [`DkgGossip`] surface, and runs
 /// the pre-ceremony enclave-identity exchange.
 ///
-/// Two message kinds share the channel, distinguished by a 1-byte envelope tag:
+/// Two message kinds share the channel. A 1-byte envelope tag tells them apart:
 /// ceremony messages ([`DkgWireMessage`]) and identity announcements
-/// (`tee_bls || dkg_enc`). The ceremony addresses dealer->player bundles by the
-/// recipient's *enclave* BLS key, but P2P routes by the *consensus* BLS key, so a
-/// `tee_bls -> consensus_pubkey` routing map is built during identity exchange
-/// (from the authenticated sender of each identity message) and used to address
-/// sends. Broadcasting addressed bundles instead would make every non-recipient
-/// enclave fail to open the share (it is sealed to one recipient) and abort the
-/// ceremony.
+/// (`bls_len(u32 BE) || bls || enc(32) || sig_len(u32 BE) || sig`). The
+/// ceremony addresses dealer->player bundles by the recipient's *enclave* BLS
+/// key, but P2P routes by the *consensus* BLS key.
+/// Thus the identity exchange builds a `tee_bls -> consensus_pubkey` routing map
+/// from the authenticated sender of each identity message. Sends use this map
+/// for their address. If the channel broadcast addressed bundles instead, every
+/// non-recipient enclave would fail to open the share (it is sealed to one
+/// recipient) and abort the ceremony.
 pub struct CommonwareDkgGossip<S, R, C> {
     pub(super) sender: S,
     pub(super) receiver: R,
     pub(super) clock: C,
     /// `tee_bls -> consensus P2P pubkey` for addressed ceremony sends.
     pub(super) routing: BTreeMap<Vec<u8>, bls12381::PublicKey>,
-    /// Ceremony messages received during the identity-exchange phase, replayed
-    /// before reading new ones so the phase race loses nothing.
+    /// Ceremony messages received during the identity-exchange phase. `recv`
+    /// replays them before it reads new ones, so the phase race loses nothing.
     pub(super) buffered: VecDeque<(Vec<u8>, DkgWireMessage)>,
     /// Signed announcements can arrive during preliminary BLS discovery. Once
-    /// ACKed they must survive the phase transition; the sender may stop retrying.
+    /// ACKed, they must survive the phase transition. The sender may stop retrying.
     /// Bounded by the expected participant count of this startup exchange.
     pub(super) early_signed_identities: BTreeMap<Vec<u8>, ([u8; 32], Vec<u8>)>,
     /// Typed, bounded delivery state. Transport acknowledgements suppress
-    /// retries per message and peer; the enclosing startup timeout remains the
+    /// retries per message and peer. The enclosing startup timeout remains the
     /// ceremony deadline.
     pub(super) delivery: DeliveryTracker,
 }
@@ -124,8 +125,8 @@ where
     async fn send(&mut self, to: &[u8], msg: DkgWireMessage) -> Result<(), CeremonyError> {
         match self.routing.get(to).cloned() {
             Some(peer) => self.send_ceremony(Recipients::One(peer), &msg)?,
-            // No route (should not happen post identity-exchange): broadcast so the
-            // recipient still receives it; non-recipients ignore foreign shares.
+            // No route (should not happen after the identity exchange): broadcast so the
+            // recipient still receives it. Non-recipients ignore foreign shares.
             None => self.send_ceremony(Recipients::All, &msg)?,
         }
         Ok(())
@@ -152,8 +153,8 @@ where
                             Ok(msg) => return Some((from.encode().to_vec(), msg)),
                             Err(_) => continue,
                         },
-                        // Late identity announcement (a peer still in its exchange phase):
-                        // ignore and keep reading.
+                        // Late identity announcement (a peer still in its exchange phase).
+                        // Ignore it and keep reading.
                         _ => continue,
                     }
                 },

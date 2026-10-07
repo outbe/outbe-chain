@@ -1,34 +1,35 @@
 //! Host-side TEE DKG ceremony coordinator.
 //!
 //! This is the TEE-native equivalent of the consensus DKG actor
-//! (`crates/blockchain/consensus/src/dkg_actor`): the public protocol - P2P
-//! gossip, ceremony bookkeeping, message shaping - runs on the host, while every
-//! secret-touching operation is delegated to the enclave over the Noise-IK
+//! (`crates/blockchain/consensus/src/dkg_actor`). The public protocol (P2P
+//! gossip, ceremony bookkeeping, message shaping) runs on the host. The host
+//! sends every secret-touching operation to the enclave over the Noise-IK
 //! channel (the [`EnclaveChannel`] / `EnclaveClient` protocol). Unlike a literal
 //! clone of the consensus actor, no `Dealer`/`Player` ever runs on the host, so
 //! shares and the assembled key never appear in host memory.
 //!
-//! The coordinator exposes the ceremony as explicit phase methods that each (a)
-//! call the enclave seam and (b) shape the resulting host wire messages. A
-//! driver - the production commonware-P2P event loop, or the in-process e2e test
-//! harness - routes [`DealerBundle`] / [`Ack`] / [`FinalizedLog`] messages between
-//! peers and feeds them back into the matching phase method. The wire messages carry
-//! only opaque bytes (the host never decodes Commonware types - the enclave does).
+//! The coordinator exposes the ceremony as explicit phase methods. Each method
+//! (a) calls the enclave seam and (b) shapes the resulting host wire messages. A
+//! driver (the production commonware-P2P event loop, or the in-process e2e test
+//! harness) routes [`DealerBundle`] / [`Ack`] / [`FinalizedLog`] messages between
+//! peers. The driver feeds them back into the matching phase method. The wire
+//! messages carry only opaque bytes (the host never decodes Commonware types -
+//! the enclave does).
 //!
 //! Production note: the threshold/timeout/retry event loop that drives these
 //! phases over real commonware P2P gossip is the remaining host-integration piece
-//! (validated on the localnet); this module is the seam-routing + message-shaping
-//! core that loop builds on, and is validated end-to-end over the real Noise-IK
-//! transport by `bin/outbe-tee-enclave/tests/dkg_e2e.rs`.
+//! (validated on the localnet). This module is the seam-routing + message-shaping
+//! core that loop builds on. `bin/outbe-tee-enclave/tests/dkg_e2e.rs` validates
+//! this module end-to-end over the real Noise-IK transport.
 
 use alloy_primitives::B256;
 
 use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
 
-/// The host's channel to its enclave: a request/response transport. Implemented
-/// by [`crate::EnclaveClient`] over Noise-IK; abstracted so the coordinator is
-/// testable and transport-agnostic.
+/// The host's channel to its enclave: a request/response transport.
+/// [`crate::EnclaveClient`] implements it over Noise-IK. The trait hides the
+/// transport, so the coordinator is testable and transport-agnostic.
 pub trait EnclaveChannel {
     fn request(
         &mut self,
@@ -94,7 +95,7 @@ pub enum DkgWireMessage {
     FinalizedLog(FinalizedLog),
     /// Seam F: a participant's partial signature over the fixed offer message,
     /// **sealed to one recipient enclave** (`partial` is opaque ciphertext). Each
-    /// signer broadcasts one of these per recipient; a recipient collects the
+    /// signer broadcasts one of these per recipient. A recipient collects the
     /// ciphertexts addressed to it (`recipient_bls == its enclave`) and recovers
     /// the offer key in-SGX. The host cannot decrypt them.
     TributeOfferPartial {
@@ -199,9 +200,9 @@ impl DkgWireMessage {
     }
 }
 
-/// The P2P gossip surface the ceremony driver needs. Implemented over the
-/// consensus P2P channel in the node; an in-memory implementation drives the
-/// end-to-end test. Async because real P2P send/recv is async.
+/// The P2P gossip surface the ceremony driver needs. The node implements it over
+/// the consensus P2P channel. An in-memory implementation drives the end-to-end
+/// test. Async because real P2P send/recv is async.
 #[allow(async_fn_in_trait)]
 pub trait DkgGossip {
     /// Send a message to one peer, addressed by BLS public key bytes.
@@ -218,12 +219,12 @@ pub trait DkgGossip {
 /// count. The founding ceremony intentionally requires all `n` identities, acks,
 /// and finalized logs: every genesis validator must finish with a usable enclave
 /// share before block 1. Although the threshold primitive can recover from
-/// `2f+1`, selecting a partial founding committee is not a startup fallback;
-/// operators must restore the missing participant and restart the ceremony.
+/// `2f+1`, selecting a partial founding committee is not a startup fallback.
+/// Operators must restore the missing participant and restart the ceremony.
 ///
 /// Returns this node's [`CeremonyOutcome`] (public group key + share commitment).
 /// Mirrors the consensus DKG actor's event loop, but no `Dealer`/`Player` runs on
-/// the host - every seam crosses to the enclave.
+/// the host. Every seam crosses to the enclave.
 pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
     coord: &CeremonyCoordinator,
     enclave: &mut C,
@@ -236,8 +237,8 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
 
     coord.open(enclave)?;
 
-    // Seam A: deal. The bundle addressed to self is ingested locally; the rest
-    // are gossiped to their recipients.
+    // Seam A: deal. This node ingests the bundle addressed to itself locally and
+    // gossips the rest to their recipients.
     let mut self_ack: Option<Addressed<Ack>> = None;
     for bundle in coord.deal(enclave)? {
         if bundle.to == coord.my_bls() {
@@ -260,11 +261,12 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
     let mut logs: BTreeMap<Vec<u8>, FinalizedLog> = BTreeMap::new();
     let mut ingested_dealers: BTreeSet<Vec<u8>> = BTreeSet::new();
     let me_bls = coord.my_bls().to_vec();
-    // Seam F sealed partials ADDRESSED TO THIS ENCLAVE that arrive while we are
-    // still collecting dealer logs (a fast peer can finish and broadcast its
-    // sealed offer partial early); keyed by signer, buffered here and folded into
-    // the Seam F phase below so none is lost. Ciphertexts for other recipients are
-    // ignored (this node cannot and need not decrypt them).
+    // This map holds Seam F sealed partials ADDRESSED TO THIS ENCLAVE that arrive
+    // while we are still collecting dealer logs. A fast peer can finish and
+    // broadcast its sealed offer partial early. This map keys them by signer and
+    // buffers them here. The Seam F phase below folds them in, so none is lost.
+    // This node ignores ciphertexts for other recipients (it cannot and need not
+    // decrypt them).
     let mut sealed_for_me: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
 
     // Once this node has finalized its own dealer log, fold it in locally too.
@@ -332,11 +334,11 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
 
     // Seam F: derive the shared tribute offer key. Each node threshold-signs the
     // fixed offer message with its share and SEALS the partial to every recipient
-    // enclave; it broadcasts one ciphertext per recipient and keeps the one
-    // addressed to itself. The cryptographic recovery threshold is `2f+1`, but
-    // the founding startup policy deliberately collects all `n` sealed partials
-    // so every genesis validator proves participation and installs the same offer
-    // key before block 1. The enclave decrypts them in-SGX, recovers the group
+    // enclave. It broadcasts one ciphertext per recipient and keeps the one
+    // addressed to itself. The cryptographic recovery threshold is `2f+1`. But
+    // the founding startup policy deliberately collects all `n` sealed partials.
+    // This way, every genesis validator proves participation and installs the
+    // same offer key before block 1. The enclave decrypts them in-SGX, recovers the group
     // signature, and derives the offer keypair. The host only ever relays
     // ciphertext, so it cannot recover the offer key. Every honest node derives
     // the byte-identical offer public key (asserted by the unit/e2e tests and by
@@ -373,8 +375,8 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
                 sealed_for_me.insert(signer_bls, partial);
             }
         }
-        // Stray late DKG messages (dealer bundles / acks / logs) are ignored: the
-        // ceremony already finalized, so only offer partials are still relevant.
+        // This loop ignores stray late DKG messages (dealer bundles / acks / logs).
+        // The ceremony already finalized, so only offer partials are still relevant.
     }
 
     let partials: Vec<Vec<u8>> = sealed_for_me.into_values().collect();
@@ -401,8 +403,8 @@ pub struct CeremonyOutcome {
     pub share_commitment: B256,
     /// The shared tribute offer X25519 public key, derived from the group
     /// threshold signature over the fixed offer message (Seam F). Byte-identical
-    /// for all honest parties; clients encrypt offers to it. Set by
-    /// [`run_tee_dkg_ceremony`]; `[0u8; 32]` until Seam F completes.
+    /// for all honest parties. Clients encrypt offers to it. Set by
+    /// [`run_tee_dkg_ceremony`]. It stays `[0u8; 32]` until Seam F completes.
     pub tribute_offer_public: [u8; 32],
     /// The committee's encoded DKG group public key (constant term). Set alongside
     /// `tribute_offer_public` at Seam F and carried into the founding bootstrap
@@ -437,9 +439,9 @@ pub struct CeremonyCoordinator {
 }
 
 impl CeremonyCoordinator {
-    /// `participants` is each enclave's announced `ParticipantAnnounce` (BLS
-    /// identity + X25519 enc key + the owner's binding signature), obtained from
-    /// each enclave's `GetPublicKeys`, including this node.
+    /// `participants` is each enclave's `ParticipantAnnounce`.
+    /// Each value comes from `DkgParticipantAnnounceV1`, not from `GetPublicKeys`.
+    /// The binding signature is the enclave TEE-BLS signature.
     pub fn new(
         ceremony_id: B256,
         round: u64,
@@ -544,7 +546,7 @@ impl CeremonyCoordinator {
     }
 
     /// Seam E: verify the collected dealer logs and recover this node's threshold
-    /// share inside the enclave; return the public outcome.
+    /// share inside the enclave. Return the public outcome.
     pub fn finalize_player<C: EnclaveChannel>(
         &self,
         ch: &mut C,
@@ -571,7 +573,7 @@ impl CeremonyCoordinator {
 
     /// Seam F: threshold-sign the fixed offer message with this node's share, then
     /// seal the partial to each recipient enclave. Returns one
-    /// `(recipient_bls, sealed_partial)` per participant; the caller gossips each
+    /// `(recipient_bls, sealed_partial)` per participant. The caller gossips each
     /// sealed ciphertext to its recipient. The host never sees a plaintext partial.
     pub fn tribute_offer_partials_sealed<C: EnclaveChannel>(
         &self,

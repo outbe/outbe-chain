@@ -3,9 +3,9 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 /// Emission sink allocation percentages (integer, denominator = 100).
 ///
-/// (Phase 4) replaced the legacy `(Validator 4 %, AgentReward
-/// 8 %, Metadosis 88 %)` table with a four-pool split that sums to
-/// 16 %, leaving 84 % for the terminal Metadosis sink. CCA distributes weighted origination rewards through its registry;
+/// (Phase 4) replaced the legacy `(Validator 4 %, AgentReward 8 %, Metadosis 88 %)` table
+/// with a four-pool split. The four pools sum to 16 %. The terminal Metadosis sink gets the
+/// remaining 84 %. CCA distributes weighted origination rewards through its registry.
 /// AgentReward owns WAA / SRA.
 pub const VALIDATOR_REWARD_PCT: u64 = 4;
 pub const WAA_REWARD_PCT: u64 = 4;
@@ -17,13 +17,12 @@ pub const PERCENT_DENOMINATOR: u64 = 100;
 /// Typed day-emission sinks. These are fixed, hard-fork governed
 /// extension points, not dynamically registered runtime plugins.
 ///
-/// replaced the per-block 3-sink table (`Validator 4 %`,
-/// `AgentReward 8 %`, `Metadosis 88 %`) with the day 5-sink table
-/// `(Validator 4 %, WAA 4 %, SRA 4 %, CCA 4 %, Metadosis terminal)`.
-/// The validator pool is forwarded to `outbe-rewards::api`
-/// by the Cycle handler; WAA / SRA / CCA are routed through
-/// `outbe_agentreward::distribute_daily`; the residue and the terminal
-/// 84 % land on Metadosis through [`crate::block::dispatch_terminal_remainder_at`].
+/// The day 5-sink table `(Validator 4 %, WAA 4 %, SRA 4 %, CCA 4 %, Metadosis terminal)`
+/// replaced the per-block 3-sink table (`Validator 4 %`, `AgentReward 8 %`, `Metadosis 88 %`).
+/// The Cycle handler forwards the validator pool to `outbe-rewards::api`.
+/// WAA / SRA / CCA go through `outbe_agentreward::distribute_daily`.
+/// The residue and the terminal 84 % land on Metadosis through
+/// [`crate::block::dispatch_terminal_remainder_at`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmissionSinkId {
     Validator,

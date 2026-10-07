@@ -127,7 +127,7 @@ pub(crate) fn execute<C: SolCall>(
     )
 }
 
-/// Decode exactly one event from its expected emitter; never accept another contract's log.
+/// Decode exactly one event from its expected emitter. Never accept another contract's log.
 pub(crate) use crate::internal::eth::receipt_event as event;
 
 pub(crate) fn read<C: SolCall>(url: &str, to: Address, call: &C, height: u64) -> C::Return

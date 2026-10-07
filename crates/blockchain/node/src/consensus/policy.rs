@@ -106,9 +106,9 @@ pub(super) fn validate_system_transactions(
 ///
 /// Ethereum's parent-relative ramp cannot represent the intentional 30M -> 500M
 /// block-1 bootstrap expansion or the 500M -> 30M block-2 contraction. Exact
-/// height selection is stronger here: a proposer cannot choose any intermediate
-/// or oversized value, and every node derives the same limit without parent or
-/// host input.
+/// height selection is stronger here. A proposer cannot choose any intermediate
+/// or oversized value. Every node derives the same limit without parent or host
+/// input.
 fn validate_protocol_gas_limit(header: &OutbeHeader) -> Result<(), ConsensusError> {
     let expected = outbe_primitives::system_tx::protocol_block_gas_limit(header.number());
     let actual = header.gas_limit();
@@ -131,11 +131,12 @@ fn validate_outbe_body_withdrawals(body: &OutbeBlockBody) -> Result<(), Consensu
 }
 
 /// Reject a block whose RLP-encoded size exceeds the consensus P2P transport
-/// cap (`OUTBE_MAX_BLOCK_SIZE`). Deterministic (RLP length of the same sealed
-/// block on every validator), so an over-sized byzantine block is rejected
-/// here rather than panicking commonware's bounded sender on dissemination.
-/// Honest proposers cap the block at build time, so this never rejects a valid
-/// block. See README "Consensus Artifact Transport".
+/// cap (`OUTBE_MAX_BLOCK_SIZE`). The check is deterministic: every validator
+/// measures the RLP length of the same sealed block. Thus this check rejects an
+/// over-sized byzantine block here, before the block can panic commonware's
+/// bounded sender on dissemination. Honest proposers cap the block at build
+/// time, so this never rejects a valid block. See README "Consensus Artifact
+/// Transport".
 fn validate_block_transport_size(block: &SealedBlock<OutbeBlock>) -> Result<(), ConsensusError> {
     let rlp_length = block.rlp_length();
     if rlp_length > OUTBE_MAX_BLOCK_SIZE {
@@ -160,16 +161,17 @@ fn validate_against_parent_timestamp_millis(
         });
     }
 
-    // Upper bound on forward drift. Stock Ethereum only checks monotonicity,
-    // which lets a single byzantine proposer ratchet chain time arbitrarily far
-    // forward in one block - maturing every unbonding entry and the slashed
-    // withdrawal delay (unbonding-lock + slashing-window bypass) and skipping
-    // the day-indexed emission schedule. The bound is deterministic and
-    // chain-state-only (header + parent, no wall clock), so proposer and every
-    // validator agree. Honest proposers cap their assigned timestamp at
-    // `parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS` (see the consensus handler
-    // build path), so this never rejects an honest block; a long outage
-    // self-heals as chain time ratchets forward in bounded steps.
+    // Upper bound on forward drift. Stock Ethereum only checks monotonicity.
+    // That lets a single byzantine proposer ratchet chain time arbitrarily far
+    // forward in one block. Such a block:
+    // - matures every unbonding entry and the slashed withdrawal delay
+    //   (unbonding-lock + slashing-window bypass).
+    // - skips the day-indexed emission schedule.
+    // The bound is deterministic and chain-state-only (header + parent, no wall
+    // clock), so proposer and every validator agree. Honest proposers cap their
+    // assigned timestamp at `parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS` (see the
+    // consensus handler build path), so this never rejects an honest block. A
+    // long outage self-heals as chain time ratchets forward in bounded steps.
     let drift = timestamp - parent_timestamp;
     if drift > MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS {
         return Err(consensus_other(format!(
@@ -179,14 +181,14 @@ fn validate_against_parent_timestamp_millis(
     }
 
     // Lower bound on forward advance. Monotonicity alone lets a colluding
-    // leader majority hold `timestamp = parent + 1 ms` while real time advances,
-    // freezing day-indexed emission and unbonding maturity. Each non-genesis
+    // leader majority hold `timestamp = parent + 1 ms` while real time advances.
+    // That freezes day-indexed emission and unbonding maturity. Each non-genesis
     // block must advance chain time by at least `MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS`.
-    // Deterministic and chain-state-only; the proposer clamps its assigned
-    // timestamp up to `parent + this` (see the consensus handler build path) so an
-    // honest block is never rejected. The genesis child (parent number 0) is
-    // exempt - its `finalization_view` is unseeded, so block 1 is monotonic-only,
-    // matching the proposer's genesis exception.
+    // The bound is deterministic and chain-state-only. The proposer clamps its
+    // assigned timestamp up to `parent + this` (see the consensus handler build
+    // path), so this check never rejects an honest block. The genesis child
+    // (parent number 0) is exempt. Its `finalization_view` is unseeded, so block 1
+    // is monotonic-only, matching the proposer's genesis exception.
     if parent.number() > 0 && drift < MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS {
         return Err(consensus_other(format!(
             "block timestamp_millis {timestamp} advances parent {parent_timestamp} by only \

@@ -108,8 +108,9 @@ pub enum DiscoverySpoolRecordV1 {
 }
 
 /// Nonmutating inspection of an existing, stopped discovery spool.
-/// The private codec owner is never opened through its runtime constructor or
-/// exposed to callers; no locking, recovery or mutation methods are invoked.
+/// The reader never opens the private codec owner through its runtime constructor
+/// and never exposes it to callers. The reader invokes no locking, recovery or
+/// mutation methods.
 pub struct DiscoverySpoolReaderV1 {
     codec: DiscoverySpoolV1,
 }
@@ -152,9 +153,9 @@ impl DiscoverySpoolReaderV1 {
     }
 
     /// Streams complete bounded native records without collecting the spool.
-    /// Directory order is unspecified. Callback failures stop the traversal;
-    /// observations are provisional until traversal succeeds. Quarantine and
-    /// retirement statuses are emitted without repairing or deleting anything.
+    /// Directory order is unspecified. Callback failures stop the traversal.
+    /// Observations are provisional until traversal succeeds. The traversal emits
+    /// quarantine and retirement statuses without repairing or deleting anything.
     pub fn visit_records(
         &self,
         visitor: &mut impl FnMut(DiscoverySpoolRecordV1) -> Result<(), DiscoverySpoolError>,
@@ -407,7 +408,7 @@ impl DiscoverySpoolV1 {
             {
                 // `put_ack` is reached only from work previously read from this
                 // spool. With every record gone, a completed retirement won the
-                // cross-process race; the late completion has no authority.
+                // cross-process race. The late completion has no authority.
                 return Ok(AckPutOutcomeV1::Retired);
             }
             return Err(DiscoverySpoolError::MissingOffer(offer.observation_id));
@@ -539,8 +540,8 @@ impl DiscoverySpoolV1 {
     }
 
     /// Durably records that one discovery record may be removed after the
-    /// closure checkpoint reaches `closed_through`. The intent is written
-    /// before the checkpoint advances, so every crash cut has enough authority
+    /// closure checkpoint reaches `closed_through`. This method writes the intent
+    /// before the checkpoint advances. Thus every crash cut has enough authority
     /// to either retain the record or finish removing it after restart.
     pub fn prepare_retirement(
         &self,
@@ -1017,7 +1018,7 @@ pub struct ClosureCheckpointInspectionV1 {
 /// Inspect a stopped store without initializing, locking, recovering or writing it.
 ///
 /// `root` is the native closure-checkpoint directory. Its writer must already
-/// be stopped; a successful read does not establish that precondition.
+/// be stopped. A successful read does not establish that precondition.
 pub fn inspect_closure_checkpoint(
     root: impl AsRef<Path>,
     expected_baseline: ProjectionCheckpoint,
@@ -1123,8 +1124,8 @@ impl ContiguousCheckpointStoreV1 {
     }
 
     /// Atomically advances to a later sparse checkpoint while comparing the
-    /// exact current authority. Intermediate block identities were already
-    /// validated by the unified reader and need not be retained in RAM.
+    /// exact current authority. The unified reader already validated intermediate
+    /// block identities. They do not need to stay in RAM.
     pub fn compare_and_advance_to(
         &self,
         expected: ProjectionCheckpoint,

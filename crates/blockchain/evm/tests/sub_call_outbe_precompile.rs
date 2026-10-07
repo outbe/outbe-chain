@@ -3,13 +3,13 @@
 //! Verifies that after outbe-precompile propagation, a sub-call driven by
 //! `sub_call::run` can reach an outbe stateful precompile and returns its
 //! output. The target is the stateless Poseidon-BN254 hash precompile at
-//! `ZKPROOF_POSEIDON_ADDRESS` (`0xEE07`), chosen because it needs no state or
-//! contract setup: raw bytes in, 32-byte hash out.
+//! `ZKPROOF_POSEIDON_ADDRESS` (`0xEE07`). The test uses it because it needs no
+//! state or contract setup: raw bytes in, 32-byte hash out.
 //!
 //! This proves the child frame uses `OutbeSubCallPrecompiles` (which dispatches
 //! outbe addresses) rather than plain `EthPrecompiles`. With the old wiring the
 //! call to `0xEE07` would fall through to an empty-account call and return
-//! `Success` with empty returndata; here we assert the returndata equals the
+//! `Success` with empty returndata. Here we assert the returndata equals the
 //! Poseidon hash of the input.
 
 mod sub_call_support;
@@ -97,8 +97,8 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
 
 #[test]
 fn subcall_reaches_outbe_poseidon_precompile() {
-    // No account is inserted for the precompile address: outbe precompiles are
-    // dispatched by the provider, not backed by real accounts/bytecode.
+    // The test inserts no account for the precompile address. The provider
+    // dispatches outbe precompiles. Real accounts/bytecode do not back them.
     let mut ctx = Context::mainnet().with_db(CacheDB::new(EmptyDB::default()));
 
     // One 32-byte BN254 field element as Poseidon input.

@@ -2,13 +2,13 @@
 //!
 //! This is the only surface IntexFactory uses to read and write the registry.
 //! The lifecycle gates mirror the Origin `IntexNFT1155` state machine
-//! (`markCalled`). There is no precompile dispatch for writes
-//! and access is Rust-to-Rust only, so no trusted-caller checks are needed.
+//! (`markCalled`). Writes have no precompile dispatch, and access is
+//! Rust-to-Rust only. Thus the API needs no trusted-caller checks.
 //!
-//! The registry is a thin ledger whose record validation is the `issued_at`
-//! existence sentinel. Contributor authority is the certified contributor root
-//! installed by OCOMP activation; series creation stays independent of it
-//! because activation may precede auction completion. Other business
+//! The registry is a thin ledger. Its record validation is the `issued_at`
+//! existence sentinel. OCOMP activation installs the certified contributor root,
+//! and that root is the contributor authority. Series creation stays independent
+//! of it because activation may come before the auction completes. Other business
 //! validation (caps, defaults, zero economic parameters) belongs to the caller
 //! (IntexFactory).
 
@@ -42,7 +42,7 @@ pub fn is_qualified(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Resul
 /// Immutable contributor target state consumed by OCOMP JobIntent assembly.
 ///
 /// An absent series starts at version 0 and an existing series at version 1.
-/// A certified root installation advances that exact version once; the
+/// A certified root installation advances that exact version once. The
 /// version is active output authority, not reservation state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OcompContributorTargetProjection {
@@ -52,9 +52,10 @@ pub struct OcompContributorTargetProjection {
     pub contributor_total: U256,
 }
 
-/// Create a new Intex series record. Always born in `Issued`. Rejects a
-/// duplicate `series_id` (via the record-level create) and a zero `issued_at`
-/// (which would make the record read back as non-existent).
+/// Create a new Intex series record. The record always starts in `Issued`.
+/// The function rejects a duplicate `series_id` (through the record-level create).
+/// It also rejects a zero `issued_at`, because that value would make the record
+/// read back as non-existent.
 pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) -> Result<()> {
     if params.issued_at == 0 {
         return Err(IntexError::ZeroIssuedAt.into());
@@ -83,7 +84,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
 }
 
 /// `Issued -> Called`. Mirrors `markCalled`. `called_at` is the
-/// block timestamp supplied by the caller (deterministic; no wall clock here).
+/// block timestamp that the caller supplies (deterministic, with no wall clock here).
 /// `Called` is terminal for these transitions.
 pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: u32) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
@@ -101,14 +102,14 @@ pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: 
     registry.update_series_record(&record)
 }
 
-/// What a series forfeited when its call window closed.
+/// What a series forfeited after its notice-period deadline.
 pub struct Forfeited {
     pub units: u32,
     pub promis_load_minor: U256,
 }
 
 /// The units a called series forfeits and their load, for the caller to return to the pool.
-/// Writes nothing, so returning that load exactly once is the caller's job.
+/// This function writes nothing, so the caller must return that load exactly once.
 pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Forfeited> {
     let registry = IntexContract::new(storage.clone());
     let record = registry.load_series(series_id)?;
@@ -256,8 +257,8 @@ pub struct UnitCounts {
     pub forfeited: u32,
 }
 
-/// Read the disjoint counts: the ledgers hold `settled_units`, `exercised_units` and
-/// `gem_factory_units` directly, and the unpaid remainder is active until expiry
+/// Read the disjoint counts. The ledgers hold `settled_units`, `exercised_units` and
+/// `gem_factory_units` directly. The unpaid remainder is active until expiry
 /// decides it is forfeited.
 pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<UnitCounts> {
     let registry = IntexContract::new(storage.clone());
@@ -340,9 +341,9 @@ fn add_realized_units(
     }
 }
 
-/// Backdate a series' issuance stamp. Test-only: the Called sweep counts breach
-/// days from `issued_at`, so a scenario that cannot spend days living through them
-/// has to be able to place issuance behind the days it seeded.
+/// Backdate a series' issuance stamp. Test-only. The Called sweep counts breach
+/// days from `issued_at`. A scenario that cannot spend days to live through those
+/// days must be able to place issuance before the days it seeded.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn set_issued_at(
     storage: &StorageHandle<'_>,
@@ -407,7 +408,7 @@ pub fn ocomp_contributor_target_projection(
     })
 }
 
-/// Reads the constant-size certified contributor proof authority for a series.
+/// Read the constant-size certified contributor proof authority for a WorldwideDay.
 pub fn certified_contributor_generation(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -448,7 +449,7 @@ pub fn open_certified_payout_round(
 
 /// Rejects a batch whose leaves were already paid.
 ///
-/// This is the cheapest possible gate - one word read - so a racing duplicate
+/// This is the cheapest possible gate: one word read. Thus a racing duplicate
 /// costs a single SLOAD instead of a full proof verification.
 pub fn require_certified_leaves_unpaid(
     storage: &StorageHandle<'_>,
@@ -554,9 +555,12 @@ pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<SeriesId>
 // Creator-reward: multi-chain proceeds fan-in aggregation
 // -------------------------------------------------------------------------
 
-/// Arm proceeds fan-in for a day: mark the winning chains expected, set the `deadline`,
-/// enroll the day in the awaiting-proceeds set. A day may issue several series, so the
-/// expected set accumulates into their union.
+/// Arm proceeds fan-in for a day:
+/// - mark the winning chains as expected.
+/// - set the `deadline`.
+/// - enroll the day in the awaiting-proceeds set.
+///
+/// A day may issue several series, so the expected set accumulates into their union.
 pub fn arm_proceeds(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -580,9 +584,9 @@ pub fn arm_proceeds(
     registry.push_awaiting_proceeds(worldwide_day)
 }
 
-/// Credit a chain's proceeds into the series pot; counts the chain toward the
-/// fan-in once (dedup), so a chain routing its proceeds in parts is idempotent
-/// for completeness while still summing every amount.
+/// Credit a chain's proceeds into the WorldwideDay pot.
+/// Each chain counts once toward completeness, while every amount contributes to the pot.
+/// This rule permits a chain to deliver proceeds in multiple parts.
 pub fn credit_proceeds(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
@@ -614,7 +618,7 @@ pub fn proceeds_ready(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) 
     Ok(expected > 0 && registry.proceeds_arrived_count.read(&worldwide_day)? == expected)
 }
 
-/// Fan-in deadline for a series (0 if never armed).
+/// Fan-in deadline for a WorldwideDay (0 if never armed).
 pub fn proceeds_deadline(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<u64> {
     IntexContract::new(storage.clone())
         .proceeds_deadline
@@ -629,9 +633,8 @@ pub fn take_proceeds_pot(storage: &StorageHandle<'_>, worldwide_day: WorldwideDa
     Ok(pot)
 }
 
-/// Finalize proceeds aggregation for a series: clear the pot/deadline/counters
-/// and drop it from the awaiting set. The per-(series, chain) flags are left as
-/// harmless dead entries - a series id (the worldwide day) never recurs.
+/// Finalize proceeds aggregation for a WorldwideDay across all its series.
+/// The per-(day, chain) flags remain harmless dead entries because a WorldwideDay never recurs.
 pub fn finalize_proceeds(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     registry.proceeds_pot.clear(&worldwide_day)?;
@@ -641,7 +644,7 @@ pub fn finalize_proceeds(storage: &StorageHandle<'_>, worldwide_day: WorldwideDa
     registry.remove_awaiting_proceeds(worldwide_day)
 }
 
-/// Number of series awaiting proceeds fan-in (for the begin-block deadline sweep).
+/// Number of WorldwideDays awaiting proceeds fan-in for the begin-block deadline sweep.
 pub fn awaiting_proceeds_count(storage: &StorageHandle<'_>) -> Result<u32> {
     IntexContract::new(storage.clone())
         .awaiting_proceeds_count

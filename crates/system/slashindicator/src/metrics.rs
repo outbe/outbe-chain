@@ -1,8 +1,8 @@
 //! Prometheus metrics for SlashIndicator state transitions.
 //!
-//! These gauges and counters are emitted from the corresponding
-//! mutation paths in `runtime.rs` so operators can alert on miss-count
-//! growth before the felony threshold is reached, and observe
+//! The corresponding mutation paths in `runtime.rs` emit these gauges
+//! and counters. With them, operators can alert on miss-count growth
+//! before the felony threshold is reached. Operators can also observe
 //! cumulative slash/felony events over time.
 //!
 //! Per-validator labels: `addr` is the validator address rendered as
@@ -44,7 +44,7 @@ pub fn record_felony_count(addr: Address, count: u64) {
 }
 
 /// One slash event was applied to `addr`. `reason` is one of:
-/// `proposer_felony` | `evidence_felony` | `byzantine` | `oracle_penalty`.
+/// `proposer_felony` | `voter_felony` | `evidence_felony` | `byzantine`.
 pub fn record_validator_slashed(addr: Address, reason: &'static str) {
     counter!(
         "outbe_validator_slashed_total",

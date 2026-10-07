@@ -1,19 +1,19 @@
 //! Sub-call driver.
 //!
-//! Drives a child CALL/STATICCALL frame from inside an outbe Rust precompile
-//! by constructing a fresh borrow-mode
+//! Drives a child CALL/STATICCALL frame from inside an outbe Rust precompile.
+//! The driver constructs a fresh borrow-mode
 //! `Evm<&mut EthEvmContext<DB>, (), EthInstructions<...>, EthPrecompiles,
-//! EthFrame<...>>` and mirroring revm's canonical
+//! EthFrame<...>>`. Then it mirrors revm's canonical
 //! [`Handler::run_exec_loop`](https://docs.rs/revm-handler/18.1.0/src/revm_handler/handler.rs.html)
 //! pattern until the child terminates.
 //!
-//! Child frame uses [`crate::precompiles::OutbeSubCallPrecompiles`], so both
+//! The child frame uses [`crate::precompiles::OutbeSubCallPrecompiles`]. Thus both
 //! the Ethereum precompiles `0x01..0x0a` AND the outbe stateful precompiles are
 //! reachable from the child frame.
 //!
-//! Atomicity is provided by the OUTER caller wrapping
+//! The OUTER caller provides atomicity: it wraps
 //! `storage.call(...)` / `storage.staticcall(...)` in `StorageHandle::with_checkpoint`.
-//! The driver itself does NOT take an extra checkpoint - `make_call_frame`
+//! The driver itself does NOT take an extra checkpoint. `make_call_frame`
 //! handles per-frame journal checkpoints internally.
 
 use crate::precompiles::{

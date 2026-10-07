@@ -11,8 +11,8 @@ const NOD_DAYS_DIR: &str = "nod-days";
 /// Filesystem layout under one off-chain root.
 ///
 /// `shared/` holds the checkpoint. `tribute-days/<day>/` and `nod-days/<day>/`
-/// are separate databases. A legacy root whose `CURRENT` sits beside those
-/// directories is moved into `shared/` once. A root that already has both is refused.
+/// are separate databases. `open` moves a legacy root whose `CURRENT` sits beside
+/// those directories into `shared/` once. `open` refuses a root that already has both.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DayDirectory {
     root: PathBuf,

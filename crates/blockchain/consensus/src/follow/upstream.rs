@@ -72,9 +72,10 @@ pub fn parent_finalization_from_child(
 
 /// A finalized block together with the finalization certificate that proves it.
 ///
-/// The certificate is NOT trusted by the transport; the marshal re-verifies it
-/// against the epoch committee registered by the driver before the block is
-/// accepted.
+/// The certificate is NOT trusted by the transport. The marshal re-verifies it
+/// against the epoch committee before the block is accepted. The resolver
+/// (through `CommitteeChain` admission) and the engine bootstrap register that
+/// committee. The driver does not.
 #[derive(Clone)]
 pub struct CertifiedFinalizedBlock {
     /// The finalization certificate for this height (committee-bound).
@@ -213,7 +214,7 @@ pub trait FinalizedSource: Clone + Send + Sync + 'static {
         }
     }
     /// Untrusted ancestor bytes. Only use with an independently authenticated
-    /// expected commitment; a height alone is never finality evidence.
+    /// expected commitment. A height alone is never finality evidence.
     fn get_block(&self, height: Height) -> impl Future<Output = Option<ConsensusBlock>> + Send {
         async move { self.get_finalization(height).await.map(|value| value.block) }
     }
@@ -221,7 +222,7 @@ pub trait FinalizedSource: Clone + Send + Sync + 'static {
     /// Fetch the finalization + block for `height` from the upstream.
     ///
     /// Returns `None` when the upstream does not (yet) have it, or the request
-    /// fails; the marshal resolver will retry.
+    /// fails. The marshal resolver will retry.
     fn get_finalization(
         &self,
         height: Height,

@@ -84,7 +84,7 @@ fn recovery_anchor_never_promotes_an_execution_only_head_to_finalized() {
 
 #[test]
 fn no_lead_is_not_a_recovery_case() {
-    // head == finalized: recover(head) would have succeeded; not this arm.
+    // head == finalized: recover(head) would have succeeded. Not this arm.
     assert!(!unfinalized_head_lead_is_recoverable(69, 69));
     // head behind finalized (execution lags): saturating lead is 0.
     assert!(!unfinalized_head_lead_is_recoverable(68, 69));
@@ -99,7 +99,7 @@ fn zero_finalized_tip_is_not_recoverable() {
 #[test]
 fn lead_beyond_bound_stays_fatal() {
     // A head far ahead of the finalized tip is suspicious, not an in-flight
-    // head - it must NOT be silently tolerated.
+    // head. Recovery must NOT silently tolerate it.
     assert!(!unfinalized_head_lead_is_recoverable(
         69 + MAX_UNFINALIZED_HEAD_LEAD + 1,
         69

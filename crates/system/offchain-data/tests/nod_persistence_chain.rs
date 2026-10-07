@@ -98,7 +98,7 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
     let mut projector = OffchainDataProjection::open(config, rocks.clone(), rocks.clone()).unwrap();
     let readers = RuntimeBodyReaders::new(rocks.clone());
     let mut evm = HashMapStorageProvider::new_with_chain_identity(91, genesis);
-    // Seed only the empty genesis CE state; all later roots/leaves come from end_block.
+    // Seed only the empty genesis CE state. All later roots/leaves come from end_block.
     StorageHandle::enter(&mut evm, |storage| {
         storage
             .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))

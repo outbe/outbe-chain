@@ -2,8 +2,8 @@
 //!
 //! The fixture constructs real Commonware q=3/4 finalization bytes and real
 //! Ethereum account/storage MPT proofs. Verification crosses the production
-//! `FinalizedIntentProofV1::verify` seam; no accepting verifier substitute is
-//! used.
+//! `FinalizedIntentProofV1::verify` seam. The fixture uses no accepting
+//! verifier substitute.
 // OCOMP-TEST-ID: OCM-FIN-001
 
 #[path = "finality_vectors/public_builder.rs"]
@@ -864,7 +864,7 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
     let account = |trie: TrieAccount| Account {
         nonce: trie.nonce,
         balance: trie.balance,
-        // Reth represents an account with empty code as `None`; the production
+        // Reth represents an account with empty code as `None`. The production
         // proof builder must derive KECCAK_EMPTY through `Account::get_bytecode_hash`.
         bytecode_hash: None,
     };

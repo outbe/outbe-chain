@@ -5,9 +5,9 @@
 //! layout is hard-fork-equivalent.
 //!
 //! `committee_set_hash_v2` / `committee_snapshot_key` and the
-//! [`CommitteeSnapshot`] type live in [`crate::committee`] and are re-exported
-//! here so every caller can use `outbe_consensus::proof::*` as the single
-//! public namespace for V2 fingerprint helpers.
+//! [`CommitteeSnapshot`] type live in [`crate::proof::committee`]. This module
+//! re-exports them so every caller can use `outbe_consensus::proof::*` as the
+//! single public namespace for V2 fingerprint helpers.
 
 use alloy_primitives::B256;
 use commonware_codec::Encode;
@@ -42,10 +42,10 @@ pub fn canonical_signer_set_hash(signer_bitmap: &[u8]) -> B256 {
 
 /// Canonical hash of a [`VrfProof`].
 ///
-/// Defined as `keccak256(commonware_codec::Encode::encode(proof))` - this is
+/// The hash is `keccak256(commonware_codec::Encode::encode(proof))`. This is
 /// the AC6 contract: the helper is **exactly** keccak256 over the encoded
-/// proof, with no additional framing. Used by Rewards/Slash V2 fingerprints
-/// and `invalid_vrf_evidence_hash_v2`.
+/// proof, with no additional framing. Rewards/Slash V2 fingerprints and
+/// `invalid_vrf_evidence_hash_v2` use it.
 pub fn canonical_vrf_proof_hash_v2<V: Variant>(proof: &VrfProof<V>) -> B256 {
     let bytes = Encode::encode(proof);
     alloy_primitives::keccak256(bytes)
@@ -59,18 +59,18 @@ pub fn canonical_vrf_proof_hash_v2<V: Variant>(proof: &VrfProof<V>) -> B256 {
 /// keccak256( child_hash (32) || phase1_tx_hash (32) )
 /// ```
 ///
-/// Used as the dedup key by `SlashIndicator.submitInvalidVrfProofEvidence`
-///. Two evidence submissions targeting the same `(child_hash,
+/// `SlashIndicator.submitInvalidVrfProofEvidence` uses it as the dedup key.
+/// Two evidence submissions that target the same `(child_hash,
 /// phase1_tx_hash)` are the same logical event.
 ///
 /// # Design - no version domain separator
 ///
 /// The preimage is intentionally minimal: it does NOT include a
 /// version-specific prefix such as `"OUTBE_INVALID_VRF_EVIDENCE_V2"`.
-/// Including one would make a future wire-format bump (e.g., a `_v3`
-/// endpoint with a richer evidence struct) produce a different dedup
-/// hash for the same real offence, which would let the same
-/// `(child_hash, phase1_tx_hash)` be slashed twice across versions and
+/// With such a prefix, a future wire-format bump would produce a different
+/// dedup hash for the same real offence. An example bump is a `_v3`
+/// endpoint with a richer evidence struct. That would let the same
+/// `(child_hash, phase1_tx_hash)` be slashed twice across versions. It would
 /// directly violate ` - one slash per (child_hash, phase1_tx_hash)`.
 /// Keeping the preimage version-independent guarantees cross-version
 /// idempotency without state migration. The `_v2` suffix in the function

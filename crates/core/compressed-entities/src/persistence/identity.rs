@@ -2,7 +2,7 @@ use super::{Decoder, PersistenceError, LOCAL_STORAGE_SCHEMA_VERSION};
 use alloy_primitives::B256;
 
 /// Persistent environment identity. A mismatch requires an explicit rebuild or
-/// migration; it is never silently reinterpreted.
+/// migration. The code never silently reinterprets a mismatch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnvironmentIdentity {
     pub local_storage_schema_version: u32,

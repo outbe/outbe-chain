@@ -1,10 +1,9 @@
 [Unit]
 Description=Outbe validator price feeder
 After=outbe-validator.service
-Requires=outbe-validator.service
+Wants=outbe-validator.service
 PartOf=outbe-validator.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -17,7 +16,7 @@ StateDirectory=outbe-feeder
 StateDirectoryMode=0700
 ExecStartPre=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-rpc
 ExecStart=/opt/outbe-chain/deploy/validator/outbe-validator-service.py feeder
-Restart=on-failure
+Restart=always
 RestartMode=direct
 RestartSec=5
 RestartSteps=5

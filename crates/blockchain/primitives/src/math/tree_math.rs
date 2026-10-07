@@ -5,15 +5,16 @@
 //!
 //! The Solidity API passes `level0` (bytes32, by value) plus two
 //! `mapping(bytes32 => bytes32) storage` references for `level1` / `level2`.
-//! The Rust analog is the [`BinTreeStorage`] trait - callers implement six
-//! `read_*` / `write_*` methods over their own storage backing, and the
-//! traversal helpers work in terms of the trait only.
+//! The Rust analog is the [`BinTreeStorage`] trait. Callers implement six
+//! `read_*` / `write_*` methods over their own storage backing. The
+//! traversal helpers use only the trait.
 //!
 //! Each set leaf bit identifies a non-empty bin. A typical consumer walks
 //! set bits in ascending order via [`find_first_left_inclusive`], processes
 //! the bins at or below some threshold, then clears the bits via [`remove`].
-//! Worst case per traversal step: 3 SLOAD (one per level), no loops at any
-//! level - same big-O as Solidity LB.
+//! Worst case per traversal step: 5 storage reads (leaf, mid, root, then the
+//! mid and the leaf on the descent). There are no loops at any level. This is
+//! the same big-O as Solidity LB.
 
 use alloy_primitives::U256;
 
@@ -35,7 +36,7 @@ fn split(id: u32) -> (u8, u8, u8) {
     (top, mid, lo)
 }
 
-/// Leaf-map key == LB `key2 = id >> 8`. Stored as u32; the high 16 bits are
+/// Leaf-map key == LB `key2 = id >> 8`. Stored as u32. The high 16 bits are
 /// always zero.
 #[inline]
 fn leaf_key(top: u8, mid: u8) -> u32 {
@@ -74,6 +75,72 @@ pub trait BinTreeStorage {
     fn write_leaf(&self, key: u32, value: U256) -> Result<()>;
 }
 
+/// Implements [`BinTreeStorage`] for `Adapter(&contract)` over three of its columns, or, with
+/// `scoped by`, for `Adapter(&contract, scope)` whose mid and leaf keys are `scoped(scope, key)`.
+#[macro_export]
+macro_rules! impl_bin_tree_storage {
+    ($adapter:ident { root: $root:ident, mid: $mid:ident, leaf: $leaf:ident $(,)? }) => {
+        impl $crate::math::tree_math::BinTreeStorage for $adapter<'_, '_> {
+            fn read_root(&self) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$root.read()
+            }
+            fn write_root(&self, value: ::alloy_primitives::U256) -> $crate::error::Result<()> {
+                self.0.$root.write(value)
+            }
+            fn read_mid(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$mid.read(&key)
+            }
+            fn write_mid(
+                &self,
+                key: u32,
+                value: ::alloy_primitives::U256,
+            ) -> $crate::error::Result<()> {
+                self.0.$mid.write(&key, value)
+            }
+            fn read_leaf(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$leaf.read(&key)
+            }
+            fn write_leaf(
+                &self,
+                key: u32,
+                value: ::alloy_primitives::U256,
+            ) -> $crate::error::Result<()> {
+                self.0.$leaf.write(&key, value)
+            }
+        }
+    };
+    ($adapter:ident scoped by $scoped:path { root: $root:ident, mid: $mid:ident, leaf: $leaf:ident $(,)? }) => {
+        impl $crate::math::tree_math::BinTreeStorage for $adapter<'_, '_> {
+            fn read_root(&self) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$root.read(&self.1)
+            }
+            fn write_root(&self, value: ::alloy_primitives::U256) -> $crate::error::Result<()> {
+                self.0.$root.write(&self.1, value)
+            }
+            fn read_mid(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$mid.read(&$scoped(self.1, key))
+            }
+            fn write_mid(
+                &self,
+                key: u32,
+                value: ::alloy_primitives::U256,
+            ) -> $crate::error::Result<()> {
+                self.0.$mid.write(&$scoped(self.1, key), value)
+            }
+            fn read_leaf(&self, key: u32) -> $crate::error::Result<::alloy_primitives::U256> {
+                self.0.$leaf.read(&$scoped(self.1, key))
+            }
+            fn write_leaf(
+                &self,
+                key: u32,
+                value: ::alloy_primitives::U256,
+            ) -> $crate::error::Result<()> {
+                self.0.$leaf.write(&$scoped(self.1, key), value)
+            }
+        }
+    };
+}
+
 // --- TreeMath port ---------------------------------------------------------
 
 /// Mirrors `TreeMath.contains(level2, id)` (TreeMath.sol L11-14).
@@ -85,7 +152,7 @@ pub fn contains<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 }
 
 /// Mirrors `TreeMath.add(level0, level1, level2, id)` (TreeMath.sol L18-39).
-/// Sets the bit; cascades to mid and root if the lower-level word transitions
+/// Sets the bit. Cascades to mid and root if the lower-level word transitions
 /// from zero. Returns `true` iff the bit transitioned 0 -> 1 (i.e., this was
 /// a real insertion, not a re-insertion).
 pub fn add<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
@@ -100,14 +167,14 @@ pub fn add<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
     s.write_leaf(leaf_k, new_leaves)?;
 
     if leaves.is_zero() {
-        // Leaf transitioned {} -> non-{} - propagate to mid.
+        // Leaf transitioned {} -> non-{}. Propagate to mid.
         let mid_k = mid_key(top);
         let mid_word = s.read_mid(mid_k)?;
         let new_mid = mid_word | (U256::ONE << (mid as usize));
         s.write_mid(mid_k, new_mid)?;
 
         if mid_word.is_zero() {
-            // Mid transitioned {} -> non-{} - propagate to root.
+            // Mid transitioned {} -> non-{}. Propagate to root.
             let root = s.read_root()?;
             let new_root = root | (U256::ONE << (top as usize));
             s.write_root(new_root)?;
@@ -117,7 +184,7 @@ pub fn add<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 }
 
 /// Mirrors `TreeMath.remove(level0, level1, level2, id)`
-/// (TreeMath.sol L45-65). Clears the bit; cascades to mid and root if the
+/// (TreeMath.sol L45-65). Clears the bit. Cascades to mid and root if the
 /// lower-level word transitions to zero. Returns `true` iff the bit
 /// transitioned 1 -> 0.
 pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
@@ -134,7 +201,7 @@ pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
     if !new_leaves.is_zero() {
         return Ok(true);
     }
-    // Leaf went to zero - clear our bit in mid.
+    // Leaf went to zero. Clear our bit in mid.
     let mid_k = mid_key(top);
     let mid_word = s.read_mid(mid_k)?;
     let new_mid = mid_word & !(U256::ONE << (mid as usize));
@@ -143,7 +210,7 @@ pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
     if !new_mid.is_zero() {
         return Ok(true);
     }
-    // Mid went to zero - clear our bit in root.
+    // Mid went to zero. Clear our bit in root.
     let root = s.read_root()?;
     let new_root = root & !(U256::ONE << (top as usize));
     s.write_root(new_root)?;
@@ -154,12 +221,12 @@ pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 /// Returns the smallest set `id` >= `start_id`, or `None` if no such id
 /// exists.
 ///
-/// Differs from LB exactly at the leaf level: LB clears bits `[0..lo+1)`
-/// (strict-greater); we clear bits `[0..lo)`, which keeps `lo` itself as a
+/// Differs from LB exactly at the leaf level. LB clears bits `[0..lo+1)`
+/// (strict-greater). We clear bits `[0..lo)`, which keeps `lo` itself as a
 /// candidate. This avoids a preceding `contains(start_id)` SLOAD on every
 /// iteration of a typical drain loop. The mid and root descents remain
-/// strict-greater because by the time we ascend, we've already exhausted
-/// the start leaf.
+/// strict-greater: by the time we ascend, we already exhausted the start
+/// leaf.
 pub fn find_first_left_inclusive<S: BinTreeStorage>(s: &S, start_id: u32) -> Result<Option<u32>> {
     if start_id > MAX_BIN_ID {
         return Ok(None);

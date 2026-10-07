@@ -92,12 +92,13 @@ pub(crate) fn fail_worldwide_day(
     metadosis.emit(failed_day_event(&settlement, forfeited_nominal))
 }
 
-/// Completes an OCOMP expiry as the same atomic FAILED contract
-/// used by every other exact-WWD business failure. The expiry transition has
-/// already written immutable `Expired` attempt evidence, but the live FSM and
-/// outer WWD remain active until this function credits the Lysis and Desis Limits
-/// the request retained, retires Tribute as the final CE mutation, and commits the
-/// terminal state.
+/// Completes an OCOMP expiry as the same atomic FAILED contract that every other
+/// exact-WWD business failure uses. The expiry transition already wrote immutable
+/// `Expired` attempt evidence. The live FSM and outer WWD remain active until
+/// this function does all of these steps:
+/// 1. Credits the Lysis and Desis Limits that the request retained.
+/// 2. Retires Tribute as the final CE mutation.
+/// 3. Commits the terminal state.
 pub(crate) fn fail_expired_ocomp_day(
     storage: StorageHandle<'_>,
     failure: ExpiredFailure<'_>,
@@ -174,9 +175,10 @@ fn route_failure(
     } = *settlement;
     let storage = metadosis.storage.clone();
     let credit = PromisLimitContract::new(storage.clone()).checked_add_carry_over(unused_limit)?;
-    // Retirement is deliberately the final compressed-entity mutation. All
-    // other failure effects are prepared first and the enclosing checkpoint
-    // rolls them back together if retirement or the final block seal fails.
+    // Carry-over credit precedes retirement, the final compressed-entity mutation.
+    // The failure receipt, outer transition, and event follow retirement.
+    // The enclosing checkpoint makes these effects atomic if retirement or the final block seal
+    // fails.
     let tribute = TributeContract::new(storage).forfeit_sealed_partition(scope, worldwide_day)?;
     metadosis.write_metadosis_failure_receipt(MetadosisFailureReceipt {
         worldwide_day,

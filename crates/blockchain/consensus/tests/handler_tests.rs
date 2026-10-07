@@ -1,13 +1,13 @@
 //! - handler / selector behaviour tests
 //!
-//! The full ApplicationHandler is wired across the whole consensus stack and
-//! is exercised end-to-end by `stack_tests.rs`; the tests here pin the V1
-//! selector removal at the API surface and exercise the non-blocking
-//! `ParentProofSelector` against the same proof-store substrate the proposer
+//! The full ApplicationHandler is wired across the whole consensus stack.
+//! `stack_tests.rs` exercises it end-to-end. The tests here pin the V1
+//! selector removal at the API surface. They also exercise the non-blocking
+//! `ParentProofSelector` against the same proof-store substrate that the proposer
 //! reads in production.
 //!
 //! - `missing_direct_parent_proof_does_not_wait_for_future_finalization` -
-//!   (the V1 polling waiter is gone; selector returns synchronously).
+//!   (the V1 polling waiter is gone, and the selector returns synchronously).
 
 use alloy_primitives::B256;
 use outbe_consensus::finalization::{
@@ -80,8 +80,8 @@ fn removed_api_hits(path: &std::path::Path) -> usize {
 }
 
 /// `rg -n "await_parent_cert" crates/blockchain/consensus/src/`
-/// must return 0 hits in non-test code. Performed in-process so the
-/// assertion runs on every `cargo nextest` invocation.
+/// must return 0 hits in non-test code. This test does the check in-process, so
+/// the assertion runs on every `cargo nextest` invocation.
 #[test]
 fn await_parent_cert_is_removed_from_non_test_consensus_src() {
     let mut total_non_test_hits = 0usize;
@@ -97,9 +97,9 @@ fn await_parent_cert_is_removed_from_non_test_consensus_src() {
 
 #[test]
 fn certified_notarized_parent_does_not_block_proposal() {
-    // with a CertifiedNotarization record for the requested parent,
-    // the selector returns synchronously - no polling, no future-finalization
-    // wait. The V1 path could deadlock here (view 61 reproduction).
+    // With a CertifiedNotarization record for the requested parent,
+    // the selector returns synchronously. It does no polling and no
+    // future-finalization wait. The V1 path could deadlock here (view 61 reproduction).
     let store = FinalizedParentCertStore::new();
     let hash = B256::with_last_byte(0xAA);
     store
@@ -113,7 +113,7 @@ fn certified_notarized_parent_does_not_block_proposal() {
 
     let start = Instant::now();
     // The non-wait selector treats a certified-notarization record as
-    // witness-only: it returns `None` synchronously (no polling, no
+    // witness-only. It returns `None` synchronously (no polling, no
     // future-finalization wait), so a CN parent cannot deadlock the proposer.
     let result = selector.select_direct_parent_proof(0, 0, 42, hash);
     let elapsed = start.elapsed();
@@ -171,7 +171,7 @@ fn finalized_parent_uses_finalization_proof_when_available() {
 fn missing_direct_parent_proof_does_not_wait_for_future_finalization() {
     // empty store -> selector returns None immediately. The V1
     // `await_parent_cert` polled until timeout (terminal-view halt root
-    // cause); the new selector is synchronous.
+    // cause). The new selector is synchronous.
     let store = FinalizedParentCertStore::new();
     let selector = ParentProofSelector::new(store);
 

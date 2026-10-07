@@ -6,11 +6,11 @@ pragma solidity 0.8.30;
 /// @notice Reason codes carried by `InboundMessageIgnored`: why an authenticated inbound message, or one item
 ///         of it, was acknowledged without effect.
 library InboundReason {
-    /// @notice The effect is already applied; nothing changed.
+    /// @notice The effect is already applied. Nothing changed.
     uint8 internal constant DUPLICATE = 1;
     /// @notice The state has moved past the point where the message could apply.
     uint8 internal constant OBSOLETE = 2;
-    /// @notice Same identity as an applied message, different content; the first one stands.
+    /// @notice Same identity as an applied message, but different content. The first one stands.
     uint8 internal constant CONFLICT = 3;
     /// @notice The message names something that does not exist on this chain and never will (day, source).
     uint8 internal constant NOT_FOUND = 4;

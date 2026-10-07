@@ -137,8 +137,8 @@ impl ProjectionBodyView {
         })
     }
 
-    /// Retained rows are a separate population; historical lease/partition
-    /// obligations are authenticated by the task06 caller, never by live CE.
+    /// Retained rows are a separate population. The task06 caller authenticates
+    /// historical lease/partition obligations. Live CE never authenticates them.
     pub(crate) fn audit_retained(
         &self,
         work: &CeAuditWork,

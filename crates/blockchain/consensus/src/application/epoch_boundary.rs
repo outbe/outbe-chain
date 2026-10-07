@@ -1,14 +1,15 @@
 //! Epoch-continuity guard and boundary-parent resolution for the application
 //! handler.
 //!
-//! Owns the whole epoch-boundary concern lifted out of `handler.rs`:
+//! Owns the whole epoch-boundary concern of the application handler:
 //! - [`ApplicationEpochFence`] - the activation-boundary state machine (active
-//!   epoch + an optional armed boundary) consulted on every propose/verify so a
-//!   stale Simplex epoch cannot submit Engine work past a DKG activation.
+//!   epoch + an optional armed boundary). The handler consults it on every
+//!   propose/verify, so a stale Simplex epoch cannot submit Engine work past a
+//!   DKG activation.
 //! - [`resolve_epoch_boundary_parent`] - the anchor-based parent resolver for
 //!   the first proposal of `epoch > 0`. It takes the finalization-view and
-//!   marshal seams as explicit parameters instead of `&self`, so the resolution
-//!   logic reads and tests independently of the handler.
+//!   marshal seams as explicit parameters instead of `&self`. Thus you can read
+//!   and test the resolution logic independently of the handler.
 
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -43,8 +44,8 @@ struct EpochBoundaryFence {
 
 /// epoch continuity anchor for the first proposal of `epoch > 0`.
 ///
-/// Built by [`resolve_epoch_boundary_parent`] and consumed
-/// by both `handle_propose` and `handle_verify` to bypass the `parent_view = 0`
+/// [`resolve_epoch_boundary_parent`] builds it. Both `handle_propose` and
+/// `handle_verify` consume it to bypass the `parent_view = 0`
 /// chain-genesis path for non-zero epochs.
 #[derive(Debug, Clone)]
 pub(crate) struct EpochBoundaryParent {
@@ -58,9 +59,10 @@ pub(crate) struct EpochBoundaryParent {
 /// The variants distinguish *invalid proposal* (the proposer chose a parent
 /// that does not match the canonical anchor) from *local infrastructure issue*
 /// (the validator cannot decide locally because the finalization view or the
-/// marshal store has not caught up). Verify path votes `false` only in the
-/// first case; the rest bubble up as `Err` and drop the response channel, to
-/// match the existing `resolve_for_verify` semantics for local timeouts.
+/// marshal store is not yet up to date). The verify path votes `false` only in
+/// the first case. The other variants return as `Err`. The verify path then
+/// withholds its vote until Simplex cancels the request. Local timeouts in
+/// `resolve_for_verify` take the same path.
 #[derive(Debug)]
 pub(crate) enum EpochBoundaryParentError {
     /// Simplex parent does not match the committed continuity anchor.
@@ -69,12 +71,13 @@ pub(crate) enum EpochBoundaryParentError {
         got: B256,
         epoch: u64,
     },
-    /// `FinalizationView` has no anchor for `epoch > 0`. Caller waited as long
-    /// as it could; this is a local-infrastructure failure, not a vote.
+    /// `FinalizationView` has no anchor for `epoch > 0`. The caller waited as
+    /// long as it could. This is a local-infrastructure failure, not a vote.
     MissingAnchor { epoch: u64 },
     /// Marshal store cannot return the anchor block.
     MissingMarshalBlock { height: u64 },
-    /// Marshal returned a block whose digest does not match the anchor.
+    /// Marshal returned a block for the anchor digest, but the block height is
+    /// not the anchor height. `got` holds the digest of the returned block.
     MarshalHashMismatch {
         height: u64,
         expected: B256,
@@ -205,15 +208,15 @@ pub(crate) async fn resolve_epoch_boundary_parent(
     let (expected_height, expected_hash, finalized_round) =
         validate_epoch_boundary_anchor(finalization_view, round, parent_digest)?;
 
-    // Marshal exposes only digest-based lookup. Since we just confirmed
-    // `parent_digest == expected_hash`, looking up by digest yields the
-    // committed anchor block; we then sanity-check the height to catch
+    // Marshal exposes only digest-based lookup. We just confirmed
+    // `parent_digest == expected_hash`, so a lookup by digest yields the
+    // committed anchor block. We then sanity-check the height to catch
     // a corrupted local store.
     let block_future = marshal_mailbox.clone().subscribe_by_digest(
         parent_digest,
         commonware_consensus::marshal::core::DigestFallback::Wait,
     );
-    // `Clock::timeout` returns `Err(Error::Timeout)` on expiry; the inner
+    // `Clock::timeout` returns `Err(Error::Timeout)` on expiry. The inner
     // `Ok`/`Err` is the marshal waiter's own result, unchanged.
     let block = match clock
         .timeout(PROPOSE_RESOLUTION_TIMEOUT, block_future)

@@ -8,7 +8,7 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
-/// @dev Randomized mints and burns into a fixed series; totalSupply moves both ways and the parity
+/// @dev Randomized mints and burns into a fixed series. totalSupply moves both ways, and the parity
 ///      invariant must always hold.
 contract NFT1155SupplyHandler is Test {
     IntexNFT1155 internal intex;

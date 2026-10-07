@@ -68,7 +68,7 @@ pub struct FinalizedReplayGuard<'a> {
 /// Per-epoch ceremony shell: the pure canonical state machine, the
 /// non-consensus gossip buffer, and the channel used to notify the local DKG
 /// actor of chain-finalized dealer logs. All non-trivial logic lives in
-/// [`ceremony`]; this struct only bundles the parts and the effect sink.
+/// [`ceremony`]. This struct only bundles the parts and the effect sink.
 #[derive(Debug)]
 struct CeremonyState {
     canonical: DkgCeremony,
@@ -193,9 +193,9 @@ impl Mailbox {
 
     /// Return the pending boundary for `epoch`.
     ///
-    /// The pending artifact alone never decides block validity: proposer and
-    /// verifier go through [`Self::plan_header_artifact`] /
-    /// [`Self::admit_header_artifact`], which combine it with the parent
+    /// The pending artifact alone never decides block validity. Proposer and
+    /// verifier use [`Self::plan_header_artifact`] /
+    /// [`Self::admit_header_artifact`]. These combine it with the parent
     /// ancestry snapshot under one rule table.
     pub async fn pending_boundary_artifact(&self, epoch: Epoch) -> Option<DkgBoundaryArtifact> {
         self.with_state(|state| {
@@ -248,10 +248,10 @@ impl Mailbox {
         })
     }
 
-    /// Commit the pending boundary from its finalized carrier read off the
+    /// Commit the pending boundary from its finalized carrier read from the
     /// canonical chain, for when live finalization delivery never did. A no-op
-    /// unless `artifact` is the pending boundary and nothing is committed yet;
-    /// unlike live delivery it leaves the running ceremony's gossip untouched.
+    /// unless `artifact` is the pending boundary and nothing is committed yet.
+    /// Unlike live delivery, it leaves the running ceremony's gossip untouched.
     pub fn adopt_finalized_boundary(
         &self,
         block_number: u64,
@@ -296,7 +296,7 @@ impl Mailbox {
     }
 
     /// Verify a carried boundary against the pending boundary only. This does
-    /// not decide whether the boundary is required; callers must separately
+    /// not decide whether the boundary is required. Callers must separately
     /// derive that from the parent chain snapshot.
     pub async fn verify_pending_boundary_artifact(
         &self,
@@ -407,8 +407,8 @@ impl Mailbox {
                     ceremony.note_finalized_dealer_log(bytes);
                 }
             }
-            // A pre-announce carries a reconstructed outcome for followers;
-            // it neither commits a boundary nor feeds the local ceremony.
+            // A pre-announce carries a reconstructed outcome for followers.
+            // It neither commits a boundary nor feeds the local ceremony.
             Some(ConsensusHeaderArtifact::CommitteePreAnnounce { .. }) | None => {}
         });
     }
@@ -499,20 +499,20 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
         )
         .map_err(|error| eyre::eyre!("invalid TEE expiry exclusions: {error}"))?;
 
-    // V2 canonical committee snapshot identit.
+    // V2 canonical committee snapshot identity.
     //
-    // Per-entry MinPk pubkeys are encoded from the DKG `participants` list, in
-    // the same Commonware participant-index order as `new_active_set` (we built
-    // `new_active_set` by iterating `participants` above). Length must be 48
-    // bytes - `bls12381::PublicKey` is MinPk-compressed.
+    // We encode per-entry MinPk pubkeys from the DKG `participants` list. They
+    // keep the same Commonware participant-index order as `new_active_set` (we
+    // built `new_active_set` by iterating `participants` above). Length must be
+    // 48 bytes: `bls12381::PublicKey` is MinPk-compressed.
     let encoded_pubkeys: Vec<Vec<u8>> = participants
         .iter()
         .map(|bls_pk| commonware_codec::Encode::encode(bls_pk).to_vec())
         .collect();
     // Single canonical builder (shared with the finalization actor/resolver and
-    // the reporter). `new_active_set[i]` was built by iterating `participants`
+    // the reporter). We built `new_active_set[i]` by iterating `participants`
     // above, so it is in the same order as `encoded_pubkeys[i]`. The proposer
-    // carries the full polynomial commitment hash; it is not folded into
+    // carries the full polynomial commitment hash. The hash is not folded into
     // committee_set_hash_v2 (the executor re-derives it from the boundary
     // `outcome`).
     let committee_snapshot = crate::proof::build_committee_snapshot(
@@ -593,13 +593,13 @@ pub fn dkg_output_hash(output: &Output<MinSig, bls12381::PublicKey>) -> B256 {
 /// output matches the chain-`canonical` output (the one the chain reconstructs
 /// from finalized dealer logs).
 ///
-/// The DKG actor's output is advisory; the authority is the canonical output.
+/// The DKG actor's output is advisory. The authority is the canonical output.
 /// Activating a VRF key from a local output that disagrees with canonical would
 /// diverge this node's randomness from the network, so a mismatch is fatal. This
-/// is the single definition of the check shared by every activation and recovery
-/// path: callers resolve `canonical` from their own authoritative source (the
-/// live manager via [`Mailbox::canonical_output`] vs a decoded boundary
-/// artifact) and pass both outputs in; `context` names the call site for the
+/// is the single definition of the check that every activation and recovery
+/// path shares. Callers resolve `canonical` from their own authoritative source
+/// (the live manager via [`Mailbox::canonical_output`] vs a decoded boundary
+/// artifact) and pass both outputs as arguments. `context` names the call site for the
 /// error.
 pub fn assert_canonical_output(
     local: &Output<MinSig, bls12381::PublicKey>,
@@ -625,9 +625,9 @@ pub fn public_polynomial_hash(polynomial: &Sharing<MinSig>) -> B256 {
 /// `keccak256(Encode(full public polynomial))` of the carried DKG output.
 ///
 /// Returns `B256::ZERO` when the outcome is not a decodable full-output ODKO
-/// record (e.g. a group-key-only bootstrap outcome) - in that case the
-/// committee's "invalid seed partial" slash offense is simply unavailable for
-/// that epoch. Deterministic and panic-free; safe to call in the executor over
+/// record (e.g. a group-key-only bootstrap outcome). In that case the
+/// committee's "invalid seed partial" slash offense is unavailable for
+/// that epoch. Deterministic and panic-free. Safe to call in the executor over
 /// the already-consensus-validated boundary `outcome`.
 pub fn boundary_outcome_polynomial_hash(outcome: &[u8]) -> B256 {
     match decode_boundary_outcome(outcome) {
@@ -642,8 +642,8 @@ pub fn boundary_outcome_polynomial_hash(outcome: &[u8]) -> B256 {
 ///
 /// This is the public-data path a `follow`-mode node uses to reconstruct an
 /// epoch's committee (`output.players()`) and verifier polynomial
-/// (`output.public()`) from a finalized boundary block, without ever having run
-/// the DKG ceremony. Deterministic and panic-free.
+/// (`output.public()`) from a finalized boundary block. The path works without
+/// the node ever running the DKG ceremony. Deterministic and panic-free.
 pub fn decode_boundary_outcome(outcome: &[u8]) -> Option<Output<MinSig, bls12381::PublicKey>> {
     OdkoOutcome::decode(outcome)
         .ok()

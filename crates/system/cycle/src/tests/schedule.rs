@@ -73,8 +73,8 @@ fn first_encounter_anchors_without_firing() {
 
 #[test]
 fn block_1_begin_block_creates_genesis_worldwide_day() {
-    // Production regression: at block 1 the daily Cycle trigger only anchors
-    // (it never invokes `start_metadosis`), so `CycleLifecycle::begin_block`
+    // Production regression: at block 1 the daily Cycle trigger only anchors.
+    // It never invokes `start_metadosis`. So `CycleLifecycle::begin_block`
     // must itself create the genesis metadosis worldwide day. Before the fix
     // the active-WWD set was empty until the first block past the next UTC
     // midnight.
@@ -185,7 +185,7 @@ fn frozen_final_profile_initializes_metadosis_at_its_existing_activation_height(
 
 #[test]
 fn does_not_fire_before_next_slot_after_anchor() {
-    // Anchor at 00:01 UTC; the first aligned hourly slot is 01:00 UTC.
+    // Anchor at 00:01 UTC. The first aligned hourly slot is 01:00 UTC.
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         let anchor_ts = GENESIS_TS + 60;

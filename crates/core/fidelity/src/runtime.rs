@@ -2,12 +2,14 @@
 //!
 //! RCFI/league are no longer computed on-chain: cohorts are encrypted and the
 //! enclave is the sole evaluator. This layer reads/writes the cohort ciphertext
-//! from committed storage and drives the enclave for the three flows -
-//! cohort mutations ([`FidelityContract::cohort_in`]/[`FidelityContract::cohort_out`]),
-//! the per-owner league snapshot ([`FidelityContract::snapshot_leagues`],
-//! [`FidelityContract::league_at`]), and owner-authorized index queries
-//! ([`FidelityContract::query_index_at`]). Only `max_rcfi_at` stays on-chain, as
-//! a pure function of the plaintext `first_qualified_start` anchor.
+//! from committed storage. It drives the enclave for three flows:
+//! - cohort mutations ([`FidelityContract::cohort_in`]/[`FidelityContract::cohort_out`])
+//! - the per-owner league snapshot ([`FidelityContract::snapshot_leagues`],
+//!   [`FidelityContract::league_at`])
+//! - owner-authorized index queries ([`FidelityContract::query_index_at`])
+//!
+//! Only `max_rcfi_at` stays on-chain, as a pure function of the plaintext
+//! `first_qualified_start` anchor.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -47,7 +49,7 @@ impl FidelityContract<'_> {
     }
 
     /// Persist a cohort outcome (from a folded gratis op or the standalone
-    /// path): store the new ciphertext and, on the account's first acquisition,
+    /// path). Store the new ciphertext. On the account's first acquisition, also
     /// anchor the global `first_qualified_start` (set-once). A probe outcome
     /// (empty blob, no init) is a no-op.
     pub fn apply_outcome(&self, account: Address, outcome: &FidelityOpOutcome) -> Result<()> {
@@ -67,7 +69,7 @@ impl FidelityContract<'_> {
         op: FidelityCohortOp,
         timestamp: u64,
     ) -> Result<()> {
-        // Zero-amount In/Out are no-ops (the enclave would also no-op); skip the
+        // Zero-amount In/Out are no-ops (the enclave would also no-op). Skip the
         // round-trip entirely so a zero mint/burn never touches the enclave.
         if amount.is_zero() {
             return Ok(());
@@ -141,7 +143,7 @@ impl FidelityContract<'_> {
     }
 
     /// Synthetic-max RCFI at `timestamp`: `t_dec(timestamp - first_qualified_start)`.
-    /// Pure function of the plaintext anchor - computed on-chain, no enclave.
+    /// Pure function of the plaintext anchor. It runs on-chain, with no enclave.
     /// Zero before any account has qualified.
     pub fn max_rcfi_at(&self, timestamp: u64) -> Result<U256> {
         let first = self.first_qualified_start()?;

@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::{IntexState, SeriesId};
@@ -12,33 +12,32 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
-use outbe_common::settlement::floor_to_asset_units;
+use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency};
 
 use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
-use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
+use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
 
 /// Issues one agent-class gem priced at `entry_price`, the COEN rate in
 /// `reference_currency` that the caller resolved for the gem's own day.
-pub fn issue_gem(
-    storage: &StorageHandle<'_>,
-    owner: Address,
-    gem_type: GemTypes,
-    promis_load: U256,
-    issuance_currency: u16,
-    reference_currency: u16,
-    entry_price: U256,
-) -> Result<U256> {
+pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<U256> {
+    let GemIssueParams {
+        owner,
+        gem_type,
+        promis_load,
+        issuance_currency,
+        reference_currency,
+        entry_price,
+    } = params;
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
     if entry_price.is_zero() {
         return Err(GemFactoryError::OracleUnavailable.into());
     }
-    // A zero load makes the cost zero, and a PayNote cannot spend zero.
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
@@ -109,10 +108,10 @@ fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256)
     )
 }
 
-/// Send a merchant's whole Intex series to the Gem Factory and issue a GemPosition NFT. Burns the
-/// merchant's entire Issued holding on IntexNFT1155 (`sendToGemFactory`, GEM_ROLE)
-/// and records the position with a snapshot of the source entry/floor and the
-/// resulting Promis capacity. Returns the issued `position_id`.
+/// Issue a GemPosition NFT from the merchant's selected `units` of Issued Intex.
+/// The merchant can transfer a partial holding. The position pins the source entry and floor.
+/// Its Promis capacity equals the source load times the burned units.
+/// Return the issued `position_id`.
 pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -135,7 +134,7 @@ pub fn issue_gem_position(
         series.reference_currency,
     )?;
 
-    // Burn `units` of the merchant's Intex; `sendToGemFactory` returns the
+    // Burn `units` of the merchant's Intex. `sendToGemFactory` returns the
     // burned count (and reverts on a state that may not be sent, or zero units).
     let burned = burn_intex_into_gem_factory(storage, caller, source_intex_id, units)?;
     let capacity = series
@@ -233,7 +232,6 @@ pub fn issue_merchant_gem(
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
-    // A zero load makes the cost zero, and a PayNote cannot spend zero.
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
@@ -298,8 +296,9 @@ pub fn issue_merchant_gem(
     Ok(gem_id)
 }
 
-/// Settles a gem paying its cost from `caller` in `asset` by direct ERC20 transfer.
-/// An issuance-currency payment must name the VWAP snapshot required at this block.
+/// Settles a gem paying its cost from `caller` in `asset` by ERC20 transfer. Anyone
+/// may pay for a gem. It stays with its owner. An issuance-currency payment must
+/// name the VWAP snapshot required at this block.
 pub fn settle_gem(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -307,79 +306,7 @@ pub fn settle_gem(
     asset: Address,
     snapshot_id: U256,
 ) -> Result<()> {
-    let quote = |item: &outbe_gem::GemData| {
-        let currency = accept_payment_asset(storage, asset, item)?;
-        let (amount_paid, snapshot) = cost_in_asset(storage, item, asset, currency)?;
-        require_snapshot(snapshot, snapshot_id)?;
-        Ok((settlement_currency(item, currency), amount_paid))
-    };
-    settle(
-        storage,
-        gem_id,
-        quote,
-        |_, (settlement_currency, amount_paid)| {
-            deposit_payment(storage, caller, asset, amount_paid)?;
-            Ok((asset, settlement_currency, amount_paid))
-        },
-    )
-}
-
-/// Settles a gem by spending a PayNote bound to this gem. Any address may relay it.
-pub fn settle_gem_with_paynote(
-    storage: &StorageHandle<'_>,
-    _caller: Address,
-    gem_id: U256,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    settle(
-        storage,
-        gem_id,
-        |_| Ok(()),
-        |item, ()| {
-            let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
-            let currency = accept_payment_asset(storage, claim.asset, item)?;
-            let (amount_paid, snapshot) = cost_in_asset(storage, item, claim.asset, currency)?;
-            let expected = outbe_paynote::api::settlement_context(
-                outbe_paynote::api::SettlementDomain::Gem,
-                B256::from(gem_id),
-                U256::ONE,
-                snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
-            )?;
-            if claim.context != expected {
-                return Err(GemFactoryError::PayNoteContextMismatch {
-                    expected,
-                    actual: claim.context,
-                }
-                .into());
-            }
-            // Exact: the surplus of an over-spend is already in the reserve vault.
-            if claim.spend_amount != amount_paid {
-                return Err(GemFactoryError::PayNoteCostMismatch {
-                    covered: claim.spend_amount,
-                    required: amount_paid,
-                }
-                .into());
-            }
-            Ok((
-                claim.asset,
-                settlement_currency(item, currency),
-                amount_paid,
-            ))
-        },
-    )
-}
-
-/// `quote` prices and authorizes the payment before any state changes; `pay`
-/// then moves it after the transition and returns the asset, the settlement
-/// currency and the amount it charged.
-fn settle<Q>(
-    storage: &StorageHandle<'_>,
-    gem_id: U256,
-    quote: impl FnOnce(&outbe_gem::GemData) -> Result<Q>,
-    pay: impl FnOnce(&outbe_gem::GemData, Q) -> Result<(Address, u16, U256)>,
-) -> Result<()> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    // Anyone may pay for a gem; it stays with its owner.
     // The qualification walk goes last.
     match item.state {
         s if s == GemState::Called as u8 => {
@@ -393,12 +320,14 @@ fn settle<Q>(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
-    let quoted = quote(&item)?;
+    let currency = accept_payment_asset(storage, asset, &item)?;
+    let (amount_paid, snapshot) = cost_in_asset(storage, &item, asset, currency)?;
+    require_snapshot(snapshot, snapshot_id)?;
     storage.clone().with_checkpoint(|| {
-        // Settled before payment so a token callback cannot settle the gem twice;
-        // a failed payment rolls the state back.
+        // Settle before payment so a token callback cannot settle the gem twice.
+        // A failed payment rolls the state back.
         gem_api::set_state(storage, gem_id, GemState::Settled)?;
-        let (asset, settlement_currency, amount_paid) = pay(&item, quoted)?;
+        deposit_payment(storage, caller, asset, amount_paid)?;
         emit_event(
             storage,
             GemSettled {
@@ -406,7 +335,7 @@ fn settle<Q>(
                 owner: item.owner,
                 asset,
                 paymentMinor: amount_paid,
-                settlementCurrency: settlement_currency,
+                settlementCurrency: settlement_currency(&item, currency),
             },
         )
     })
@@ -489,16 +418,9 @@ fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
     IERC20::decimalsCall::abi_decode_returns(&ret).map_err(|_| GemFactoryError::InvalidAsset.into())
 }
 
-/// Which of a gem's two currencies a payment asset is denominated in.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PaymentCurrency {
-    Reference,
-    Issuance,
-}
-
-/// Which of the gem's two currencies `asset` is denominated in. Registration is
-/// checked first, so an unregistered asset need not implement `isoCode()` at all;
-/// reference is matched first, so a single-currency gem takes the no-rate branch.
+/// Which of the gem's two currencies `asset` is denominated in. The function checks
+/// registration first, so an unregistered asset need not implement `isoCode()` at all.
+/// It matches reference first, so a single-currency gem takes the no-rate branch.
 fn accept_payment_asset(
     storage: &StorageHandle<'_>,
     asset: Address,
@@ -527,8 +449,8 @@ fn accept_payment_asset(
 }
 
 /// Cost of one gem in `asset`'s minor units and, on the issuance rail, the VWAP
-/// snapshot both COEN legs came from. The cross rate is folded into the same
-/// fraction, so the whole thing is floored once.
+/// snapshot both COEN legs came from. The function folds the cross rate into the same
+/// fraction, so it floors the whole thing once.
 fn cost_in_asset(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
@@ -536,22 +458,19 @@ fn cost_in_asset(
     currency: PaymentCurrency,
 ) -> Result<(U256, Option<VwapSnapshotId>)> {
     let asset_decimals = read_decimals(storage, asset)?;
-    let (rate, snapshot) = match currency {
-        PaymentCurrency::Reference => (None, None),
-        PaymentCurrency::Issuance => {
-            let fx = settlement_fx_rates(
-                storage.clone(),
-                item.issuance_currency,
-                item.reference_currency,
-            )?
-            .ok_or(GemFactoryError::OracleUnavailable)?;
-            let rate = (
-                fx.issuance_currency_vwap_minor,
-                fx.reference_currency_vwap_minor,
-            );
-            (Some(rate), Some(fx.snapshot))
-        }
-    };
+    let (rate, snapshot) = currency.conversion(|| -> Result<_> {
+        let fx = settlement_fx_rates(
+            storage.clone(),
+            item.issuance_currency,
+            item.reference_currency,
+        )?
+        .ok_or(GemFactoryError::OracleUnavailable)?;
+        let rate = (
+            fx.issuance_currency_vwap_minor,
+            fx.reference_currency_vwap_minor,
+        );
+        Ok((rate, fx.snapshot))
+    })?;
     Ok((settlement_units(item, rate, asset_decimals)?, snapshot))
 }
 
@@ -678,7 +597,7 @@ pub fn mine_promis(
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    // Anyone may submit; the owner's modify key authorizes the mint.
+    // Anyone may submit. The owner's modify key authorizes the mint.
     if item.state != GemState::Settled as u8 {
         return Err(GemFactoryError::InvalidState.into());
     }
@@ -727,8 +646,8 @@ fn compute_floor(
         GemTypes::Sra | GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
             derived_floor(coen_rate, terms.floor_rate)?
         }
-        // Merchant gems are issued via `issue_merchant_gem` against a GemPosition,
-        // not through this agent-class path.
+        // `issue_merchant_gem` issues Merchant gems against a GemPosition,
+        // not this agent-class path.
         GemTypes::Merchant => return Err(GemFactoryError::UnsupportedGemType.into()),
     };
     Ok(floor_price)
@@ -756,7 +675,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 }
 
 /// PoW gate for `mine_promis`. The preimage is
-/// `OUTBE_GEM_MINING_V1 || gemId || owner || miningSequence=0 || nonce`; the caller is not in it.
+/// `OUTBE_GEM_MINING_V1 || gemId || owner || miningSequence=0 || nonce`. The caller is not in it.
 pub fn validate_pow(gem_id: U256, owner: Address, nonce: u64) -> Result<()> {
     pow::validate_mining_pow(
         pow::MiningDomain::Gem,

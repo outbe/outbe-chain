@@ -1,13 +1,17 @@
 //! `outbe-cli tee` - V1 TEE registration for a joining validator or full node.
 //!
-//! Pre-start flow: before launching `outbe-chain node` on a
-//! TEE-bootstrapped chain, the joiner registers its enclave on-chain
-//! (`registerEnclave(bytes,bytes,bytes,bytes,bytes,bytes)`), reads the
-//! deterministically sealed offer
-//! key from its own transaction log (`OfferKeySealedForRegistryV1`), and installs
-//! it in its enclave. Only
-//! then can the node execute offer blocks. Mirrors `secretd tx register auth` +
-//! `q register seed` + `configure-secret`, run before `secretd start`.
+//! Pre-start flow: before it launches `outbe-chain node` on a TEE-bootstrapped
+//! chain, the joiner does these steps:
+//!
+//! 1. It registers its enclave on-chain
+//!    (`registerEnclave(bytes,bytes,bytes,bytes,bytes,bytes)`).
+//! 2. It reads the deterministically sealed offer key from its own transaction
+//!    log (`OfferKeySealedForRegistryV1`).
+//! 3. It installs that key in its enclave.
+//!
+//! Only then can the node execute offer blocks. This flow mirrors
+//! `secretd tx register auth` + `q register seed` + `configure-secret`, run
+//! before `secretd start`.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -87,8 +91,8 @@ pub enum TeeCmd {
     /// Print this enclave's resident tribute-offer public key (the key clients
     /// encrypt offers to once DKG completes) and its DKG identity key. With
     /// `--diff-chain`, also read the on-chain registry `tributeOfferPublicKey()`
-    /// and assert it MATCHES the enclave - exits non-zero on a registry-vs-enclave
-    /// mismatch, so it can gate scripts.
+    /// and assert it MATCHES the enclave. The command exits non-zero on a
+    /// registry-vs-enclave mismatch, so it can gate scripts.
     Pubkey {
         /// Enclave sidecar endpoint: a UDS path or a `host:port` (Gramine) address.
         #[arg(long)]

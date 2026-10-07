@@ -15,11 +15,12 @@ use super::{
     schema::poc_schema_limits,
     state::{DayPhase, JobFsmProjection},
     vote::{OcompPenaltyMetrics, ResponseWindowCloseV1},
+    FinalityAnchor,
 };
 
 /// Records finality for the exact live OCOMP request whose request block is the
-/// consensus-certified parent. The lookup is bounded by the canonical retained
-/// WorldwideDay population; unrelated finalized parents are a no-op.
+/// consensus-certified parent. The canonical retained WorldwideDay population
+/// bounds the lookup. Unrelated finalized parents are a no-op.
 pub fn record_certified_parent_finality(
     ctx: &BlockRuntimeContext<'_>,
     finalized_request_block_number: u64,
@@ -60,17 +61,19 @@ pub fn record_certified_parent_finality(
 
     metadosis.record_ocomp_finality(
         intent_id,
-        finalized_request_block_hash,
-        finalized_request_state_root,
-        ctx.block.block_number,
-        profile.capacity_profile.result_deadline_blocks,
+        FinalityAnchor {
+            request_block_hash: finalized_request_block_hash,
+            request_state_root: finalized_request_state_root,
+            recorded_height: ctx.block.block_number,
+            response_window_blocks: profile.capacity_profile.result_deadline_blocks,
+        },
         &schema_limits,
     )?;
     Ok(true)
 }
 
-/// Runs the exact begin-zone expiry key. No WorldwideDay or job scan is
-/// permitted on this path.
+/// Process begin-zone expiry, including missed lifecycle boundaries.
+/// This path scans live jobs and validates the bounded WorldwideDay aggregate.
 pub fn run_lifecycle_begin_with_scope(
     ctx: &BlockRuntimeContext<'_>,
     scope: &ExecutionScope,

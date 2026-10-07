@@ -9,7 +9,7 @@ import {Create3Factory} from "../src/Create3Factory.sol";
 /// @dev Deploys the protocol-wide CREATE3 factory through the canonical Arachnid CREATE2 deployer
 ///      with a pinned salt. The factory is ownerless and has no constructor, so its init code -
 ///      and therefore its address - is identical on every chain. This is the only project that
-///      builds it; every other project takes the address as CREATE3_FACTORY_ADDRESS.
+///      builds it. Every other project takes the address as CREATE3_FACTORY_ADDRESS.
 ///
 /// Required env vars:
 ///   DEPLOYER_PK - deployer private key

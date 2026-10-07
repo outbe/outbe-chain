@@ -194,7 +194,7 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
     let price_publication = crate::features::price_oracle::stop_before_clock_restart(world);
 
     // External clients depend on node RPC and projection storage. Stop the
-    // complete cohort before taking down any validator, exactly as the initial
+    // complete cohort before stopping any validator, exactly as the initial
     // production-shaped launch starts them only after committee readiness.
     let ocomp_resume = stop_ocomp_roles_before_committee_time_change(world);
     world

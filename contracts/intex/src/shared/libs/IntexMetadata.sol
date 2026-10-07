@@ -8,7 +8,7 @@ import {IIntexNFT1155} from "../interfaces/IIntexNFT1155.sol";
 /// @title IntexMetadata
 /// @notice JSON + SVG metadata rendering for IntexNFT1155 tokens.
 /// @dev External linked library: deployed once and delegatecalled, keeping the renderer's
-///      bytecode outside IntexNFT1155's EIP-170 budget. All functions are pure - the caller
+///      bytecode outside IntexNFT1155's EIP-170 budget. All functions are pure. The caller
 ///      passes a SeriesData snapshot whose state already carries the derived Expired.
 library IntexMetadata {
     string internal constant COLLECTION_DESCRIPTION =
@@ -25,10 +25,11 @@ library IntexMetadata {
     uint256 private constant SCALE_1E6 = 1e6;
 
     /// @notice Build the `data:application/json;base64,...` URI for a token.
-    /// @param data Series record for the token id, with its effective state - the
+    /// @param data Series record for the token id, with its effective state. The
     ///        caller derives `Expired`, so this library never re-derives it.
     /// @param settled Whether the token id is the series' Settled class.
-    /// @return Token URI; the collection document when the record does not exist (`issuedAt == 0`).
+    /// @return Token URI, or the collection document when the record does not exist
+    ///         (`issuedAt == 0`).
     function tokenURI(IIntexNFT1155.SeriesData memory data, bool settled) external pure returns (string memory) {
         if (data.issuedAt == 0) return _collectionURI();
 
@@ -63,7 +64,7 @@ library IntexMetadata {
         );
     }
 
-    /// @dev Unsettled classes share one text; the settled class has no auction or deadline to name.
+    /// @dev Unsettled classes share one text. The settled class has no auction or deadline to name.
     function _tokenDescription(IIntexNFT1155.SeriesData memory data, string memory displayId, bool settled)
         private
         pure
@@ -87,7 +88,7 @@ library IntexMetadata {
         );
     }
 
-    /// @dev The series id verbatim - it is already the readable `20260212-TRY-U`.
+    /// @dev The series id verbatim. It is already the readable `20260212-TRY-U`.
     function _displayId(IIntexNFT1155.SeriesData memory data) private pure returns (string memory) {
         return string(abi.encodePacked(data.seriesId));
     }
@@ -115,7 +116,7 @@ library IntexMetadata {
             ",\"display_type\":\"number\"}"
         );
 
-        // Raw minor units stay in readData; these are display values.
+        // Raw minor units stay in readData. These are display values.
         string memory economics = string.concat(
             ",{\"trait_type\":\"Entry Price\",\"value\":",
             _amountPlain(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION),
@@ -260,7 +261,7 @@ library IntexMetadata {
         return string.concat(_formatInteger(amount / divisor), _fraction(amount % divisor, decimals, shown));
     }
 
-    /// @dev `.ddd` capped at `shown` digits, trailing zeros trimmed; empty when nothing remains.
+    /// @dev `.ddd` capped at `shown` digits, trailing zeros trimmed. Empty when nothing remains.
     ///      Leading zeros are kept, so 0.001 never collapses to 0.1.
     function _fraction(uint256 remainder, uint8 decimals, uint8 shown) private pure returns (string memory) {
         uint256 value = remainder / (10 ** (decimals - shown));
@@ -309,8 +310,8 @@ library IntexMetadata {
         return string(result);
     }
 
-    /// @dev Unix timestamp as "DD.MM.YYYY HH:MM UTC" via Howard Hinnant's civil_from_days -
-    ///      divide-then-multiply is exact integer date math, not precision loss.
+    /// @dev Unix timestamp as "DD.MM.YYYY HH:MM UTC" via Howard Hinnant's civil_from_days.
+    ///      Divide-then-multiply is exact integer date math, not precision loss.
     // slither-disable-start divide-before-multiply
     function _formatTimestamp(uint256 timestamp) private pure returns (string memory) {
         uint256 z = timestamp / 86400 + 719468;

@@ -1,20 +1,24 @@
 //! Real Gramine attestation surface (`/dev/attestation/*`).
 //!
-//! This is the genuine SGX integration - no mock constants. Under `gramine-sgx`
-//! these pseudo-files are backed by hardware: `quote` is a real DCAP quote and
-//! the keys under `keys/` come from `EGETKEY`. Under `gramine-direct` there is no
-//! SGX hardware, so `attestation_type` reads `none`, `quote` is unavailable, and
-//! `keys/` does not exist - this module reports that honestly (no fabricated
-//! quote, no fixed sealing key). Outside Gramine entirely (bare process) every
-//! pseudo-file is absent and every call returns the "unavailable" path.
+//! This is the genuine SGX integration, with no mock constants. Under `gramine-sgx`
+//! hardware backs these pseudo-files: `quote` is a real DCAP quote and the keys
+//! under `keys/` come from `EGETKEY`. Under `gramine-direct` there is no SGX
+//! hardware, so:
+//!   - `attestation_type` reads `none`,
+//!   - `quote` is unavailable,
+//!   - `keys/` does not exist.
 //!
-//! Note that `attestation_type` reading `none` is ambiguous: it is also what real
-//! `gramine-sgx` reports when the manifest does not enable remote attestation. We
+//! This module reports that honestly (no fabricated quote, no fixed sealing key).
+//! Outside Gramine entirely (bare process) every pseudo-file is absent and every
+//! call returns the "unavailable" path.
+//!
+//! Note that `attestation_type` reading `none` is ambiguous. Real `gramine-sgx`
+//! also reports it when the manifest does not enable remote attestation. We
 //! disambiguate via EGETKEY availability (see [`attestation_type`] /
 //! [`AttestationType::SgxNoAttest`]) so a real-SGX run is never mislabeled "no SGX".
 //!
-//! Hardware MRENCLAVE/MRSIGNER/ISVSVN are parsed out of the real quote's embedded
-//! SGX report body - they are never hardcoded.
+//! This module parses hardware MRENCLAVE/MRSIGNER/ISVSVN from the real quote's
+//! embedded SGX report body. They are never hardcoded.
 
 use std::fs;
 
@@ -34,8 +38,8 @@ pub enum AttestationType {
     /// has no `sgx.remote_attestation = "dcap"`/`"epid"`), so
     /// `/dev/attestation/attestation_type` reads `none`. SGX hardware IS present:
     /// EGETKEY sealing keys (`keys/_sgx_mrsigner`) derive. This is NOT
-    /// remote-attested - it cannot produce a DCAP quote - but it is confidential
-    /// at rest. Distinguished from [`None`] by EGETKEY availability.
+    /// remote-attested: it cannot produce a DCAP quote. But it is
+    /// confidential at rest. EGETKEY availability distinguishes it from [`None`].
     SgxNoAttest,
     /// `gramine-sgx` with DCAP remote attestation.
     Dcap,
@@ -53,11 +57,11 @@ impl AttestationType {
         matches!(self, AttestationType::Dcap | AttestationType::Epid)
     }
 
-    /// True when real SGX hardware is present - including [`SgxNoAttest`], which
+    /// True when real SGX hardware is present. This includes [`SgxNoAttest`], which
     /// has EGETKEY sealing but no remote attestation. Distinct from
     /// [`is_hardware`](Self::is_hardware), which is narrower: "remote-attestation
     /// capable" (a real quote can be produced). Use this for "is there SGX at all"
-    /// wording; use `is_hardware` to gate quote-dependent claims.
+    /// wording. Use `is_hardware` to gate quote-dependent claims.
     pub fn sgx_present(&self) -> bool {
         matches!(
             self,
@@ -94,17 +98,18 @@ fn classify_none(egetkey_available: bool) -> AttestationType {
 
 /// Classify the attestation environment.
 ///
-/// Grounded in observed behaviour: under `gramine-sgx` the
-/// `/dev/attestation/attestation_type` pseudo-file reads `dcap`/`epid`; under
-/// `gramine-direct` the `/dev/attestation` directory exists but real attestation
-/// is unavailable (the type file is absent/`none`, `keys/` is empty, and
-/// `user_report_data` is not writable); a bare process has no `/dev/attestation`
-/// at all.
+/// Grounded in observed behaviour:
+///   - Under `gramine-sgx` the `/dev/attestation/attestation_type` pseudo-file
+///     reads `dcap`/`epid`.
+///   - Under `gramine-direct` the `/dev/attestation` directory exists but real
+///     attestation is unavailable. The type file is absent/`none`, `keys/` is
+///     empty, and `user_report_data` is not writable.
+///   - A bare process has no `/dev/attestation` at all.
 ///
 /// A `none` type file is ambiguous: it appears both under `gramine-direct` and
 /// under real `gramine-sgx` whose manifest did not enable remote attestation. We
 /// resolve it via EGETKEY availability (`sealing_key_raw` reading
-/// `keys/_sgx_mrsigner`) - real SGX -> [`AttestationType::SgxNoAttest`],
+/// `keys/_sgx_mrsigner`). Real SGX -> [`AttestationType::SgxNoAttest`],
 /// gramine-direct -> [`AttestationType::None`]. See [`classify_none`].
 pub fn attestation_type() -> AttestationType {
     if let Ok(s) = fs::read_to_string(format!("{ATTEST_DIR}/attestation_type")) {
@@ -116,7 +121,7 @@ pub fn attestation_type() -> AttestationType {
         };
     }
     // No readable type file. If the Gramine attestation dir exists at all we are
-    // under Gramine without a configured remote-attestation type; EGETKEY
+    // under Gramine without a configured remote-attestation type. EGETKEY
     // availability still tells real SGX (gramine-sgx) from gramine-direct.
     // Otherwise we are not under Gramine.
     if fs::metadata(ATTEST_DIR).is_ok() {
@@ -128,7 +133,7 @@ pub fn attestation_type() -> AttestationType {
 
 /// Produce a real SGX DCAP quote binding `report_data` (64 bytes): write
 /// `user_report_data`, then read back `quote`. Only succeeds under `gramine-sgx`
-/// with DCAP remote attestation; under `gramine-direct` the `quote` read fails
+/// with DCAP remote attestation. Under `gramine-direct` the `quote` read fails
 /// and this returns `Err` (the caller degrades honestly rather than faking).
 pub fn dcap_quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
     let urd = format!("{ATTEST_DIR}/user_report_data");
@@ -146,7 +151,7 @@ pub fn dcap_quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
 
 /// Decode one canonical registration intent and derive the exact 64-byte value
 /// that Gramine must place in the SGX report body. This boundary exists only in
-/// `dcap-fixture-capture` builds; production binaries do not expose arbitrary
+/// `dcap-fixture-capture` builds. Production binaries do not expose arbitrary
 /// intent-driven quote generation.
 #[cfg(feature = "dcap-fixture-capture")]
 pub fn capture_report_data_from_intent(canonical_intent: &[u8]) -> Result<[u8; 64], String> {
@@ -163,8 +168,8 @@ pub fn capture_report_data_from_intent(canonical_intent: &[u8]) -> Result<[u8; 6
 }
 
 /// Capture a real DCAP quote for one canonical intent into a new output file.
-/// Both paths are expected to live in the Gramine capture work directory,
-/// which is mounted as an untrusted allowed file tree by the capture launcher.
+/// Both paths are expected to live in the Gramine capture work directory.
+/// The capture launcher mounts that directory as an untrusted allowed file tree.
 #[cfg(feature = "dcap-fixture-capture")]
 pub fn capture_dcap_quote_to_file(intent_path: &str, quote_path: &str) -> Result<(), String> {
     use std::io::Write;
@@ -192,14 +197,14 @@ pub fn capture_dcap_quote_to_file(intent_path: &str, quote_path: &str) -> Result
 }
 
 /// Read this enclave's REAL measurements (MRENCLAVE/MRSIGNER/ISVSVN) from a LOCAL
-/// SGX report (`/dev/attestation/report`), which Gramine produces via EREPORT with
-/// NO DCAP/PCCS provisioning - so it works under `gramine-sgx` even when remote
+/// SGX report (`/dev/attestation/report`). Gramine produces it via EREPORT with
+/// NO DCAP/PCCS provisioning. So it works under `gramine-sgx` even when remote
 /// attestation is disabled (manifest `sgx.remote_attestation = "none"`). EREPORT
-/// needs a target enclave; for a self-report we target THIS enclave by copying
-/// `my_target_info` into `target_info`. `report_data` is written so the local
-/// report still commits to the enclave's cleartext keys. Returns `Err` under
-/// `gramine-direct`/bare (no `/dev/attestation/report`), where the caller falls
-/// back to zero (unmeasured) - never fabricated.
+/// needs a target enclave. For a self-report we target THIS enclave by copying
+/// `my_target_info` into `target_info`. This function writes `report_data` so the
+/// local report still commits to the enclave's cleartext keys. Returns `Err` under
+/// `gramine-direct`/bare (no `/dev/attestation/report`). There the caller uses
+/// zero (unmeasured) as the fallback, never fabricated values.
 pub fn local_report_measurements(report_data: &[u8; 64]) -> Result<ReportMeasurements, String> {
     let mti = format!("{ATTEST_DIR}/my_target_info");
     let ti = format!("{ATTEST_DIR}/target_info");
@@ -219,8 +224,8 @@ pub fn local_report_measurements(report_data: &[u8; 64]) -> Result<ReportMeasure
 }
 
 /// EGETKEY-derived sealing key from Gramine's `/dev/attestation/keys/<name>`.
-/// `mrsigner` survives an enclave update by the same signer; `mrenclave` is
-/// strict per-build. Gramine returns a 128-bit key; we expand it to 256 bits with
+/// `mrsigner` survives an enclave update by the same signer. `mrenclave` is
+/// strict per-build. Gramine returns a 128-bit key. We expand it to 256 bits with
 /// the caller's HKDF. Only available under `gramine-sgx`.
 pub fn sealing_key_raw(mrsigner_policy: bool) -> Result<Vec<u8>, String> {
     let name = if mrsigner_policy {
@@ -237,20 +242,21 @@ pub fn sealing_key_raw(mrsigner_policy: bool) -> Result<Vec<u8>, String> {
 }
 
 /// 256-bit sealing key for the `TSEAL` blob, HKDF-expanded from the real 128-bit
-/// EGETKEY key. This is the production sealing-key source: it ties the sealed
-/// root seed to MRSIGNER (survives a same-signer enclave update). Returns `Err`
-/// when no SGX hardware is present (gramine-direct/bare), where there is no
-/// confidential at-rest persistence - the caller must not silently substitute a
-/// fixed key.
+/// EGETKEY key. New production seals do not use it. They use the combined
+/// MRENCLAVE|MRSIGNER key of the `sgx_sealing` module. This key reads old
+/// MRSIGNER seals and probes for hardware sealing support. Returns `Err`
+/// when no SGX hardware is present (gramine-direct/bare). There is no
+/// confidential at-rest persistence there, so the caller must not silently
+/// substitute a fixed key.
 pub fn sealing_key_256(mrsigner_policy: bool) -> Result<[u8; 32], String> {
     let raw = sealing_key_raw(mrsigner_policy)?;
     crate::crypto::hkdf_sha256(&raw, b"", b"outbe/tee/seal-key/v1").map_err(|e| e.to_string())
 }
 
-/// Diagnostic dump of the whole attestation surface - used by the
-/// `--probe-attestation` startup mode to observe real Gramine behaviour instead
-/// of guessing it. Prints to stderr; performs no secret-revealing reads (the
-/// sealing key bytes are summarised by length only).
+/// Diagnostic dump of the whole attestation surface. The `--probe-attestation`
+/// startup mode uses it to observe real Gramine behaviour instead of guessing it.
+/// Prints to stderr. Performs no secret-revealing reads (it summarises the
+/// sealing key bytes by length only).
 pub fn probe_to_stderr() {
     eprintln!("=== gramine /dev/attestation probe ===");
     let at = attestation_type();

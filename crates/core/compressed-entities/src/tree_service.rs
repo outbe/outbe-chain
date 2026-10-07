@@ -39,7 +39,7 @@ struct SessionState {
 /// One exact-finalized-parent catalog session for block execution.
 ///
 /// The Root Catalog is opened eagerly. Collection shard sets are opened only
-/// after their catalog leaf has been verified against the same MDBX snapshot.
+/// after their catalog leaf is verified against the same MDBX snapshot.
 pub struct MdbxAuthenticatedTree {
     identity: ExactParentIdentity,
     view: AuthenticatedCatalogView,
@@ -314,10 +314,6 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
             if state.catalog_tree.is_some() {
                 self.ensure_collection(&mut state, domain, key)?;
             } else {
-                // `prepare_seal` consumes the mutable catalog session. Root
-                // capabilities are issued only after that point, so verify an
-                // untouched collection through a fresh read-only tree over the
-                // same exact-parent MDBX snapshot.
                 let catalog_root = TreeRoot::from_be_bytes(self.view.catalog_root().0)
                     .map_err(|error| tree_corruption(error.to_string()))?;
                 let catalog_store = StagingCkbStore::new(
@@ -641,8 +637,8 @@ fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
             if required.commitment_scheme_version == actual.commitment_scheme_version
                 && required.block_number != actual.height =>
         {
-            // Payload jobs are asynchronous: an old job can legitimately run
-            // after finalization advanced the in-place materialization, while a
+            // Payload jobs are asynchronous. An old job can legitimately run
+            // after finalization advanced the in-place materialization. A
             // catching-up node can request a parent ahead of its marker. Neither
             // height skew proves corruption. Same-height hash/root mismatches and
             // scheme mismatches remain fatal below.

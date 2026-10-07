@@ -17,12 +17,12 @@ import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 /// @author Outbe
 /// @notice Shared plumbing to upgrade the intex UUPS proxies in place: deploy a fresh
 ///         implementation and point the existing CREATE3 proxy at it via `upgradeToAndCall`.
-/// @dev The proxy keeps its storage (roles, peers, balances) - only the implementation pointer
-///      changes. Proxies are located by their deterministic CREATE3 address (same `predictProxy`
-///      as the deploy scripts), so no addresses need to be passed in. The broadcaster must hold
-///      each contract's upgrade authority (DEFAULT_ADMIN_ROLE) - the deployer does. `data` is empty
-///      (logic-only upgrade);
-///      pass `reinitializer` calldata here if a storage migration is ever needed.
+/// @dev The proxy keeps its storage (roles, peers, balances). Only the implementation pointer
+///      changes. The script locates each proxy by its deterministic CREATE3 address (same
+///      `predictProxy` as the deploy scripts), so no addresses need to be passed in. The
+///      broadcaster must hold each contract's upgrade authority (DEFAULT_ADMIN_ROLE). The deployer
+///      holds it. `data` is empty (logic-only upgrade). Pass `reinitializer` calldata here if a
+///      storage migration is ever needed.
 abstract contract UpgradeBase is BaseScript {
     /// @dev Upgrade the proxy at `prefix`'s deterministic address to `newImpl`.
     function upgradeProxy(Create3Factory factory, address deployer, string memory prefix, address newImpl) internal {

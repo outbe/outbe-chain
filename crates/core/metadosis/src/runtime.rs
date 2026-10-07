@@ -31,20 +31,20 @@ pub fn date_key_to_timestamp(date_key: u32) -> u64 {
     primitives_date_key_to_timestamp(date_key)
 }
 
-/// Public entry point invoked once by each hourly ProtocolCycle pass, after an
-/// optional contiguous completed UTC day has received its terminal Metadosis
-/// credit. Runs the full WWD lifecycle:
-/// bootstrap (block 1 only), `create_worldwide_day_if_needed`,
-/// exhaustive reducer advancement for active WWDs, then either one closed
-/// local terminal outcome or OCOMP pre-admission for a READY WWD.
+/// Public entry point. Each hourly ProtocolCycle pass calls it once. The call
+/// comes after an optional contiguous completed UTC day receives its terminal
+/// Metadosis credit. The function runs the full WWD lifecycle:
+/// 1. bootstrap (block 1 only).
+/// 2. `create_worldwide_day_if_needed`.
+/// 3. exhaustive reducer advancement for active WWDs.
+/// 4. one closed local terminal outcome, or OCOMP pre-admission for a READY WWD.
 ///
-/// Renamed from `run_begin_block` (Phase 5.1 of the
-/// Cycle epic): the function used to be wired into a dedicated
-/// `MetadosisLifecycle::begin_block` lifecycle hook running on every
-/// block; with the Cycle epic the only legitimate caller is the
-/// hourly ProtocolCycle handler. The `MetadosisLifecycle` wrapper
-/// was deleted altogether in the follow-up cleanup; tests that drive
-/// the WWD state machine sub-day call this function directly.
+/// Old name: `run_begin_block` (Phase 5.1 of the Cycle epic). Before the
+/// Cycle epic, a dedicated `MetadosisLifecycle::begin_block` lifecycle hook
+/// called this function on every block. With the Cycle epic, the only
+/// legitimate caller is the hourly ProtocolCycle handler. The follow-up
+/// cleanup deleted the `MetadosisLifecycle` wrapper. Tests that drive the WWD
+/// state machine sub-day call this function directly.
 pub fn start_metadosis(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
@@ -76,10 +76,9 @@ pub fn start_metadosis(
         break;
     }
 
-    // Terminal-day cleanup is no longer a per-tick scan: each COMPLETED/FAILED
-    // transition retires the day into the bounded `closed_wwd`
-    // delete-queue (see `MetadosisContract::mark_wwd_*`), which evicts and
-    // deletes the oldest record past `MAX_RECORDS_KEPT`.
+    // `MetadosisContract::commit_retire_terminal_wwd` places terminal days in `closed_wwd`.
+    // The bounded queue deletes the oldest record past `MAX_RECORDS_KEPT`, avoiding a per-tick
+    // scan.
 
     Ok(())
 }
@@ -100,12 +99,12 @@ pub fn advance_active_worldwide_days(
 /// Genesis-block (block 1) metadosis bootstrap: engage the testnet/devnet
 /// bootstrap window and create the first worldwide day. Idempotent.
 ///
-/// Wired into the begin-zone CycleTick phase at block 1 via
-/// `outbe_cycle::lifecycle::CycleLifecycle::begin_block`. This is required
-/// because ProtocolCycle only *anchors* `last_executed_at` on its
-/// first encounter (block 1) and therefore never invokes [`start_metadosis`]
-/// there; without this entry point the first worldwide day would not exist
-/// until the first block after the next UTC-hour boundary.
+/// `outbe_cycle::lifecycle::CycleLifecycle::begin_block` calls this function
+/// from the begin-zone CycleTick phase at block 1. This entry point is
+/// necessary because ProtocolCycle only *anchors* `last_executed_at` on its
+/// first encounter (block 1), so it never invokes [`start_metadosis`] there. Without
+/// this entry point, the first worldwide day would not exist until the first
+/// block after the next UTC-hour boundary.
 pub fn init_genesis_day(ctx: &BlockRuntimeContext) -> Result<()> {
     lifecycle::init_genesis_day(ctx)
 }

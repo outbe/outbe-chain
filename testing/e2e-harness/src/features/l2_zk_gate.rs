@@ -20,7 +20,8 @@ sol! {
 }
 
 /// A getter with an immutable ABI-encoded key in its code. Both the constructor
-/// and getter use CODECOPY; no debug RPC storage writes or Solidity toolchain.
+/// and getter use CODECOPY. Neither needs debug RPC storage writes or a Solidity
+/// toolchain.
 fn inbox_init_code(public_key: &[u8]) -> Vec<u8> {
     let answer = (Bytes::copy_from_slice(public_key),).abi_encode_params();
     // Return `len` bytes located immediately after this 15-byte program.

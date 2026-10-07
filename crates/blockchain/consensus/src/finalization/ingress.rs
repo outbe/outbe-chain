@@ -1,8 +1,8 @@
 //! `FinalizationActor` mailbox + message types.
 //!
-//! The mailbox is an `UnboundedSender<Message>` so the voter-side
-//! Reporter callback never blocks. Closure of the receiver is treated
-//! as a fatal supervisor event, surfaced via the
+//! The mailbox is an `UnboundedSender<Message>`, so the voter-side
+//! Reporter callback never blocks. A closed receiver is a fatal
+//! supervisor event. The mailbox reports it through the
 //! [`FinalizationMailboxClosed`] error.
 
 use crate::digest::Digest;
@@ -14,8 +14,8 @@ use outbe_primitives::consensus::ConsensusData;
 
 /// Returned by [`Mailbox::notify_finalized`] when the
 /// `FinalizationActor` has exited and its receiver has been dropped.
-/// Caller MUST log + increment a metric on this error; silently
-/// dropping a finalization breaks settlement liveness.
+/// Caller MUST log + increment a metric on this error. A silently
+/// dropped finalization breaks settlement liveness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FinalizationMailboxClosed;
 
@@ -29,15 +29,16 @@ impl std::error::Error for FinalizationMailboxClosed {}
 
 /// Messages accepted by the `FinalizationActor`.
 ///
-/// `Finalized` carries a finalization notification; `CertifiedNotarization`
+/// `Finalized` carries a finalization notification. `CertifiedNotarization`
 /// carries a pre-built certified-parent witness record for off-thread
-/// durable persistence. Routing the certified-notarization write through this
-/// actor (a) moves the synchronous MDBX commit off the Simplex voter task and
-/// (b) keeps the actor the single durable writer to `FinalizedParentCertStore`
-/// (the reporter previously wrote it inline on the voter thread). The
-/// parity-critical record (including `committee_set_hash`) is built by the
-/// reporter before enqueue and is byte-identical to before - only the write
-/// moves - so there is no proposer/validator divergence risk.
+/// durable persistence. The certified-notarization write goes through this
+/// actor for two reasons:
+/// (a) It moves the synchronous MDBX commit off the Simplex voter task.
+/// (b) It keeps the actor the single durable writer to `FinalizedParentCertStore`
+/// (the reporter previously wrote it inline on the voter thread).
+/// The reporter builds the parity-critical record (including `committee_set_hash`)
+/// before enqueue. The record is byte-identical to before. Only the write moves,
+/// so there is no proposer/validator divergence risk.
 pub enum Message {
     Finalized(Finalized),
     CertifiedNotarization(CertifiedParentProofRecord),
@@ -74,7 +75,7 @@ impl Mailbox {
 
     /// Returns `Err(FinalizationMailboxClosed)` if the actor has exited.
     /// Caller (see `OutbeReporter::handle_finalization`) MUST log and
-    /// increment the `consensus_finalization_dropped{reason="mailbox_closed"}`
+    /// increment the `outbe_finalization_dropped_total{reason="mailbox_closed"}`
     /// metric on Err.
     pub fn notify_finalized(&self, f: Finalized) -> Result<(), FinalizationMailboxClosed> {
         self.inner
@@ -82,7 +83,7 @@ impl Mailbox {
             .map_err(|_| FinalizationMailboxClosed)
     }
 
-    /// enqueue a pre-built certified-parent witness record for off-thread
+    /// Enqueue a pre-built certified-parent witness record for off-thread
     /// durable persistence. Returns immediately via `unbounded_send`, so the
     /// Simplex voter task no longer blocks on the synchronous MDBX commit. The
     /// caller (`OutbeReporter::handle_certification`) logs + meters on `Err`.
@@ -130,8 +131,8 @@ mod tests {
         }
     }
 
-    // certified-notarization persistence is routed off-thread through the
-    // same mailbox as a distinct message variant.
+    // The same mailbox routes certified-notarization persistence off-thread
+    // as a distinct message variant.
     #[tokio::test]
     async fn persist_certified_notarization_delivers_record() {
         let (tx, mut rx) = mpsc::unbounded::<Message>();
@@ -169,8 +170,8 @@ mod tests {
 
     #[tokio::test]
     async fn notify_finalized_is_non_blocking_for_burst() {
-        // 10_000 sends with no concurrent receiver - unbounded_send
-        // returns instantly each time. Reads happen after.
+        // Send 10_000 messages with no concurrent receiver. unbounded_send
+        // returns instantly each time. The reads happen after.
         let (tx, mut rx) = mpsc::unbounded::<Message>();
         let mailbox = Mailbox::from_sender(tx);
 

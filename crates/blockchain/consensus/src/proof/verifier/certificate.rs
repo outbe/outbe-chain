@@ -34,8 +34,8 @@ pub(super) fn verify(
         proposal,
         cert,
     } = decode_proof(metadata, participants_len)?;
-    // vote namespaces bind the ordered committee (same sorted/deduped order as
-    // the signer's participant set) so these bytes equal what the signer used.
+    // Vote namespaces bind the ordered committee (same sorted/deduped order as
+    // the signer's participant set). Thus these bytes equal what the signer used.
     let committee_set = committee_ordered_set(view.participants);
     let namespace = match subject {
         VoteSubject::Finalize => finalize_namespace(&committee_set),

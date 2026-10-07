@@ -58,7 +58,7 @@ fn test_jail_validator_from_active() {
         assert_eq!(vs.val_slash_count.read(&v).unwrap(), 1);
         assert!(vs.has_pending_set_change().unwrap());
         // Still accountable in the live committee until the next reshare clears the
-        // share (same as EXITING) - so current-epoch metadata does not Fatal.
+        // share (same as EXITING). So current-epoch metadata does not Fatal.
         assert!(vs.is_consensus_participant(v).unwrap());
         // Excluded from the NEXT reshare target.
         assert!(!vs
@@ -86,7 +86,7 @@ fn test_jailed_loses_share_at_reshare() {
         vs.jail_validator(v).unwrap();
 
         // A reshare that does not include the jailed validator clears its share
-        // (clear-all loop) and it stops being a participant - but stays JAILED.
+        // (clear-all loop). The validator stops being a participant but stays JAILED.
         vs.activate_reshared_set(&[], B256::ZERO).unwrap();
         assert!(!vs.val_has_bls_share.read(&v).unwrap());
         assert!(!vs.is_consensus_participant(v).unwrap());

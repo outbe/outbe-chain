@@ -47,8 +47,8 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize, batch
     );
     let private_keys = &private_keys[..count];
     // Distinct callers share the declared testnet circuit network. Each offer
-    // still has its own caller-bound proof and network-signed Merkle root;
-    // synthetic per-owner networks have no circuit binding on this host chain.
+    // still has its own caller-bound proof and network-signed Merkle root.
+    // Synthetic per-owner networks have no circuit binding on this host chain.
     const CAPACITY_L2_CHAIN_ID: u64 = 57_005;
     let network_operator = world
         .validators
@@ -347,9 +347,8 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
         .rpc
         .nod_data_on(port, &nod_id)
         .expect("capacity owner NOD body");
-    // Mining always burns a note, so the capacity Nod needs one deposited under
-    // an asset the router registers for its reference currency — the fixture
-    // genesis registers liquidity sources but no vault.
+    // Mining needs a paid Nod. The fixture genesis registers liquidity sources but
+    // no vault. So the owner pays in an asset registered for its reference currency.
     assert_eq!(
         body.referenceCurrency, 840,
         "the settlement fixture only registers an asset for USD"
@@ -366,18 +365,17 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
     )
     .expect("quote capacity nod settlement");
     assert_eq!(quote.paymentMinor, body.settlementCostMinor);
-    let proof = crate::features::paynote::deposit_and_prove(
+    crate::features::settlement::fund_and_approve(
         world,
-        port,
+        fixture.asset,
         &private_key,
         owner,
-        fixture.asset,
+        crate::internal::addresses::NOD_FACTORY_ADDR,
         quote.paymentMinor,
-        crate::features::paynote::nod_context(nod_word, quote.snapshotId),
     );
     world
         .rpc
-        .mine_first_materialized_capacity_nod(port, &private_key, &proof)
+        .mine_first_materialized_capacity_nod(port, &private_key, fixture.asset, quote.snapshotId)
         .expect("post-completion mineGratis");
 }
 

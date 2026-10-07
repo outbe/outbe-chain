@@ -13,10 +13,10 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 ///
 ///   - SI-08: `sum totalSupply(issuedId)` across chains equals what was issued. Mint+bridge+round-trip
 ///     moves balances between chains but cannot inflate the global pool.
-///   - SI-09: a `crosschainBurn` of `amount` on the source mints exactly `amount` on the destination,
-///     even when the inbound crosschainMint fails: the parked-amount `failedCrosschainMints[receiveId][idx].units`
-///     holds the in-flight units until retry, so the source-burned amount equals
-///     `destination-minted + destination-parked` at every step.
+///   - SI-09: a `crosschainBurn` of `amount` on the source mints exactly `amount` on the
+///     destination, even when the inbound crosschainMint fails. In that case the parked-amount
+///     `failedCrosschainMints[receiveId][idx].units` holds the in-flight units until retry. Thus
+///     the source-burned amount equals `destination-minted + destination-parked` at every step.
 contract CrossChainSupplyConservationTest is CrossChainTest {
     uint32 private constant A_CHAIN_ID = 1;
     uint32 private constant B_CHAIN_ID = 2;
@@ -143,7 +143,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         assertEq(parkedAmount, minted, "park holds the in-flight units");
         assertEq(tokenA.totalSupply(parkTokenId), 0, "A burned the bridged units");
 
-        // Retry can never clear it while B lacks the series; reclaim to the origin is the only exit.
+        // Retry can never clear it while B lacks the series. Reclaim to the origin is the only
+        // exit.
         adapterB.reclaimToSource(receiveId, 0);
 
         (,,, bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
@@ -202,8 +203,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         adapterB.reclaimToSource(receiveId, 0);
     }
 
-    /// A hop inside the call window carries the units but never the clock: `calledAt` and the
-    /// sealed notice on both mirrors are byte-equal before and after, so the settlement deadline
+    /// A hop inside the call window carries the units but never the clock. `calledAt` and the
+    /// sealed notice on both mirrors are byte-equal before and after. Thus the settlement deadline
     /// (`calledAt + callNoticePeriod`) is unchanged, and one second past it the return hop is refused.
     function test_CalledHop_KeepsCalledAtAndDeadlineOnBothChains() public {
         uint32 day = 20260603;

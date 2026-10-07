@@ -174,7 +174,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
         dispatch_triggers(&ctx_anchor).unwrap();
 
         // Step 2: block past first slot. prev_day = genesis_utc_day
-        // (20240101); day_number_since_genesis = 0; cap = INITIAL_DAY_EMISSION.
+        // (20240101). day_number_since_genesis = 0. cap = INITIAL_DAY_EMISSION.
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
         let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
         account_parent(&ctx_fire, 2);
@@ -200,7 +200,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
 
         // No tributes for any AgentReward pool, so all three
         // WAA/SRA/CCA amounts are accounted for.
-        // Empty WAA/SRA pools burn their backing; an empty CCA pool mints
+        // Empty WAA/SRA pools burn their backing. An empty CCA pool mints
         // nothing. All three allocations return to terminal Metadosis.
         let agent_reward_balance = ctx_fire
             .storage
@@ -687,8 +687,8 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
 }
 
 /// a second `run_emission_limit_daily` invocation for an already-settled
-/// `prev_day` is a no-op - the CCA agent pool (and terminal Metadosis)
-/// are NOT minted twice. Guards the per-day idempotency added on top of the
+/// `prev_day` is a no-op. The handler does NOT mint the CCA agent pool (and
+/// terminal Metadosis) twice. Guards the per-day idempotency added on top of the
 /// C-01 timestamp drift band.
 #[test]
 fn emission_dispatch_is_idempotent_per_prev_day() {
@@ -720,7 +720,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         assert!(!cca_after_first.is_zero(), "first fire credited CCA");
 
         // Second invocation for the SAME prev_day: the idempotency guard sees
-        // `daily_settled[20240101] == true` and returns early - no double-mint.
+        // `daily_settled[20240101] == true` and returns early. No double-mint occurs.
         run_emission_limit_daily(&ctx).unwrap();
         assert_eq!(
             ctx.storage

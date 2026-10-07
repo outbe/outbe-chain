@@ -84,7 +84,7 @@ impl OcompTopology {
     }
 
     /// All four domains must retain the same successful computation. Only
-    /// canonical voters must have submission journals; a missing nonvoter
+    /// canonical voters must have submission journals. A missing nonvoter
     /// journal needs an exact, current-incarnation successful late outcome.
     #[cfg(feature = "ocomp-integration")]
     pub(crate) fn verify_completed_artifacts_canonical(
@@ -164,7 +164,7 @@ impl OcompTopology {
         for index in self.validator_indices()? {
             // The production finalizer publishes this exact result to its own
             // CAS before reporting completion, even if node-v1 later prunes it.
-            // Use only the read-only reader; never invoke the publishing finalizer.
+            // Use only the read-only reader. Never invoke the publishing finalizer.
             let local_result = outbe_ocomp::cas::FilesystemCasReader::open(
                 self.domain_root(index)?.join("cas-v1"),
                 outbe_ocomp::cas::CasLimits {
@@ -335,9 +335,9 @@ impl OcompTopology {
     }
 
     /// Restart the real exporter with its acknowledged export left intact.
-    /// Prepared-before-commit recovery is covered separately by the existing
-    /// export_receipt integration tests; deleting a receipt after ACK does not
-    /// reproduce that crash window.
+    /// The existing export_receipt integration tests cover prepared-before-commit
+    /// recovery separately. Deleting a receipt after ACK does not reproduce that
+    /// crash window.
     #[cfg(feature = "ocomp-integration")]
     pub fn verify_committed_exporter_restart(
         &mut self,
@@ -652,7 +652,7 @@ pub struct OcompProcessRecordV1 {
     pub stopped_at_millis: Option<u64>,
 }
 
-/// One pre-work observation; never carried across a node replacement.
+/// One pre-work observation. It is never carried across a node replacement.
 #[cfg(feature = "ocomp-integration")]
 #[derive(Debug)]
 pub(in crate::world::ocomp) struct OcompArtifactPhase {

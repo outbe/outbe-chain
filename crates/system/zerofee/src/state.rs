@@ -2,8 +2,8 @@
 //!
 //! All access goes through `ZeroFeeContract::counter` which is a
 //! `Map<Address, u64>` of packed `(date_key, count)`. The day reset is
-//! lazy: a stored day that no longer matches the current UTC day is
-//! treated as count = 0 without an explicit overwrite - the next
+//! lazy. The helpers treat a stored day that no longer matches the
+//! current UTC day as count = 0, without an explicit overwrite. The next
 //! `record_use` will rewrite the slot with the new day.
 
 use alloy_primitives::Address;
@@ -35,14 +35,14 @@ impl ZeroFeeContract<'_> {
 
     /// Increments the sponsored-tx counter for `signer` on
     /// `current_day`, applying the lazy reset if the stored day no
-    /// longer matches. Saturating add at `u32::MAX`; callers are
+    /// longer matches. The add saturates at `u32::MAX`. Callers are
     /// expected to gate on `effective_count < FREE_TX_DAILY_LIMIT`
-    /// before invoking this.
+    /// before they call this.
     ///
     /// Crate-private: the only legitimate caller is
-    /// [`crate::runtime::record_sponsorship_use`], which pairs the write
-    /// with the [`crate::precompile::IZeroFee::SponsorshipAuthorized`] log emission
-    /// and is itself gated by [`crate::runtime::authorize_sponsorship`].
+    /// [`crate::runtime::record_sponsorship_use`]. That caller pairs the write
+    /// with the [`crate::precompile::IZeroFee::SponsorshipAuthorized`] log emission.
+    /// [`crate::runtime::authorize_sponsorship`] gates that caller.
     /// Broadening this surface would let a future caller burn quota
     /// without observability or authorization checks.
     pub(crate) fn record_use(&mut self, signer: Address, current_day: u32) -> Result<u32> {

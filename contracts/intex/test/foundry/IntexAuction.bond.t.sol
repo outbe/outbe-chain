@@ -13,8 +13,9 @@ import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Commit-bond lifecycle through the real IntexAuction + EscrowAdapter pair:
-///      commit takes the bond, reveal/cancel return it, and a no-reveal waits out
-///      `UNREVEALED_BOND_LOCK_PERIOD`.
+///      - commit takes the bond.
+///      - reveal/cancel return it.
+///      - a commit with no reveal waits for the full `UNREVEALED_BOND_LOCK_PERIOD`.
 contract IntexAuctionBondTest is Test {
     uint16 internal constant ISSUANCE_CCY = 840;
     uint16 internal constant REFERENCE_CCY = 840;
@@ -181,7 +182,8 @@ contract IntexAuctionBondTest is Test {
         vm.prank(iba1);
         auction.revealBid(worldwideDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature());
 
-        // Bond came back, the bid escrow went out - net position is just the bid lock.
+        // The escrow returned the bond and took the bid lock. The net position is only the bid
+        // lock.
         assertEq(paymentToken.balanceOf(iba1), 1000e18 - LOCK_AMOUNT, "net = bid lock only");
         assertEq(escrow.getCommitBond(worldwideDay, iba1).amount, 0, "bond deleted");
         assertEq(escrow.getBidLock(worldwideDay, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
@@ -212,8 +214,8 @@ contract IntexAuctionBondTest is Test {
         vm.prank(bridger);
         auction.auctionStart(redSeries, IIntexAuction.WorldwideDayState.Red, _schedule(), _params(BOND));
 
-        // A red day is cancelled before anyone can commit, so its penalty window passes with no bond
-        // for the escrow to release.
+        // A red day is cancelled before anyone can commit, so its penalty window passes with no
+        // bond for the escrow to release.
         vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
         vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);

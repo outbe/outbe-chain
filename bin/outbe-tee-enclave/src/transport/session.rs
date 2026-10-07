@@ -47,8 +47,8 @@ pub fn serve_connection_for_network_test<S: EnclaveTransportStream>(
 /// Serve a single client connection end-to-end. `offer_key` is the shared,
 /// write-once DKG-derived offer key slot (populated by the DKG connection's
 /// Seam F, read by the offer-decrypt path). `boot` carries the seal/unseal
-/// configuration (chain_id / tee-dir / isv_svn); when `Some`, the sealing path
-/// persists the offer secret + threshold share after Seam F. The production
+/// configuration (chain_id / tee-dir / isv_svn). When `Some`, the sealing path
+/// persists the offer secret + group threshold signature after Seam F. The production
 /// accept loop passes the resident chain independently because non-sealing
 /// enclaves still need a chain-scoped state-key domain.
 pub fn serve_connection_with<S: EnclaveTransportStream>(
@@ -255,8 +255,6 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
     let mut dcap_verification = DcapVerificationSessionV1::default();
     let mut onboarding_upload = OnboardingArtifactUploadSessionV1::default();
     let mut call_stream = outbe_tee::call_context::StreamContext::default();
-    // Seal the DKG-derived offer key + share once installed (Seam F). Tracked
-    // per-connection so we attempt the write-once seal at most once here.
 
     // 3. Encrypted request/response loop. Exits when the peer closes (read EOF).
     // Remote traffic is checked both before and after every blocking read, so a

@@ -50,9 +50,9 @@ pub struct ValidatorSet {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidatorP2pAddress {
-    /// No registry address exists; static bootstrap may fill this gap.
+    /// No registry address exists. Static bootstrap may fill this gap.
     Missing,
-    /// Registry contained an invalid address; exclude this peer and do not
+    /// Registry contained an invalid address. Exclude this peer and do not
     /// substitute static/bootstrap target addresses.
     Invalid,
     /// Valid decoded Commonware target address.

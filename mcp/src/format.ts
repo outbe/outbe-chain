@@ -22,7 +22,7 @@ import {
  *  - WorldwideDay u32 YYYYMMDD .......... crates/core/common/src/worldwideday.rs
  *  - native COEN amounts at 1e18 ........ explicit contract/function boundaries
  *  - protocol monetary amounts at 1e6 ... crates/blockchain/primitives/src/units.rs
- *  - asset-native amounts, raw .......... the asset's own decimals (Credis, settlement, PayNote)
+ *  - asset-native amounts, raw .......... the asset's own decimals (Credis, settlement)
  *  - Credis annual currency rate at 1e6 . Oracle/Credis contract
  *  - generic prices/ratios at 1e18 ...... their owning protocol modules
  *  - status / day_type enums ............ crates/core/metadosis/src/schema.rs
@@ -72,7 +72,7 @@ export interface ReturnFormatContext {
   contractName?: string;
   /** Raw ABI arguments for a call resolved to the Oracle precompile. */
   oracleArgs?: readonly unknown[];
-  /** The registry's own answer for a market; the local rule is the fallback. */
+  /** The registry's own answer for a market. The local rule is the fallback. */
   scaleFor?: (base: unknown, quote: unknown) => number | undefined;
 }
 
@@ -168,7 +168,7 @@ function isUint(type: string, bits?: number): boolean {
  * `enclosingTupleType` is the enclosing tuple's `internalType` (e.g. `struct
  * IGovernance.Proposal`) when there is one. A bare `status` byte means the
  * WorldwideDay lifecycle everywhere except inside a governance proposal, which
- * uses its own enum - so the enclosing struct disambiguates them.
+ * uses its own enum. So the enclosing struct disambiguates them.
  */
 interface ScalarFormatContext {
   contractName?: string;
@@ -177,7 +177,7 @@ interface ScalarFormatContext {
   marketDecimals?: number;
 }
 
-/** Names a `state` code by the contract whose struct carries it; any other keeps the bare code. */
+/** Names a `state` code by the contract whose struct carries it. Any other keeps the bare code. */
 function lifecycleStateName(v: number, context: ScalarFormatContext): string | undefined {
   const owner =
     /\bI(Gem|Credis)\./.exec(context.enclosingTupleType ?? "")?.[1]?.toLowerCase() ??
@@ -251,8 +251,8 @@ function formatScalar(
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 6) };
   }
-  // Credis principal and interest, settlement payments and PayNote spends are in the
-  // asset's own atomic units, whose decimals vary by asset.
+  // Credis principal and interest and settlement payments are in the asset's own
+  // atomic units, whose decimals vary by asset.
   if (type === "uint256" && ASSET_UNIT_AMOUNT_RE.test(n)) {
     return (value as bigint).toString();
   }

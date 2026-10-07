@@ -1,6 +1,15 @@
 //! Sealed-blob format + seal/unseal.
 //!
-//! On-disk layout (`<node_datadir>/tee/sealed_root.bin`):
+//! The file is `<tee-dir>/sealed_root.bin`. A production SGX seal (see the
+//! `sgx_sealing` module) wraps the `TSEAL` blob:
+//!
+//! ```text
+//! magic    "TSGX1" (5B)
+//! request  canonical SGX KEYREQUEST (512B)
+//! payload  the TSEAL blob below
+//! ```
+//!
+//! A mock seal and old read-only operator state hold the `TSEAL` blob directly:
 //!
 //! ```text
 //! magic   "TSEAL" (5B)
@@ -13,13 +22,15 @@
 //!
 //! The blob seals the DKG-derived offer secret and group threshold signature
 //! (Seam F output), so restart restores the exact permanent key. The resident
-//! signature is also the enclave-only input to deterministic registry onboarding;
-//! it is never a peer recovery or key-replacement capability.
+//! signature is also the enclave-only input to deterministic registry onboarding.
+//! It is never a peer recovery or key-replacement capability.
 //!
-//! The sealing key comes from SGX `EGETKEY` with `KEYPOLICY=MRSIGNER` (so a new
-//! enclave of the same signer can unseal across updates). In mock mode it is a
-//! fixed key that is stable across rebuilds (simulating MRSIGNER). The mock key
-//! is feature/test gated so it never links into the production binary.
+//! New production seals use an SGX `EGETKEY` key with
+//! `KEYPOLICY=MRENCLAVE|MRSIGNER`. Thus a rebuilt enclave cannot unseal them, even
+//! from the same signer. The explicit upgrade key-transfer path moves the key
+//! across an enclave update. The MRSIGNER-only key stays only to read old state.
+//! In mock mode the key is fixed and stable across rebuilds. The mock key is
+//! feature/test gated so it never links into the production binary.
 
 use std::path::PathBuf;
 
@@ -32,12 +43,15 @@ use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 use crate::crypto::OneNonce;
 use crate::errors::{Result, TeeError};
 
-/// Boot-time configuration the sealing path needs, built once at startup from CLI
-/// args and consumed by the seal-on-bootstrap / unseal-on-restart path:
-/// which chain the seed is bound to (AAD), where the sealed blob lives,
-/// and the running enclave SVN (anti-rollback floor). Production requires this
-/// configuration; only the separate development process may omit it and remain
-/// non-durable/keyless until its fresh founding ceremony.
+/// Boot-time configuration that the sealing path needs. Startup builds it once
+/// from CLI args, and the seal-on-bootstrap / unseal-on-restart path consumes it.
+/// It records:
+/// - which chain the seed is bound to (AAD).
+/// - where the sealed blob lives.
+/// - the running enclave SVN (anti-rollback floor).
+///
+/// Production requires this configuration. Only the separate development process
+/// may omit it and remain non-durable/keyless until its fresh founding ceremony.
 #[derive(Clone, Debug)]
 pub struct EnclaveBootConfig {
     pub chain_id: B256,
@@ -225,7 +239,7 @@ fn decode_sealed_payload(pt: &[u8]) -> Result<DecodedSealedPayload> {
 }
 
 /// Seal the permanent DKG-derived offer secret together with the founding Seam F
-/// signature. Restart restores these exact bytes; it never derives a replacement
+/// signature. Restart restores these exact bytes. It never derives a replacement
 /// key. `header.format_version` must be [`SEAL_FORMAT`].
 pub fn seal_tribute_offer_and_group_sig(
     tribute_offer_secret: &[u8; 32],
@@ -266,7 +280,7 @@ pub struct UnsealedTributeOfferAndGroupSig {
 /// Unseal a blob back to `(tribute_offer_secret, group_sig_bytes, header)`.
 ///
 /// Any `format_version` other than [`SEAL_FORMAT`] is rejected. `running_isv_svn`
-/// is the currently running enclave's SVN; a blob sealed by a strictly newer SVN
+/// is the currently running enclave's SVN. A blob sealed by a strictly newer SVN
 /// is rejected (anti-rollback). Magic/version/SVN are checked before AEAD so an
 /// unsupported blob yields a clear error. Secrets come back `Zeroizing`.
 pub fn unseal_tribute_offer_and_group_sig(
@@ -331,7 +345,7 @@ pub fn unseal_network_bound_payload(
     })
 }
 
-/// Fixed mock sealing key - stable across rebuilds so it simulates MRSIGNER
+/// Fixed mock sealing key. It is stable across rebuilds so it simulates MRSIGNER
 /// (a rebuilt mock enclave unseals an older mock blob). Gated so it never links
 /// into the production binary.
 #[cfg(any(test, feature = "mock"))]

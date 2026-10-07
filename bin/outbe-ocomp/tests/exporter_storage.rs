@@ -119,7 +119,7 @@ fn rocks_input() -> (Vec<AuthenticatedTributeRecord>, TributeStreamSummary) {
             .wait_timeout(std::time::Duration::from_secs(5))
             .unwrap();
     }
-    // Node reopens its writer; the exporter independently loads the same TOML.
+    // Node reopens its writer. The exporter independently loads the same TOML.
     let _primary = provider.open_writer().unwrap();
     let exporter = StorageProvider::new(StorageConfig::load(&path).unwrap())
         .unwrap()
@@ -134,8 +134,8 @@ fn rocks_input() -> (Vec<AuthenticatedTributeRecord>, TributeStreamSummary) {
 }
 
 // This checks actual CAS bytes, including manifest roots and chunk ordering. Chain
-// opening proofs are fixed fixtures: proof validation and result execution belong
-// to the separate full-network E2E, not this storage/publisher integration test.
+// opening proofs are fixed fixtures. Proof validation and result execution belong
+// to the separate full-network E2E, not to this storage/publisher integration test.
 fn artifact_bytes(records: &[AuthenticatedTributeRecord]) -> (Vec<u8>, Vec<Vec<u8>>) {
     let limits = poc_schema_limits();
     let bundle = support::protocol_bundle();

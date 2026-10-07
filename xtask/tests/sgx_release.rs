@@ -617,7 +617,7 @@ fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
         "            \"${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json\")\" = '676'"
     )));
     // The unsigned build uses the shared SGX runner. Keep the exception scoped
-    // to that job; testnet settings elsewhere in the mainnet workflow still fail.
+    // to that job. Testnet settings elsewhere in the mainnet workflow still fail.
     let unsigned_build_runner = concat!(
         "  build-and-compare:\n",
         "    name: two independent ELF and unsigned SGX builds\n",

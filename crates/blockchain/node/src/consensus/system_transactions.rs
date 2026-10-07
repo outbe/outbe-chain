@@ -54,12 +54,13 @@ pub(super) fn validate_late_credits(
     layout: &SystemTxLayout<'_>,
     artifacts: &OutbeBlockArtifacts,
 ) -> Result<(), ConsensusError> {
-    // bind the header's `late_finalize_credits` artifact (tag
-    // 0x06 - hash-committed and BLS-verified pre-exec) to the body's
-    // `LateFinalizeCredits` system-tx calldata, so the artifact that is verified
-    // is exactly the one that settles fees. Mirrors the BoundaryOutcome parity
-    // above. The header `Option` maps to the calldata artifact via the proposer
-    // build path's `unwrap_or_default()`: `None => empty`, `Some(a) => a`.
+    // Bind the header's `late_finalize_credits` artifact to the body's
+    // `LateFinalizeCredits` system-tx calldata. The artifact has tag 0x06 and is
+    // hash-committed and BLS-verified pre-exec. The binding makes sure that the
+    // verified artifact is exactly the one that settles fees. This mirrors the
+    // BoundaryOutcome parity above. The header `Option` maps to the calldata
+    // artifact via the proposer build path's `unwrap_or_default()`:
+    // `None => empty`, `Some(a) => a`.
     let header_credits = artifacts.late_finalize_credits.clone().unwrap_or_default();
     let mut found = false;
     for input in system_inputs(layout) {

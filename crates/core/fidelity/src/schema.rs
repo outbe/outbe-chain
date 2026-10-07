@@ -15,16 +15,16 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 /// the enclave (cohort ops, the per-WWD league snapshot, and signed queries).
 ///
 /// The only plaintext scalar is `first_qualified_start`: the earliest
-/// `qualified_start` across all accounts, which anchors the synthetic-max RCFI
+/// `qualified_start` across all accounts. It anchors the synthetic-max RCFI
 /// ceiling for leagues (`maxFidelityIndexAt`). It is not attributable to any
-/// account and is needed on-chain (and by the enclave, passed in) to derive
-/// leagues, so it stays in the clear. Timestamps are monotonic, so the first
-/// write is the chain-wide minimum.
+/// account. League derivation needs it on-chain (and in the enclave, passed in),
+/// so it stays in the clear. Timestamps are monotonic, so the first write is the
+/// chain-wide minimum.
 #[contract(addr = FIDELITY_ADDRESS)]
 pub struct FidelityContract {
     // slot 0: encrypted per-owner cohort ledger blob (`version(8) || FID2 || binding(32) || AEAD-ct`);
     // empty when the owner has no cohort history.
     pub cohorts_ct: Mapping<Address, StorageBytes>,
-    // slot 1: earliest qualified_start across all accounts; 0 = none qualified.
+    // slot 1: earliest qualified_start across all accounts. 0 = none qualified.
     pub first_qualified_start: Slot<u64>,
 }

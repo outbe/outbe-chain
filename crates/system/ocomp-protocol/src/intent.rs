@@ -272,8 +272,8 @@ impl JobIntentV1 {
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "Metadosis limit split",
             })?;
-        // A day issues at most its own nominal; the unissued headroom is credited back to the
-        // warehouse, and the exact identity is enforced on the split receipt.
+        // A day issues at most its own nominal. The unissued headroom is credited back to the
+        // warehouse. The exact identity is enforced on the split receipt.
         require(
             split_total <= self.frozen_metadosis_values.day_limit,
             "Metadosis limit split",
@@ -468,8 +468,8 @@ impl FinalizedIntentProofV1 {
     /// [`JobIntentV1::job_id`].
     ///
     /// Caller-supplied events, committee bytes and storage keys are never
-    /// authority: the adapter must authenticate them against finalized chain
-    /// state, while this method closes all protocol-level bindings.
+    /// authority. The adapter must authenticate them against finalized chain
+    /// state. This method closes all protocol-level bindings.
     pub fn verify(
         &self,
         expected: ExpectedFinalizedIntentBindingV1,

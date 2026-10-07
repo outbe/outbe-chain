@@ -32,10 +32,6 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::pledgenote::PledgeNoteCmd,
     },
-    Paynote {
-        #[command(subcommand)]
-        cmd: commands::paynote::PaynoteCmd,
-    },
     /// Validator management
     Validator {
         #[command(subcommand)]
@@ -120,7 +116,6 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Pledgenote { cmd } => cmd.run(&client).await,
-        Commands::Paynote { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Validator { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Staking { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Rewards { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
@@ -176,7 +171,7 @@ mod tests {
 
     #[test]
     fn test_cli_rejects_removed_rewards_claim_and_pending() {
-        // Validator emission is paid in gems; the dead `claim` / `pending`
+        // Validator emission is paid in gems. The dead `claim` / `pending`
         // subcommands were removed and must no longer parse.
         assert!(Cli::try_parse_from(["outbe-cli", "rewards", "claim"]).is_err());
         assert!(Cli::try_parse_from([

@@ -10,8 +10,8 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 
-/// @dev A chunk is quoted for what it may do: any chunk that can be the one sending the day's proceeds home
-///      carries the routing leg, and a chunk with no winners settles nothing.
+/// @dev A chunk is quoted for what it may do. Any chunk that can be the one sending the day's
+///      proceeds home carries the routing leg. A chunk with no winners settles nothing.
 contract RefundProceedsQuoteTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant DAY = 42;
@@ -58,8 +58,9 @@ contract RefundProceedsQuoteTest is CrossChainTest {
         _assertQuoted(IntexGas.refund(5, true));
     }
 
-    /// @dev The target routes on the chunk that completes the day, which is the last to land, not the last by
-    ///      index: chunk 0 arriving after chunk 1 is the one that sends the proceeds.
+    /// @dev The target routes on the chunk that completes the day, which is the last to land,
+    ///      not the last by index. Chunk 0 arriving after chunk 1 is the one that sends the
+    ///      proceeds.
     function test_EveryChunkOfARunCarriesIt() public {
         _send(0, 3, 64);
         _assertQuoted(IntexGas.refund(64, true));

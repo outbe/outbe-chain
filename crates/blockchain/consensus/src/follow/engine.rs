@@ -1,19 +1,19 @@
 //! Follower engine assembly: marshal + resolver + driver + committee chain.
 //!
 //! The follower reuses the same marshal and executor as the validator path. The
-//! marshal actor (with its two immutable archives) and the executor mailbox are
-//! built by the caller - they need the reth node handle and the engine-crate
-//! storage config, which `outbe-consensus` does not have - and handed in here.
+//! caller builds the marshal actor (with its two immutable archives) and the
+//! executor mailbox and gives them to this function. They need the reth node handle
+//! and the engine-crate storage config, which `outbe-consensus` does not have.
 //! This function then:
 //!
-//! 1. bootstraps the [`CommitteeChain`] at the anchor epoch (fetching the anchor
-//!    epoch's first block from the upstream and registering its committee, which
-//!    runs the anchor group-key trust check);
-//! 2. builds the marshal's resolver handler pair and the [`FollowResolver`] over
-//!    the upstream + local block sources;
-//! 3. starts the marshal with the executor mailbox as its application reporter,
-//!    a null broadcast, and the follow resolver;
-//! 4. starts the [`Driver`] which walks the marshal forward to the upstream tip.
+//! 1. Bootstraps the [`CommitteeChain`] at the anchor epoch. It fetches the anchor
+//!    epoch's first block from the upstream and registers its committee, which
+//!    runs the anchor group-key trust check.
+//! 2. Builds the marshal's resolver handler pair and the [`FollowResolver`] over
+//!    the upstream + local block sources.
+//! 3. Starts the marshal with the executor mailbox as its application reporter,
+//!    a null broadcast, and the follow resolver.
+//! 4. Starts the [`Driver`], which walks the marshal forward to the upstream tip.
 //!
 //! It returns successfully only after a requested runtime stop and a clean
 //! marshal drain. Unexpected completion and bootstrap or marshal errors fail.
@@ -67,8 +67,8 @@ where
     pub marshal_mailbox: MarshalMailbox,
     /// Exact durable height recovered by `marshal::Actor::init`.
     ///
-    /// This is supplied by the caller because the marshal actor has not been
-    /// started yet. Querying its mailbox before `start` would wait forever.
+    /// The caller supplies this value because the marshal actor is not
+    /// started yet. A query to its mailbox before `start` would wait forever.
     pub recovered_height: Height,
     /// The executor mailbox, used as the marshal's application reporter. It must
     /// implement `Reporter<Activity = MarshalUpdate>` (the outbe executor does).
@@ -84,7 +84,7 @@ where
     /// The shared committee chain. Its `scheme_provider()` MUST be the same
     /// provider the `marshal_actor` was initialized with, so committee
     /// registrations are visible to the marshal's certificate verification.
-    /// It is bootstrapped at the anchor epoch by this function.
+    /// This function bootstraps it at the anchor epoch.
     pub chain: SharedCommitteeChain,
     /// The trust anchor's start epoch (for the bootstrap + driver). Equal to
     /// `chain.anchor_epoch()`.
@@ -196,10 +196,11 @@ async fn await_marshal_exit(
 /// Rebuild the authenticated follower committee chain from the trusted anchor
 /// through the exact epoch of `recovered_height`.
 ///
-/// The recovered certificate's epoch is only a target hint. Every intermediate
-/// committee is authenticated by an E-1-finalized pre-announce, every activating
-/// height by the corresponding E-finalized boundary, and the recovered
-/// certificate is verified again after reconstruction.
+/// The recovered certificate's epoch is only a target hint. The rebuild does these
+/// checks:
+/// - An E-1-finalized pre-announce authenticates every intermediate committee.
+/// - The corresponding E-finalized boundary authenticates every activating height.
+/// - The rebuild verifies the recovered certificate again after reconstruction.
 pub async fn prepare_committee_chain<F>(
     chain: &SharedCommitteeChain,
     source: &F,
@@ -266,11 +267,11 @@ where
 /// consume after restart before its actor is initialized or started.
 ///
 /// The range is inclusive. Existing local blocks and finalized proposals must
-/// match the authenticated upstream record. A local finalization certificate
-/// is verified independently because honest nodes may retain different quorum
-/// subsets for the same proposal. A missing certificate or block is repaired
+/// match the authenticated upstream record. This function verifies a local
+/// finalization certificate independently, because honest nodes may retain different
+/// quorum subsets for the same proposal. It repairs a missing certificate or block
 /// from the authenticated record. Committee and boundary state advances
-/// through the same transition used by live resolver delivery.
+/// through the same transition that live resolver delivery uses.
 pub async fn authenticate_and_reconcile_replay_suffix<F, FC, FB>(
     authority: ReplayAuthority<'_, F>,
     window: ReplayWindow,
@@ -303,8 +304,8 @@ fn validate_certified_envelope(
 }
 
 /// Authenticate one live finalized delivery and advance only follower-local
-/// committee/boundary state. The marshal verifies the same certificate again;
-/// this lead-in exists solely to break the boundary verifier-routing cycle.
+/// committee/boundary state. The marshal verifies the same certificate again.
+/// This lead-in exists solely to break the boundary verifier-routing cycle.
 pub(super) fn authenticate_live_finalized(
     chain: &SharedCommitteeChain,
     epocher: &FollowerEpocher,
@@ -496,7 +497,7 @@ where
     })?;
 
     // The boundary block, finalized by the new committee itself, must carry
-    // the outcome its carrier pre-announced - exactly as live delivery checks.
+    // the outcome its carrier pre-announced. Live delivery does exactly this check.
     authenticate_ancestor_proof(chain, epocher, boundary_height, &boundary)?;
     ensure!(
         chain

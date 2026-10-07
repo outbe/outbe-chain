@@ -1,11 +1,12 @@
 //! Verify-side block resolution for the application handler.
 //!
-//! [`resolve_for_verify`] is the fetch strategy used while verifying a proposal:
-//! try the local block cache first, then subscribe to the marshal by digest
-//! (falling back to fetch-by-round) under a bounded timeout. Lifted out of
-//! `handler.rs` so the strategy - and its cache/marshal/timeout/telemetry
-//! shape - reads and tests independently of the verify event loop; it takes the
-//! block-cache and marshal seams as explicit parameters instead of `&self`.
+//! [`resolve_for_verify`] is the fetch strategy used while verifying a proposal.
+//! It tries the local block cache first. Then it subscribes to the marshal by
+//! digest, with fetch-by-round as the fallback, under a bounded timeout. The
+//! strategy lives outside the `handler` module. Thus the strategy and its
+//! cache/marshal/timeout/telemetry shape read and test independently of the
+//! verify path. It takes the block-cache and marshal seams as explicit
+//! parameters instead of `&self`.
 
 use std::time::Instant;
 

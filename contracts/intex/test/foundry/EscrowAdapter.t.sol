@@ -144,9 +144,9 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_Wire_EmitsWired_OnRotation() public {
-        // Rotate the auction address; the asset stays, so no version is retired.
-        // `escrow` was wired in setUp with (auction, compact, paymentToken); only the auction
-        // rotates, so its old value is non-zero and the rest carry their prior addresses.
+        // Rotate the auction address. The asset stays, so no version is retired.
+        // setUp wired `escrow` with (auction, compact, paymentToken). Only the auction rotates,
+        // so its old value is non-zero and the rest carry their prior addresses.
         address newAuction = address(0xBEEF);
         vm.expectEmit(true, true, true, true);
         emit IEscrowAdapter.Wired(
@@ -215,7 +215,8 @@ contract EscrowAdapterTest is Test {
     }
 
     /// @notice cheap sanity floor on `worldwideDay`. The `AUCTION_ROLE` gate already guarantees
-    ///         a real series, but a zero id is obviously bogus and is rejected before any state write.
+    ///         a real series. But a zero id is obviously bogus, and the escrow rejects it before
+    ///         any state write.
     function test_LockFunds_ZeroWorldwideDay() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "worldwideDay"));
         vm.prank(auction);
@@ -247,7 +248,8 @@ contract EscrowAdapterTest is Test {
 
     // --- FinalizeAuction Tests ---
 
-    /// @dev Lock a bid the way the auction sizes it, so the day's clearing terms can work out its payment.
+    /// @dev Lock a bid the way the auction sizes it, so the day's clearing terms can compute its
+    ///      payment.
     function _lockBid(address bidder, uint32 bidRate, uint16 quantity) internal returns (uint128 amount) {
         amount = uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, bidRate));
         paymentToken.mint(bidder, amount);
@@ -294,7 +296,8 @@ contract EscrowAdapterTest is Test {
 
     // --- a bidder the finalized day never named ---
 
-    // Finalize the day naming bidder2 only, who pays its whole lock; bidder1 lost and is left Locked.
+    // Finalize the day naming bidder2 only, who pays its whole lock. bidder1 lost and is left
+    // Locked.
     function _finalizeOmittingBidder1() internal returns (uint128 locked1) {
         locked1 = _lockBid(bidder1, 500_000, 1);
         _lockBid(bidder2, CLEARING_RATE, 1);
@@ -426,7 +429,8 @@ contract EscrowAdapterTest is Test {
     }
 
     function test_FinalizeAuction_OneFailure_OthersSucceed() public {
-        // bidder1 bid under the clearing rate, so its payment would exceed its lock; bidder2 is a valid winner.
+        // bidder1 bid under the clearing rate, so its payment would exceed its lock. bidder2 is a
+        // valid winner.
         uint128 locked1 = _lockBid(bidder1, 500_000, 1);
         uint128 locked2 = _lockBid(bidder2, 900_000, 1);
 
@@ -668,7 +672,7 @@ contract EscrowAdapterTest is Test {
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
-        // The Compact's forced withdrawal returns false (e.g. reset period not elapsed); the
+        // The Compact's forced withdrawal returns false (e.g. reset period not elapsed). The
         // adapter must surface this as the dedicated ForcedWithdrawalFailed, not a generic error.
         compact.setForcedWithdrawalShouldFail(true);
 
@@ -686,7 +690,8 @@ contract EscrowAdapterTest is Test {
         assertEq(paymentToken.balanceOf(bidder1) - balanceBefore, locked, "claimed before the unfinalized delay");
     }
 
-    /// @dev A winner the chunk had to skip keeps its whole lock, and the closed day owes it back in full.
+    /// @dev A winner the chunk had to skip keeps its whole lock, and the closed day must refund it
+    ///      in full.
     function test_ClaimRefund_SkippedWinner_RefundsFullPrincipal() public {
         uint128 locked = _lockBid(bidder1, 500_000, 1);
         _finalize(_winners(bidder1));
@@ -701,8 +706,8 @@ contract EscrowAdapterTest is Test {
 
     // --- message-id threading ---
 
-    /// @dev A finalize call stamps its inbound bridge message id onto every event it emits, so an indexer can
-    ///      attribute the whole chunk to one cross-chain packet.
+    /// @dev A finalize call stamps its inbound bridge message id onto every event it emits, so an
+    ///      indexer can attribute the whole chunk to one cross-chain packet.
     function test_GuidThreading_AllFinalizeEvents_CarryPacketGuid() public {
         bytes32 packet = keccak256("inbound-packet-A");
         uint128 locked = _lockBid(bidder2, 900_000, 1);

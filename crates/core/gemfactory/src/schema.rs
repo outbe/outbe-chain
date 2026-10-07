@@ -17,9 +17,20 @@ pub enum GemTypes {
     Merchant = 5,
 }
 
-/// A merchant's Gem Factory position: the pool of Promis capacity from which
-/// Merchant gems are issued. Modeled as a single-owner, non-transferable NFT
-/// (owner = `merchant`), keyed by `position_id`. `merchant == 0` means "no
+/// The terms an agent-class gem is issued on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GemIssueParams {
+    pub owner: Address,
+    pub gem_type: GemTypes,
+    pub promis_load: U256,
+    pub issuance_currency: u16,
+    pub reference_currency: u16,
+    pub entry_price: U256,
+}
+
+/// A merchant's Gem Factory position: the pool of Promis capacity from which the
+/// Gem Factory issues Merchant gems. The position is a single-owner, non-transferable
+/// NFT (owner = `merchant`), keyed by `position_id`. `merchant == 0` means "no
 /// position".
 #[storage_record(exists_field = merchant)]
 pub struct GemPosition {
@@ -32,7 +43,7 @@ pub struct GemPosition {
     #[attribute(order = 1)]
     pub source_intex_id: SeriesId,
 
-    /// Remaining Promis capacity; drains by `promis_load` on each issue.
+    /// Remaining Promis capacity. Each issue drains it by `promis_load`.
     #[attribute(order = 2)]
     pub remaining_capacity_minor: U256,
 
@@ -78,13 +89,13 @@ pub struct GemFactoryContract {
     #[attribute(order = 4)]
     pub position_owner_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- Live positions, in the order they opened: nothing else enumerates them, the
+    // --- Live positions, in the order they opened. Nothing else enumerates them: the
     // owner index answers "whose", not "which are alive".
     #[attribute(order = 5)]
     pub live_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 6)]
     pub live_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> position id; zero marks a slot already taken.
+    /// Queue index -> position id. Zero marks a slot already taken.
     #[attribute(order = 7)]
     pub live_queue_at: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 8)]
@@ -101,7 +112,7 @@ impl GemFactoryContract<'_> {
 
     pub(crate) fn remove_live_position(&mut self, position_id: U256) -> Result<()> {
         let index = self.live_queue_index.read(&position_id)?;
-        // A position that never queued reads index 0; only clear a slot it owns.
+        // A position that never queued reads index 0. Only clear a slot it owns.
         if self.live_queue_at.read(&index)? == position_id {
             self.live_queue_at.clear(&index)?;
         }

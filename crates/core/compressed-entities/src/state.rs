@@ -199,7 +199,7 @@ impl<'storage> State<'storage> {
     }
 
     /// The identity at `locator`, or `None` when the locator is untouched.
-    /// Absence is carried by the collection byte, not by a zero identity:
+    /// The collection byte, not a zero identity, carries absence:
     /// `Collection::from_id` rejects 0, and a zero identity is a representable
     /// value rather than a sentinel.
     fn read_body_identity(&self, locator: B256) -> Result<Option<(Collection, WwdEntityId)>> {

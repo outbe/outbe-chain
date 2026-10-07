@@ -1,7 +1,7 @@
 //! Genesis-fixed authority for V1 TEE attestation.
 //!
 //! Every runnable chain must carry this field. Devnet and testnet may
-//! explicitly select `DcapRequired` or `GramineDirectDev`; mainnet requires
+//! explicitly select `DcapRequired` or `GramineDirectDev`. Mainnet requires
 //! `DcapRequired`. Both use OST3, and neither can fall back at runtime.
 
 use std::sync::Arc;
@@ -28,7 +28,7 @@ pub const TEE_ATTESTATION_V1_ACTIVATION_HEIGHT: u64 = 1;
 
 /// Pre-measurement network authority derived from the seeded genesis. It is
 /// intentionally independent of `teeAttestationV1`, because that policy is
-/// created only after the descriptor has contributed to `MRENCLAVE`.
+/// created only after the descriptor contributed to `MRENCLAVE`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DcapSeededChainSpecBindingV1 {
     pub chain_id: u64,

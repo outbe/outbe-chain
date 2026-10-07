@@ -577,11 +577,10 @@ fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
         .next()
         .expect("OracleSlashWindow system tx should be present");
     let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
-    // A forced OOG does not model Oracle performing ten billion units of
-    // useful work: revm charges the complete system-call gas limit for any
-    // OOG. Because mandatory phases have already consumed internal work,
-    // accepting it as a soft failure would exceed the aggregate block
-    // budget. The failure must therefore be hard and atomic even though an
+    // A forced OOG does not model Oracle performing ten billion units of useful work. revm
+    // charges the complete system-call gas limit for any OOG. The mandatory phases already
+    // consumed internal work. Thus, to accept the OOG as a soft failure would exceed the
+    // aggregate block budget. Therefore the failure must be hard and atomic, even though an
     // ordinary OracleSlashWindow revert remains soft.
     let cycle_gas = executor
         .execute_transaction(cycle_tx)

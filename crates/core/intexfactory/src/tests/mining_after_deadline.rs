@@ -22,7 +22,7 @@ fn promis_auth(account: Address, amount: U256, nonce: u64) -> outbe_promisfactor
     }
 }
 
-/// Past the deadline the unpaid unit is refused settlement; the paid one mints
+/// Past the deadline the unpaid unit is refused settlement. The paid one mints
 /// its Promis and moves the ledgers by exactly one unit.
 #[test]
 fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_closed() {
@@ -66,10 +66,12 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::ONE,
-            payment_token(),
-            U256::ZERO,
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: U256::ZERO,
+            },
         )
         .unwrap_err();
         assert!(
@@ -84,8 +86,10 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             sid(7),
             owner(),
             U256::ONE,
-            nonce,
-            promis_auth(owner(), promis_minor, 0),
+            runtime::MiningProof {
+                nonce,
+                auth: promis_auth(owner(), promis_minor, 0),
+            },
         )
         .unwrap();
         assert_eq!(minted, promis_minor);

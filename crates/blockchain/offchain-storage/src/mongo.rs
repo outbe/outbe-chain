@@ -55,8 +55,8 @@ const RETRYABLE_READ_CODES: &[i32] = &[
 pub struct MongoStorageConfig {
     /// MongoDB connection string.
     ///
-    /// Read/write consistency options may be omitted or set to the required
-    /// primary/majority contract. Conflicting URI options are rejected.
+    /// The URI may omit read/write consistency options or set them to the required
+    /// primary/majority contract. `MongoStorage::connect` rejects conflicting URI options.
     pub uri: String,
     /// Database containing the namespace collections.
     pub database: String,
@@ -188,8 +188,9 @@ impl MongoStorage {
 
     /// Proves recovery with a server-acknowledged operation inside a transaction.
     ///
-    /// The projection state collection is guaranteed to exist after projector
-    /// startup. The impossible filter keeps this probe side-effect free while
+    /// The probe targets the writer-lease collection. The storage provider
+    /// acquires the writer lease when it opens the storage, and that insert
+    /// creates the collection. The impossible filter keeps this probe side-effect free while
     /// still forcing the driver to start and commit a real transaction.
     pub fn verify_acknowledged_transaction(&self) -> Result<(), StorageError> {
         let mut session = self

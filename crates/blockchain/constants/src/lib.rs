@@ -388,8 +388,8 @@ impl GenesisProtocolParametersV1 {
 static PARAMETERS: OnceLock<GenesisProtocolParametersV1> = OnceLock::new();
 
 /// Enforce the build policy and initialize test-only overrides when enabled.
-/// Re-validating the same effective parameters is harmless; changing an
-/// already running process's parameters remains forbidden.
+/// Re-validating the same effective parameters is harmless. Changing the
+/// parameters of an already running process remains forbidden.
 pub fn initialize(value: Option<&serde_json::Value>) -> Result<(), ProtocolConstantsError> {
     let parameters = GenesisProtocolParametersV1::select_for_build(value)?;
 

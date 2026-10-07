@@ -243,16 +243,16 @@ fn fatal(message: impl Into<String>) -> outbe_primitives::error::PrecompileError
 ///
 /// Field order is protocol-critical: the declaration order below is exactly
 /// slots 0 through 13. Slot 1 is the sole EVM authority for the
-/// compressed-entity tree. Slots 2 and 3 deliberately remain reserved; they
-/// must not be reused as direct commitment mappings.
+/// compressed-entity tree. Slots 2 and 3 deliberately remain reserved. Do not
+/// reuse them as direct commitment mappings.
 ///
-/// Slot 10 changed meaning when identities narrowed to 32 bytes: it held a
+/// Slot 10 changed meaning when identities narrowed to 32 bytes. It held a
 /// 38-byte dynamic `bytes` record (three slots - a length word plus two data
-/// words) and now holds the identity in one word, with slot 13 carrying the
-/// collection byte that record used to include. Repointing a live slot is
-/// normally forbidden; it is admissible only because that change ships as a
-/// clean break with no migration, and `STORAGE_SCHEMA_VERSION` is bumped to
-/// reject any state written under the old layout.
+/// words). Now it holds the identity in one word, and slot 13 carries the
+/// collection byte that the record used to include. Repointing a live slot is
+/// normally forbidden. `ensure_schema` rejects version 3 but accepts version 2
+/// when the body, index, and retirement overlays are empty. It then writes the
+/// current `STORAGE_SCHEMA_VERSION`.
 #[contract(addr = COMPRESSED_ENTITIES_ADDRESS)]
 pub(crate) struct CompressedEntitiesSchema {
     /// Slot 0.
@@ -284,8 +284,8 @@ pub(crate) struct CompressedEntitiesSchema {
     /// Slot 13. Collection of the identity at slot 10, and the presence marker
     /// for it: `Collection::from_id` rejects 0, so a zero here means absent.
     /// Kept out of slot 10 because a collection plus a full-width identity does
-    /// not fit one word, and stored at all because the cleanup and sealing scans
-    /// recover the collection from the value - the locator key is hashed and
+    /// not fit one word. It is stored at all because the cleanup and sealing
+    /// scans recover the collection from the value. The locator key is hashed and
     /// cannot be inverted.
     pub body_identity_collection: Mapping<B256, u8>,
 }

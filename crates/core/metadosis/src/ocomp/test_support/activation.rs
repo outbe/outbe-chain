@@ -582,10 +582,12 @@ fn seed_requested_job(
     let finalized = contract
         .record_ocomp_finality(
             intent_id,
-            hash(46),
-            request_state_root,
-            TEST_REQUEST_HEIGHT,
-            capacity_profile().result_deadline_blocks,
+            crate::ocomp::FinalityAnchor {
+                request_block_hash: hash(46),
+                request_state_root,
+                recorded_height: TEST_REQUEST_HEIGHT,
+                response_window_blocks: capacity_profile().result_deadline_blocks,
+            },
             limits,
         )
         .unwrap();

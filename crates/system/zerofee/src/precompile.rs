@@ -1,11 +1,12 @@
 //! ABI dispatch for the zero-fee paymaster precompile.
 //!
-//! Only view methods are exposed. `recordUse` is **not** an ABI method -
-//! the counter is only mutated by the executor pre-fee hook via the
-//! direct Rust function [`crate::record_sponsorship_use`], gated by a
-//! successful [`crate::authorize_sponsorship`]. Allowing out-of-band
+//! The precompile exposes only view methods. `recordUse` is **not** an ABI
+//! method. Only the executor pre-fee hook mutates the counter, through the
+//! direct Rust function [`crate::record_sponsorship_use`]. A successful
+//! [`crate::authorize_sponsorship`] gates that call. Out-of-band
 //! `recordUse` calls would let a sponsored signer burn their own quota
-//! through a regular sub-call, racing the executor's pre-fee write.
+//! through a regular sub-call. That sub-call would race the executor's
+//! pre-fee write.
 
 use alloy_primitives::Address;
 use alloy_sol_types::sol;
@@ -36,9 +37,9 @@ sol!(
 ///
 /// The raw packed slot (`date_key << 32 | count`) is still readable via
 /// `eth_getStorageAt(ZEROFEE_ADDRESS, slot)` for anyone who needs the
-/// pre-reset value; it is intentionally not a precompile method because
-/// it is trivially derivable and the reset-applied view is what callers
-/// actually want.
+/// pre-reset value. It is intentionally not a precompile method, because
+/// it is trivially derivable and callers actually want the reset-applied
+/// view.
 #[contract_dispatch]
 impl ZeroFeeContract<'_> {
     /// Returns `true` if `signer` would be admitted to the sponsored
@@ -48,9 +49,9 @@ impl ZeroFeeContract<'_> {
     /// (`timestamp_to_date_key(block.timestamp)`).
     ///
     /// This is the canonical "may this signer use a free tx now?" RPC
-    /// for off-chain wallets - they can call it before submitting a
-    /// sponsored transaction to surface `false` as a UX warning instead
-    /// of waiting for a soft-failure receipt.
+    /// for off-chain wallets. A wallet can call it before it submits a
+    /// sponsored transaction. The wallet can then surface `false` as a UX
+    /// warning instead of waiting for a soft-failure receipt.
     #[contract_public("authorizeSponsorship(address) view returns (bool)")]
     #[contract_view]
     fn _abi_authorize_sponsorship(&mut self, signer: Address) -> Result<bool> {
@@ -62,8 +63,8 @@ impl ZeroFeeContract<'_> {
     }
 
     /// Returns the EFFECTIVE `(day, count)` for `signer` as of the
-    /// current block, with the lazy day-reset already applied: `day` is
-    /// always today's UTC day key, and `count` is 0 if the stored slot
+    /// current block, with the lazy day-reset already applied. `day` is
+    /// always today's UTC day key. `count` is 0 if the stored slot
     /// belongs to an earlier day (or was never written). A caller can
     /// therefore compute remaining free txs as
     /// `FREE_TX_DAILY_LIMIT - count` directly, without knowing or
@@ -96,10 +97,10 @@ impl ZeroFeeContract<'_> {
 #[cfg(test)]
 mod tests {
     //! ABI dispatch round-trip tests. These exercise the generated
-    //! `dispatch` entrypoint (selector decode -> method -> ABI encode),
-    //! which is a code path distinct from the runtime helpers - in
-    //! particular `authorizeSponsorship` reimplements the gate inline
-    //! and must be verified independently of `runtime::authorize_sponsorship`.
+    //! `dispatch` entrypoint (selector decode -> method -> ABI encode).
+    //! That code path is distinct from the runtime helpers. In
+    //! particular, `authorizeSponsorship` reimplements the gate inline.
+    //! These tests must verify it independently of `runtime::authorize_sponsorship`.
 
     use alloy_primitives::{address, Address, U256};
     use alloy_sol_types::SolCall;
@@ -238,7 +239,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             // `recordUse(address,uint32)` selector is deliberately NOT in
-            // the ABI - any unknown selector must fail to dispatch, so a
+            // the ABI. Any unknown selector must fail to dispatch, so a
             // signer cannot burn quota out-of-band.
             let bogus = [0xde, 0xad, 0xbe, 0xef];
             let res = super::dispatch(storage, &bogus, Address::ZERO, U256::ZERO);

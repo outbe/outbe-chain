@@ -2,10 +2,10 @@
 //!
 //! Faithful port of `contracts/.../VaultRouter.sol`. All cross-contract
 //! interaction (ERC-20 token ops, ERC-4626 vault ops) goes
-//! through `StorageHandle::call` / `StorageHandle::staticcall`; from the callee's
+//! through `StorageHandle::call` / `StorageHandle::staticcall`. From the callee's
 //! perspective `msg.sender` is `VAULT_ROUTER_ADDRESS` (this precompile).
 //!
-//! ERC-20 transfers reject false or malformed return values; empty returns are accepted.
+//! ERC-20 transfers reject false or malformed return values. They accept empty returns.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
@@ -25,7 +25,7 @@ use crate::sol_ext::{IVaultV2, IERC20};
 /// This precompile's own address (`address(this)` in the Solidity original).
 const SELF: Address = VAULT_ROUTER_ADDRESS;
 
-/// Ceiling on a registered asset's `decimals()` accepted by `rebalance`; every scaling
+/// Ceiling on a registered asset's `decimals()` accepted by `rebalance`. Every scaling
 /// below this bound is an exact power-of-ten multiply or a single ceiling divide.
 const MAX_ASSET_DECIMALS: u8 = 18;
 
@@ -107,9 +107,9 @@ fn ensure_no_pending_crosschain_operations(storage: &StorageHandle<'_>) -> Resul
 // vault management (owner-only)
 // ---------------------------------------------------------------------------
 
-/// `addVault`: register an ownerless `vault` for its underlying asset and ISO
-/// 4217 reference currency, then grant the router an unlimited allowance so
-/// the vault can pull on deposit.
+/// Register an ownerless `vault` for its underlying asset and ISO 4217 reference currency.
+/// The router grants the vault an unlimited allowance so the vault can transfer assets during
+/// deposits.
 pub fn add_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) -> Result<()> {
     ensure_owner(&storage, sender)?;
     if vault.is_zero() {
@@ -300,7 +300,7 @@ pub fn remove_liquidity_target(
 // liquidity flow
 // ---------------------------------------------------------------------------
 
-/// Resolves the `StablesSource` registered for `caller`, returning `Unknown`
+/// Resolves the `StablesSource` registered for `caller`. Returns `Unknown`
 /// when `caller` is not a registered source.
 pub fn registered_liquidity_source(
     storage: &StorageHandle<'_>,
@@ -312,7 +312,7 @@ pub fn registered_liquidity_source(
     ))
 }
 
-/// Resolves the `StablesTarget` registered for `caller`, returning `Unknown`
+/// Resolves the `StablesTarget` registered for `caller`. Returns `Unknown`
 /// when `caller` is not a registered target.
 pub fn registered_liquidity_target(
     storage: &StorageHandle<'_>,
@@ -325,7 +325,7 @@ pub fn registered_liquidity_target(
 }
 
 /// `deposit`: pulls `amount` of `asset` from the caller and deposits it
-/// into the asset's vault, returning the minted shares.
+/// into the asset's vault. Returns the minted shares.
 pub(crate) fn deposit(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -354,7 +354,7 @@ pub(crate) fn deposit(
     Ok(shares)
 }
 
-/// `withdraw`: redeems assets and transfers them to `receiver`, returning burned shares.
+/// `withdraw`: redeems assets and transfers them to `receiver`. Returns the burned shares.
 pub(crate) fn withdraw(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -529,7 +529,7 @@ pub(crate) fn release_reservation(
 }
 
 /// `returnReservation`: deposit the assets held under `id` back into their origin
-/// vault. The originating CCA may unwind anytime; after expiry anyone may.
+/// vault. The originating CCA may unwind anytime. After expiry, anyone may.
 /// Idempotent: an unknown id returns zero.
 pub(crate) fn return_reservation(
     storage: StorageHandle<'_>,
@@ -590,10 +590,10 @@ fn now_secs(storage: &StorageHandle<'_>) -> Result<u64> {
 
 /// `rebalance`: moves `amount` of liquidity from `vault_from` to `vault_to`. The caller
 /// supplies `asset_to` (the destination vault's underlying asset) at the oracle cross rate
-/// and receives `asset_from` in return, so the router never holds a standing allowance and
-/// never sources liquidity itself - the caller must have approved this router for at least
-/// the required amount beforehand. `max_amount_to` bounds what the router may pull if the
-/// rate moved between the caller's quote and this call.
+/// and receives `asset_from` in return. As a result, the router never holds a standing
+/// allowance and never sources liquidity itself. The caller must have approved this router
+/// for at least the required amount beforehand. `max_amount_to` bounds what the router may
+/// pull if the rate moved between the caller's quote and this call.
 pub(crate) fn rebalance(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -654,7 +654,7 @@ pub(crate) fn rebalance(
 }
 
 /// `previewRebalance`: what a `rebalance` of `amount` from `vault_from` to `vault_to` would
-/// require the caller to supply, so it can approve exactly that before calling.
+/// require the caller to supply. The caller can then approve exactly that before calling.
 pub(crate) fn preview_rebalance(
     storage: &StorageHandle<'_>,
     vault_from: Address,
@@ -670,9 +670,10 @@ pub(crate) fn preview_rebalance(
 }
 
 /// Resolves both vaults' underlying assets and confirms each vault is still registered
-/// under its own asset - the enumerable set membership `addVault`/`removeVault` maintain,
-/// not `vault_reference_currencies`, which has an upgrade-compatibility hole for vaults
-/// registered before the ISO index existed (see `remove_vault` above).
+/// under its own asset. The check uses the enumerable set membership that
+/// `addVault`/`removeVault` maintain. It does not use `vault_reference_currencies`, which
+/// has an upgrade-compatibility hole for vaults registered before the ISO index existed
+/// (see `remove_vault` above).
 fn registered_rebalance_assets(
     storage: &StorageHandle<'_>,
     vault_from: Address,
@@ -731,7 +732,7 @@ fn rebalance_amount_to(
 }
 
 /// Rescales `amount` from `from_decimals` to `to_decimals`. Scaling up is an exact
-/// power-of-ten multiply; scaling down rounds up.
+/// power-of-ten multiply. Scaling down rounds up.
 fn rescale_decimals(amount: U256, from_decimals: u8, to_decimals: u8) -> Result<U256> {
     match to_decimals.cmp(&from_decimals) {
         core::cmp::Ordering::Equal => Ok(amount),

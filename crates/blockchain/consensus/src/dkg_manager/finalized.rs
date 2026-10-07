@@ -115,7 +115,7 @@ impl CeremonyState {
 }
 
 /// Existing ceremony inputs and the canonical finalized-log prefix to replay.
-/// The caller supplies chain order; the manager does not reorder or prefetch it.
+/// The caller supplies chain order. The manager does not reorder or prefetch it.
 pub struct CeremonyReplayRequest<I> {
     pub epoch: Epoch,
     pub round: u64,

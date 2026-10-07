@@ -2,7 +2,7 @@ use crate::world::ocomp::*;
 
 impl OcompTopology {
     /// Stage the next validator's local runtime material before it starts in
-    /// validator mode. This does not add it to the voting topology; membership
+    /// validator mode. This does not add it to the voting topology. Membership
     /// changes only after the canonical ValidatorSet activation boundary.
     #[cfg(feature = "ocomp-integration")]
     pub fn stage_joiner_domain_material(&self, validator_index: u8) -> Result<()> {
@@ -17,7 +17,7 @@ impl OcompTopology {
 
     /// Prepare two independently scheduled public jobs around one real DKG
     /// membership boundary. The shortened epoch is still above the normative
-    /// snapshot-retention lower bound; the compute-and-vote deadline comes from
+    /// snapshot-retention lower bound. The compute-and-vote deadline comes from
     /// the test-only genesis override selected by the E2E node build.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_dynamic_membership_fork_install(&self) -> Result<OcompDynamicMembershipForkV1> {
@@ -138,8 +138,8 @@ fn schedule_dynamic_membership_days(
     let first_processing_time = genesis_timestamp
         .checked_add(OCOMP_DYNAMIC_FIRST_OFFERING_AFTER_GENESIS_SECS)
         .ok_or_else(|| eyre::eyre!("first dynamic OCOMP processing time overflow"))?;
-    // Job B is deliberately released by the scenario's controlled-time jump,
-    // after the certified five-validator activation. A relative `+700s`
+    // The scenario's controlled-time jump deliberately releases Job B after
+    // the certified five-validator activation. A relative `+700s`
     // deadline raced the height-300 activation when SGX/admission work delayed
     // blocks, allowing the job to pin the historical four-member snapshot.
     let second_processing_time = genesis_timestamp
@@ -200,8 +200,9 @@ pub(in crate::world::ocomp) fn schedule_public_recovery_day(
 }
 
 /// Seed only the chain-state prerequisites for a later independent public job.
-/// No Tribute, OCOMP FSM, JobIntent, export, vote, result or Nod is constructed
-/// here; those remain observable production effects of the running scenario.
+/// This function constructs no Tribute, OCOMP FSM, JobIntent, export, vote,
+/// result or Nod. Those remain observable production effects of the running
+/// scenario.
 #[cfg(feature = "ocomp-integration")]
 fn seed_followup_public_day(
     genesis: &mut serde_json::Value,

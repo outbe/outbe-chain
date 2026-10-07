@@ -69,16 +69,16 @@ pub enum TransportError {
 impl TransportError {
     /// True when the error means the connection itself is broken or
     /// desynchronized, so a bounded reconnect + one retry may help:
-    /// - `Io` / `IoTimeout`: socket-level fault;
-    /// - `Noise`: after any failed round-trip the initiator nonce has advanced,
-    ///   so the cipher state is unusable regardless of the cause;
+    /// - `Io` / `IoTimeout`: socket-level fault.
+    /// - `Noise`: after any failed round-trip, the initiator nonce advanced.
+    ///   The cipher state is then unusable, whatever the cause.
     /// - `FrameTooLarge` on read: corrupt stream.
     ///
     /// Deliberately excluded:
-    /// - `Handshake` - also produced by local policy rejections
-    ///   (e.g. `AuthorizeRemoteSessionV1` misuse), not only by transport;
-    /// - `EnclaveError` - the enclave answered; the connection is healthy and
-    ///   the answer is deterministic;
+    /// - `Handshake` - local policy rejections also produce it
+    ///   (e.g. `AuthorizeRemoteSessionV1` misuse), not only transport.
+    /// - `EnclaveError` - the enclave answered. The connection is healthy and
+    ///   the answer is deterministic.
     /// - `Codec` / `UnexpectedResponse` / attestation errors - post-decryption
     ///   protocol or enclave faults a fresh connection deterministically repeats.
     pub fn is_connection_fault(&self) -> bool {

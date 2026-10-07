@@ -4,7 +4,7 @@ use cucumber::then;
 use cucumber::when;
 
 /// Stop every committee node and enclave, then relaunch them from the same
-/// datadirs. Each identity must unseal its own permanent key; there is no peer
+/// datadirs. Each identity must unseal its own permanent key. There is no peer
 /// redelivery path.
 #[when("the entire committee and its enclaves are stopped and restarted")]
 fn committee_and_enclaves_restarted(world: &mut World) {
@@ -45,7 +45,7 @@ fn committee_and_enclaves_restarted(world: &mut World) {
     world
         .localnet
         .restart_committee_and_enclaves_observed(|stopped| {
-            // Old processes have been reaped; no replacement has started yet.
+            // The old processes are reaped. No replacement has started yet.
             for index in 0..original_pids.len() {
                 let dir = stopped.scenario_dir().join(format!("validator-{index}"));
                 logs.push((
@@ -163,8 +163,8 @@ fn committee_recovers_sealed_tee_state(world: &mut World) {
     let expected_supply = supply_before
         .checked_add(alloy_primitives::U256::from(1))
         .expect("Tribute supply overflow");
-    // The offer is admitted only from an operator L2Registry knows, so the
-    // registration is established before the before-offer capture below.
+    // The offer is admitted only from an operator that L2Registry knows. Thus this
+    // step establishes the registration before the before-offer capture below.
     crate::features::l2_registration::ensure_tribute_offer_operator(world, &key);
     // Retain an exact prefix of the existing launch capture. The suffix must
     // come from these same processes after this checkpoint, not earlier replay.

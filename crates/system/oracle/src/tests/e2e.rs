@@ -1864,8 +1864,8 @@ fn tribute_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
     });
 }
 
-/// Each currency is priced from its own `COEN/<iso>` pair, and a pair COEN is not
-/// the base of never leaks into the answer.
+/// The API prices each currency from its own `COEN/<iso>` pair. A pair that does
+/// not have COEN as its base never leaks into the answer.
 #[test]
 fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
     let eur: Address = AssetType::IsoCurrency(978).into();
@@ -1876,7 +1876,7 @@ fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
-        // COEN is not the base - must not be mistaken for a COEN/<iso> pair.
+        // COEN is not the base. This pair must not be mistaken for a COEN/<iso> pair.
         oracle
             .register_pair(AddressPair::from_addresses(usd(), ETH))
             .unwrap();
@@ -1904,8 +1904,8 @@ fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
             })
         );
 
-        // A curve on the issuance currency must never brake Tribute pricing;
-        // only the independently selected reference currency curve is returned.
+        // A curve on the issuance currency must never brake Tribute pricing.
+        // The API returns only the independently selected reference currency curve.
         crate::scurve::store_scurve_entry(
             &mut oracle,
             pair_key(COEN, usd()),

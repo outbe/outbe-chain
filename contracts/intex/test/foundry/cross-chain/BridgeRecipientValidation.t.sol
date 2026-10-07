@@ -9,8 +9,9 @@ import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {SendParam, BatchSendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
 
-/// @notice A non-canonical recipient (dirty high bits) is rejected on the send path before any burn, matching the
-///         receive path - otherwise the burn would have no mint counterpart and the message would wedge.
+/// @notice The send path rejects a non-canonical recipient (dirty high bits) before any burn, as
+///         the receive path does. Otherwise the burn would have no mint counterpart and the message
+///         would wedge.
 contract BridgeRecipientValidationTest is CrossChainTest {
     uint32 private constant B_CHAIN_ID = 2;
     uint256 private constant FEE = 0.001 ether;

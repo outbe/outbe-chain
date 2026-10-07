@@ -6,12 +6,15 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageVec};
 use outbe_primitives::time::WorldwideDay;
 pub use outbe_primitives::units::SCALE_1E18;
 
-/// Which pair a parallel-column group is talking about: the registry's 1-based
-/// enumeration index in `pair_by_index`, and the 0-based entry index in the
-/// per-vote, per-snapshot and per-day columns, where every pair appears once.
+/// Which pair a parallel-column group is talking about. It labels two indices:
+/// - the registry's 1-based enumeration index in `pair_by_index`.
+/// - the 0-based entry index in the per-vote and per-snapshot columns,
+///   where every pair appears once.
 ///
-/// An alias, not a newtype - it labels which of this schema's several `u32`s
-/// means "which pair" without pretending to stop a `utc_day` being passed as
+/// Per-day VWAP columns use this 1-based registry index, not that entry index.
+///
+/// An alias, not a newtype. It labels which of this schema's several `u32`s
+/// means "which pair". It does not pretend to stop a `utc_day` being passed as
 /// one. The S-curve columns are deliberately *not* indexed by this: a pair can
 /// hold several S-curve entries, so their key identifies an entry, not a pair.
 pub type PairIndex = u32;
@@ -22,20 +25,20 @@ pub type PairIndex = u32;
 /// calculation for whitelisted trading pairs.
 ///
 /// Prices and volumes remain `U256` in each pair's registered scale. COEN/ISO
-/// uses six decimals; generic non-ISO pairs retain their existing contract.
+/// uses six decimals. Generic non-ISO pairs retain their existing contract.
 ///
 /// A pair is an [`AddressPair`]: its two asset addresses in the orientation they
 /// were quoted. As a *key* it sorts (so both directions of a market share one
-/// slot); as a *value* it spans two consecutive words, base then quote.
-/// `pair_to_index` maps a pair onto a dense 1-based [`PairIndex`], which exists
-/// only so the registry can be enumerated, and `pair_by_index` walks back.
+/// slot). As a *value* it spans two consecutive words, base then quote.
+/// `pair_to_index` maps a pair onto a dense 1-based [`PairIndex`]. That index
+/// exists only so the registry can be enumerated. `pair_by_index` walks back.
 ///
-/// Slot number == field declaration index; every field below occupies exactly
-/// one, including `Mapping<_, AddressPair>` - its second word lives at
-/// `keccak256(key || slot) + 1`, inside the key's own hashed namespace rather
-/// than in the next declaration slot. `openings.rs` and
-/// `scripts/seed_genesis.py` hardcode these numbers - see the slot-parity tests
-/// in `tests/state.rs` before reordering anything.
+/// Slot number == field declaration index. Every field below occupies exactly
+/// one slot, including `Mapping<_, AddressPair>`. Its second word lives at
+/// `keccak256(key || slot) + 1`, inside the key's own hashed namespace and not
+/// in the next declaration slot. `openings.rs` and `scripts/seed_genesis.py`
+/// hardcode these numbers. Read the slot-parity tests in `tests/state.rs` before
+/// you reorder anything.
 #[contract(addr = ORACLE_ADDRESS)]
 pub struct OracleContract {
     // === Config (slots 0-7) ===
@@ -71,9 +74,9 @@ pub struct OracleContract {
     // === Exchange Rates (slots 12-14) ===
     // Keyed by the registry's [`PairIndex`], so a price read is two steps:
     // `pair_to_index` first, then this column. Only a registered pair has an
-    // index, so an unregistered market has no rate slot to write into at all,
-    // and the index carries the orientation the pair was registered in - the
-    // stored rate is always the registered direction, never the reciprocal.
+    // index, so an unregistered market has no rate slot to write into at all.
+    // The index carries the orientation the pair was registered in. The stored
+    // rate is always the registered direction, never the reciprocal.
     // slot 12: mapping(pair_index => exchange_rate), pair-registered scale
     pub exchange_rate: Mapping<PairIndex, U256>,
     // slot 13: mapping(pair_index => last_update_block)
@@ -81,9 +84,10 @@ pub struct OracleContract {
     // slot 14: mapping(pair_index => last_update_timestamp)
     pub exchange_rate_timestamp: Mapping<PairIndex, u64>,
 
-    // === Feeder Delegation (slot 15) ===
-    // slot 15: mapping(validator_address => feeder_address)
-    // Address::ZERO means self-delegation (validator is its own feeder)
+    // === Retired feeder-delegation field (slot 15) ===
+    // Dead mapping. This crate has no reader or writer for it.
+    // Live feeder delegation is stored in ValidatorSet
+    // under `ValidatorDelegateRole::Oracle`.
     pub feeder_delegation: Mapping<Address, Address>,
 
     // === Vote Penalty Counters (slots 16-18) ===
@@ -147,9 +151,9 @@ pub struct OracleContract {
     pub scurve_last_processed_day: Slot<u64>,
 
     // === Settlement Currencies - retired (slots 40-42) ===
-    // The settlement pair is derived, not stored: `AddressPair::new_coen_to(iso)` packs the
-    // zero address with the marked ISO address, and an ISO is usable exactly
-    // when that pair is present in `pair_index`. Slots 40
+    // The settlement pair is derived, not stored: `AddressPair::new_coen_to(iso)`
+    // packs the zero address with the marked ISO address. An ISO is usable
+    // exactly when that pair is present in `pair_index`. Slots 40
     // (`settlement_count`), 41 (`settlement_iso_to_denom`) and 42
     // (`settlement_iso_to_pair`) are retired holes with no live writer. Do not
     // reuse them.
@@ -176,11 +180,11 @@ pub struct OracleContract {
     pub worldwide_day_vwap_end: Mapping<WorldwideDay, u64>,
     // Slots 50 (`worldwide_day_vwap_pair_count`) and 51
     // (`worldwide_day_vwap_pair`) are retired holes. Do not reuse. They existed
-    // only to name the pair behind a per-day entry ordinal; the column below is
+    // only to name the pair behind a per-day entry ordinal. The column below is
     // keyed by the registry index instead, so the pair is already in
     // `pair_by_index`.
     // slot 52: mapping(worldwide_day => mapping(pair_index => vwap))
-    // Inner key is the registry [`PairIndex`] - the same key space as
+    // Inner key is the registry [`PairIndex`]. It is the same key space as
     // `pair_by_index`, so `1..=pair_count` enumerates the day. An absent entry
     // reads as zero and means "no VWAP for that pair on that day".
     // slot 52 - pinned: without this anchor the running slot counter would slide
@@ -199,17 +203,18 @@ pub struct OracleContract {
     // === Reference Currencies (slot 55) ===
     // Dynamic list of ISO 4217 numeric codes considered "reference" currencies
     // for off-chain pricing. Length at the base slot, data at keccak256(slot)
-    // + index. Pre-filled at genesis with [840] (USD).
+    // + index. Genesis pre-fills CNY 156, HKD 344, JPY 392, GBP 826,
+    // USD 840, and EUR 978. USD is the mandatory member.
     pub reference_currencies: StorageVec<u16>,
 
     // === Per-UTC-Day VWAP Snapshots (slots 58-59) ===
     // Finalized VWAP for a full UTC calendar day, keyed by a yyyymmdd UTC date
-    // key (e.g. 20260625) - NOT a WorldwideDay (which is UTC+14). Written once
-    // per closed day by the begin-block lifecycle from the canonical
+    // key (e.g. 20260625). The key is NOT a WorldwideDay (which is UTC+14). The
+    // begin-block lifecycle writes it once per closed day from the canonical
     // `[date_key_to_utc_timestamp(utc_day), +SECONDS_PER_DAY)` window. Stored
     // forever (no pruning). A day with no oracle data is never written, so an
     // empty day is indistinguishable from an unfinalized one by its entries
-    // alone; `utc_day_vwap_last_finalized` is the authority on which is which.
+    // alone. `utc_day_vwap_last_finalized` is the authority on which is which.
     //
     // Slots 56 (`utc_day_vwap_pair_count`) and 57 (`utc_day_vwap_pair`) are
     // retired holes. Do not reuse.
@@ -218,13 +223,15 @@ pub struct OracleContract {
     // above. slot 58 - pinned against the retired 56-57 hole.
     #[slot(58)]
     pub(crate) utc_day_vwap_value: Mapping<u32, Mapping<PairIndex, U256>>,
-    // Monotonic watermark: most recent fully-closed UTC day that has been
-    // finalized (yyyymmdd). 0 = nothing finalized yet. Backfill is contiguous,
-    // so every day <= this watermark is considered finalized.
+    // Monotonic watermark: most recent closed UTC day the lifecycle marked
+    // (yyyymmdd). 0 = nothing finalized yet.
+    // A gap wider than the backfill cap skips the oldest days.
+    // The watermark still moves to the most recent closed day.
+    // A day below the watermark can therefore stay unfinalized.
     pub utc_day_vwap_last_finalized: Slot<u32>,
 
     // Slot 60 held annual policy rates while they were incorrectly coupled to
-    // reference-currency membership. It is retired; do not reuse.
+    // reference-currency membership. It is retired. Do not reuse.
 
     // === OCOMP PoC pre-admission projection (slots 61, 63-64) ===
     // These trailing fields are inert until the fresh-devnet fork handler sets
@@ -233,7 +240,7 @@ pub struct OracleContract {
     #[slot(61)]
     pub ocomp_profile_ready: Slot<bool>,
     // Slot 62 (`ocomp_day_type_pair_id`) is a retired hole. The day-type pair is
-    // the compile-time `DAY_TYPE_PAIR_KEY`, so pinning its ordinal in storage
+    // the compile-time `DAY_TYPE_PAIR`, so pinning its ordinal in storage
     // bought nothing once pairs stopped being identified by ordinal.
     // Do not reuse.
     // slot 63: direct O(1) lookup for the single fork-fixed auction-entry pair.
@@ -271,14 +278,14 @@ pub struct OracleContract {
     pub(crate) utc_day_vwap_first_recorded: Slot<u32>,
 
     // === Hourly VWAP aggregates (slots 78-80) ===
-    // A ring of 24 cells per pair keyed by UTC hour of day; `hourly_vwap_hour`
-    // names the hour a cell holds; it holds nothing for any other hour.
+    // A ring of 24 cells per pair keyed by UTC hour of day. `hourly_vwap_hour`
+    // names the hour a cell holds. The cell holds nothing for any other hour.
     pub(crate) hourly_vwap_hour: Mapping<AddressPair, Mapping<u64, u64>>,
     pub(crate) hourly_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
     pub(crate) hourly_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
 
     // === Window coverage (slots 81-82) ===
-    // Snapshots the pair contributed to the cell's hour; lives with the cell.
+    // Snapshots the pair contributed to the cell's hour. It lives with the cell.
     pub(crate) hourly_snapshot_count: Mapping<AddressPair, Mapping<u64, u64>>,
     // First block number seen in each UTC hour (keyed by hour start), written
     // at begin-block. Gives the window's block span independently of votes.

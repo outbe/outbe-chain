@@ -4,8 +4,8 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
-/// @dev Thin external wrapper around `internal pure` helpers in BridgeMsgCodec so the per-helper
-///      revert paths can be exercised with `vm.expectRevert` from a test contract.
+/// @dev Thin external wrapper around `internal pure` helpers in BridgeMsgCodec, so that a test
+///      contract can exercise the per-helper revert paths with `vm.expectRevert`.
 contract BridgeMsgCodecHarness {
     function readHeader(bytes calldata m) external pure returns (uint8) {
         return BridgeMsgCodec.readHeader(m);
@@ -35,8 +35,8 @@ contract BridgeMsgCodecHarness {
 /// @dev Library-level negative tests for `BridgeMsgCodec`. The revert paths exercised here used to
 ///      ride end-to-end via the now-skipped `InboundValidation.t.sol` / `InboundDropDontBlock.t.sol`
 ///      router tests (drop-don't-block was temporarily removed for the BSC testnet executor
-///      workaround). The library still emits these reverts identically; this file pins them at the
-///      library boundary so they stay asserted in CI regardless of the router-layer wrapper state.
+///      workaround). The library still emits these reverts identically. This file pins them at the
+///      library boundary, so CI keeps asserting them regardless of the router-layer wrapper state.
 contract BridgeMsgCodecHelpersTest is Test {
     BridgeMsgCodecHarness internal harness;
 
@@ -132,7 +132,7 @@ contract BridgeMsgCodecHelpersTest is Test {
 
     // --- decodeBidsBatch: inbound over-cap rejected with BidsBatchTooLarge ---
     function test_decodeBidsBatch_overCap_revertsBidsBatchTooLarge() public {
-        // The outbound encoder caps at MAX_PAYLOAD_ARRAY_LEN; an over-cap inbound packet can only
+        // The outbound encoder caps at MAX_PAYLOAD_ARRAY_LEN. An over-cap inbound packet can only
         // arrive via a trusted-peer bug. The decode-side guard exists to reject it.
         uint256 n = BridgeMsgCodec.MAX_BIDS_BATCH + 1;
         address[] memory bidders = new address[](n);

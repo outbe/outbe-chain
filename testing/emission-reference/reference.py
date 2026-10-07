@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Decimal reference for the founder daily COEN emission curve."""
+"""Independent Decimal reference for the founder curve of daily COEN emission."""
 
 from __future__ import annotations
 

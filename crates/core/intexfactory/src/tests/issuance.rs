@@ -24,7 +24,7 @@ fn issue_creates_series_in_registry() {
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );
-        // Born Issued; issued_at is the block timestamp.
+        // Born Issued. `issued_at` is the block timestamp.
         assert_eq!(
             r.lifecycle_state().unwrap(),
             outbe_intex::IntexState::Issued
@@ -56,7 +56,7 @@ fn issue_zero_winners_leaves_the_day_untouched() {
 
 #[test]
 fn issuance_legs_route_winners_to_their_own_chain() {
-    // One winner on chain 10, one on chain 20; chain 30 in the snapshot has none.
+    // One winner on chain 10, one on chain 20. Chain 30 in the snapshot has none.
     let other = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
     let mut p = sample(7);
     p.recipients = vec![owner(), other];
@@ -176,8 +176,9 @@ fn a_chains_series_travel_together_up_to_the_message_caps() {
     );
 }
 
-/// The codec enforces this same number on both encode and decode (`BridgeMsgCodec.sol`), and nothing
-/// links the two languages, so the value is pinned here: changing it must be a deliberate act.
+/// The codec enforces this same number on both encode and decode (`BridgeMsgCodec.sol`).
+/// Nothing links the two languages, so the value is pinned here: changing it must be a
+/// deliberate act.
 #[test]
 fn the_recipient_cap_matches_the_wire() {
     assert_eq!(MAX_RECIPIENTS_PER_ISSUANCE, 24);
@@ -482,10 +483,12 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 &s,
                 sid(7),
                 owner(),
-                owner(),
                 U256::ONE,
-                payment_token(),
-                snapshot,
+                runtime::SettlementPayment {
+                    settler: owner(),
+                    asset: payment_token(),
+                    snapshot_id: snapshot,
+                },
             )
             .unwrap_err()
             .to_string()
@@ -551,86 +554,6 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
 }
 
 #[test]
-fn a_paynote_bound_to_an_earlier_snapshot_cannot_settle_after_rollover() {
-    let mut storage = dual_currency_series(EUR_ISO as u64);
-    StorageHandle::enter(&mut storage, |s| {
-        let oracle = OracleContract::new(s.clone());
-        write_day_rate(
-            &oracle,
-            REFERENCE_ISO,
-            PAIR_ID,
-            U256::from(2u64) * COEN_ISO_RATE_SCALE,
-        );
-        write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
-        seed_qualifying_day(&s);
-    });
-    let quote = |storage: &mut HashMapStorageProvider| {
-        StorageHandle::enter(storage, |s| {
-            runtime::quote_settlement(&s, sid(7), payment_token(), U256::ONE).unwrap()
-        })
-    };
-    let context = |snapshot: U256| {
-        outbe_paynote::api::settlement_context(
-            outbe_paynote::api::SettlementDomain::Intex,
-            outbe_paynote::api::intex_holding_target(sid(7).as_bytes(), owner()),
-            U256::ONE,
-            snapshot,
-        )
-        .unwrap()
-    };
-    let (_, amount, quoted) = quote(&mut storage);
-    let stale = outbe_paynote::test_support::note_and_spend_proof(
-        CHAIN_ID,
-        payment_token(),
-        context(quoted),
-        amount,
-        amount,
-    );
-    outbe_paynote::test_support::seed_pool(&mut storage, CHAIN_ID, &[stale.commitment]);
-    let nullifier = outbe_protocol::codec::field_to_b256(&stale.public.nullifier).unwrap();
-
-    let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
-        .unwrap()
-        .cutoff();
-    storage.set_timestamp(U256::from(cutoff + 3_600));
-    let (_, next_amount, required) = quote(&mut storage);
-    assert_eq!(next_amount, amount, "the next window holds the same price");
-    let before = storage.storage.clone();
-    let error = StorageHandle::enter(&mut storage, |s| {
-        runtime::settle_intex_with_paynote(&s, sid(7), owner(), owner(), U256::ONE, &stale.proof)
-            .unwrap_err()
-    });
-    assert_eq!(
-        error.to_string(),
-        outbe_primitives::error::PrecompileError::from(
-            crate::errors::IntexFactoryError::PayNoteContextMismatch {
-                expected: context(required),
-                actual: context(quoted),
-            }
-        )
-        .to_string()
-    );
-    assert_eq!(
-        storage.storage, before,
-        "the note and the units are untouched"
-    );
-
-    let current = outbe_paynote::test_support::note_and_spend_proof(
-        CHAIN_ID,
-        payment_token(),
-        context(required),
-        amount,
-        amount,
-    );
-    StorageHandle::enter(&mut storage, |s| {
-        runtime::settle_intex_with_paynote(&s, sid(7), owner(), owner(), U256::ONE, &current.proof)
-            .unwrap();
-        assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 1);
-        assert!(outbe_paynote::api::is_spent(&s, nullifier).unwrap());
-    });
-}
-
-#[test]
 fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
     let mut storage = dual_currency_series(EUR_ISO as u64);
     stub_token_that_never_credits(&mut storage);
@@ -647,10 +570,12 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
                 &s,
                 sid(7),
                 owner(),
-                owner(),
                 U256::ONE,
-                payment_token(),
-                snapshot,
+                runtime::SettlementPayment {
+                    settler: owner(),
+                    asset: payment_token(),
+                    snapshot_id: snapshot,
+                },
             )
             .unwrap_err()
             .to_string()
@@ -711,10 +636,12 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
             &s,
             sid(7),
             owner(),
-            owner(),
             U256::ONE,
-            payment_token(),
-            U256::from(7u64),
+            runtime::SettlementPayment {
+                settler: owner(),
+                asset: payment_token(),
+                snapshot_id: U256::from(7u64),
+            },
         )
         .unwrap_err();
         assert_eq!(

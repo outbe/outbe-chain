@@ -15,8 +15,9 @@ import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 
-/// A Called mark for a series this chain has not seen waits in one slot per series and is applied when
-/// ISSUANCE creates the series; a mark the series already carries is acknowledged without effect.
+/// A Called mark for a series that this chain has not seen waits in one slot per series. The router
+/// applies it when ISSUANCE creates the series. The router acknowledges a mark that the series
+/// already carries, without effect.
 contract TargetRouterMarkSlotTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;

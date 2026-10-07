@@ -3,11 +3,12 @@ use super::*;
 #[test]
 fn dispatch_rejects_value() {
     with_factory(|s| {
-        let data = IIntexFactory::settleIntexWithPayNoteCall {
+        let data = IIntexFactory::settleIntexCall {
             seriesId: sid(7).into(),
             owner: owner(),
             units: U256::from(1),
-            payNoteProof: Default::default(),
+            asset: Address::ZERO,
+            snapshotId: U256::ZERO,
         }
         .abi_encode();
         assert!(precompile::dispatch(s.clone(), &data, owner(), U256::from(1)).is_err());
@@ -142,7 +143,8 @@ fn config_profile_slot_matches_seeder_layout() {
     });
 }
 
-/// Slots are dense in `order` sequence, so a field inserted rather than appended moves every one after it.
+/// Slots are dense in `order` sequence, so a field inserted rather than appended moves every
+/// one after it.
 #[test]
 fn intex_factory_slot_layout_is_pinned() {
     with_factory(|s| {

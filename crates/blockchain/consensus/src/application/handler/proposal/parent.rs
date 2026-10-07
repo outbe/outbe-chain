@@ -12,8 +12,8 @@ impl ApplicationShared {
 
         // epoch continuity: special-case the first proposal of a
         // new Simplex epoch (`epoch > 0`, `parent_view = 0`) before the chain
-        // genesis path. `Ok(None)` means "not an epoch boundary"; caller falls
-        // through to the chain genesis / cache / marshal-by-digest branches.
+        // genesis path. `Ok(None)` means "not an epoch boundary". The caller then
+        // falls through to the chain genesis / cache / marshal-by-digest branches.
         let maybe_epoch_anchor = match epoch_boundary::resolve_epoch_boundary_parent(
             &self.finalization_view,
             &self.marshal_mailbox,

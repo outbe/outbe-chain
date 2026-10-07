@@ -51,7 +51,7 @@ pub(crate) fn verify_paid_bitmap(
     })
 }
 
-/// Native SeriesId::worldwide_day is intentionally permissive; validate its
+/// Native SeriesId::worldwide_day is intentionally permissive. Validate its
 /// stored spelling and date before using it to discover canonical obligations.
 pub(crate) fn verify_series_day(id: SeriesId) -> eyre::Result<WorldwideDay> {
     let bytes = id.as_bytes();
@@ -84,7 +84,7 @@ pub(crate) struct ClosureAudit {
 }
 
 /// Observe the native closure positions without opening its writable store.
-/// Historical previous may be sparse; only the saved identities are required.
+/// Historical previous may be sparse. Only the saved identities are required.
 pub(crate) fn verify_closure(
     view: &crate::snapshot::native::RethReadOnlyView,
     root: &Path,
@@ -233,8 +233,8 @@ pub(super) fn visit_retained_frames(
                     end.number, result.blocks, result.transactions
                 )).into());
             }
-            // Match the pinned Reth provider: transactions are static-only;
-            // receipts choose one native backend by its high-water mark. A hole
+            // Match the pinned Reth provider. Transactions are static-only.
+            // Receipts choose one native backend by its high-water mark. A hole
             // below that mark must not be disguised by a different backend.
             view.static_files
                 .transaction_by_id(number)?

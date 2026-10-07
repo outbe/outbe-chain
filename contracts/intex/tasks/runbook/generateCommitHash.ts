@@ -46,8 +46,8 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   const referenceCurrency = Number(toOptional(args.referenceCurrency) || "840");
   const chainId = BigInt(toOptional(args.chainId) || "97");
 
-  // EIP-712 domain binds the deployment address; signature is invalid against any other
-  // `IntexAuction` instance.
+  // The EIP-712 domain binds the deployment address. The signature is invalid against any
+  // other `IntexAuction` instance.
   const verifyingContract = (toOptional(args.auctionContract) ||
     process.env.INTEX_AUCTION_ADDRESS) as `0x${string}` | undefined;
   if (!verifyingContract || !isAddress(verifyingContract)) {
@@ -68,8 +68,8 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   console.log("chainId:", chainId.toString());
   console.log("verifyingContract:", verifyingContract);
 
-  // EIP-712 typed data - must mirror `IntexAuction.REVEAL_BID_TYPEHASH` and the contract's
-  // EIP712("IntexAuction", "1") domain.
+  // EIP-712 typed data. It must mirror `IntexAuction.REVEAL_BID_TYPEHASH` and the
+  // contract's EIP712("IntexAuction", "1") domain.
   const signature = await account.signTypedData({
     domain: {
       name: "IntexAuction",

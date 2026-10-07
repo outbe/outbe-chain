@@ -53,8 +53,8 @@ pub const STABLECOIN_V1_REOPEN_RULES: [&str; 3] = [
     "supported-network-genesis-does-not-preserve-the-reserved-namespace",
 ];
 
-/// Outbe-native dispatch and state accounting. The normal EVM CALL/account
-/// access charge remains revm-owned and is not duplicated here.
+/// Outbe-native dispatch and state accounting. revm owns the normal EVM
+/// CALL/account access charge. This schedule does not duplicate it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StablecoinGasSchedule {
     pub dispatch_base: u64,

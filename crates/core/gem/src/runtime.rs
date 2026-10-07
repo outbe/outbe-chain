@@ -8,9 +8,9 @@ use crate::schema::{GemContract, GemState};
 
 impl GemContract<'_> {
     /// Call an uncalled bucket whose reference-currency daily VWAP exceeded its call
-    /// price on at least its threshold days of its trailing window, read off `window`
-    /// (newest-first `(day, vwap)` pairs from the bucket's own `COEN/<iso>` pair).
-    /// Returns true if called.
+    /// price on at least its threshold days of its trailing window. The VWAPs are read
+    /// from `window` (newest-first `(day, vwap)` pairs from the bucket's own `COEN/<iso>`
+    /// pair). Returns true if called.
     ///
     /// The terms were sealed when the bucket opened, so a later change to
     /// `CALL_WINDOW`/`CALL_THRESHOLD` cannot re-term it.
@@ -44,8 +44,9 @@ impl GemContract<'_> {
             return Ok(false);
         }
         self.burn(&item)?;
-        // The load came out of a daily emission sink and nobody realized it, so it
-        // goes back. Same checkpoint as the burn, or there is nothing to recover.
+        // The load came from a daily emission sink and nobody realized it, so it is
+        // returned. The return uses the same checkpoint as the burn, or there is nothing
+        // to recover.
         outbe_promislimit::PromisLimitContract::new(self.storage.clone())
             .add_to_total_unallocated(item.promis_load_minor)?;
         self.emit(GemExpired {
@@ -59,7 +60,7 @@ impl GemContract<'_> {
 
 /// Days before the bucket's start day never count: its gems did not exist yet.
 fn breached_enough(window: &[(u32, Option<U256>)], terms: &BucketTerms) -> bool {
-    // Both terms are stored in seconds; the daily scan needs day counts.
+    // Both terms are stored in seconds. The daily scan needs day counts.
     let window_days = terms.call_window_seconds / 86_400;
     let threshold_days = terms.call_threshold_seconds / 86_400;
     // Zero days means no terms, not a breach on every day.

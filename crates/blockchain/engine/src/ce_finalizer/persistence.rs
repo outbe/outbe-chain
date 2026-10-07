@@ -109,8 +109,8 @@ impl DurableCePersistence {
                     }
                     if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
                         // This is a watch stream, so a slow receiver may observe a
-                        // later durable tip. The target is accepted only after a fresh
-                        // DB-only transaction proves its exact canonical identity.
+                        // later durable tip. This loop accepts the target only after a
+                        // fresh DB-only transaction proves its exact canonical identity.
                         return Ok(());
                     }
                     eyre::bail!(

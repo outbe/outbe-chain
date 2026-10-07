@@ -60,7 +60,7 @@ pub(super) fn run(args: ValidateArgs) -> eyre::Result<()> {
         expected_signer: args.expected_signer,
     };
     // The validation engine creates its own bounded work under this external
-    // disposable directory. No scratch is placed in the copied native stores.
+    // disposable directory. It places no scratch in the copied native stores.
     let scratch = tempfile::tempdir()?;
     // Report isolation and semantic validation must share one native argument
     // parse because chain parsing initializes process-wide protocol constants.

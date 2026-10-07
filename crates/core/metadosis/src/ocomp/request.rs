@@ -204,10 +204,10 @@ fn inspect_request_candidate(
         candidate_tribute_projection(stored_tribute_projection, exact_collection)?;
     let current_vwap = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
     let oracle = outbe_oracle::api::ocomp_pre_admission_projection(ctx.storage.clone())?;
-    // The per-owner league snapshot and its root were committed during the
-    // active-phase prepare step (`build_fidelity_league_snapshot`). This terminal
-    // request runs after the provisional seal and cannot enumerate tributes, so
-    // it only reads the committed snapshot root to bind into the envelope.
+    // The active-phase prepare step (`build_fidelity_league_snapshot`) committed
+    // the per-owner league snapshot and its root. This terminal request runs
+    // after the provisional seal and cannot enumerate tributes. So it only reads
+    // the committed snapshot root to bind into the envelope.
     let snapshot_root = metadosis.ocomp_fidelity_league_snapshot_root.read(&wwd)?;
     if snapshot_root.is_zero() {
         return Err(storage_corruption_message(

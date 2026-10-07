@@ -8,9 +8,12 @@ import {OrderEncoder} from "./OrderEncoder.sol";
 /// @title OrderValidator
 /// @notice Shared decode-and-check helper for callers that receive ABI-encoded OrderData
 library OrderValidator {
-    /// @notice Decode `originData` and assert: orderId hash matches, fillDeadline is in the future,
-    ///         and `outputAmount` is at least the user's `amountOut` floor.
-    /// @dev Reverts with errors declared on IDestinationSettler so all order-level errors share one source of truth.
+    /// @notice Decode `originData` and assert three conditions:
+    ///         - the orderId hash matches.
+    ///         - fillDeadline is in the future.
+    ///         - `outputAmount` is at least the user's `amountOut` floor.
+    /// @dev Reverts with errors declared on IDestinationSettler, so all order-level errors share one
+    ///      source of truth.
     function decodeAndCheck(bytes calldata originData, bytes32 orderId, uint256 outputAmount)
         internal
         view

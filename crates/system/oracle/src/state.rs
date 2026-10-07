@@ -94,10 +94,10 @@ impl OracleContract<'_> {
 
     /// Registers a new trading pair and marks it as a vote target.
     ///
-    /// The configured orientation is preserved in `pair_by_index`; the storage
-    /// key sorts independently, so registering the inverse of an existing pair
-    /// is rejected as a duplicate. COEN/ISO markets are the sole directional
-    /// exception and must be registered as COEN base, ISO quote.
+    /// `pair_by_index` keeps the configured orientation. The storage key sorts
+    /// independently, so this function rejects the inverse of an existing pair
+    /// as a duplicate. COEN/ISO markets are the sole directional exception.
+    /// They must be registered as COEN base, ISO quote.
     pub(crate) fn register_pair(&mut self, pair: AddressPair) -> Result<PairIndex> {
         if pair.address1() == pair.address2() {
             return Err(OracleError::PairBaseQuoteIdentical.into());
@@ -126,20 +126,20 @@ impl OracleContract<'_> {
 
     /// The pair registered at `index`, in its configured orientation.
     ///
-    /// Reads back as the zero pair for an index that was never written, which is
-    /// why membership is decided by [`Self::pair_index_of`] and never by a zero
-    /// check - the zero address is a legitimate asset (native COEN). Callers
-    /// iterating `1..=pair_count` have already established the bound; anything
-    /// taking an index from outside goes through [`Self::require_pair_at`].
+    /// An index that was never written reads back as the zero pair. For that
+    /// reason, [`Self::pair_index_of`] decides membership, never a zero check.
+    /// The zero address is a legitimate asset (native COEN). Callers that
+    /// iterate `1..=pair_count` already established the bound. Code that takes
+    /// an index from outside goes through [`Self::require_pair_at`].
     pub fn pair_at(&self, index: PairIndex) -> Result<AddressPair> {
         self.pair_by_index.read_pair(&index)
     }
 
     /// [`Self::pair_at`] for an index that arrived from a caller.
     ///
-    /// An unwritten index reads back as the zero pair, which is indistinguishable
-    /// from a genuine COEN/COEN registration, so the bound is checked rather than
-    /// the value.
+    /// An unwritten index reads back as the zero pair. The zero pair is
+    /// indistinguishable from a genuine COEN/COEN registration, so this function
+    /// checks the bound, not the value.
     pub fn require_pair_at(&self, index: PairIndex) -> Result<AddressPair> {
         if index == 0 || index > self.pair_count.read()? {
             return Err(OracleError::PairIndexOutOfRange { index }.into());
@@ -202,7 +202,7 @@ impl OracleContract<'_> {
     ///
     /// Every value read through this resolver is a bare scalar with no direction
     /// of its own (a VWAP, an S-curve peak, a median input). The quote therefore
-    /// has to match the configured orientation exactly; only spot-rate reads may
+    /// has to match the configured orientation exactly. Only spot-rate reads may
     /// ask for the reciprocal.
     pub fn require_pair_from(&self, base: Address, quote: Address) -> Result<AddressPair> {
         let pair = AddressPair::from_addresses(base, quote);
@@ -228,10 +228,10 @@ impl OracleContract<'_> {
     /// Returns whether a market is an active vote target.
     ///
     /// Direction-insensitive: being a vote target is a property of the market,
-    /// not of how a caller quotes it, and answering `false` for a direction
-    /// [`Self::get_exchange_rate`] happily prices would be an incoherence a
-    /// caller could act on. Being a plain boolean query it returns `false` for an
-    /// unregistered market rather than reverting; storage faults still propagate.
+    /// not of how a caller quotes it. An answer of `false` for a direction that
+    /// [`Self::get_exchange_rate`] prices would be an incoherence a caller could
+    /// act on. This is a plain boolean query, so it returns `false` for an
+    /// unregistered market and does not revert. Storage faults still propagate.
     pub fn is_vote_target(&self, base: Address, quote: Address) -> Result<bool> {
         let pair = AddressPair::from_addresses(base, quote);
         if self.pair_to_index.read(&pair)? == 0 {
@@ -245,12 +245,13 @@ impl OracleContract<'_> {
     // -----------------------------------------------------------------------
 
     /// Returns the current exchange rate in the market's configured scale,
-    /// quoted in the caller's direction. COEN/ISO uses six decimals; generic
-    /// markets retain their decimal18 contract.
+    /// quoted in the caller's direction. COEN/ISO uses six decimals. Generic
+    /// markets keep their decimal18 contract.
     ///
-    /// Only the configured direction is stored, so quoting the market backwards
-    /// returns the reciprocal. This is the one read that answers either quote
-    /// direction; everything else resolves through [`Self::require_pair_from`].
+    /// The Oracle stores only the configured direction, so a backwards quote of
+    /// the market returns the reciprocal. This is the one read that answers
+    /// either quote direction. Everything else resolves through
+    /// [`Self::require_pair_from`].
     pub fn get_exchange_rate(&self, base: Address, quote: Address) -> Result<U256> {
         let pair = AddressPair::from_addresses(base, quote);
         let index = self.pair_to_index.read(&pair)?;
@@ -305,7 +306,7 @@ impl OracleContract<'_> {
         block_number: u64,
         timestamp: u64,
     ) -> Result<()> {
-        // Bootstrap write path: only callable by system (Address::ZERO)
+        // Bootstrap write path: only the system (Address::ZERO) can call it.
         if caller != Address::ZERO {
             return Err(OracleError::OnlySystem("set exchange rate directly").into());
         }
@@ -315,8 +316,8 @@ impl OracleContract<'_> {
 
     /// Updates the exchange rate from tally results (internal, no caller check).
     ///
-    /// `index` is the registry index of an already-registered pair; the rate is
-    /// stored in that pair's registered orientation.
+    /// `index` is the registry index of an already-registered pair. This function
+    /// stores the rate in that pair's registered orientation.
     pub fn update_exchange_rate(
         &mut self,
         index: PairIndex,
@@ -389,8 +390,8 @@ impl OracleContract<'_> {
             let volume_map = self.vote_volume.get_nested(&voter);
 
             for j in 0..tuple_count {
-                // Clears to the zero pair, which is never registered; readers
-                // stay bounded by `vote_tuple_count` rather than probing for it.
+                // Clears to the zero pair, which is never registered. Readers
+                // stay bounded by `vote_tuple_count` and do not probe for it.
                 pair_map.write_pair(&j, AddressPair::ZERO)?;
                 rate_map.write(&j, U256::ZERO)?;
                 volume_map.write(&j, U256::ZERO)?;
@@ -495,8 +496,9 @@ impl OracleContract<'_> {
 
     /// Writes a price snapshot with rates/volumes for the given pairs.
     ///
-    /// Each entry is (registered pair, rate, volume). The snapshot is appended at
-    /// `snapshot_write_idx` and old entries beyond the retention window are evicted.
+    /// Each entry is (registered pair, rate, volume). This function appends the
+    /// snapshot at `snapshot_write_idx` and evicts old entries beyond the
+    /// retention window.
     pub fn write_snapshot(
         &mut self,
         timestamp: u64,
@@ -637,8 +639,8 @@ impl OracleContract<'_> {
         )
     }
 
-    /// Records the first block of the UTC hour containing `timestamp`; called
-    /// every block so the window's block span is known even without votes.
+    /// Records the first block of the UTC hour that contains `timestamp`. This
+    /// runs every block, so the window's block span is known even without votes.
     pub fn record_hour_block(&mut self, timestamp: u64, block_number: u64) -> Result<()> {
         let hour_start = timestamp - timestamp % VWAP_HOUR_SECONDS;
         if self.hour_first_block.read(&hour_start)? == 0 {
@@ -866,8 +868,8 @@ impl OracleContract<'_> {
         Ok((start_time, end_time, bases, quotes, vwaps, lookbacks))
     }
 
-    /// Returns a stored WorldwideDay VWAP for the pair registered under `index`,
-    /// or `None` when the day has no snapshot or that pair had no data in it.
+    /// Returns a stored WorldwideDay VWAP for the pair registered under `index`.
+    /// Returns `None` when the day has no snapshot or that pair had no data in it.
     pub fn get_worldwide_day_vwap_for_pair(
         &self,
         worldwide_day: WorldwideDay,
@@ -885,7 +887,7 @@ impl OracleContract<'_> {
     }
 
     /// Returns the finalized per-UTC-day VWAP for the pair registered under
-    /// `index` on `utc_day` (yyyymmdd UTC), or `None` if the day is not
+    /// `index` on `utc_day` (yyyymmdd UTC). Returns `None` if the day is not
     /// finalized or had no data for that pair. To distinguish "not finalized
     /// yet" from "finalized, no data", compare `utc_day` against
     /// `utc_day_vwap_last_finalized`.
@@ -917,15 +919,16 @@ impl OracleContract<'_> {
         if vwap >= max {
             maxima.write(&index, vwap)
         } else if previous == max {
-            // The day holding the maximum went down, so the month is read again.
+            // The day that held the maximum went down, so read the month again.
             maxima.write(&index, self.month_day_vwap_max(index, month, 1, 31, None)?)
         } else {
             Ok(())
         }
     }
 
-    /// Largest finalized day VWAP of `index` from `from_utc_day` to the watermark. The two edge
-    /// months are read day by day and every month between once; it stops above `stop_above`.
+    /// Largest finalized day VWAP of `index` from `from_utc_day` to the watermark. This function
+    /// reads the two edge months day by day and every month between them once. It stops above
+    /// `stop_above`.
     pub(crate) fn max_finalized_day_vwap_since(
         &self,
         index: PairIndex,

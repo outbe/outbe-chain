@@ -4,9 +4,9 @@
 //!
 //! Deliberately kept OUT of [`crate::proof::committee`]: that module is pure
 //! committee data, reused by the EVM executor and full-node import paths. These
-//! helpers decode cryptographic keys and surface [`V2VerifyError`] - proof
-//! *verification* concerns - so they live on the verifier side of the `proof/`
-//! seam, not in the pure-data module.
+//! helpers decode cryptographic keys and surface [`V2VerifyError`]. Those are
+//! proof *verification* concerns, so the helpers live on the verifier side of the
+//! `proof/` seam, not in the pure-data module.
 
 use bytes::Bytes;
 use commonware_codec::DecodeExt;
@@ -19,7 +19,7 @@ use crate::proof::error::V2VerifyError;
 /// Decode the snapshot's committee into typed MinPk consensus public keys, in
 /// committee (signer-bitmap) order.
 ///
-/// `CommitteeEntry` stores each key as a fixed-size 48-byte array; this is the
+/// `CommitteeEntry` stores each key as a fixed-size 48-byte array. This is the
 /// single decode recipe shared by the V2 verifier and the late-finalize
 /// verifier, so a Commonware MinPk encode-size drift surfaces in exactly one
 /// place.
@@ -38,9 +38,9 @@ pub(crate) fn decode_committee_participants(
         .collect()
 }
 
-/// Build the canonical deduped `ordered::Set` from committee participants in the
-/// same sorted/deduped order the signer used, so the vote/seed namespace bytes
-/// derived from it equal what the signer bound.
+/// Build the canonical deduped `ordered::Set` from committee participants, in the
+/// same sorted/deduped order that the signer used. The vote/seed namespace bytes
+/// derived from the set then equal what the signer bound.
 pub(crate) fn committee_ordered_set(
     participants: &[bls12381::PublicKey],
 ) -> Set<bls12381::PublicKey> {

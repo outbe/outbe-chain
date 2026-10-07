@@ -16,8 +16,7 @@ use reth_primitives_traits::SealedHeader;
 use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
 
 /// Execution context for an Outbe block. The inner Ethereum context keeps the
-/// EVM path unchanged; the millis remainder is only used when assembling the
-/// Outbe header.
+/// EVM path unchanged. Only the Outbe header assembly uses the millis remainder.
 #[derive(Debug, Clone)]
 pub struct OutbeBlockExecutionCtx<'a> {
     pub inner: EthBlockExecutionCtx<'a>,
@@ -35,25 +34,24 @@ pub struct OutbeBlockExecutionCtx<'a> {
     /// Disabled only for Reth's local pending-block RPC construction, which lacks
     /// consensus-only parent certificate and proposer context.
     pub execute_outbe_block_hooks: bool,
-    /// proposer-side Phase 1 (CertifiedParentAccounting) body[0] tx
-    /// signed by the payload builder BEFORE `apply_pre_execution_changes`. When
-    /// set, the executor reuses it byte-for-byte as the Phase 1 commit witness
-    /// (so the pre-exec receipt and the body[0] tx are guaranteed identical).
+    /// Proposer-side Phase 1 (CertifiedParentAccounting) body[0] tx. The payload
+    /// builder signs it BEFORE `apply_pre_execution_changes`. When set, the
+    /// executor reuses it byte-for-byte as the Phase 1 commit witness, so the
+    /// pre-exec receipt and the body[0] tx are guaranteed identical.
     /// `None` on the validator path (body[0] arrives through
     /// `expected_begin_system_txs`) and for `block_number <= GENESIS_BOOTSTRAP_BLOCK_NUMBER`.
     pub prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
-    /// optional accounted-parent artifact hint supplied by the
-    /// payload builder (or import driver) when the executor's
-    /// [`AccountedParentArtifactProvider`] cannot see the parent header in
-    /// tree state. The executor accepts the hint ONLY when the metadata's
-    /// `(finalized_block_number, finalized_block_hash)` matches
-    /// `(self.parent_block_number, self.parent_hash)` and the artifact bytes
-    /// decode cleanly. `None` on the validator path (provider always
+    /// Optional accounted-parent artifact hint. The payload builder (or import
+    /// driver) supplies it when the executor's [`AccountedParentArtifactProvider`]
+    /// cannot see the parent header in tree state. The executor accepts the hint
+    /// ONLY when the metadata's `(finalized_block_number, finalized_block_hash)`
+    /// matches `(self.parent_block_number, self.parent_hash)` and the artifact
+    /// bytes decode cleanly. `None` on the validator path (provider always
     /// has the sealed block) and on the proposer path when the bridge cache
     /// already holds the artifact.
     pub parent_artifact_hint: Option<crate::executor::AccountedParentArtifact>,
-    /// optional one-time Phase 3b `TeeBootstrap` payload supplied by the
-    /// proposer's tribute-DKG bootstrap producer once the ceremony completes and
+    /// Optional one-time Phase 3b `TeeBootstrap` payload. The proposer's
+    /// tribute-DKG bootstrap producer supplies it once the ceremony completes and
     /// the `TeeRegistry` is still empty. `None` on every block until then and on
     /// the validator path (the body carries the bootstrap, read via
     /// `expected_begin_system_txs`). Flows into the executor and into

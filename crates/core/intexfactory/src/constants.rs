@@ -19,11 +19,12 @@ pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB882
 /// cases, creators receive a single payment.
 pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
-/// Bin step (basis points) for the floor-price bin ladder.
+/// Bin step in basis points for the call-price index.
 pub const BIN_STEP_BP: u16 = 25;
 
 /// Work one lifecycle scan may do: a decision reads a group, an action writes one
-/// series with its index move and notice. Budgeted apart because they differ in cost.
+/// series with its index move and notice. The two budgets are separate because they differ
+/// in cost.
 pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
@@ -87,10 +88,10 @@ pub const MAX_RECIPIENTS_PER_ISSUANCE: usize = 24;
 pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 
 /// Series one MARK_CALLED message may carry. Mirrors the
-/// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
+/// codec's `MAX_SERIES_PER_MARK`. A wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
 
 /// Bit that marks a Settled NFT token id. A series id is 14 bytes, so the issued id space ends at
-/// 2**112 and this bit sits directly above it: the classes cannot collide, and clearing it recovers
-/// the series. Mirrors `IntexNFT1155._SETTLED_TAG`.
+/// 2**112 and this bit sits directly above it. The classes cannot collide, and clearing the bit
+/// recovers the series. Mirrors `IntexNFT1155._SETTLED_TAG`.
 pub const SETTLED_TAG: U256 = U256::from_limbs([0, 1 << 48, 0, 0]);

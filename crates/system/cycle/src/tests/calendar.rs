@@ -175,7 +175,7 @@ fn a_multi_day_halt_issues_no_emission_and_credits_no_capacity_or_native_balance
             .balance(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS)
             .unwrap();
 
-        // Three completed UTC days pass with no block; the first block after the
+        // Three completed UTC days pass with no block. The first block after the
         // halt forfeits them instead of synthesizing their emission.
         let fire = BlockRuntimeContext::new(
             block_ctx(2, GENESIS_TS + 3 * SECONDS_PER_DAY + 3_600),

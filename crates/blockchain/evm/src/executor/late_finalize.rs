@@ -12,22 +12,22 @@ where
     /// FATAL pre-exec verification of the block's late-finalize
     /// credits. Each batch in `header.extra_data`'s
     /// `LateFinalizeCreditsArtifact` carries a BLS aggregate over a recently
-    /// finalized block's individual finalize votes. This runs on the same
-    /// pre-exec path as [`Self::verify_phase1_in_preexec`] - synchronous, no
-    /// state mutation, `Err` aborts the block before any begin-zone state diff
-    /// reaches Reth's state-root task - and enforces, for every batch:
+    /// finalized block's individual finalize votes. This check runs on the same
+    /// pre-exec path as [`Self::verify_phase1_in_preexec`]. It is synchronous
+    /// and does not mutate state. An `Err` aborts the block before any
+    /// begin-zone state diff reaches Reth's state-root task. For every batch,
+    /// the check enforces these conditions:
     ///
-    /// - the target sits inside the inclusion window: `1 <= block - fb <= K`;
-    /// - the committee snapshot for `(epoch, committee_set_hash)` exists;
-    /// - the aggregate verifies against that snapshot (no quorum/VRF floor -
+    /// - The target sits inside the inclusion window: `1 <= block - fb <= K`.
+    /// - The committee snapshot for `(epoch, committee_set_hash)` exists.
+    /// - The aggregate verifies against that snapshot (no quorum/VRF floor:
     ///   late credits are the sub-quorum tail, see
     ///   [`outbe_consensus::proof::verify_late_finalize_proof`]).
     ///
     /// Both proposer (its own gathered credits) and validator (proposer-
     /// supplied) verify, so a buggy proposer or a forged batch is rejected
-    /// identically. Block 0 / block 1 (genesis bootstrap) and the test-only
-    /// `PHASE1_VERIFY_DISABLED` opt-out skip verification; a `None` or empty
-    /// artifact is a no-op.
+    /// identically. Block 0 / block 1 (genesis bootstrap) skip verification.
+    /// A `None` or empty artifact is a no-op. There is no test opt-out.
     pub(in crate::executor) fn verify_late_finalize_credits_in_preexec(
         &mut self,
         block_number: u64,
@@ -41,7 +41,7 @@ where
             return Ok(());
         }
         // No test opt-out: a `None`/empty artifact early-returns below, so tests
-        // that don't carry credits are unaffected; tests that do carry credits
+        // that don't carry credits are unaffected. Tests that do carry credits
         // (and seed the matching committee snapshot) exercise the real verifier.
         let Some(artifact) = block_artifacts.late_finalize_credits.as_ref() else {
             return Ok(());
@@ -82,9 +82,10 @@ where
 
             // NOTE: the canonical-binding authentication (fb_number/epoch/
             // committee_set_hash vs the escrow) is intentionally NOT done here.
-            // The escrow for the closest in-window target (block N-1) is written
-            // by THIS block's CPA, which runs in the body AFTER this pre-exec
-            // gate - so the binding is not yet present at pre-exec. The
+            // THIS block's CPA writes the escrow for the closest in-window target
+            // (block N-1). The CPA executes in pre-execution AFTER this gate
+            // (`apply_phase1_commit_in_preexec`), so the binding is not yet
+            // present when this gate runs. The
             // authentication therefore lives in the begin-zone body
             // (`run_late_finalize_credits`, after the CPA), where a mismatch is
             // FATAL and aborts the block. This pre-exec gate covers the BLS proof

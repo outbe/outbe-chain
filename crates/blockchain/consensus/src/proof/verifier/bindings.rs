@@ -30,7 +30,8 @@ fn validate_parent_binding(
     header_parent_hash: B256,
 ) -> Result<(), V2VerifyError> {
     // Rule 1 - missed_proposers MUST be empty in V2, ALWAYS, BEFORE any
-    // other check. This rejects pre-mutation, applies to both proof kinds.
+    // other check. This check rejects pre-mutation. It applies to both proof
+    // kinds.
     if !metadata.missed_proposers.is_empty() {
         return Err(V2VerifyError::NonEmptyMissedProposers {
             count: metadata.missed_proposers.len(),
@@ -54,8 +55,8 @@ fn validate_committee_binding(
     snapshot: &CommitteeSnapshot,
 ) -> Result<(), V2VerifyError> {
     // Rule 3 - committee shape: metadata vs snapshot must agree on size
-    // AND per-position address. Disagreement is either a snapshot lookup error
-    // by the caller or a malicious metadata.
+    // AND per-position address. A disagreement is either a snapshot lookup
+    // error by the caller or malicious metadata.
     if snapshot.committee.is_empty() {
         return Err(V2VerifyError::CommitteeSnapshotMissing);
     }
@@ -119,21 +120,21 @@ pub(super) fn validate_result(
     metadata: &CertifiedParentAccountingMetadata,
     inner: &VerifiedProof,
 ) -> Result<(), V2VerifyError> {
-    // Rule 5 cross-check: cert's VRF material version must also equal the
-    // metadata's (the inner verifier returns it directly from the proof).
+    // Rule 5 cross-check: the cert's VRF material version must also equal the
+    // metadata's version. The inner verifier returns it directly from the proof.
     validate_material_version(metadata.vrf_material_version, inner.vrf_material_version)?;
 
-    // Rule 8 cross-check: bitmap reconciliation - metadata's bitmap must
-    // exactly equal the reconstructed bitmap from the certificate.
+    // Rule 8 cross-check: bitmap reconciliation. The metadata's bitmap must
+    // exactly equal the bitmap reconstructed from the certificate.
     if inner.signer_bitmap != metadata.signer_bitmap {
         return Err(V2VerifyError::BitmapMismatch {
             reason: "metadata.signer_bitmap differs from certificate-reconstructed bitmap",
         });
     }
 
-    // Duplicate-signer / out-of-range checks are enforced by the inner
-    // decoder and the bitmap reconstruction loop already; the BTreeSet check
-    // here is defence in depth in case the inner decoder ever stops doing it.
+    // The inner decoder and the bitmap reconstruction loop already enforce the
+    // duplicate-signer / out-of-range checks. The BTreeSet check here is
+    // defence in depth in case the inner decoder ever stops doing it.
     let mut seen = BTreeSet::new();
     for (idx, byte) in metadata.signer_bitmap.iter().enumerate() {
         if *byte == 0 {

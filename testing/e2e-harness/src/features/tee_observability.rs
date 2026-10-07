@@ -19,7 +19,7 @@ fn enclave_status(world: &World, index: usize) -> Option<Value> {
     serde_json::from_str(&raw).ok()
 }
 
-/// Poll until validator `index`'s canary state is one of `want`; returns the
+/// Poll until validator `index`'s canary state is one of `want`. Return the
 /// last observed state either way. The harness runs the canary at a 5s
 /// cadence, so `tries` x 2s bounds the wait.
 fn wait_enclave_state(world: &World, index: usize, want: &[&str], tries: usize) -> String {

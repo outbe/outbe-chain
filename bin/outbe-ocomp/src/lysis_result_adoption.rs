@@ -212,7 +212,8 @@ pub fn admit_reported_lysis_root_reduce_node(
 
 /// Reopens and verifies the exact typed chunk reported by one admitted
 /// ROOT_REDUCE leaf before publishing it into the supervisor's authoritative
-/// CAS. No caller-selected path or out-of-band chunk reference is accepted.
+/// CAS. This function accepts no caller-selected path and no out-of-band chunk
+/// reference.
 pub fn adopt_lysis_result_chunk(
     root_reduce_spec: &UnitSpecV1,
     root_reduce_artifact: &UnitArtifactV1,

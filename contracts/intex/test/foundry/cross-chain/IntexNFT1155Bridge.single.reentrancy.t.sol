@@ -13,8 +13,8 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
 ///      mid-`receiveMessage` (via `token.crosschainMint` -> `_mint`), re-enters the adapter's
 ///      `send` entrypoint. With both `receiveMessage` and `send` carrying `nonReentrant`, the
 ///      inner call reverts with `ReentrancyGuardReentrantCall` at the modifier check (before the
-///      zero-`to` validation), and we capture the selector. Without the guards, the inner call
-///      would revert with `InvalidReceiver` instead - distinguishing the two cases.
+///      zero-`to` validation). We capture the selector. Without the guards, the inner call
+///      would revert with `InvalidReceiver` instead. This difference distinguishes the two cases.
 contract ReentrantSendProbe is IERC1155Receiver {
     address public immutable adapter;
     bool public attempted;
@@ -60,11 +60,11 @@ contract ReentrantSendProbe is IERC1155Receiver {
 
 /// @title IntexNFT1155BridgeSingleReentrancyTest
 /// @notice Behavioral test that `receiveMessage` and `send` are mutually `nonReentrant`-guarded.
-/// @dev Source chain (A) caller initiates a transfer to the hostile probe on the destination chain (B). On B,
-///      `receiveMessage` -> `_dispatch` -> `token.crosschainMint` -> `_mint` invokes the probe's `onERC1155Received`,
-///      which attempts to re-enter `adapterB.send`. Expected: the inner call reverts with
-///      `ReentrancyGuardReentrantCall` - proving the guard is held by `receiveMessage` AND that `send` carries the
-///      modifier.
+/// @dev Source chain (A) caller initiates a transfer to the hostile probe on the destination chain
+///      (B). On B, `receiveMessage` -> `_dispatch` -> `token.crosschainMint` -> `_mint` invokes the
+///      probe's `onERC1155Received`, which attempts to re-enter `adapterB.send`. Expected: the
+///      inner call reverts with `ReentrancyGuardReentrantCall`. This proves that `receiveMessage`
+///      holds the guard AND that `send` carries the modifier.
 contract IntexNFT1155BridgeSingleReentrancyTest is CrossChainTest {
     uint32 private aChainId = 1;
     uint32 private bChainId = 2;

@@ -111,7 +111,7 @@ fn test_slash_proposer_misdemeanor() {
         }
 
         assert_eq!(si.get_proposer_miss_count(VAL_A).unwrap(), 50);
-        // Misdemeanor is logged only - no felony
+        // SlashIndicator only logs the misdemeanor. No felony.
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
 
         // Validator status must still be ACTIVE (not force-exited)
@@ -165,9 +165,9 @@ fn test_slash_proposer_felony() {
 #[test]
 fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
     // The single biggest ordering invariant: JAIL BEFORE SLASH. slash_stake demotes
-    // ACTIVE->EXITING / PENDING->REGISTERED when stake drops below min_stake, but a
-    // JAILED status matches neither arm, so a JAILED validator stays JAILED even
-    // when the slash takes it below min_stake.
+    // ACTIVE->EXITING / PENDING->REGISTERED when stake drops below min_stake. A JAILED
+    // status matches neither arm. Thus a JAILED validator stays JAILED even when the
+    // slash takes it below min_stake.
     with_storage(|storage| {
         let stake = U256::from(1_000u64);
         register_and_activate_with_stake(storage.clone(), VAL_A, 2, stake);
@@ -383,7 +383,7 @@ fn test_evidence_reward() {
 // 7. test_conflicting_vote_evidence
 // ---------------------------------------------------------------------------
 /// Verifies that conflicting vote evidence (notarize + nullify same round)
-/// correctly force-exits the validator and rewards the submitter.
+/// correctly jails the validator and rewards the submitter.
 #[test]
 fn test_conflicting_vote_evidence() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -529,7 +529,7 @@ fn test_conflicting_vote_same_type_fails() {
 
         write_test_committee(&storage);
 
-        // This should fail - both are notarize, need one notarize + one nullify
+        // This should fail. Both are notarize. The call needs one notarize + one nullify.
         let mut si = SlashIndicator::new(storage.clone());
         assert!(si
             .submit_conflicting_vote_evidence(SUBMITTER, &ev1, &ev2)
@@ -540,7 +540,7 @@ fn test_conflicting_vote_same_type_fails() {
 // ---------------------------------------------------------------------------
 // 10. test_full_lifecycle_integration
 // ---------------------------------------------------------------------------
-/// Integration test: register -> stake -> activate -> propose -> slash -> forced exit.
+/// Integration test: register -> stake -> activate -> propose -> slash -> jail.
 #[test]
 fn test_full_lifecycle_integration() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -573,14 +573,14 @@ fn test_full_lifecycle_integration() {
         ctx.set_balance(validator, U256::from(1_000_000u64))
             .unwrap();
 
-        // Stake to meet min_stake -> PENDING (PoS lifecycle), then activate so the
-        // felony has an ACTIVE consensus participant to act on (the DKG reshare
-        // normally promotes PENDING->ACTIVE; use the semantic boundary fixture).
+        // Stake to meet min_stake -> PENDING (PoS lifecycle). Then activate, so the
+        // felony has an ACTIVE consensus participant to act on. The DKG reshare
+        // normally promotes PENDING->ACTIVE. This test uses the semantic boundary fixture.
         staking
             .stake(validator, validator, U256::from(10_000u64))
             .unwrap();
         // stake() no longer transfers funds (EVM call value does it).
-        // slash_stake burns from STAKING_ADDRESS - fund it for the test.
+        // slash_stake burns from STAKING_ADDRESS. Fund it for the test.
         ctx.set_balance(STAKING_ADDRESS, U256::from(10_000u64))
             .unwrap();
         assert!(matches!(
@@ -608,7 +608,7 @@ fn test_full_lifecycle_integration() {
             si.slash_proposer(validator).unwrap();
         }
 
-        // 6. Verify forced exit
+        // 6. Verify jail
         assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
             ValidatorLifecycle::JailRetained(_)
@@ -626,7 +626,7 @@ fn test_full_lifecycle_integration() {
     });
 
     // 8. On a felony the validator is JAILED (not force-exited). It remains
-    // JAILED until the operator unjails (-> PENDING) or unstakes out; DKG drops
+    // JAILED until the operator unjails (-> PENDING) or unstakes out. DKG drops
     // it from the committee at the next reshare regardless.
     storage.set_timestamp(U256::from(200_000u64));
     StorageHandle::enter(&mut storage, |storage| {
@@ -641,7 +641,7 @@ fn test_full_lifecycle_integration() {
 
 // ---------------------------------------------------------------------------
 // Voter felony: missed finalize votes are punitive at the felony threshold.
-// Mirrors the proposer-felony path - force-exit + 5% slash.
+// Mirrors the proposer-felony path: jail + 5% slash.
 // ---------------------------------------------------------------------------
 #[test]
 fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
@@ -649,8 +649,8 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         register_and_activate(storage.clone(), VAL_A, 0xA1);
 
         let mut si = SlashIndicator::new(storage.clone());
-        // Pin the felony threshold (prod default is 500); the felony branch fires
-        // first at this pinned 150, so the misdemeanor warning is not reached.
+        // Pin the felony threshold (prod default is 500). The felony branch fires
+        // first at this pinned 150, so the test does not reach the misdemeanor warning.
         si.config_voter_felony_threshold.write(150).unwrap();
         for _ in 0..149 {
             si.slash_voter(VAL_A).unwrap();
@@ -660,7 +660,7 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
         assert!(vs.validator_lifecycle(VAL_A).unwrap().is_active_status());
 
-        // 150th miss crosses the felony threshold -> force-exit + 5% stake slash.
+        // 150th miss crosses the felony threshold -> jail + 5% stake slash.
         si.slash_voter(VAL_A).unwrap();
         assert_eq!(si.get_voter_miss_count(VAL_A).unwrap(), 150);
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
@@ -675,9 +675,9 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
     });
 }
 
-/// graduated escalation invariant - the misdemeanor (warning) threshold
+/// Graduated escalation invariant: the misdemeanor (warning) threshold
 /// must be strictly below the felony (slash) threshold for both proposer and
-/// voter, so the warning can fire before the punishment.
+/// voter. This lets the warning fire before the punishment.
 #[test]
 fn default_thresholds_warn_before_they_punish() {
     with_storage(|storage| {
@@ -692,8 +692,8 @@ fn default_thresholds_warn_before_they_punish() {
     });
 }
 
-/// a validator already JAILED for a continuous liveness fault is NOT
-/// re-felonied (re-slashed 5%) when it crosses the next miss threshold; only the
+/// A validator already JAILED for a continuous liveness fault is NOT
+/// re-felonied (re-slashed 5%) when it crosses the next miss threshold. Only the
 /// miss counter keeps moving until the next reshare removes it from the set.
 #[test]
 fn already_jailed_voter_is_not_re_slashed() {
@@ -982,7 +982,7 @@ fn slash_window_voters_idempotent_on_repeat_for_same_fb_hash() {
             .unwrap();
         assert_eq!(after_first, 1, "first window pass bumps the counter");
 
-        // Replay: same fb_hash window - must be a no-op (per-fb_hash guard).
+        // Replay: same fb_hash window. It must be a no-op (per-fb_hash guard).
         hooks::slash_window_voters(storage.clone(), FB_HASH_A, &[VAL_A]).unwrap();
         hooks::slash_window_voters(storage.clone(), FB_HASH_A, &[VAL_A]).unwrap();
         assert_eq!(
@@ -1036,8 +1036,8 @@ fn slash_window_proposers_processes_list_once() {
     with_storage(|storage| {
         register_and_activate(storage.clone(), VAL_A, 1);
 
-        // The same proposer can appear twice (two skipped views) in one window -
-        // each occurrence is slashed within the single atomic pass.
+        // The same proposer can appear twice (two skipped views) in one window.
+        // The hook slashes each occurrence within the single atomic pass.
         hooks::slash_window_proposers(storage.clone(), FB_HASH_A, &[VAL_A, VAL_A]).unwrap();
         assert_eq!(
             SlashIndicator::new(storage.clone())

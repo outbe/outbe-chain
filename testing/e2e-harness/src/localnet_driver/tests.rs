@@ -97,9 +97,9 @@ fn destructive_bootstrap_targets_reject_broad_paths() {
     validate_data_dir(Path::new("/repo"), Path::new("/tmp/outbe-testnet")).unwrap();
 }
 
-/// Linux keeps the Gramine container; every other host runs the enclave
+/// Linux keeps the Gramine container. Every other host runs the enclave
 /// natively, because the test image is amd64-only and does not survive
-/// emulation. Asserted on both sides so neither can drift silently.
+/// emulation. The test asserts both sides so neither can drift silently.
 #[test]
 fn the_driver_resolves_the_enclave_profile_this_host_can_run() {
     let mode = localnet_tee_mode();

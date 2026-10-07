@@ -218,11 +218,11 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
     });
 }
 
-/// `advance_active_worldwide_days` (the 12:00 UTC `wwd_advance_noon` Cycle
-/// trigger handler) must walk the status machine forward exactly like the
-/// midnight path - including the FORMING->OFFERING side effects (tribute day
-/// unseal) - but must NOT create a new worldwide day and must NOT settle a
-/// READY one; day creation and settlement stay midnight-owned in
+/// `advance_active_worldwide_days` is the 12:00 UTC `wwd_advance_noon` Cycle
+/// trigger handler. It must walk the status machine forward exactly like the
+/// midnight path, including the FORMING->OFFERING side effects (tribute day
+/// unseal). But it must NOT create a new worldwide day and must NOT settle a
+/// READY one. Day creation and settlement stay midnight-owned in
 /// `start_metadosis`.
 #[test]
 fn advance_active_worldwide_days_advances_status_without_creating_or_settling() {
@@ -262,7 +262,7 @@ fn advance_active_worldwide_days_advances_status_without_creating_or_settling() 
         };
 
         // At the offering-entry edge the day opens and the tribute day
-        // unseals - offers stop reverting `not in OFFERING status`.
+        // unseals. Offers stop reverting `not in OFFERING status`.
         advance(2, offering_entry);
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
@@ -297,11 +297,13 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
         assert_eq!(
             outbe_desis::api::dispatch_auction_brief(
                 storage.clone(),
-                wwd,
-                U256::from(1_u8),
-                true,
+                outbe_desis::api::AuctionBrief {
+                    worldwide_day: wwd,
+                    desis_limit_minor: U256::from(1_u8),
+                    is_green: true
+                },
                 scheduled,
-                outbe_desis::api::BriefOverflowPolicy::CarryOver,
+                outbe_desis::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             outbe_desis::api::AuctionBriefReceipt::Accepted
@@ -399,8 +401,8 @@ fn test_terminal_day_leaves_active_set() {
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage);
-        // The day completed and was retired out of the active set into the
-        // bounded delete-queue, but stays readable while under the cap.
+        // The day completed. Metadosis retired it out of the active set into the
+        // bounded delete-queue, but it stays readable while under the cap.
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
         assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
         assert!(metadosis

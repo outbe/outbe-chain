@@ -59,7 +59,6 @@ outbe-protocol.workspace = true
 outbe-poseidon.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
-outbe-paynote.workspace = true
 
 # Alloy
 alloy-rpc-types-eth.workspace = true
@@ -101,7 +100,6 @@ outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-node.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
-outbe-paynote = { workspace = true, features = ["test-utils"] }
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-tee-enclave.workspace = true
 alloy-sol-types.workspace = true

@@ -6,7 +6,7 @@ import { type Address, type Hex, keccak256 } from "viem";
  * There is no separate salt. The commit hash is `keccak256(signature)` where
  * `signature` is the EIP-712 RevealBid signature. ECDSA signatures are
  * deterministic (RFC 6979), so re-signing the same (key, day, units, rate, pair) at
- * reveal reproduces the identical signature - nothing is stored between commit
+ * reveal reproduces the identical signature. Nothing is stored between commit
  * and reveal, and it works across sessions and machines.
  *
  * Scheme (verbatim from contracts/intex/src/target/IntexAuction.sol):
@@ -23,11 +23,11 @@ export interface RevealBidParams {
   worldwideDay: number;
   bidder: Address;
   units: number;
-  /** Bid rate, scale-1e6 fixed-point (% of strike); 1_000_000 = 100%. Fits uint32. */
+  /** Bid rate, scale-1e6 fixed-point (% of strike). 1_000_000 = 100%. Fits uint32. */
   bidRate: number;
   /** Declared issuance currency (ISO 4217 numeric). */
   issuanceCurrency: number;
-  /** Reference currency the bid prices in; the day must carry it. */
+  /** Reference currency the bid prices in. The day must carry it. */
   referenceCurrency: number;
 }
 

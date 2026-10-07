@@ -1,9 +1,9 @@
 //! DKG failure steps used by `features/validator_lifecycle.feature`.
-//! The DKG-failure feature. Freeze a 4->5 reshare target, then take the
-//! joiner AND one committee validator offline so the ceremony begins with only
+//! The DKG-failure feature. Freeze a 4->5 reshare target. Then take the
+//! joiner AND one committee validator offline. As a result, the ceremony begins with only
 //! 3 online players (< player_threshold) and cannot complete. The OLD committee
-//! keeps finalizing on its 3-of-4 quorum (no hard-halt); restoring the downed
-//! validator lets a later retry complete and the set reaches 5.
+//! keeps finalizing on its 3-of-4 quorum (no hard-halt). Restoring the downed
+//! validator lets a later retry complete, and the set reaches 5.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -419,8 +419,8 @@ fn retained_frozen_target(world: &World) -> Result<FrozenTarget> {
 }
 
 fn dkg_activation_anchor(boundary_commit_height: u64) -> Result<u64> {
-    // The boundary artifact is carried by the first block of the new epoch,
-    // one block after the activation anchor used by the rotation schedule.
+    // The first block of the new epoch carries the boundary artifact. That block
+    // is one block after the activation anchor that the rotation schedule uses.
     boundary_commit_height
         .checked_sub(1)
         .ok_or_else(|| eyre!("DKG boundary commit height cannot be zero"))
@@ -527,8 +527,8 @@ fn wait_recovered_dkg(
         let attempts =
             recovered_checkpoint_attempts(deadline.saturating_duration_since(Instant::now()))?;
         // A newly restored owned process may not serve finalized RPC yet.
-        // Keep every expected peer and the helper's final per-port errors;
-        // canonical hash/root disagreement still fails immediately.
+        // Keep every expected peer and the helper's final per-port errors.
+        // Canonical hash/root disagreement still fails immediately.
         let point = world.rpc.wait_finalized_checkpoint(&ports, 0, attempts)?;
         ensure!(
             Instant::now() < deadline,
@@ -605,16 +605,17 @@ fn tuned_setup(world: &mut World) {
             ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "100".to_string()),
             ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "600".to_string()),
             // Keep validator-3 ACTIVE through the real 120-second failed-DKG
-            // timeout. The default E2E threshold would jail it first, silently
-            // turning the intended 4->5 target into a 4-member replacement
-            // target whose three online players can complete DKG without a retry.
+            // timeout. The default E2E threshold would jail it first. That would
+            // silently turn the intended 4->5 target into a 4-member replacement
+            // target. The three online players of that target can complete DKG
+            // without a retry.
             ("TESTNET_DEV_FELONY_THRESHOLD", "179".to_string()),
         ],
     );
 }
 
 /// A compact live network for the permanent-loss safety path. The joiner can
-/// sync and confirm before height 40; the frozen target then expires shortly
+/// sync and confirm before height 40. The frozen target then expires shortly
 /// after its height-60 activation boundary.
 #[given("a fresh localnet with a short DKG activation grace")]
 fn short_grace_setup(world: &mut World) {
@@ -654,7 +655,7 @@ fn freeze_target(world: &mut World) {
     let stake = world.rpc.stake(&key, 1000).expect("stake");
     sleep(Duration::from_secs(6));
     let ready = world.rpc.confirm_ready(&key).expect("confirm ready");
-    // Retain receipts now; finalize them on survivors after the existing fault,
+    // Retain receipts now. Finalize them on survivors after the existing fault,
     // without adding a pre-fault warmup or waiting for the target to freeze.
     for (phase, hash) in [("dkg_stake", stake), ("dkg_ready", ready)] {
         let receipt = eth::raw_json_result(
@@ -736,8 +737,9 @@ fn lose_quorum_permanently(world: &mut World) {
 }
 
 /// Prove the bounded safety behavior without treating it as a liveness fix:
-/// the old 4-member set remains authoritative and produces blocks, the 5-member
-/// target never partially activates, and progress stops only after VRF expiry.
+/// - the old 4-member set remains authoritative and produces blocks,
+/// - the 5-member target never partially activates,
+/// - progress stops only after VRF expiry.
 #[then("the old committee finalizes without partial activation until VRF expiry")]
 fn old_committee_reaches_expiry_without_partial_activation(world: &mut World) {
     expiry::observe(world).expect("complete owned DKG expiry ceiling proof");
@@ -798,8 +800,8 @@ fn old_committee_keeps_finalizing(world: &mut World) {
 }
 
 /// Keep the failed target frozen until the chain has certified blocks after
-/// the originally planned activation height. This proves the later boundary
-/// cannot be mistaken for the regular epoch grid by a FullNode follower.
+/// the originally planned activation height. This proves that a FullNode
+/// follower cannot mistake the later boundary for the regular epoch grid.
 #[then("the old committee crosses the planned activation height without partial activation")]
 fn old_committee_crosses_planned_activation(world: &mut World) {
     // This step belongs to the explicitly configured off-grid FullNode scenario.

@@ -4,8 +4,8 @@
 use super::*;
 
 /// The euro trades live and the dollar leg is priced in the window, but the
-/// window holds no euro price: the direct settlement of a euro-referenced Gem
-/// is refused as oracle unavailable and the provider records no write or event.
+/// window holds no euro price. The direct settlement of a euro-referenced Gem
+/// is refused as oracle unavailable, and the provider records no write or event.
 #[test]
 fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_writes() {
     let rate = U256::from(2u64) * six_decimal_unit();

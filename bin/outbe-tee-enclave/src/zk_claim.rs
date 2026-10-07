@@ -1,15 +1,18 @@
 //! Canonical TributeDraft public-input derivation inside the enclave.
 //!
-//! The claim is folded from the encrypted payload (draft id, amount, su ids),
-//! the cleartext offer (`worldwide_day`, `tribute_currency`) and
-//! `derived_owner`, which is public input zero of the submitted Tribute proof.
+//! The claim is folded from:
+//!
+//! - the encrypted payload (draft id, amount, su ids),
+//! - the cleartext offer (`worldwide_day`, `tribute_currency`),
+//! - `derived_owner`, which is public input zero of the submitted Tribute proof.
+//!
 //! Keeping the fold here binds the proof claim to the plaintext the enclave
 //! actually decrypted without exposing the draft id or amount fields to the
 //! host.
 //!
-//! Because the day and currency are folded in, a caller who declares cleartext
+//! The day and currency are folded in. Thus a caller who declares cleartext
 //! values that disagree with their L2-attested draft produces an `nft_hash` that
-//! does not match the proof's public input, and the offer is rejected. That is
+//! does not match the proof's public input. Such an offer is rejected. That is
 //! what keeps those two fields bound now that they no longer travel encrypted.
 
 use alloy_primitives::B256;

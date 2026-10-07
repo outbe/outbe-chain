@@ -125,7 +125,7 @@ fn setup(storage: StorageHandle) -> Fixture {
     }
 }
 
-/// Threshold-sign a seed partial for `signer` over `(epoch, view)`; return the
+/// Threshold-sign a seed partial for `signer` over `(epoch, view)`. Return the
 /// 48-byte partial.
 fn sign_partial(fx: &Fixture, signer: usize, epoch: u64, view: u64) -> [u8; 48] {
     let msg = Round::new(Epoch::new(epoch), View::new(view)).encode();

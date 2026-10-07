@@ -1,4 +1,5 @@
 use super::*;
+use outbe_common::settlement::PaymentCurrency;
 
 /// Cost of `units` in payment-asset minor units, floored once above the
 /// purchase minimum of one reference-currency minor unit. `rate` is
@@ -25,7 +26,7 @@ pub(crate) fn settlement_units(
         .map_err(|e| IntexFactoryError::from(e).into())
 }
 
-/// Whether the series has qualified; derived from finalized daily VWAPs, never stored.
+/// Whether the series has qualified. It is derived from finalized daily VWAPs and never stored.
 pub fn is_qualified(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
@@ -61,16 +62,9 @@ pub fn quote_settlement(
     ))
 }
 
-/// Which of the series' two currencies a payment asset is denominated in.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum PaymentCurrency {
-    Reference,
-    Issuance,
-}
-
 /// Cost of `units` in `asset`'s minor units and, on the issuance rail, the
 /// VWAP snapshot both COEN legs came from. The Cost Amount is denominated in the
-/// reference currency; an issuance-currency asset is charged at the snapshot's
+/// reference currency. An issuance-currency asset is charged at the snapshot's
 /// COEN cross rate, folded into the same fraction so the conversion floors once.
 pub(super) fn cost_in_asset(
     storage: &StorageHandle<'_>,
@@ -84,21 +78,19 @@ pub(super) fn cost_in_asset(
         .entry_price_minor
         .checked_mul(series.promis_load_minor)
         .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))?;
-    let target_iso = match currency {
-        PaymentCurrency::Reference => series.reference_currency,
-        PaymentCurrency::Issuance => series.issuance_currency,
-    };
-    let (rate, snapshot) = if target_iso == series.reference_currency {
-        (None, None)
-    } else {
-        let fx = settlement_fx_rates(storage.clone(), target_iso, series.reference_currency)?
-            .ok_or(IntexFactoryError::OracleUnavailable)?;
+    let (rate, snapshot) = currency.conversion(|| -> Result<_> {
+        let fx = settlement_fx_rates(
+            storage.clone(),
+            series.issuance_currency,
+            series.reference_currency,
+        )?
+        .ok_or(IntexFactoryError::OracleUnavailable)?;
         let rate = (
             fx.issuance_currency_vwap_minor,
             fx.reference_currency_vwap_minor,
         );
-        (Some(rate), Some(fx.snapshot))
-    };
+        Ok((rate, fx.snapshot))
+    })?;
     Ok((
         settlement_units(product, units, rate, payment_decimals)?,
         snapshot,
@@ -106,7 +98,7 @@ pub(super) fn cost_in_asset(
 }
 
 /// Rejects `asset` unless the router holds a vault for it and the asset reports
-/// one of the series' two currencies; returns which one. Registration is checked
+/// one of the series' two currencies. Returns which one. Registration is checked
 /// first: an unregistered asset need not implement `isoCode()` at all.
 pub(super) fn accept_payment_asset(
     storage: &StorageHandle<'_>,

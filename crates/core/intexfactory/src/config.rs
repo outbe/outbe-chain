@@ -1,6 +1,6 @@
 //! Genesis-selectable parameter profile for IntexFactory: `PROD` (real timings)
 //! and `DEV` (short timings) are fixed here. A chain picks one via the
-//! `config_profile` selector byte seeded from genesis; an unset byte resolves by
+//! `config_profile` selector byte seeded from genesis. An unset byte resolves by
 //! network, so only mainnet runs PROD.
 
 use outbe_primitives::chain::is_mainnet;
@@ -18,7 +18,7 @@ pub const PROFILE_AUTO: u8 = 0;
 pub const PROFILE_DEV: u8 = 1;
 pub const PROFILE_PROD: u8 = 2;
 
-/// Resolved IntexFactory protocol parameters. Periods are seconds; rates are
+/// Resolved IntexFactory protocol parameters. Periods are seconds. Rates are
 /// percentage points over [`crate::constants::PRICE_RATE_DEN`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntexParams {
@@ -32,7 +32,7 @@ pub struct IntexParams {
 }
 
 impl IntexParams {
-    /// Real protocol timings; the default on mainnet.
+    /// Real protocol timings. This is the default on mainnet.
     pub const PROD: Self = Self {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
@@ -44,7 +44,7 @@ impl IntexParams {
 
     /// Short timings for dev/test. `called` is day-granular (daily VWAP scan),
     /// so window/threshold stay whole multiples of a day. The bond drops to
-    /// 100 wCOEN so test bidders are not forced to mint 100M per commit.
+    /// 100 wCOEN so test bidders do not have to mint 100M per commit.
     pub const DEV: Self = Self {
         call_window_seconds: 3 * 24 * 3600,
         call_threshold_seconds: 2 * 24 * 3600,

@@ -22,6 +22,7 @@ pub(crate) mod ocomp_worker_outage;
 pub(crate) mod parse;
 pub(crate) mod pending_dkg;
 pub(crate) mod ports;
+#[cfg(any(test, feature = "ocomp-integration"))]
 pub(crate) mod pricing_coverage;
 pub(crate) mod proc;
 pub(crate) mod shell;

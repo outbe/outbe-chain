@@ -5,8 +5,8 @@
 //! ordering. It runs at the start of every block and currently performs
 //! only the genesis-anchor lazy initialization.
 //!
-//! Day-boundary settle has moved out of Rewards as part of the Cycle
-//! refactor: the daily orchestration runs on
+//! Day-boundary settle moved out of Rewards as part of the Cycle
+//! refactor. The daily orchestration runs on
 //! `CycleLifecycle::begin_block` and dispatches into EmissionLimit ->
 //! AgentReward -> Rewards (via
 //! [`crate::api::prepare_daily_validator_gem_batch`]) exactly once per UTC day.
@@ -26,11 +26,11 @@ impl BlockLifecycle for RewardsLifecycle {
     type EndBlockResult = ();
 
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        // Lock in `genesis_utc_day` from block 0's timestamp on the very
+        // Record `genesis_utc_day` from block 0's timestamp on the very
         // first invocation of this lifecycle on a fresh chain.
         // Subsequent calls are no-ops because the slot is already
-        // non-zero. This is the single source of truth for the
-        // closed-form daily-emission curve in `crate::emission`.
+        // non-zero. `day_emission_limit` in `outbe_emissionlimit::day_emission`
+        // reads this anchor through `day_number_since_genesis`.
         let _genesis = runtime::ensure_genesis_anchor(ctx)?;
         Ok(())
     }

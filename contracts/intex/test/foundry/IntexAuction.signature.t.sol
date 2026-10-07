@@ -8,9 +8,12 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
-/// @notice Focused suite for the EIP-712 reveal signature scheme: cross-chain and
-///         cross-instance replay protection, malleability rejection, the new commit-side
-///         and chainId guards, the golden typed-data digest, and the indexer events.
+/// @notice Focused suite for the EIP-712 reveal signature scheme:
+///         - cross-chain and cross-instance replay protection.
+///         - malleability rejection.
+///         - the new commit-side and chainId guards.
+///         - the golden typed-data digest.
+///         - the indexer events.
 contract AuctionSignatureTest is Test {
     uint16 internal constant ISSUANCE_CCY = 840;
     uint16 internal constant REFERENCE_CCY = 840;
@@ -164,9 +167,9 @@ contract AuctionSignatureTest is Test {
         _commit(auction, worldwideDay, iba1, sig);
         _enterReveal(worldwideDay);
 
-        // Simulate the EVM moving to a different chain (e.g. fork). Caller passes the new chainid
-        // - guard is fine - but the EIP-712 domain rebuilds with the new chainid, so the signature
-        // recovers the wrong signer and `RevealHashMismatch` fires.
+        // Simulate the EVM moving to a different chain (e.g. fork). The caller passes the new
+        // chainid, so the guard is fine. But the EIP-712 domain rebuilds with the new chainid. The
+        // signature then recovers the wrong signer, and `RevealHashMismatch` fires.
         uint256 newChain = origChain + 1;
         vm.chainId(newChain);
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
@@ -180,15 +183,16 @@ contract AuctionSignatureTest is Test {
         uint32 worldwideDay = 20260104;
         _start(worldwideDay);
 
-        // Bidder A signs for chain X (some other chain that is NOT the current one) - replay attacker
-        // captures it and tries to use against the contract running on the current chain.
+        // Bidder A signs for chain X (some other chain that is NOT the current one). A replay
+        // attacker captures it and tries to use it against the contract on the current chain.
         uint256 attackChain = block.chainid + 17;
         bytes memory crossChainSig = _signFor(iba1Pk, address(auction), attackChain, worldwideDay, iba1, 5, 50);
         _commit(auction, worldwideDay, iba1, crossChainSig);
         _enterReveal(worldwideDay);
 
-        // Caller passes block.chainid in the param so the WrongChain guard is silent, but the domain
-        // separator on this chain differs from the one used to sign - recovery fails.
+        // The caller passes block.chainid in the param, so the WrongChain guard is silent. But the
+        // domain separator on this chain differs from the one the bidder signed with, so recovery
+        // fails.
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
         vm.prank(iba1);
         auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), crossChainSig);
@@ -226,15 +230,16 @@ contract AuctionSignatureTest is Test {
         other.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, schedule, params);
         vm.stopPrank();
 
-        // Bidder signs for `auction` (verifyingContract=auction). Attacker tries to replay on `other`.
+        // Bidder signs for `auction` (verifyingContract=auction). Attacker tries to replay on
+        // `other`.
         bytes memory sigForAuction = _signFor(iba1Pk, address(auction), block.chainid, worldwideDay, iba1, 5, 50);
         _commit(other, worldwideDay, iba1, sigForAuction);
 
         // Move to reveal stage on `other`.
         vm.warp(block.timestamp + COMMIT_OFFSET + 1);
 
-        // Reveal on `other` - domain separator binds verifyingContract=other; recovery yields a
-        // wrong signer.
+        // Reveal on `other`. The domain separator binds verifyingContract=other, so recovery
+        // yields a wrong signer.
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
         vm.prank(iba1);
         other.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sigForAuction);
@@ -293,11 +298,12 @@ contract AuctionSignatureTest is Test {
         _commit(auction, worldwideDay, iba1, realSig);
         _enterReveal(worldwideDay);
 
-        // 65 zero bytes - recovers to a zero/garbage address, fails malleability or signer check.
+        // 65 zero bytes. They recover to a zero/garbage address and fail the malleability or
+        // signer check.
         bytes memory zeroes = new bytes(65);
         // OZ ECDSA either reverts ECDSAInvalidSignature (v not 27/28) or treats r/s/v as a
         // garbage but valid-length input that recovers a non-msg.sender address. Either way the
-        // call must revert; we only assert it does.
+        // call must revert. The test only asserts that it reverts.
         vm.expectRevert();
         vm.prank(iba1);
         auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), zeroes);

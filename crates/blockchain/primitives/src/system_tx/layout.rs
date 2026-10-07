@@ -37,10 +37,10 @@ impl<'a> SystemTxLayout<'a> {
             .collect()
     }
 
-    /// True if the begin zone contains a system tx of `kind`. Used to derive the
-    /// layout-signaled optional-phase flags (e.g. the one-time
-    /// [`SystemTxKind::TeeBootstrap`]). A decode failure - which a
-    /// successful [`split_system_layout`] precludes - is treated as absent.
+    /// True if the begin zone contains a system tx of `kind`. Callers use it to
+    /// derive the layout-signaled optional-phase flags (e.g. the one-time
+    /// [`SystemTxKind::TeeBootstrap`]). A successful [`split_system_layout`]
+    /// precludes a decode failure. This method treats a decode failure as absent.
     pub fn has_begin_kind(&self, kind: SystemTxKind) -> bool {
         self.begin_block_kinds()
             .map(|kinds| kinds.contains(&kind))
@@ -126,8 +126,9 @@ pub fn expected_begin_block_kinds_for_activation(
             vec![
                 SystemTxKind::CertifiedParentAccounting,
                 // mandatory inclusion-window phase, ordered after Phase 1
-                // and before CycleTick for every block >= 2 (empty when nothing to
-                // credit; its body still drives the matured-window settlement).
+                // and before CycleTick for every block >= 2. It is empty when there
+                // is nothing to credit. Its body still drives the matured-window
+                // settlement.
                 SystemTxKind::LateFinalizeCredits,
             ]
         }
@@ -194,8 +195,8 @@ pub fn validate_system_tx_set_for_activation(
     }
 
     // / V2: block 1 mandatorily carries the genesis bootstrap
-    // BoundaryOutcome. Reject the layout if the proposer omitted it; the
-    // expected-kinds list rejection below is structural, this rejection is
+    // BoundaryOutcome. Reject the layout if the proposer omitted it. The
+    // expected-kinds list rejection below is structural. This rejection is
     // protocol-level for V2 greenfield.
     if block_number == 1 && !has_boundary_outcome {
         return Err(SystemTxError::V2Block1MissingBoundaryOutcome);

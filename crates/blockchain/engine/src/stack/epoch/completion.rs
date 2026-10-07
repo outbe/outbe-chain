@@ -78,8 +78,8 @@ where
         // Publish only after the exact artifact and threshold
         // material are durable. Proposers can now carry this
         // next-epoch artifact as a CommitteePreAnnounce before
-        // activation; the same immutable object is retained for
-        // the activation boundary below.
+        // activation. This code keeps the same immutable object
+        // for the activation boundary below.
         self.dkg_manager
             .note_ceremony_completed(boundary_artifact.clone());
 
@@ -107,14 +107,16 @@ where
         publish_randomness_status(&self.bridge, &self.vrf_safety);
 
         // Pre-register vote/cert/res sub-channels for
-        // the upcoming epoch BEFORE stashing the pending
-        // activation and BEFORE the
-        // `execution_finalized_height_tx.send(...)`
-        // call that may immediately wake the activation
-        // branch (when `should_activate_now` is true).
-        // This closes the cross-node race where a
+        // the upcoming epoch. Do this BEFORE:
+        // - stashing the pending activation.
+        // - the `execution_finalized_height_tx.send(...)`
+        //   call. That call may immediately wake the
+        //   activation branch (when
+        //   `pending_dkg_handoff_decision` returns
+        //   `PendingDkgHandoffDecision::Activate`).
+        // This closes a cross-node race. In that race, a
         // faster peer can begin broadcasting epoch-N+1
-        // traffic before this node has registered the
+        // traffic before this node registers the
         // matching sub-channel on its Mux. See
         // `epoch_subchannels::register_epoch_subchannels`.
         //
@@ -199,12 +201,12 @@ where
         Ok(EventAction::Proceed)
     }
     fn retry_failed_ceremony(&mut self, e: eyre::Report) -> Result<EventAction> {
-        // Height notifications are deliberately not consumed while a
-        // ceremony is running. Check the authoritative finalized view
-        // before scheduling a retry: otherwise an old queued height can
-        // start another ceremony while the chain is already at the VRF
-        // deadline, and the application cannot propose the next block
-        // that would wake this branch again.
+        // This supervisor deliberately does not consume height notifications
+        // while a ceremony is running. Check the authoritative finalized view
+        // before scheduling a retry. Otherwise an old queued height can start
+        // another ceremony while the chain is already at the VRF deadline.
+        // Then the application cannot propose the next block that would wake
+        // this branch again.
         if let Some(target) = self
             .rotation
             .frozen_dkg_target

@@ -163,11 +163,14 @@ pub enum ExternalRegistryAdmissionError {
 
 /// Production node-local route for authorizing one remote session.
 ///
-/// This deep module owns the complete authority sequence: it resolves the
-/// node's current consensus-finalized head, reads both exact Registry bindings,
-/// validates the source witness and lease, and installs one bounded one-use
-/// ticket in the local enclave. Transporting that ticket to the already chosen
-/// peer is deliberately outside this interface and carries no authority.
+/// This deep module owns the complete authority sequence. It:
+/// 1. Resolves the node's current consensus-finalized head.
+/// 2. Reads both exact Registry bindings.
+/// 3. Validates the source witness and lease.
+/// 4. Installs one bounded one-use ticket in the local enclave.
+///
+/// Transporting that ticket to the already chosen peer is deliberately outside
+/// this interface and carries no authority.
 pub fn authorize_local_finalized_remote_session_v1<P>(
     provider: &P,
     local_enclave: &mut AuthorizedEnclaveClient,
@@ -430,7 +433,7 @@ fn replacement_intent_matches(
 }
 
 /// Inspect only node-local consensus-finalized rollout state. This supplies
-/// deadline alerts and terminal-cutoff decisions; it cannot authorize
+/// deadline alerts and terminal-cutoff decisions. It cannot authorize
 /// candidate promotion.
 pub fn inspect_local_finalized_successor_status_v1<P>(
     provider: &P,

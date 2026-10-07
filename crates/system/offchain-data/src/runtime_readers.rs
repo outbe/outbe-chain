@@ -1,4 +1,7 @@
-//! Read-only Tribute and Nod body capabilities used by runtime execution.
+//! Tribute and Nod body capabilities used by runtime execution.
+//! The path with no day route is read-only.
+//! The day-routed path holds the shared durable writer.
+//! A body read on that path can migrate legacy keys and write.
 
 use outbe_compressed_entities::{
     EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
@@ -272,9 +275,10 @@ impl StorageReader for BudgetedStorageReader {
 
 /// Cloneable runtime authority for typed Tribute and Nod body reads.
 ///
-/// The underlying storage capability is accepted only during construction and
-/// is deliberately not exposed. Runtime consumers receive domain-owned typed
-/// readers and cannot acquire projection write authority through this bundle.
+/// Construction takes the storage capability and does not expose it.
+/// Callers receive typed readers. They cannot take the writer from this bundle.
+/// On the day-routed path, a body read can still migrate legacy keys.
+/// That migration writes the shared database and the day databases.
 #[derive(Clone)]
 pub struct RuntimeBodyReaders {
     storage: StorageReaderHandle,

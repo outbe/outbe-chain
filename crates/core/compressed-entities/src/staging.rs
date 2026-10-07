@@ -31,8 +31,8 @@ use crate::{
 
 pub type ShardIndex = u32;
 
-/// A staged store mutation. Deletes are represented only in candidate memory;
-/// finalized MDBX applies them by removing the corresponding record.
+/// A staged store mutation. Deletes exist only in candidate memory. Finalized
+/// MDBX applies them by removing the corresponding record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TreeChange<T> {
     Set(T),
@@ -1224,9 +1224,9 @@ impl StagingCkbStore {
     }
 }
 
-/// Benchmark-fixed local candidate cache bounds. No entry is implicitly
-/// evicted, so a required pending-finalized candidate cannot disappear under
-/// pressure.
+/// Benchmark-fixed bounds for the local candidate cache. The cache evicts no
+/// entry implicitly, so a required pending-finalized candidate cannot disappear
+/// under pressure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CandidateCacheLimits {
     pub max_candidates: usize,

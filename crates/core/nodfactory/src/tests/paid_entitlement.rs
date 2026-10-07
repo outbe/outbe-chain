@@ -1,10 +1,10 @@
 use super::*;
 
-/// Settlement at the deadline remains valid; the paid Nod can then be mined.
+/// Settlement at the deadline remains valid. The paid Nod can then be mined.
 #[test]
 fn a_called_nod_still_mines_at_the_settlement_deadline() {
     let mut world = World::new();
-    let input = params(Address::repeat_byte(0x55));
+    let input = free(Address::repeat_byte(0x55));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
 
@@ -13,8 +13,7 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD));
     assert_eq!(public_nod_data(&mut world, nod_id).effectiveState, 2);
 
-    let proof = world.covering_proof(nod_id, &input);
-    world.settle(nod_id, input.owner, &proof).unwrap();
+    world.settle(nod_id, input.owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let minted = world
         .mine_gratis(api::MineGratisRequest {
@@ -32,14 +31,10 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
 #[test]
 fn a_called_nod_settles_without_qualifying() {
     let mut world = World::new();
-    let input = params(Address::repeat_byte(0x56));
+    let input = free(Address::repeat_byte(0x56));
     let nod_id = world.issue(&input);
-    let proof = world.covering_proof(nod_id, &input);
     assert_eq!(
-        world
-            .settle(nod_id, input.owner, &proof)
-            .unwrap_err()
-            .to_string(),
+        world.settle(nod_id, input.owner).unwrap_err().to_string(),
         PrecompileError::from(NodFactoryError::NodNotQualified).to_string()
     );
 
@@ -47,7 +42,7 @@ fn a_called_nod_settles_without_qualifying() {
     world.mark_called(nod_id, called_at);
     world.set_timestamp(called_at + 1);
     assert!(!public_nod_data(&mut world, nod_id).isQualified);
-    world.settle(nod_id, input.owner, &proof).unwrap();
+    world.settle(nod_id, input.owner).unwrap();
     assert!(public_nod_data(&mut world, nod_id).isSettled);
 }
 
@@ -73,13 +68,13 @@ fn settlement_is_rejected_once_the_deadline_has_passed() {
         called_at + u64::from(CALL_NOTICE_PERIOD)
     );
 
-    let error = world.settle(nod_id, input.owner, &[]).unwrap_err();
+    let error = world.settle(nod_id, input.owner).unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
             if reason == &NodFactoryError::CallDeadlineExpired.to_string()),
         "unexpected error: {error:?}"
     );
-    // The Nod survives for the sweep to burn; the gate only refuses to mine it.
+    // The Nod survives for the sweep to burn. The gate only refuses to mine it.
     assert!(world
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()
@@ -89,18 +84,14 @@ fn settlement_is_rejected_once_the_deadline_has_passed() {
 #[test]
 fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline() {
     let mut world = World::new();
-    let input = params(Address::repeat_byte(0x81));
+    let input = free(Address::repeat_byte(0x81));
     let nod_id = world.issue(&input);
-    let proof = world.covering_proof(nod_id, &input);
-    assert!(
-        world.settle(nod_id, input.owner, &proof).is_err(),
-        "unqualified"
-    );
+    assert!(world.settle(nod_id, input.owner).is_err(), "unqualified");
     world.qualify(nod_id);
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD));
-    world.settle(nod_id, input.owner, &proof).unwrap();
+    world.settle(nod_id, input.owner).unwrap();
     let stored = world.enter(|storage, scope, parent| {
         let item = nod_api::get_item(&storage, scope, parent, nod_id)
             .unwrap()
@@ -128,7 +119,7 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
     let before = world.provider.storage.clone();
     let events = world.provider.get_ordered_events().to_vec();
     assert!(
-        world.settle(nod_id, input.owner, &proof).is_err(),
+        world.settle(nod_id, input.owner).is_err(),
         "duplicate settlement"
     );
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 365 * 86_400);
@@ -192,15 +183,12 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
 }
 
 #[test]
-fn settlement_failure_rolls_back_payment_change_and_body_updates() {
+fn settlement_failure_rolls_back_body_updates() {
     let mut world = World::new();
-    let input = params(Address::repeat_byte(0x83));
+    let input = free(Address::repeat_byte(0x83));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    world.register_reference_currency_asset(NOTE_ASSET);
-    let cost = cost_of(&input);
-    let (proof, nullifier) = world.fund_note(NOTE_ASSET, nod_id, cost * 2, cost);
-    // Force a state failure after consume has booked the nullifier and appended change.
+    // Force a state failure inside the settlement transition.
     world.enter(|storage, scope, parent| {
         let item = nod_api::get_item(&storage, scope, parent, nod_id)
             .unwrap()
@@ -212,11 +200,10 @@ fn settlement_failure_rolls_back_payment_change_and_body_updates() {
     });
     let before = world.provider.storage.clone();
     let events = world.provider.get_ordered_events().to_vec();
-    assert!(world.settle(nod_id, input.owner, &proof).is_err());
+    assert!(world.settle(nod_id, input.owner).is_err());
     assert_eq!(world.provider.storage, before);
     assert_eq!(world.provider.get_ordered_events(), events);
     world.enter(|storage, scope, parent| {
-        assert!(!outbe_paynote::api::is_spent(&storage, nullifier).unwrap());
         let item = nod_api::get_item(&storage, scope, parent, nod_id)
             .unwrap()
             .unwrap();
@@ -226,7 +213,7 @@ fn settlement_failure_rolls_back_payment_change_and_body_updates() {
             .write(&item.bucket_key, 1)
             .unwrap();
     });
-    world.settle(nod_id, input.owner, &proof).unwrap();
+    world.settle(nod_id, input.owner).unwrap();
 }
 
 #[test]
@@ -253,10 +240,6 @@ fn unpaid_mining_is_rejected() {
     assert!(
         matches!(error, PrecompileError::Revert(reason) if reason == NodFactoryError::NodNotSettled.to_string())
     );
-    assert_eq!(
-        crate::precompile::base_gas(&INodFactory::mineGratisCall::SELECTOR),
-        outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS
-    );
 }
 
 #[test]
@@ -271,13 +254,12 @@ fn settlement_leaves_fidelity_alone_and_mining_records_it() {
             .collect::<std::collections::BTreeMap<_, _>>()
     };
     let mut world = World::new();
-    let input = params(Address::repeat_byte(0x86));
+    let input = free(Address::repeat_byte(0x86));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    let proof = world.covering_proof(nod_id, &input);
     let before = fidelity(&world);
 
-    world.settle(nod_id, input.owner, &proof).unwrap();
+    world.settle(nod_id, input.owner).unwrap();
     assert_eq!(fidelity(&world), before, "settlement acquires no Fidelity");
 
     let nonce = world.pow_nonce(nod_id);
@@ -295,11 +277,10 @@ fn settlement_leaves_fidelity_alone_and_mining_records_it() {
 #[test]
 fn fidelity_persistence_failure_preserves_paid_entitlement_and_mint_nonce() {
     let mut world = World::new();
-    let input = params(Address::repeat_byte(0x85));
+    let input = free(Address::repeat_byte(0x85));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    let proof = world.covering_proof(nod_id, &input);
-    world.settle(nod_id, input.owner, &proof).unwrap();
+    world.settle(nod_id, input.owner).unwrap();
     let before = world.provider.storage.clone();
     let events = world.provider.get_ordered_events().to_vec();
     let nonce = world.pow_nonce(nod_id);
@@ -344,15 +325,25 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
     let mut input = params(Address::repeat_byte(0x91));
     input.entry_price_minor = U256::ZERO;
     let nod_id = world.issue(&input);
-    world.register_reference_currency_asset(NOTE_ASSET);
+    world.register_reference_currency_asset(PAYMENT_ASSET);
     let settle = |world: &mut World, caller, asset| {
         world.enter(|storage, scope, parent| {
-            api::settle_nod(&storage, scope, parent, caller, nod_id, asset, U256::ZERO)
+            api::settle_nod(
+                &storage,
+                scope,
+                parent,
+                api::SettleNodRequest {
+                    caller,
+                    nod_id,
+                    asset,
+                    snapshot_id: U256::ZERO,
+                },
+            )
         })
     };
     let stranger = Address::repeat_byte(0x92);
     assert_eq!(
-        settle(&mut world, stranger, NOTE_ASSET)
+        settle(&mut world, stranger, PAYMENT_ASSET)
             .unwrap_err()
             .to_string(),
         PrecompileError::from(NodFactoryError::NodNotQualified).to_string()
@@ -375,9 +366,9 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
     );
 
     // No token transfer stubs: zero cost must require neither funds nor approvals.
-    settle(&mut world, stranger, NOTE_ASSET).unwrap();
+    settle(&mut world, stranger, PAYMENT_ASSET).unwrap();
     assert_eq!(
-        settle(&mut world, input.owner, NOTE_ASSET)
+        settle(&mut world, input.owner, PAYMENT_ASSET)
             .unwrap_err()
             .to_string(),
         PrecompileError::from(NodFactoryError::NodAlreadySettled).to_string()
@@ -390,7 +381,6 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
         .last()
         .unwrap();
     assert_eq!(paid.owner, input.owner);
-    assert_eq!(paid.nullifier, B256::ZERO);
     assert_eq!(paid.paymentMinor, U256::ZERO);
 }
 
@@ -400,7 +390,7 @@ fn settlement_over_a_broken_member_index_reverts() {
     let mut input = params(Address::repeat_byte(0x93));
     input.entry_price_minor = U256::ZERO;
     let nod_id = world.issue(&input);
-    world.register_reference_currency_asset(NOTE_ASSET);
+    world.register_reference_currency_asset(PAYMENT_ASSET);
     world.qualify(nod_id);
     world.enter(|storage, _, _| {
         NodContract::new(storage)
@@ -414,10 +404,12 @@ fn settlement_over_a_broken_member_index_reverts() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                NOTE_ASSET,
-                U256::ZERO,
+                api::SettleNodRequest {
+                    caller: input.owner,
+                    nod_id,
+                    asset: PAYMENT_ASSET,
+                    snapshot_id: U256::ZERO,
+                },
             )
         })
         .unwrap_err();
@@ -427,37 +419,12 @@ fn settlement_over_a_broken_member_index_reverts() {
 }
 
 #[test]
-fn erc20_selector_has_no_zk_surcharge_and_old_paynote_selector_is_rejected() {
-    assert_eq!(
-        crate::precompile::base_gas(&INodFactory::settleNodCall::SELECTOR),
-        outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS
-    );
-    alloy_sol_types::sol! { function settleNod(uint256 nodId, bytes payNoteProof) external; }
-    let data = settleNodCall {
-        nodId: U256::ONE,
-        payNoteProof: Bytes::new(),
-    }
-    .abi_encode();
-    let mut world = World::new();
-    assert!(world
-        .enter(|storage, scope, parent| crate::precompile::dispatch(
-            storage,
-            scope,
-            parent,
-            &data,
-            Address::repeat_byte(1),
-            U256::ZERO,
-        ))
-        .is_err());
-}
-
-#[test]
 fn erc20_settlement_uses_the_existing_inclusive_deadline() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x93));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    world.register_reference_currency_asset(NOTE_ASSET);
+    world.register_reference_currency_asset(PAYMENT_ASSET);
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
     let deadline = called_at + u64::from(CALL_NOTICE_PERIOD);
@@ -477,10 +444,12 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
                     &storage,
                     scope,
                     parent,
-                    input.owner,
-                    nod_id,
-                    foreign,
-                    U256::ZERO,
+                    api::SettleNodRequest {
+                        caller: input.owner,
+                        nod_id,
+                        asset: foreign,
+                        snapshot_id: U256::ZERO,
+                    },
                 )
             })
             .unwrap_err();
@@ -489,4 +458,33 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
             PrecompileError::from(expected).to_string()
         );
     }
+}
+
+#[test]
+fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
+    let mut world = World::new();
+    let input = free(Address::repeat_byte(0x6a));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    // The registry lists interchangeable assets for the currency; the payer
+    // picks which one to pay in, and it need not be the first.
+    let second_asset = Address::repeat_byte(0x6b);
+    world.register_reference_currency_assets(vec![PAYMENT_ASSET, second_asset]);
+    world
+        .enter(|storage, scope, parent| {
+            api::settle_nod(
+                &storage,
+                scope,
+                parent,
+                api::SettleNodRequest {
+                    caller: input.owner,
+                    nod_id,
+                    asset: second_asset,
+                    snapshot_id: U256::ZERO,
+                },
+            )
+        })
+        .unwrap();
+    assert_eq!(paid_event(&world).asset, second_asset);
+    assert!(is_settled(&mut world, nod_id));
 }

@@ -1,8 +1,8 @@
 //! Canonical replay-visible carrier for validator-authenticated OCOMP actions.
 //!
 //! The signed EIP-1559 envelope is propagated and replayed like any other
-//! transaction, but its `gas_limit` is a protocol marker rather than the budget
-//! for the OCOMP precompile work. Pool and execution must classify this exact
+//! transaction. But its `gas_limit` is a protocol marker, not the budget for
+//! the OCOMP precompile work. Pool and execution must classify this exact
 //! shape before ordinary Ethereum intrinsic-gas handling.
 
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;

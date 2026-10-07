@@ -1,11 +1,12 @@
 //! Fidelity crate tests over the confidential (enclave-backed) path.
 //!
-//! The deep RCFI/cohort math is pinned in the enclave engine
+//! The enclave engine pins the deep RCFI/cohort math
 //! (`outbe-tee-enclave`'s `fidelity` module: LIFO split, golden decay.py
-//! replay, blob padding). Here we test the on-chain orchestration: cohort ops
-//! persist encrypted blobs, the global anchor is set once, leagues come back
-//! from the snapshot, and the signed-auth query path decrypts only for the
-//! owner.
+//! replay, blob padding). Here we test the on-chain orchestration:
+//! - cohort ops persist encrypted blobs
+//! - the global anchor is set once
+//! - leagues come back from the snapshot
+//! - the signed-auth query path decrypts only for the owner
 
 use alloy_primitives::{address, Address, U256};
 use k256::ecdsa::signature::hazmat::PrehashSigner;
@@ -171,7 +172,7 @@ fn max_rcfi_at_uses_plaintext_anchor() {
 #[test]
 fn cohort_ciphertext_is_deterministic_across_executions() {
     // The consensus invariant: two independent executions of the SAME sequence
-    // of cohort ops produce BYTE-IDENTICAL ciphertext (and league), so every
+    // of cohort ops produce BYTE-IDENTICAL ciphertext (and league). Thus every
     // validator converges on identical encrypted state (deterministic nonce, no
     // randomness).
     let run = || {

@@ -2,8 +2,7 @@
 Description=Outbe OCOMP worker %i
 After=outbe-full-node.service outbe-validator.service
 PartOf=outbe-validator.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -22,7 +21,7 @@ ExecStart=/opt/outbe-chain/outbe-ocomp worker \
   --worker-ordinal %i \
   --protocol-bundle-hash ${OCOMP_PROTOCOL_BUNDLE_HASHES} \
   --supervisor-address 127.0.0.1:30401
-Restart=on-failure
+Restart=always
 RestartMode=direct
 RestartSec=5
 RestartSteps=5

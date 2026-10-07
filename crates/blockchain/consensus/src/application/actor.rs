@@ -1,4 +1,5 @@
-//! Application actor - handles propose/verify/finalize via beacon_engine_handle.
+//! Application actor - handles propose/verify/certify and the relay via
+//! beacon_engine_handle. Finalization flows to `FinalizationActor`, not here.
 //!
 //! Implements the consensus `Automaton` and `Relay` traits, bridging
 //! Commonware Simplex with Reth's execution layer.
@@ -17,8 +18,8 @@ use crate::marshal_types::MarshalMailbox;
 /// The application actor that bridges consensus and execution.
 ///
 /// Implements [`Automaton`]/[`CertifiableAutomaton`] so Simplex can call
-/// `propose()`, `verify()`, and `certify()` (the genesis digest now feeds
-/// `simplex::Config.floor` instead of an `Automaton::genesis` call).
+/// `propose()`, `verify()`, and `certify()`. The genesis digest now feeds
+/// `simplex::Config.floor` instead of an `Automaton::genesis` call.
 /// Implements [`Relay`] so Simplex can broadcast proposals.
 pub struct OutbeApplication<E> {
     context: Arc<E>,
@@ -115,10 +116,10 @@ impl<E: Spawner> Relay for OutbeApplication<E> {
     /// Hand a staged candidate directly to marshal, or forward its digest. Honor
     /// the relay plan's recipients without enqueueing an application message.
     fn broadcast(&mut self, payload: Self::Digest, plan: Self::Plan) -> commonware_actor::Feedback {
-        // Honor the plan's intended recipients: `Propose` is a fresh broadcast to
-        // all peers; `Forward` targets a specific subset (under ForwardPolicy
-        // ::Disabled the batcher never emits `Forward`, but if a future policy
-        // enables targeted forwarding we must NOT silently widen it to All).
+        // Honor the plan's intended recipients. `Propose` is a fresh broadcast to
+        // all peers. `Forward` targets a specific subset. Under ForwardPolicy
+        // ::Disabled the batcher never emits `Forward`. If a future policy
+        // enables targeted forwarding, we must NOT silently widen it to All.
         let (round, recipients) = match plan {
             commonware_consensus::simplex::Plan::Propose { round } => (round, Recipients::All),
             commonware_consensus::simplex::Plan::Forward { round, recipients } => {

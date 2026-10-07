@@ -264,7 +264,7 @@ fn write_validator_identity_bundle(
             .wrap_err_with(|| format!("failed to write EVM key: {}", evm_key_path.display()))?;
 
         // Generate a stable Reth RLPx identity for localnet bootnode wiring.
-        // This key is not consensus-critical; it only lets scripts know each
+        // This key is not consensus-critical. It only lets scripts know each
         // node's enode before the first Reth startup.
         let reth_p2p_key = SigningKey::random(&mut rand_core::OsRng);
         let reth_p2p_key_hex = hex::encode(reth_p2p_key.to_bytes());
@@ -329,7 +329,7 @@ fn print_validator_identity_outputs(
     }
 }
 
-/// DKG state file names (must match stack.rs constants).
+/// DKG state file names (must match the `outbe-engine` `stack::dkg::persistence` constants).
 const DKG_SHARE_FILE: &str = "dkg_share.hex";
 const DKG_POLYNOMIAL_FILE: &str = "dkg_polynomial.hex";
 const DKG_OUTPUT_FILE: &str = "dkg_output.hex";
@@ -468,7 +468,7 @@ pub fn execute_dkg_export_share(
 ///
 /// This maintenance command never touches enclave state or the permanent offer
 /// key. The next node startup still passes the normal founding or existing-chain
-/// gates; an existing identity without its exact offer key remains terminal.
+/// gates. An existing identity without its exact offer key remains terminal.
 pub fn execute_dkg_force_restart(storage_dir: &Path) -> Result<()> {
     let material_paths = [
         storage_dir.join(DKG_SHARE_FILE),

@@ -2,7 +2,7 @@
 //! the same block, not the parent state. Here the validator first assigns an
 //! OCOMP delegate, which revokes its own authority to sign carriers, and then
 //! submits a carrier signed with its own key. On the parent state that carrier
-//! is valid; on the block state it is not, and execution would reject it.
+//! is valid. On the block state it is not, and execution would reject it.
 
 use super::*;
 

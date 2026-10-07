@@ -69,8 +69,8 @@ where
 /// Verifies one chunk-aligned leaf range against the certified contributor root.
 ///
 /// `leaves` must be a full chunk or the final partial chunk, and `start_index`
-/// must be chunk-aligned. Padding slots are derived locally, never supplied by
-/// the caller.
+/// must be chunk-aligned. This function derives padding slots locally. The
+/// caller never supplies them.
 pub fn verify_contributor_leaf_range(
     real_count: u32,
     start_index: u32,
@@ -190,7 +190,7 @@ impl RangeShape {
             )
             .into());
         }
-        // A short batch is only legal as the final chunk; otherwise a caller
+        // A short batch is only legal as the final chunk. Otherwise a caller
         // could claim padding slots or split a chunk.
         if len != shape.capacity && end != real_count {
             return Err(IntexError::BadContributorBatch("partial batch is not the tail").into());

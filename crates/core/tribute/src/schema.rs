@@ -52,7 +52,7 @@ pub struct DayTotals {
 
 /// Bounded, incrementally maintained Tribute inputs used by OCOMP
 /// pre-admission. The live accumulator is frozen exactly once after the
-/// Tribute WWD and its CE collection have both been sealed.
+/// Tribute WWD and its CE collection are both sealed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DayPreAdmission {
     pub worldwide_day: WorldwideDay,

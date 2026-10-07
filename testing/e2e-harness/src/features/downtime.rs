@@ -226,7 +226,7 @@ fn observe_penalty(world: &mut World) -> Result<()> {
         .slash_count
         .checked_add(1)
         .ok_or_else(|| eyre!("slash count overflow"))?;
-    // Keep the original 80 x 3-second penalty budget; no nested readiness wait.
+    // Keep the original 80 x 3-second penalty budget. Use no nested readiness wait.
     for _ in 0..80 {
         check_owned_processes(world, &state, true)?;
         let checkpoint = world.rpc.wait_finalized_checkpoint(&ports, 0, 1)?;
@@ -439,7 +439,7 @@ fn observe_at(
             "eth_getBalance",
             json!([addresses::STK_ADDR, format!("0x{height:x}")]),
         )?)?;
-        // Staking slot 9 is the per-validator unbonding head (idx+1; zero is empty).
+        // Staking slot 9 is the per-validator unbonding head (idx+1, zero is empty).
         // Reuse production's Solidity storage-key derivation, not a second hash implementation.
         let unbonding_head = storage_word(
             &url,

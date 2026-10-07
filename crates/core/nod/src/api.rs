@@ -71,12 +71,12 @@ pub fn store_entry_price_snapshot(
 
 /// The Nod's settlement cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.
 /// Positive inputs have a minimum cost of one reference-currency minor unit.
-/// Price and cost use six-decimal reference-currency precision; the load uses
+/// Price and cost use six-decimal reference-currency precision. The load uses
 /// protocol units (1e6 per whole COEN). Asset payment units are quoted separately.
 ///
-/// Derived rather than stored — the entry price lives on the Nod's bucket and
-/// the load on the Nod itself, and lysis mints the Nod from exactly this
-/// formula.
+/// The cost is derived rather than stored. The entry price lives on the Nod's
+/// bucket and the load lives on the Nod itself. Lysis mints the Nod from exactly
+/// this formula.
 pub fn settlement_cost_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
     let cost = checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)?;
     if !entry_price_minor.is_zero() && !gratis_load_minor.is_zero() {

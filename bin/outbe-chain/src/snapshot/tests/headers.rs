@@ -141,7 +141,7 @@ impl Fixture {
 }
 
 // Cover the entire fixture, including configuration and key sentinels. Preserve
-// membership and modes even for MDBX's existing reader bookkeeping file; its
+// membership and modes even for MDBX's existing reader bookkeeping file. Its
 // reader-slot bytes and size can change when MDBX opens a read-only environment.
 pub(super) fn fingerprint(
     root: &std::path::Path,

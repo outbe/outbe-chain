@@ -4,10 +4,10 @@
 //! nodes. Implements the spec curve `T_dec(T) = L * (1 - (1/2)^(T/H))` with
 //! half-life `H = 365 days` and saturation limit `L = H/ln2 ~= 526.58 days`.
 //!
-//! `(1/2)^x` is evaluated by binary decomposition of the fractional part of `x`:
+//! The crate evaluates `(1/2)^x` by binary decomposition of the fractional part of `x`:
 //! `(1/2)^x = (1/2)^k * prod_i ((1/2)^(2^-i))^{b_i}` where `k` is the integer part
 //! and `b_i` the i-th fractional bit. The per-bit factors `(1/2)^(2^-i)` are the
-//! precomputed [`HALF_POW_TABLE`] constants; the integer part is a right shift.
+//! precomputed [`HALF_POW_TABLE`] constants. The integer part is a right shift.
 //! Validated against the PDF reference `decay.py` (errors ~1e-15 vs float64).
 
 use alloy_primitives::U256;
@@ -21,23 +21,23 @@ pub(crate) const SCALE: U256 = SCALE_1E18;
 /// `IFidelity.decimals()`.
 pub const DECIMALS: u8 = 18;
 
-/// Half-life in seconds (365 days). The decay ratio `T/H` is computed in
-/// seconds so sub-day precision is preserved.
+/// Half-life in seconds (365 days). The crate computes the decay ratio `T/H` in
+/// seconds to keep sub-day precision.
 pub(crate) const H_SEC: u64 = 365 * 86_400;
 
 /// Saturation limit `L = H / ln2` in fixed-point decayed-days
 /// (~= 526.583690 days). `526583689924471619584 = round(365/ln2 * 10^18)`.
 pub(crate) const L_FP: U256 = U256::from_limbs([10074855860604174336, 28, 0, 0]);
 /// Inclusive bounds of the Fidelity league scale. A valid league is always in
-/// `[MIN_LEAGUE, MAX_LEAGUE]`; the derivation from RCFI lives in
+/// `[MIN_LEAGUE, MAX_LEAGUE]`. The derivation from RCFI lives in
 /// [`league_from_rcfi`]. Public so consumers (and fixtures) reference the
 /// canonical range instead of hard-coding it.
 pub const MIN_LEAGUE: u16 = 1;
 pub const MAX_LEAGUE: u16 = 4096;
 
 /// Public (not `pub(crate)`): the TEE enclave engine accumulates RCFI over
-/// decrypted cohorts with the exact same arithmetic, so this is the single
-/// source of truth shared by the on-chain and in-enclave evaluation paths.
+/// decrypted cohorts with the exact same arithmetic. Thus this type is the single
+/// source of truth that the on-chain and in-enclave evaluation paths share.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RcfiAccumulator {
     numerator: U256,
@@ -183,8 +183,8 @@ pub(crate) fn pow_one_half_fp(x_fp: U256) -> U256 {
 }
 
 /// Decayed time `T_dec(age) = L * (1 - (1/2)^(age/H))` in fixed-point
-/// decayed-days. `age_sec` is the elapsed time since the event in seconds;
-/// callers must clamp clock skew (`now < event_time`) to `0` before calling.
+/// decayed-days. `age_sec` is the elapsed time since the event in seconds.
+/// Callers must clamp clock skew (`now < event_time`) to `0` before calling.
 pub fn t_dec(age_sec: u64) -> U256 {
     if age_sec == 0 {
         return U256::ZERO;

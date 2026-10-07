@@ -11,19 +11,19 @@
 //! The happy-path test builds a real 4-validator DKG fixture, a
 //! real aggregated BLS signature over the canonical proposal, and a
 //! real ECDSA-signed Phase 1 TxLegacy. The cert carries a mandatory but
-//! cryptographically invalid VRF proof while its BLS vote aggregate remains
-//! valid, producing canonical failure class 7. This proves end-to-end that:
+//! cryptographically invalid VRF proof. Its BLS vote aggregate stays valid.
+//! The result is canonical failure class 7. This test proves end-to-end that:
 //!   * the codec -> admissibility -> proposer recovery -> snapshot lookup
-//!     -> verifier -> felony chain is wired correctly;
+//!     -> verifier -> felony chain is wired correctly.
 //!   * the recovered proposer is byte-equal to the EVM address derived
-//!     from the test's `PrivateKeySigner`;
+//!     from the test's `PrivateKeySigner`.
 //!   * the felony helper credits the submitter with 10% of the slashed
-//!     amount and force-exits the proposer.
+//!     amount and jails the proposer.
 //!
-//! Tests rely on `submit_invalid_vrf_evidence_with_schedule`, the
-//! `#[doc(hidden)]` test-seam that lets us pass relaxed evidence limits
+//! The tests use `submit_invalid_vrf_evidence_with_schedule`. This
+//! `#[doc(hidden)]` test-seam lets us pass relaxed evidence limits
 //! (`invalid_vrf_evidence_max_bytes` / `_max_age_blocks` / `_max_epoch_lag`).
-//! Production callers always go through `submit_invalid_vrf_evidence`, which
+//! Production callers always use `submit_invalid_vrf_evidence`, which
 //! passes `OutbeProtocolSchedule::default()`.
 
 use alloy_consensus::{SignableTransaction as _, TxEnvelope};
@@ -99,8 +99,8 @@ const STAKE_AMOUNT: u64 = 1_000_000_000_000u64;
 // axis (size / age / epoch-lag) without bumping into the others.
 fn relaxed_schedule() -> OutbeProtocolSchedule {
     OutbeProtocolSchedule {
-        // Base gas is the precompile gas charge, not consumed by the verification
-        // path these tests exercise; left at a small value.
+        // Base gas is the precompile gas charge. The verification path that these
+        // tests exercise does not consume it, so it stays at a small value.
         slash_indicator_vrf_evidence_base_gas: 1,
         invalid_vrf_evidence_max_bytes: 1_000_000,
         invalid_vrf_evidence_max_age_blocks: 10_000,
@@ -190,7 +190,7 @@ fn build_cert(
     .unwrap();
 
     let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
-    // finalize votes bind the ordered committee; build the canonical `Set`
+    // Finalize votes bind the ordered committee. Build the canonical `Set`
     // from the DKG committee (matches the snapshot the verifier reads).
     let committee_set: commonware_utils::ordered::Set<PublicKey> =
         commonware_utils::ordered::Set::from_iter_dedup(dkg.pubkeys.iter().cloned());
@@ -266,7 +266,7 @@ fn build_metadata(
 // ---------------------------------------------------------------------------
 // Phase 1 tx signing helper. Returns (encoded_2718_bytes, recovered_address).
 // The recovered address matches what `submit_invalid_vrf_evidence` ecrecovers
-// from the encoded bytes - proves the proposer-attribution chain.
+// from the encoded bytes. This proves the proposer-attribution chain.
 // ---------------------------------------------------------------------------
 
 fn signer_with_address() -> (PrivateKeySigner, Address) {
@@ -313,9 +313,9 @@ fn sign_phase1_metadata_tx(
 
 /// Populates storage with the minimum entries needed for the runtime
 /// function to reach the verifier: registered + staked proposer, epoch
-/// counter, and the committee snapshot. The provider's block number must
-/// be set separately via `with_storage_at` (StorageHandle does not expose
-/// a setter - block_number is part of the provider's block context).
+/// counter, and the committee snapshot. The caller must set the provider's
+/// block number separately via `with_storage_at` (StorageHandle does not
+/// expose a setter - block_number is part of the provider's block context).
 fn setup_storage(
     storage: StorageHandle,
     proposer: Address,
@@ -436,7 +436,7 @@ fn with_storage_no_canonical_parent<R>(block_number: u64, f: impl FnOnce(Storage
 }
 
 /// Provider with `block_number` set and the canonical fixture seeded with
-/// a DIFFERENT hash at `PARENT_BLOCK_NUMBER` - drives the
+/// a DIFFERENT hash at `PARENT_BLOCK_NUMBER`. This drives the
 /// "canonical mismatch" branch.
 fn with_storage_with_foreign_canonical_parent<R>(
     block_number: u64,
@@ -514,7 +514,7 @@ fn invalid_vrf_evidence_rejects_non_active_submitter() {
 }
 
 // ===========================================================================
-// oversized evidence is rejected by the size cap before codec runs.
+// the size cap rejects oversized evidence before the codec runs.
 // ===========================================================================
 #[test]
 fn invalid_vrf_evidence_rejects_over_max_bytes() {
@@ -532,8 +532,8 @@ fn invalid_vrf_evidence_rejects_over_max_bytes() {
 }
 
 // ===========================================================================
-// evidence whose `child_block_number` is older than current_block -
-// max_age_blocks is rejected.
+// the runtime rejects evidence whose `child_block_number` is older than
+// current_block - max_age_blocks.
 // ===========================================================================
 #[test]
 fn invalid_vrf_evidence_rejects_after_max_age() {
@@ -573,7 +573,7 @@ fn evidence_epoch_deadline_inadmissible_after_grace_epoch() {
 }
 
 // ===========================================================================
-// codec rejects bad magic. (Mirrors a codec unit test; this test
+// codec rejects bad magic. (Mirrors a codec unit test. This test
 // confirms the codec error propagates through the runtime path.)
 // ===========================================================================
 #[test]
@@ -590,8 +590,8 @@ fn evidence_with_bad_magic_propagates_codec_error_through_runtime() {
 }
 
 // ===========================================================================
-// phase1_tx_bytes that doesn't decode as an EIP-2718 envelope
-// is rejected (the runtime guards against junk bytes before recovery).
+// the runtime rejects phase1_tx_bytes that does not decode as an EIP-2718
+// envelope (the runtime guards against junk bytes before recovery).
 // ===========================================================================
 #[test]
 fn evidence_with_phase1_tx_not_eip2718_envelope_rejected() {
@@ -610,7 +610,7 @@ fn evidence_with_phase1_tx_not_eip2718_envelope_rejected() {
 }
 
 // ===========================================================================
-// phase1_tx_bytes with trailing bytes after the envelope is rejected.
+// the runtime rejects phase1_tx_bytes with trailing bytes after the envelope.
 // ===========================================================================
 #[test]
 fn evidence_with_phase1_tx_trailing_bytes_rejected() {
@@ -677,9 +677,9 @@ fn invalid_vrf_evidence_without_child_proposer_attribution_rejects() {
         let (signer, _proposer) = signer_with_address();
         let dkg = build_dkg(4);
         // Build a snapshot whose committee does NOT contain the
-        // proposer-derived address - use a different placeholder for
-        // slot 0 (the same `foreign_addr` is what setup_storage
-        // registers + stakes, so its identity is consistent).
+        // proposer-derived address. Use a different placeholder for
+        // slot 0 (setup_storage registers + stakes the same
+        // `foreign_addr`, so its identity is consistent).
         let foreign_addr = address!("0xfefefefefefefefefefefefefefefefefefefefe");
         let snapshot = build_snapshot(&dkg, foreign_addr);
         let cert = build_cert(&dkg, &[0, 1, 2, 3], PARENT_BLOCK_HASH, false);
@@ -747,8 +747,8 @@ fn invalid_vrf_evidence_for_non_vrf_failure_class_rejects() {
         let cert = build_cert(&dkg, &[0, 1, 2], PARENT_BLOCK_HASH, true);
         let cert_bytes = proof_envelope_bytes(&cert, PARENT_BLOCK_HASH);
         let mut metadata = build_metadata(&snapshot, &cert_bytes);
-        // Claim all 4 signers in the bitmap even though only 3 signed -
-        // this makes the BLS aggregate mismatch the reconstructed
+        // Claim all 4 signers in the bitmap even though only 3 signed.
+        // This makes the BLS aggregate mismatch the reconstructed
         // expected payload.
         metadata.signer_bitmap = vec![1u8; 4];
 
@@ -925,7 +925,7 @@ fn classify_vrf_failure_covers_all_reachable_vrf_variants_only() {
     );
     assert_eq!(classify_vrf_failure(&InvalidVrfSignature), Some(7));
 
-    // Representative non-VRF variants must return None - the precompile
+    // Representative non-VRF variants must return None. The precompile
     // reverts with "non-VRF class" rather than slashing.
     assert_eq!(
         classify_vrf_failure(&BelowQuorum {
@@ -973,8 +973,8 @@ fn codec_wire_constants_are_stable() {
 // ===========================================================================
 #[test]
 fn evidence_max_age_inadmissible_after_deadline() {
-    // (a) deadline exactly - admissibility passes; we expect a later
-    // failure path (here the codec, because metadata is empty), proving
+    // (a) deadline exactly - admissibility passes. We expect a later
+    // failure path (here the codec, because metadata is empty). This proves
     // we got past the block-age gate.
     let mut schedule = relaxed_schedule();
     schedule.invalid_vrf_evidence_max_age_blocks = 5;
@@ -1032,7 +1032,7 @@ fn evidence_admissibility_reads_current_epoch_from_validator_set_storage() {
             "precompile must read the ValidatorSet epoch from storage; got: {msg}",
         );
         // The current_epoch in the error message must be exactly the
-        // value we just wrote - pins the storage-read path.
+        // value we just wrote. This pins the storage-read path.
         assert!(
             msg.contains(&format!("current_epoch {}", CHILD_EPOCH + 7)),
             "rejection must echo the stored epoch value; got: {msg}",
@@ -1136,7 +1136,7 @@ fn invalid_vrf_evidence_uses_existing_evidence_felony_economics() {
             "slash must equal 5% of stake (apply_evidence_felony default)",
         );
 
-        // 10% of slashed goes to submitter, the rest is burned from
+        // 10% of slashed goes to submitter. The rest is burned from
         // STAKING_ADDRESS (same conservation as
         // submitDoubleProposalEvidence / submitConflictingVoteEvidence).
         let expected_reward = expected_slashed * U256::from(10u64) / U256::from(100u64);
@@ -1155,9 +1155,9 @@ fn invalid_vrf_evidence_uses_existing_evidence_felony_economics() {
 }
 
 // ===========================================================================
-// body test #11 - evidence whose `parent_block_hash`
-// is not canonical at `parent_block_number` is rejected as
-// non-attributable. Covers both branches:
+// body test #11 - the runtime rejects evidence whose `parent_block_hash`
+// is not canonical at `parent_block_number` as non-attributable.
+// Covers both branches:
 //   (a) parent number is OUTSIDE the canonical-history window (None)
 //   (b) parent number is in window but with a DIFFERENT canonical hash
 //       (side-chain evidence)
@@ -1197,8 +1197,8 @@ fn invalid_vrf_proof_evidence_with_non_canonical_parent_rejects() {
 
 // ===========================================================================
 // body test #14 - after a successful slash the canonical
-// `(child_hash, phase1_tx_hash)` dedup slot must be set, AND a fresh
-// `SlashIndicator` facade attached to the same storage must still see
+// `(child_hash, phase1_tx_hash)` dedup slot must be set. A fresh
+// `SlashIndicator` facade attached to the same storage must ALSO still see
 // it (the slot is persisted in EVM storage, not cached on the contract
 // instance). Locks the persistence boundary that the dedup guard relies
 // on across separate precompile invocations.
@@ -1245,19 +1245,18 @@ fn slashindicator_dedup_retains_invalid_vrf_evidence_seen_hash() {
 //   * ABI-decode the canonical 4-byte selector through `ISlashIndicator`
 //     (the txpool precompile's interface) - the route exists.
 //   * Confirm the dispatch closure reaches the runtime entry-point with
-// an ACTIVE-validator caller (the ACL gate) and proceeds
-//     into the decode phase. A begin-zone phase wouldn't enforce the
+//     an ACTIVE-validator caller (the ACL gate) and proceeds
+//     into the decode phase. A begin-zone phase would not enforce the
 //     validator-set ACL (system txs run as `SYSTEM_ADDRESS` against a
-//     different dispatcher), so the canonical revert text is a
+//     different dispatcher). So the canonical revert text is a
 //     behavioural marker for "this ran through the user-tx precompile
 //     dispatch and was gated by the ACL".
 // The begin-zone path lives in a different crate (`outbe-evm`) that
-// `outbe-slashindicator` cannot depend on without cycle, so the
-// structural "begin-zone does NOT host this selector" claim is enforced
-// by the type system: `outbe_evm::system_tx::SystemTxInputV2` is a
-// closed enum with 4 named variants (CertifiedParentAccounting,
-// CycleTick, BoundaryOutcome, OracleSlashWindow), none of which
-// reference `submitInvalidVrfProofEvidence`.
+// `outbe-slashindicator` cannot depend on without cycle. So the type
+// system enforces the structural "begin-zone does NOT host this selector"
+// claim. `outbe_evm::system_tx::SystemTxInputV2` is a closed enum with
+// 4 named variants (CertifiedParentAccounting, CycleTick, BoundaryOutcome,
+// OracleSlashWindow). None of them reference `submitInvalidVrfProofEvidence`.
 // ===========================================================================
 #[test]
 fn invalid_vrf_evidence_uses_txpool_precompile_path_not_begin_zone() {
@@ -1283,9 +1282,8 @@ fn invalid_vrf_evidence_uses_txpool_precompile_path_not_begin_zone() {
     // (b) Hitting the txpool-style dispatch (`SlashIndicator::new(...)`
     // then the runtime entry-point) with a registered ACTIVE submitter
     // proceeds past the ACL gate into the decode phase. The
-    // empty input fails at the codec ("bad magic"), proving the dispatch
-    // path is wired through to runtime decode without going through any
-    // begin-zone shortcut.
+    // empty input fails at the codec ("bad magic"). This proves that the
+    // dispatch path reaches runtime decode without any begin-zone shortcut.
     with_storage(|storage| {
         let mut si = SlashIndicator::new(storage);
         let err = si.submit_invalid_vrf_evidence(SUBMITTER, &[]).unwrap_err();

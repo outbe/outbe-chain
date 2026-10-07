@@ -52,11 +52,11 @@ export function encryptOffer(offerPub: Uint8Array, plaintext: Uint8Array): Encry
 export interface OfferPayload {
   creator: string;
   amount_base: string;
-  /** Six-decimal remainder; must match the proof's draft. Defaults to "0". */
+  /** Six-decimal remainder. It must match the proof's draft. Defaults to "0". */
   amount_micro?: string;
   /** TributeDraft id bound by the proof and by the caller's L2 attestation. */
   tribute_draft_id: string;
-  /** SpendingUnit hashes bound by the proof; at least one. */
+  /** SpendingUnit hashes bound by the proof. Contains at least one hash. */
   su_hashes: readonly string[];
 }
 
@@ -83,7 +83,7 @@ export function canonicalAmountMicro(value: string): string {
  * from the caller and MUST be the values its proof and L2 attestation bind:
  * the enclave folds them into `nft_hash`, which the node checks against the
  * proof's public input. `worldwide_day` and `currency` are cleartext
- * `offerTribute` arguments, not payload fields - the node needs them to admit
+ * `offerTribute` arguments, not payload fields. The node needs them to admit
  * and price the offer.
  */
 export function buildPayload(p: OfferPayload): Uint8Array {

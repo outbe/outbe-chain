@@ -195,9 +195,9 @@ fn successful_receipt_and_supply(world: &mut World) {
             world
                 .rpc
                 .trace_tribute_state(tx_hash, "state-visible", primary);
-            // The offer just went through every enclave: the per-request
-            // telemetry line must be on the enclave log, and each validator's
-            // canary-fed enclave status must not be failing.
+            // The offer just went through every enclave. The per-request
+            // telemetry line must be on the enclave log. The canary-fed enclave
+            // status of each validator must not be failing.
             for index in 0..world.validators.size() {
                 let mut telemetry_visible = false;
                 for _ in 0..60 {

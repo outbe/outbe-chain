@@ -67,7 +67,7 @@ where
 
         // All ordinary and Ethereum post-execution changes are complete. The
         // terminal request consumes exact provisional roots while CE remains
-        // active, so its failure path can retire the WWD Tribute partition as
+        // active. Thus its failure path can retire the WWD Tribute partition as
         // the last CE mutation. The sole committed seal follows the terminal
         // decision.
         self.apply_outbe_ethereum_post_execution()?;

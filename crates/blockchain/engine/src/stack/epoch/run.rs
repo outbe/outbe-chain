@@ -82,7 +82,7 @@ where
 
     // Follower mode: cold-sync finalized blocks from an upstream node and verify
     // them against the trusted network identity, WITHOUT running the consensus
-    // engine. Short-circuits before any validator material is loaded.
+    // engine. Short-circuits before this function loads any validator material.
     if let Some(upstream) = args.upstream.clone() {
         return run_follow_stack(
             ctx,
@@ -118,7 +118,7 @@ where
 
     // -- 2. Load validator set -------------------------------------------
     // Chain state is the only runtime source of validator membership. For a
-    // fresh network this is the genesis ValidatorSet storage; for restart/join
+    // fresh network this is the genesis ValidatorSet storage. For restart/join
     // this is the synced canonical state.
     let initial_peer_height = node
         .provider
@@ -187,7 +187,7 @@ where
     // -- 5c. Initialize marshal actor before threshold material selection -
     //
     // Marshal init exposes persisted consensus finalized height. That height is
-    // part of the genesis-formation proof; without it a crash-restart with
+    // part of the genesis-formation proof. Without it, a crash-restart with
     // execution height 0 could incorrectly start DKG round 0.
     use commonware_consensus::marshal;
 
@@ -276,12 +276,12 @@ where
     );
     bridge.set_local_threshold_share_present(signing_share.is_some());
     // The active boundary tuple height is the ACTIVATION ANCHOR (the height the
-    // live committee anchored its rotation schedule on), NOT the commit height of
-    // the artifact-carrying block: finalized BoundaryOutcome recovery normalizes
-    // commit -> anchor (commit - 1, since the artifact rides the first new-epoch
-    // block). A node-local pending snapshot is restored separately and never
-    // changes this active anchor until its exact outgoing-finalized preannounce
-    // authorizes the normal runtime activation path.
+    // live committee anchored its rotation schedule on). It is NOT the commit
+    // height of the artifact-carrying block. Finalized BoundaryOutcome recovery
+    // normalizes commit -> anchor (commit - 1, since the artifact rides the first
+    // new-epoch block). The supervisor restores a node-local pending snapshot
+    // separately. That snapshot never changes this active anchor until its exact
+    // outgoing-finalized preannounce authorizes the normal runtime activation path.
     let last_dkg_activation_height = active_boundary
         .as_ref()
         .map(|(height, _)| *height)
@@ -330,15 +330,16 @@ where
     let engine_handle: EngineHandle = node.add_ons_handle.beacon_engine_handle.clone();
     let payload_builder = node.payload_builder_handle.clone();
 
-    // sus-5: the executor publishes execution-finalized heights here; the
-    // supervisor consumes them to drive height-based DKG/VRF rotation. The
-    // consumer arm is gated off while a reshare is in progress
-    // (`if !reshare_in_progress`), so heights accumulate during a reshare. The
-    // backlog is BOUNDED by the reshare duration (one height per finalized block
-    // for the length of a reshare) and is drained in order afterwards. We keep an
-    // ordered (unbounded) mpsc rather than a latest-only `watch` deliberately: the
-    // drain feeds per-height rotation-threshold logic (freeze/activation heights),
-    // so heights are processed in sequence rather than coalesced to the latest.
+    // sus-5: the executor publishes execution-finalized heights here. The
+    // supervisor consumes them to drive height-based DKG/VRF rotation. A guard
+    // (`if !reshare_in_progress`) disables the consumer arm while a reshare is
+    // in progress, so heights accumulate during a reshare. The reshare duration
+    // BOUNDS the backlog (one height per finalized block for the length of a
+    // reshare). The supervisor drains the backlog in order afterwards. We
+    // deliberately keep an ordered (unbounded) mpsc rather than a latest-only
+    // `watch`. The drain feeds per-height rotation-threshold logic
+    // (freeze/activation heights). Thus the supervisor processes heights in
+    // sequence and does not coalesce them to the latest.
     let (executor_finalized_height_tx, mut executor_finalized_height_rx) =
         tokio::sync::mpsc::unbounded_channel::<u64>();
     let (execution_finalized_height_tx, execution_finalized_height_rx) =
@@ -349,9 +350,9 @@ where
     // Reth may have one or more speculative canonical blocks above marshal's
     // durable certified tip when the process stops. Those blocks remain useful
     // as local payload data, but they are not a finalization authority. Seed the
-    // executor and FinalizationView at the highest height confirmed by both
-    // stores so a different block winning at the first unfinalized height can
-    // be imported and selected by forkchoice after restart.
+    // executor and FinalizationView at the highest height that both stores
+    // confirm. Then, if a different block wins at the first unfinalized height,
+    // the node can import it and forkchoice can select it after restart.
     let recovery_anchor_height =
         durable_recovery_anchor_height(last_execution_height, last_consensus_finalized.get());
     let recovery_anchor_hash = if recovery_anchor_height == 0 {
@@ -540,18 +541,19 @@ where
             }
             Err(head_error) => {
                 // reth's canonical head can lead consensus finalization by the
-                // in-flight block: one this node proposed and applied as its head
-                // but had not finalized when it stopped (steady state:
-                // head_height = finalized_height + 1). On a plain restart in that
-                // window the head's finalization legitimately does not exist yet -
-                // a normal unfinalized head, NOT archive corruption. Confirm the
-                // marshal still holds its own finalized tip's record (a gap *there*
-                // is genuine corruption) and that the head leads by a bounded
-                // amount, then continue from marshal's durable finalized boundary.
+                // in-flight block. That is a block this node proposed and applied
+                // as its head but had not finalized when it stopped. In steady
+                // state, head_height = finalized_height + 1. On a plain restart in that
+                // window, the head's finalization legitimately does not exist yet.
+                // This is a normal unfinalized head, NOT archive corruption.
+                // 1. Confirm the marshal still holds its own finalized tip's record
+                //    (a gap *there* is genuine corruption).
+                // 2. Confirm the head leads by a bounded amount.
+                // 3. Continue from marshal's durable finalized boundary.
                 // The speculative Reth head remains available locally, but neither
                 // ExecutorActor nor FinalizationView may call it finalized. The
-                // network re-finalizes forward and Reth reorgs via forkchoice if a
-                // different block wins the first unfinalized height.
+                // network re-finalizes forward. If a different block wins the first
+                // unfinalized height, Reth reorgs via forkchoice.
                 let finalized_tip = last_consensus_finalized.get();
                 if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
                     return Err(head_error);
@@ -622,12 +624,13 @@ where
     let application_epoch_fence = ApplicationEpochFence::new(Epoch::new(recovered_epoch));
 
     // -- Half B step 21: build the shared finalization view + block
-    // cache BEFORE constructing the application handler. Both the
-    // application handler (`build_block` reads `prev_randao` /
-    // `last_timestamp_millis`; proposer inserts into `block_cache`) and
-    // the FinalizationActor (sole writer for the view; evicts entries
-    // below the new finalized height from `block_cache`) hold the same
-    // `Arc`s. Recovery state is seeded into the view here.
+    // cache BEFORE constructing the application handler. Two owners hold
+    // the same `Arc`s:
+    // - the application handler. `build_block` reads `prev_randao` /
+    //   `last_timestamp_millis`, and the proposer inserts into `block_cache`.
+    // - the FinalizationActor. It is the sole writer for the view, and it
+    //   evicts entries below the new finalized height from `block_cache`.
+    // This code seeds the recovery state into the view here.
     let finalization_view = new_finalization_view(
         recovery_anchor_hash,
         recovery_anchor_height,
@@ -636,9 +639,9 @@ where
     let finalization_block_cache = BlockCache::new();
 
     // Construct the consensus-owned exact-parent certificate handoff store
-    // before either the application handler (consumer-side waiter) or the
-    // FinalizationActor (single writer) so both can clone from the same durable
-    // backing.
+    // before the application handler (consumer-side waiter) and before the
+    // FinalizationActor (single writer). Then both can clone from the same
+    // durable backing.
     let parent_cert_dir = args
         .storage_dir
         .as_ref()
@@ -703,11 +706,12 @@ where
     // no CLI override) once, before the handler ctor and the epoch loop.
     let bt = block_timing_from_genesis(&node)?;
 
-    // one process-local late-finalize signature store shared by the
-    // application handler (packs the proposer artifact), the FinalizationActor
-    // (resolves views -> block numbers), and every per-epoch OutbeReporter
-    // (records observed individual finalize votes). Best-effort, never consensus
-    // state - the resulting artifact is re-verified pre-exec on every node.
+    // one process-local late-finalize signature store. These users share it:
+    // - the application handler (packs the proposer artifact)
+    // - the FinalizationActor (resolves views -> block numbers)
+    // - every per-epoch OutbeReporter (records observed individual finalize votes).
+    // Best-effort, never consensus state. Every node re-verifies the resulting
+    // artifact pre-exec.
     let late_sig_store = outbe_consensus::finalization::late_sig_store::shared(
         outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
     );
@@ -774,7 +778,7 @@ where
     // owns all bridge / DKG / view-update side effects.
     //
     // Hand a clone of the exact-parent certificate store to the actor. The actor
-    // is the only writer; the application handler reads hash-exact records via
+    // is the only writer. The application handler reads hash-exact records via
     // the `ParentProofSelector` constructed above.
     let (finalization_actor, finalization_mailbox) =
         FinalizationActor::new(FinalizationActorDeps {
@@ -794,19 +798,19 @@ where
 
     // persistent off-thread finalize-vote verifier. Each per-epoch
     // OutbeReporter enqueues raw finalize votes here instead of verifying
-    // O(committee) BLS pairings inline on the Simplex voter task; the actor
+    // O(committee) BLS pairings inline on the Simplex voter task. The actor
     // resolves each vote's committee scheme by epoch through the shared
-    // `certificate_scheme_provider` and admits only verified votes to
+    // `certificate_scheme_provider`. It admits only verified votes to
     // `late_sig_store`.
     let (finalize_verify_actor, finalize_verify_mailbox) =
         outbe_consensus::finalization::finalize_verify::FinalizeVerifyActor::new(
             certificate_scheme_provider.clone(),
             late_sig_store.clone(),
         );
-    // Best-effort actor: its exit is non-fatal (consensus continues; only late
-    // credits stop), so it is held for the engine's lifetime but not polled in
-    // the fatal-exit select below. The named `_`-binding keeps the task alive
-    // (a bare `_` would drop and abort it immediately).
+    // Best-effort actor: its exit is non-fatal. Consensus continues, and only
+    // late credits stop. So this code holds it for the engine's lifetime but
+    // does not poll it in the fatal-exit select below. The named `_`-binding
+    // keeps the task alive (a bare `_` would drop and abort it immediately).
     let _finalize_verify_handle = ctx
         .child("finalize_verify")
         .spawn(move |_ctx| finalize_verify_actor.run());
@@ -913,13 +917,13 @@ fn reconcile_recovered_vrf_material(
     // These strict checks (saved polynomial / DKG output must equal the recovered
     // finalized boundary) only matter for a SIGNER, which signs with its polynomial +
     // share. A share-less VERIFIER follows finality via the certificate's PARTICIPANT
-    // set (not its polynomial), so its CLI `--public-polynomial`/`--dkg-output` may be
-    // off (e.g. a TEE chain's runtime-derived genesis consensus polynomial differs
-    // from the bootstrap file, or the chain has rotated past it) without affecting
-    // sync - only its local VRF/leader view is degraded (process-local, non-fatal,
-    // same as the post-rotation verifier-follower case). Enforcing these on a restarted
-    // verifier would fatally crash an otherwise-healthy follower, so gate them to
-    // signers; the verifier syncs and the running epoch loop advances it.
+    // set (not its polynomial). So its CLI `--public-polynomial`/`--dkg-output` may be
+    // off without affecting sync. Examples: a TEE chain's runtime-derived genesis
+    // consensus polynomial differs from the bootstrap file, or the chain rotated past
+    // it. Only its local VRF/leader view degrades (process-local, non-fatal, same as
+    // the post-rotation verifier-follower case). Enforcing these checks on a restarted
+    // verifier would fatally crash an otherwise-healthy follower. So gate them to
+    // signers. The verifier syncs, and the running epoch loop advances it.
     if has_signing_share {
         validate_recovered_vrf_material(polynomial, recovered_boundary_artifact)?;
         if let (Some(output), Some(boundary)) =
@@ -934,13 +938,16 @@ fn reconcile_recovered_vrf_material(
         // a TEE chain whose runtime genesis consensus output differs from the bootstrap
         // CLI files): adopt the chain's CURRENT canonical DKG output as both the
         // polynomial and the reshare prev_output. The DKG reshare ceremony binds the
-        // FULL previous output into its `info_hash` (not just the group key), so if the
-        // verifier later becomes a frozen-target player it MUST present the committee's
-        // current output as prev_output - its stale `--consensus.dkg-output` would yield
-        // a divergent `info_hash`, the dealers' bundles get dropped, and the ceremony
-        // times out (the node never gets a share). The genesis/boundary artifact carries
-        // the full `Output`, so `decode_boundary_output` recovers exactly what the
-        // committee holds. Finality still verifies via the participant set regardless.
+        // FULL previous output into its `info_hash` (not just the group key). So if the
+        // verifier later becomes a frozen-target player, it MUST present the committee's
+        // current output as prev_output. Otherwise its stale `--consensus.dkg-output`
+        // would cause this sequence:
+        // 1. it yields a divergent `info_hash`.
+        // 2. the dealers' bundles get dropped.
+        // 3. the ceremony times out (the node never gets a share).
+        // The genesis/boundary artifact carries the full `Output`, so
+        // `decode_boundary_output` recovers exactly what the committee holds. Finality
+        // still verifies via the participant set regardless.
         let canonical_output = decode_boundary_output(boundary)
             .wrap_err("failed to decode recovered DKG boundary output for verifier")?;
         *polynomial = canonical_output.public().clone();

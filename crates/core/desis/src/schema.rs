@@ -36,8 +36,8 @@ impl AuctionStage {
     }
 }
 
-/// Call-trigger parameters carried alongside the auction config; sourced from
-/// the genesis `IntexParams` at auction start and relayed to the target chain.
+/// Call-trigger parameters carried alongside the auction config. They are sourced
+/// from the genesis `IntexParams` at auction start and relayed to the target chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IntexCallTrigger {
     /// Rolling VWAP window evaluated for the call condition (seconds).
@@ -52,22 +52,23 @@ pub struct IntexCallTrigger {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReferenceCurrencyPrice {
     pub iso_code: u16,
-    /// Per-unit entry price in ISO stable-units (1e6); floor and call derive from it.
+    /// Per-unit entry price in ISO stable-units (1e6). Floor and call derive from it.
     pub entry_price_minor: U256,
 }
 
 /// Auction configuration (demand side).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuctionConfig {
-    /// PROMIS-units per Intex unit (1e6); bounded by uint128.
+    /// PROMIS-units per Intex unit (1e6). Bounded by uint128.
     pub promis_load_minor: u128,
     /// Call-trigger parameters sourced from genesis `IntexParams`.
     pub call_trigger: IntexCallTrigger,
     /// Minimum acceptable bid rate (1e6 fixed-point, % of the escrow basis). 0 -> no floor.
     pub min_intex_bid_rate: u32,
-    /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
+    /// Minimum bid quantity in Intex units. The floor rescales 4% of the prior issued count
+    /// by the prior PROMIS load divided by today's load.
     pub min_intex_bid_quantity: u16,
-    /// Commit-entry bond in 18-decimal WCOEN units; 0 disables the bond.
+    /// Commit-entry bond in 18-decimal WCOEN units. A value of 0 disables the bond.
     pub commit_bond_minor: u128,
     /// One row per reference currency the oracle could price for this day.
     pub reference_prices: Vec<ReferenceCurrencyPrice>,
@@ -76,8 +77,8 @@ pub struct AuctionConfig {
 impl AuctionConfig {
     /// Build the demand-side config from the day's per-reference entry prices and
     /// the load the ladder stepped to. `min_intex_bid_rate = 0` means no bid floor.
-    /// `call_trigger`, `min_intex_bid_quantity` and `commit_bond_minor` are left at
-    /// their defaults here and folded in by `fold_profile`.
+    /// This function leaves `call_trigger`, `min_intex_bid_quantity` and
+    /// `commit_bond_minor` at their defaults. `fold_profile` folds them in.
     pub fn from_reference_prices(
         reference_prices: Vec<ReferenceCurrencyPrice>,
         promis_load_minor: u128,
@@ -132,8 +133,8 @@ pub struct ClearingResult {
     pub winner_quantities: Vec<U256>,
     /// Source chain of each winning bid (parallel to `winners`).
     pub winner_chains: Vec<u32>,
-    /// `(issuance, reference)` ISO pair of each winning bid (parallel to `winners`);
-    /// the day issues one series per distinct pair.
+    /// `(issuance, reference)` ISO pair of each winning bid (parallel to `winners`).
+    /// The day issues one series per distinct pair.
     pub winner_currencies: Vec<(u16, u16)>,
     /// Index into `winners` of the one bid filled in part, where the Desis Limit ran out.
     pub partial_winner: Option<usize>,
@@ -190,7 +191,7 @@ pub struct DesisContract {
     #[attribute(order = 9)]
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// worldwide_day -> 1 once `arm_clearing` has run; lets `force_clear` tell a
+    /// worldwide_day -> 1 once `arm_clearing` has run. This lets `force_clear` tell a
     /// genuine zero Desis Limit from a clearing that was never initiated.
     #[attribute(order = 10)]
     pub clearing_initiated: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,

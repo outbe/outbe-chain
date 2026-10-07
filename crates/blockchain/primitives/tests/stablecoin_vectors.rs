@@ -354,7 +354,7 @@ fn every_pinned_code_resolves_to_its_own_letters() {
 
 #[test]
 fn a_code_outside_the_pinned_list_has_no_letters() {
-    // 0 and 500 are not assigned; 1000 is past the three-digit range.
+    // 0 and 500 are not assigned. 1000 is past the three-digit range.
     for code in [0u16, 500, 1000] {
         assert_eq!(iso_4217_alpha(code), None, "unexpected alpha for {code}");
     }

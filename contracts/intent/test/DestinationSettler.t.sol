@@ -228,9 +228,9 @@ contract DestinationSettlerTest is BaseTest {
 
     // ========== mixed origin domain ==========
 
-    /// @dev The whole batch dispatches to order [0]'s domain, so a batch mixing origins would
-    ///      silently mis-route the divergent orders - it must revert. settle/refund share the same
-    ///      _requireSameOriginDomain check, so the settle path covers both.
+    /// @dev The whole batch dispatches to order [0]'s domain. A batch that mixes origins would
+    ///      silently mis-route the divergent orders, so it must revert. settle/refund share the
+    ///      same _requireSameOriginDomain check, so the settle path covers both.
     function test_settleOrders_RevertWhen_MixedOriginDomain() public {
         uint32 otherDomain = origin + 1;
 
@@ -437,7 +437,7 @@ contract DestinationSettlerTest is BaseTest {
         _reveal(vegeta, orderId, amount, originData);
 
         assertEq(auction.getQuoteCount(orderId), 1);
-        // After reveal, commit is cleared
+        // After reveal, the auction clears the commit
         assertFalse(auction.hasSolverCommitted(orderId, vegeta));
     }
 

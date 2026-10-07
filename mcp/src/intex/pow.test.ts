@@ -4,7 +4,7 @@ import test from "node:test";
 import type { Address, Hex } from "viem";
 import { POW_DIFFICULTY, grindNonce } from "./pow.js";
 
-// Computed outside both implementations; the node's intexfactory tests read the same file.
+// Computed outside both implementations. The node's intexfactory tests read the same file.
 const fixture = JSON.parse(readFileSync(new URL("./pow.vectors.json", import.meta.url), "utf8")) as {
   difficulty_bytes: number;
   vectors: {

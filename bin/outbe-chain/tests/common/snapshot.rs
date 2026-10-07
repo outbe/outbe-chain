@@ -1,4 +1,4 @@
-//! Shared stopped native fixture and process helpers; no registered tests.
+//! Shared stopped native fixture and process helpers. This file has no registered tests.
 
 use std::{
     collections::BTreeMap,
@@ -41,7 +41,7 @@ pub(crate) fn binary() -> Command {
 
 pub(crate) fn run(command: &mut Command) -> Output {
     // These real MDBX fixtures contain a 4 GiB CE file. Debug hashing may exceed
-    // the small CLI fixture timeout; this watchdog is test-only, not a node limit.
+    // the small CLI fixture timeout. This watchdog is test-only. It is not a node limit.
     // File-backed output avoids blocking a child while waiting for a large report.
     let mut stdout = tempfile::tempfile().unwrap();
     let mut stderr = tempfile::tempfile().unwrap();
@@ -182,7 +182,7 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
         parent_root: B256::ZERO,
         new_root: empty_root,
     };
-    // Small test geometry; the normal CE owner still initializes its native schema.
+    // Small test geometry. The normal CE owner still initializes its native schema.
     drop(
         reth_ethereum::provider::db::create_db(
             chain.join("compressed_entities/smt"),
@@ -299,7 +299,7 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
     }
 }
 
-// Preserve directory/file membership too; only existing MDBX reader-slot bytes may change.
+// Preserve directory/file membership too. Only existing MDBX reader-slot bytes may change.
 pub(crate) fn fingerprint(root: &Path) -> BTreeMap<PathBuf, Option<u64>> {
     fn visit(root: &Path, at: &Path, found: &mut BTreeMap<PathBuf, Option<u64>>) {
         for entry in fs::read_dir(at).unwrap() {

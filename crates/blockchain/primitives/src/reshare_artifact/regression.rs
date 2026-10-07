@@ -73,7 +73,7 @@ fn assert_fatal(bytes: &[u8], expected: &str) {
 
 #[test]
 fn mixed_record_wire_vectors_are_pinned() {
-    // Captured from the pre-refactor encoder; hashes bind every field, length,
+    // Captured from the pre-refactor encoder. The hashes bind every field, length,
     // endian convention, version and record order without duplicating the codec.
     let expected = [
         (
@@ -130,7 +130,7 @@ fn duplicate_checks_precede_record_payload_validation() {
     ] {
         assert_fatal(&envelope(&[(tag, &payload), (tag, &[])]), message);
     }
-    // All consensus tags share one slot; the second payload is never inspected.
+    // All consensus tags share one slot. The decoder never inspects the second payload.
     for tag in [2, 3, 7] {
         assert_fatal(
             &envelope(&[(3, b"dealer"), (tag, &[])]),

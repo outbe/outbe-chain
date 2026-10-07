@@ -1,4 +1,5 @@
-//! Stateless encrypted Gratis balance transitions. Pledge ownership is committed inside the enclave.
+//! Stateless encrypted Gratis balance transitions. Pledge ownership is committed inside the
+//! enclave.
 use crate::confidential::{FIELD_BALANCE, GRATIS};
 use crate::errors::Result;
 use alloy_primitives::{Address, B256, U256};
@@ -15,7 +16,7 @@ pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32
     GRATIS.derive_view_key(state_key, account)
 }
 
-/// Per-account modify key: authorizes writes (via HMAC); never decrypts state.
+/// Per-account modify key: authorizes writes (via HMAC). It never decrypts state.
 pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
     GRATIS.derive_modify_key(state_key, account)
 }
@@ -45,7 +46,7 @@ fn verify_modify_auth(
     )
 }
 
-/// Decrypt a `version || ct` amount blob; an empty blob is a fresh slot (`0`).
+/// Decrypt a `version || ct` amount blob. An empty blob is a fresh slot (`0`).
 fn read_amount(
     view_key: &[u8; 32],
     account: Address,
@@ -56,8 +57,8 @@ fn read_amount(
 }
 
 /// Client-side helper: decrypt an account's balance blob with its view key (the
-/// key delivered by `DeriveAccountKeys`). Same primitive the enclave uses, so a
-/// client reproduces the plaintext without ever touching the state key.
+/// key that `DeriveAccountKeys` delivers). It uses the same primitive as the
+/// enclave, so a client reproduces the plaintext without ever touching the state key.
 pub fn decrypt_balance(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
     read_amount(view_key, account, FIELD_BALANCE, blob).map(|(_, v)| v)
 }
@@ -90,9 +91,9 @@ fn reject(reason: impl Into<String>) -> GratisOpResult {
 }
 
 /// Apply a Gratis op over encrypted state. Pure and deterministic given
-/// `state_key` + `req`. Sets `inputs_canonical_hash`; the caller (dispatch) signs
-/// and fills `attestation_tag`. Business rejections come back as
-/// `GratisOpStatus::Rejected` (-> precompile revert), never a panic.
+/// `state_key` + `req`. Sets `inputs_canonical_hash`. The caller (dispatch) signs
+/// and fills `attestation_tag`. This function returns business rejections as
+/// `GratisOpStatus::Rejected` (-> precompile revert), never as a panic.
 pub fn apply_op(state_key: &[u8; 32], req: &GratisOpRequest) -> GratisOpResult {
     let inputs_canonical_hash = outbe_tee::protocol::gratis_op_canonical_hash(req);
     let mut result = match apply_op_inner(state_key, req) {

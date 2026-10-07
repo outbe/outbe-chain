@@ -49,21 +49,21 @@ pub fn most_significant_bit(mut x: U256) -> u8 {
 
 /// Mirrors `BitMath.leastSignificantBit(uint256)` (BitMath.sol L74-117).
 /// Returns the index (0..=255) of the lowest set bit. Returns 255 for zero
-/// (matches LB sentinel-ish behavior; no caller should pass zero in
-/// performance-critical paths).
+/// (matches LB sentinel-ish behavior). No caller should pass zero in
+/// performance-critical paths.
 ///
 /// Implementation: walks alloy's little-endian limb array (limb[0] = bits
 /// 0..63) and uses `u64::trailing_zeros`, which is deterministic across
 /// every Rust target (defined for 0 -> 64, never CPU-intrinsic-dependent).
 pub fn least_significant_bit(word: U256) -> u32 {
     let limbs = word.as_limbs();
-    // SAFETY: i in {0,1,2,3}, so (i as u32) * 64 in {0,64,128,192}; no narrowing.
+    // SAFETY: i in {0,1,2,3}, so (i as u32) * 64 in {0,64,128,192}. No narrowing.
     for (i, &limb) in limbs.iter().enumerate() {
         if limb != 0 {
             return limb.trailing_zeros() + (i as u32) * 64;
         }
     }
-    255 // unreachable per precondition; matches LB's "leastSignificantBit(0) == 255".
+    255 // unreachable per precondition. Matches LB's "leastSignificantBit(0) == 255".
 }
 
 /// Returns `word` with all bits below `from_bit` cleared.

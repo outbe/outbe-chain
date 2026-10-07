@@ -62,8 +62,8 @@ pub(super) fn ensure_matches(cli: &LocalnetCli, state: &LocalnetStateV1) -> Resu
 ///
 /// A development network is unusable without them and they otherwise exist only
 /// on disk, so `start` prints them. These are throwaway devnet keys generated
-/// into the data directory for a chain that is wiped on the next bootstrap;
-/// nothing outside a localnet may print key material this way.
+/// into the data directory for a chain that is wiped on the next bootstrap.
+/// Nothing outside a localnet may print key material this way.
 pub(super) fn print_funded_accounts(cli: &LocalnetCli, rpc_ports: &[u16]) {
     let rpc = rpc_ports
         .first()
@@ -92,7 +92,7 @@ pub(super) fn print_funded_accounts(cli: &LocalnetCli, rpc_ports: &[u16]) {
     }
 }
 
-/// COEN carries 18 decimals; render base units as a decimal amount.
+/// COEN carries 18 decimals. Render base units as a decimal amount.
 pub(super) fn coen(balance: alloy_primitives::U256) -> String {
     const UNITS: u64 = 1_000_000_000_000_000_000;
     let whole = balance / alloy_primitives::U256::from(UNITS);
@@ -117,7 +117,7 @@ pub(super) fn enclave_profile_banner() -> String {
 /// The Gramine test image is published for `linux/amd64` only and does not
 /// survive emulation, so every non-Linux host runs the mock enclave as a native
 /// host process instead. This is a distinct named profile with its own evidence
-/// label - never a silent fallback to `mock`'s.
+/// label. It is never a silent fallback to `mock`'s.
 pub(super) const fn localnet_tee_mode() -> TeeMode {
     if cfg!(target_os = "linux") {
         TeeMode::Mock

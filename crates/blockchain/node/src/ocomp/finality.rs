@@ -82,8 +82,9 @@ pub trait HistoricalCommitteeAuthority {
 /// carried by `FinalizedIntentProofV1`.
 ///
 /// The witness includes the canonical snapshot values plus Ethereum
-/// account/storage MPT paths. Values are accepted only after every derived
-/// fixed ValidatorSet slot verifies against the finalized request state root.
+/// account/storage MPT paths. The verifier accepts values only after every
+/// derived fixed ValidatorSet slot verifies against the finalized request state
+/// root.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TrieHistoricalCommitteeAuthority;
 
@@ -158,7 +159,7 @@ impl HistoricalCommitteeAuthority for TrieHistoricalCommitteeAuthority {
 }
 
 /// Detailed production verifier failures. Protocol callers receive only the
-/// stable authority class; task-local tests use this type to pin exact behavior.
+/// stable authority class. Task-local tests use this type to pin exact behavior.
 #[derive(Debug, thiserror::Error)]
 pub enum FinalizedIntentVerifierError {
     #[error("canonical request header exceeds proof byte cap")]
@@ -203,8 +204,8 @@ pub struct FinalizedIntentVerifier<A> {
 
 /// Node-owned production adapter injected into every live EVM instance.
 ///
-/// It reuses the same self-contained proof verifier used by finalized export;
-/// activation does not carry a weaker or relay-provided authority.
+/// It reuses the same self-contained proof verifier that finalized export uses.
+/// Activation does not carry a weaker or relay-provided authority.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProductionOcompFinalizedIntentAuthority;
 
@@ -240,7 +241,7 @@ impl<A> FinalizedIntentVerifier<A> {
 ///
 /// The exporter must call this before using the JobIntent's day, collection
 /// root, count or nominal total. The envelope is transport, not finality
-/// authority; current exporters obtain the proof and values through public RPC.
+/// authority. Current exporters obtain the proof and values through public RPC.
 pub fn authenticate_snapshot_handoff(
     handoff: &SnapshotHandoffV1,
     response: &FinalizedIntentProofResponseV1,
@@ -567,8 +568,8 @@ pub enum PublicFinalizedIntentProofBuildError {
 ///
 /// It never accepts an event, caller-selected root, or live-tip lookup. The
 /// exact finalized block opens both Metadosis intent storage and ValidatorSet
-/// committee history, and the constructed proof is run through the production
-/// verifier before it is returned.
+/// committee history. The builder runs the constructed proof through the
+/// production verifier before it returns the proof.
 #[derive(Clone)]
 pub struct RethFinalizedIntentProofBuilder<P> {
     provider: P,
@@ -1065,9 +1066,9 @@ pub(crate) fn build_verified_raw_contract_opening(
 /// Converts a standard `eth_getProof` response into the canonical OCOMP raw
 /// opening and verifies it against the finalized block state root.
 ///
-/// The RPC server is only a proof transport: the account path, every storage
-/// path, the exact contract address, and the ordered slot set are checked
-/// locally before the opening is returned.
+/// The RPC server is only a proof transport. This function checks the account
+/// path, every storage path, the exact contract address, and the ordered slot
+/// set locally before it returns the opening.
 pub fn build_verified_raw_contract_opening_from_public_proof(
     proof: &PublicAccountProofV1,
     state_root: B256,

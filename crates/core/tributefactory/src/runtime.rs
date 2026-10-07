@@ -137,8 +137,8 @@ impl TributeFactoryContract<'_> {
             }
         };
 
-        // Everything below is settled from chain state before the enclave is
-        // contacted, so a bad day or an unpriceable currency costs no round trip.
+        // The code below settles everything from chain state before it contacts the
+        // enclave, so a bad day or an unpriceable currency costs no round trip.
         if !worldwide_day.is_valid() {
             return Err(TributeFactoryError::InvalidWorldwideDay { worldwide_day }.into());
         }
@@ -159,7 +159,7 @@ impl TributeFactoryContract<'_> {
             reference_currency,
         )?;
 
-        // Priced against the tribute's own day, not whichever day happens to be
+        // Price the tribute against its own day, not whichever day happens to be
         // first in the OFFERING list.
         let pricing = outbe_oracle::api::tribute_pricing_inputs(
             self.storage.clone(),

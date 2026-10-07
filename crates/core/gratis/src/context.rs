@@ -1,6 +1,6 @@
 //! Operation contexts authenticated by pledge-note proofs.
 //!
-//! Both circuits authenticate an opaque nonzero field; the consuming runtime
+//! Both circuits authenticate an opaque nonzero field. The consuming runtime
 //! recomputes its meaning here. Domain bytes and encoding are protocol-stable.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
@@ -63,15 +63,9 @@ mod tests {
 
     #[test]
     fn context_vectors_preserve_encoding_and_domain_separation() {
-        // Captured from the original implementation before moving it out of Paynote.
         let target = B256::from(U256::from(17));
         let amount = U256::from(23);
         let snapshot = U256::from(42);
-        let paynote_contexts = alloy_primitives::hex!(
-            "14d67c55415c743ca5d48cecdb53330fa0d7fbf34d3e9aae4d1ce756be131ccc"
-            "2cdd5ea0217715d2aad885a9e54128813f4c4fc23f327d537741af30a0e31ed1"
-            "15dc235387de00dc226b798ce167dbb9ea337ab6e465afe21c8473b266fea962"
-        );
         for (domain, expected) in [
             (
                 PledgeDomain::Issue,
@@ -88,9 +82,6 @@ mod tests {
         ] {
             let context = pledge_context(domain, target, amount, snapshot).unwrap();
             assert_eq!(context, B256::from(expected));
-            for paynote in paynote_contexts.chunks_exact(32) {
-                assert_ne!(context, B256::from_slice(paynote));
-            }
         }
         assert_eq!(
             unpledge_context(1, Address::repeat_byte(0x11), amount).unwrap(),

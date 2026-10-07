@@ -10,8 +10,9 @@ import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Router} from "../src/router/Router.sol";
 import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
 
-/// @dev Deploys RouterAllocator + the composition {Router} via Create3Factory. The Router talks to the `crosschain` hub's
-///      `ERC7786Bridge` (no LayerZero endpoint / eids here - the protocol lives on the bridge).
+/// @dev Deploys RouterAllocator + the composition {Router} via Create3Factory. The Router talks to
+///      the `crosschain` hub's `ERC7786Bridge`. This script has no LayerZero endpoint or eids. The
+///      protocol lives on the bridge.
 ///
 /// Required env vars:
 ///   DEPLOYER_PK      - deployer private key
@@ -40,7 +41,7 @@ contract DeployRouter is Script {
         console2.log("Router:", router);
     }
 
-    /// @dev The factory namespaces this with the caller, so the deployer is not mixed in here.
+    /// @dev The factory namespaces this with the caller, so this salt omits the deployer.
     function getRouterSalt(string memory salt) public pure returns (bytes32) {
         return keccak256(abi.encodePacked("Router", salt));
     }

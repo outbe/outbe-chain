@@ -11,11 +11,12 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 /// @author Outbe
 /// @notice Deploy the origin-side intex engine (OriginRouter) and register every auction target
 ///         from `TARGET_CHAIN_IDS`. The NFT collection + bridge and the auction stack are a target
-///         concern (see DeployTarget); the origin engine needs neither.
+///         concern (see DeployTarget). The origin engine needs neither.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS (the ERC-7786 bridge all clients speak to),
 ///      TARGET_CHAIN_IDS (comma-separated auction target chainIds), optional OUTBE_WCOEN_BRIDGE +
-///      OUTBE_WCOEN_TOKEN (creator-reward proceeds unwrap). The deployer is admin + delegate. Target
-///      peers are CREATE3-deterministic, so they are predictable before those chains are deployed.
+///      OUTBE_WCOEN_TOKEN (creator-reward proceeds unwrap). The deployer is admin + delegate.
+///      Target peers are CREATE3-deterministic, so they are predictable before those chains are
+///      deployed.
 contract DeployOrigin is BaseScript {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -36,9 +37,10 @@ contract DeployOrigin is BaseScript {
             abi.encodeCall(OriginRouter.initialize, (delegate))
         );
 
-        // Register every auction target. The TargetRouter sits at the same CREATE3 address on every
-        // chain, so its peer is predictable before that chain exists. addTarget requires the peer set
-        // first and reverts on a duplicate, so guard on isTarget to keep re-runs / added chains safe.
+        // Register every auction target. The TargetRouter sits at the same CREATE3 address on
+        // every chain, so its peer is predictable before that chain exists. addTarget requires the
+        // peer set first and reverts on a duplicate, so guard on isTarget to keep re-runs and added
+        // chains safe.
         address targetRouterPeer = predictProxy(factory, deployer, "TargetRouter");
         for (uint256 i = 0; i < targetChainIds.length; i++) {
             uint32 cid = uint32(targetChainIds[i]);
@@ -49,7 +51,7 @@ contract DeployOrigin is BaseScript {
         }
 
         // Proceeds route (creator-reward): unwrap inbound WCOEN and hand the native to the factory
-        // precompile. Skipped when the WCOEN env is unset.
+        // precompile. The script skips this step when the WCOEN env is unset.
         address wcoenBridge = vm.envOr("OUTBE_WCOEN_BRIDGE", address(0));
         address wcoenToken = vm.envOr("OUTBE_WCOEN_TOKEN", address(0));
         if (wcoenBridge != address(0) && wcoenToken != address(0)) {

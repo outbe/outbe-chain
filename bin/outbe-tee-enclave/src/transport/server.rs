@@ -1,13 +1,13 @@
 use crate::transport::*;
 
-/// Accept loop (used by the enclave binary). Each connection is served on its
-/// own thread so multiple long-lived clients are handled concurrently - the node
-/// keeps one connection open for offer decryption for its whole lifetime *and*
-/// opens a second one for the startup TEE-bootstrap registration fetch; a
+/// Accept loop (used by the enclave binary). The loop serves each connection on
+/// its own thread, so it handles multiple long-lived clients concurrently. The
+/// node keeps one connection open for offer decryption for its whole lifetime
+/// *and* opens a second one for the startup TEE-bootstrap registration fetch. A
 /// sequential loop would deadlock the second behind the first. `keys` is
-/// read-only and shared via `Arc`; each connection still keeps its own
-/// `DkgSessionStore`. A per-connection error is logged and never stops the
-/// server.
+/// read-only and shared via `Arc`. Each connection still keeps its own
+/// `DkgSessionStore`. The loop logs a per-connection error, and that error never
+/// stops the server.
 pub fn serve(
     listener: &UnixListener,
     keys: Arc<EnclaveKeys>,
@@ -26,7 +26,7 @@ pub fn serve(
         let boot = boot.clone();
         let initialization = Arc::clone(&initialization);
         std::thread::spawn(move || {
-            // PoC: surface to stderr; one bad client must not kill the enclave.
+            // PoC: surface to stderr. One bad client must not kill the enclave.
             if let Err(err) = serve_connection_with_resident_chain(
                 stream,
                 &keys,
@@ -43,12 +43,12 @@ pub fn serve(
     Ok(())
 }
 
-/// TCP accept loop - same thread-per-connection model as [`serve`], but over
-/// TCP. Used when the enclave runs under Gramine, where pathname Unix domain
-/// sockets are process-internal and a host process (the node) cannot reach them;
-/// Gramine passes TCP through to the host network. The Noise-IK handshake still
-/// authenticates + encrypts every byte, so TCP only changes the carrier, not the
-/// confidentiality of the channel.
+/// TCP accept loop. It uses the same thread-per-connection model as [`serve`],
+/// but over TCP. This loop applies when the enclave runs under Gramine. There,
+/// pathname Unix domain sockets are process-internal, and a host process (the
+/// node) cannot reach them. Gramine passes TCP through to the host network.
+/// The Noise-IK handshake still authenticates + encrypts every byte, so TCP only
+/// changes the carrier, not the confidentiality of the channel.
 pub fn serve_tcp(
     listener: &TcpListener,
     keys: Arc<EnclaveKeys>,

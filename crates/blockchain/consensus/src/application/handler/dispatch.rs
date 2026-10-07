@@ -95,10 +95,10 @@ impl ApplicationShared {
         } = reply;
         match outcome {
             Ok(ProposeOutcome::Proposed(digest)) => {
-                // Proposer-side liveness pacing only: hold the already-sealed
-                // digest until the min-block-time floor elapses, then hand it
-                // to Simplex (or abort if the view is cancelled first). Never
-                // touches block bytes/hash/validation.
+                // Proposer-side liveness pacing only. Hold the already-sealed
+                // digest until the min-block-time floor elapses. Then give it
+                // to Simplex, or abort if the view is cancelled first. This
+                // never touches block bytes/hash/validation.
                 pace_and_send(clock, response, digest, self.min_block_time, propose_start).await;
             }
             Ok(outcome) => debug!("{}", outcome.completion_message()),

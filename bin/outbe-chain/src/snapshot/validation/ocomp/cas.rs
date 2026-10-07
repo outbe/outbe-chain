@@ -9,7 +9,7 @@ pub(crate) struct CasAudit {
 
 /// Check transport integrity of every published native CAS object, including
 /// unreferenced historical objects. Typed artifact/job relationships are checked
-/// separately through their native references; this does not infer an OCB1 kind.
+/// separately through their native references. This does not infer an OCB1 kind.
 pub(crate) fn verify_present_cas(
     ocomp_root: &Path,
     limits: CasLimits,

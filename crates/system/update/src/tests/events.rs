@@ -78,7 +78,7 @@ fn lifecycle_emits_upgrade_canceled_event() {
 #[test]
 fn dispatch_rejects_unknown_selector() {
     with_update(|storage| {
-        // Legacy createProposal selector no longer dispatched at UPDATE_ADDRESS.
+        // UPDATE_ADDRESS no longer dispatches the legacy createProposal selector.
         let data = alloy_primitives::hex!("b1a14106");
         let err =
             dispatch(storage, &data, alloy_primitives::Address::ZERO, U256::ZERO).unwrap_err();

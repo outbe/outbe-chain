@@ -29,25 +29,27 @@ use crate::precompile::ISlashIndicator;
 /// Default config values used when the stored value is zero (uninitialized).
 // Felony thresholds are the maximum validator misses TOLERATED within one epoch.
 // The per-epoch reset (`reset_epoch_counters`, run at the epoch boundary) zeroes
-// the miss counters, so a validator that crosses the threshold inside an epoch is
-// force-exited + slashed immediately; otherwise its count resets next epoch. The
-// epoch (`config_epoch_length_blocks`) is the ~1-hour window that also drives DKG
-// reshare / active-set rotation / counter reset, so a felony threshold MUST stay
-// below the epoch length, else the reset wipes the counter before it can trigger
-// (prod epoch 1200 ~= 1h at ~3s; dev/localnet seeds a smaller threshold for its
-// short epoch via genesis - see `scripts/bootstrap-testnet.sh`). A voter miss
-// accrues ~1 per finalized block; a proposer miss only on the validator's own
-// leader slots (~1/N). Both are genesis-overridable per network
-// (`config_*_felony_threshold` slots).
+// the miss counters. Thus a validator that crosses the threshold inside an epoch
+// is jailed and slashed immediately. Otherwise its count resets next epoch.
+// The epoch (`config_epoch_length_blocks`) is the ~1-hour window that also drives
+// DKG reshare / active-set rotation / counter reset. Thus a felony threshold MUST
+// stay below the epoch length. Otherwise the reset wipes the counter before it
+// can trigger. The prod epoch is 1200 ~= 1h at ~3s. Dev/localnet seeds a smaller
+// threshold for its short epoch via genesis (see `scripts/bootstrap-testnet.sh`).
+// A voter miss accrues ~1 per finalized block. A proposer miss accrues only on
+// the validator's own leader slots (~1/N). Both are genesis-overridable per
+// network (`config_*_felony_threshold` slots).
 const DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD: u64 = 50;
 const DEFAULT_PROPOSER_FELONY_THRESHOLD: u64 = 150;
-// graduated escalation requires misdemeanor (warn) < felony (slash). The
-// two voter defaults were inverted (misdemeanor 500 > felony 150), so the harsh
-// penalty fired before the warning could ever emit. Restored to misdemeanor 150
-// < felony 500: both sit above the proposer thresholds (voters accrue ~1 miss
-// per finalized block vs a proposer's ~1 per own leader slot) and below the
-// prod epoch length (1200), so the felony can still trigger before the per-epoch
-// reset.
+// Graduated escalation requires misdemeanor (warn) < felony (slash). The
+// two voter defaults were inverted (misdemeanor 500 > felony 150). Thus the harsh
+// penalty fired before the warning could ever emit. The defaults are now restored
+// to misdemeanor 150 and felony 500. The voter misdemeanor default equals
+// the proposer felony default (150). It does not sit above that threshold.
+// The voter felony default (500) is above both proposer thresholds. Voters
+// accrue ~1 miss per finalized block vs a proposer's ~1 per own leader slot.
+// Both also sit below the prod epoch length (1200). Thus the felony can still
+// trigger before the per-epoch reset.
 const DEFAULT_VOTER_MISDEMEANOR_THRESHOLD: u64 = 150;
 const DEFAULT_VOTER_FELONY_THRESHOLD: u64 = 500;
 const DEFAULT_SLASH_AMOUNT_PERCENT: u64 = 5;
@@ -112,11 +114,11 @@ impl SlashIndicator<'_> {
 
     // --- Slash actions ---
 
-    /// a validator already JAILED or EXITING is being removed from the
-    /// consensus set at the next reshare; while it lingers in the committee
-    /// snapshot it must NOT be re-felonied (re-jailed + re-slashed 5% at every
-    /// subsequent miss threshold) for the same continuous liveness fault, which
-    /// would compound to far more than the intended single-felony penalty.
+    /// The next reshare removes a validator that is already JAILED or EXITING
+    /// from the consensus set. While it stays in the committee snapshot, it must
+    /// NOT be re-felonied (re-jailed + re-slashed 5% at every subsequent miss
+    /// threshold) for the same continuous liveness fault. That would compound to
+    /// far more than the intended single-felony penalty.
     fn validator_already_penalized(&self, validator: Address) -> Result<bool> {
         let vs = ValidatorSet::new(self.storage.clone());
         Ok(matches!(
@@ -130,7 +132,7 @@ impl SlashIndicator<'_> {
     /// Records a proposer miss for `validator`.
     ///
     /// - Increments proposer_miss_count[validator].
-    /// - At multiples of felony_threshold: forces exit and slashes the validator.
+    /// - At multiples of felony_threshold: jails and slashes the validator.
     /// - At multiples of misdemeanor_threshold (non-felony): misdemeanor logged only.
     pub fn slash_proposer(&mut self, validator: Address) -> Result<()> {
         let count = self.proposer_miss_count.read(&validator)? + 1;
@@ -163,20 +165,20 @@ impl SlashIndicator<'_> {
             "proposer miss recorded",
         );
 
-        // the miss is recorded above, but skip felony/misdemeanor
+        // The code above records the miss. Skip felony/misdemeanor
         // punishment for a validator already JAILED/EXITING for this fault.
         if self.validator_already_penalized(validator)? {
             return Ok(());
         }
 
         if count > 0 && count % felony_threshold == 0 {
-            // Felony: increment cumulative counter, force exit and slash.
+            // Felony: increment cumulative counter, jail and slash.
             let fc = self.felony_count.read(&validator)? + 1;
             self.felony_count.write(&validator, fc)?;
 
-            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake -
-            // slash_stake demotes ACTIVE/PENDING below min_stake but leaves a
-            // JAILED status untouched, so this ordering preserves JAILED.
+            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake.
+            // The slash_stake call demotes ACTIVE/PENDING below min_stake but
+            // leaves a JAILED status untouched. Thus this ordering preserves JAILED.
             let mut vs = ValidatorSet::new(self.storage.clone());
             vs.jail_validator(validator)?;
 
@@ -243,7 +245,7 @@ impl SlashIndicator<'_> {
     /// Records a voter miss for `validator`.
     ///
     /// - Increments voter_miss_count[validator].
-    /// - At multiples of voter_felony_threshold: forces exit and slashes the validator.
+    /// - At multiples of voter_felony_threshold: jails and slashes the validator.
     /// - At multiples of voter_misdemeanor_threshold (non-felony): misdemeanor logged only.
     pub fn slash_voter(&mut self, validator: Address) -> Result<()> {
         let count = self.voter_miss_count.read(&validator)? + 1;
@@ -275,22 +277,23 @@ impl SlashIndicator<'_> {
             "voter miss recorded",
         );
 
-        // the miss is recorded above, but skip felony/misdemeanor
+        // The code above records the miss. Skip felony/misdemeanor
         // punishment for a validator already JAILED/EXITING for this fault.
         if self.validator_already_penalized(validator)? {
             return Ok(());
         }
 
         if count > 0 && count % felony_threshold == 0 {
-            // Felony: increment cumulative counter, force exit and slash. Mirrors
-            // the proposer-felony path so missed finalize votes are punitive once
-            // they cross the configured threshold (vote_ext.md E8 graduated to T1).
+            // Felony: increment cumulative counter, jail and slash. This
+            // mirrors the proposer-felony path so missed finalize votes are punitive
+            // once they cross the configured threshold (vote_ext.md E8 graduated to
+            // T1).
             let fc = self.felony_count.read(&validator)? + 1;
             self.felony_count.write(&validator, fc)?;
 
-            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake -
-            // slash_stake demotes ACTIVE/PENDING below min_stake but leaves a
-            // JAILED status untouched, so this ordering preserves JAILED.
+            // Felony: JAIL (not force-exit) + slash. Jail BEFORE slash_stake.
+            // The slash_stake call demotes ACTIVE/PENDING below min_stake but
+            // leaves a JAILED status untouched. Thus this ordering preserves JAILED.
             let mut vs = ValidatorSet::new(self.storage.clone());
             vs.jail_validator(validator)?;
 
@@ -366,11 +369,11 @@ impl SlashIndicator<'_> {
     /// 4. Both BLS signatures must be valid (signed over the Simplex notarize payload).
     /// 5. The signer must be a registered validator.
     ///
-    /// On success: the validator is forced out and slashed (felony), and the
+    /// On success: the runtime jails and slashes the validator (felony). The
     /// evidence submitter receives a reward (evidence_reward_percent of slashed amount).
     /// Submitter ACL for the BLS-evidence precompile entry points: only
     /// currently-ACTIVE validators may submit. The verifiers run heavy
-    /// cryptography (BLS pairings + ecrecover + storage reads); gating to the
+    /// cryptography (BLS pairings + ecrecover + storage reads). Gating to the
     /// staked set makes DoS self-destructive (a griefer pays gas AND has
     /// slashable stake at risk) instead of free on the ZeroFee chain.
     fn require_active_submitter(&self, caller: Address) -> Result<()> {
@@ -387,10 +390,10 @@ impl SlashIndicator<'_> {
 
     /// Build the ordered committee `Set` for `epoch` from the on-chain
     /// `CommitteeSnapshot`. Equivocation vote signatures are committee-bound
-    /// (notarize/nullify/finalize namespaces fold `participant_set_commitment`), so
-    /// verification must use the SAME committee the Simplex signer used. The
-    /// snapshot committee order matches the signer's participant `Set` (both are
-    /// the canonical sorted/deduped pubkey set), so the commitment bytes agree.
+    /// (notarize/nullify/finalize namespaces fold `participant_set_commitment`).
+    /// Thus verification must use the SAME committee that the Simplex signer used.
+    /// The snapshot committee order matches the signer's participant `Set`. Both
+    /// are the canonical sorted/deduped pubkey set, so the commitment bytes agree.
     fn committee_set_for_epoch(&self, epoch: u64) -> Result<EvidenceCommittee> {
         let snapshot =
             read_committee_snapshot_for_epoch(self.storage.clone(), epoch)?.ok_or_else(|| {
@@ -467,7 +470,7 @@ impl SlashIndicator<'_> {
         // Mark evidence as processed before applying effects
         self.evidence_processed.write(&evidence_hash, true)?;
 
-        // Felony: forced exit + slash + reward evidence submitter.
+        // Felony: jail + slash + reward evidence submitter.
         self.apply_evidence_felony(validator_addr, caller)
     }
 
@@ -480,7 +483,7 @@ impl SlashIndicator<'_> {
     /// signature for the same round (epoch + view) by the same signer. This proves
     /// the validator voted both to accept and skip the same view.
     ///
-    /// On success: the validator is forced out and slashed (felony), and the
+    /// On success: the runtime jails and slashes the validator (felony). The
     /// evidence submitter receives a reward.
     pub fn submit_conflicting_vote_evidence(
         &mut self,
@@ -515,7 +518,7 @@ impl SlashIndicator<'_> {
         }
 
         // Verify conflicting vote types: one must be notarize, the other nullify.
-        // Try ev1=notarize + ev2=nullify first, then the reverse. both
+        // Try ev1=notarize + ev2=nullify first, then the reverse. Both
         // namespaces are committee-bound, so verify under the epoch's committee.
         let committee = self.committee_set_for_epoch(round1.0)?;
         let valid = (ev1.verify_notarize_signature(&committee).is_ok()
@@ -541,16 +544,16 @@ impl SlashIndicator<'_> {
         // Mark evidence as processed before applying effects
         self.evidence_processed.write(&evidence_hash, true)?;
 
-        // Felony: forced exit + slash + reward evidence submitter.
+        // Felony: jail + slash + reward evidence submitter.
         self.apply_evidence_felony(validator_addr, caller)
     }
 
     /// Shared verifier for the three commonware same-signer equivocation classes
     /// (`ConflictingNotarize`, `ConflictingFinalize`, `NullifyFinalize`). Each is
-    /// two `EvidenceBlock`s from the SAME signer for the SAME round; the two
+    /// two `EvidenceBlock`s from the SAME signer for the SAME round. The two
     /// closures verify each block's signature against the appropriate Simplex
-    /// sub-namespace. `require_distinct_proposals` is set for same-vote-type
-    /// classes (two notarizes / two finalizes must differ); the nullify+finalize
+    /// sub-namespace. Callers set `require_distinct_proposals` for same-vote-type
+    /// classes (two notarizes / two finalizes must differ). The nullify+finalize
     /// class differs by construction. Dedup reuses the `evidence_processed`
     /// guard (slot 8) keyed by the order-independent `canonical_evidence_hash`.
     fn apply_equivocation_felony(
@@ -588,7 +591,7 @@ impl SlashIndicator<'_> {
             return Err(PrecompileError::Revert("evidence already processed".into()));
         }
 
-        // vote namespaces are committee-bound; verify under the committee
+        // Vote namespaces are committee-bound. Verify under the committee
         // that ran the evidence's epoch.
         let committee = self.committee_set_for_epoch(round1.0)?;
         verify1(&ev1, &committee)?;
@@ -661,7 +664,7 @@ impl SlashIndicator<'_> {
         )
     }
 
-    /// Applies a felony penalty from evidence submission: forced exit, slash, reward submitter.
+    /// Applies a felony penalty from evidence submission: jail, slash, reward submitter.
     fn apply_evidence_felony(
         &mut self,
         validator: Address,
@@ -708,7 +711,7 @@ impl SlashIndicator<'_> {
         // Reward evidence submitter: mint evidence_reward_percent of slashed amount.
         // slash_stake now burns slashed tokens from STAKING_ADDRESS, so we
         // mint the reward directly to the submitter. Net effect: (slashed - reward)
-        // is burned from supply, reward goes to the submitter.
+        // is burned from supply. The reward goes to the submitter.
         let mut reward = U256::ZERO;
         if !slashed_amount.is_zero() {
             let reward_pct = self.evidence_reward_percent()?;
@@ -728,7 +731,7 @@ impl SlashIndicator<'_> {
         Ok(())
     }
 
-    /// submit evidence that the Phase 1 system transaction in a
+    /// Submit evidence that the Phase 1 system transaction in a
     /// child block carried an invalid threshold VRF proof.
     ///
     /// `evidence` is the wire form of [`InvalidVrfProofEvidence`] (see
@@ -736,21 +739,21 @@ impl SlashIndicator<'_> {
     ///
     /// 1. **Submitter ACL**: `caller` must be a currently-`ACTIVE` validator
     ///    in `ValidatorSet`. Reading + verifying VRF/BLS proofs is heavy
-    ///    cryptographic work; gating the entry-point to active validators
+    ///    cryptographic work. Gating the entry-point to active validators
     ///    keeps DoS exposure inside the staked set (a malicious validator
-    ///    pays gas AND has slashable stake at risk) instead of permitting
+    ///    pays gas AND has slashable stake at risk). The gate does not permit
     ///    arbitrary EOAs to spam the chain.
     /// 2. Size cap (`invalid_vrf_evidence_max_bytes`).
     /// 3. Block-age cap (`invalid_vrf_evidence_max_age_blocks`).
-    /// 4. Epoch-lag cap (`invalid_vrf_evidence_max_epoch_lag`) - read from
-    ///    on-chain state via [`ValidatorSet::epoch_number`]
-    ///    BP-0 option C: epoch is consensus state, not a derived value).
+    /// 4. Epoch-lag cap (`invalid_vrf_evidence_max_epoch_lag`). The runtime
+    ///    reads the epoch from on-chain state via [`ValidatorSet::epoch_number`]
+    ///    (BP-0 option C: epoch is consensus state, not a derived value).
     /// 5. Child and parent canonicity: claimed child and parent
     ///    hashes must match the canonical chain.
     /// 6. Dedup via
     ///    [`outbe_consensus::proof::invalid_vrf_evidence_hash_v2`] keyed by
-    ///    `(child_block_hash, keccak256(phase1_tx_bytes))`; replay of the same
-    ///    evidence reverts with `"evidence already processed"` matching the
+    ///    `(child_block_hash, keccak256(phase1_tx_bytes))`. A replay of the same
+    ///    evidence reverts with `"evidence already processed"`. This matches the
     ///    `submitDoubleProposalEvidence` / `submitConflictingVoteEvidence`
     ///    precedent.
     /// 7. Cryptographic proposer attribution (D-2): validate
@@ -760,19 +763,19 @@ impl SlashIndicator<'_> {
     /// 8. Look up the committee snapshot for `metadata.finalized_epoch +
     ///    committee_set_hash` via the canonical
     ///    [`outbe_validatorset::state::committee_snapshot_key`] +
-    ///    [`outbe_validatorset::state::read_committee_snapshot`] path; reject
+    ///    [`outbe_validatorset::state::read_committee_snapshot`] path. Reject
     ///    if the snapshot is absent OR if the recovered proposer is not in
     ///    the committee.
     /// 9. Re-run [`outbe_consensus::proof::verify_v2_proof`] against the
-    ///    same metadata/snapshot/parent_hash the child block used; accept
+    ///    same metadata/snapshot/parent_hash that the child block used. Accept
     ///    only VRF-class failures from `V2VerifyError`. Any `Ok` or
-    ///    non-VRF rejection reverts - the precompile is strictly for VRF
+    ///    non-VRF rejection reverts. The precompile is strictly for VRF
     ///    misbehavior, not for re-litigating BLS quorum or accounting
     ///    binding failures.
     /// 10. Mark dedup BEFORE applying effects, then call
-    ///     [`Self::apply_evidence_felony`] for forced exit + 5% slash +
-    ///     10% submitter reward (reusing the existing felony helper -
-    ///     economics shared with the other evidence types).
+    ///     `apply_evidence_felony` for jail + 5% slash +
+    ///     10% submitter reward. This reuses the existing felony helper. The
+    ///     other evidence types share the same economics.
     pub fn submit_invalid_vrf_evidence(
         &mut self,
         caller: Address,
@@ -787,12 +790,12 @@ impl SlashIndicator<'_> {
 
     /// Test seam for [`Self::submit_invalid_vrf_evidence`].
     ///
-    /// Production callers go through the no-arg `submit_invalid_vrf_evidence`,
-    /// which always passes [`OutbeProtocolSchedule::default`] - that is the
-    /// canonical V2 schedule and the only schedule the precompile dispatcher
-    /// ever uses. This `_with_schedule` variant exists so integration tests
-    /// can relax admissibility caps (max_age, max_epoch_lag, max_bytes) to
-    /// stress a single axis without bumping into the others.
+    /// Production callers use the no-arg `submit_invalid_vrf_evidence`. It
+    /// always passes [`OutbeProtocolSchedule::default`]. That is the canonical
+    /// V2 schedule and the only schedule that the precompile dispatcher ever
+    /// uses. This `_with_schedule` variant exists so integration tests can relax
+    /// admissibility caps (max_age, max_epoch_lag, max_bytes). Then a test can
+    /// stress a single axis without hitting the other caps.
     #[doc(hidden)]
     pub fn submit_invalid_vrf_evidence_with_schedule(
         &mut self,
@@ -802,9 +805,9 @@ impl SlashIndicator<'_> {
     ) -> Result<()> {
         // (1) Submitter ACL. Only currently-ACTIVE validators can submit.
         // Rationale: the verifier path is heavy cryptography (BLS + VRF +
-        // ecrecover + storage reads); restricting the entry-point to the
-        // staked set means any griefer pays gas AND has slashable stake at
-        // risk, so DoS becomes self-destructive rather than free.
+        // ecrecover + storage reads). With the entry-point restricted to the
+        // staked set, any griefer pays gas AND has slashable stake at risk.
+        // Thus DoS becomes self-destructive rather than free.
         self.require_active_submitter(caller)?;
 
         // (2) Size cap. Bound the work the precompile body does on
@@ -832,10 +835,10 @@ impl SlashIndicator<'_> {
             )));
         }
 
-        // (5) Epoch-lag admissibility - read the canonical on-chain
-        // epoch counter from ValidatorSet (option C: epoch is consensus
-        // state, recorded by update_epoch at boundaries; we do NOT
-        // re-derive it from block height).
+        // (5) Epoch-lag admissibility. Read the canonical on-chain
+        // epoch counter from ValidatorSet. Option C: epoch is consensus
+        // state, which update_epoch records at boundaries. We do NOT
+        // re-derive it from block height.
         let vs = ValidatorSet::new(self.storage.clone());
         let current_epoch = vs.current_epoch_u64()?;
         let max_acceptable_epoch = ev
@@ -899,8 +902,8 @@ impl SlashIndicator<'_> {
             return Err(PrecompileError::Revert("evidence already processed".into()));
         }
 
-        // (8) Cryptographic proposer attribution. The Phase 1 tx is signed by
-        // the child block's proposer. Its calldata is the single
+        // (8) Cryptographic proposer attribution. The child block's proposer
+        // signs the Phase 1 tx. Its calldata is the single
         // source of truth for metadata and proof bytes.
         let chain_id = self.storage.chain_id()?;
         let (proposer, calldata) =
@@ -946,11 +949,11 @@ impl SlashIndicator<'_> {
                 ))
             })?;
 
-        // (10) Proposer must be in the snapshot's committee. Defends
-        // against a future bug that signs a Phase 1 tx with a key not
-        // bound to any active validator - without this check, the
-        // felony helper would call jail_validator on a
-        // non-existent validator and the slash path would silently
+        // (10) Proposer must be in the snapshot's committee. This check
+        // defends against a future bug that signs a Phase 1 tx with a key
+        // not bound to any active validator. Without this check, the
+        // felony helper would call jail_validator on a non-existent
+        // validator, and the slash path would silently
         // no-op.
         if !snapshot
             .committee
@@ -964,7 +967,7 @@ impl SlashIndicator<'_> {
         }
 
         // (11) Re-verify the proof. We expect verify_v2_proof to REJECT
-        // with a VRF-class error; anything else is non-slashable here.
+        // with a VRF-class error. Anything else is non-slashable here.
         let verify_err = match verify_v2_proof(
             &metadata,
             &snapshot,
@@ -989,8 +992,8 @@ impl SlashIndicator<'_> {
         self.invalid_vrf_evidence_processed
             .write(&evidence_hash, true)?;
 
-        // (13) Apply felony - forced exit + 5% slash + 10% submitter
-        // reward, using the same helper the other evidence types call.
+        // (13) Apply felony: jail + 5% slash + 10% submitter
+        // reward. This uses the same helper that the other evidence types call.
         self.apply_evidence_felony(proposer, caller)?;
 
         // (14) Canonical event with re-derived failure class.
@@ -1031,11 +1034,11 @@ impl SlashIndicator<'_> {
 
     /// Submit evidence that a validator equivocated on its VRF seed partial:
     /// two DIFFERENT identity-signed `bls_seed_partial`s for the same
-    /// `(round, vrf_material_version)`. Self-authenticating from the two MinPk
-    /// identity signatures - no committee polynomial is needed - and reuses the
-    /// shared felony economics. An honest validator produces exactly one partial
-    /// per round/version and never identity-signs a second distinct one, so a
-    /// valid pair cannot frame an honest node.
+    /// `(round, vrf_material_version)`. The evidence self-authenticates from the
+    /// two MinPk identity signatures. No committee polynomial is needed. The
+    /// method reuses the shared felony economics. An honest validator produces
+    /// exactly one partial per round/version. It never identity-signs a second
+    /// distinct one. Thus a valid pair cannot frame an honest node.
     pub fn submit_seed_partial_equivocation_evidence(
         &mut self,
         caller: Address,
@@ -1049,8 +1052,8 @@ impl SlashIndicator<'_> {
     }
 
     /// Test seam for [`Self::submit_seed_partial_equivocation_evidence`] (lets
-    /// integration tests relax the epoch-lag cap). Production goes through the
-    /// no-arg wrapper with the canonical schedule.
+    /// integration tests relax the epoch-lag cap). Production uses the no-arg
+    /// wrapper with the canonical schedule.
     #[doc(hidden)]
     pub fn submit_seed_partial_equivocation_evidence_with_schedule(
         &mut self,
@@ -1058,7 +1061,7 @@ impl SlashIndicator<'_> {
         evidence_bytes: &[u8],
         schedule: &OutbeProtocolSchedule,
     ) -> Result<()> {
-        // (1) Submitter ACL: ACTIVE validators only - verification is BLS-heavy,
+        // (1) Submitter ACL: ACTIVE validators only. Verification is BLS-heavy,
         // so gating to the staked set makes DoS self-destructive.
         self.require_active_submitter(caller)?;
 
@@ -1147,11 +1150,12 @@ impl SlashIndicator<'_> {
     /// Submit evidence that a validator emitted a single INVALID VRF seed
     /// partial: an identity-signed partial that fails verification against the
     /// committee's full public polynomial. Unlike equivocation, this needs the
-    /// committee polynomial - carried in the evidence and checked against the
-    /// `vrf_public_polynomial_hash` committed in the committee snapshot (which
-    /// the executor derives from the consensus-validated DKG boundary outcome,
-    /// so a proposer cannot forge it to frame an honest validator). Reuses the
-    /// shared felony economics.
+    /// committee polynomial. The evidence carries the polynomial. This method
+    /// checks it against the `vrf_public_polynomial_hash` committed in the
+    /// committee snapshot. The executor derives that hash from the
+    /// consensus-validated DKG boundary outcome. Thus a proposer cannot forge it
+    /// to frame an honest validator. The method reuses the shared felony
+    /// economics.
     pub fn submit_invalid_seed_partial_evidence(
         &mut self,
         caller: Address,
@@ -1175,7 +1179,7 @@ impl SlashIndicator<'_> {
         // (1) Submitter ACL: ACTIVE validators only (BLS-heavy verification).
         self.require_active_submitter(caller)?;
 
-        // (2) Size cap - the polynomial commitment dominates; reuse the VRF
+        // (2) Size cap. The polynomial commitment dominates. Reuse the VRF
         // evidence cap (the only other commitment-carrying evidence).
         if evidence_bytes.len() > schedule.invalid_vrf_evidence_max_bytes {
             return Err(PrecompileError::Revert(format!(
@@ -1270,7 +1274,7 @@ impl SlashIndicator<'_> {
         }
 
         // (11) The partial must FAIL verification against the committee
-        // polynomial. A valid partial is not slashable; malformed input rejects.
+        // polynomial. A valid partial is not slashable. Malformed input rejects.
         match verify_seed_partial_against_commitment(
             &ev.commitment,
             ev.signer_index,
@@ -1310,12 +1314,14 @@ impl SlashIndicator<'_> {
         Ok(())
     }
 
-    /// Applies a felony for byzantine behavior detected by the consensus layer.
+    /// Applies a felony for byzantine behavior.
     ///
-    /// Called from post-execution hooks when the consensus layer detects equivocation
-    /// (ConflictingNotarize, ConflictingFinalize, NullifyFinalize).
-    /// Unlike `apply_evidence_felony`, there is no external evidence submitter,
-    /// so no reward is distributed.
+    /// No production caller invokes this method. The same three evidence classes
+    /// go through `submit_conflicting_notarize_evidence`,
+    /// `submit_conflicting_finalize_evidence`, and
+    /// `submit_nullify_finalize_evidence`.
+    /// Unlike `apply_evidence_felony`, there is no external evidence submitter.
+    /// Thus this method distributes no reward.
     pub fn slash_byzantine(&mut self, validator: Address) -> Result<()> {
         let block_number = self.storage.block_number().unwrap_or(0);
         // Felony: JAIL (not force-exit) + slash. Jail before slash_stake (which
@@ -1425,11 +1431,11 @@ fn canonical_evidence_hash(ev1: &[u8], ev2: &[u8]) -> B256 {
     keccak256(&buf)
 }
 
-/// maps a [`V2VerifyError`] to a canonical VRF failure class code
+/// Maps a [`V2VerifyError`] to a canonical VRF failure class code
 /// emitted in [`InvalidVrfProofEvidenceApplied`] and the slashing journal.
 ///
-/// Returns `None` for any non-VRF failure - those are not slashable through
-/// `submitInvalidVrfProofEvidence` and the caller must revert.
+/// Returns `None` for any non-VRF failure. Those failures are not slashable
+/// through `submitInvalidVrfProofEvidence`, and the caller must revert.
 ///
 /// The codes are stable wire constants once the precompile is live; renaming
 /// or renumbering them is a hard-fork change.

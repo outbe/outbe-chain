@@ -1,16 +1,16 @@
 //! Finalized-parent attestation validation surface.
 //!
-//! The determinism-critical consensus-metadata validation that previously
-//! shared `finalization::util` with generic leaf helpers. Splitting it out
-//! keeps the BLS / committee / canonical-missed-proposer checks in one named
-//! module; `util` retains only pure leaf helpers (retry, replay classification,
-//! header-artifact extraction, signer-bitmap fill).
+//! This module holds the determinism-critical consensus-metadata validation.
+//! That validation previously shared `finalization::util` with generic leaf
+//! helpers. Splitting it out keeps the BLS / committee / canonical-missed-proposer
+//! checks in one named module. `util` retains only pure leaf helpers (retry,
+//! replay classification, header-artifact extraction, signer-bitmap fill).
 //!
 //! `validate_consensus_metadata` is the V2 structural + certificate predicate.
 //! `validate_consensus_metadata_for_verify` is retained ONLY as a legacy test
-//! fixture for `handler_tests.rs` cases that pre-date the V2 verifier - it MUST
-//! NOT be called from production runtime paths, which use
-//! `outbe-consensus-proof::verify_v2_proof` instead.
+//! fixture for `handler_tests.rs` cases that pre-date the V2 verifier. Production
+//! runtime paths MUST NOT call it. They use
+//! [`crate::proof::verify_v2_proof`] instead.
 
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
@@ -44,9 +44,9 @@ const MAX_MISSED_PROPOSERS_IN_METADATA: usize = u8::MAX as usize;
 /// finalized-parent attestation validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttestationVerdict {
-    /// Attestation is absent - valid block, no settlement.
+    /// Attestation is absent. The block is valid, with no settlement.
     AcceptNone,
-    /// Attestation present and valid; embed (builder) / accept (verifier).
+    /// Attestation present and valid. Embed (builder) / accept (verifier).
     AcceptValid,
     /// Bitmap / committee / missed-proposers structurally bad.
     RejectStructural,
@@ -93,16 +93,17 @@ pub struct AttestationValidationContext<'a> {
 }
 
 // `validate_finalized_parent_attestation` was the V1
-// async certificate-validation predicate used by the proposer-side
-// exact-parent wait and by `handle_verify`. Both call sites are removed
-// (the proposer reads the proof store directly; `handle_verify`
-// is narrowed to structural checks only per). The function is
-// deleted to prevent accidental reintroduction of the BLS-on-verify path.
+// async certificate-validation predicate. The proposer-side exact-parent
+// wait and `handle_verify` used it. Both call sites are removed. The
+// proposer reads the proof store directly. `handle_verify` does not decode or
+// verify the carried BLS certificate in its prechecks. The EVM-side V2
+// verifier does that during execution verification. The function is deleted
+// to prevent accidental reintroduction of the BLS-on-verify path.
 //
 // `validate_consensus_metadata_for_verify` below is retained ONLY as a
-// test fixture for legacy `handler_tests.rs` cases that pre-date
-// - it MUST NOT be called from production runtime paths. 's
-// V2 verifier reads `outbe-consensus-proof::verify_v2_proof` instead.
+// test fixture for legacy `handler_tests.rs` cases that pre-date the V2
+// verifier. Production runtime paths MUST NOT call it. They use
+// `crate::proof::verify_v2_proof` instead.
 
 pub async fn validate_consensus_metadata_for_verify(
     clock: &impl commonware_runtime::Clock,
@@ -235,7 +236,7 @@ fn validate_present_consensus_metadata(
         return Err(AttestationVerdict::RejectCertificate);
     }
 
-    // V2 signer bitmap is the certificate's own bitmap - no
+    // The V2 signer bitmap is the certificate's own bitmap. There is no
     // supplemental finalize-vote reconciliation. The V1
     // `build_signer_bitmap_with_finalize_votes` helper is dropped.
     let expected_bitmap = build_signer_bitmap(&finalization.certificate, expected_committee.len());
@@ -264,9 +265,9 @@ fn validate_metadata_committee(
         return Err(AttestationVerdict::RejectStructural);
     }
     let committee_set: BTreeSet<_> = expected_committee.iter().copied().collect();
-    // V2 contract requires `missed_proposers` to be empty; if any
-    // event is present, it must reference a committee member (defensive
-    // structural check - the V2 verifier enforces emptiness upstream).
+    // The V2 contract requires `missed_proposers` to be empty. If any
+    // event is present, it must reference a committee member. This is a
+    // defensive structural check. The V2 verifier enforces emptiness upstream.
     if actual
         .missed_proposers
         .iter()
@@ -344,8 +345,8 @@ async fn validate_canonical_missed_proposers(
         return Ok(false);
     };
 
-    // compare V2 event list (`Vec<MissedProposerEvent>`) against
-    // the canonical-derivation `Vec<Address>` - equality holds when (a) both
+    // Compare the V2 event list (`Vec<MissedProposerEvent>`) against
+    // the canonical-derivation `Vec<Address>`. Equality holds when (a) both
     // are empty (the V2 contract) or (b) the event sequence's `.validator`
     // chain matches the expected address sequence.
     let actual_addrs: Vec<Address> = actual
@@ -392,9 +393,9 @@ fn canonical_missed_proposers(
     let elector_config = elector_config_provider.scoped(epoch)?;
     let elector = elector_config.as_ref().clone().build(participants);
 
-    // Shared single source of truth with the proposer-side reporter path: the
-    // election sequence must match exactly or this recompute would reject a
-    // valid proposer's `missed_proposers` list.
+    // This call is the single source of truth shared with the proposer-side
+    // reporter path. The election sequence must match exactly. Otherwise this
+    // recompute would reject a valid proposer's `missed_proposers` list.
     let leaders = crate::missed_proposers::elected_leaders_for_gap(
         epoch,
         &elector,

@@ -217,7 +217,7 @@ enum FrozenResultV1 {
 }
 
 impl CompressedTreeService {
-    /// Freezes tree evidence first; both callbacks run only after the sole MDBX
+    /// Freezes tree evidence first. Both callbacks run only after the sole MDBX
     /// read transaction has been dropped.
     pub fn serve_point_read_v1<H, B>(
         &self,

@@ -4,10 +4,7 @@ use outbe_compressed_entities::{
     ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
-use outbe_primitives::math::{
-    reference_price,
-    tree_math::{self, BinTreeStorage},
-};
+use outbe_primitives::math::{reference_price, tree_math};
 use outbe_primitives::time::WorldwideDay;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -182,29 +179,40 @@ impl NodContract<'_> {
         let mut records = Vec::new();
         let mut after = None;
         loop {
-            let page = list(
-                self.storage_handle(),
-                scope,
-                parent,
-                query,
-                IdPageRequest {
-                    after,
-                    limit: MAX_ID_PAGE_LIMIT,
-                },
-            )?;
-            let next_after = page.next_after();
-            let bodies = page.into_bodies();
-            records.extend(
-                bodies
-                    .iter()
-                    .map(nod_item_from_verified)
-                    .collect::<Result<Vec<_>>>()?,
-            );
+            let (page, next_after) = self.read_page(scope, parent, query, after)?;
+            records.extend(page);
             let Some(next) = next_after else {
                 return Ok(records);
             };
             after = Some(next);
         }
+    }
+
+    /// One page of `query` after `after`, decoded, with the cursor of the next page.
+    fn read_page(
+        &self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        query: QueryRef,
+        after: Option<WwdEntityId>,
+    ) -> Result<(Vec<NodItemState>, Option<WwdEntityId>)> {
+        let page = list(
+            self.storage_handle(),
+            scope,
+            parent,
+            query,
+            IdPageRequest {
+                after,
+                limit: MAX_ID_PAGE_LIMIT,
+            },
+        )?;
+        let next_after = page.next_after();
+        let records = page
+            .into_bodies()
+            .iter()
+            .map(nod_item_from_verified)
+            .collect::<Result<Vec<_>>>()?;
+        Ok((records, next_after))
     }
 
     /// Records compact issuance state and delegates both bodies to the generic lifecycle.
@@ -400,8 +408,9 @@ impl NodContract<'_> {
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
 
     /// Maps a six-decimal call price (or oracle rate) to a 24-bit
-    /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]` -
-    /// see `lb_math::get_id_from_price` for the deviation from LB's revert.
+    /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]`.
+    /// See [`outbe_primitives::math::price_helper::get_id_from_price`] for the saturation
+    /// rationale.
     pub fn price_to_bin(price_minor: U256) -> Result<u32> {
         if price_minor.is_zero() {
             return Ok(0);
@@ -410,7 +419,7 @@ impl NodContract<'_> {
     }
 
     /// Inverse of `price_to_bin`: returns the lower edge of bin `bin_id` in
-    /// six-decimal minor units. Diagnostic-only - `bin_to_price_floor` may
+    /// six-decimal minor units. Diagnostic-only. `bin_to_price_floor` may
     /// fail at extreme bin ids whose LB-pow exponent exceeds `2^20`.
     pub fn bin_to_price_floor(bin_id: u32) -> Result<U256> {
         reference_price::bin_id_to_coen_iso_price(bin_id, BIN_STEP_BP)
@@ -419,10 +428,10 @@ impl NodContract<'_> {
     /// Namespaces a bin-column key by the bucket's reference currency.
     ///
     /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
-    /// integer type alone namespaces nothing - the ISO has to occupy real
+    /// integer type alone namespaces nothing. The ISO has to occupy real
     /// high bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit,
     /// so the low 32 bits always hold `key` unambiguously. ISO `0` is the one
-    /// value that would alias the un-namespaced key; `record_nod_issued`
+    /// value that would alias the un-namespaced key. `record_nod_issued`
     /// rejects it at the funnel so it can never be written.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
         ((reference_currency as u64) << 32) | key as u64
@@ -585,7 +594,7 @@ impl NodContract<'_> {
     // --- Callable-bucket index ----------------------------------------------
 
     /// Writes the call terms a new bucket sealed at issuance. Later Nods that
-    /// join the same bucket inherit this copy; nothing reads the constants again.
+    /// join the same bucket inherit this copy. Nothing reads the constants again.
     pub(crate) fn seal_bucket_call_terms(
         &mut self,
         bucket_key: B256,
@@ -674,7 +683,8 @@ impl NodContract<'_> {
         self.called_bucket_index.clear(&bucket_key)
     }
 
-    /// No-op for a bucket the call index never held, so the removal funnel can call it unconditionally.
+    /// No-op for a bucket the call index never held, so the removal funnel can call it
+    /// unconditionally.
     pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
         self.remove_call_bin(bucket_key)?;
         self.remove_called_bucket(bucket_key)?;
@@ -722,31 +732,8 @@ const fn unpack_bin_slot(packed: u64) -> (u32, u32) {
 /// One currency's call-price trie, like `outbe_gem::state::BucketBins`.
 pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
 
-impl BinTreeStorage for CallBins<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.call_bin_tree_root.read(&self.1)
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.call_bin_tree_root.write(&self.1, value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0
-            .call_bin_tree_mid
-            .read(&NodContract::scoped(self.1, key))
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .call_bin_tree_mid
-            .write(&NodContract::scoped(self.1, key), value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0
-            .call_bin_tree_leaf
-            .read(&NodContract::scoped(self.1, key))
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .call_bin_tree_leaf
-            .write(&NodContract::scoped(self.1, key), value)
-    }
-}
+outbe_primitives::impl_bin_tree_storage!(CallBins scoped by NodContract::scoped {
+    root: call_bin_tree_root,
+    mid: call_bin_tree_mid,
+    leaf: call_bin_tree_leaf,
+});

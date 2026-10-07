@@ -244,7 +244,7 @@ fn test_bootstrap_dkg_waits_for_all_genesis_nodes_one_offline() {
         |context| async move {
             // Non-completion within a bounded virtual-time window (matches the
             // original outer 5s timeout): a non-canonical 3/4 subset must keep
-            // waiting, never finalize. `select!` is biased; the sleep arm winning
+            // waiting, never finalize. `select!` is biased. The sleep arm winning
             // is the pass condition.
             commonware_macros::select! {
                 _ = run_partial_dkg(&context, 4, 3) => {
@@ -258,7 +258,7 @@ fn test_bootstrap_dkg_waits_for_all_genesis_nodes_one_offline() {
 
 /// 7 validators, 2 offline (maximum tolerable under N3f1).
 /// Threshold = 5 (f=2, quorum=5). Bootstrap still must wait for the full
-/// genesis dealer-log set; threshold liveness belongs to chain-finalized
+/// genesis dealer-log set. Threshold liveness belongs to chain-finalized
 /// reshare after blocks exist.
 #[test]
 fn test_bootstrap_dkg_waits_for_all_genesis_nodes_max_offline() {
@@ -284,7 +284,7 @@ fn test_dkg_fails_below_threshold() {
             .start(|context| async move {
             // Use a short timeout to avoid slow test.
             // The DKG has DKG_TIMEOUT=120s, but we wrap with a shorter outer timeout.
-            // The ceremony should not complete - it will hit DKG_TIMEOUT internally,
+            // The ceremony should not complete. It will hit DKG_TIMEOUT internally,
             // but we can't wait 120s in a test. Instead, verify it doesn't complete
             // within a reasonable window.
             // Should not complete - 2 nodes can't reach threshold=3.

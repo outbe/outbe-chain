@@ -33,8 +33,8 @@ pub struct Oip {
 }
 
 /// A Governance Improvement Proposal - a proposal to change the canon and/or
-/// meta-canon. Field set is identical to [`Oip`] for now (per design decision);
-/// the two are separate record types so they can diverge independently when GIP
+/// meta-canon. Field set is identical to [`Oip`] for now (per design decision).
+/// The two are separate record types so they can diverge independently when GIP
 /// gains its git-style semantics.
 #[storage_record(exists_field = author)]
 pub struct Gip {
@@ -85,12 +85,12 @@ pub struct GovernanceContract {
 
     // --- proposal id counters + authorities: all one slot each ---
     //
-    // These fixed-width fields are ordered BEFORE the record maps on purpose: a
+    // These fixed-width fields come BEFORE the record maps on purpose. A
     // `Map<K, Record>` reserves `Record::SLOTS` contiguous base slots (one per
-    // record field, for keccak namespacing), so placing `oips`/`gips` last keeps
+    // record field, for keccak namespacing). Because `oips`/`gips` come last,
     // every seeded slot (texts, versions, hashes, revisions, counters,
-    // authorities) at a fixed index regardless of how the record types grow.
-    // `scripts/seed_genesis.py` depends on this stability; the
+    // authorities) stays at a fixed index, regardless of how the record types
+    // grow. `scripts/seed_genesis.py` depends on this stability. The
     // `storage_layout_matches_seeder` test pins it.
     #[attribute(order = 8)]
     pub next_oip_id: outbe_primitives::storage::dsl::Value<u64>,
@@ -108,12 +108,14 @@ pub struct GovernanceContract {
     #[attribute(order = 12)]
     pub gips: outbe_primitives::storage::dsl::Map<U256, Gip>,
 
-    // --- indexes, per kind (appended last so genesis-seeded slots (<=10) never
-    //     shift). Author list uses the tribute owner-index idiom (count map +
-    //     hashed-key id map). Status uses one enumerable StorageSet per status
-    //     value via `mapping(status => set)` (the OZ `mapping(role => members)`
-    //     pattern): submit inserts into Draft; a status change moves the id from
-    //     the old set to the new one; `getByStatus` reads only that set. ---
+    // --- indexes, per kind (they come last so genesis-seeded slots (<=10) never
+    //     shift). The author list uses the tribute owner-index idiom (count map +
+    //     hashed-key id map). The status index uses one enumerable StorageSet per
+    //     status value via `mapping(status => set)` (the OZ
+    //     `mapping(role => members)` pattern):
+    //     - submit inserts the id into the Draft set.
+    //     - a status change moves the id from the old set to the new one.
+    //     - `getByStatus` reads only that set. ---
     #[attribute(order = 13)]
     pub oip_author_count: outbe_primitives::storage::dsl::Map<Address, u32>,
     #[attribute(order = 14)]

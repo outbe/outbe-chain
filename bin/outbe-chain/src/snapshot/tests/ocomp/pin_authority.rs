@@ -1,8 +1,8 @@
 mod present_discovery;
 
 // This fixture is test setup only.
-// It uses public Registry initialization and native WWD/model capabilities;
-// private Metadosis persistence codecs are reproduced only to seed source words.
+// It uses public Registry initialization and native WWD/model capabilities.
+// It reproduces private Metadosis persistence codecs only to seed source words.
 // Every constructed aggregate must pass the real public native getter.
 mod active_canonical;
 
@@ -314,7 +314,7 @@ fn stages(
     ];
     for authority in [None, Some(export())] {
         // Canonical completion was at 105. Retention observed terminality
-        // at 250, after the response deadline of 200; its native evidence
+        // at 250, after the response deadline of 200. Its native evidence
         // window is 64 blocks. This lag does not change job authority.
         states.push((
             PinStateV1::Terminal {
@@ -423,7 +423,7 @@ fn all_pin_stages_allow_completed_authority_and_preserve_source_obligations() {
 fn every_candidate_identity_component_and_registry_key_bind_exactly() {
     for version in [1, 2] {
         // An unfinalized canonical record forces the verifier to bind B
-        // explicitly; the getter's finalized-request branch cannot do it.
+        // explicitly. The getter's finalized-request branch cannot do it.
         with_job(version, false, false, |state, view, job| {
             let valid = candidate(view, &job);
             let bad_hash = B256::repeat_byte(77);
@@ -467,7 +467,7 @@ fn every_candidate_identity_component_and_registry_key_bind_exactly() {
                     state: PinStateV1::AwaitingJobFinalization { candidate: changed },
                 };
                 // Follow a changed block hash with the registry key so the
-                // actual canonical-header comparison is also exercised.
+                // test also exercises the actual canonical-header comparison.
                 assert!(
                     verify_pin_authority(state, view, changed.block_hash, &record).is_err(),
                     "accepted {changed:?}"

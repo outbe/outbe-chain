@@ -152,8 +152,8 @@ fn copy_authoritative_state_to_scratch(
 }
 
 // Reth's Compact decoders may panic on truncated native bytes. Isolate only the
-// immutable value decode, so a malformed snapshot produces an audit error while
-// the source stays untouched and the caller still drops its disposable scratch.
+// immutable value decode. With this isolation, a malformed snapshot produces an audit
+// error, the source stays untouched, and the caller still drops its disposable scratch.
 fn read_native_value<V: Value>(value: &RawValue<V>, table: &str) -> eyre::Result<V> {
     Ok(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| value.value()))

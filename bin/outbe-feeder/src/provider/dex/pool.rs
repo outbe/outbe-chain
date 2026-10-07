@@ -177,8 +177,8 @@ impl DexMarketConfig {
         Ok(topics)
     }
 
-    /// Absolute base-token balance delta once per core Swap event. A V2 flash
-    /// swap can have both input/output: use its net delta, not double turnover.
+    /// Absolute base-token balance delta, once for each core Swap event. A V2 flash
+    /// swap can have both input and output. Use its net delta, not double turnover.
     pub fn swap_volume(&self, log: &Log) -> Result<U256> {
         ensure!(
             !log.removed && log.address == self.pool.address(),

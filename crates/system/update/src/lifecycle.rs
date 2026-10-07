@@ -1,4 +1,4 @@
-//! Block lifecycle hook for upgrade proposal tally and activation.
+//! Block lifecycle hook for scheduled update activation.
 
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -10,11 +10,12 @@ use crate::schema::Update;
 pub struct UpdateLifecycle;
 
 impl UpdateLifecycle {
-    /// Tally pending proposals and activate approved ones at the current block.
+    /// Activates each scheduled update when the block height reaches its activation height.
+    /// Vote owns proposal tally. This hook does not tally proposals.
     ///
     /// Unlike other lifecycle modules, Update does not implement
     /// [`BlockLifecycle`](outbe_primitives::block::BlockLifecycle) directly. Callers
-    /// must pass the node-level upgrade handler registry explicitly - in production
+    /// must pass the node-level upgrade handler registry explicitly. In production,
     /// this is `outbe_evm::handlers::update::registry()`.
     ///
     /// The registry is owned outside `outbe-update` so migration handlers can live

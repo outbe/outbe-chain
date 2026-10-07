@@ -272,24 +272,6 @@
   },
   {
     "type": "function",
-    "name": "settleGemWithPayNote",
-    "inputs": [
-      {
-        "name": "gemId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "payNoteProof",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "tokenOfOwnerByIndex",
     "inputs": [
       {

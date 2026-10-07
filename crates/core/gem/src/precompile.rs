@@ -30,8 +30,9 @@ sol!(
 
 // A gem is stamped live, so only a throwaway build can move its issuance back
 // behind the closed days a scenario seeds for the call sweep. The forfeit sweep
-// opens a bucket only once its hour has closed, so `closeCallNoticeForTest` moves
-// a deadline that has already lapsed into one the sweep will open on the next block.
+// opens a bucket only once its hour has closed. For that reason,
+// `closeCallNoticeForTest` moves a deadline that already lapsed into one that the
+// sweep will open on the next block.
 #[cfg(feature = "e2e-test")]
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]

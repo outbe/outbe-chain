@@ -13,7 +13,7 @@ use crate::schema::Gratis;
 
 // --- Reads ---
 
-/// Encrypted balance blob for `account`; decrypt client-side with the view key.
+/// Encrypted balance blob for `account`. Decrypt it client-side with the view key.
 pub fn balance_ct(storage: StorageHandle<'_>, account: Address) -> Result<Vec<u8>> {
     Gratis::new(storage).balance_ct_of(account)
 }

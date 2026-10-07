@@ -1,15 +1,21 @@
 use super::*;
 
-/// minePromis: PoW-gated burn of Settled then mint of Promis. `owner` is the
-/// caller.
+/// What the owner brings to one mining: the PoW nonce and the Promis modify-key authorization.
+pub struct MiningProof {
+    pub nonce: u64,
+    pub auth: outbe_promisfactory::api::ModifyAuth,
+}
+
+/// Burn Settled Intex and mint Promis with PoW and the owner's modify-key authorization.
+/// `owner` comes from calldata. Any sender can submit the authorized request.
 pub fn mine_promis(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     owner: Address,
     units: U256,
-    nonce: u64,
-    auth: outbe_promisfactory::api::ModifyAuth,
+    proof: MiningProof,
 ) -> Result<U256> {
+    let MiningProof { nonce, auth } = proof;
     if owner.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
@@ -28,7 +34,7 @@ pub fn mine_promis(
         .checked_mul(units)
         .ok_or_else(|| PrecompileError::Revert("promis overflow".into()))?;
 
-    // PoW over the per-(series, owner) sequence; bump it on success.
+    // PoW over the per-(series, owner) sequence. Bump it on success.
     let mut factory = IntexFactoryContract::new(storage.clone());
     let seq = factory.read_mine_seq(series_id, owner)?;
     validate_pow(owner, promis_minor, series_id, seq, nonce)?;
@@ -80,7 +86,7 @@ pub(crate) fn issued_token_id(series_id: SeriesId) -> U256 {
 
 /// Settled token id = the series id with `SETTLED_TAG` set. A series id is 14 bytes, so the issued
 /// space ends at 2**112 and the bit above it distinguishes the classes without a hash. Mirrors
-/// `IntexNFT1155._settledTokenId`; the two derivations must stay identical.
+/// `IntexNFT1155._settledTokenId`. The two derivations must stay identical.
 pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
     issued_token_id(series_id) | SETTLED_TAG
 }
@@ -110,7 +116,7 @@ pub(crate) fn compute_pow_hash(
     out
 }
 
-/// The preimage is Intex's own; the difficulty it must clear is the protocol's.
+/// The preimage is Intex's own. The difficulty it must clear is the protocol's.
 pub(crate) fn validate_pow(
     owner: Address,
     promis_amount: U256,

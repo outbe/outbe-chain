@@ -127,7 +127,7 @@ pub fn storage_schema(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `pub fn dispatch(storage, data, caller, value) -> Result<Bytes>`.
 ///
 /// Companion markers on individual methods:
-/// - `#[contract_view]` - read-only; method takes only ABI args.
+/// - `#[contract_view]` - read-only. The method takes only ABI args.
 /// - `#[contract_payable]` - `caller: Address, value: U256` are the first
 ///   two parameters after `&mut self`, followed by ABI args.
 /// - (no marker) - default mutating: `caller: Address` is the first
@@ -138,26 +138,26 @@ pub fn contract_dispatch(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Marks a method inside a `#[contract_dispatch]` impl block as an ABI
-/// entry. The string is a Solidity-style signature; argument names are
-/// taken from the Rust method (only types are read from the string).
-/// Consumed by the surrounding `#[contract_dispatch]` macro.
+/// entry. The string is a Solidity-style signature. The macro takes argument
+/// names from the Rust method and reads only types from the string.
+/// The surrounding `#[contract_dispatch]` macro consumes this marker.
 #[proc_macro_attribute]
 pub fn contract_public(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
 /// Inside a `#[contract_dispatch]` impl block: marks the method as
-/// read-only (no caller / no msg.value injection). Consumed by the
-/// surrounding `#[contract_dispatch]` macro.
+/// read-only (no caller / no msg.value injection). The surrounding
+/// `#[contract_dispatch]` macro consumes this marker.
 #[proc_macro_attribute]
 pub fn contract_view(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
 /// Inside a `#[contract_dispatch]` impl block: marks the method as
-/// payable; first two parameters after `&mut self` are
-/// `caller: Address, value: U256`. Consumed by the surrounding
-/// `#[contract_dispatch]` macro.
+/// payable. The first two parameters after `&mut self` are
+/// `caller: Address, value: U256`. The surrounding `#[contract_dispatch]`
+/// macro consumes this marker.
 ///
 /// Using this requires the module to publish its payable surface next to the
 /// impl block:
@@ -167,7 +167,7 @@ pub fn contract_view(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// The generated dispatch refuses value for every selector missing from that
-/// list, and the precompile route table asserts at compile time that the list
+/// list. The precompile route table asserts at compile time that the list
 /// agrees with the address's declared value policy. Omitting the const is a
 /// compile error (see `tests/compile_fail/payable_without_selectors.rs`).
 #[proc_macro_attribute]

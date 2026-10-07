@@ -221,7 +221,7 @@ fn persist_fixture_headers(
 
 fn persist_genesis_ce_root(tx: &impl DbTxMut) -> eyre::Result<()> {
     // All fixture blocks leave CE unchanged, so this native genesis slot is
-    // legitimately identical at every historical height; no rewind stubs.
+    // legitimately identical at every historical height. No rewind stubs.
     tx.put::<tables::PlainAccountState>(COMPRESSED_ENTITIES_ADDRESS, Default::default())?;
     tx.put::<tables::PlainStorageState>(
         COMPRESSED_ENTITIES_ADDRESS,
@@ -729,7 +729,7 @@ impl DiskFixture {
                 delivered: reporter_keepalive.delivered.lock().unwrap().clone(),
             };
             // Resolver closure is the ordinary actor exit path. Await it before
-            // dropping held ACKs or copying files; never abort the donor actor.
+            // dropping held ACKs or copying files. Never abort the donor actor.
             drop(resolver);
             tokio::time::timeout(Duration::from_secs(10), actor)
                 .await

@@ -36,9 +36,9 @@ fn apply_inner(ctx: &BlockRuntimeContext, amount: U256) -> Result<DayLimitFormat
 /// Recycles late-settlement headroom without racing daily OCOMP limit formation.
 ///
 /// The genesis-active OCOMP profile makes the daily Cycle allocation the sole
-/// base-limit formation input, so a late residue is a carry-over credit consumed
-/// by the next not-yet-formed day limit. Missing profile state is fatal rather
-/// than a legacy execution mode.
+/// base-limit formation input. A late residue becomes carry-over credit.
+/// OCOMP request processing draws this credit when it knows the day's demand.
+/// Missing profile state is fatal.
 pub(crate) fn apply_late_settlement_headroom(
     ctx: &BlockRuntimeContext,
     amount: U256,

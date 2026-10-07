@@ -1,11 +1,11 @@
 //! Pure block-acceptance rules for the application handler.
 //!
-//! These are the deterministic "what makes a proposed block invalid?" checks,
-//! lifted out of `handler.rs`'s propose/verify event loop. They take an
-//! immutable block plus the scheme/committee providers and return a `Result` -
-//! no clock, no marshal, no runtime state - so they read and test as a
-//! standalone validation layer. `handler` calls them; the tests below exercise
-//! them directly.
+//! These are the deterministic "what makes a proposed block invalid?" checks.
+//! They live outside the propose/verify paths of the `handler` module. They
+//! take an immutable block plus the scheme/committee providers and return a
+//! `Result`. They use no clock, no marshal and no runtime state. Thus they read
+//! and test as a standalone validation layer. `handler` calls them. The tests
+//! below exercise them directly.
 
 use alloy_consensus::BlockHeader as _;
 use alloy_primitives::B256;
@@ -87,10 +87,12 @@ pub(crate) fn validate_context_parent_binding(
     Ok(())
 }
 
-/// Validate the begin/end system-transaction set: layout, the mandatory
-/// CertifiedParentAccounting parent-hash binding, BoundaryOutcome consistency
-/// with the header artifact, per-tx signature-hash binding, and that every
-/// system tx is signed by the consensus leader's EVM address.
+/// Validate the begin/end system-transaction set:
+/// - layout
+/// - the mandatory CertifiedParentAccounting parent-hash binding
+/// - BoundaryOutcome consistency with the header artifact
+/// - per-tx signature-hash binding
+/// - every system tx has a signature from the consensus leader's EVM address.
 pub(crate) fn validate_system_tx_leader_binding_for_activation(
     block: &ConsensusBlock,
     context: SystemTxLeaderValidationContext<'_>,

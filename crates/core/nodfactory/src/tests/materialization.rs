@@ -247,8 +247,7 @@ fn apply(
     world.enter(|storage, scope, parent| {
         crate::materialization::materialize_certified_nods_authorized(
             &storage,
-            scope,
-            parent,
+            ExecutionReaders { scope, parent },
             batch,
             profile(),
             &poc_schema_limits(),
@@ -273,8 +272,7 @@ fn the_public_selector_rejects_a_caller_without_the_active_ocomp_role() {
         .enter(|storage, scope, parent| {
             api::materialize_certified_nods(
                 &storage,
-                scope,
-                parent,
+                ExecutionReaders { scope, parent },
                 Address::repeat_byte(0xee),
                 &batch(&population, 0, 8),
                 &poc_schema_limits(),
@@ -318,8 +316,7 @@ fn the_public_selector_accepts_only_the_delegate_of_an_active_validator() {
         .enter(|storage, scope, parent| {
             api::materialize_certified_nods(
                 &storage,
-                scope,
-                parent,
+                ExecutionReaders { scope, parent },
                 delegate,
                 &batch(&population, 0, 8),
                 &poc_schema_limits(),
@@ -391,7 +388,8 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
     ));
 }
 
-/// Materialization carries the proven batch's price; a snapshot saying otherwise is not read.
+/// Materialization carries the proven batch's price. It does not read a snapshot that says
+/// otherwise.
 #[test]
 fn a_materialized_nod_keeps_the_batch_entry_price() {
     let mut world = World::new();
@@ -694,7 +692,13 @@ fn every_final_batch_cleanup_failure_rolls_back_nods_projection_fifo_and_events(
 #[test]
 fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     let mut world = World::new();
-    let population = population(10);
+    let mut actions = (0..10)
+        .map(|ordinal| action_for(MATERIALIZATION_WWD, ordinal))
+        .collect::<Vec<_>>();
+    // Free, so settling it by ERC20 moves no tokens.
+    actions[0].entry_price_minor = U256::ZERO;
+    actions[0].settlement_cost_minor = U256::ZERO;
+    let population = population_of(actions);
     seed_generation(&mut world, &population);
     apply(&mut world, &batch(&population, 0, 8)).unwrap();
     let nod_id = ledger_entity(population.actions[0].nod_id);
@@ -720,23 +724,13 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     ));
 
     assert!(
-        matches!(world.settle(nod_id, population.actions[0].owner, &[]).unwrap_err(),
+        matches!(world.settle(nod_id, population.actions[0].owner).unwrap_err(),
         PrecompileError::Revert(reason) if reason == NodFactoryError::NodGenerationNotMaterialized.to_string())
     );
     world.provider.set_block_number(2);
     apply(&mut world, &batch(&population, 8, 2)).unwrap();
     world.qualify(nod_id);
-    world.register_reference_currency_asset(NOTE_ASSET);
-    let cost = outbe_nod::api::settlement_cost_minor(
-        population.actions[0].entry_price_minor,
-        population.actions[0].gratis_load_minor,
-    )
-    .unwrap()
-    .to::<u128>();
-    let paynote_proof = world.fund_note(NOTE_ASSET, nod_id, cost.max(1), cost).0;
-    world
-        .settle(nod_id, population.actions[0].owner, &paynote_proof)
-        .unwrap();
+    world.settle(nod_id, population.actions[0].owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let encrypted = world
         .enter(|storage, scope, parent| {

@@ -69,8 +69,9 @@ impl MetadosisContract<'_> {
     }
 }
 
-/// The Desis Limit of a day: what it earned beyond the Lysis share, capped by what Lysis left of the
-/// day's own limit plus what the path draws from the carry-over. A day that is not green sells nothing.
+/// The Desis Limit of a day: what the day earned beyond the Lysis share. The cap is what Lysis left
+/// of the day's own limit plus what the path draws from the carry-over. A day that is not green
+/// sells nothing.
 pub(crate) fn desis_limit(
     nominal_total: U256,
     lysis_limit_minor: U256,
@@ -162,8 +163,10 @@ pub(crate) fn process_ocomp_ready_candidate(
         OuterWwdEvent::ProcessReady(ReadyDisposition::PrepareOcomp),
     )?;
     metadosis.initialize_ocomp_pre_admission(wwd)?;
-    // This order is protocol-relevant: snapshot while CE is active, enqueue
-    // the OCOMP FSM, then commit the outer transition.
+    // This order is protocol-relevant:
+    // 1. Snapshot while CE is active.
+    // 2. Enqueue the OCOMP FSM.
+    // 3. Commit the outer transition.
     outbe_lysis::api::freeze_entry_price_snapshot(
         ctx.storage.clone(),
         wwd,
@@ -288,8 +291,8 @@ fn settle_zero_allocation(
         crate::errors::storage_corruption("Metadosis Lysis Limit exceeds the day's nominal".into())
     })?;
     let to_promis = dispatch_brief(ctx, day_type, wwd, desis_limit_minor)?;
-    // The limit headroom above the day's own nominal is issued by nobody, so it stays on
-    // the warehouse together with whatever the brief did not take.
+    // Nobody issues the limit headroom above the day's own nominal, so it stays on the
+    // warehouse together with whatever the brief did not take.
     let returned = current
         .metadosis_limit_minor
         .checked_sub(calculation.lysis_limit_minor)
@@ -300,7 +303,7 @@ fn settle_zero_allocation(
         })?;
     promis_limit.add_to_total_unallocated(returned)?;
     commit_outer_transition(metadosis, wwd, transition, ctx.block.block_number)?;
-    // No Lysis allocation consumes these tributes, so the sealed partition is forfeited.
+    // No Lysis allocation consumes these tributes, so this path forfeits the sealed partition.
     TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(scope, wwd)?;
     metadosis.emit(IMetadosis::MetadosisExecuted {
         worldwideDay: wwd.into(),
@@ -322,8 +325,8 @@ fn dispatch_brief(
     wwd: WorldwideDay,
     desis_limit_minor: U256,
 ) -> Result<U256> {
-    // A day with nothing to sell is briefed as cancelled: an auction opened over
-    // a zero limit would run its whole cross-chain cycle with no winner possible.
+    // This function briefs a day with nothing to sell as cancelled. An auction opened
+    // over a zero limit would run its whole cross-chain cycle with no winner possible.
     let is_green = dtype == WwdDayType::Green && !desis_limit_minor.is_zero();
     let briefed_desis_limit_minor = if is_green {
         desis_limit_minor
@@ -332,9 +335,11 @@ fn dispatch_brief(
     };
     let receipt = outbe_desis::api::dispatch_auction_brief(
         ctx.storage.clone(),
-        wwd,
-        briefed_desis_limit_minor,
-        is_green,
+        outbe_desis::api::AuctionBrief {
+            worldwide_day: wwd,
+            desis_limit_minor: briefed_desis_limit_minor,
+            is_green,
+        },
         ctx.block.timestamp,
         outbe_desis::api::BriefOverflowPolicy::CarryOver,
     )?;

@@ -1,7 +1,7 @@
 //! Cross-module NodFactory API.
 
 use alloy_primitives::{Address, Bytes, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, ParentBodySource, WwdEntityId};
 #[cfg(any(test, feature = "test-utils"))]
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationBatchV1;
 use outbe_ocomp_protocol::{nod_materialization::ProtectedNodMaterializationV2, SchemaLimits};
@@ -10,7 +10,7 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::runtime;
 
-pub use crate::runtime::MineGratisRequest;
+pub use crate::runtime::{MineGratisRequest, SettleNodRequest};
 
 pub use crate::certified::{install_certified_generation, CertifiedNodGenerationV1};
 pub use crate::materialization::NodMaterializationOutcomeV1;
@@ -37,8 +37,7 @@ pub fn mine_gratis(
 #[cfg(any(test, feature = "test-utils"))]
 pub fn materialize_certified_nods(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     caller: Address,
     batch: &NodMaterializationBatchV1,
     limits: &SchemaLimits,
@@ -52,7 +51,7 @@ pub fn materialize_certified_nods(
             outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
     };
     crate::materialization::materialize_certified_nods_authorized(
-        storage, scope, parent, batch, profile, limits,
+        storage, readers, batch, profile, limits,
     )
 }
 
@@ -65,11 +64,11 @@ pub struct ProtectedMaterializationRequest<'a> {
 /// Authorizes and atomically materializes a protected encrypted batch.
 pub fn materialize_encrypted_certified_nods(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     caller: Address,
     request: ProtectedMaterializationRequest<'_>,
 ) -> Result<NodMaterializationOutcomeV1> {
+    let ExecutionReaders { scope, parent } = readers;
     let ProtectedMaterializationRequest { carrier, limits } = request;
     crate::materialization::authorize_materializer(storage.clone(), caller)?;
     let profile = outbe_chain_constants::NodMaterializationProfileV1 {
@@ -91,18 +90,6 @@ pub fn materialize_encrypted_certified_nods(
     })
 }
 
-/// Pays a qualified or called Nod for later mining.
-pub fn settle_nod_with_paynote(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    _caller: Address,
-    nod_id: WwdEntityId,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    runtime::settle_nod_with_paynote(storage, scope, parent, nod_id, paynote_proof)
-}
-
 /// What settling `nod_id` with `asset` costs, which of the Nod's two currencies
 /// that asset settles on, and the VWAP snapshot an issuance-currency payment
 /// must name.
@@ -116,15 +103,12 @@ pub fn quote_settlement(
     runtime::quote_settlement(storage, scope, parent, nod_id, asset)
 }
 
-/// Pays a qualified or called Nod's cost directly in ERC20 base units.
+/// Pays a qualified or called Nod's cost in ERC20 base units.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
-    nod_id: WwdEntityId,
-    asset: Address,
-    snapshot_id: U256,
+    request: SettleNodRequest,
 ) -> Result<()> {
-    runtime::settle_nod(storage, scope, parent, caller, nod_id, asset, snapshot_id)
+    runtime::settle_nod(storage, scope, parent, request)
 }

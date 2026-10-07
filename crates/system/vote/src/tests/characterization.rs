@@ -867,14 +867,14 @@ fn outer_hook_checkpoint_revert_restores_pending_state_index_and_logs() {
 }
 
 /// Vote is a payable route, so the boundary credits value to its address. Its
-/// dispatch must refuse value for every selector outside `PAYABLE_SELECTORS`, or
-/// a funded call to any other selector would strand native value at an address
-/// whose only outward path is the proposal-bond accounting.
+/// dispatch must refuse value for every selector outside `PAYABLE_SELECTORS`.
+/// Otherwise, a funded call to any other selector would strand native value at an
+/// address whose only outward path is the proposal-bond accounting.
 ///
 /// Characterization: the negative-match block this replaced already covered
-/// these selectors with the same message, so the test pins current behavior
-/// rather than proving a fix. Its value is catching a future removal of the
-/// guard.
+/// these selectors with the same message. Thus the test pins current behavior
+/// and does not prove a fix. Its value is that it catches a future removal of
+/// the guard.
 #[test]
 fn unpublished_selectors_refuse_native_value() {
     use alloy_sol_types::SolCall;

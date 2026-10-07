@@ -10,7 +10,7 @@ impl ValidatorSet<'_> {
     ///
     /// The caller must be either the config owner or the validator address itself.
     /// The address must not already be registered, and the count must be below max.
-    /// Initial state is `WaitingForStake` (`REGISTERED`); reaching the minimum,
+    /// Initial state is `WaitingForStake` (`REGISTERED`). Reaching the minimum,
     /// confirming readiness, and boundary activation are separate transitions.
     ///
     /// `consensus_pubkey` is a 48-byte BLS12-381 MinPk public key.
@@ -129,7 +129,7 @@ impl ValidatorSet<'_> {
 
     /// Applies inputs already validated against the locally expected consensus
     /// boundary artifact. Snapshot/hash validation remains in the EVM boundary
-    /// orchestrator; this method owns only the ValidatorSet state transition.
+    /// orchestrator. This method owns only the ValidatorSet state transition.
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn activate_validated_boundary_set(
         &mut self,

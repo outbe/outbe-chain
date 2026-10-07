@@ -315,7 +315,7 @@ fn zk_signature_check_paths() {
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        // An unregistered chain is reported to the admission gate.
+        // The check reports an unregistered chain to the admission gate.
         assert_eq!(
             check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &good_sig).unwrap(),
             ZkOfferCheck::NotRegistered
@@ -326,7 +326,7 @@ fn zk_signature_check_paths() {
             .register_network(L2_CHAIN_ID, l1_addr(), &public)
             .unwrap();
 
-        // The signature is checked against the selected network's key.
+        // The check verifies the signature against the selected network's key.
         assert_eq!(
             check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &good_sig).unwrap(),
             ZkOfferCheck::Verified {
@@ -689,8 +689,8 @@ fn register_accepts_unset_key_and_keeps_ownership() {
     StorageHandle::enter(&mut storage, |storage| {
         let mut registry = L2RegistryContract::new(storage.clone());
 
-        // Anything that is neither empty nor a 256-byte key is rejected; the
-        // retired compact length is not a sentinel either.
+        // Registration rejects anything that is neither empty nor a 256-byte key.
+        // The retired compact length is not a sentinel either.
         for malformed in [
             &[0u8; 95][..],
             &[0u8; 96][..],
@@ -736,8 +736,8 @@ fn register_accepts_unset_key_and_keeps_ownership() {
     });
 }
 
-/// An unset registration authenticates through `IDaInbox.groupPubKey()`; a key
-/// pinned afterwards — by the operator or by registration — wins over it.
+/// An unset registration authenticates through `IDaInbox.groupPubKey()`. A key
+/// pinned afterwards, by the operator or by registration, wins over it.
 #[test]
 fn zk_signature_gate_resolves_unset_key_from_inbox() {
     let (private, public) = seeded_keypair(1);
@@ -798,8 +798,8 @@ fn zk_signature_gate_resolves_unset_key_from_inbox() {
         assert!(matches!(err, PrecompileError::Revert(_)));
     });
 
-    // Rotating the getter's answer rotates the accepted key: nothing is cached
-    // and the previous key stops authenticating.
+    // Rotating the getter's answer rotates the accepted key. The registry caches
+    // nothing, and the previous key stops authenticating.
     provider.stub_sub_call_at_selector(l1_addr(), selector, inbox_key_returns(&rotated_public));
     StorageHandle::enter(&mut provider, |storage| {
         let err = check_zk_merkle_root_signature(storage.clone(), L2_CHAIN_ID, &root, &signed)

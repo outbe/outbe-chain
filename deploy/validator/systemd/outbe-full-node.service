@@ -1,12 +1,10 @@
 [Unit]
 Description=Outbe certified FullNode
 After=network-online.target outbe-enclave.service
-Wants=network-online.target
+Wants=network-online.target outbe-enclave.service
 Wants=outbe-ocomp-exporter.service outbe-ocomp-worker@0.service
-Requires=outbe-enclave.service
 Conflicts=outbe-validator.service
-StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -44,7 +42,7 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --log.file.directory /opt/outbe-chain/validator-0/logs \
   --upstream ${OUTBE_CERTIFIED_RPC}
 ExecStartPost=/opt/outbe-chain/deploy/validator/outbe-validator-service.py wait-rpc
-Restart=on-failure
+Restart=always
 RestartMode=direct
 RestartSec=5
 RestartSteps=5

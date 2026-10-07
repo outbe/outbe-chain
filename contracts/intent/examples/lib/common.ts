@@ -15,8 +15,8 @@ export async function getTokenDecimals(
   tokenAddress: string,
   provider: Provider
 ): Promise<number> {
-  // Native decimals are not discoverable over RPC and are not the same on every
-  // chain, so they come from the chain config rather than token metadata.
+  // RPC does not expose native decimals, and they are not the same on every chain.
+  // So they come from the chain config, not from token metadata.
   if (isNativeToken(tokenAddress)) {
     const { chainId } = await provider.getNetwork();
     const decimals = nativeDecimalsByChainId[Number(chainId)];
@@ -99,7 +99,7 @@ export function sleep(ms: number): Promise<void> {
 
 /**
  * Read order data directly from on-chain storage (openOrders mapping).
- * No event scanning needed - works regardless of block depth.
+ * This function does not scan events. It works at any block depth.
  *
  * @param orderId The order ID to look up
  * @param router Router contract instance (connected to origin chain)

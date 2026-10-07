@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
+use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
@@ -20,8 +20,6 @@ use outbe_primitives::{
 use outbe_tee::protocol::GratisOp;
 use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 
-use outbe_paynote::test_support as paynote_support;
-
 use crate::{
     api,
     errors::NodFactoryError,
@@ -30,20 +28,6 @@ use crate::{
     sol_ext::{IReferenceCurrency, IERC20},
 };
 use outbe_vaultrouter::api::IVaultRouter;
-
-fn nod_context(nod_id: WwdEntityId, snapshot: U256) -> B256 {
-    outbe_paynote::api::settlement_context(
-        outbe_paynote::api::SettlementDomain::Nod,
-        B256::from(nod_id.to_u256()),
-        U256::ONE,
-        snapshot,
-    )
-    .unwrap()
-}
-
-/// The chain ID `World`'s storage provider reports; PayNote folds it into
-/// every commitment, so fixtures must be built under the same one.
-const CHAIN_ID: u64 = 1;
 
 fn dummy_auth() -> ModifyAuth {
     ModifyAuth {
@@ -102,12 +86,20 @@ fn params(owner: Address) -> NodIssueParams {
     }
 }
 
-/// The Nod's derived cost, in the `u128` minor units a PayNote spend carries.
+/// A Nod with no entry price: it costs nothing, so settling it moves no tokens.
+fn free(owner: Address) -> NodIssueParams {
+    NodIssueParams {
+        entry_price_minor: U256::ZERO,
+        ..params(owner)
+    }
+}
+
+/// The Nod's derived cost in reference minor units.
 fn cost_of(input: &NodIssueParams) -> u128 {
     let cost =
         outbe_nod::api::settlement_cost_minor(input.entry_price_minor, input.gratis_load_minor)
             .expect("derive the Nod cost");
-    u128::try_from(cost).expect("test Nod cost fits a PayNote spend amount")
+    u128::try_from(cost).expect("test Nod cost fits u128")
 }
 
 fn find_valid_nonce(nod_id: WwdEntityId, owner: Address) -> u64 {
@@ -212,31 +204,21 @@ impl World {
         find_valid_nonce(nod_id, owner)
     }
 
-    fn settle_and_mine(
-        &mut self,
-        nod_id: WwdEntityId,
-        caller: Address,
-        nonce: u64,
-        auth: ModifyAuth,
-        paynote_proof: &[u8],
-    ) -> Result<U256, PrecompileError> {
-        self.settle(nod_id, caller, paynote_proof)?;
-        self.mine_gratis(api::MineGratisRequest {
-            caller,
-            nod_id,
-            nonce,
-            auth,
-        })
-    }
-
-    fn settle(
-        &mut self,
-        nod_id: WwdEntityId,
-        caller: Address,
-        proof: &[u8],
-    ) -> Result<(), PrecompileError> {
+    /// Settles by ERC20 in the reference currency; a free Nod moves no tokens.
+    fn settle(&mut self, nod_id: WwdEntityId, caller: Address) -> Result<(), PrecompileError> {
+        self.register_reference_currency_asset(PAYMENT_ASSET);
         self.enter(|storage, scope, parent| {
-            api::settle_nod_with_paynote(&storage, scope, parent, caller, nod_id, proof)
+            api::settle_nod(
+                &storage,
+                scope,
+                parent,
+                api::SettleNodRequest {
+                    caller,
+                    nod_id,
+                    asset: PAYMENT_ASSET,
+                    snapshot_id: U256::ZERO,
+                },
+            )
         })
     }
 
@@ -309,71 +291,21 @@ impl World {
         );
     }
 
-    /// Seeds one note bound to `nod_id` at an explicit snapshot and returns the
-    /// proof plus the nullifier that spend would book.
-    fn fund_bound(
-        &mut self,
-        asset: Address,
-        nod_id: WwdEntityId,
-        snapshot: U256,
-        note_amount: U256,
-        spend_amount: U256,
-    ) -> (Vec<u8>, B256) {
-        let fixture = paynote_support::note_and_spend_proof(
-            CHAIN_ID,
-            asset,
-            nod_context(nod_id, snapshot),
-            note_amount,
-            spend_amount,
-        );
-        paynote_support::seed_pool(&mut self.provider, CHAIN_ID, &[fixture.commitment]);
-        let nullifier = outbe_protocol::codec::field_to_b256(&fixture.public.nullifier).unwrap();
-        (fixture.proof, nullifier)
-    }
-
-    /// Quotes `nod_id` and binds the proof to that snapshot. Panics if the nod
-    /// cannot be quoted, so a missing rate cannot hide as a context mismatch.
-    fn fund_note<T>(
-        &mut self,
-        asset: Address,
-        nod_id: WwdEntityId,
-        note_amount: T,
-        spend_amount: T,
-    ) -> (Vec<u8>, B256)
-    where
-        U256: alloy_primitives::ruint::UintTryFrom<T>,
-    {
-        let note_amount = U256::from(note_amount);
-        let spend_amount = U256::from(spend_amount);
-        let snapshot = self.enter(|storage, scope, parent| {
-            runtime::quote_settlement(&storage, scope, parent, nod_id, asset)
-                .expect("note is quoted against a settleable nod")
-                .2
-        });
-        self.fund_bound(asset, nod_id, snapshot, note_amount, spend_amount)
-    }
-
-    /// Registers `NOTE_ASSET` for the Nod's reference currency and mints a note
-    /// that exactly covers its cost, returning the spend proof `settle_nod`
-    /// needs.
-    fn covering_proof(&mut self, nod_id: WwdEntityId, input: &NodIssueParams) -> Vec<u8> {
-        self.register_reference_currency_asset(NOTE_ASSET);
-        let cost = cost_of(input);
-        self.fund_note(NOTE_ASSET, nod_id, cost, cost).0
-    }
-
-    /// Stamps the bucket's call directly. The scan that decides *when* to stamp
-    /// is covered in `outbe_nod::called_tests`; what matters here is the gate
+    /// Stamps the bucket's call directly. `outbe_nod::called_tests` covers the
+    /// scan that decides *when* to stamp. What matters here is the gate
     /// `settle_nod` applies once it is stamped.
     fn mark_called(&mut self, nod_id: WwdEntityId, at: u64) {
         self.enter(|storage, scope, parent| {
             let item = nod_api::get_item(&storage, scope, parent, nod_id)
                 .unwrap()
                 .unwrap();
-            NodContract::new(storage)
-                .bucket_called_at
-                .write(&item.bucket_key, at)
-                .unwrap();
+            let nod = NodContract::new(storage);
+            nod.bucket_called_at.write(&item.bucket_key, at).unwrap();
+            // A free Nod's bucket seals no call terms; give it the notice a priced one seals.
+            let notice = &nod.callable_bucket_call_notice_period_seconds;
+            if notice.read(&item.bucket_key).unwrap() == 0 {
+                notice.write(&item.bucket_key, CALL_NOTICE_PERIOD).unwrap();
+            }
         });
     }
 
@@ -418,61 +350,11 @@ impl World {
     }
 }
 
-// ---- PayNote-discharged cost ---------------------------------------------
-//
-// A Nod's cost is paid by spending a note, not by a transfer. The value itself
-// reached the reserve vault when the note was deposited, so what these tests
-// pin is the proof obligation: the right owner, the right asset, enough
-// covered, and exactly one spend per note.
+const CHAIN_ID: u64 = 1;
 
-const NOTE_ASSET: Address = Address::new([0x71; 20]);
+const PAYMENT_ASSET: Address = Address::new([0x71; 20]);
 const EUR_ASSET: Address = Address::new([0x72; 20]);
 const SIX_DECIMALS: u64 = 1_000_000;
-
-fn assert_covering_paynote_mines_nod(input: NodIssueParams) {
-    let mut world = World::new();
-    let nod_id = world.issue(&input);
-    world.qualify(nod_id);
-    world.register_reference_currency_asset(NOTE_ASSET);
-    let cost = cost_of(&input);
-    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, nod_id, cost, cost);
-    world.provider.clear_events(NOD_FACTORY_ADDRESS);
-    let nonce = world.pow_nonce(nod_id);
-
-    let minted = world
-        .settle_and_mine(
-            nod_id,
-            input.owner,
-            nonce,
-            mine_auth(input.owner, input.gratis_load_minor),
-            &proof,
-        )
-        .unwrap();
-    assert_eq!(minted, input.gratis_load_minor);
-    assert!(world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
-        .unwrap()
-        .is_none());
-
-    let paid: Vec<_> = world
-        .provider
-        .get_ordered_events()
-        .iter()
-        .filter(|event| event.address == NOD_FACTORY_ADDRESS)
-        .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
-        .collect();
-    assert_eq!(paid.len(), 1);
-    assert_eq!(paid[0].owner, input.owner);
-    assert_eq!(
-        paid[0].asset, NOTE_ASSET,
-        "the log must name the asset the note carried"
-    );
-    assert_eq!(paid[0].paymentMinor, U256::from(cost_of(&input)));
-
-    let spent = world
-        .enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, paid[0].nullifier).unwrap());
-    assert!(spent, "mining must burn the note it was paid with");
-}
 
 mod materialization;
 
@@ -480,8 +362,7 @@ fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
     world.enter(|storage, scope, parent| {
         let bytes = outbe_nod::precompile::dispatch(
             storage,
-            scope,
-            parent,
+            ExecutionReaders { scope, parent },
             &INod::nodDataCall {
                 nodId: nod_id.to_u256(),
             }
@@ -548,7 +429,17 @@ fn settle_erc20(
             .stub_sub_call_at_selector(asset, selector, Bytes::from(ret));
     }
     world.enter(|storage, scope, parent| {
-        api::settle_nod(&storage, scope, parent, owner, nod_id, asset, snapshot)
+        api::settle_nod(
+            &storage,
+            scope,
+            parent,
+            api::SettleNodRequest {
+                caller: owner,
+                nod_id,
+                asset,
+                snapshot_id: snapshot,
+            },
+        )
     })
 }
 
@@ -556,5 +447,4 @@ mod costs;
 mod currency_snapshots;
 mod direct_fx_admission;
 mod issuance;
-mod note_regressions;
 mod paid_entitlement;

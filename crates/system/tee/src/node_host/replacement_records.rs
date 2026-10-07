@@ -52,9 +52,10 @@ pub struct ReplacementCandidateRelayV1 {
     pub(super) raw_transaction: Vec<u8>,
 }
 
-/// Opaque authority issued only after I6 verifies an exact finalized registry
-/// binding. I5 defines and consumes the capability but has no production
-/// constructor for it.
+/// Opaque authority for one exact finalized registry binding.
+/// `construct_finalized_replacement_authorization_v1` builds it in production.
+/// The node session and the CLI call that constructor.
+/// The caller checks the finalized registry state before construction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FinalizedReplacementAuthorizationV1 {
     pub(super) intent_hash: B256,

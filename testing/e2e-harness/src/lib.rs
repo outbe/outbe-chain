@@ -2,19 +2,19 @@
 
 //! Rust cucumber harness for the outbe-chain e2e suite.
 //!
-//! The scenarios live as Gherkin fixtures under `features/`; the step code
+//! The scenarios live as Gherkin fixtures under `features/`. The step code
 //! behind them ([`features`]) drives typed handles ([`world`]). Chain reads and
-//! sends are native (alloy [`Provider`]/`sol!`, see `internal::eth`); the
-//! committee validators, joiner, followers, and their enclave containers are all
-//! launched as Rust-owned processes by one handle ([`world::localnet`], via
-//! [`internal::proc`]) - no `run-testnet.sh`/`nohup`. Bootstrap keeps only two
-//! one-shot subprocesses (`outbe-chain dkg bootstrap` + `python3 seed_genesis.py`);
-//! governance/tribute sends still go through `outbe-cli`.
+//! sends are native (alloy [`Provider`]/`sol!`, see `internal::eth`). One handle
+//! ([`world::localnet`], via [`internal::proc`]) launches the committee
+//! validators, joiner, followers, and their enclave containers as Rust-owned
+//! processes, with no `run-testnet.sh`/`nohup`. Bootstrap keeps only two
+//! one-shot subprocesses (`outbe-chain dkg bootstrap` + `python3 seed_genesis.py`).
+//! Governance/tribute sends still go through `outbe-cli`.
 //!
 //! [`Provider`]: https://docs.rs/alloy-provider
 //!
-//! The [`run`] entry point is driven by the `outbe-e2e` binary: the CLI defines
-//! the [`env::Environment`] (validators / TEE mode / sudo), and Gherkin tags
+//! The `outbe-e2e` binary drives the [`run`] entry point. The CLI defines the
+//! [`env::Environment`] (validators / TEE mode / sudo), and Gherkin tags
 //! define each scenario's requirements.
 
 pub mod artifacts;
@@ -172,10 +172,11 @@ fn watchdog_loop(shared: Arc<(Mutex<WatchdogState>, Condvar)>, env: Environment)
 ///
 /// Cucumber's per-scenario `after` hook only runs on normal completion, so a
 /// signal would otherwise leave the running scenario's committee validators and
-/// enclave containers orphaned. On the signal path the `World` is never dropped,
-/// so the owned process/enclave guards never fire - we reconstruct the teardown
-/// target from the resolved environment (the same data-dir every `World` uses)
-/// and run the stateless datadir-scoped sweep before exiting `130` (SIGINT).
+/// enclave containers orphaned. On the signal path, nothing drops the `World`,
+/// so the owned process/enclave guards never fire. This handler reconstructs the
+/// teardown target from the resolved environment (the same data-dir every
+/// `World` uses). It then runs the stateless datadir-scoped sweep before it
+/// exits with `130` (SIGINT).
 async fn teardown_on_signal(env: Environment) {
     #[cfg(unix)]
     {
@@ -221,8 +222,8 @@ fn shutdown_and_exit_with_code(env: &Environment, code: i32) -> ! {
 /// `features/`.
 ///
 /// A scenario whose requirements the environment can't satisfy is **skipped**
-/// (a `SKIPPED:` line is printed and it is filtered out). With `--all`, such a
-/// scenario instead **fails** - a `before` hook panics so it counts as a hook
+/// (the runner prints a `SKIPPED:` line and excludes it). With `--all`, such
+/// a scenario instead **fails**. A `before` hook panics so it counts as a hook
 /// error. Only one scenario runs at a time (the localnet is a single shared
 /// resource). Exits non-zero on any failure.
 pub async fn run() {
@@ -231,7 +232,7 @@ pub async fn run() {
     // Several scenarios prove different circuits in this one process. The
     // Barretenberg SRS is one-shot, so size it for the largest canonical
     // circuit before a smaller proof can initialize it first. CRS setup may
-    // block on a file read/download; keep it off the Tokio runtime.
+    // block on a file read/download. Keep it off the Tokio runtime.
     std::thread::spawn(outbe_zk_backend::barretenberg::init_crs)
         .join()
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
@@ -247,7 +248,7 @@ pub async fn run() {
     // scenario a `scenario-<n>` subdir under that (see `Config::for_scenario`).
     // The enclave container tag and the teardown sweep both derive from the run
     // dir, so this one move also makes this run's docker names + sweep scope
-    // unique - two runs (or a prior crashed one) never touch each other's
+    // unique. Two runs (or a prior crashed one) never touch each other's
     // nodes/containers, with no manual `--data-dir` juggling.
     let run_id = {
         let secs = std::time::SystemTime::now()
@@ -307,13 +308,13 @@ pub async fn run() {
             hook_counters.started.fetch_add(1, Ordering::Relaxed);
             let deadline = before_watchdog.arm(
                 format!("{} :: {}", feature.name, scenario.name),
-                Duration::from_secs(env::scenario_timeout_secs(feature, scenario, &env_hook)),
+                Duration::from_secs(env::scenario_timeout_secs(&env_hook)),
             );
             world.localnet.set_scenario_deadline(deadline);
             #[cfg(feature = "ocomp-integration")]
             features::entity_lifecycle::markets::configure(world, &scenario.tags);
             // Only reachable for unmet scenarios in `--all` mode (the filter
-            // excludes them otherwise); panic so they count as failures.
+            // excludes them otherwise). Panic so they count as failures.
             let reason = if env_hook.all {
                 unmet(feature, scenario, &env_hook)
             } else {
@@ -521,9 +522,9 @@ pub async fn run() {
         .and_then(|artifacts| evidence::write_run_manifest(&env_cleanup, summary, &artifacts));
     let complete = summary.is_complete_pass();
 
-    // `execution_has_failed` covers failed steps, parsing errors, and hook errors
-    // - so `--all`, which fails unmet scenarios by panicking in the `before` hook,
-    // keeps its data dir too.
+    // `execution_has_failed` covers failed steps, parsing errors, and hook
+    // errors. So `--all`, which fails unmet scenarios by panicking in the
+    // `before` hook, keeps its data dir too.
     let dir = env_cleanup.data_dir.display().to_string();
     if writer.execution_has_failed()
         || !complete

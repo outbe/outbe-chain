@@ -8,15 +8,15 @@
 //! therefore:
 //!
 //! 1. anchors the START epoch on the genesis validator set for a fresh node,
-//!    or an already accepted local finalized boundary on snapshot/restart;
+//!    or an already accepted local finalized boundary on snapshot/restart.
 //! 2. reads each later epoch's committee from a `CommitteePreAnnounce` in the
 //!    previous epoch's last finalized block, verifies that block with the already
 //!    trusted previous committee, and only then installs the next verifier.
 //!
 //! All inputs are public on-chain data carried in the boundary block
-//! `extra_data` (the full DKG [`Output`] - players + polynomial); the follower
-//! never holds any DKG secret. [`CommitteeChain`] implements this chaining; it
-//! is exercised by `phase0_spike_*` (the de-risk gate) and the tests below.
+//! `extra_data` (the full DKG [`Output`] - players + polynomial). The follower
+//! never holds any DKG secret. [`CommitteeChain`] implements this chaining.
+//! `phase0_spike_*` (the de-risk gate) and the tests below exercise it.
 
 use std::{
     collections::BTreeMap,
@@ -53,9 +53,10 @@ pub use upstream::{
 };
 
 /// Builds and chains per-epoch finalization verifiers from finalized boundary
-/// blocks, anchored on genesis or a trusted local finalized boundary. Verifiers are kept in a
-/// [`HybridSchemeProvider`] keyed by epoch - the same provider type the live
-/// stack uses - so cert verification is byte-identical to the validator path.
+/// blocks, anchored on genesis or a trusted local finalized boundary. The chain
+/// keeps verifiers in a [`HybridSchemeProvider`] keyed by epoch. The live stack
+/// uses the same provider type, so cert verification is byte-identical to the
+/// validator path.
 ///
 /// **Trust root.** Consensus finality is a multisig over the committee's
 /// individual MinPk keys. The mandatory MinSig VRF proof supplies the finalized
@@ -72,7 +73,7 @@ pub struct CommitteeChain {
     /// Highest epoch whose committee verifier has been registered.
     highest_registered: Option<Epoch>,
     /// Exact authenticated outcome hash by epoch. Repeated pre-announces are
-    /// idempotent; a conflicting outcome can never replace trusted material.
+    /// idempotent. A conflicting outcome can never replace trusted material.
     outcome_hashes: BTreeMap<u64, B256>,
 }
 
@@ -92,7 +93,7 @@ impl CommitteeChain {
 
     /// Restore committee material from a boundary already accepted in the
     /// local finalized canonical chain. The caller must authenticate the local
-    /// provenance; arbitrary upstream bytes cannot establish this trust anchor.
+    /// provenance. Arbitrary upstream bytes cannot establish this trust anchor.
     pub fn from_trusted_local_boundary(epoch: Epoch, outcome: &[u8]) -> Result<Self> {
         let output = crate::dkg_manager::decode_boundary_outcome(outcome)
             .ok_or_else(|| eyre::eyre!("local boundary is not a decodable full DKG output"))?;
@@ -121,9 +122,9 @@ impl CommitteeChain {
     /// `extra_data`).
     ///
     /// For the anchor epoch the committee MUST equal the trusted anchor
-    /// participant set from genesis or accepted local finalized history. For later epochs the caller must
-    /// have authenticated the carrier with the prior committee; [`Self::admit`]
-    /// is the transition that does so.
+    /// participant set from genesis or accepted local finalized history. For
+    /// later epochs the caller must have authenticated the carrier with the prior
+    /// committee. [`Self::admit`] is the transition that does so.
     ///
     /// Returns the epoch's ordered participant set.
     pub fn register_epoch_from_outcome(
@@ -248,13 +249,13 @@ impl CommitteeChain {
     /// - [`CommitteePreAnnounce`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::CommitteePreAnnounce)
     ///   the Path A committee-chaining carrier: epoch `E`'s committee riding a
     ///   block finalized by the already-trusted `E-1` committee. This is the
-    ///   authenticated path - the trust chains from genesis through each E-1.
+    ///   authenticated path. The trust chains from genesis through each E-1.
     /// - [`BoundaryOutcome`](outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome)
     ///   the activating boundary at `E*L+1`, finalized by `E` ITSELF. We register
-    ///   from it ONLY for a not-yet-known epoch (the genesis anchor; and, until the
-    ///   pre-announce producer is wired, epochs lacking a pre-announce). We must NOT
-    ///   let it OVERRIDE a committee already registered via its `E-1` pre-announce:
-    ///   a self-finalized boundary overriding the chained committee is exactly the
+    ///   from it ONLY for a not-yet-known epoch: the genesis anchor and, until the
+    ///   pre-announce producer is wired, epochs lacking a pre-announce. We must NOT
+    ///   let it OVERRIDE a committee already registered via its `E-1` pre-announce.
+    ///   A self-finalized boundary overriding the chained committee is exactly the
     ///   D1 self-certification bug.
     ///
     /// Safe only for `extra_data` from blocks already verified as finalized by the
@@ -324,7 +325,7 @@ impl CommitteeChain {
     }
 }
 
-/// A validated committee ready to install; `install` is `None` for an
+/// A validated committee ready to install. `install` is `None` for an
 /// idempotent replay of the already registered outcome.
 struct PreparedCommittee {
     epoch: Epoch,
@@ -348,9 +349,9 @@ fn verify_with(
 }
 
 /// The committee chain shared by the follower's engine, resolver and replay
-/// paths. A poisoned lock is recovered: no chain mutation panics part-way (a
-/// prepared committee is installed in one infallible step), so the state a
-/// panicking holder leaves behind is consistent.
+/// paths. A poisoned lock is recovered. No chain mutation panics part-way (a
+/// prepared committee is installed in one infallible step). Thus the state that
+/// a panicking holder leaves is consistent.
 #[derive(Clone)]
 pub struct SharedCommitteeChain(Arc<Mutex<CommitteeChain>>);
 

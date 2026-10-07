@@ -1,22 +1,23 @@
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::units::{checked_protocol_to_native, native_to_protocol_floor};
 
-/// ISO 4217 code both currency axes of an agent reward Gem carry. Agent rewards
-/// are denominated in USD by protocol policy, the same as validator Gems.
+/// ISO 4217 code that both currency axes of an agent reward Gem carry. Protocol
+/// policy denominates agent rewards in USD, the same as validator Gems.
 const AGENT_GEM_CURRENCY: u16 = 840;
 
 impl AgentRewardContract<'_> {
     /// Increments WAA (wallet) tribute count for an address on `day`.
     ///
-    /// On the first tribute for this address+day pair, the address is
-    /// also appended to the per-day WAA address list so it can be
-    /// enumerated during distribution.
+    /// On the first tribute for this address+day pair, the function also
+    /// appends the address to the per-day WAA address list. Distribution
+    /// enumerates that list.
     pub fn increment_waa_tribute(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
         let key = AgentRewardContract::tribute_count_key(day, address);
         let count = self.waa_tribute_counts.read(&key)?;
@@ -32,9 +33,9 @@ impl AgentRewardContract<'_> {
 
     /// Increments SRA tribute count for an address on `day`.
     ///
-    /// On the first tribute for this address+day pair, the address is
-    /// also appended to the per-day SRA address list so it can be
-    /// enumerated during distribution.
+    /// On the first tribute for this address+day pair, the function also
+    /// appends the address to the per-day SRA address list. Distribution
+    /// enumerates that list.
     pub fn increment_sra_tribute(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
         let key = AgentRewardContract::tribute_count_key(day, address);
         let count = self.sra_tribute_counts.read(&key)?;
@@ -95,14 +96,14 @@ impl AgentRewardContract<'_> {
     }
 
     /// Claims `amount` of the pool's balance as a Gem, or all of it when `amount`
-    /// is zero. Issues the Gem, burns the native COEN that backed it and clears
-    /// what was converted. The Gem load is not that COEN - it becomes Promis at
-    /// mining time - so leaving the backing in place would let one emission exist
-    /// twice.
+    /// is zero. The function issues the Gem, burns the native COEN that backed it,
+    /// and clears the converted amount. The Gem load is not that COEN. The load
+    /// becomes Promis at mining time. Leaving the backing in place would therefore
+    /// let one emission exist twice.
     ///
-    /// The balance is the safe form of the reward and the Gem is not: an unsettled
+    /// The balance is the safe form of the reward. The Gem is not: an unsettled
     /// Gem can be Called and forfeited. Sizing the claim is therefore the agent's
-    /// own risk control, and what it leaves behind keeps accruing.
+    /// own risk control. The part that the agent does not claim keeps accruing.
     ///
     /// Any failure reverts the call and leaves the balance for the next day, which
     /// brings a new VWAP with it.
@@ -130,9 +131,9 @@ impl AgentRewardContract<'_> {
                     "insufficient claimable balance".into(),
                 ));
             }
-            // The balance is native COEN; a Gem load is a protocol amount. Only the
-            // part that survives the conversion is minted and burned, so a sub-unit
-            // remainder keeps accumulating instead of being lost.
+            // The balance is native COEN. A Gem load is a protocol amount. The claim
+            // mints and burns only the part that survives the conversion, so a
+            // sub-unit remainder keeps accumulating instead of being lost.
             let gem_load = native_to_protocol_floor(requested);
             if gem_load.is_zero() {
                 return Err(PrecompileError::Revert(
@@ -164,44 +165,26 @@ impl AgentRewardContract<'_> {
 
     /// Gets all WAA tribute counts for a day as (address, count) pairs.
     pub fn get_all_waa_counts(&self, day: WorldwideDay) -> Result<Vec<(Address, u64)>> {
-        let addr_count = self.waa_address_count.read(&day)?;
-        let mut result = Vec::with_capacity(addr_count as usize);
-        for i in 0..addr_count {
-            let idx_key = AgentRewardContract::address_index_key(day, i);
-            let addr = self.waa_addresses.read(&idx_key)?;
-            if addr.is_zero() {
-                continue;
-            }
-            let count_key = AgentRewardContract::tribute_count_key(day, addr);
-            let count = self.waa_tribute_counts.read(&count_key)?;
-            if count > 0 {
-                result.push((addr, count));
-            }
-        }
-        Ok(result)
+        read_tribute_counts(
+            day,
+            &self.waa_address_count,
+            &self.waa_addresses,
+            &self.waa_tribute_counts,
+        )
     }
 
     /// Gets all SRA tribute counts for a day as (address, count) pairs.
     pub fn get_all_sra_counts(&self, day: WorldwideDay) -> Result<Vec<(Address, u64)>> {
-        let addr_count = self.sra_address_count.read(&day)?;
-        let mut result = Vec::with_capacity(addr_count as usize);
-        for i in 0..addr_count {
-            let idx_key = AgentRewardContract::address_index_key(day, i);
-            let addr = self.sra_addresses.read(&idx_key)?;
-            if addr.is_zero() {
-                continue;
-            }
-            let count_key = AgentRewardContract::tribute_count_key(day, addr);
-            let count = self.sra_tribute_counts.read(&count_key)?;
-            if count > 0 {
-                result.push((addr, count));
-            }
-        }
-        Ok(result)
+        read_tribute_counts(
+            day,
+            &self.sra_address_count,
+            &self.sra_addresses,
+            &self.sra_tribute_counts,
+        )
     }
 
-    /// Clears WAA tribute counts and address list for a day. Called from
-    /// the distribution path once the day's WAA pool has been settled.
+    /// Clears WAA tribute counts and address list for a day. The distribution
+    /// path calls this function after it settles the day's WAA pool.
     pub fn clear_waa_counts(&mut self, day: WorldwideDay) -> Result<()> {
         let waa_count = self.waa_address_count.read(&day)?;
         for i in 0..waa_count {
@@ -217,8 +200,8 @@ impl AgentRewardContract<'_> {
         Ok(())
     }
 
-    /// Clears SRA tribute counts and address list for a day. Called from
-    /// the distribution path once the day's SRA pool has been settled.
+    /// Clears SRA tribute counts and address list for a day. The distribution
+    /// path calls this function after it settles the day's SRA pool.
     pub fn clear_sra_counts(&mut self, day: WorldwideDay) -> Result<()> {
         let sra_count = self.sra_address_count.read(&day)?;
         for i in 0..sra_count {
@@ -235,6 +218,29 @@ impl AgentRewardContract<'_> {
     }
 }
 
+fn read_tribute_counts(
+    day: WorldwideDay,
+    address_count: &Map<'_, WorldwideDay, u32>,
+    addresses: &Map<'_, B256, Address>,
+    tribute_counts: &Map<'_, B256, u64>,
+) -> Result<Vec<(Address, u64)>> {
+    let addr_count = address_count.read(&day)?;
+    let mut result = Vec::with_capacity(addr_count as usize);
+    for i in 0..addr_count {
+        let idx_key = AgentRewardContract::address_index_key(day, i);
+        let addr = addresses.read(&idx_key)?;
+        if addr.is_zero() {
+            continue;
+        }
+        let count_key = AgentRewardContract::tribute_count_key(day, addr);
+        let count = tribute_counts.read(&count_key)?;
+        if count > 0 {
+            result.push((addr, count));
+        }
+    }
+    Ok(result)
+}
+
 /// Shared issuance economics and claim-day pricing for WAA, SRA and CCA rewards.
 pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
@@ -247,17 +253,19 @@ pub(crate) fn issue_reward_gem(
     })?;
     outbe_gemfactory::api::issue_gem(
         storage,
-        owner,
-        gem_type,
-        load,
-        AGENT_GEM_CURRENCY,
-        AGENT_GEM_CURRENCY,
-        entry_price,
+        outbe_gemfactory::GemIssueParams {
+            owner,
+            gem_type,
+            promis_load: load,
+            issuance_currency: AGENT_GEM_CURRENCY,
+            reference_currency: AGENT_GEM_CURRENCY,
+            entry_price,
+        },
     )
 }
 
 fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {
-    // Unix seconds must fit u64; reject malformed timestamps instead of truncating.
+    // Unix seconds must fit u64. Reject malformed timestamps instead of truncating.
     let now: u64 = storage
         .timestamp()?
         .try_into()

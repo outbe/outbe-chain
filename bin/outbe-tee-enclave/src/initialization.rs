@@ -82,9 +82,9 @@ struct StoredInitialization {
     loaded_from_seal: bool,
 }
 
-/// Shared process-wide initialization state. Production requires a boot config
-/// because accepting an authorization that cannot survive restart would silently
-/// rotate the enclave/NodeHost trust boundary.
+/// Shared process-wide initialization state. Production requires a boot config.
+/// If the enclave accepted an authorization that cannot survive restart, that
+/// would silently rotate the enclave/NodeHost trust boundary.
 pub struct InitializationState {
     mode: InitializationMode,
     attestation: crate::gramine::AttestationType,
@@ -777,9 +777,9 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
     }
 }
 
-/// Health-counter bucket for `request` - the telemetry-facing name of the
+/// Health-counter bucket for `request`: the telemetry-facing name of the
 /// private capability matrix above. Authorization stays with
-/// [`InitializationState::authorize_command`]; this only labels counters.
+/// [`InitializationState::authorize_command`]. This only labels counters.
 pub(crate) fn request_class_label(request: &EnclaveRequest) -> crate::telemetry::RequestClassLabel {
     use crate::telemetry::RequestClassLabel;
     match request {

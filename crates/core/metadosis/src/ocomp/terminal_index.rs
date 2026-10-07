@@ -2,9 +2,9 @@
 //!
 //! One WorldwideDay owns exactly one terminal IntentId. Entries live in
 //! the sparse `ocomp_terminal_intents` mapping under a domain-separated
-//! composite key; `ocomp_terminal_counts` is the sole authority for each
-//! day's length. Entries are immutable once written and are deleted together
-//! with the day on retirement.
+//! composite key. `ocomp_terminal_counts` is the sole authority for each
+//! day's length. Entries are immutable after the write. Retirement deletes
+//! them together with the day.
 
 use alloy_primitives::{keccak256, B256};
 use outbe_primitives::error::Result;
@@ -35,7 +35,7 @@ impl MetadosisContract<'_> {
     }
 
     /// Reads the terminal IntentId at one position, `None` when the slot is
-    /// vacant. Positions below the day's count must never be vacant; callers
+    /// vacant. Positions below the day's count must never be vacant. Callers
     /// that iterate use [`Self::terminal_intents_for`], which enforces that.
     #[cfg(test)]
     pub(crate) fn terminal_intent_at(&self, wwd: WorldwideDay, index: u16) -> Result<Option<B256>> {
@@ -72,9 +72,9 @@ impl MetadosisContract<'_> {
     }
 
     /// Appends one terminal IntentId to the day's list. Rejects a zero id, a
-    /// day that already has a terminal job, and any overwrite of its occupied position; the
-    /// entry is written before the count so the count never references a
-    /// vacant slot.
+    /// day that already has a terminal job, and any overwrite of its occupied
+    /// position. The function writes the entry before the count, so the count
+    /// never references a vacant slot.
     pub(crate) fn push_terminal_intent(
         &mut self,
         wwd: WorldwideDay,
@@ -105,8 +105,8 @@ impl MetadosisContract<'_> {
         Ok(())
     }
 
-    /// Deletes the day's terminal index entries and count word. Called from
-    /// WorldwideDay retirement; bounded by the day's own recorded count.
+    /// Deletes the day's terminal index entries and count word. WorldwideDay
+    /// retirement calls this. The day's own recorded count bounds the work.
     pub(crate) fn delete_terminal_index(&mut self, wwd: WorldwideDay) -> Result<()> {
         let count = self.terminal_intent_count(wwd)?;
         for index in 0..count {

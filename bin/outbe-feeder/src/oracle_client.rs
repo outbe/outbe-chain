@@ -307,8 +307,8 @@ impl OracleClient {
         {
             Ok(hash) => hash,
             Err(error) => {
-                // An idempotent rebroadcast can be acknowledged this way by
-                // Reth. It is not inclusion: keep waiting for the receipt.
+                // Reth can acknowledge an idempotent rebroadcast this way.
+                // It is not inclusion: keep waiting for the receipt.
                 let known = error.downcast_ref::<RpcFailure>().is_some_and(|rpc| {
                     rpc.method == "eth_sendRawTransaction"
                         && rpc.error["code"].as_i64() == Some(-32000)

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "kind": "outbe-ocomp-semantic-artifacts-v1",
   "source_sets": {
-    "generator": "0x70c9792911414190141594dde6a01d7520d1e14eef7a494e591a1c9f5a0cabae",
+    "generator": "0x4816aa52b487ea84f8e2a58c8589f1edf9881430329496234c17f27c892b2c9e",
     "registry": "0xf5c8045c3d68f13575eda75d54f925e17066217cd57231fcace4b69ccf75abe0"
   },
   "artifacts": {

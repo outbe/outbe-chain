@@ -334,7 +334,7 @@ impl OcompRetentionCoordinator {
     }
 
     /// Finalizes one retained request exclusively from its canonical typed
-    /// Metadosis record. The request event remains a locator; the chain record
+    /// Metadosis record. The request event remains a locator. The chain record
     /// is the authority for JobId and every response-window height.
     pub fn bind_canonical_finalized_job(
         &self,
@@ -401,7 +401,7 @@ impl OcompRetentionCoordinator {
 
     /// A crash may persist the spool ACK before retaining its export authority.
     /// Completing that metadata write never reactivates a retired lease. Expired
-    /// jobs cannot adopt a late ACK; every ACK requires canonical job authority.
+    /// jobs cannot adopt a late ACK. Every ACK requires canonical job authority.
     pub fn confirm_canonical_export_ack(
         &self,
         canonical: &OcompJobRecordV1,
@@ -550,7 +550,7 @@ impl OcompRetentionCoordinator {
     }
 
     /// Confirm a durable spool ACK across restart windows. A live finalized
-    /// record performs the Exported transition; later states accept only the
+    /// record performs the Exported transition. Later states accept only the
     /// exact source generation that must have preceded them.
     pub fn confirm_export_ack(
         &self,

@@ -1,8 +1,8 @@
 use crate::features::ocomp::*;
 
 // Exact WorldwideDay VWAP formation always spans the canonical 50-hour window.
-// The scenario advances that interval with the controlled logical-time ratchet;
-// it must never shorten the consensus constant merely to make the E2E faster.
+// The scenario advances that interval with the controlled logical-time ratchet.
+// It must never shorten the consensus constant merely to make the E2E faster.
 pub(in crate::features::ocomp) const METADOSIS_FRESH_FORMING_SECONDS: u64 =
     outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS;
 
@@ -238,7 +238,7 @@ fn fresh_capacity_day_advances_to_offering(world: &mut World) {
 fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
     // These three artifact scenarios require all four independent outputs, not
     // merely a quorum. Keep workers held until every node has dispatched the
-    // exact exported job; unrelated capacity and fault scenarios use their own
+    // exact exported job. Unrelated capacity and fault scenarios use their own
     // processing steps and retain their original scheduling.
     assert!(!world.state.ocomp_pending_v1_workers_held);
     for validator_index in 0..4 {
@@ -431,7 +431,7 @@ fn advance_fresh_metadosis_time(
     let before_timestamp = before_restart[0].block_timestamp;
     let worldwide_day = fresh_metadosis_wwd(world);
     // The chain closes the gap one hour per block, so wait on progress rather
-    // than on a budget derived from the distance: a loaded host slows block
+    // than on a budget derived from the distance. A loaded host slows block
     // production without stalling it.
     let mut deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
     let mut last_timestamp = before_timestamp;
@@ -717,7 +717,7 @@ pub(crate) fn restart_committee_at_logical_time(
         });
     // The initial production-shaped launch starts external OCOMP roles only
     // after node RPC/TEE bootstrap. Preserve that ordering on a controlled-time
-    // restart and require every validator, not only the primary, to import one
+    // restart. Require every validator, not only the primary, to import one
     // common finalized block before an exporter opens its projection.
     let minimum_height = before_height.saturating_add(1);
     let _ = finalized_points_at_common_height(world, minimum_height);

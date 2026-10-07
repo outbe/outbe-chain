@@ -1,4 +1,5 @@
-//! Independent Nod body stores and commitment namespaces yield identical full-block state, receipts and balances on both execution roles.
+//! Independent Nod body stores and commitment namespaces yield identical full-block state,
+//! receipts and balances on both execution roles.
 
 use super::*;
 use outbe_primitives::projection::{ExecutionReadBudget, ExecutionReadCancelled};
@@ -108,9 +109,10 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
             .evm_mut()
             .db_mut()
             .set_state_hook(Some(Box::new(observe_ce_cleanup(cleanup_hook_capture))));
-        // Match the production payload-builder ordering: finalize CE while
-        // the parallel-root hook is attached, prove the zeroing diff was
-        // observed, then detach the hook and freeze/finalize the root.
+        // Match the production payload-builder ordering:
+        // 1. Finalize CE while the parallel-root hook is attached.
+        // 2. Prove that the hook observed the zeroing diff.
+        // 3. Detach the hook and freeze/finalize the root.
         executor
             .finalize_compressed_entities()
             .expect("pre-root compressed-entity cleanup must succeed");
@@ -142,9 +144,9 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         let proposer_balance = signer_balance(&mut state, proposer);
         let rewards_balance = signer_balance(&mut state, REWARDS_ADDRESS);
 
-        // A new lifecycle can only open when every pending body/index record and
-        // touched list from the finished block has been removed. This checks the
-        // same committed bundle used for the state root above, not a mock store.
+        // A new lifecycle can open only when no pending body/index record and no
+        // touched list from the finished block remains. This checks the same
+        // committed bundle that the state root above uses, not a mock store.
         assert_clean_ce_lifecycle(
             &mut state,
             &tree_service,
@@ -463,7 +465,7 @@ fn seed_called_nod(
         &fixture.item,
         fixture.entry_price_minor,
     )?;
-    // The daily Nod trigger forfeits a lapsed called bucket, deleting both bodies.
+    // The daily Nod trigger forfeits a lapsed called bucket and deletes both bodies.
     let nod = NodContract::new(storage.clone());
     nod.bucket_called_at.write(&bucket_key, 1)?;
     nod.called_bucket_index.write(&bucket_key, 0)?;

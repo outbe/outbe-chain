@@ -34,19 +34,19 @@ pub enum SlashCmd {
 pub enum EvidenceCmd {
     /// Submit double-proposal evidence
     DoubleProposal {
-        /// First block header (hex-encoded RLP)
+        /// First signed proposal, hex: `pubkey[48] || bls_signature[96] || proposal_bytes`
         #[arg(long)]
         block1: String,
-        /// Second block header (hex-encoded RLP)
+        /// Second signed proposal, hex, same format as `--block1`
         #[arg(long)]
         block2: String,
     },
     /// Submit conflicting-vote evidence
     ConflictingVote {
-        /// First vote (hex-encoded RLP)
+        /// First signed vote, hex: `pubkey[48] || bls_signature[96] || proposal_bytes`
         #[arg(long)]
         vote1: String,
-        /// Second vote (hex-encoded RLP)
+        /// Second signed vote, hex, same format as `--vote1`
         #[arg(long)]
         vote2: String,
     },
@@ -201,7 +201,8 @@ async fn config(client: &(impl Rpc + Sync)) -> Result<()> {
 }
 
 async fn history(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
-    // Fetch all slash-related events: ProposerFelony, ProposerMisdemeanor, VoterMisdemeanor, EvidenceFelonyApplied
+    // Fetch all slash-related events: ProposerFelony, ProposerMisdemeanor, VoterMisdemeanor,
+    // EvidenceFelonyApplied
     let topic_proposer_felony = format!(
         "{:?}",
         B256::from(keccak256(b"ProposerFelony(address,uint64,uint64)",))

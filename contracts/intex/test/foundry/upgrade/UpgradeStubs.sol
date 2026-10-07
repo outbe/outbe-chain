@@ -8,9 +8,9 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 
-/// @dev v1.1 upgrade stubs used by the upgrade drill. Each inherits the real implementation and
-///      adds a single no-op view, so an upgrade exercises a genuinely new code path while reusing
-///      the existing storage layout. Test-only; never deployed to production.
+/// @dev v1.1 upgrade stubs that the upgrade drill uses. Each stub inherits the real implementation
+///      and adds a single no-op view. An upgrade thus exercises a genuinely new code path and
+///      reuses the existing storage layout. Test-only. Never deployed to production.
 uint256 constant UPGRADE_PROBE = 42;
 
 contract IntexNFT1155V2 is IntexNFT1155 {
@@ -55,7 +55,7 @@ contract IntexNFT1155BridgeV2 is IntexNFT1155Bridge {
     }
 }
 
-/// @dev v1.1 stub that exercises the `upgradeToAndCall` init-data path: it appends a field in a
+/// @dev v1.1 stub that exercises the `upgradeToAndCall` init-data path. It appends a field in a
 ///      fresh ERC-7201 namespace and sets it from a `reinitializer(2)` migration entrypoint.
 contract IntexNFT1155V2Reinit is IntexNFT1155 {
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155V2Reinit

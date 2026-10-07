@@ -20,8 +20,8 @@ const MAGIC: &[u8; 4] = b"OART";
 /// This pre-genesis hard fork makes the exact freeze-height expiry authority
 /// committee-notarized and replayable by execution.
 ///
-/// Version 0x06: the
-/// `DkgBoundaryArtifact` boundary payload (tag 0x02) is extended with
+/// Version 0x06 extends the
+/// `DkgBoundaryArtifact` boundary payload (tag 0x02) with
 /// the V2 `committee_set_hash` (32 bytes) and the raw encoded VRF group
 /// public key bytes (length-prefixed `u32`). Both fields are needed at
 /// boundary activation so the executor can populate the V2
@@ -29,32 +29,34 @@ const MAGIC: &[u8; 4] = b"OART";
 ///
 /// Version 0x05 (Ethereum-header-hash compatibility, see
 /// `feat/header-eth-compat-millis-in-extradata`): the sub-second
-/// `timestamp_millis_part` previously carried as a top-level RLP field
-/// on `OutbeHeader` now travels in `header.extra_data` under tag 0x05,
-/// so the block hash is `keccak256(rlp(standard_ethereum_header))`
+/// `timestamp_millis_part` was previously a top-level RLP field on
+/// `OutbeHeader`. It now travels in `header.extra_data` under tag 0x05.
+/// As a result, the block hash is `keccak256(rlp(standard_ethereum_header))`
 /// without any Outbe-specific extra fields.
 ///
-/// Version 0x04: the
-/// `total_emission_limit` field was dropped from
+/// Version 0x04 dropped the
+/// `total_emission_limit` field from
 /// `ExecutionSummaryArtifact` because per-block emission no longer
-/// exists; the daily cap is computed by the Cycle handler directly
+/// exists. The Cycle handler computes the daily cap directly
 /// from `outbe_emissionlimit::day_emission::day_emission_limit`.
 ///
-/// Version 0x08 adds tag 0x06 carrying
-/// `LateFinalizeCreditsArtifact` - a canonical batch of per-finalized-block
-/// late-finalize proofs (aggregate signature + signer bitmap + binding fields)
-/// gathered within the `K`-block inclusion window. Hard fork: the new mandatory
-/// begin-zone phase and this version bump both change the block hash.
+/// Version 0x08 adds tag 0x06, which carries
+/// `LateFinalizeCreditsArtifact`. This artifact is a canonical batch of
+/// per-finalized-block late-finalize proofs
+/// (aggregate signature + signer bitmap + binding fields)
+/// gathered within the `K`-block inclusion window. Hard fork:
+/// the new mandatory begin-zone phase and this version bump both change the
+/// block hash.
 ///
-/// Pre-genesis hard fork; nodes built before this change will reject
+/// Pre-genesis hard fork. Nodes built before this change will reject
 /// blocks carrying earlier artifact versions.
 const VERSION: u8 = 0x0B;
 const TEE_EXPIRED_TARGET_EXCLUSIONS_DOMAIN: &[u8] = b"outbe/tee-expired-target-exclusions/v1";
 const EXECUTION_SUMMARY_TAG: u8 = 0x01;
 const BOUNDARY_TAG: u8 = 0x02;
 const DEALER_LOG_TAG: u8 = 0x03;
-// Tag 0x04 is permanently retired (legacy finalized-parent cert metadata) and is
-// rejected by the active codec - do not reuse it (see CLAUDE.md).
+// Tag 0x04 is permanently retired (legacy finalized-parent cert metadata). The
+// active codec rejects it. Do not reuse it (see CLAUDE.md).
 const TIMESTAMP_MILLIS_PART_TAG: u8 = 0x05;
 const LATE_FINALIZE_CREDITS_TAG: u8 = 0x06;
 const COMMITTEE_PREANNOUNCE_TAG: u8 = 0x07;
@@ -70,8 +72,8 @@ const LATE_FINALIZE_SIG_LEN: usize = 96;
 /// Max signer-bitmap bytes = `ceil(MAX_VALIDATORS / 8)` = `ceil(256 / 8)`.
 ///
 /// Approved deviation: the codec enforces only this fixed
-/// upper bound because it is committee-agnostic - it cannot know the committee
-/// size of the block being decoded. The committee-exact `ceil(committee/8)`
+/// upper bound because it is committee-agnostic. It cannot know the committee
+/// size of the block that it decodes. The committee-exact `ceil(committee/8)`
 /// length check lives in `outbe_consensus::proof::late_finalize`
 /// (`verify_late_finalize_proof`), where the epoch `CommitteeSnapshot` is
 /// available. This split is intentional, not a missing check.
@@ -95,8 +97,8 @@ pub struct OutbeBlockArtifacts {
     pub consensus_header_artifact: Option<ConsensusHeaderArtifact>,
     /// Sub-second part of the consensus block timestamp (0..1000).
     /// Carried inside `extra_data` under tag 0x05 so that the block hash
-    /// is computed from a strictly Ethereum-spec-compliant header - no
-    /// extra top-level RLP fields. The integer-second part lives in
+    /// is computed from a strictly Ethereum-spec-compliant header. That header
+    /// has no extra top-level RLP fields. The integer-second part lives in
     /// `header.timestamp` as usual.
     pub timestamp_millis_part: u64,
     /// late-finalize credits (tag 0x06): a canonical batch of
@@ -104,8 +106,8 @@ pub struct OutbeBlockArtifacts {
     /// `K`-block inclusion window. `None`/empty when this block credits nothing.
     pub late_finalize_credits: Option<LateFinalizeCreditsArtifact>,
     /// Execution-computed post-state compressed-entity root (tag 0x08).
-    /// Structurally optional; mandatory presence for block 1+ is enforced by
-    /// block execution rather than this height-independent codec.
+    /// Structurally optional. Block execution, not this height-independent
+    /// codec, enforces mandatory presence for block 1+.
     pub compressed_entities_root: Option<CompressedEntitiesRootArtifact>,
 }
 
@@ -119,7 +121,7 @@ pub struct CompressedEntitiesRootArtifact {
 ///
 /// One block may credit several finalized blocks whose inclusion windows are
 /// still open. Batches are in **canonical order** (strictly ascending
-/// `(fb_number, fb_hash)`, one record per target); the codec rejects
+/// `(fb_number, fb_hash)`, one record per target). The codec rejects
 /// out-of-order or duplicate targets so the bytes are deterministic across the
 /// proposer and every validator.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -130,7 +132,7 @@ pub struct LateFinalizeCreditsArtifact {
 /// One finalized block's late-finalize proof: the BLS aggregate + signer bitmap
 /// plus the full binding set needed to rebuild the signed `proposal.encode()`
 /// and select the epoch committee. The signature and bitmap are
-/// raw bytes here (primitives layer); the consensus verifier parses them.
+/// raw bytes here (primitives layer). The consensus verifier parses them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PerBlockCredit {
     pub fb_number: u64,
@@ -145,8 +147,8 @@ pub struct PerBlockCredit {
 
 /// Finalized-parent consensus facts carried in Phase 1 system transaction input.
 ///
-/// V1 `finalize_votes` legacy field was removed; V2 participation
-/// accounting is driven entirely by the certificate's own signer bitmap.
+/// The V1 `finalize_votes` legacy field was removed. The certificate's own
+/// signer bitmap drives V2 participation accounting entirely.
 /// `missed_proposers: Vec<Address>` is retained for the V1 compatibility
 /// adapter (`FinalizedParentAttestation` <-> `CertifiedParentAccountingMetadata`)
 /// but is always empty under V2.
@@ -164,36 +166,36 @@ pub struct FinalizedParentAttestation {
 }
 
 /// Wire payload kept inside `header.extra_data` (tag 0x01) under the
-/// `OART` v0x04 envelope. Holds the only piece of execution-side data
+/// `OART` v0x0B envelope (`VERSION`). Holds the only piece of execution-side data
 /// the consensus path needs: the validator fee sum that
 /// `on_finalized_metadata` distributes to voters and accumulates into
 /// `daily_fee_sum_raw`. The previous `total_emission_limit` field was
-/// removed - daily emission is computed by the Cycle
-/// handler from the closed-form formula and does not need to be
-/// transported in `extra_data`.
+/// removed. The Cycle handler computes daily emission from the closed-form
+/// formula. `extra_data` does not need to transport it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionSummaryArtifact {
     pub validator_fee_sum: U256,
 }
 
 // `BoundaryOutcome` is inherently larger than `DealerLog`. This is a consensus
-// wire artifact transported in `extra_data` and matched/constructed across the
-// codec and consensus paths; boxing the large variant would change those sites
-// for marginal stack savings on a low-frequency, deterministically-encoded type
-// (the encoded bytes are unaffected by the in-memory layout). Keep it inline.
+// wire artifact. `extra_data` transports it, and the codec and consensus paths
+// match and construct it. Boxing the large variant would change those sites
+// for marginal stack savings on a low-frequency, deterministically-encoded type.
+// The in-memory layout does not affect the encoded bytes. Keep it inline.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConsensusHeaderArtifact {
     BoundaryOutcome(DkgBoundaryArtifact),
     DealerLog(Bytes),
     /// Path A committee-chaining pre-announce: the full DKG `outcome` (players +
-    /// polynomial) for `epoch`, emitted in a block finalized by the OUTGOING
-    /// (`epoch-1`) committee - before epoch `epoch`'s own boundary block `epoch*L+1`,
-    /// which is finalized by `epoch` itself and so cannot self-authenticate. A
-    /// follower registers `epoch`'s committee from this via the existing
-    /// `register_epoch_from_outcome`, trusting it because the carrying block's cert
-    /// verifies against the already-trusted `epoch-1` committee. Does NOT activate -
-    /// activation stays on the `BoundaryOutcome` at `epoch*L+1`.
+    /// polynomial) for `epoch`. It is emitted in a block finalized by the OUTGOING
+    /// (`epoch-1`) committee, before epoch `epoch`'s own boundary block
+    /// `epoch*L+1`. Committee `epoch` itself finalizes that boundary block, so the
+    /// boundary block cannot self-authenticate. A follower registers `epoch`'s
+    /// committee from this via the existing `register_epoch_from_outcome`. The
+    /// follower trusts it because the carrying block's cert verifies against the
+    /// already-trusted `epoch-1` committee. Does NOT activate. Activation stays on
+    /// the `BoundaryOutcome` at `epoch*L+1`.
     CommitteePreAnnounce {
         epoch: u64,
         outcome: Bytes,
@@ -308,7 +310,7 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
 
 /// Canonicalizes proposer-supplied artifact fragments before block execution.
 ///
-/// Execution-produced fields are never accepted from payload attributes. The
+/// This function never accepts execution-produced fields from payload attributes. The
 /// caller must insert the local execution summary, timestamp remainder, and CE
 /// root after compressed-entity sealing. The reduced size limit reserves the
 /// mandatory tag `0x08` record inside the unchanged 64 KiB final envelope.
@@ -355,7 +357,7 @@ pub fn decode_boundary_artifact(extra_data: &[u8]) -> Result<Option<DkgBoundaryA
         Some(ConsensusHeaderArtifact::BoundaryOutcome(result)) => Ok(Some(result)),
         Some(ConsensusHeaderArtifact::DealerLog(_)) => Ok(None),
         // A committee pre-announce carries an outcome for a follower to register a
-        // future epoch's committee; it is not an activating boundary.
+        // future epoch's committee. It is not an activating boundary.
         Some(ConsensusHeaderArtifact::CommitteePreAnnounce { .. }) => Ok(None),
     }
 }
@@ -402,8 +404,8 @@ fn validate_tee_expired_target_exclusions(addresses: &[Address]) -> Result<()> {
 
 /// Encode a standalone `LateFinalizeCreditsArtifact` for the `LateFinalizeCredits`
 /// system-transaction body (mirrors [`encode_boundary_artifact`]). An empty batch
-/// encodes to empty bytes - the mandatory system tx then carries an empty body
-/// and its execution still performs the matured-window close as a side effect.
+/// encodes to empty bytes. The mandatory system tx then carries an empty body,
+/// and its execution still closes the matured window as a side effect.
 pub fn encode_late_finalize_credits_artifact(
     artifact: &LateFinalizeCreditsArtifact,
 ) -> Result<Bytes> {
@@ -414,7 +416,7 @@ pub fn encode_late_finalize_credits_artifact(
 }
 
 /// Decode a standalone `LateFinalizeCreditsArtifact` from a system-tx body. Empty
-/// input decodes to `None`; callers treat that as an empty (no-op) artifact.
+/// input decodes to `None`. Callers treat that as an empty (no-op) artifact.
 pub fn decode_late_finalize_credits_artifact(
     extra_data: &[u8],
 ) -> Result<Option<LateFinalizeCreditsArtifact>> {
@@ -655,7 +657,7 @@ mod tests {
             decode_consensus_header_artifact(&encoded).unwrap(),
             Some(artifact)
         );
-        // A pre-announce carries a committee for a follower; it is NOT an
+        // A pre-announce carries a committee for a follower. It is NOT an
         // activating boundary.
         assert_eq!(decode_boundary_artifact(&encoded).unwrap(), None);
     }
@@ -928,7 +930,7 @@ mod tests {
         // u16 cap (65535) but whose total framed length (6-byte envelope +
         // 3-byte record header + payload) exceeds OUTBE_MAX_EXTRA_DATA_SIZE.
         //
-        // Fixed boundary payload prefix is 216 bytes; the rest is the outcome
+        // Fixed boundary payload prefix is 216 bytes. The rest is the outcome
         // blob. We size the outcome so the total framed length is just over the
         // 64 KiB budget while the record payload stays <= 65535.
         // (180 base fields + 2-byte tee_recipient_pubkeys count + 32-byte
@@ -1112,10 +1114,10 @@ mod tests {
 
     #[test]
     fn late_credits_decode_rejects_more_than_k_batches() {
-        // the wire cap is the inclusion window `K`, so a count
-        // header above `K` is rejected before any per-credit body is parsed -
-        // bounding adversarial decode/snapshot/BLS-verify work to the protocol
-        // window. An honest proposer never emits more than `K` batches.
+        // The wire cap is the inclusion window `K`. The decoder rejects a count
+        // header above `K` before it parses any per-credit body. This bounds
+        // adversarial decode/snapshot/BLS-verify work to the protocol window.
+        // An honest proposer never emits more than `K` batches.
         assert_eq!(
             super::LATE_FINALIZE_MAX_BATCHES as u64,
             crate::consensus::LATE_FINALIZE_WINDOW_K,

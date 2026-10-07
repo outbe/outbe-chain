@@ -1,7 +1,7 @@
 //! Bounded, Lysis-specific owner/bucket shuffle run artifacts.
 //!
 //! This closed schema is deliberately not a generic DAG or spill-file
-//! framework. A `UnitArtifactV1` embeds one root object; bounded descendants
+//! framework. A `UnitArtifactV1` embeds one root object. Bounded descendants
 //! are addressed by their verified CAS references.
 
 use std::collections::{BTreeSet, VecDeque};
@@ -140,7 +140,7 @@ where
 /// Opens one canonical 256-record page from an already admitted shuffle root.
 ///
 /// The lookup follows only the unique authenticated child path for
-/// `page_ordinal`; it never scans the preceding population. A request beyond
+/// `page_ordinal`. It never scans the preceding population. A request beyond
 /// the exact record stream returns the canonical empty slice.
 pub fn verified_shuffle_run_page<R>(
     root: ShuffleRunArtifactV1,

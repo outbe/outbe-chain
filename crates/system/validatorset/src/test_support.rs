@@ -1,5 +1,7 @@
-//! Shared schema assertions and test setup that reaches ACTIVE state only
-//! through the production certified-boundary hook.
+//! Shared schema assertions and test setup.
+//! One path reaches ACTIVE through the production certified-boundary hook.
+//! `test_activate_validator_canonically` persists ACTIVE directly.
+//! That path writes no snapshot, no `pending_set_change`, and no event.
 //!
 //! This module is deliberately feature-gated. Production callers must use the
 //! named lifecycle commands in [`crate::runtime`], while cross-crate tests use
@@ -133,7 +135,7 @@ pub fn admit_validator_for_boundary(
 
 /// Promote one registered test validator by running the same atomic boundary
 /// hook used by production. Existing active validators remain in the incoming
-/// set; participant order is the canonical BLS-public-key order.
+/// set. Participant order is the canonical BLS-public-key order.
 pub fn activate_validator_via_boundary(
     validators: &mut ValidatorSet<'_>,
     validator: Address,
@@ -213,8 +215,8 @@ impl ValidatorSet<'_> {
 impl ValidatorSet<'_> {
     /// Registers a fixture through the explicit bootstrap-only no-PoP seam.
     ///
-    /// The underlying registration path is unavailable in production builds;
-    /// ordinary callers must submit a valid proof of possession.
+    /// The underlying registration path is unavailable in production builds.
+    /// Ordinary callers must submit a valid proof of possession.
     pub fn test_register_validator_without_pop(
         &mut self,
         validator: Address,
@@ -226,9 +228,9 @@ impl ValidatorSet<'_> {
 
     /// Moves a registered fixture through the canonical typed join path.
     ///
-    /// This intentionally does not expose constructors for lifecycle payloads:
-    /// identity, P2P data and history are carried forward from the current
-    /// registered state by the real transition functions.
+    /// This intentionally does not expose constructors for lifecycle payloads.
+    /// The real transition functions carry identity, P2P data and history
+    /// forward from the current registered state.
     pub fn test_activate_validator_canonically(
         &mut self,
         address: Address,
@@ -295,7 +297,7 @@ impl ValidatorSet<'_> {
         )
     }
 
-    /// Replaces the ValidatorSet stake mirror; Staking remains authoritative.
+    /// Replaces the ValidatorSet stake mirror. Staking remains authoritative.
     pub fn test_set_stake_projection(
         &mut self,
         address: Address,

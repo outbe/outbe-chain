@@ -135,8 +135,8 @@ impl TeePolicyV1 {
     }
 
     /// Counts rules that admit one authenticated enclave measurement at a
-    /// height. Consensus admission requires the result to equal exactly one;
-    /// zero and overlapping matches are both fail-closed.
+    /// height. Consensus admission requires the result to equal exactly one.
+    /// Zero and overlapping matches are both fail-closed.
     pub fn measurement_rule_match_count(
         &self,
         mrenclave: B256,

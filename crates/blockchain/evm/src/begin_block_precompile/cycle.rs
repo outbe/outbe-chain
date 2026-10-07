@@ -110,7 +110,7 @@ fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
         vs.record_proposer(ctx.block.proposer)?;
     } else if allow_boundary_proposer && vs.is_validator(ctx.block.proposer)? {
         // The block is the activation block for a validator-set-changing
-        // BoundaryOutcome and was proposed by a next-epoch validator. The
+        // BoundaryOutcome, and a next-epoch validator proposed it. The
         // proposer becomes a consensus participant in BoundaryOutcome, at which
         // point `run_boundary_outcome` records this proposal exactly once.
     } else {
@@ -133,8 +133,8 @@ pub(crate) fn run_hyperlane_liveness_window(ctx: &BlockRuntimeContext) {
     outbe_hyperlanecontroller::lifecycle::run_liveness_window(ctx)
 }
 
-/// HookEvents system tx: no-op marker. Whitelisted pre-exec hook logs are
-/// attached to this phase's receipt by the executor without re-running hooks.
+/// HookEvents system tx: no-op marker. The executor attaches whitelisted
+/// pre-exec hook logs to this phase's receipt without re-running hooks.
 pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }

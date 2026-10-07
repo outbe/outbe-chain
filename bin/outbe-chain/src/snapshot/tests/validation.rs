@@ -743,7 +743,7 @@ mod native_files {
             .domains
             .iter()
             .any(|domain| domain.entries.is_empty()));
-        // The writer leaves empty domain mode synthetic; it never stats the root.
+        // The writer leaves empty domain mode synthetic. It never stats the root.
         for domain in manifest
             .domains
             .iter_mut()
@@ -1050,7 +1050,7 @@ mod orchestration {
                 .unwrap();
             drop(parent);
             drop(ce);
-            // Retained execution headers are 0, 100, 101; CE's historical Q=1
+            // Retained execution headers are 0, 100, 101. CE's historical Q=1
             // is unavailable, while all current E=101 state remains present.
             let report = run(root.path(), &inputs("evm,ce"));
             assert_eq!(
@@ -1146,8 +1146,8 @@ mod orchestration {
                         .unwrap();
                     }
                     _ => {
-                        // Pinned Reth does not serialize FinishCheckpoint itself;
-                        // this native persisted marker survives the orchestrator reopen.
+                        // Pinned Reth does not serialize FinishCheckpoint itself.
+                        // This native persisted marker survives the orchestrator reopen.
                         tx.put::<tables::Metadata>(
                             "partial_state_trie_unwind".into(),
                             br#"{"finish_block_number":101,"partial_state_trie":100}"#.to_vec(),

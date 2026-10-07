@@ -21,17 +21,20 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::Stora
 
 /// Bounded Oracle projection captured before the terminal OCOMP request.
 ///
-/// `oracle_state_version` reuses the authoritative monotonic snapshot stream
-/// index: every exchange-rate snapshot advances it, while the WWD and S-curve
-/// counters identify the exact derived collections read for this day.
+/// `oracle_state_version` is the `ocomp_state_version` counter.
+/// It is not the snapshot-stream index.
+/// It advances on snapshots, WorldwideDay VWAP writes, UTC-day finalization,
+/// and S-curve writes. It advances only after the profile is ready.
+/// It does not advance on every snapshot.
+/// The WWD and S-curve counters identify the derived collections for this day.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OcompOraclePreAdmissionProjection {
     pub profile_ready: bool,
     pub oracle_state_version: u64,
     /// Registered pairs, i.e. the upper bound on the day-VWAP entries an
-    /// opening proof can be asked to cover. Now that the WorldwideDay VWAP
-    /// column is keyed by the registry index, the registry size *is* that
-    /// bound; there is no separate per-day entry count to read.
+    /// opening proof can be asked to cover. The registry index now keys the
+    /// WorldwideDay VWAP column, so the registry size *is* that bound. There is
+    /// no separate per-day entry count to read.
     pub wwd_pair_entries: u32,
     pub active_scurve_entries: u32,
 }
@@ -42,8 +45,9 @@ pub struct OcompOraclePreAdmissionProjection {
 /// [`OracleError::NotReferenceCurrency`] otherwise.
 ///
 /// Reference currencies are the ISO 4217 numeric codes considered valid
-/// for off-chain pricing references. The list is pre-filled at genesis
-/// with `[840]` (USD) and may be extended via future protocol upgrades.
+/// for off-chain pricing references. Genesis pre-fills six codes:
+/// CNY 156, HKD 344, JPY 392, GBP 826, USD 840, and EUR 978.
+/// USD is the mandatory member. Future protocol upgrades may extend it.
 pub fn check_reference_currency(ctx: &BlockRuntimeContext, iso_code: u16) -> Result<()> {
     check_reference_currency_with_storage(ctx.storage.clone(), iso_code)
 }
@@ -70,8 +74,8 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
 
 /// Current COEN price to currency `iso_code` in the COEN/ISO six-decimal scale.
 ///
-/// Returns errors when `COEN/<iso_code>` is not a registered pair, or
-/// no rates are found.
+/// Returns an error when `COEN/<iso_code>` is not a registered pair, or when
+/// the pair has no rates.
 pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_exchange_rate(COEN_ASSET, currency_address(iso_code))
@@ -80,8 +84,8 @@ pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
 /// `amount`, denominated in `from_iso`, re-expressed in `to_iso`.
 ///
 /// Both currencies are priced against COEN, so the cross rate is the ratio of
-/// the two legs: `amount x rate(COEN/to) / rate(COEN/from)`. One rounding,
-/// upwards, so a converted charge never undercollects. Equal currencies
+/// the two legs: `amount x rate(COEN/to) / rate(COEN/from)`. The function rounds
+/// once, upwards, so a converted charge never undercollects. Equal currencies
 /// short-circuit and read no rate at all.
 ///
 /// Reverts when either leg has no registered pair or no published rate.
@@ -106,9 +110,9 @@ pub fn currency_cross_rate(
 /// registered or carries no published rate.
 ///
 /// [`get_all_reference_currencies`] lists currencies independently of whether
-/// their `COEN/<iso>` pair has been registered and priced, so a block hook
-/// walking that registry needs a read that reports "not priceable yet" instead
-/// of reverting and halting the block. Storage faults still propagate.
+/// their `COEN/<iso>` pair is registered and priced. A block hook that walks that
+/// registry therefore needs a read that reports "not priceable yet" instead of
+/// reverting and halting the block. Storage faults still propagate.
 pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
@@ -127,7 +131,7 @@ pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
 
 /// Finalized COEN/`iso_code` VWAP over the snapshot's window, in the pair's
 /// six-decimal scale. `None` when the pair is unregistered or the window holds no
-/// positive price; an open or malformed snapshot is an error.
+/// positive price. An open or malformed snapshot is an error.
 pub fn get_finalized_window_vwap(
     storage: StorageHandle,
     iso_code: u16,
@@ -188,8 +192,8 @@ pub fn fresh_coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256
 }
 
 /// Hook-safe variant of [`fresh_coen_rate_for`]. An unregistered, unpublished or
-/// stale currency is not priceable in this block and therefore returns `None`;
-/// storage faults still propagate.
+/// stale currency is not priceable in this block and therefore returns `None`.
+/// Storage faults still propagate.
 pub fn fresh_coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
     let oracle = OracleContract::new(storage.clone());
     let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
@@ -230,7 +234,7 @@ fn fresh_rate_at_index(storage: StorageHandle, index: PairIndex) -> Result<Optio
 }
 
 /// Registry index of the `COEN/<iso_code>` pair, or `None` when it was never registered.
-/// Unlike [`require_coen_pair`], which collapses both into an error.
+/// [`require_coen_pair`] is different: it collapses both cases into an error.
 pub fn coen_pair_index_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<PairIndex>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
@@ -266,7 +270,7 @@ pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIn
 ///
 /// Both VWAPs are exact WorldwideDay snapshots in the six-decimal COEN/ISO
 /// domain. The S-curve belongs only to the independently selected reference
-/// currency; the enclave owns the final `max(reference_vwap, reference_curve)`
+/// currency. The enclave owns the final `max(reference_vwap, reference_curve)`
 /// and cross-currency nominal arithmetic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TributePricingInputs {
@@ -278,9 +282,9 @@ pub struct TributePricingInputs {
 /// Reads the three canonical public pricing inputs for one Tribute.
 ///
 /// `None` means the issuance `COEN/<iso>` pair is not registered. Once the
-/// issuance pair exists, missing daily data or a missing reference pair is
-/// represented by zero fields so the Tribute host can reject the transient
-/// unpriced condition without collapsing it into an unsupported issuance.
+/// issuance pair exists, zero fields represent missing daily data or a missing
+/// reference pair. The Tribute host can then reject the transient unpriced
+/// condition without collapsing it into an unsupported issuance.
 pub fn tribute_pricing_inputs(
     storage: StorageHandle,
     issuance_currency: u16,
@@ -343,8 +347,8 @@ pub fn get_worldwide_day_vwap_for_pair(
 
 /// Every reference currency the closed UTC day `utc_day` priced, ascending by
 /// currency. A currency is present when its `COEN/<iso>` pair is registered and
-/// the day left a non-zero VWAP for it; an unpriced currency is absent rather
-/// than zero. Never invokes calculation - a stored value is already finalized.
+/// the day left a non-zero VWAP for it. An unpriced currency is absent rather
+/// than zero. It never invokes calculation. A stored value is already finalized.
 pub fn priced_reference_currencies(
     storage: StorageHandle,
     utc_day: u32,
@@ -352,9 +356,9 @@ pub fn priced_reference_currencies(
     let oracle = OracleContract::new(storage);
     let mut priced = Vec::new();
     // The day-type currency is priced from the same per-pair day VWAP as every
-    // other currency; the OCOMP mirror of it is a copy, written only once the
-    // profile is installed, and is not the price source. It is read from its own
-    // pair: the day-type price does not hang on 840's registry entry.
+    // other currency. The OCOMP mirror of it is a copy, written only once the
+    // profile is installed, and is not the price source. This function reads it
+    // from its own pair, so the day-type price does not depend on 840's registry entry.
     let day_type_index = oracle.pair_index_of(DAY_TYPE_PAIR)?;
     if day_type_index != 0 {
         if let Some(vwap) = oracle
@@ -383,7 +387,7 @@ pub fn priced_reference_currencies(
     Ok(priced)
 }
 
-/// Reads the authenticated collection counts; never invokes calculation.
+/// Reads the authenticated collection counts. It never invokes calculation.
 pub fn ocomp_pre_admission_projection(
     storage: StorageHandle,
 ) -> Result<OcompOraclePreAdmissionProjection> {
@@ -415,11 +419,11 @@ pub fn initialize_fresh_ocomp_profile(storage: StorageHandle) -> Result<()> {
 /// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or `None`
 /// when the pair is not registered or the day has no snapshot for it.
 ///
-/// This is the single entry point for the day-rate decision: pair resolution and
-/// the snapshot lookup live here, behind one typed interface, so callers never
-/// touch the oracle's internal `pair_index` map. Genuine storage faults
-/// propagate as `Err`, keeping "no data yet" (`Ok(None)` -> caller's RED fallback)
-/// distinct from "oracle broken".
+/// This is the single entry point for the day-rate decision. Pair resolution and
+/// the snapshot lookup live here, behind one typed interface. Callers therefore
+/// never touch the oracle's internal `pair_index` map. Genuine storage faults
+/// propagate as `Err`. This keeps "no data yet" (`Ok(None)` -> caller's RED
+/// fallback) distinct from "oracle broken".
 pub fn day_type_pair_vwap(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,
@@ -433,8 +437,8 @@ pub fn day_type_pair_vwap(
 }
 
 /// Computes and stores the WorldwideDay VWAP snapshot for `[start_time,
-/// end_time)`. Returns `true` if a snapshot was written, `false` if the window
-/// held no oracle data (a deterministic no-op, not an error).
+/// end_time)`. Returns `true` if it wrote a snapshot, `false` if the window held
+/// no oracle data (a deterministic no-op, not an error).
 pub fn store_worldwide_day_vwap_snapshot(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,
@@ -445,11 +449,11 @@ pub fn store_worldwide_day_vwap_snapshot(
     oracle.store_worldwide_day_vwap_snapshot(worldwide_day, start_time, end_time)
 }
 
-/// Returns the finalized VWAP for `pair` on the given UTC calendar day
-/// (`utc_day` is a yyyymmdd UTC date key, e.g. `20260625`), or `None` if the
-/// day is not finalized or had no oracle data for that pair. Distinguishing
-/// "not finalized yet" from "finalized, no data" requires comparing `utc_day`
-/// against the oracle's `utc_day_vwap_last_finalized` watermark.
+/// Returns the stored VWAP for `pair` on that UTC calendar day, or `None`
+/// when the day has no entry. `utc_day` is a yyyymmdd UTC date key.
+/// A day above `utc_day_vwap_last_finalized` is not finalized.
+/// After a gap wider than the backfill cap, a day at or below the watermark
+/// can also be unfinalized. An empty entry is then not proof of no data.
 pub fn get_utc_day_vwap(
     storage: StorageHandle,
     utc_day: u32,
@@ -459,7 +463,8 @@ pub fn get_utc_day_vwap(
     oracle.get_utc_day_vwap_for_pair(utc_day, index)
 }
 
-/// Whether a finalized day from `from_utc_day` on closed `COEN/<iso_code>` strictly above `floor_minor`.
+/// Whether a finalized day from `from_utc_day` on closed `COEN/<iso_code>` strictly
+/// above `floor_minor`.
 pub fn closed_above_floor(
     storage: StorageHandle,
     iso_code: u16,
@@ -469,7 +474,8 @@ pub fn closed_above_floor(
     Ok(max_day_vwap_since(storage, iso_code, from_utc_day, Some(floor_minor))? > floor_minor)
 }
 
-/// The highest finalized daily VWAP of `COEN/<iso_code>` from `from_utc_day` on; zero when none.
+/// The highest finalized daily VWAP of `COEN/<iso_code>` from `from_utc_day` on.
+/// Zero when none.
 pub fn max_utc_day_vwap_since(
     storage: StorageHandle,
     iso_code: u16,
@@ -517,7 +523,7 @@ pub fn get_max_active_scurve_value(
 }
 
 /// Annualized policy rate (scale `1e6`) for an independently registered ISO
-/// 4217 code. Called by the Credis Factory at issuance to pin the position's
+/// 4217 code. The Credis Factory calls it at issuance to pin the position's
 /// settlement policy without coupling it to reference-currency membership.
 pub fn get_policy_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);

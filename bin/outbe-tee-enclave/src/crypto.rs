@@ -2,17 +2,16 @@
 //!
 //! Two responsibilities for slice 1:
 //!
-//! 1. **Offer decryption primitive** - byte-identical to the host's current
-//!    `outbe-tributefactory` `crypto.rs`: ECDHE(X25519) + HKDF-SHA256 +
+//! 1. **Offer decryption primitive** - the inverse of the client encryption in
+//!    `outbe_tee::offer_encrypt`: ECDHE(X25519) + HKDF-SHA256 +
 //!    ChaCha20Poly1305 with the same `b"tribute-factory-encryption"` info
-//!    label. This is what `crypto.rs` will call into the enclave for once the
-//!    decrypt key is enclave-resident.
+//!    label (`outbe_tee::offer_encrypt::OFFER_HKDF_INFO`).
 //!
 //! 2. **Tribute-offer-key derivation** - DKG group threshold signature -> HKDF ->
 //!    tribute-offer X25519 keypair, resident in each enclave so every validator
 //!    decrypts tribute offers deterministically during block execution.
 //!
-//! `ring` (HKDF + AEAD) and `x25519-dalek` mirror the existing host code, so
+//! The client encryption uses the same X25519 + HKDF + AEAD recipe, so
 //! ciphertext produced by current clients decrypts identically here.
 
 use ring::{
@@ -28,15 +27,15 @@ use outbe_tee::dcap_protocol::{DcapOnboardingArtifactV1, DcapOnboardingContextV1
 use crate::errors::{Result, TeeError};
 
 /// HKDF info label for the offer encryption key. MUST match
-/// `outbe-tributefactory::crypto` for byte-identical decryption.
+/// `outbe_tee::offer_encrypt::OFFER_HKDF_INFO` for byte-identical decryption.
 const OFFER_AEAD_INFO: &[u8] = b"tribute-factory-encryption";
 /// HKDF info label for deriving the offer X25519 secret from the root seed.
 const OFFER_X25519_INFO: &[u8] = b"outbe/tribute/offer-x25519/v1";
 /// Offer-key HKDF info prefix: `info = "outbe/tribute/v1/" || epoch`.
 const OFFER_SEED_INFO_PREFIX: &[u8] = b"outbe/tribute/v1/";
 /// HKDF info label for DKG share sealed-box encryption. TEE infrastructure
-/// (not tribute-offer-specific), so the domain is `outbe/tee/...`; distinct from
-/// offer encryption so a share key can never be derived as an offer key.
+/// (not tribute-offer-specific), so the domain is `outbe/tee/...`. It is distinct
+/// from offer encryption, so a share key can never be derived as an offer key.
 const DKG_SHARE_INFO: &[u8] = b"outbe/tee/dkg-share/v1";
 
 /// HKDF `info` for the deterministic registry-seal nonce, distinct from the AEAD
@@ -103,8 +102,8 @@ pub fn chacha20poly1305_decrypt(
     Ok(plaintext.to_vec())
 }
 
-/// ChaCha20Poly1305 AEAD encrypt (empty AAD). Used by the client/host and tests
-/// to produce ciphertext; the enclave itself only decrypts offers.
+/// ChaCha20Poly1305 AEAD encrypt (empty AAD). The client/host and tests use it
+/// to produce ciphertext. The enclave itself only decrypts offers.
 pub fn chacha20poly1305_encrypt(
     key: &[u8; 32],
     nonce: &[u8; 12],
@@ -124,9 +123,8 @@ pub fn chacha20poly1305_encrypt(
 /// Offer decryption primitive: ECDHE(static_secret, ephemeral_pubkey) ->
 /// HKDF-SHA256(salt, shared, info) -> ChaCha20Poly1305 decrypt.
 ///
-/// Byte-identical to `outbe-tributefactory::crypto::decrypt_tribute_input`'s
-/// cryptographic core (this returns raw plaintext; payload parsing is a later
-/// slice).
+/// This is the inverse of `outbe_tee::offer_encrypt::encrypt_tribute_offer`.
+/// This function returns raw plaintext. Payload parsing is a later slice.
 pub fn ecdhe_tribute_offer_decrypt(
     tribute_offer_private_key: &[u8; 32],
     salt: &[u8; 32],
@@ -160,15 +158,15 @@ pub fn derive_tribute_offer_keypair(seed: &[u8; 32]) -> Result<(Zeroizing<[u8; 3
 }
 
 /// Derive the tribute-offer X25519 keypair from the DKG **group threshold
-/// signature** `group_sig` - the signature every enclave recovers (via
+/// signature** `group_sig`. Every enclave recovers this signature (via
 /// `threshold::recover`) from `2f+1` partial signatures over the fixed offer
-/// message. `group_sig` is the shared, deterministic secret material:
+/// message. `group_sig` is the shared, deterministic secret material. It is
 /// byte-identical on every honest enclave (so all derive the same tribute-offer
-/// key), yet unforgeable without a threshold of DKG shares. `chain_id` + `epoch`
-/// are bound into the HKDF for domain separation. The resulting tribute-offer
+/// key), yet unforgeable without a threshold of DKG shares. The HKDF binds
+/// `chain_id` + `epoch` for domain separation. The resulting tribute-offer
 /// secret is resident in each enclave so every validator decrypts tribute offers
-/// deterministically during block execution - an architectural requirement of
-/// deterministic local re-execution, not a compromise. Returns
+/// deterministically during block execution. This residency is an architectural
+/// requirement of deterministic local re-execution, not a compromise. Returns
 /// `(tribute_offer_secret, tribute_offer_public)` with a zeroizing secret.
 pub fn derive_tribute_offer_secret_from_group_sig(
     group_sig: &[u8],
@@ -183,7 +181,7 @@ pub fn derive_tribute_offer_secret_from_group_sig(
 
 /// A DKG share sealed to a recipient enclave's X25519 key: a fresh ephemeral
 /// public key, a nonce, and the ChaCha20Poly1305 ciphertext. The host only ever
-/// relays this opaque blob; the plaintext share exists only inside the dealer's
+/// relays this opaque blob. The plaintext share exists only inside the dealer's
 /// and the recipient's enclaves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncryptedShare {
@@ -222,13 +220,13 @@ impl EncryptedShare {
 /// Seal `plaintext` (a serialized DKG share) to `recipient_pub` with a fresh
 /// ephemeral X25519 keypair (sealed-box). The recipient recovers it with
 /// [`decrypt_share`]. The shared key is `HKDF(salt = recipient_pub, ikm = ECDHE,
-/// info = DKG_SHARE_INFO)`; a fresh ephemeral key per call makes the key unique,
+/// info = DKG_SHARE_INFO)`. A fresh ephemeral key per call makes the key unique,
 /// so the random nonce is defense-in-depth.
 ///
 /// `OsRng` here is **transport-encryption** randomness (ephemeral X25519 +
-/// nonce) - it is NOT consensus randomness. The encrypted share decrypts to a
-/// deterministic plaintext; ciphertext freshness only protects confidentiality
-/// in flight, and never feeds VRF/leader-election/state transitions.
+/// nonce). It is NOT consensus randomness. The encrypted share decrypts to a
+/// deterministic plaintext. Ciphertext freshness only protects confidentiality
+/// in flight. It never feeds VRF/leader-election/state transitions.
 pub fn encrypt_share(recipient_pub: &[u8; 32], plaintext: &[u8]) -> Result<EncryptedShare> {
     use rand_core::RngCore;
     let mut ephemeral_secret = [0u8; 32];
@@ -250,20 +248,22 @@ pub fn encrypt_share(recipient_pub: &[u8; 32], plaintext: &[u8]) -> Result<Encry
 }
 
 /// DETERMINISTIC seal of `plaintext` to `recipient_pub`, suitable for committing
-/// the sealed blob ON-CHAIN (an encrypted-seed analog):
-/// every enclave holding the same `sender_static_secret` (the resident offer key's
-/// X25519 secret, identical across the committee) produces a BYTE-IDENTICAL
-/// [`EncryptedShare`] for the same recipient + plaintext, so the result can be a
+/// the sealed blob ON-CHAIN (an encrypted-seed analog).
+/// `sender_static_secret` is the resident offer key's X25519 secret, identical
+/// across the committee. Every enclave that holds it produces a BYTE-IDENTICAL
+/// [`EncryptedShare`] for the same recipient + plaintext. So the result can be a
 /// consensus-validated on-chain artifact.
 ///
-/// Unlike [`encrypt_share`] (random ephemeral key + random nonce), this uses
-/// static-static ECDH between the sender's static secret and the recipient's
-/// static public, and derives the nonce from the shared secret - NO RNG. The
+/// Unlike [`encrypt_share`] (random ephemeral key + random nonce), this function
+/// uses static-static ECDH between the sender's static secret and the recipient's
+/// static public. It derives the nonce from the shared secret, with NO RNG. The
 /// recipient opens it with the UNCHANGED [`decrypt_share`] using its own X25519
-/// secret and the sender's static public (carried in `ephemeral_pub`, which equals
-/// the on-chain `tribute_offer_public_key`). The fixed-per-pair nonce is safe: the
-/// AEAD key is unique per (offer-key epoch, recipient) because the offer secret
-/// rotates with the key epoch and `recipient_pub` salts both key and nonce.
+/// secret and the sender's static public. `ephemeral_pub` carries that static
+/// public, which equals the on-chain `tribute_offer_public_key`.
+///
+/// The fixed-per-pair nonce is safe. The AEAD key is unique per (offer-key epoch,
+/// recipient), because the offer secret rotates with the key epoch and
+/// `recipient_pub` salts both key and nonce.
 pub fn encrypt_share_deterministic(
     sender_static_secret: &[u8; 32],
     recipient_pub: &[u8; 32],
@@ -285,8 +285,8 @@ pub fn encrypt_share_deterministic(
 }
 
 /// Open a share sealed by [`encrypt_share`] with the recipient's X25519 private
-/// key. The salt (`recipient_pub`) is recomputed from `recipient_secret`, so it
-/// matches the sealer without being transmitted.
+/// key. This function recomputes the salt (`recipient_pub`) from
+/// `recipient_secret`, so it matches the sealer without being transmitted.
 pub fn decrypt_share(recipient_secret: &[u8; 32], enc: &EncryptedShare) -> Result<Vec<u8>> {
     let secret = StaticSecret::from(*recipient_secret);
     let recipient_pub = PublicKey::from(&secret).to_bytes();
@@ -342,8 +342,8 @@ pub fn encrypt_onboarding_artifact_v1(
 }
 
 /// Open one purpose-bound onboarding artifact. The target derives its recipient
-/// public key, context key and nonce locally. A wire nonce mismatch is rejected
-/// before AEAD open and is never used as nonce authority.
+/// public key, context key and nonce locally. The function rejects a wire nonce
+/// mismatch before AEAD open. It never uses the wire nonce as nonce authority.
 pub fn decrypt_onboarding_artifact_v1(
     recipient_secret: &[u8; 32],
     artifact: &DcapOnboardingArtifactV1,
@@ -378,7 +378,7 @@ mod tests {
 
     /// The shared client-side encryptor (`outbe_tee::offer_encrypt`, used by
     /// outbe-cli, the bench and the node canary) must round-trip with THIS
-    /// decrypt path byte-for-byte - the canary asserts exactly this in prod.
+    /// decrypt path byte-for-byte. The canary asserts exactly this in prod.
     #[test]
     fn shared_offer_encrypt_helper_round_trips_with_decrypt() {
         let offer_sk = [7u8; 32];
@@ -545,7 +545,7 @@ mod tests {
     #[test]
     fn tribute_offer_secret_is_deterministic_and_chain_bound() {
         // The group threshold signature is the shared secret material every
-        // enclave recovers identically; HKDF binds chain_id + epoch.
+        // enclave recovers identically. HKDF binds chain_id + epoch.
         let sig = b"a-recovered-group-threshold-signature-~48-bytes";
         let cid_a = B256::repeat_byte(0xAA);
         let cid_b = B256::repeat_byte(0xBB);

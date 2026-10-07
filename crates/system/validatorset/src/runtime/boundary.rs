@@ -72,10 +72,10 @@ impl ValidatorSet<'_> {
             states.push(self.validator_state(addr)?);
         }
 
-        // Plan the entire state transition before the first write. Canonical
-        // Commonware order and the address hash are validated by the executor
-        // against the incoming snapshot; this layer validates unique membership
-        // and lifecycle eligibility.
+        // Plan the entire state transition before the first write. The executor
+        // validates canonical Commonware order and the address hash against the
+        // incoming snapshot. This layer validates unique membership and lifecycle
+        // eligibility.
         let mut transitions = Vec::with_capacity(states.len());
         let mut transitioned_to_unbonding = Vec::new();
         let mut tee_expired_active = Vec::new();

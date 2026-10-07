@@ -1447,8 +1447,8 @@ fn recovered_nodes_resume(world: &mut World) {
         finalized_voter_misses(world, "misses_before_readiness", &address);
     ensure_recovered_process(world);
     // Recheck after all RPC observations, then freeze this phase immediately
-    // before submission. The second capture includes the submission boundary;
-    // its prefix must overlap only authority-free pre-submission records.
+    // before submission. The second capture includes the submission boundary.
+    // Its prefix must overlap only authority-free pre-submission records.
     let mut post_log = LeaseLogCapture::node(world, MISSED_VALIDATOR);
     let pre_interval = pre_log.finish();
     let no_authority = pre_readiness_recovery_is_authority_free(

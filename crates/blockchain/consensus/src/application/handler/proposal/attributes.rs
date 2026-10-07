@@ -17,22 +17,22 @@ impl ApplicationShared {
         // Clamp the proposed timestamp into the deterministic two-sided drift band
         // `[parent + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
         // parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS]`. The lower bound
-        // forces each block to advance chain time, denying a colluding leader
+        // forces each block to advance chain time. This denies a colluding leader
         // majority the `parent + 1 ms` timestamp freeze that stalls emission and
-        // unbonding maturity; the upper bound (C-01) mirrors the validator check
-        // in `outbe-node`'s `validate_against_parent_timestamp_millis`, so an
-        // honest proposer never emits a block validators would reject as
-        // over-drifted. Both bounds match the validator rule exactly, so the
-        // clamp only ever shifts the timestamp into the accepted band - never out
-        // of it. After a long stall `now_millis` may exceed the cap; the chain
-        // self-heals, ratcheting time forward by at most one band per block until
-        // it catches up to real time.
+        // unbonding maturity. The upper bound (C-01) mirrors the validator check
+        // in `outbe-node`'s `validate_against_parent_timestamp_millis`. Thus an
+        // honest proposer never emits a block that validators would reject as
+        // over-drifted. Both bounds match the validator rule exactly. Thus the
+        // clamp only ever shifts the timestamp into the accepted band, never out
+        // of it. After a long stall `now_millis` may exceed the cap. The chain
+        // then self-heals: it ratchets time forward by at most one band per block
+        // until it catches up to real time.
         //
-        // Exception - the genesis child has no resolved consensus parent block,
-        // so the band is meaningless and only monotonicity is enforced. The
+        // Exception: the genesis child has no resolved consensus parent block.
+        // Thus the band is meaningless and only monotonicity is enforced. The
         // validator side exempts the genesis parent (`parent.number() == 0`) from
-        // both band bounds, so block 1 (~= genesis + now) always validates and no
-        // unbonding-lock bypass is possible at the first block.
+        // both band bounds. Thus block 1 (~= genesis + now) always validates and
+        // no unbonding-lock bypass is possible at the first block.
         let timestamp_millis = proposal_timestamp_millis(
             parent_block.as_ref(),
             now_millis,
@@ -51,21 +51,24 @@ impl ApplicationShared {
         // parent_height == 0) MUST carry `ConsensusHeaderArtifact::BoundaryOutcome`
         // in `extra_data`. If the epoch has no pending boundary for block 1,
         // the proposer forfeits the slot deterministically with the
-        // `genesis_dkg_boundary_not_ready` reason - never propose block 1
+        // `genesis_dkg_boundary_not_ready` reason. Never propose block 1
         // without a real boundary artifact.
         let proposed_height = parent_height.get().saturating_add(1);
         let consensus_header_artifact = match self.proposal_header_artifact(clock, request).await? {
             ControlFlow::Continue(artifact) => artifact,
             ControlFlow::Break(outcome) => return Ok(ControlFlow::Break(outcome)),
         };
-        // Non-blocking direct-parent proof selection
+        // Direct-parent proof selection
         // (finalization first -> certified-notarization -> marshal-archive
-        // recovery -> forfeit). The request budget does not gate this lookup -
-        // the selector returns synchronously. On a selection-store
-        // miss the None branch recovers the parent's finalization from marshal's
-        // durable archive (, `recover_parent_proof_from_marshal`); only if
-        // that also misses does the slot forfeit deterministically with the
-        // parent-proof-unavailable metric.
+        // recovery -> forfeit). The request budget does not gate this lookup.
+        // The lookup can wait. When the store holds only a certified-notarization
+        // record, the selector waits a bounded time for a finalization record.
+        // The wait starts at `PHASE1_FINALIZATION_WAIT_DEFAULT`, and the default
+        // leader timeout caps it. On a selection-store miss, the None branch
+        // recovers the parent's finalization from marshal's durable archive
+        // (`recover_parent_proof_from_marshal`). Only if that also misses does
+        // the slot forfeit deterministically with the parent-proof-unavailable
+        // metric.
         let parent_proof_record = match self
             .select_parent_proof_for_proposal(
                 clock,
@@ -88,12 +91,13 @@ impl ApplicationShared {
         // `CertifiedParentAccountingMetadata` directly from the proof record
         // via [`CertifiedParentProofRecord::to_v2_metadata`]. Both
         // finalization and certified-notarization records project into V2
-        // metadata's `ParentProofSelector::select_direct_parent_proof`
-        // is the upstream caller that decides which record (if any) to feed
+        // metadata. `ParentProofSelector::select_direct_parent_proof_by_key_with_wait`
+        // is the upstream selector that decides which record (if any) to feed
         // into Phase 1.
         // The selector guarantees the chosen record's height resolves to
-        // `parent_height` (Finalization validated to match; CertifiedNotarization
-        // carries no height of its own and is resolved to the parent here).
+        // `parent_height`. A Finalization record is validated to match. A
+        // CertifiedNotarization record carries no height of its own, and this
+        // code resolves it to the parent.
         let parent_consensus_metadata = parent_proof_record
             .as_ref()
             .map(|record| record.to_v2_metadata(parent_height.get()));
@@ -212,9 +216,9 @@ impl ApplicationShared {
     ) -> eyre::Result<Bytes> {
         // pack the in-window late-finalize credits this node has
         // locally observed for blocks `proposed_height - K ..= proposed_height - 1`.
-        // Best-effort and process-local: every validator re-verifies each batch
+        // Best-effort and process-local. Every validator re-verifies each batch
         // (pre-exec FATAL) and re-derives the same artifact via header<->calldata
-        // parity, so the contents never affect determinism - an empty store just
+        // parity. Thus the contents never affect determinism. An empty store just
         // credits nobody. A poisoned lock degrades to no credits.
         let late_finalize_credits = match self.late_sig_store.lock() {
             Ok(store) => {
@@ -235,10 +239,10 @@ impl ApplicationShared {
                 encode_outbe_block_artifacts(&OutbeBlockArtifacts {
                     execution_summary: None,
                     consensus_header_artifact,
-                    // The sub-second timestamp part is recomputed by the
-                    // payload builder from `OutbeBlockExecutionCtx` and
-                    // re-encoded into `extra_data` before sealing; we
-                    // intentionally leave it at 0 here.
+                    // The payload builder recomputes the sub-second timestamp
+                    // part from `OutbeBlockExecutionCtx` and re-encodes it into
+                    // `extra_data` before sealing. We intentionally leave it
+                    // at 0 here.
                     timestamp_millis_part: 0,
                     late_finalize_credits,
                     compressed_entities_root: None,

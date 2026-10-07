@@ -1,7 +1,7 @@
 //! Node-level handler registries for vote target dispatch and upgrade migrations.
 //!
-//! Handler implementations live in their owning crates; this module wires them
-//! into Vote and Update lifecycle at block processing time.
+//! Handler implementations live in their owning crates. This module connects them
+//! to the Vote and Update lifecycle during block processing.
 
 pub mod vote {
     use alloy_primitives::{Address, U256};

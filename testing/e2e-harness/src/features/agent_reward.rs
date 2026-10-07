@@ -510,7 +510,7 @@ fn claim_gem_and_assert_gas_only_cost(
             "Gem body parity"
         );
         // Window, threshold and bucket are not on the gem view.
-        let issued = super::paynote::capacity::single_event::<eth::IGemFactory::GemIssued>(
+        let issued = eth::receipt_event::<eth::IGemFactory::GemIssued>(
             &receipt,
             addresses::GEM_FACTORY_ADDR,
         );
@@ -602,7 +602,7 @@ fn claim_gem_terms_at(url: &str, height: u64) -> (U256, U256) {
         )
         .expect("input slot quantity")
     };
-    // Oracle schema slots 58/59 are UTC-day VWAP values/watermark;
+    // Oracle schema slots 58/59 are UTC-day VWAP values/watermark.
     // Gem profile is slot 34 (the preceding record spans multiple slots).
     let day: u32 = word(outbe_primitives::addresses::ORACLE_ADDRESS, 59)
         .try_into()

@@ -534,7 +534,7 @@ fn test_storage_dsl_layout_slots() {
         assert_eq!(m.bootstrap_end_time.slot(), U256::ZERO);
         assert_eq!(m.worldwide_days.base_slot(), U256::from(1u64));
         // WorldwideDay gained `metadosis_limit_minor`, so the record is now
-        // 10 scalar slots (was 9); worldwide_days occupies slots 1..=10.
+        // 10 scalar slots (was 9). worldwide_days occupies slots 1..=10.
         assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 10);
         assert_eq!(m.closed_wwd.base_slot(), U256::from(13u64));
         assert_eq!(m.ocomp_job_records.base_slot(), U256::from(19u64));

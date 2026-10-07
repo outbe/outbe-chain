@@ -20,9 +20,9 @@ use tokio::sync::watch;
 /// Local-only lifetime of one consensus execution request.
 ///
 /// Commonware owns the actual proposal/verification deadline. The application
-/// cancels this token when Commonware drops the corresponding response channel,
-/// so synchronous Mongo reads inherit the already-running request lifetime
-/// without inventing or resetting a wall-clock deadline.
+/// cancels this token when Commonware drops the corresponding response channel.
+/// Synchronous Mongo reads thus inherit the already-running request lifetime.
+/// They do not invent or reset a wall-clock deadline.
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionReadBudget {
     cancelled: Arc<AtomicBool>,

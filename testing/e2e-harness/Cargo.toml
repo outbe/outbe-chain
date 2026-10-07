@@ -33,7 +33,6 @@ ocomp-integration = [
     "dep:outbe-gemfactory",
     "dep:outbe-intexfactory",
     "dep:outbe-nodfactory",
-    "dep:outbe-paynote",
     "dep:outbe-tribute",
     "dep:outbe-tee-enclave",
     "dep:reth-provider",
@@ -92,8 +91,6 @@ outbe-intexfactory = { workspace = true, optional = true }
 outbe-metadosis = { workspace = true, optional = true }
 outbe-nod = { workspace = true, optional = true }
 outbe-nodfactory = { workspace = true, optional = true }
-# Note construction and proving for the Nod cost-discharge scenario.
-outbe-paynote = { workspace = true, features = ["test-utils"], optional = true }
 outbe-node = { workspace = true, optional = true }
 outbe-ocomp = { workspace = true, optional = true }
 outbe-ocomp-protocol = { workspace = true, optional = true }

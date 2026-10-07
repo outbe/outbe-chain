@@ -9,20 +9,20 @@
 //!
 //! This module owns the helpers that translate a [`CommitteeSnapshot`] into:
 //!
-//! * the canonical V2 committee hash ([`committee_set_hash_v2`]); the formula
+//! * the canonical V2 committee hash ([`committee_set_hash_v2`]). The formula
 //!   binds domain, epoch, committee length, ordered `(Address, MinPk pubkey)`
-//!   entries, `vrf_material_version`, and the raw encoded VRF group public key
-//!   so any drift is a chain split rather than a silent re-encoding;
-//! * the storage key ([`committee_snapshot_key`]); the namespace prefix is a
-//!   separate domain string so that the snapshot key never collides with the
+//!   entries, `vrf_material_version`, and the raw encoded VRF group public key.
+//!   Thus any drift is a chain split rather than a silent re-encoding.
+//! * the storage key ([`committee_snapshot_key`]). The namespace prefix is a
+//!   separate domain string. Thus the snapshot key never collides with the
 //!   committee hash itself, even when they share the same `(epoch, hash)`
 //!   inputs.
 //!
-//! The store layout is fixed to ValidatorSet storage slots 31..40 (see
-//! [`schema::ValidatorSet`](crate::schema::ValidatorSet)). Writes are
-//! field-by-field and **end with the `exists` flag**, so a partial write
-//! observed via a checkpoint-rolled-back transaction is never reachable: the
-//! reader gates every other slot behind `exists`.
+//! A snapshot record spans slots 31..=40, slot 44, slot 47, and slots 52..=58
+//! (see [`schema::ValidatorSet`](crate::schema::ValidatorSet)).
+//! Writes are field-by-field and end with the `exists` flag.
+//! A partial write from a rolled-back checkpoint is not readable.
+//! The reader gates every other slot behind `exists`.
 
 use alloy_primitives::{Address, B256};
 
@@ -36,7 +36,7 @@ use crate::errors::ActivationError;
 use crate::schema::ValidatorSet;
 
 // Canonical V2 committee types and pure-function hashers live in
-// `outbe-consensus-proof` (the wire-codec crate). They are re-exported here so
+// `outbe_consensus::proof`. They are re-exported here so
 // existing `outbe_validatorset::state::{...}` callers keep compiling, and
 // internal storage helpers (`write/read_committee_snapshot`,
 // `snapshot_identity`) reference them through the canonical crate.
@@ -50,9 +50,9 @@ pub use outbe_consensus::proof::{
 ///
 /// invariant: the version is strictly
 /// monotonic, incremented by exactly 1, and **never saturates**. Overflow at
-/// `u64::MAX` is a deterministic activation error - both proposer and
+/// `u64::MAX` is a deterministic activation error. Both proposer and
 /// validator paths reject the activation rather than silently capping the
-/// value, which would otherwise let two distinct DKG outputs share a version
+/// value. A capped value would let two distinct DKG outputs share a version
 /// and break the V2 metadata binding.
 pub fn next_vrf_material_version(previous: u64) -> std::result::Result<u64, ActivationError> {
     previous
@@ -78,7 +78,7 @@ fn join_pubkey(lo: B256, hi: B256) -> [u8; 48] {
 
 /// Number of recent epochs whose committee snapshots stay live. Every reader
 /// (`read_committee_snapshot`) only touches the current finalized epoch +/- the
-/// K-block late-finalize window (<< 1 epoch), so this is a generous retention;
+/// K-block late-finalize window (<< 1 epoch), so this is a generous retention.
 /// `write_committee_snapshot` prunes older snapshots to bound state growth.
 /// Changing it is a hard fork (it changes which slots are zero -> the state root).
 pub const COMMITTEE_SNAPSHOT_RETAIN_EPOCHS: u64 = 8;
@@ -149,13 +149,13 @@ fn join_ocomp_public_key(lo: B256, hi: B256) -> Result<[u8; 33]> {
     Ok(public_key)
 }
 
-/// Zeroes every slot of the committee snapshot at `key` - the inverse of
-/// [`write_committee_snapshot`] - reclaiming its EVM storage (a slot set to its
-/// default is empty in the state trie). All loop bounds are read before
-/// `exists` is cleared; otherwise the guard needed to discover them could turn
-/// the clear into a no-op. The flag is cleared only after every field is
-/// reclaimed; callers perform eviction inside the enclosing boundary
-/// checkpoint, so failure cannot commit a half-clear. No-op if absent.
+/// Zeroes every slot of the committee snapshot at `key` and reclaims its EVM
+/// storage. This is the inverse of [`write_committee_snapshot`]. A slot set to
+/// its default is empty in the state trie. The function reads all loop bounds
+/// before it clears `exists`. Otherwise the guard needed to discover them could
+/// turn the clear into a no-op. The flag is cleared only after every field is
+/// reclaimed. Callers evict inside the enclosing boundary checkpoint, so
+/// failure cannot commit a half-clear. No-op if absent.
 pub fn clear_committee_snapshot(storage: StorageHandle, key: B256) -> Result<()> {
     let vs = ValidatorSet::new(storage);
     if !vs.committee_snapshot_exists.read(&key)? {
@@ -221,12 +221,12 @@ pub fn clear_committee_snapshot(storage: StorageHandle, key: B256) -> Result<()>
 ///
 /// Returns `(committee_set_hash, snapshot_key)`. The function is "atomic per
 /// boundary block" in the sense that all writes happen inside the current EVM
-/// journal - wrap the caller in a [`outbe_primitives::storage::CheckpointGuard`]
+/// journal. Wrap the caller in a [`outbe_primitives::storage::CheckpointGuard`]
 /// to roll back on artifact rejection.
 ///
-/// The `exists` flag is intentionally written *last*: even if a checkpoint
-/// commit observes a partial write (e.g., because of an out-of-gas error
-/// mid-write), no reader will treat the half-written snapshot as present.
+/// The function writes the `exists` flag *last* on purpose. Even if a
+/// checkpoint commit observes a partial write (e.g., because of an out-of-gas
+/// error mid-write), no reader will treat the half-written snapshot as present.
 pub fn write_committee_snapshot(
     storage: StorageHandle,
     epoch: u64,
@@ -444,7 +444,7 @@ pub fn read_ocomp_snapshot_extension_for_binding(
 
 /// Resolves the one canonical snapshot retained for `epoch` from the bounded
 /// ring and validates both its consensus and OCOMP bindings. A missing,
-/// evicted or colliding record returns `None`; it is never substituted with a
+/// evicted or colliding record returns `None`. It is never substituted with a
 /// snapshot from another epoch.
 pub fn read_ocomp_snapshot_extension_at_epoch(
     storage: StorageHandle,
@@ -528,7 +528,7 @@ pub fn read_ocomp_snapshot_member_at(
 /// Reads a previously-written committee snapshot from the store, or returns
 /// `Ok(None)` when no snapshot exists at `snapshot_key`.
 ///
-/// Returns the snapshot data without `epoch`; the caller already supplied the
+/// Returns the snapshot data without `epoch`. The caller already supplied the
 /// `(epoch, committee_set_hash)` pair that produced `snapshot_key`.
 pub fn read_committee_snapshot(
     storage: StorageHandle,
@@ -609,8 +609,8 @@ pub fn read_committee_snapshot(
 ///
 /// The ring maps `epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS -> snapshot_key`. For
 /// an epoch within the retained window the slot holds that epoch's key. For an
-/// older epoch, the slot may have been overwritten by a newer colliding epoch;
-/// the reader recomputes the requested epoch's canonical key from the decoded
+/// older epoch, a newer colliding epoch may have overwritten the slot. The
+/// reader recomputes the requested epoch's canonical key from the decoded
 /// snapshot and returns `None` on mismatch. This keeps evidence lookup
 /// fail-closed even when both epochs have an identical committee.
 pub fn read_committee_snapshot_for_epoch(

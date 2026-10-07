@@ -416,8 +416,8 @@ impl RequestLimitSplitReceiptV1 {
                 what: "request limit split",
             })?;
         require(split_total <= self.day_limit, "request limit split")?;
-        // The day limit is exhausted by what the day briefs, what Lysis takes and what returns to
-        // the warehouse; a red day briefs nothing, so its limit returns with the headroom.
+        // What the day briefs, what Lysis takes and what returns to the warehouse exhaust the day
+        // limit. A red day briefs nothing, so its limit returns with the headroom.
         let briefed = if green {
             self.desis_limit_minor
         } else {

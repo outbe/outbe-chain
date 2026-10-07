@@ -102,7 +102,7 @@ impl AuthenticatedHistory {
             .ok_or_else(|| eyre!("genesis committee has not been authenticated"))
     }
 
-    /// A failed authentication terminates the scenario; never reuse its partial
+    /// A failed authentication terminates the scenario. Never reuse its partial
     /// observations as trusted state or skip a failed height.
     pub(crate) fn advance(
         &mut self,

@@ -1,12 +1,21 @@
 //! Soft-failure receipt synthesis for the Outbe executor.
 //!
-//! When the executor rejects a transaction outside the EVM (zero-fee
-//! policy classification or stateful authorization) or when a Phase 1-4
-//! begin-zone system transaction fails to execute, the executor no longer
-//! aborts the block build. It pushes a synthetic receipt with `success=0`
-//! and exactly one log carrying a stable `code` plus a free-form `reason`
-//! string, so the failure is observable via `eth_getTransactionReceipt`
-//! and `eth_getLogs` without losing block-build availability.
+//! In these cases the executor does not abort the block build:
+//!
+//! - the executor rejects a transaction outside the EVM (zero-fee policy
+//!   classification or stateful authorization).
+//! - a soft begin-zone system transaction (`RewardsGemDelivery` or
+//!   `OracleSlashWindow`) fails to execute.
+//!
+//! A revert or halt in the other system-tx phases (for example
+//! `CertifiedParentAccounting`, `LateFinalizeCredits`, `CycleTick`,
+//! `BoundaryOutcome`, `TeeBootstrap`) fails the block. See
+//! `SystemTxKind::revert_fails_block`.
+//!
+//! Instead, it pushes a synthetic receipt with `success=0` and exactly one
+//! log. The log carries a stable `code` plus a free-form `reason` string.
+//! Thus `eth_getTransactionReceipt` and `eth_getLogs` show the failure, and
+//! block-build availability stays.
 //!
 //! The single shared event is:
 //!
@@ -19,12 +28,12 @@
 //! - zero-fee policy rejections (`outbe-zerofee::ZeroFeePolicyError::code()`):
 //!   100-199, emitted from
 //!   [`outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS`].
-//! - Phase 1-4 system tx failures (`crate::executor::phase_failure_code()`):
+//! - soft system tx failures (`crate::executor::system_tx_failure_code_for_result()`):
 //!   200-299, emitted from
 //!   [`outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS`].
 //!
 //! Determinism of the synthetic log encoding is the contract that keeps
-//! `receipts_root` byte-equal across proposer and validators; see EPIC
+//! `receipts_root` byte-equal across proposer and validators.
 
 use alloy_primitives::{Address, Log, LogData};
 use alloy_sol_types::{sol, SolEvent};
@@ -34,9 +43,9 @@ sol! {
     ///
     /// `code` is a stable per-subsystem `u16` identifier (zero-fee 100-199,
     /// phase failures 200-299). `reason` is the `Display` rendering of the
-    /// underlying Rust error and is intended for human consumption - its
+    /// underlying Rust error and is intended for human consumption. Its
     /// exact text is byte-stable per compiled binary but is not part of the
-    /// API contract; downstream consumers should match on `code`.
+    /// API contract. Downstream consumers should match on `code`.
     #[derive(Debug, PartialEq)]
     event OutbeFailure(uint16 indexed code, string reason);
 }
@@ -47,8 +56,8 @@ pub const OUTBE_FAILURE_TOPIC0: alloy_primitives::B256 = OutbeFailure::SIGNATURE
 /// Builds the synthetic `OutbeFailure` log to attach to a soft-failure
 /// receipt.
 ///
-/// The encoding is purely a function of the inputs - no environment, no
-/// allocation order, no hash-map iteration - so two nodes that build a
+/// The encoding is purely a function of the inputs. It uses no environment, no
+/// allocation order, and no hash-map iteration. Thus two nodes that build a
 /// failure receipt for the same `(log_address, code, reason)` produce
 /// byte-equal logs and therefore byte-equal receipts.
 pub fn build_outbe_failure_log(log_address: Address, code: u16, reason: String) -> Log<LogData> {
@@ -111,7 +120,7 @@ mod tests {
     //
     // Pin the exact byte layout of `OutbeFailure(code, reason)` for the four
     // most common production codes. If any of these tests breaks, every
-    // historical receipt's `receipts_root` is at stake; fixing the test must
+    // historical receipt's `receipts_root` is at stake. A fix to the test must
     // be a deliberate hard-fork-or-wipe decision, not a casual change.
 
     /// ABI-encodes a `string` payload into the `data` portion of the
@@ -217,9 +226,9 @@ mod tests {
         );
     }
 
-    /// Reason text encoding is independent of the address - same `(code, reason)`
-    /// produced from different addresses differ only in the `Log.address` field,
-    /// not in the `data` payload.
+    /// Reason text encoding is independent of the address. Logs with the same
+    /// `(code, reason)` from different addresses differ only in the
+    /// `Log.address` field, not in the `data` payload.
     #[test]
     fn reason_encoding_is_address_independent() {
         let reason = "any";
@@ -235,7 +244,7 @@ mod tests {
     }
 
     /// Reason text containing multi-byte UTF-8 must encode by byte length,
-    /// not by character count - otherwise indexers see length / data mismatch.
+    /// not by character count. Otherwise indexers see length / data mismatch.
     #[test]
     fn reason_encoding_is_byte_length_not_char_length() {
         // 1 char, 4 UTF-8 bytes.

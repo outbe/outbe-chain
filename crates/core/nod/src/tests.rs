@@ -5,7 +5,7 @@ use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
+use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{
@@ -165,7 +165,7 @@ fn bucket_key_binds_the_reference_currency() {
 }
 
 /// Why the bin columns had to widen to `u64`: mapping keys are left-padded to
-/// 32 bytes before hashing, so integer width alone namespaces nothing — the
+/// 32 bytes before hashing, so integer width alone namespaces nothing. The
 /// ISO has to occupy real high bits, and those bits do not fit in a `u32`
 /// alongside a 24-bit bin id.
 #[test]
@@ -183,9 +183,9 @@ fn currency_scoped_bin_keys_do_not_alias() {
     assert_eq!(NodContract::scoped(0, 7), 7u64);
 }
 
-/// The headline regression: two Nods sharing a worldwide day and an identical
-/// `entry_price_minor` but denominated differently are two buckets in two
-/// independent bin tries, and a day price only qualifies its own currency.
+/// The headline regression: two Nods share a worldwide day and an identical
+/// `entry_price_minor`, but are denominated differently. Such Nods are two buckets
+/// in two independent bin tries. A day price only qualifies its own currency.
 #[test]
 fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
@@ -377,8 +377,10 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
         .unwrap();
         let data = dispatch(
             storage.clone(),
-            &scope,
-            &parent,
+            ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &INod::nodDataCall {
                 nodId: item.nod_id.to_u256(),
             }
@@ -394,8 +396,10 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
         );
         let data = dispatch(
             storage,
-            &scope,
-            &parent,
+            ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &INod::tokenURICall {
                 nodId: item.nod_id.to_u256(),
             }
@@ -478,8 +482,10 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             };
             let bytes = dispatch(
                 storage.clone(),
-                &scope,
-                &parent,
+                ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
                 &call.abi_encode(),
                 item.owner,
                 U256::ZERO,
@@ -503,8 +509,10 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             );
             let bytes = dispatch(
                 storage.clone(),
-                &scope,
-                &parent,
+                ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
                 &INod::tokenURICall {
                     nodId: item.nod_id.to_u256(),
                 }
@@ -552,8 +560,10 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             .unwrap();
             let error = dispatch(
                 storage,
-                &scope,
-                &parent,
+                ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
                 &call.abi_encode(),
                 item.owner,
                 U256::ZERO,
@@ -579,8 +589,18 @@ fn transfer_surface_is_soulbound() {
     let scope = ExecutionScope::new();
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     StorageHandle::enter(&mut provider, |storage| {
-        let call =
-            |data: Vec<u8>| dispatch(storage.clone(), &scope, &parent, &data, owner, U256::ZERO);
+        let call = |data: Vec<u8>| {
+            dispatch(
+                storage.clone(),
+                ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
+                &data,
+                owner,
+                U256::ZERO,
+            )
+        };
         for data in [
             INod::transferFromCall {
                 from: owner,
@@ -784,8 +804,10 @@ fn supported_interfaces_match_the_implemented_selectors() {
             .abi_encode();
             let out = dispatch(
                 storage.clone(),
-                &scope,
-                &parent,
+                ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
                 &data,
                 Address::ZERO,
                 U256::ZERO,
@@ -830,8 +852,10 @@ fn token_uri_renders_the_nod_image_and_metadata() {
             .abi_encode();
             let out = dispatch(
                 storage.clone(),
-                &scope,
-                &parent,
+                ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
                 &data,
                 Address::ZERO,
                 U256::ZERO,
@@ -946,8 +970,10 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
         nod.bucket_called_at.write(&item.bucket_key, 100).unwrap();
         let out = dispatch(
             storage.clone(),
-            &scope,
-            &parent,
+            ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &INod::tokenURICall {
                 nodId: item.nod_id.to_u256(),
             }

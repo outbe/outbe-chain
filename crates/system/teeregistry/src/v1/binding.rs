@@ -22,10 +22,10 @@ impl TeeRegistry<'_> {
         self.node_enclave_binding_v1(node_id_hash)
     }
 
-    /// Reads one V1 binding by its complete canonical node identity and rejects
-    /// a profile or identity-map mismatch. This is the shared read seam for
-    /// finalized-state session admission; callers do not reconstruct Registry
-    /// slots or trust an address-only validator lookup.
+    /// Reads one V1 binding for `node_id.reth_p2p_public`.
+    /// The hash compare uses the same `NodeIdV1` that the inner read rebuilds.
+    /// Those two hashes match for every well-formed identity.
+    /// This function does not read a profile field or an identity map.
     pub fn node_enclave_binding_for_identity_v1(
         &self,
         node_id: &NodeIdV1,
@@ -47,7 +47,7 @@ impl TeeRegistry<'_> {
 
     /// Returns the exact append-only storage slots read by
     /// [`Self::node_enclave_binding_for_identity_v1`]. External light clients
-    /// use this canonical plan to request one bounded MPT proof; keeping the
+    /// use this canonical plan to request one bounded MPT proof. Keeping the
     /// plan beside the schema prevents a parallel hand-maintained layout.
     pub fn node_enclave_binding_storage_slots_v1(&self, node_id: &NodeIdV1) -> Result<Vec<B256>> {
         let node_hash = node_id

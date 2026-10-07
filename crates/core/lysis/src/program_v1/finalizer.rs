@@ -5,7 +5,7 @@
 //! field: callers cannot provide a result root, conservation scalar or
 //! arithmetic commitment.
 
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::{
     hash_framed,
@@ -117,113 +117,20 @@ where
     validate_authority(&inputs, limits)?;
     let topology = LysisPlanTopologyV1::new(inputs.plan.primary_work_unit_count)?;
     let plan_hash = inputs.plan.plan_hash(limits)?;
-    let exact_unit_count = topology.total_unit_count();
-    let final_unit_ordinal = exact_unit_count
-        .checked_sub(1)
-        .ok_or(LysisFinalizationErrorV1::Authority("non-empty exact plan"))?;
-    let mut unit_artifact_root =
-        StreamingOrderedListRoot::new(ListKind::UnitSpecificationsArtifacts, final_unit_ordinal)?;
-    let mut gratis_prefix_root = StreamingOrderedListRoot::new(
-        ListKind::LysisGratisLeafPrefixes,
-        inputs.plan.primary_work_unit_count,
-    )?;
-    let mut final_fractions = None;
-    let mut final_summary_from_artifact = None;
-    let mut next_unit_ordinal = 0_u32;
-
+    let binding = ResultBindingV1 {
+        job_id: inputs.finalized_job_id,
+        plan: inputs.plan,
+        plan_hash,
+    };
+    let mut unit_artifacts = UnitArtifactStreamV1::new(binding, topology, limits)?;
     for item in inputs.unit_artifacts {
-        let item = item?;
-        if item.plan_ordinal != next_unit_ordinal || item.plan_ordinal >= exact_unit_count {
-            return Err(LysisFinalizationErrorV1::Authority(
-                "exact plan artifact order",
-            ));
-        }
-        let expected_position = topology.plan_position_at(item.plan_ordinal)?;
-        if item.position != expected_position
-            || item.artifact.protocol_bundle_hash != inputs.plan.protocol_bundle_hash
-            || item.artifact.job_id != inputs.finalized_job_id
-            || item.artifact.attempt != inputs.plan.attempt
-            || item.artifact.phase != expected_position.phase()
-        {
-            return Err(LysisFinalizationErrorV1::Authority(
-                "plan-bound unit artifact",
-            ));
-        }
-        item.artifact.validate_semantics(limits)?;
-
-        if item.plan_ordinal == final_unit_ordinal {
-            final_summary_from_artifact = Some(require_final_root_output(
-                &item.artifact,
-                inputs.plan.primary_work_unit_count,
-                limits,
-            )?);
-        } else {
-            unit_artifact_root.push(
-                item.artifact.artifact_digest(limits)?.as_slice(),
-                B256::len_bytes(),
-            )?;
-        }
-
-        if is_fixed_reduce_root(item.position, topology) {
-            let output = decode_fixed_reduce_output(item.artifact.phase_payload(limits)?, limits)?;
-            final_fractions = Some(output.ordered_fractions);
-        }
-        if let PlannedUnitPositionV1::TreeNode {
-            phase: UnitPhase::GratisPrefixDown,
-            level: 0,
-            index,
-        } = item.position
-        {
-            let GratisPrefixDownOutputV1::Leaf(prefix) =
-                decode_gratis_prefix_down_output(item.artifact.phase_payload(limits)?, limits)?
-            else {
-                return Err(LysisFinalizationErrorV1::Authority(
-                    "GratisPrefixDown leaf payload",
-                ));
-            };
-            if prefix.segment_ordinal != index {
-                return Err(LysisFinalizationErrorV1::Authority(
-                    "GratisPrefixDown segment ordinal",
-                ));
-            }
-            gratis_prefix_root.push(
-                &encode_gratis_prefix_record(&prefix, limits)?,
-                limits.max_bounded_bytes,
-            )?;
-        }
-
-        next_unit_ordinal =
-            next_unit_ordinal
-                .checked_add(1)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "finalization unit cursor",
-                })?;
+        unit_artifacts.push(item?)?;
     }
-    if next_unit_ordinal != exact_unit_count {
-        return Err(LysisFinalizationErrorV1::Authority(
-            "complete exact plan artifacts",
-        ));
-    }
-    let final_summary_from_artifact = final_summary_from_artifact.ok_or(
-        LysisFinalizationErrorV1::Authority("final ROOT_REDUCE artifact"),
-    )?;
-    if &final_summary_from_artifact != inputs.root_reduce_summary {
-        return Err(LysisFinalizationErrorV1::Authority(
-            "final ROOT_REDUCE summary input",
-        ));
-    }
-    let unit_artifact_root = unit_artifact_root.finish()?;
-    let gratis_prefix_root = gratis_prefix_root.finish()?;
-    let fractions = final_fractions.ok_or(LysisFinalizationErrorV1::Authority(
-        "final Fidelity fraction table",
-    ))?;
-    let fidelity_fraction_root = fraction_root(&fractions, limits)?;
+    let unit_roots = unit_artifacts.finish(inputs.root_reduce_summary)?;
 
     let streamed = stream_result_chunks(
-        inputs.finalized_job_id,
-        inputs.plan,
+        binding,
         inputs.root_reduce_summary,
-        plan_hash,
         inputs.result_chunks,
         limits,
     )?;
@@ -300,9 +207,9 @@ where
         attempt: inputs.plan.attempt,
         input_manifest_hash: inputs.plan.input_manifest_hash,
         plan_hash,
-        unit_artifact_root,
-        fidelity_fraction_root,
-        gratis_prefix_root,
+        unit_artifact_root: unit_roots.unit_artifact_root,
+        fidelity_fraction_root: unit_roots.fidelity_fraction_root,
+        gratis_prefix_root: unit_roots.gratis_prefix_root,
         result_chunk_count: inputs.plan.primary_work_unit_count,
         result_chunk_list_root: streamed.result_chunk_list_root,
         carry_over_credit,
@@ -332,31 +239,224 @@ fn validate_authority<U, C, B>(
     inputs.intent.validate_semantics()?;
     let manifest_hash = inputs.input_manifest.manifest_hash(limits)?;
     let plan_hash = inputs.plan.plan_hash(limits)?;
-    if inputs.finalized_job_id.is_zero()
-        || inputs.finalized_job_id != inputs.plan.job_id
-        || inputs.finalized_job_id != inputs.input_manifest.job_id
-        || inputs.plan.protocol_bundle_hash != inputs.intent.protocol_bundle_hash
-        || inputs.plan.protocol_bundle_hash != inputs.input_manifest.protocol_bundle_hash
-        || inputs.plan.attempt != inputs.intent.attempt
-        || inputs.plan.attempt != inputs.input_manifest.attempt
-        || inputs.plan.input_manifest_hash != manifest_hash
-        || inputs.plan.wwd != inputs.intent.wwd
-        || inputs.plan.wwd != inputs.input_manifest.wwd
-        || inputs.plan.lysis_limit_minor != inputs.intent.frozen_metadosis_values.lysis_limit_minor
-        || inputs.plan.logical_evaluation_time != inputs.intent.logical_evaluation_time
-        || inputs.plan.tribute_count != inputs.intent.authenticated_day_count
-        || inputs.plan.tribute_count != inputs.input_manifest.tribute_count
-        || inputs.input_manifest.tribute_nominal_total != inputs.intent.authenticated_day_nominal
-        || inputs.root_reduce_summary.protocol_bundle_hash != inputs.plan.protocol_bundle_hash
-        || inputs.root_reduce_summary.job_id != inputs.finalized_job_id
-        || inputs.root_reduce_summary.attempt != inputs.plan.attempt
-        || inputs.root_reduce_summary.plan_hash != plan_hash
+    let (intent, manifest, plan) = (inputs.intent, inputs.input_manifest, inputs.plan);
+    let job_differs = inputs.finalized_job_id.is_zero()
+        || inputs.finalized_job_id != plan.job_id
+        || inputs.finalized_job_id != manifest.job_id;
+    let bundle_differs = plan.protocol_bundle_hash != intent.protocol_bundle_hash
+        || plan.protocol_bundle_hash != manifest.protocol_bundle_hash
+        || plan.attempt != intent.attempt
+        || plan.attempt != manifest.attempt;
+    let day_differs = plan.wwd != intent.wwd
+        || plan.wwd != manifest.wwd
+        || plan.lysis_limit_minor != intent.frozen_metadosis_values.lysis_limit_minor
+        || plan.logical_evaluation_time != intent.logical_evaluation_time;
+    let population_differs = plan.input_manifest_hash != manifest_hash
+        || plan.tribute_count != intent.authenticated_day_count
+        || plan.tribute_count != manifest.tribute_count
+        || manifest.tribute_nominal_total != intent.authenticated_day_nominal;
+    let summary = inputs.root_reduce_summary;
+    let summary_differs = summary.protocol_bundle_hash != plan.protocol_bundle_hash
+        || summary.job_id != inputs.finalized_job_id
+        || summary.attempt != plan.attempt
+        || summary.plan_hash != plan_hash;
+    if [
+        job_differs,
+        bundle_differs,
+        day_differs,
+        population_differs,
+        summary_differs,
+    ]
+    .contains(&true)
     {
         return Err(LysisFinalizationErrorV1::Authority(
             "finalized intent, manifest, plan and root summary",
         ));
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct ResultBindingV1<'a> {
+    job_id: B256,
+    plan: &'a PlanCommitmentV1,
+    plan_hash: B256,
+}
+
+#[derive(Clone, Copy)]
+struct SummaryBindingV1 {
+    protocol_bundle_hash: B256,
+    job_id: B256,
+    attempt: u32,
+    plan_hash: B256,
+}
+
+struct UnitArtifactRootsV1 {
+    unit_artifact_root: B256,
+    gratis_prefix_root: B256,
+    fidelity_fraction_root: B256,
+}
+
+struct UnitArtifactStreamV1<'a> {
+    binding: ResultBindingV1<'a>,
+    topology: LysisPlanTopologyV1,
+    limits: &'a SchemaLimits,
+    exact_unit_count: u32,
+    final_unit_ordinal: u32,
+    unit_artifact_root: StreamingOrderedListRoot,
+    gratis_prefix_root: StreamingOrderedListRoot,
+    final_fractions: Option<Vec<LeagueFractionV1>>,
+    final_summary: Option<RootReduceSummaryV1>,
+    next_unit_ordinal: u32,
+}
+
+impl<'a> UnitArtifactStreamV1<'a> {
+    fn new(
+        binding: ResultBindingV1<'a>,
+        topology: LysisPlanTopologyV1,
+        limits: &'a SchemaLimits,
+    ) -> Result<Self, LysisFinalizationErrorV1> {
+        let exact_unit_count = topology.total_unit_count();
+        let final_unit_ordinal = exact_unit_count
+            .checked_sub(1)
+            .ok_or(LysisFinalizationErrorV1::Authority("non-empty exact plan"))?;
+        let unit_artifact_root = StreamingOrderedListRoot::new(
+            ListKind::UnitSpecificationsArtifacts,
+            final_unit_ordinal,
+        )?;
+        let gratis_prefix_root = StreamingOrderedListRoot::new(
+            ListKind::LysisGratisLeafPrefixes,
+            binding.plan.primary_work_unit_count,
+        )?;
+        Ok(Self {
+            binding,
+            topology,
+            limits,
+            exact_unit_count,
+            final_unit_ordinal,
+            unit_artifact_root,
+            gratis_prefix_root,
+            final_fractions: None,
+            final_summary: None,
+            next_unit_ordinal: 0,
+        })
+    }
+
+    fn push(&mut self, item: FinalizationUnitArtifactV1) -> Result<(), LysisFinalizationErrorV1> {
+        if item.plan_ordinal != self.next_unit_ordinal || item.plan_ordinal >= self.exact_unit_count
+        {
+            return Err(LysisFinalizationErrorV1::Authority(
+                "exact plan artifact order",
+            ));
+        }
+        let expected_position = self.topology.plan_position_at(item.plan_ordinal)?;
+        let plan = self.binding.plan;
+        let artifact = &item.artifact;
+        let binding_differs = artifact.protocol_bundle_hash != plan.protocol_bundle_hash
+            || artifact.job_id != self.binding.job_id
+            || artifact.attempt != plan.attempt;
+        if item.position != expected_position
+            || binding_differs
+            || artifact.phase != expected_position.phase()
+        {
+            return Err(LysisFinalizationErrorV1::Authority(
+                "plan-bound unit artifact",
+            ));
+        }
+        artifact.validate_semantics(self.limits)?;
+
+        if item.plan_ordinal == self.final_unit_ordinal {
+            self.final_summary = Some(require_final_root_output(
+                artifact,
+                plan.primary_work_unit_count,
+                self.limits,
+            )?);
+        } else {
+            self.unit_artifact_root.push(
+                artifact.artifact_digest(self.limits)?.as_slice(),
+                B256::len_bytes(),
+            )?;
+        }
+
+        if is_fixed_reduce_root(item.position, self.topology) {
+            let output =
+                decode_fixed_reduce_output(artifact.phase_payload(self.limits)?, self.limits)?;
+            self.final_fractions = Some(output.ordered_fractions);
+        }
+        if let PlannedUnitPositionV1::TreeNode {
+            phase: UnitPhase::GratisPrefixDown,
+            level: 0,
+            index,
+        } = item.position
+        {
+            self.push_gratis_prefix(artifact, index)?;
+        }
+
+        self.next_unit_ordinal =
+            self.next_unit_ordinal
+                .checked_add(1)
+                .ok_or(ProtocolError::IntegerOverflow {
+                    what: "finalization unit cursor",
+                })?;
+        Ok(())
+    }
+
+    fn push_gratis_prefix(
+        &mut self,
+        artifact: &UnitArtifactV1,
+        index: u32,
+    ) -> Result<(), LysisFinalizationErrorV1> {
+        let GratisPrefixDownOutputV1::Leaf(prefix) =
+            decode_gratis_prefix_down_output(artifact.phase_payload(self.limits)?, self.limits)?
+        else {
+            return Err(LysisFinalizationErrorV1::Authority(
+                "GratisPrefixDown leaf payload",
+            ));
+        };
+        if prefix.segment_ordinal != index {
+            return Err(LysisFinalizationErrorV1::Authority(
+                "GratisPrefixDown segment ordinal",
+            ));
+        }
+        self.gratis_prefix_root.push(
+            &encode_gratis_prefix_record(&prefix, self.limits)?,
+            self.limits.max_bounded_bytes,
+        )?;
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        root_reduce_summary: &RootReduceSummaryV1,
+    ) -> Result<UnitArtifactRootsV1, LysisFinalizationErrorV1> {
+        if self.next_unit_ordinal != self.exact_unit_count {
+            return Err(LysisFinalizationErrorV1::Authority(
+                "complete exact plan artifacts",
+            ));
+        }
+        let final_summary = self
+            .final_summary
+            .ok_or(LysisFinalizationErrorV1::Authority(
+                "final ROOT_REDUCE artifact",
+            ))?;
+        if &final_summary != root_reduce_summary {
+            return Err(LysisFinalizationErrorV1::Authority(
+                "final ROOT_REDUCE summary input",
+            ));
+        }
+        let unit_artifact_root = self.unit_artifact_root.finish()?;
+        let gratis_prefix_root = self.gratis_prefix_root.finish()?;
+        let fractions = self
+            .final_fractions
+            .ok_or(LysisFinalizationErrorV1::Authority(
+                "final Fidelity fraction table",
+            ))?;
+        Ok(UnitArtifactRootsV1 {
+            unit_artifact_root,
+            gratis_prefix_root,
+            fidelity_fraction_root: fraction_root(&fractions, self.limits)?,
+        })
+    }
 }
 
 fn is_fixed_reduce_root(position: PlannedUnitPositionV1, topology: LysisPlanTopologyV1) -> bool {
@@ -448,75 +548,185 @@ struct StreamedResultV1 {
 }
 
 fn stream_result_chunks<C>(
-    job_id: B256,
-    plan: &PlanCommitmentV1,
+    binding: ResultBindingV1<'_>,
     final_summary: &RootReduceSummaryV1,
-    plan_hash: B256,
     chunks: C,
     limits: &SchemaLimits,
 ) -> Result<StreamedResultV1, LysisFinalizationErrorV1>
 where
     C: IntoIterator<Item = Result<FinalizationResultChunkV1, LysisFinalizationErrorV1>>,
 {
-    let mut nod_root =
-        StreamingOrderedListRoot::new(ListKind::NodActions, final_summary.nod_count)?;
-    let mut contributor_root = StreamingOrderedListRoot::new(
-        ListKind::ContributorActions,
-        final_summary.contributor_count,
-    )?;
-    let mut output_manifest_root = StreamingOrderedListRoot::new(
-        ListKind::CompleteOutputManifest,
-        plan.primary_work_unit_count,
-    )?;
-    let mut result_chunk_list_root =
-        StreamingOrderedListRoot::new(ListKind::ResultChunkHashes, plan.primary_work_unit_count)?;
-    let mut summary_frontier = SummaryFrontierV1::new();
-    let mut next_chunk = 0_u32;
-    let mut next_nod_ordinal = 0_u32;
-    let mut previous_tribute = None;
-    let mut previous_contributor = None;
-    let mut tribute_count = 0_u32;
-    let mut nod_count = 0_u32;
-    let mut contributor_count = 0_u32;
-    let mut tribute_nominal_total = U256::ZERO;
-    let mut eligible_nominal_total = U256::ZERO;
-    let mut lysis_allocation_minor = U256::ZERO;
-    let mut nod_cost_total = U256::ZERO;
-
+    let mut stream = ResultChunkStreamV1::new(binding, final_summary, limits)?;
     for item in chunks {
-        let item = item?;
-        if item.chunk_ordinal != next_chunk || next_chunk >= plan.primary_work_unit_count {
+        stream.push(item?)?;
+    }
+    stream.finish()
+}
+
+struct ResultChunkStreamV1<'a> {
+    binding: ResultBindingV1<'a>,
+    limits: &'a SchemaLimits,
+    nod_root: StreamingOrderedListRoot,
+    contributor_root: StreamingOrderedListRoot,
+    output_manifest_root: StreamingOrderedListRoot,
+    result_chunk_list_root: StreamingOrderedListRoot,
+    summary_frontier: SummaryFrontierV1,
+    next_chunk: u32,
+    next_nod_ordinal: u32,
+    previous_tribute: Option<B256>,
+    previous_contributor: Option<(Address, B256)>,
+    tribute_count: u32,
+    nod_count: u32,
+    contributor_count: u32,
+    tribute_nominal_total: U256,
+    eligible_nominal_total: U256,
+    lysis_allocation_minor: U256,
+    nod_cost_total: U256,
+}
+
+type EncodedRecords = Vec<Vec<u8>>;
+
+struct LeafRecordsV1<'a> {
+    chunk_ordinal: u32,
+    nod_records: &'a [Vec<u8>],
+    bucket_records: &'a [Vec<u8>],
+    contributor_records: &'a [Vec<u8>],
+    manifest_record: &'a [u8],
+    result_chunk_hash: B256,
+    eligible_nominal_total: U256,
+    chunk: &'a ResultChunkV1,
+}
+
+impl<'a> ResultChunkStreamV1<'a> {
+    fn new(
+        binding: ResultBindingV1<'a>,
+        final_summary: &RootReduceSummaryV1,
+        limits: &'a SchemaLimits,
+    ) -> Result<Self, LysisFinalizationErrorV1> {
+        let primary_count = binding.plan.primary_work_unit_count;
+        Ok(Self {
+            binding,
+            limits,
+            nod_root: StreamingOrderedListRoot::new(ListKind::NodActions, final_summary.nod_count)?,
+            contributor_root: StreamingOrderedListRoot::new(
+                ListKind::ContributorActions,
+                final_summary.contributor_count,
+            )?,
+            output_manifest_root: StreamingOrderedListRoot::new(
+                ListKind::CompleteOutputManifest,
+                primary_count,
+            )?,
+            result_chunk_list_root: StreamingOrderedListRoot::new(
+                ListKind::ResultChunkHashes,
+                primary_count,
+            )?,
+            summary_frontier: SummaryFrontierV1::new(),
+            next_chunk: 0,
+            next_nod_ordinal: 0,
+            previous_tribute: None,
+            previous_contributor: None,
+            tribute_count: 0,
+            nod_count: 0,
+            contributor_count: 0,
+            tribute_nominal_total: U256::ZERO,
+            eligible_nominal_total: U256::ZERO,
+            lysis_allocation_minor: U256::ZERO,
+            nod_cost_total: U256::ZERO,
+        })
+    }
+
+    fn push(&mut self, item: FinalizationResultChunkV1) -> Result<(), LysisFinalizationErrorV1> {
+        if item.chunk_ordinal != self.next_chunk
+            || self.next_chunk >= self.binding.plan.primary_work_unit_count
+        {
             return Err(LysisFinalizationErrorV1::Authority(
                 "exact result chunk order",
             ));
         }
-        let chunk = ResultChunkV1::decode_canonical(&item.canonical_chunk_bytes, limits)?;
-        if chunk.protocol_bundle_hash != plan.protocol_bundle_hash
-            || chunk.job_id != job_id
-            || chunk.attempt != plan.attempt
-            || chunk.chunk_ordinal != next_chunk
-            || chunk.first_nod_ordinal != next_nod_ordinal
-            || item.output_manifest_entry.chunk_ordinal != next_chunk
-            || item
-                .output_manifest_entry
-                .result_chunk_ref
-                .expected_ocb1_kind
-                != Some(ObjectKind::ResultChunkV1.tag())
-            || item.output_manifest_entry.result_chunk_ref.encoded_bytes
-                != u64::try_from(item.canonical_chunk_bytes.len()).map_err(|_| {
-                    ProtocolError::IntegerOverflow {
-                        what: "canonical ResultChunkV1 bytes",
-                    }
-                })?
-            || item.output_manifest_entry.result_chunk_ref.transport_digest
-                != keccak256(&item.canonical_chunk_bytes)
-            || item.output_manifest_entry.result_chunk_hash != chunk.result_chunk_hash(limits)?
+        let chunk = ResultChunkV1::decode_canonical(&item.canonical_chunk_bytes, self.limits)?;
+        self.require_chunk_descriptor(&item, &chunk)?;
+        self.require_primary_coverage(&chunk)?;
+        let (nod_records, bucket_record_bytes) = self.stream_nod_actions(&chunk)?;
+        let (contributor_records, chunk_eligible) = self.stream_contributors(&chunk)?;
+        self.eligible_nominal_total = checked_add(
+            self.eligible_nominal_total,
+            chunk_eligible,
+            "global eligible nominal total",
+        )?;
+
+        let manifest_record = item
+            .output_manifest_entry
+            .encode_canonical_record(self.limits)?;
+        self.output_manifest_root
+            .push(&manifest_record, self.limits.max_bounded_bytes)?;
+        self.result_chunk_list_root.push(
+            item.output_manifest_entry.result_chunk_hash.as_slice(),
+            B256::len_bytes(),
+        )?;
+        require_leaf_summary(
+            &item.summary,
+            self.binding,
+            &LeafRecordsV1 {
+                chunk_ordinal: self.next_chunk,
+                nod_records: &nod_records,
+                bucket_records: &bucket_record_bytes,
+                contributor_records: &contributor_records,
+                manifest_record: &manifest_record,
+                result_chunk_hash: item.output_manifest_entry.result_chunk_hash,
+                eligible_nominal_total: chunk_eligible,
+                chunk: &chunk,
+            },
+            self.limits,
+        )?;
+        let chunk_tribute_nominal_total = item.summary.tribute_nominal_total;
+        self.summary_frontier.push(item.summary)?;
+        self.advance(&chunk, chunk_tribute_nominal_total)
+    }
+
+    fn require_chunk_descriptor(
+        &self,
+        item: &FinalizationResultChunkV1,
+        chunk: &ResultChunkV1,
+    ) -> Result<(), LysisFinalizationErrorV1> {
+        let plan = self.binding.plan;
+        let entry = &item.output_manifest_entry;
+        let binding_differs = chunk.protocol_bundle_hash != plan.protocol_bundle_hash
+            || chunk.job_id != self.binding.job_id
+            || chunk.attempt != plan.attempt;
+        let order_differs = chunk.chunk_ordinal != self.next_chunk
+            || chunk.first_nod_ordinal != self.next_nod_ordinal
+            || entry.chunk_ordinal != self.next_chunk;
+        if binding_differs
+            || order_differs
+            || entry.result_chunk_ref.expected_ocb1_kind != Some(ObjectKind::ResultChunkV1.tag())
         {
             return Err(LysisFinalizationErrorV1::Authority(
                 "exact result chunk descriptor",
             ));
         }
-        let expected_start = next_chunk
+        let encoded_bytes = u64::try_from(item.canonical_chunk_bytes.len()).map_err(|_| {
+            ProtocolError::IntegerOverflow {
+                what: "canonical ResultChunkV1 bytes",
+            }
+        })?;
+        if entry.result_chunk_ref.encoded_bytes != encoded_bytes
+            || entry.result_chunk_ref.transport_digest != keccak256(&item.canonical_chunk_bytes)
+            || entry.result_chunk_hash != chunk.result_chunk_hash(self.limits)?
+        {
+            return Err(LysisFinalizationErrorV1::Authority(
+                "exact result chunk descriptor",
+            ));
+        }
+        Ok(())
+    }
+
+    fn require_primary_coverage(
+        &self,
+        chunk: &ResultChunkV1,
+    ) -> Result<(), LysisFinalizationErrorV1> {
+        let plan = self.binding.plan;
+        let expected_start = self
+            .next_chunk
             .checked_mul(plan.max_tributes_per_work_shard)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "result chunk start ordinal",
@@ -537,21 +747,30 @@ where
                 "result chunk primary shard coverage",
             ));
         }
+        Ok(())
+    }
 
+    fn stream_nod_actions(
+        &mut self,
+        chunk: &ResultChunkV1,
+    ) -> Result<(EncodedRecords, EncodedRecords), LysisFinalizationErrorV1> {
         let mut nod_records = Vec::with_capacity(chunk.ordered_nod_actions.len());
         let mut bucket_records = Vec::with_capacity(chunk.ordered_nod_actions.len());
         for action in &chunk.ordered_nod_actions {
-            if previous_tribute.is_some_and(|tribute| tribute >= action.tribute_id) {
+            if self
+                .previous_tribute
+                .is_some_and(|tribute| tribute >= action.tribute_id)
+            {
                 return Err(LysisFinalizationErrorV1::Authority(
                     "global Nod Tribute order",
                 ));
             }
-            previous_tribute = Some(action.tribute_id);
+            self.previous_tribute = Some(action.tribute_id);
             if !NodContract::is_issuable_entry(action.entry_price_minor) {
                 return Err(LysisFinalizationErrorV1::Authority("Nod entry price bound"));
             }
-            let record = action.encode_canonical_record(limits)?;
-            nod_root.push(&record, limits.max_bounded_bytes)?;
+            let record = action.encode_canonical_record(self.limits)?;
+            self.nod_root.push(&record, self.limits.max_bounded_bytes)?;
             nod_records.push(record);
             bucket_records.push(ShuffleBucketRecordV1 {
                 bucket_key: action.bucket_key(),
@@ -559,13 +778,13 @@ where
                 tribute_id: action.tribute_id,
                 nod_id: action.nod_id,
             });
-            lysis_allocation_minor = checked_add(
-                lysis_allocation_minor,
+            self.lysis_allocation_minor = checked_add(
+                self.lysis_allocation_minor,
                 action.gratis_load_minor,
                 "Lysis allocation",
             )?;
-            nod_cost_total = checked_add(
-                nod_cost_total,
+            self.nod_cost_total = checked_add(
+                self.nod_cost_total,
                 action.settlement_cost_minor,
                 "Nod cost total",
             )?;
@@ -573,21 +792,31 @@ where
         bucket_records.sort_by_key(|record| (record.bucket_key, record.raw_ordinal));
         let bucket_record_bytes = bucket_records
             .iter()
-            .map(|record| record.encode_canonical_record(limits))
+            .map(|record| record.encode_canonical_record(self.limits))
             .collect::<Result<Vec<_>, _>>()?;
+        Ok((nod_records, bucket_record_bytes))
+    }
 
+    fn stream_contributors(
+        &mut self,
+        chunk: &ResultChunkV1,
+    ) -> Result<(EncodedRecords, U256), LysisFinalizationErrorV1> {
         let mut contributor_records = Vec::with_capacity(chunk.ordered_eligible_contributors.len());
         let mut chunk_eligible = U256::ZERO;
         for action in &chunk.ordered_eligible_contributors {
             let key = (action.owner, action.source_tribute_id);
-            if previous_contributor.is_some_and(|previous| previous >= key) {
+            if self
+                .previous_contributor
+                .is_some_and(|previous| previous >= key)
+            {
                 return Err(LysisFinalizationErrorV1::Authority(
                     "global contributor order",
                 ));
             }
-            previous_contributor = Some(key);
-            let record = action.encode_canonical_record(limits)?;
-            contributor_root.push(&record, limits.max_bounded_bytes)?;
+            self.previous_contributor = Some(key);
+            let record = action.encode_canonical_record(self.limits)?;
+            self.contributor_root
+                .push(&record, self.limits.max_bounded_bytes)?;
             contributor_records.push(record);
             chunk_eligible = checked_add(
                 chunk_eligible,
@@ -595,35 +824,14 @@ where
                 "eligible nominal total",
             )?;
         }
-        eligible_nominal_total = checked_add(
-            eligible_nominal_total,
-            chunk_eligible,
-            "global eligible nominal total",
-        )?;
+        Ok((contributor_records, chunk_eligible))
+    }
 
-        let manifest_record = item.output_manifest_entry.encode_canonical_record(limits)?;
-        output_manifest_root.push(&manifest_record, limits.max_bounded_bytes)?;
-        result_chunk_list_root.push(
-            item.output_manifest_entry.result_chunk_hash.as_slice(),
-            B256::len_bytes(),
-        )?;
-        require_leaf_summary(
-            &item.summary,
-            plan,
-            plan_hash,
-            next_chunk,
-            &nod_records,
-            &bucket_record_bytes,
-            &contributor_records,
-            &manifest_record,
-            item.output_manifest_entry.result_chunk_hash,
-            chunk_eligible,
-            &chunk,
-            limits,
-        )?;
-        let chunk_tribute_nominal_total = item.summary.tribute_nominal_total;
-        summary_frontier.push(item.summary)?;
-
+    fn advance(
+        &mut self,
+        chunk: &ResultChunkV1,
+        chunk_tribute_nominal_total: U256,
+    ) -> Result<(), LysisFinalizationErrorV1> {
         let chunk_nod_count = u32::try_from(chunk.ordered_nod_actions.len()).map_err(|_| {
             ProtocolError::IntegerOverflow {
                 what: "chunk Nod count",
@@ -633,142 +841,148 @@ where
             .map_err(|_| ProtocolError::IntegerOverflow {
                 what: "chunk contributor count",
             })?;
-        tribute_count =
-            tribute_count
-                .checked_add(chunk_nod_count)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "Tribute count",
-                })?;
-        nod_count = nod_count
+        self.tribute_count = self.tribute_count.checked_add(chunk_nod_count).ok_or(
+            ProtocolError::IntegerOverflow {
+                what: "Tribute count",
+            },
+        )?;
+        self.nod_count = self
+            .nod_count
             .checked_add(chunk_nod_count)
             .ok_or(ProtocolError::IntegerOverflow { what: "Nod count" })?;
-        contributor_count = contributor_count
+        self.contributor_count = self
+            .contributor_count
             .checked_add(chunk_contributor_count)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "contributor count",
             })?;
-        tribute_nominal_total = checked_add(
-            tribute_nominal_total,
+        self.tribute_nominal_total = checked_add(
+            self.tribute_nominal_total,
             chunk_tribute_nominal_total,
             "Tribute nominal total",
         )?;
-        next_nod_ordinal = next_nod_ordinal.checked_add(chunk_nod_count).ok_or(
+        self.next_nod_ordinal = self.next_nod_ordinal.checked_add(chunk_nod_count).ok_or(
             ProtocolError::IntegerOverflow {
                 what: "next Nod ordinal",
             },
         )?;
-        next_chunk = next_chunk
+        self.next_chunk = self
+            .next_chunk
             .checked_add(1)
             .ok_or(ProtocolError::IntegerOverflow {
                 what: "next result chunk",
             })?;
+        Ok(())
     }
-    if next_chunk != plan.primary_work_unit_count {
-        return Err(LysisFinalizationErrorV1::Authority(
-            "complete result chunk catalog",
-        ));
+
+    fn finish(self) -> Result<StreamedResultV1, LysisFinalizationErrorV1> {
+        let plan = self.binding.plan;
+        if self.next_chunk != plan.primary_work_unit_count {
+            return Err(LysisFinalizationErrorV1::Authority(
+                "complete result chunk catalog",
+            ));
+        }
+        let reduced_summary = self.summary_frontier.finish(
+            plan.primary_work_unit_count,
+            SummaryBindingV1 {
+                protocol_bundle_hash: plan.protocol_bundle_hash,
+                job_id: self.binding.job_id,
+                attempt: plan.attempt,
+                plan_hash: self.binding.plan_hash,
+            },
+        )?;
+        Ok(StreamedResultV1 {
+            nod_root: self.nod_root.finish()?,
+            contributor_root: self.contributor_root.finish()?,
+            output_manifest_root: self.output_manifest_root.finish()?,
+            result_chunk_list_root: self.result_chunk_list_root.finish()?,
+            reduced_summary,
+            tribute_count: self.tribute_count,
+            nod_count: self.nod_count,
+            bucket_count: self.nod_count,
+            contributor_count: self.contributor_count,
+            tribute_nominal_total: self.tribute_nominal_total,
+            eligible_nominal_total: self.eligible_nominal_total,
+            lysis_allocation_minor: self.lysis_allocation_minor,
+            nod_cost_total: self.nod_cost_total,
+        })
     }
-    let reduced_summary = summary_frontier.finish(
-        plan.primary_work_unit_count,
-        plan.protocol_bundle_hash,
-        job_id,
-        plan.attempt,
-        plan_hash,
-    )?;
-    Ok(StreamedResultV1 {
-        nod_root: nod_root.finish()?,
-        contributor_root: contributor_root.finish()?,
-        output_manifest_root: output_manifest_root.finish()?,
-        result_chunk_list_root: result_chunk_list_root.finish()?,
-        reduced_summary,
-        tribute_count,
-        nod_count,
-        bucket_count: nod_count,
-        contributor_count,
-        tribute_nominal_total,
-        eligible_nominal_total,
-        lysis_allocation_minor,
-        nod_cost_total,
-    })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn require_leaf_summary(
     summary: &RootReduceSummaryV1,
-    plan: &PlanCommitmentV1,
-    plan_hash: B256,
-    chunk_ordinal: u32,
-    nod_records: &[Vec<u8>],
-    bucket_records: &[Vec<u8>],
-    contributor_records: &[Vec<u8>],
-    manifest_record: &[u8],
-    result_chunk_hash: B256,
-    eligible_nominal_total: U256,
-    chunk: &ResultChunkV1,
+    binding: ResultBindingV1<'_>,
+    leaf: &LeafRecordsV1<'_>,
     limits: &SchemaLimits,
 ) -> Result<(), LysisFinalizationErrorV1> {
     let expected_nod = LysisListSubtreeCarrierV1::from_primary_page(
         ListKind::NodActions,
-        chunk_ordinal,
-        nod_records,
+        leaf.chunk_ordinal,
+        leaf.nod_records,
         limits.max_bounded_bytes,
     )?;
     let expected_bucket = LysisListSubtreeCarrierV1::from_primary_page(
         ListKind::BucketRecords,
-        chunk_ordinal,
-        bucket_records,
+        leaf.chunk_ordinal,
+        leaf.bucket_records,
         limits.max_bounded_bytes,
     )?;
     let expected_contributor = LysisListSubtreeCarrierV1::from_primary_page(
         ListKind::ContributorActions,
-        chunk_ordinal,
-        contributor_records,
+        leaf.chunk_ordinal,
+        leaf.contributor_records,
         limits.max_bounded_bytes,
     )?;
     let expected_manifest = LysisListSubtreeCarrierV1::from_primary_page(
         ListKind::CompleteOutputManifest,
-        chunk_ordinal,
-        &[manifest_record],
+        leaf.chunk_ordinal,
+        &[leaf.manifest_record],
         limits.max_bounded_bytes,
     )?;
     let expected_result_hash = LysisListSubtreeCarrierV1::from_primary_page(
         ListKind::ResultChunkHashes,
-        chunk_ordinal,
-        &[result_chunk_hash.as_slice()],
+        leaf.chunk_ordinal,
+        &[leaf.result_chunk_hash.as_slice()],
         B256::len_bytes(),
     )?;
-    let lysis_allocation_minor = chunk
+    let lysis_allocation_minor = leaf
+        .chunk
         .ordered_nod_actions
         .iter()
         .try_fold(U256::ZERO, |total, action| {
             checked_add(total, action.gratis_load_minor, "leaf Nod Gratis")
         })?;
-    let nod_cost_total = chunk
+    let nod_cost_total = leaf
+        .chunk
         .ordered_nod_actions
         .iter()
         .try_fold(U256::ZERO, |total, action| {
             checked_add(total, action.settlement_cost_minor, "leaf Nod cost")
         })?;
-    if summary.protocol_bundle_hash != plan.protocol_bundle_hash
-        || summary.job_id != plan.job_id
-        || summary.attempt != plan.attempt
-        || summary.plan_hash != plan_hash
-        || summary.covered_primary_start != chunk_ordinal
-        || summary.covered_primary_count != 1
-        || summary.nod_actions != expected_nod
-        || summary.bucket_records != expected_bucket
-        || summary.contributor_actions != expected_contributor
-        || summary.output_manifest_entries != expected_manifest
-        || summary.result_chunk_hashes != expected_result_hash
-        || summary.tribute_count != u32::try_from(nod_records.len()).unwrap_or(u32::MAX)
-        || summary.nod_count != u32::try_from(nod_records.len()).unwrap_or(u32::MAX)
-        || summary.bucket_count != u32::try_from(bucket_records.len()).unwrap_or(u32::MAX)
-        || summary.contributor_count != u32::try_from(contributor_records.len()).unwrap_or(u32::MAX)
-        || summary.eligible_nominal_total != eligible_nominal_total
-        || summary.lysis_allocation_minor != lysis_allocation_minor
-        || summary.nod_cost_total != nod_cost_total
-        || summary.first_error_ordinal.is_some()
-    {
+    let nod_count = u32::try_from(leaf.nod_records.len()).unwrap_or(u32::MAX);
+    let expected = RootReduceSummaryV1 {
+        protocol_bundle_hash: binding.plan.protocol_bundle_hash,
+        job_id: binding.plan.job_id,
+        attempt: binding.plan.attempt,
+        plan_hash: binding.plan_hash,
+        covered_primary_start: leaf.chunk_ordinal,
+        covered_primary_count: 1,
+        nod_actions: expected_nod,
+        bucket_records: expected_bucket,
+        contributor_actions: expected_contributor,
+        output_manifest_entries: expected_manifest,
+        result_chunk_hashes: expected_result_hash,
+        tribute_count: nod_count,
+        nod_count,
+        bucket_count: u32::try_from(leaf.bucket_records.len()).unwrap_or(u32::MAX),
+        contributor_count: u32::try_from(leaf.contributor_records.len()).unwrap_or(u32::MAX),
+        tribute_nominal_total: summary.tribute_nominal_total,
+        eligible_nominal_total: leaf.eligible_nominal_total,
+        lysis_allocation_minor,
+        nod_cost_total,
+        first_error_ordinal: None,
+    };
+    if *summary != expected {
         return Err(LysisFinalizationErrorV1::Authority(
             "ROOT_REDUCE leaf summary from exact chunk",
         ));
@@ -855,10 +1069,7 @@ impl SummaryFrontierV1 {
     fn finish(
         mut self,
         primary_count: u32,
-        protocol_bundle_hash: B256,
-        job_id: B256,
-        attempt: u32,
-        plan_hash: B256,
+        binding: SummaryBindingV1,
     ) -> Result<RootReduceSummaryV1, LysisFinalizationErrorV1> {
         let padded_count = if primary_count == 1 {
             1
@@ -870,13 +1081,7 @@ impl SummaryFrontierV1 {
                 })?
         };
         for padded_ordinal in primary_count..padded_count {
-            self.push(canonical_empty_summary(
-                protocol_bundle_hash,
-                job_id,
-                attempt,
-                plan_hash,
-                padded_ordinal,
-            )?)?;
+            self.push(canonical_empty_summary(binding, padded_ordinal)?)?;
         }
         let root_level = usize::try_from(padded_count.trailing_zeros()).map_err(|_| {
             ProtocolError::IntegerOverflow {
@@ -898,17 +1103,14 @@ impl SummaryFrontierV1 {
 }
 
 fn canonical_empty_summary(
-    protocol_bundle_hash: B256,
-    job_id: B256,
-    attempt: u32,
-    plan_hash: B256,
+    binding: SummaryBindingV1,
     padded_ordinal: u32,
 ) -> Result<RootReduceSummaryV1, LysisFinalizationErrorV1> {
     Ok(RootReduceSummaryV1 {
-        protocol_bundle_hash,
-        job_id,
-        attempt,
-        plan_hash,
+        protocol_bundle_hash: binding.protocol_bundle_hash,
+        job_id: binding.job_id,
+        attempt: binding.attempt,
+        plan_hash: binding.plan_hash,
         covered_primary_start: padded_ordinal,
         covered_primary_count: 0,
         nod_actions: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
@@ -965,109 +1167,4 @@ fn require_global_nominal_conservation(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        canonical_empty_summary, require_global_nominal_conservation, stream_result_chunks,
-        FinalizationResultChunkV1, LysisFinalizationErrorV1,
-    };
-    use crate::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
-    use alloy_primitives::{keccak256, Address, B256, U256};
-    use outbe_compressed_entities::derive_poseidon_entity_id;
-    use outbe_ocomp_protocol::{
-        local_control::poc_schema_limits,
-        result::{NodActionV1, OutputManifestEntryV1, ResultChunkV1},
-        unit::PlanCommitmentV1,
-        CasObjectRefV1, ObjectKind,
-    };
-    use outbe_primitives::time::WorldwideDay;
-
-    #[test]
-    fn a_result_chunk_with_an_entry_beyond_the_call_price_bound_is_not_finalized() {
-        let limits = poc_schema_limits();
-        let day = WorldwideDay::new(20_260_724);
-        let owner = Address::repeat_byte(0x51);
-        let id = *derive_poseidon_entity_id(owner, day).unwrap();
-        let plan = PlanCommitmentV1 {
-            protocol_bundle_hash: B256::repeat_byte(0x01),
-            job_id: B256::repeat_byte(0x02),
-            attempt: 1,
-            input_manifest_hash: B256::repeat_byte(0x03),
-            wwd: day.value(),
-            lysis_limit_minor: U256::from(1),
-            logical_evaluation_time: 1_784_765_900,
-            tribute_count: 1,
-            max_tributes_per_work_shard: PRIMARY_WORK_SHARD_SIZE,
-            primary_work_unit_count: 1,
-            primary_work_unit_root: B256::repeat_byte(0x04),
-            planner_spec_version: 1,
-            reducer_spec_version: 1,
-        };
-        let chunk = ResultChunkV1 {
-            protocol_bundle_hash: plan.protocol_bundle_hash,
-            job_id: plan.job_id,
-            attempt: plan.attempt,
-            chunk_ordinal: 0,
-            first_nod_ordinal: 0,
-            ordered_nod_actions: vec![NodActionV1 {
-                raw_ordinal: 0,
-                tribute_id: id,
-                nod_id: id,
-                owner,
-                wwd: day.value(),
-                league_id: 1,
-                gratis_load_minor: U256::from(1),
-                entry_price_minor: U256::MAX / U256::from(100 + u32::from(u16::MAX))
-                    + U256::from(1),
-                settlement_cost_minor: U256::from(1),
-                issuance_currency: 840,
-                reference_currency: 840,
-            }],
-            ordered_eligible_contributors: Vec::new(),
-        };
-        let bytes = chunk.encode_canonical(&limits).unwrap();
-        let mut summary = canonical_empty_summary(
-            plan.protocol_bundle_hash,
-            plan.job_id,
-            plan.attempt,
-            B256::ZERO,
-            0,
-        )
-        .unwrap();
-        summary.nod_count = 1;
-        let item = FinalizationResultChunkV1 {
-            chunk_ordinal: 0,
-            summary: summary.clone(),
-            output_manifest_entry: OutputManifestEntryV1 {
-                chunk_ordinal: 0,
-                result_chunk_hash: chunk.result_chunk_hash(&limits).unwrap(),
-                result_chunk_ref: CasObjectRefV1 {
-                    transport_digest: keccak256(&bytes),
-                    encoded_bytes: u64::try_from(bytes.len()).unwrap(),
-                    expected_ocb1_kind: Some(ObjectKind::ResultChunkV1.tag()),
-                },
-            },
-            canonical_chunk_bytes: bytes,
-        };
-
-        assert!(matches!(
-            stream_result_chunks(
-                plan.job_id,
-                &plan,
-                &summary,
-                B256::ZERO,
-                [Ok(item)],
-                &limits
-            ),
-            Err(LysisFinalizationErrorV1::Authority("Nod entry price bound"))
-        ));
-    }
-
-    #[test]
-    fn finalizer_enforces_nominal_conservation_only_at_the_global_root() {
-        require_global_nominal_conservation(U256::from(2_000), U256::from(2_570))
-            .expect("globally conserved totals");
-        require_global_nominal_conservation(U256::from(2_570), U256::from(2_570))
-            .expect("all Tribute can be eligible");
-        assert!(require_global_nominal_conservation(U256::from(2_571), U256::from(2_570)).is_err());
-    }
-}
+mod tests;

@@ -26,8 +26,8 @@ pub(crate) struct PreAdmissionContext {
 pub(crate) struct PreAdmissionInputs {
     pub tribute: TributePreAdmissionProjection,
     /// Ordered commitment over the day's snapshotted `(owner, league)` pairs,
-    /// computed by the caller from the sealed owner set. Sealed into the
-    /// envelope so the OCOMP opening's owner/league set is consensus-committed.
+    /// computed by the caller from the sealed owner set. It is sealed into the
+    /// envelope so that the OCOMP opening's owner/league set is consensus-committed.
     pub fidelity_league_snapshot_root: B256,
     pub oracle: OcompOraclePreAdmissionProjection,
 }
@@ -219,11 +219,9 @@ pub struct MetadosisPreAdmissionProjection {
 }
 
 impl MetadosisContract<'_> {
-    /// Initializes the per-day OCOMP state on a fresh-devnet fork.
-    ///
-    /// The later fork handler owns the production call site. Repeating the
-    /// exact initialization is idempotent; any non-canonical partial record is
-    /// rejected.
+    /// Initialize the day's OCOMP state when READY-day processing prepares it for OCOMP.
+    /// Repeating the exact initialization is idempotent.
+    /// This method rejects any non-canonical partial record.
     pub(crate) fn initialize_ocomp_pre_admission(
         &mut self,
         wwd: WorldwideDay,

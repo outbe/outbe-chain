@@ -58,7 +58,7 @@ pub fn checked_whole_coen_to_native(whole_coen: U256) -> Option<U256> {
 }
 
 /// Reduces a native COEN amount to the protocol's six-decimal precision.
-/// Any sub-protocol-unit native remainder is deliberately discarded.
+/// The function deliberately discards any sub-protocol-unit native remainder.
 pub fn native_to_protocol_floor(amount: U256) -> U256 {
     amount / NATIVE_UNITS_PER_PROTOCOL_UNIT
 }

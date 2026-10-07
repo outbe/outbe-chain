@@ -51,7 +51,7 @@ pub trait StorageReader: Send + Sync {
         key: &Key,
     ) -> Result<Option<StoredValue>, StorageError>;
 
-    /// Logical routing introspection for overlays; raw adapters may have no scope.
+    /// Logical routing introspection for overlays. Raw adapters may have no scope.
     fn storage_scope(
         &self,
         namespace: &Namespace,
@@ -110,7 +110,11 @@ pub trait StorageWriter: Send + Sync {
         ]))
     }
 
-    /// Transactional collection adapters can remove whole keyspaces without row scans.
+    /// Clears the given namespaces and applies the batch atomically. The default
+    /// implementation rejects a non-empty namespace list. The in-memory adapter
+    /// deletes a whole keyspace without a row walk. The MongoDB adapter deletes
+    /// every document in the namespace (`delete_many`), so its cost grows with
+    /// the row count.
     fn apply_atomic_clearing(
         &self,
         batch: &AtomicWriteBatch,

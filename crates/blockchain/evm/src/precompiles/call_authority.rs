@@ -1,5 +1,5 @@
 //! Binds EVM command identity to existing domain mutation capabilities.
-//! Economic transitions remain owned by Cycle and Metadosis.
+//! Cycle and Metadosis continue to own economic transitions.
 use alloy_primitives::{Address, U256};
 use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_primitives::{
@@ -14,7 +14,7 @@ use outbe_primitives::{
 };
 
 /// Admission for the public result-vote command. The same decision must drive
-/// dispatch and capabilities; selector-only routing could open an unauthorized
+/// dispatch and capabilities. Selector-only routing could open an unauthorized
 /// mutation frame before the command gets a chance to reject its call mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ResultVoteCall {
@@ -121,8 +121,8 @@ pub(super) fn metadosis_mutation_entitlements(
             )
         }
         // Exact command identities cover genesis, one contiguous daily
-        // allocation when due, and the single hourly Metadosis pass. The cursor
-        // is read from Cycle storage by the provider; it is never accepted from
+        // allocation when due, and the single hourly Metadosis pass. The provider
+        // reads the cursor from Cycle storage. The cursor is never accepted from
         // calldata. Multi-day gaps grant no missed-day economic authority.
         crate::system_tx::SystemTxInputV2::CycleTick => cycle_tick_entitlements(&call),
         crate::system_tx::SystemTxInputV2::OcompLifecycleBegin if ocomp_lifecycle_active => {

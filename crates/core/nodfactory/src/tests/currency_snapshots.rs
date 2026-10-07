@@ -1,40 +1,19 @@
 use super::*;
 
 #[test]
-fn the_issuance_currency_settles_through_the_coen_pivot() {
-    let mut world = World::new();
-    let input = dual_currency_params(Address::repeat_byte(0xa1));
-    let nod_id = world.issue(&input);
-    world.qualify(nod_id);
-    world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
-    let reference_cost = cost_of(&input);
-    let issuance_cost = reference_cost / 2;
-    let (proof, _nullifier) = world.fund_note(EUR_ASSET, nod_id, issuance_cost, issuance_cost);
-
-    world.settle(nod_id, input.owner, &proof).unwrap();
-
-    let paid = paid_event(&world);
-    assert_eq!(paid.asset, EUR_ASSET);
-    assert_eq!(paid.paymentMinor, U256::from(issuance_cost));
-    assert!(is_settled(&mut world, nod_id));
-}
-
-#[test]
-fn quote_agrees_with_what_settling_charges_on_both_rails() {
+fn quote_prices_both_rails() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa2));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    world.register_settlement_asset(NOTE_ASSET, 840);
+    world.register_settlement_asset(PAYMENT_ASSET, 840);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
     world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
 
     let (ref_iso, ref_amount, iss_iso, iss_amount) = world.enter(|storage, scope, parent| {
         let (ref_iso, ref_amount, _) =
-            api::quote_settlement(&storage, scope, parent, nod_id, NOTE_ASSET).unwrap();
+            api::quote_settlement(&storage, scope, parent, nod_id, PAYMENT_ASSET).unwrap();
         let (iss_iso, iss_amount, _) =
             api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET).unwrap();
         (ref_iso, ref_amount, iss_iso, iss_amount)
@@ -43,11 +22,6 @@ fn quote_agrees_with_what_settling_charges_on_both_rails() {
     assert_eq!(iss_iso, 978);
     assert_eq!(ref_amount, U256::from(cost_of(&input)));
     assert_eq!(iss_amount, ref_amount / U256::from(2u64));
-
-    let spend = u128::try_from(iss_amount).unwrap();
-    let (proof, _) = world.fund_note(EUR_ASSET, nod_id, spend, spend);
-    world.settle(nod_id, input.owner, &proof).unwrap();
-    assert_eq!(paid_event(&world).paymentMinor, iss_amount);
 }
 
 #[test]
@@ -83,7 +57,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let input = dual_currency_params(Address::repeat_byte(0xa9));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    world.register_settlement_asset(NOTE_ASSET, 840);
+    world.register_settlement_asset(PAYMENT_ASSET, 840);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
     world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
@@ -116,47 +90,8 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     );
     assert!(!is_settled(&mut world, nod_id));
 
-    let reference = settle_erc20(&mut world, nod_id, input.owner, NOTE_ASSET, quoted);
+    let reference = settle_erc20(&mut world, nod_id, input.owner, PAYMENT_ASSET, quoted);
     assert_eq!(reference.unwrap_err().to_string(), mismatch);
-}
-
-#[test]
-fn a_paynote_bound_to_an_earlier_snapshot_cannot_settle_after_rollover() {
-    let mut world = World::new();
-    let input = dual_currency_params(Address::repeat_byte(0xac));
-    let nod_id = world.issue(&input);
-    world.qualify(nod_id);
-    world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
-    let quote = |world: &mut World| {
-        world
-            .enter(|storage, scope, parent| {
-                api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
-            })
-            .unwrap()
-    };
-    let (_, amount, quoted) = quote(&mut world);
-    let snapshot = outbe_oracle::api::VwapSnapshotId::from_u256(quoted).unwrap();
-    let (proof, nullifier) = world.fund_bound(EUR_ASSET, nod_id, quoted, amount, amount);
-
-    world.set_timestamp(snapshot.cutoff() + 3_600);
-    let (_, next_amount, next) = quote(&mut world);
-    assert_eq!(next_amount, amount, "the next window holds the same price");
-    assert_ne!(next, quoted);
-    let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        PrecompileError::from(NodFactoryError::PayNoteContextMismatch {
-            expected: nod_context(nod_id, next),
-            actual: nod_context(nod_id, quoted),
-        })
-        .to_string()
-    );
-    assert!(
-        !world.enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, nullifier).unwrap())
-    );
-    assert!(!is_settled(&mut world, nod_id));
 }
 
 #[test]
@@ -288,10 +223,12 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                EUR_ASSET,
-                quoted.2,
+                api::SettleNodRequest {
+                    caller: input.owner,
+                    nod_id,
+                    asset: EUR_ASSET,
+                    snapshot_id: quoted.2,
+                },
             )
         })
         .unwrap_err();
@@ -308,7 +245,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
     let input = params(Address::repeat_byte(0xa4));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    world.register_reference_currency_asset(NOTE_ASSET);
+    world.register_reference_currency_asset(PAYMENT_ASSET);
     world.provider.stub_sub_call_at_selector(
         outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall::SELECTOR,
@@ -316,38 +253,27 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
             &U256::ZERO,
         )),
     );
-    let cost = cost_of(&input);
-    let (proof, _) = world.fund_bound(
-        NOTE_ASSET,
-        nod_id,
-        U256::ZERO,
-        U256::from(cost),
-        U256::from(cost),
-    );
-
-    let paynote_error = world.settle(nod_id, input.owner, &proof).unwrap_err();
-    assert_eq!(
-        paynote_error.to_string(),
-        PrecompileError::from(NodFactoryError::SettlementAssetNotRegistered { asset: NOTE_ASSET })
-            .to_string()
-    );
     let erc20_error = world
         .enter(|storage, scope, parent| {
             api::settle_nod(
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                NOTE_ASSET,
-                U256::ZERO,
+                api::SettleNodRequest {
+                    caller: input.owner,
+                    nod_id,
+                    asset: PAYMENT_ASSET,
+                    snapshot_id: U256::ZERO,
+                },
             )
         })
         .unwrap_err();
     assert_eq!(
         erc20_error.to_string(),
-        PrecompileError::from(NodFactoryError::SettlementAssetNotRegistered { asset: NOTE_ASSET })
-            .to_string()
+        PrecompileError::from(NodFactoryError::SettlementAssetNotRegistered {
+            asset: PAYMENT_ASSET
+        })
+        .to_string()
     );
     assert!(!is_settled(&mut world, nod_id));
 }
@@ -362,24 +288,13 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
     world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
     // The euro trades live, but the window it converts at holds no euro price.
     world.publish_coen_spot(978, U256::from(SIX_DECIMALS));
-    let spend = cost_of(&input) / 2;
-    let (proof, nullifier) = world.fund_bound(
-        EUR_ASSET,
-        nod_id,
-        U256::ZERO,
-        U256::from(spend),
-        U256::from(spend),
-    );
 
-    let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
+    let error = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, U256::ZERO).unwrap_err();
     assert_eq!(
         error.to_string(),
         PrecompileError::from(NodFactoryError::OracleUnavailable).to_string()
     );
     assert!(!is_settled(&mut world, nod_id));
-    assert!(
-        !world.enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, nullifier).unwrap())
-    );
 
     world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
     let live = world.enter(|storage, scope, parent| {
@@ -387,15 +302,12 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
             .unwrap()
             .2
     });
-    let bound = paynote_support::note_and_spend_proof(
-        CHAIN_ID,
-        EUR_ASSET,
-        nod_context(nod_id, live),
-        U256::from(spend),
-        U256::from(spend),
+    // Priced now, the payment clears conversion and stops at the balance stub.
+    let error = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, live).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::SettlementAmountMismatch).to_string()
     );
-    world.settle(nod_id, input.owner, &bound.proof).unwrap();
-    assert!(is_settled(&mut world, nod_id));
 }
 
 #[test]
@@ -406,16 +318,8 @@ fn issuance_rail_rejects_a_missing_cross_rate() {
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    let spend = cost_of(&input) / 2;
-    let (proof, _) = world.fund_bound(
-        EUR_ASSET,
-        nod_id,
-        U256::ZERO,
-        U256::from(spend),
-        U256::from(spend),
-    );
 
-    let error = world.settle(nod_id, input.owner, &proof).unwrap_err();
+    let error = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, U256::ZERO).unwrap_err();
     assert!(
         error.to_string().contains("oracle nominal unavailable"),
         "unexpected error: {error}"
@@ -436,8 +340,7 @@ fn quote_settlement_dispatch() {
         .enter(|storage, scope, parent| {
             crate::precompile::dispatch(
                 storage,
-                scope,
-                parent,
+                ExecutionReaders { scope, parent },
                 &INodFactory::quoteSettlementCall {
                     nodId: nod_id.to_u256(),
                     asset: EUR_ASSET,

@@ -2,11 +2,12 @@
 //!
 //! [`VrfMaterialProvider`] owns the per-version DKG material (polynomial +
 //! optional local share) and every threshold-crypto operation over it: seed
-//! signing, proof recovery, and partial/proof verification. State is fully
-//! encapsulated behind the provider - the surrounding `HybridScheme` holds a
-//! provider and calls its methods, never reaching into the version map. Lifted
-//! out of `hybrid.rs` so the material lifecycle reads and tests as one unit;
-//! the dependency is one-way (`HybridScheme` -> provider).
+//! signing, proof recovery, and partial/proof verification. The provider fully
+//! encapsulates the state. The surrounding `HybridScheme` holds a provider and
+//! calls its methods, and never reaches into the version map. This module was
+//! extracted from `hybrid.rs` so that the material lifecycle reads and tests as
+//! one unit.
+//! The dependency is one-way (`HybridScheme` -> provider).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -98,8 +99,9 @@ impl<V: Variant> VrfMaterialProvider<V> {
         })
     }
 
-    /// Partial public key for `index` in the active version's polynomial, or
-    /// `None` if there is no active material or the index is out of range.
+    /// Partial public key for `index` in the polynomial of material `version`,
+    /// or `None` if there is no material for `version` or the index is out of
+    /// range.
     /// Lets callers validate a local share without exposing the state map.
     pub(crate) fn partial_public(&self, version: u64, index: Participant) -> Option<V::Public> {
         self.with_state(|state| {

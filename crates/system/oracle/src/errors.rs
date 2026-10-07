@@ -157,7 +157,7 @@ impl From<OracleError> for PrecompileError {
         use OracleError::*;
         match err {
             // A monotonic counter that cannot advance means the stored oracle
-            // state is no longer self-consistent; a revert would let the caller
+            // state is no longer self-consistent. A revert would let the caller
             // keep reading it.
             SnapshotWriteIndexOverflow | ScurveWriteIndexOverflow => {
                 PrecompileError::BodyReadCorruption(err.to_string())
@@ -234,8 +234,8 @@ pub enum OracleOcompError {
     #[error("Oracle OCOMP profile contains partial pre-fork state")]
     PartialPreForkState,
     /// Read-path sighting of the same broken invariant as
-    /// [`Self::ProfileReadyWithZeroVersion`]; kept apart because a read is
-    /// recoverable state corruption, not a failed fork activation.
+    /// [`Self::ProfileReadyWithZeroVersion`]. It is a separate variant because a
+    /// read is recoverable state corruption, not a failed fork activation.
     #[error("Oracle OCOMP profile is ready with zero state version")]
     StateVersionZero,
     #[error("Oracle OCOMP state version overflow")]
@@ -289,7 +289,7 @@ impl From<OracleOcompError> for PrecompileError {
             // Stored OCOMP state or an opening does not match what the protocol
             // requires. The opening variants are produced for the off-chain
             // `outbe-ocomp` worker and do not reach the EVM boundary in
-            // practice, but they classify the same way: the body being read is
+            // practice. They still classify the same way: the body being read is
             // not the body the plan describes.
             StateVersionZero
             | StateVersionOverflow
@@ -372,7 +372,7 @@ mod tests {
         }
     }
 
-    /// The messages are user-visible revert reasons; a reword is an ABI change.
+    /// The messages are user-visible revert reasons. A reword is an ABI change.
     #[test]
     fn messages_match_the_strings_callers_see() {
         assert_eq!(

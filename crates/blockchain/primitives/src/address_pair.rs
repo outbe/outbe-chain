@@ -28,8 +28,9 @@ impl AddressPair {
 
     /// The `COEN/<iso>` pair, e.g. `new_coen_to(840)` for COEN/USD.
     ///
-    /// COEN base, ISO quote - the orientation these pairs are registered in.
-    /// COEN is also the zero address, so this is the canonical key form too.
+    /// COEN is the base and the ISO currency is the quote. These pairs are
+    /// registered in this orientation. COEN is also the zero address, so this
+    /// is the canonical key form too.
     pub fn new_coen_to(iso_code: u16) -> Self {
         AddressPair::from_assets(AssetType::Native, AssetType::IsoCurrency(iso_code))
     }
@@ -76,15 +77,16 @@ impl AddressPair {
 ///
 /// [`Storable`]: crate::storage::types::Storable
 impl StorageKey for AddressPair {
-    /// Sorted, so `quoted(a, b)` and `quoted(b, a)` address the same slot.
+    /// Sorted, so `from_addresses(a, b)` and `from_addresses(b, a)` address the same slot.
     fn key_bytes(&self) -> Vec<u8> {
         self.to_canonical().to_vec()
     }
 
-    /// Solidity left-pads a mapping key only when it is narrower than a word;
-    /// a wider key is concatenated with the base slot as-is. The provided
-    /// implementation computes `32 - key.len()`, which a 40-byte key underflows,
-    /// so the concatenation is spelled out here against a fixed-size buffer.
+    /// Solidity left-pads a mapping key only when it is narrower than a word.
+    /// Solidity concatenates a wider key with the base slot as-is. The provided
+    /// implementation computes `32 - key.len()`, and a 40-byte key underflows
+    /// it. So this override writes out the concatenation against a fixed-size
+    /// buffer.
     fn mapping_slot(&self, base_slot: U256) -> U256 {
         let mut buf = [0u8; 72];
         buf[..40].copy_from_slice(self.to_canonical().as_slice());

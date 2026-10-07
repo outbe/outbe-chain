@@ -98,7 +98,7 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<
         &[
             (
                 "REMOTE_CHAIN_IDS",
-                // The hub peers with the chains that are genuinely elsewhere; the
+                // The hub peers with the chains that are genuinely elsewhere. The
                 // local chain among the targets is the loopback route, not a peer.
                 targets
                     .iter()
@@ -120,8 +120,8 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<
     let bridge = address_from(&hub, "ERC7786Bridge:")?;
 
     // Proceeds arrive as WCOEN and are unwrapped to native. The repository's own
-    // WETH-style stub pays from its balance, so nothing new is written here; the
-    // deployer stands in for the token bridge, which is only an authorised caller.
+    // WETH-style stub pays from its balance, so nothing new is written here. The
+    // deployer acts as the token bridge, which is only an authorised caller.
     let wcoen = address_from(
         &forge::run(
             &intex,
@@ -142,8 +142,8 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<
             ("BRIDGE_ADDRESS", format!("{bridge:?}")),
             (
                 "TARGET_CHAIN_IDS",
-                // The script sets each target's peer before registering it, and the
-                // peer sits at the same CREATE3 address everywhere - so naming the
+                // The script sets each target's peer before it registers the target.
+                // The peer sits at the same CREATE3 address everywhere. So naming the
                 // chains here is all a second target needs.
                 targets
                     .iter()
@@ -170,7 +170,7 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<
             ("SALT_VERSION", SALT_VERSION.to_owned()),
             ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
             // Names the escrow's proceeds recipient. The target script spells this
-            // one without the OUTBE_ prefix its origin sibling uses; without it the
+            // one without the OUTBE_ prefix its origin sibling uses. Without it, the
             // whole proceeds route is skipped and settlement reverts unset.
             ("WCOEN_BRIDGE", DEPLOYER_ADDRESS.to_owned()),
         ],
@@ -273,11 +273,12 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         chain_id,
     )?;
 
-    // Settlement burns Issued and mints Settled; the Promis burn path needs its own
+    // Settlement burns Issued and mints Settled. The Promis burn path needs its own
     // role. Production grants both through these tasks.
     // The lifecycle scenario opens a day itself instead of running an auction, and
     // freezing the day's target set is DESIS_ROLE work. Granting the deploy account
-    // the same roles the begin-block caller holds lets it stand in for that one call.
+    // the same roles the begin-block caller holds lets it act as that caller for
+    // that one call.
     hardhat::task(
         intex,
         "outbe-system-grant-roles",

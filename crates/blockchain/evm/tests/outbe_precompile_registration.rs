@@ -11,7 +11,7 @@ use revm::{
     database_interface::EmptyDB, handler::PrecompileProvider, primitives::hardfork::SpecId,
 };
 
-fn expected_exact_addresses() -> [Address; 41] {
+fn expected_exact_addresses() -> [Address; 40] {
     [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
@@ -25,7 +25,6 @@ fn expected_exact_addresses() -> [Address; 41] {
         INTEX_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         DESIS_ADDRESS,
-        PAYNOTE_ADDRESS,
         VAULT_ROUTER_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
@@ -142,7 +141,7 @@ fn unregistered_address_returns_none() {
     assert!(precompiles.get(&Address::repeat_byte(0xfe)).is_none());
 }
 
-/// Every sponsored target must remain an exact Outbe route; otherwise a free
+/// Every sponsored target must remain an exact Outbe route. Otherwise a free
 /// transaction could invoke arbitrary EVM code.
 #[test]
 fn sponsored_whitelist_is_subset_of_exact_routes() {

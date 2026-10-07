@@ -4,26 +4,10 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;
-use crate::schema::GemTypes;
+use crate::schema::GemIssueParams;
 
-pub fn issue_gem(
-    storage: &StorageHandle<'_>,
-    owner: Address,
-    gem_type: GemTypes,
-    promis_load: U256,
-    issuance_currency: u16,
-    reference_currency: u16,
-    entry_price: U256,
-) -> Result<U256> {
-    runtime::issue_gem(
-        storage,
-        owner,
-        gem_type,
-        promis_load,
-        issuance_currency,
-        reference_currency,
-        entry_price,
-    )
+pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<U256> {
+    runtime::issue_gem(storage, params)
 }
 
 pub fn issue_gem_position(
@@ -53,15 +37,6 @@ pub fn settle_gem(
     snapshot_id: U256,
 ) -> Result<()> {
     runtime::settle_gem(storage, caller, gem_id, asset, snapshot_id)
-}
-
-pub fn settle_gem_with_paynote(
-    storage: &StorageHandle<'_>,
-    caller: Address,
-    gem_id: U256,
-    paynote_proof: &[u8],
-) -> Result<()> {
-    runtime::settle_gem_with_paynote(storage, caller, gem_id, paynote_proof)
 }
 
 pub fn mine_promis(

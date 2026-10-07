@@ -43,7 +43,7 @@ impl FinalizedTarget {
 ///
 /// Projection holds the shared side from pin selection through the durable
 /// offchain storage commit. The retention worker briefly takes the exclusive side only
-/// while it durably claims a lease for collection; physical deletion happens
+/// while it durably claims a lease for collection. Physical deletion happens
 /// after the exclusive guard is released.
 #[derive(Default)]
 pub struct ProjectionRetentionFence {
@@ -68,9 +68,9 @@ impl ProjectionRetentionFence {
 ///
 /// The sink owns the logical overlay and the single-writer lease inherited from
 /// [`ReadyOffchainDataProjection`]. [`Self::project_frame`] does not return a new checkpoint until
-/// the exact atomic batch has committed through the durable writer. Frames below the durable
-/// checkpoint are accepted as restart replay; a replay at the checkpoint height must have the
-/// exact durable hash.
+/// the exact atomic batch has committed through the durable writer. The sink accepts frames below
+/// the durable checkpoint as restart replay. A replay at the checkpoint height must have the exact
+/// durable hash.
 pub struct FinalizedProjectionSink {
     runtime: ProjectionRuntime,
     durable_checkpoint: Option<ProjectionCheckpoint>,
@@ -191,7 +191,7 @@ impl FinalizedProjectionSink {
     /// Reth can temporarily expose no finalized marker, or an older marker, while restoring its
     /// forkchoice state after restart. That state is recoverable only when the durable checkpoint
     /// still has the exact canonical hash validated at startup. Readiness remains closed until the
-    /// provider reaches the floor again; a same-height identity conflict remains fatal.
+    /// provider reaches the floor again. A same-height identity conflict remains fatal.
     pub fn reconcile_finalized_target(
         &mut self,
         target: Option<ProjectionCheckpoint>,

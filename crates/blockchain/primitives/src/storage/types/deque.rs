@@ -9,7 +9,7 @@ use super::Storable;
 ///
 /// Supports amortized O(1) `push`/`pop` at both ends and O(1) indexed access,
 /// with O(N) enumeration. Indices are `u128` and wrap on overflow (matching the
-/// OZ reference); the queue is empty iff `begin == end`.
+/// OZ reference). The queue is empty iff `begin == end`.
 ///
 /// Storage layout:
 /// - Base slot:      `begin` index (`u128`)
@@ -32,13 +32,13 @@ impl<'storage, T: Storable> StorageDeque<'storage, T> {
         }
     }
 
-    /// The schema slot this queue is anchored at (`begin`; `end` is `base_slot + 1`).
+    /// The schema slot that anchors this queue (`begin`). `end` is at `base_slot + 1`.
     pub fn base_slot(&self) -> U256 {
         self.base_slot
     }
 
-    /// Number of elements currently queued. Bounded by usage well below
-    /// `u64::MAX`; saturates rather than panicking in the impossible overflow.
+    /// Number of elements currently queued. Usage keeps it well below
+    /// `u64::MAX`. In the impossible overflow it saturates rather than panics.
     pub fn len(&self) -> Result<u64> {
         let span = self.read_end()?.wrapping_sub(self.read_begin()?);
         Ok(u64::try_from(span).unwrap_or(u64::MAX))
@@ -137,7 +137,7 @@ impl<'storage, T: Storable> StorageDeque<'storage, T> {
         Ok(result)
     }
 
-    /// Empties the queue, zeroing the vacated data slots.
+    /// Empties the queue and zeroes the vacated data slots.
     pub fn clear(&self) -> Result<()> {
         let begin = self.read_begin()?;
         let end = self.read_end()?;

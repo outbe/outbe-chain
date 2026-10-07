@@ -1,9 +1,8 @@
 //! Real offline validate CLI coverage using stopped native files and conventional placement.
 //!
-//! The shared task01 fixture
-//! intentionally contains incomplete EVM progress and opaque unfinished OCOMP
-//! bytes. Only prepare_evm_authority below establishes a valid current-E fixture;
-//! these tests do not claim CE/body/OCOMP all-check acceptance or node startup.
+//! The shared task01 fixture intentionally contains incomplete EVM progress and opaque
+//! unfinished OCOMP bytes. Only prepare_evm_authority below establishes a valid current-E
+//! fixture. These tests do not claim CE/body/OCOMP all-check acceptance or node startup.
 
 use std::{
     fs,
@@ -78,8 +77,8 @@ fn create_archive(fixture: &StoppedFixture, archive: &Path) {
 }
 
 // Match the existing snapshot/tests/evm.rs current-state fixture. This setup is
-// local to the integration test: no historical replay, fake validator, or runtime
-// behavior is introduced. State is nonempty and authoritative v2 tables are used.
+// local to the integration test. It introduces no historical replay, fake validator, or
+// runtime behavior. State is nonempty, and the setup uses authoritative v2 tables.
 fn prepare_evm_authority(fixture: &mut StoppedFixture, corrupt_after_binding: bool) -> B256 {
     let address = Address::repeat_byte(0x11);
     let slot = B256::repeat_byte(0x22);
@@ -123,8 +122,8 @@ fn prepare_evm_authority(fixture: &mut StoppedFixture, corrupt_after_binding: bo
     }
     tx.delete::<tables::Metadata>("partial_state_trie_unwind".into(), None)
         .unwrap();
-    // The archive below will be freshly generated and signed AFTER corruption:
-    // file equality and valid provenance must not override this stale state root.
+    // The test later generates and signs a fresh archive AFTER this corruption.
+    // File equality and valid provenance must not override this stale state root.
     if corrupt_after_binding {
         tx.put::<tables::HashedAccounts>(
             keccak256(address),
@@ -361,7 +360,7 @@ fn signed_transfer_and_conventional_placement_do_not_mask_semantic_state_corrupt
         let recipient_key = placed.root(NativeRoot::Chain).join("keys/recipient.hex");
         fs::create_dir_all(recipient_key.parent().unwrap()).unwrap();
         fs::write(&recipient_key, b"independent recipient authority").unwrap();
-        // Opaque task01 OCOMP input remains copied; no claim that OCOMP is valid.
+        // Opaque task01 OCOMP input remains copied. This makes no claim that OCOMP is valid.
         assert!(placed
             .root(NativeRoot::Ocomp)
             .join(&fixture.pending_result)

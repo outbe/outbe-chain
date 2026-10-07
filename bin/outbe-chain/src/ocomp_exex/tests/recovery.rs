@@ -396,7 +396,7 @@ fn sticky_fatal_evidence_survives_restart_and_is_write_once() {
         .contains("local_result_digest"));
 }
 
-// Native component restart tests; these do not claim a full process launch.
+// Native component restart tests. These tests do not claim a full process launch.
 #[cfg(feature = "snapshot-integration")]
 pub(super) mod copied_native;
 

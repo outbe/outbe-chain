@@ -38,7 +38,7 @@ const GEM_LOAD_MINOR: u128 = 100_003;
 const REFERENCE_BYTE: u8 = b'U';
 /// `GemTypes::Merchant`.
 const MERCHANT_GEM_TYPE: u8 = 5;
-/// `getGemStatus` states: Issued, Qualified, Called, Settled, Forfeited; Qualified and
+/// `getGemStatus` states: Issued, Qualified, Called, Settled, Forfeited. Qualified and
 /// Forfeited are derived on read.
 const ISSUED: u8 = 0;
 const QUALIFIED: u8 = 1;
@@ -516,7 +516,7 @@ fn position_returns_capacity(world: &mut World) {
     let url = world_url(world);
     let position_id = world.state.gem_position.expect("a position was parked");
 
-    // A retired position keeps its record and drops its capacity to zero; only
+    // A retired position keeps its record and drops its capacity to zero. Only
     // the sweep's live queue forgets it.
     poll_until(
         Duration::from_secs(POSITION_SWEEP_TIMEOUT_SECS),

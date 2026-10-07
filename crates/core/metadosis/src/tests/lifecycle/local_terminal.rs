@@ -624,8 +624,8 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
-        // A red day is recorded as a brief with no limit; a day with no tributes issues nothing,
-        // so its whole limit goes back to the warehouse.
+        // A red day is recorded as a brief with no limit. A day with no tributes issues nothing,
+        // so its whole limit returns to the warehouse.
         let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(

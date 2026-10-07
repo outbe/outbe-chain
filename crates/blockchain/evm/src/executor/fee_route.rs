@@ -63,8 +63,8 @@ where
         self.execute_paid_transaction(tx_env, recovered, f)
     }
 
-    /// Policy rejections are included with fixed gas and a failure log, up to
-    /// the shared per-block cap. Account for the cap before appending a receipt.
+    /// The executor includes policy rejections with fixed gas and a failure log,
+    /// up to the shared per-block cap. Account for the cap before appending a receipt.
     fn include_zero_fee_soft_failure(
         &mut self,
         tx: &TransactionSigned,

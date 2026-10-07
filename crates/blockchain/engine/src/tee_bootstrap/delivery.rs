@@ -10,9 +10,9 @@ pub(super) struct PendingDelivery {
     retry_every_ticks: u32,
 }
 
-/// Per-message delivery state. It is intentionally process-local: the enclosing
-/// startup ceremony has one existing deadline and a failed startup is retried by
-/// restarting the node. P2P sender identities authenticate receipts.
+/// Per-message delivery state. It is intentionally process-local. The enclosing
+/// startup ceremony has one existing deadline. A node restart retries a failed
+/// startup. P2P sender identities authenticate receipts.
 #[derive(Debug)]
 pub(super) struct DeliveryTracker {
     scope: B256,

@@ -15,7 +15,8 @@ import {ISolverEscrow} from "./interfaces/ISolverEscrow.sol";
 
 /// @title SolverEscrow
 /// @notice Deposit, withdraw, lock, and slash solver collateral managed via The Compact.
-/// @dev Solver holds ERC6909 tokens directly while unlocked; the escrow custodies them while locked.
+/// @dev Solver holds ERC6909 tokens directly while unlocked. The escrow custodies them while
+///      locked.
 ///      Escrow acts as an ERC6909 operator (solver must call COMPACT.setOperator(escrow, true) once).
 ///      The SolverAllocator.attest() allows transfers where operator == arbiter (escrow).
 ///
@@ -119,7 +120,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
 
     // ============ Admin ============
 
-    /// @notice Set the authorized caller (Router). Can only be called once by owner.
+    /// @notice Set the authorized caller (Router). Only the owner can call this, and only once.
     /// @param _caller The Router contract address.
     function setAuthorizedCaller(address _caller) external onlyOwner {
         if (AUTHORIZED_CALLER != address(0)) revert AuthorizedCallerAlreadySet();
@@ -140,17 +141,17 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @notice Deposit tokens as solver collateral.
     /// @dev Solver must have called COMPACT.setOperator(address(this), true) beforehand.
     /// @param token  ERC20 token address, or address(0) for native ETH
-    /// @param amount Amount to deposit (ERC20 only; ignored for native -- use msg.value)
+    /// @param amount Amount to deposit (ERC20 only. Ignored for native: use msg.value)
     function deposit(address token, uint256 amount) external payable {
         _deposit(msg.sender, token, amount);
     }
 
     /// @notice Deposit tokens as collateral credited to another solver.
-    /// @dev Funds come from msg.sender, but the collateral belongs to `solver` and cannot be
-    ///      reclaimed by the payer. `solver` must have called COMPACT.setOperator(address(this), true).
+    /// @dev Funds come from msg.sender, but the collateral belongs to `solver`. The payer cannot
+    ///      reclaim it. `solver` must have called COMPACT.setOperator(address(this), true).
     /// @param solver Address credited with the collateral
     /// @param token  ERC20 token address, or address(0) for native ETH
-    /// @param amount Amount to deposit (ERC20 only; ignored for native -- use msg.value)
+    /// @param amount Amount to deposit (ERC20 only. Ignored for native: use msg.value)
     function depositFor(address solver, address token, uint256 amount) external payable {
         if (solver == address(0)) revert ZeroAddress();
         _deposit(solver, token, amount);
@@ -229,8 +230,8 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     }
 
     /// @inheritdoc ISolverEscrow
-    /// @dev Accounting only: the escrow already holds the collateral, so it is reclassified into
-    ///      slashedPool. Performs no external call.
+    /// @dev Accounting only: the escrow already holds the collateral, so this function reclassifies
+    ///      it into slashedPool. It performs no external call.
     function slashCollateral(bytes32 orderId) external onlyAuthorizedCaller {
         Lock memory lock = _consumeLock(orderId);
 
@@ -241,7 +242,8 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
 
     /// @inheritdoc ISolverEscrow
     /// @dev Distributes REWARD_BPS (1.5%) of orderAmountIn from slashed pool as underlying tokens.
-    ///      Returns 0 if the reward rounds to zero or the slashed balance is insufficient (all-or-nothing).
+    ///      Returns 0 if the reward rounds to zero or the slashed balance is insufficient
+    ///      (all-or-nothing).
     function distributeReward(address token, uint256 orderAmountIn, address receiver)
         external
         onlyAuthorizedCaller
@@ -249,11 +251,11 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     {
         reward = (orderAmountIn * REWARD_BPS) / BPS_DENOMINATOR;
         // A dust order rounds the reward to zero, and The Compact rejects a zero-amount
-        // allocatedTransfer -- that would revert the whole settle instead of skipping the reward.
+        // allocatedTransfer. That would revert the whole settle instead of skipping the reward.
         if (reward == 0) return 0;
         uint256 id = _lockId(token);
 
-        // Only slashed collateral is payable -- the escrow's balance also holds live locks.
+        // Only slashed collateral is payable. The escrow's balance also holds live locks.
         if (slashedPool[id] < reward) return 0;
         slashedPool[id] -= reward;
 

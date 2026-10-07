@@ -23,7 +23,7 @@ use super::{
 /// Builds the exact Lysis openings exclusively from standard public
 /// `eth_getProof` data at the authenticated request block.
 ///
-/// Both slot plans are derived directly from the subjects. The legacy
+/// The function derives both slot plans directly from the subjects. The legacy
 /// `oracle` wire field carries the Nod entry-price snapshot proof.
 pub fn build_public_lysis_openings<S>(
     source: &S,
@@ -146,9 +146,10 @@ where
 
 /// Verifies the complete historical Fidelity/Oracle input returned by the node.
 ///
-/// The first proof pass authenticates every supplied raw value against the
-/// finalized state root. Only then are the count-dependent canonical slot plans
-/// reconstructed and compared with the supplied slot order.
+/// For each opening (Fidelity, then Oracle), the function authenticates every
+/// supplied raw value against the finalized state root. Then it compares the
+/// supplied slot order with the canonical slot plan. Each plan comes only from
+/// `wwd` and the expected subjects, so it reads no proven value.
 pub fn verify_lysis_openings(
     openings: &LysisOpeningsProofV1,
     finalized: &VerifiedFinalizedIntentV1,

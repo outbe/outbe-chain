@@ -83,10 +83,10 @@ impl<'storage, K: StorageKey> Mapping<'storage, K, StorageBytes<'storage>> {
     }
 }
 
-// Mapping<K, AddressPair> -> a two-word value, laid out exactly like a Solidity
+// Mapping<K, AddressPair> -> a two-word value. Its layout is exactly a Solidity
 // `mapping(K => struct { address base; address quote; })`: base at the key's
-// mapping slot, quote at the next one. `AddressPair` is 40 bytes so it cannot be
-// `Storable`, which is what keeps it off the single-word `read`/`write` above.
+// mapping slot, quote at the next one. `AddressPair` is 40 bytes, so it cannot be
+// `Storable`. This keeps it off the single-word `read`/`write` above.
 impl<'storage, K: StorageKey> Mapping<'storage, K, AddressPair> {
     /// Reads the pair for the given key, in the orientation it was written.
     pub fn read_pair(&self, key: &K) -> Result<AddressPair> {
@@ -201,14 +201,14 @@ mod tests {
         let storage = StorageHandle::new(&mut provider);
         let mapping: Mapping<u32, AddressPair> = Mapping::new(U256::from(43), contract, storage);
 
-        // Unwritten reads back as the zero pair, not as an error - the zero
+        // An unwritten key reads back as the zero pair, not as an error. The zero
         // address is a legitimate asset, so absence is decided elsewhere.
         assert_eq!(mapping.read_pair(&1).unwrap(), AddressPair::ZERO);
 
         let pair = AddressPair::from_addresses(base, quote);
         mapping.write_pair(&1, pair).unwrap();
 
-        // The quoted orientation survives the round trip; it is not sorted.
+        // The quoted orientation survives the round trip. It is not sorted.
         assert_eq!(mapping.read_pair(&1).unwrap(), pair);
         assert_eq!(mapping.read_pair(&1).unwrap().address1(), base);
         assert_eq!(mapping.read_pair(&1).unwrap().address2(), quote);

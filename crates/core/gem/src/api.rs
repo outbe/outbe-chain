@@ -46,8 +46,8 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
     Ok(gem_id)
 }
 
-/// Burn a settled gem (promis mining). Forfeit burns of Called gems go through
-/// the internal `GemContract::burn` from the daily scan, not this entry point.
+/// Burn a settled gem for Promis mining.
+/// The begin-block expiry sweep forfeits Called gems through `GemContract::forfeit`.
 pub fn burn(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
     let mut gem = GemContract::new(storage.clone());
     let item = gem.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
@@ -62,8 +62,8 @@ pub fn set_state(storage: &StorageHandle<'_>, gem_id: U256, new_state: GemState)
     gem.set_state(gem_id, new_state)
 }
 
-/// Qualified once a finalized daily VWAP closed above the floor. A zero floor clears on the
-/// first eligible full day, since every positive price exceeds it.
+/// A gem is qualified once a finalized daily VWAP closed above the floor. A zero floor clears
+/// on the first eligible full day, because every positive price exceeds it.
 pub fn is_qualified(storage: &StorageHandle<'_>, item: &GemData) -> Result<bool> {
     outbe_oracle::api::closed_above_floor(
         storage.clone(),
@@ -78,7 +78,8 @@ pub fn get_gem(storage: &StorageHandle<'_>, gem_id: U256) -> Result<Option<GemDa
     gem.get_gem(gem_id)
 }
 
-/// The call bucket a gem belongs to; zero once it left one, or for a gem from before buckets.
+/// The call bucket that a gem belongs to. The value is zero once the gem left its bucket, or
+/// for a gem from before buckets.
 pub fn bucket_of(storage: &StorageHandle<'_>, gem_id: U256) -> Result<alloy_primitives::B256> {
     GemContract::new(storage.clone()).gem_bucket.read(&gem_id)
 }

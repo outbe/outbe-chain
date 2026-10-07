@@ -496,23 +496,24 @@ where
     }
 
     /// Probe whether `signer` has an EIP-7702 delegation to
-    /// [`outbe_zerofee::ZEROFEE_ADDRESS`]; if so, run the same
-    /// `classify_sponsorship` + `authorize_sponsorship` checks the
-    /// executor will perform at block time.
+    /// [`outbe_zerofee::ZEROFEE_ADDRESS`]. If it has one, run
+    /// `classify_sponsorship` + `precheck_sponsorship`. The precheck rejects
+    /// self-sponsorship only and reads no quota. The executor runs the
+    /// stateful `authorize_sponsorship`, with the daily quota, at block time.
     ///
     /// Returns [`SponsorshipOutcome::NotSponsored`] when no delegation
-    /// is present (the tx then falls back to the standard
-    /// cost-vs-balance Overdraft gate). Returns `Err(_)` for an
+    /// is present. The tx then falls back to the standard
+    /// cost-vs-balance Overdraft gate. Returns `Err(_)` for an
     /// authenticated sponsorship attempt that fails any of the policy
-    /// rules - the pool rejects with the policy reason in the
-    /// `InvalidPoolTransactionError::other` payload so the caller sees
-    /// the same error code the executor would produce at block time.
+    /// rules. The pool then rejects with the policy reason in the
+    /// `InvalidPoolTransactionError::other` payload. Thus the caller sees
+    /// the same error code that the executor would produce at block time.
     ///
     /// The latest-block view used here is necessarily stale relative to
-    /// the block currently building; an admitted sponsored tx whose
-    /// quota was already burned by an earlier in-block tx will be
-    /// rejected at execution time via a `status=0` receipt (same
-    /// pattern as the oracle `AlreadyVoted` flow).
+    /// the block that is currently in construction. An earlier in-block tx
+    /// can burn the quota of an admitted sponsored tx. Execution then
+    /// rejects that tx with a `status=0` receipt (same pattern as the
+    /// oracle `AlreadyVoted` flow).
     fn try_eip7702_sponsorship(
         &self,
         signer: Address,
@@ -525,11 +526,11 @@ where
             .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?;
 
         // Resolve the signer's account + (optional) delegation bytecode
-        // from the latest committed state, then hand the already-fetched
-        // values to the pure decision core. Splitting the I/O from the
-        // policy keeps the composition (delegation match -> classify ->
-        // precheck, with NO quota check) deterministically unit-testable
-        // without a provider mock - see `sponsorship_decision` tests.
+        // from the latest committed state. Then give the already-fetched
+        // values to the pure decision core. The I/O is separate from the
+        // policy, so unit tests can check the composition (delegation match
+        // -> classify -> precheck, with NO quota check) deterministically
+        // without a provider mock. See the `sponsorship_decision` tests.
         let Some(account) = state
             .basic_account(&signer)
             .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?
@@ -604,35 +605,35 @@ where
 enum SponsorshipOutcome {
     /// Signer is delegated to ZEROFEE_ADDRESS and passes all policy checks.
     Accepted,
-    /// Signer is not delegated to ZEROFEE_ADDRESS; fall back to normal
+    /// Signer is not delegated to ZEROFEE_ADDRESS. Fall back to normal
     /// cost-vs-balance gating.
     NotSponsored,
 }
 
-/// Pure decision core for EIP-7702 sponsorship pool admission, factored
-/// out of [`OutbeTransactionValidator::try_eip7702_sponsorship`] so the
-/// composition is testable without a provider mock.
+/// Pure decision core for EIP-7702 sponsorship pool admission. It is
+/// separate from [`OutbeTransactionValidator::try_eip7702_sponsorship`],
+/// so tests can check the composition without a provider mock.
 ///
-/// Inputs are the values the caller already fetched from the latest
-/// committed state: the signer, its native `balance`, and the address
-/// its account code delegates to (`None` if it is not an EIP-7702
-/// delegation). The decision:
+/// Inputs are the values that the caller already fetched from the latest
+/// committed state. They are the signer and the address that its account
+/// code delegates to (`None` if it is not an EIP-7702 delegation). The
+/// decision:
 ///   - `delegated_to != Some(ZEROFEE_ADDRESS)` -> `NotSponsored` (normal
-///     fee path; never an error).
+///     fee path, never an error).
 ///   - delegated but the envelope does not match `classify_sponsorship`
 ///     (most importantly `priority_fee > 0` - "I am paying") ->
-///     `NotSponsored`. The tx is a normal paid transaction that merely
-///     originates from a delegated account; it must go through the
-///     standard cost-vs-balance gating, NOT be rejected. This keeps
+///     `NotSponsored`. The tx is a normal paid transaction that only
+///     comes from a delegated account. It must go through the standard
+///     cost-vs-balance gating. The pool must NOT reject it. This keeps
 ///     EIP-7702 delegation additive and lets a signer pay once their
 ///     daily free quota is exhausted.
 ///   - delegated AND envelope matches -> run `precheck_sponsorship`
-///     (self-sponsorship); its policy error is
-///     returned so the pool rejects with the matching code.
+///     (self-sponsorship). This function returns its policy error, so
+///     the pool rejects with the matching code.
 ///
-/// Quota is deliberately NOT checked here: the executor is authoritative
-/// and quota-exhausted txs must land in the block as soft-failures
-/// (code 110), so the pool admits them.
+/// This function deliberately does NOT check the quota. The executor is
+/// authoritative, and quota-exhausted txs must land in the block as
+/// soft-failures (code 110). So the pool admits them.
 fn sponsorship_decision(
     signer: Address,
     delegated_to: Option<Address>,
@@ -642,9 +643,9 @@ fn sponsorship_decision(
         return Ok(SponsorshipOutcome::NotSponsored);
     }
 
-    // Envelope mismatch (e.g. priority_fee > 0) means the signer is not
-    // opting into sponsorship - fall through to the normal fee path
-    // rather than rejecting the tx.
+    // Envelope mismatch (e.g. priority_fee > 0) means that the signer does
+    // not opt into sponsorship. Fall through to the normal fee path. Do
+    // not reject the tx.
     if outbe_zerofee::classify_sponsorship(zero_fee_tx).is_err() {
         return Ok(SponsorshipOutcome::NotSponsored);
     }

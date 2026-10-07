@@ -4,8 +4,8 @@
 //! `Message::Finalized` variant from this mailbox. Finalization
 //! notifications now flow voter -> `OutbeReporter` -> `FinalizationActor`
 //! through `crate::finalization::ingress::Mailbox` (an unbounded
-//! channel), so a slow finalization consumer can no longer back-pressure
-//! the application handler.
+//! channel). Thus a slow finalization consumer can no longer
+//! back-pressure the application handler.
 
 use crate::digest::Digest;
 use commonware_consensus::{simplex::types::Context, types::Epoch};
@@ -32,7 +32,8 @@ impl Mailbox {
     /// Send a genesis request.
     ///
     /// Applies backpressure if the handler's mailbox is full rather than
-    /// dropping the message (genesis is required for correct startup).
+    /// dropping the message. Only tests send this request. Simplex takes the
+    /// genesis digest from `simplex::Config.floor`.
     pub async fn genesis(&mut self, epoch: Epoch) -> Digest {
         let (tx, rx) = oneshot::channel();
         let msg = Message::Genesis(Genesis {
@@ -85,8 +86,8 @@ impl Mailbox {
 /// Messages handled by the application actor.
 ///
 /// `Verify` and `Propose` are boxed to keep the enum small for the
-/// bounded mailbox; the per-message payloads contain ~250 bytes of
-/// consensus context each, which would otherwise blow up enum size.
+/// bounded mailbox. The per-message payloads contain ~250 bytes of
+/// consensus context each. Without the boxes, they would inflate the enum size.
 pub enum Message {
     /// Request genesis digest for an epoch.
     Genesis(Genesis),

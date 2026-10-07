@@ -1,8 +1,9 @@
 //! Shared status cell for the node's periodic enclave canary probe.
 //!
-//! The canary worker (in `outbe-node`) publishes snapshots; the RPC layer reads
-//! them into `outbe_consensusStatus.enclave` and `outbe-cli monitor readiness`
-//! consumes that. Signal only - nothing here gates consensus participation.
+//! The canary worker (in `outbe-node`) publishes snapshots. The RPC layer reads
+//! them into `outbe_consensusStatus.enclave`, and `outbe-cli monitor readiness`
+//! consumes that. This is a signal only. Nothing here gates consensus
+//! participation.
 
 use std::sync::{Arc, RwLock};
 
@@ -73,8 +74,8 @@ impl TeeEnclaveHealthChannel {
     }
 
     /// Read the latest snapshot. A poisoned lock (a reader/writer panicked)
-    /// degrades to the poisoned value rather than propagating the panic -
-    /// health reporting must never take the node down.
+    /// degrades to the poisoned value rather than propagating the panic.
+    /// Health reporting must never take the node down.
     pub fn snapshot(&self) -> TeeEnclaveHealthSnapshot {
         match self.0.read() {
             Ok(guard) => guard.clone(),

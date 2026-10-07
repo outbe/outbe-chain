@@ -48,8 +48,8 @@ contract CountingTokenBridge {
     }
 }
 
-/// A chain's refunds arrive as a run of chunks, but the day's proceeds leave as one
-/// transfer: the origin counts a chain paid on the first delivery.
+/// A chain's refunds arrive as a run of chunks. But the day's proceeds leave as one transfer: the
+/// origin counts a chain paid on the first delivery.
 contract TargetRouterRefundChunksTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_260_713;
@@ -116,8 +116,8 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         assertEq(tokenBridge.lastAmount(), 25e6);
     }
 
-    /// Driven through the real adapter: the rule that matters - a finalized day refuses
-    /// everything after - is exactly what the mock above cannot express.
+    /// This test drives the real adapter. The rule that matters is that a finalized day refuses
+    /// everything after. That rule is exactly what the mock above cannot express.
     function test_TheRealEscrowSettlesEveryChunkOfADay() public {
         MockWCOEN token = new MockWCOEN();
         MockTheCompact compact = new MockTheCompact();

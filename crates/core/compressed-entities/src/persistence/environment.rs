@@ -178,7 +178,7 @@ impl CeMdbx {
     }
 
     /// Atomically applies one contiguous finalized batch and writes the marker
-    /// last. A commit error is explicitly reported as an unknown outcome.
+    /// last. It explicitly reports a commit error as an unknown outcome.
     pub fn apply_finalized(
         &self,
         batch: &StagedTreeBatch,

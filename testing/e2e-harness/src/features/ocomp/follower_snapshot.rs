@@ -78,7 +78,7 @@ fn run_snapshot_start_and_restart(world: &mut World) -> Result<()> {
         .as_u64()
         .ok_or_else(|| eyre!("snapshot cut missing"))?;
     ensure!(cut >= minimum_cut, "snapshot has no rotated committee");
-    // Keep the donor offline; the live quorum is the source of new finality.
+    // Keep the donor offline. The live quorum is the source of new finality.
 
     let mut minimum_recovery = cut;
     for phase in ["imported", "restarted"] {

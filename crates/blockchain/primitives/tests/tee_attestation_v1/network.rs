@@ -333,8 +333,8 @@ fn registration_intent_roundtrips_and_rejects_unknown_or_trailing_data() {
         })
     ));
 
-    // version + chain id + genesis + operation + mode + policy hash = 99 bytes;
-    // the nested NodeId version starts at byte 99.
+    // version + chain id + genesis + operation + mode + policy hash = 99 bytes.
+    // The nested NodeId version starts at byte 99.
     unknown_kind[99] = 0xff;
     assert!(matches!(
         RegistrationIntentV1::decode_canonical(&unknown_kind),

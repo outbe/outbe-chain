@@ -1,28 +1,30 @@
 //! Bounded-budget remote fetch for certified-parent notarization proofs.
 //!
 //! `fetch_parent_proof(key, targets, schedule)` uses
-//! [`OutbeProtocolSchedule`] budgets for timeout/attempts/byte cap and only
-//! ingests bytes via the `Request::Notarized` byte-recovery channel
-//! (monorepo `consensus/src/marshal/core/actor.rs:847`, returns
+//! [`OutbeProtocolSchedule`] budgets for timeout/attempts/byte cap. It ingests
+//! bytes only through the `Request::Notarized` byte-recovery channel
+//! (monorepo `consensus/src/marshal/core/actor.rs:847`, which returns
 //! `(notarization, block).encode()`).
 //!
-//! Marshal-wire integration is 's responsibility. ships:
+//! Marshal-wire integration is not part of this module. This module ships:
 //!
 //! 1. The [`ParentProofTransport`] trait the resolver depends on (concrete
 //!    marshal transport plugs in by implementing it).
-//! 2. The [`ParentProofResolver`] policy layer: enforces per-attempt timeout,
-//!    max attempts, max bytes; rejects hash-mismatch responses
-//!    ([`ProofFetchOutcome::NoProofForExactParent`]); gates persistence
-//!    on a local certification witness already being present
-//!    ([`ProofFetchOutcome::NoLocalCertificationWitness`]).
-//! 3. The structured outcome enum [`ProofFetchOutcome`] consumed by
-//!    's V2 proposer selector.
+//! 2. The [`ParentProofResolver`] policy layer. It:
+//!    - enforces per-attempt timeout, max attempts, and max bytes.
+//!    - rejects hash-mismatch responses
+//!      ([`ProofFetchOutcome::NoProofForExactParent`]).
+//!    - gates persistence on a local certification witness already being
+//!      present ([`ProofFetchOutcome::NoLocalCertificationWitness`]).
+//! 3. The structured outcome enum [`ProofFetchOutcome`] that the V2 proposer
+//!    selector consumes.
 //!
-//! binding: a remote `Request::Notarized` response NEVER produces a
-//! `CertifiedParentProofRecord` write unless this node has already locally
-//! observed `Activity::Certification` for the same `(epoch, view, block_hash)`
-//! (verified by [`CertifiedParentProofStore::get_certified_notarization`]
-//! being non-empty for the requested parent hash).
+//! Binding: a remote `Request::Notarized` response NEVER produces a
+//! `CertifiedParentProofRecord` write without a local witness. This node must
+//! already have locally observed `Activity::Certification` for the same
+//! `(epoch, view, block_hash)`. The check is
+//! [`FinalizedParentCertStore::has_local_certification_witness`] for the exact
+//! key. It reads the in-memory witness index, not the persistent CN record slot.
 
 use std::{future::Future, time::Duration};
 
@@ -63,15 +65,15 @@ pub struct ProofFetchKey {
 #[allow(clippy::large_enum_variant)]
 pub enum ProofFetchOutcome {
     /// Remote response decoded, signature verified, hash matched, and local
-    /// certification witness exists. The record has been persisted to the
+    /// certification witness exists. The resolver persisted the record to the
     /// certified-notarization slot.
     Hit(CertifiedParentProofRecord),
     /// The remote response payload hash did not match the requested
-    /// `parent_hash`. exact-key only; the resolver
-    /// fails the request without ever writing under the mismatched key.
+    /// `parent_hash`. The contract is exact-key only. The resolver fails the request
+    /// without ever writing under the mismatched key.
     NoProofForExactParent,
-    /// No local witness for the requested `(epoch, view, parent_hash)` -
-    /// forbids producing a record from remote bytes alone.
+    /// No local witness exists for the requested `(epoch, view, parent_hash)`.
+    /// The local-witness gate forbids a record produced from remote bytes alone.
     NoLocalCertificationWitness,
     /// All budget exhausted (no successful response within
     /// `max_attempts` x per-attempt `timeout_ms`).
@@ -79,11 +81,11 @@ pub enum ProofFetchOutcome {
     /// Notarization signature verification failed on the decoded remote
     /// response.
     VerifyFailed,
-    /// Persistence to the certified-parent proof store failed; the underlying
-    /// error is reported for caller diagnostics.
+    /// Persistence to the certified-parent proof store failed. The outcome
+    /// carries the underlying error for caller diagnostics.
     StoreError(ParentProofStoreError),
-    /// The canonical committee snapshot could not be built (an encode-invariant
-    /// violation); no record is produced and none is written.
+    /// The resolver could not build the canonical committee snapshot (an
+    /// encode-invariant violation). It produces no record and writes none.
     SnapshotBuildFailed(SnapshotBuildError),
 }
 
@@ -106,16 +108,16 @@ pub enum TransportError {
 ///
 /// The marshal-backed impl wraps marshal's `Request::Notarized`
 /// resolver subscription and decodes the leading `Notarization<S, D>` from the
-/// `(notarization, block).encode` wire payload. ships the trait
+/// `(notarization, block).encode` wire payload. This module ships the trait
 /// surface and the mock-driven test suite.
 ///
 /// Implementors MUST enforce `byte_cap` on the wire (refuse oversize bytes
-/// without buffering); the resolver passes the protocol schedule's
-/// `parent_proof_fetch_max_bytes` so a hostile peer cannot consume node
-/// resources before the cap is enforced.
+/// without buffering). The resolver passes the protocol schedule's
+/// `parent_proof_fetch_max_bytes`, so a hostile peer cannot consume node
+/// resources before the transport enforces the cap.
 pub trait ParentProofTransport: Send + Sync + 'static {
-    /// Opaque target identifier (peer id, address, etc.). Resolver does not
-    /// interpret it; it only forwards it to `request_notarized`.
+    /// Opaque target identifier (peer id, address, etc.). The resolver does not
+    /// interpret it. It only forwards it to `request_notarized`.
     type Target: Clone + Send + Sync + 'static;
 
     /// Request the canonical notarization for `round` from `target`,
@@ -129,8 +131,8 @@ pub trait ParentProofTransport: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Notarization<HybridScheme<MinSig>, Digest>, TransportError>> + Send;
 }
 
-/// Policy layer over a [`ParentProofTransport`] enforcing 's
-/// schedule budgets, hash-exact-only contract, and local-witness gate.
+/// Policy layer over a [`ParentProofTransport`]. It enforces the schedule
+/// budgets, the hash-exact-only contract, and the local-witness gate.
 pub struct ParentProofResolver<T: ParentProofTransport> {
     transport: T,
     schedule: OutbeProtocolSchedule,
@@ -158,14 +160,14 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
 
     /// Try up to `schedule.parent_proof_fetch_max_attempts` targets, applying
     /// the schedule's per-attempt timeout and byte cap. Returns the first
-    /// successful, hash-matching, locally-witnessed response - or one of the
+    /// successful, hash-matching, locally-witnessed response, or one of the
     /// structured failure variants on [`ProofFetchOutcome`].
     ///
-    /// The resolver is hash-strict: any decoded notarization whose
-    /// payload hash differs from `key.parent_hash` aborts the request with
-    /// [`ProofFetchOutcome::NoProofForExactParent`] rather than continuing to
-    /// the next target, because a peer that supplied wrong bytes for this
-    /// round is not going to redeem itself on retry.
+    /// The resolver is hash-strict. Any decoded notarization whose payload hash
+    /// differs from `key.parent_hash` aborts the request with
+    /// [`ProofFetchOutcome::NoProofForExactParent`]. The resolver does not
+    /// continue to the next target, because a peer that supplied wrong bytes
+    /// for this round is not going to redeem itself on retry.
     pub async fn fetch_parent_proof(
         &self,
         clock: &impl commonware_runtime::Clock,
@@ -180,9 +182,9 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
         for target in targets.iter().take(attempt_budget).cloned() {
             // The transport future borrows `self`/`target`, so it is not `'static`
             // and cannot use `Clock::timeout` (which requires `Send + 'static`).
-            // Inline the same race `Clock::timeout`'s default impl uses: a biased
-            // select between the request and a runtime-agnostic sleep, preferring
-            // the response.
+            // Inline the same race that `Clock::timeout`'s default impl uses. It is
+            // a biased select between the request and a runtime-agnostic sleep,
+            // and it prefers the response.
             let request =
                 self.transport
                     .request_notarized(key.round, target, byte_cap, attempt_timeout);
@@ -204,23 +206,24 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
                 return outcome;
             }
 
-            // Build the record and persist. Witness flag is true by the gate
-            // above. `committee_set_hash_v2` matches the reporter's canonical
-            // fingerprint so 's V2 selector sees a consistent value.
+            // Build the record and persist it. The gate above proves that this
+            // node observed the local certification witness for this key.
+            // `committee_set_hash_v2` matches the reporter's canonical
+            // fingerprint, so the V2 selector sees a consistent value.
             //
             // PLAN A4 requires the full canonical snapshot (address +
             // 48-byte MinPk pubkey per validator + raw encoded VRF group pk
-            // bytes), so the resolver assembles the same snapshot shape the
-            // boundary writer (`apply_boundary_outcome`) and Phase 1 verifier
+            // bytes). Thus the resolver assembles the same snapshot shape that the
+            // boundary writer (`apply_boundary_outcome`) and the Phase 1 verifier
             // recompute.
             // Defence-in-depth recovery path: a build failure is an
-            // encode-invariant violation; surface it as a deterministic non-Hit
-            // outcome rather than writing a record whose committee_set_hash would
+            // encode-invariant violation. Surface it as a deterministic non-Hit
+            // outcome rather than write a record whose committee_set_hash would
             // diverge from the writer's. The shared prelude also populates
             // `vrf_group_public_key_hash`, so a promoted witness record passes the
-            // Phase 1 verifier Rule 6 - this remote-fetch path previously left it
-            // `B256::ZERO` (via `..default()`), which `to_v2_metadata` then carried
-            // into Phase 1 metadata that Rule 6 rejected.
+            // Phase 1 verifier Rule 6. This remote-fetch path previously left it
+            // `B256::ZERO` (via `..default()`). `to_v2_metadata` then carried that
+            // value into Phase 1 metadata, and Rule 6 rejected it.
             let prelude = match build_committee_prelude(
                 &self.verifier_scheme,
                 &self.validator_addresses,
@@ -231,9 +234,11 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
             };
             let encoded_proof: Bytes = notarization.encode().into();
             let view = notarization.view().get();
-            // The notarization carries no block-number context. Store `0` so
-            // this record can serve as the exact-key local witness, but the
-            // Phase 1 selector will not promote it without a real block number.
+            // The notarization carries no block-number context. Thus the record
+            // kind is `ProofKind::CertifiedNotarization`, which has no block
+            // number. The Phase 1 selector resolves its height to the known
+            // parent block number. `stored_at_height` holds the view as the
+            // retention key.
             let record = CertifiedParentProofRecord {
                 format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
                 kind: ProofKind::CertifiedNotarization,
@@ -267,34 +272,33 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
         key: ProofFetchKey,
         notarization: &Notarization<HybridScheme<MinSig>, Digest>,
     ) -> Option<ProofFetchOutcome> {
-        // Strict hash check. A peer that returned a
-        // different parent for this round has nothing useful to offer on
-        // retry; fail immediately so the caller can fall back to
-        // proposer-forfeit.
+        // Strict hash check. A peer that returned a different parent for this
+        // round has nothing useful to offer on retry. Fail immediately so the
+        // caller can fall back to proposer-forfeit.
         if notarization.proposal.payload.0 != key.parent_hash {
             return Some(ProofFetchOutcome::NoProofForExactParent);
         }
-        // The notarization must be for the requested round. Defence in
-        // depth - a transport implementation that did not enforce this is
-        // a bug, but we still fail fast rather than persist mismatched
-        // round bookkeeping.
+        // The notarization must be for the requested round. This is defence in
+        // depth. A transport implementation that did not enforce this is a bug,
+        // but we still fail fast rather than persist mismatched round
+        // bookkeeping.
         if notarization.proposal.round != key.round {
             return Some(ProofFetchOutcome::NoProofForExactParent);
         }
 
-        // Signature verification - same trust boundary the reporter uses
+        // Signature verification uses the same trust boundary as the reporter
         // for Activity::Certification (see `reporter.rs::handle_certification`).
         let mut rng = bls_batch_verification_rng();
         if !notarization.verify(&mut rng, &self.verifier_scheme, &Sequential) {
             return Some(ProofFetchOutcome::VerifyFailed);
         }
 
-        // - local witness gate. A record produced from purely
-        // remote bytes is never written; the local node must have already
-        // observed `Activity::Certification` for the same key. The gate is
-        // the in-memory witness index, not the persistent CN record slot:
-        // CN rows may be pruned or withheld from proposer selection, while
-        // the witness fact remains a separate local observation.
+        // Local witness gate. The resolver never writes a record produced from
+        // purely remote bytes. The local node must have already observed
+        // `Activity::Certification` for the same key. The gate is the in-memory
+        // witness index, not the persistent CN record slot. CN rows may be pruned
+        // or withheld from proposer selection, while the witness fact remains a
+        // separate local observation.
         let proof_key = CertifiedParentProofKey::new(
             key.round.epoch().get(),
             key.round.view().get(),
@@ -342,13 +346,14 @@ pub struct RecoveredFinalizationMaterial<'a> {
 /// After a restart (or under brief finalization lag) the in-process
 /// `FinalizedParentCertStore` that the proposer selects from can be empty even
 /// though marshal's durable finalization archive still holds the direct parent's
-/// finalization. This rebuilds the SAME record the live
+/// finalization. This function rebuilds the SAME record that the live
 /// [`FinalizationActor`](crate::finalization::actor) writes for that
-/// finalization - byte-identical, so the proposer's Phase 1 metadata stays
-/// canonical and every validator accepts it (the `record_builder_parity` test
-/// pins this equality). The inputs are all derived from the recovered
-/// finalization plus the finalized epoch's committee scheme + ordered addresses;
-/// `missed_proposers` and `finalize_votes` are empty under the V2 contract.
+/// finalization. The record is byte-identical, so the proposer's Phase 1
+/// metadata stays canonical and every validator accepts it (the
+/// `record_builder_parity` test pins this equality). All inputs derive from the
+/// recovered finalization plus the finalized epoch's committee scheme + ordered
+/// addresses. `missed_proposers` and `finalize_votes` are empty under the V2
+/// contract.
 pub fn build_recovered_finalization_record(
     block: RecoveredFinalizedBlock,
     material: RecoveredFinalizationMaterial<'_>,
@@ -403,7 +408,8 @@ mod tests {
     use outbe_primitives::consensus_metadata::ParentParticipationProof;
 
     /// A finalization signed by all 3 committee members for `payload`, plus the
-    /// matching verifier scheme - all from ONE DKG so the certificate verifies.
+    /// matching verifier scheme. Both come from ONE DKG so the certificate
+    /// verifies.
     fn finalization_and_verifier(
         round: Round,
         parent_view: View,
@@ -431,10 +437,10 @@ mod tests {
         )
     }
 
-    /// the marshal-recovery record builder reproduces the SAME canonical
-    /// V2 fields the live `FinalizationActor` writes. The committee-set-hash
-    /// derivation is rebuilt inline exactly as `actor.rs` does so a future
-    /// divergence in the helper trips this assertion.
+    /// The marshal-recovery record builder reproduces the SAME canonical
+    /// V2 fields that the live `FinalizationActor` writes. The test rebuilds the
+    /// committee-set-hash derivation inline exactly as `actor.rs` does, so a
+    /// future divergence in the helper trips this assertion.
     #[test]
     fn record_builder_parity() {
         let epoch = Epoch::new(4);

@@ -1,6 +1,6 @@
-//! Rounding rule shared by Nod, Intex and Gem settlement: the obligation is
-//! computed at full precision, any FX leg included, then floored once into the
-//! settlement asset's minor units.
+//! Rounding rule shared by Nod, Intex and Gem settlement. Settlement computes the
+//! obligation at full precision, any FX leg included, and then floors it once into
+//! the settlement asset's minor units.
 
 use alloy_primitives::U256;
 use core::fmt;
@@ -33,8 +33,9 @@ impl fmt::Display for RoundingError {
 
 /// `floor(numerator x 10^asset_decimals / (denominator x 10^obligation_decimals))`.
 ///
-/// `numerator / denominator` is the obligation carrying `obligation_decimals`; a
-/// rate leg belongs in that fraction so it is floored with the unit scaling.
+/// `numerator / denominator` is the obligation carrying `obligation_decimals`.
+/// A rate leg belongs in that fraction, so this function floors it with the unit
+/// scaling.
 pub fn floor_to_asset_units(
     numerator: U256,
     denominator: U256,
@@ -68,6 +69,30 @@ pub fn floor_to_asset_units(
 
 fn pow10(exponent: u32) -> U256 {
     U256::from(10u64).pow(U256::from(exponent))
+}
+
+/// Which of an obligation's two currencies a payment asset is denominated in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaymentCurrency {
+    Reference,
+    Issuance,
+}
+
+impl PaymentCurrency {
+    /// The cross rate and its snapshot a payment converts at. Only the issuance
+    /// rail converts, so only it calls `cross_rate`.
+    pub fn conversion<R, S, E>(
+        self,
+        cross_rate: impl FnOnce() -> Result<(R, S), E>,
+    ) -> Result<(Option<R>, Option<S>), E> {
+        match self {
+            Self::Reference => Ok((None, None)),
+            Self::Issuance => {
+                let (rate, snapshot) = cross_rate()?;
+                Ok((Some(rate), Some(snapshot)))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -105,7 +130,7 @@ mod tests {
 
     #[test]
     fn the_rate_leg_is_floored_together_with_the_scaling() {
-        // 7.5 at rate 2/3 = 5.0 exactly; flooring the rate leg on its own first
+        // 7.5 at rate 2/3 = 5.0 exactly. Flooring the rate leg on its own first
         // (7 x 2 / 3 = 4.66) would have lost a unit.
         assert_eq!(
             floor_to_asset_units(u(7_500_000) * u(2), u(3), 6, 6),
@@ -122,6 +147,23 @@ mod tests {
         assert_eq!(
             floor_to_asset_units(U256::ZERO, U256::ONE, 12, 0),
             Ok(U256::ZERO)
+        );
+    }
+
+    #[test]
+    fn only_the_issuance_rail_converts() {
+        let unavailable = || Err::<(U256, u8), _>("unavailable");
+        assert_eq!(
+            PaymentCurrency::Reference.conversion(unavailable),
+            Ok((None, None))
+        );
+        assert_eq!(
+            PaymentCurrency::Issuance.conversion(unavailable),
+            Err("unavailable")
+        );
+        assert_eq!(
+            PaymentCurrency::Issuance.conversion(|| Ok::<_, &str>((u(2), 7u8))),
+            Ok((Some(u(2)), Some(7u8)))
         );
     }
 

@@ -1,12 +1,12 @@
 //! Prometheus metrics for ValidatorSet state transitions.
 //!
-//! Emitted from the corresponding mutation paths in `runtime.rs` so
-//! operators have realtime visibility into validator lifecycle without
-//! having to poll on-chain state.
+//! The mutation paths under `runtime/` emit these metrics.
+//! Operators then see the validator lifecycle in real time and do not
+//! need to poll on-chain state.
 //!
 //! Per-validator labels: `addr` is the validator address rendered as
-//! `0x{40-char-hex}`. Cardinality is bounded by the configured maximum
-//! validator count (`config_max_validators`, default 128).
+//! `0x{40-char-hex}`. The configured maximum validator count
+//! (`config_max_validators`, default 128) bounds the cardinality.
 
 use alloy_primitives::Address;
 use metrics::{counter, gauge};
@@ -17,12 +17,14 @@ fn addr_label(addr: Address) -> String {
 
 /// Per-validator current status, one of the values from
 /// [`crate::runtime::status`]:
-/// `0=UNINIT`, `1=REGISTERED`, `2=ACTIVE`, `3=EXITING`, `4=UNBONDING`, `5=INACTIVE`.
+/// `0=REGISTERED`, `1=PENDING`, `2=ACTIVE`, `3=EXITING`,
+/// `4=UNBONDING`, `5=INACTIVE`, `6=JAILED`.
 pub fn record_validator_status(addr: Address, status: u8) {
     gauge!("outbe_validator_status", "addr" => addr_label(addr)).set(f64::from(status));
 }
 
-/// Cumulative force-exit events per validator.
+/// Cumulative punishment events per validator.
+/// Both jail and force-exit increment this counter.
 pub fn record_validator_force_exit(addr: Address) {
     counter!("outbe_validator_force_exit_total", "addr" => addr_label(addr)).increment(1);
 }
@@ -42,7 +44,7 @@ pub fn record_validator_register(addr: Address, reregister: bool) {
     .increment(1);
 }
 
-/// One DKG reshare activation; `transitioned_to_unbonding` is the
+/// One DKG reshare activation. `transitioned_to_unbonding` is the
 /// number of validators transitioned EXITING->UNBONDING this round.
 pub fn record_reshared_set_activated(active_count: u32, transitioned_to_unbonding: usize) {
     counter!("outbe_reshared_set_activated_total").increment(1);
@@ -51,7 +53,7 @@ pub fn record_reshared_set_activated(active_count: u32, transitioned_to_unbondin
 }
 
 /// Aggregate validator-status counts. Sample once per relevant
-/// transition; cheap because validator-set size is bounded.
+/// transition. This is cheap because the validator-set size is bounded.
 pub fn record_aggregate_status_counts(active: usize, exiting: usize, unbonding: usize) {
     gauge!("outbe_validator_active_count").set(active as f64);
     gauge!("outbe_validator_exiting_count").set(exiting as f64);
@@ -80,7 +82,7 @@ pub fn record_tee_expiry_exclusions(active_demoted: usize, pending_cleared: usiz
 }
 
 /// One missing OCOMP result vote. The first miss opens the fixed recovery
-/// window; repeats remain visible without implying another slash.
+/// window. Repeats remain visible and do not imply another slash.
 pub fn record_ocomp_miss(addr: Address, first_in_window: bool, recovery_deadline: u64) {
     counter!(
         "outbe_ocomp_vote_missed_total",
@@ -98,9 +100,9 @@ pub fn record_ocomp_recovery_deadline(addr: Address, recovery_deadline: u64) {
         .set(recovery_deadline as f64);
 }
 
-/// One durable recovery-window resolution. The per-validator deadline is
-/// cleared together with the outcome counter so dashboards never retain a
-/// stale open deadline after restore, jail or lifecycle departure.
+/// One durable recovery-window resolution. This function clears the
+/// per-validator deadline together with the outcome counter. Dashboards then
+/// never retain a stale open deadline after restore, jail or lifecycle departure.
 pub fn record_ocomp_recovery_resolution(addr: Address, outcome: &'static str) {
     clear_ocomp_recovery_deadline(addr);
     counter!("outbe_ocomp_recovery_resolved_total", "outcome" => outcome).increment(1);
@@ -114,7 +116,8 @@ pub fn clear_ocomp_recovery_deadline(addr: Address) {
 
 /// Aggregate result of the bounded per-block OCOMP recovery sweep. The block
 /// number comes from the same execution context that decides restoration or
-/// jail, so deadline alerts do not depend on the off-chain reader being alive.
+/// jail. Deadline alerts therefore do not depend on the off-chain reader being
+/// alive.
 pub fn record_ocomp_recovery_sweep(current_block: u64, remaining_open: u32) {
     gauge!("outbe_ocomp_recovery_block_number").set(current_block as f64);
     gauge!("outbe_ocomp_recovery_open_windows").set(f64::from(remaining_open));

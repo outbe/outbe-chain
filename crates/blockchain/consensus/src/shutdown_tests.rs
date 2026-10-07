@@ -354,7 +354,7 @@ fn planned_abort_during_pending_sync_reopens_the_same_voter_journal() {
 
         // Planned replacement reuses the same epoch journal partition. The
         // observable safety contract is that the replacement can replay and
-        // continue; terminal drain is an implementation choice, not the test.
+        // continue. Terminal drain is an implementation choice, not the test.
         for _ in durable_vote_rx.try_iter() {}
         let second_context = context.child("engine_after_planned_abort");
         let engine = Engine::new(second_context, engine_config(&context));

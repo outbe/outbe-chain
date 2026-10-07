@@ -1,11 +1,12 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{SolCall, SolInterface};
+#[cfg(feature = "e2e-test")]
+use alloy_sol_types::SolCall;
+use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 
 use crate::runtime;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, ParentBodySource, WwdEntityId};
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -22,7 +23,7 @@ mod abi {
 }
 pub use abi::INodFactory;
 
-// A Nod is issued out of Lysis over a certified generation: only a throwaway build may
+// Lysis issues a Nod over a certified generation. Only a throwaway build may
 // skip that.
 #[cfg(feature = "e2e-test")]
 alloy_sol_types::sol! {
@@ -77,24 +78,15 @@ fn issue_for_test(
     Ok(())
 }
 
-pub fn base_gas(input: &[u8]) -> u64 {
-    match input.first_chunk::<4>() {
-        Some(&INodFactory::settleNodWithPayNoteCall::SELECTOR) => {
-            outbe_primitives::storage::gas::ZK_VERIFY_GAS
-        }
-        _ => PRECOMPILE_BASE_GAS,
-    }
-}
-
 /// Dispatches NodFactory calls through the block-scoped compressed-body lifecycle.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
+    let ExecutionReaders { scope, parent } = readers;
     outbe_primitives::dispatch::reject_value(&value)?;
     #[cfg(feature = "e2e-test")]
     if let Ok(call) = INodFactoryTestArming::issueForTestCall::abi_decode(data) {
@@ -114,22 +106,14 @@ pub fn dispatch(
                     &storage,
                     scope,
                     parent,
-                    sender,
-                    WwdEntityId::from(c.nodId),
-                    c.asset,
-                    c.snapshotId,
+                    runtime::SettleNodRequest {
+                        caller: sender,
+                        nod_id: WwdEntityId::from(c.nodId),
+                        asset: c.asset,
+                        snapshot_id: c.snapshotId,
+                    },
                 )?;
                 Ok(INodFactory::settleNodReturn {})
-            }),
-            settleNodWithPayNote(c) => mutate(c, caller, |_, c| {
-                runtime::settle_nod_with_paynote(
-                    &storage,
-                    scope,
-                    parent,
-                    WwdEntityId::from(c.nodId),
-                    &c.payNoteProof,
-                )?;
-                Ok(INodFactory::settleNodWithPayNoteReturn {})
             }),
             quoteSettlement(c) => view(c, |c| {
                 let (settlement_currency, amount, snapshot_id) = runtime::quote_settlement(

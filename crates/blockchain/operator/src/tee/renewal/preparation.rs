@@ -95,8 +95,8 @@ pub(super) async fn prepare_attempt<
         requested_valid_until: intent.requested_valid_until,
         collateral_valid_until: generated_evidence.collateral_valid_until,
         collateral_margin: generated_evidence.collateral_margin,
-        // `relay` is retained in the V1 journal shape for restart compatibility;
-        // manual renewal binds it to the caller's global EVM signer.
+        // The V1 journal shape keeps `relay` for restart compatibility.
+        // Manual renewal binds it to the caller's global EVM signer.
         relay: evm_signer.address(),
         relay_variants: vec![raw],
     })

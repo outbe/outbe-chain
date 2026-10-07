@@ -5,15 +5,15 @@
 //!
 //! - deterministic-output property tests (`proptest`): any permutation of
 //!   inputs to `SystemTxPhase::advance_after_commit` yields byte-identical
-//!   cursor sequences across N invocations;
+//!   cursor sequences across N invocations.
 //! - cross-version compatibility: the `SystemTxPhase` variant set is exactly
 //!   the V2 contract set (no silently-introduced variants).
 //!
 //! The proptest output determinism property is the key consensus-safety
-//! guard for the cursor refactor: if `advance_after_commit` were
+//! guard for the cursor refactor. Suppose `advance_after_commit` were
 //! non-deterministic (e.g., via accidental `HashMap` iteration or
-//! `SystemTime`-derived state), proposer and validator paths would diverge
-//! on the per-block cursor sequence and the block hash would split.
+//! `SystemTime`-derived state). Then proposer and validator paths would
+//! diverge on the per-block cursor sequence, and the block hash would split.
 
 use outbe_evm::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
 use proptest::prelude::*;
@@ -22,9 +22,9 @@ use proptest::prelude::*;
 /// 10 variants, no more, no fewer. A drift here is a protocol incompatibility.
 #[test]
 fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
-    // Construct one of each variant; if a new variant is added without
+    // Construct one of each variant. If someone adds a new variant without
     // updating this test, the compiler match below becomes non-exhaustive
-    // and the test will fail to compile - that is the intended contract.
+    // and the test will fail to compile. That is the intended contract.
     let variants = [
         SystemTxPhase::Phase1Preexecuted {
             body_index: 0,

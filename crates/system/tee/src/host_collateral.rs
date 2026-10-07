@@ -1,10 +1,14 @@
 //! Host-only Intel collateral acquisition for a freshly generated SGX quote.
 //!
-//! This module runs before consensus starts. It dynamically opens the
-//! exact-digest QVL pinned by the project, lets Intel QPL/PCCS acquire the
-//! collateral, copies it into the eight canonical V1 components, and frees the
-//! Intel allocation. Consensus never calls this module and never performs a
-//! network fetch.
+//! Startup bootstrap, CLI join, lease renewal, and enclave upgrade call this
+//! module. It does these steps:
+//!
+//! 1. It dynamically opens the exact-digest QVL that the project pins.
+//! 2. It lets Intel QPL/PCCS acquire the collateral.
+//! 3. It copies the collateral into the eight canonical V1 components.
+//! 4. It frees the Intel allocation.
+//!
+//! Consensus never calls this module and never performs a network fetch.
 
 use std::ffi::{c_void, CStr, CString};
 use std::path::{Path, PathBuf};
@@ -122,8 +126,8 @@ pub fn acquire_dcap_collateral_v1(
     verify_pinned_library(&library_path, expected_size, &expected_sha256)?;
     let library = DynamicLibrary::open(&library_path)?;
     // SAFETY: the manifest-pinned Intel library exports the documented QVL ABI
-    // under these exact symbol names. The typed values are used only while the
-    // library handle remains alive.
+    // under these exact symbol names. This function uses the typed values only
+    // while the library handle remains alive.
     let get: GetCollateral =
         unsafe { std::mem::transmute(library.symbol(b"tee_qv_get_collateral\0")?) };
     // SAFETY: same ABI argument as above.

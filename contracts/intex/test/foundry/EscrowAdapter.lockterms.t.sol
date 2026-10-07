@@ -46,7 +46,8 @@ contract EscrowAdapterLockTermsTest is Test {
         assertEq(lock.lockedAmount, LOCK, "amount");
     }
 
-    /// @dev Amount, time, status, rate and quantity pack into a single word, so a lock is one storage write.
+    /// @dev Amount, time, status, rate and quantity pack into a single word, so a lock is one
+    ///      storage write.
     function test_TheWholeLockFitsOneWord() public {
         vm.prank(auction);
         escrow.lockFunds(DAY, bidder, LOCK, 800_000, 30);

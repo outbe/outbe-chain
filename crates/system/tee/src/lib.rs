@@ -1,13 +1,14 @@
 //! `outbe-tee` - host-side TEE integration crate for the Tribute SGX enclave PoC.
 //!
-//! Architecture the DKG actor and all
-//! gossip / ceremony bookkeeping live on the **node (host)**; the secret
+//! Architecture: the DKG actor and all
+//! gossip / ceremony bookkeeping live on the **node (host)**. The secret
 //! material and key assembly live **inside the enclave**. This crate is the
 //! host-side half: the neutral wire-protocol types, the framed-UDS + Noise-IK
-//! codec, and the blocking client used from the precompile path.
+//! codec, and the blocking client that the precompile path uses.
 //!
-//! This crate MUST NOT contain secret-bearing cryptography - that lives only in
-//! `bin/outbe-tee-enclave`. Here we keep the message contract and transport.
+//! This crate MUST NOT contain secret-bearing cryptography. That cryptography
+//! lives only in `bin/outbe-tee-enclave`. Here we keep the message contract and
+//! transport.
 
 pub mod call_context;
 pub mod canary;
@@ -95,7 +96,7 @@ pub const SEALED_STATE_SCHEMA_V1: u8 = 3;
 
 /// Fixed, **public** HKDF-SHA256 salt for the tribute offer encryption key.
 ///
-/// An HKDF salt provides domain separation, not confidentiality - it is not a
+/// An HKDF salt provides domain separation, not confidentiality. It is not a
 /// secret. It is a single protocol constant (the same for every enclave and every
 /// client), so the derived ChaCha20Poly1305 key is deterministic across all
 /// validators. A client encrypts an offer with

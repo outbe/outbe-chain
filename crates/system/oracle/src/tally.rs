@@ -16,8 +16,8 @@ use crate::precompile::IOracle;
 use crate::schema::{OracleContract, PairIndex, SCALE_1E18};
 
 /// Maximum validator records processed by the receipt-visible Oracle slash-window
-/// system transaction. The configured genesis maximum is 128; keeping the cap
-/// explicit makes the mandatory phase's gas bound protocol-visible.
+/// system transaction. The configured genesis maximum is 128. An explicit cap
+/// makes the gas bound of the mandatory phase protocol-visible.
 pub const MAX_ORACLE_SLASH_WINDOW_VALIDATORS: usize = 128;
 
 /// A single vote entry in a ballot for one trading pair.
@@ -241,9 +241,12 @@ fn apply_winners(claims: &mut [(Address, Claim)], winning_validators: &[Address]
 /// Converts a ballot to cross-rates using a reference pair's votes.
 ///
 /// For each voter, the cross-rate is: `reference_rate / vote_rate`.
-/// Rows without an eligible reference leg, whose cross-rate is unrepresentable,
-/// or whose positive input floors to zero are excluded independently. One bad
-/// validator row must not abort the mandatory round tally.
+/// The function excludes each row independently when one of these is true:
+/// - The row has no eligible reference leg.
+/// - The cross-rate of the row is unrepresentable.
+/// - The positive input of the row floors to zero.
+///
+/// One bad validator row must not abort the mandatory round tally.
 pub fn to_cross_rate(
     ballot: &[VoteForTally],
     reference_votes: &[(Address, U256)],
@@ -357,9 +360,10 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
     let reward_band = oracle.config_reward_band.read()?;
 
     // Collect the active validator set at tally time.
-    // Intentional divergence from Cosmos (which locks the set at period start):
-    // membership is revalidated at tally time so a validator that exited after
-    // submitting cannot contribute to quorum. Snapshotting membership at vote
+    // This is an intentional divergence from Cosmos, which locks the set at
+    // period start. The tally revalidates membership at tally time, so a
+    // validator that exited after submitting cannot contribute to quorum.
+    // Snapshotting membership at vote
     // time would require additional storage per period per validator.
     let vs = outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
     let all_validators = vs.get_active_validators()?;
@@ -449,8 +453,8 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
         if observation_count(ballot) >= quorum {
             qualified[index] = true;
         } else {
-            // Cosmos-style participation credit: a valid observation on a pair
-            // that lacks quorum is not punished as an outlier. Missing and
+            // Cosmos-style participation credit: the tally does not punish a valid
+            // observation on a pair that lacks quorum as an outlier. Missing and
             // zero-rate observations receive no credit for that pair.
             for vote in ballot.iter().filter(|vote| vote_has_price(vote)) {
                 if let Some((_, claim)) = claims
@@ -586,7 +590,7 @@ fn run_tally_inner(oracle: &mut OracleContract, block_number: u64, timestamp: u6
     Ok(())
 }
 
-/// Processes the slash window: checks vote rates and force-exits underperformers.
+/// Processes the slash window: checks vote rates and jails underperformers.
 pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) -> Result<()> {
     let min_valid = oracle.config_min_valid_per_window.read()?;
     let allow_protected = oracle.config_allow_protected.read()?;
@@ -627,10 +631,10 @@ pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) ->
         if valid_rate < min_valid {
             let storage = oracle.storage.clone();
             storage.with_checkpoint(|| {
-                // Force-exit first so validator lifecycle events and status
-                // transitions follow the same ordering as slash indicator.
-                // Keep the cross-module writes under one checkpoint: any later
-                // slash/reset failure must roll back forced-exit state.
+                // Jail first. The penalty is jail plus slash, not a force-exit.
+                // A later failure rolls the jail storage write back with this
+                // checkpoint. `jail_validator` records metrics before that
+                // rollback. Those metrics stay outside the checkpoint.
                 let mut vs_mut =
                     outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
                 // Oracle underperformance felony: JAIL (not force-exit) + slash.
@@ -1001,7 +1005,8 @@ mod tests {
         // Reward band = 0.02 * 1e18. base_spread = 101 * 0.02 / 2 = 1.01.
         // Since stddev(57.16) > base_spread(1.01), reward_spread = 57.16.
         // Range: [101-57.16, 101+57.16] = [43.84, 158.16]
-        // Vote 100 is in range -> win. Vote 101 is in range -> win. Vote 200 is NOT in range -> miss.
+        // Vote 100 is in range -> win. Vote 101 is in range -> win.
+        // Vote 200 is NOT in range -> miss.
 
         let addr1 = Address::new([1u8; 20]);
         let addr2 = Address::new([2u8; 20]);
@@ -1035,7 +1040,7 @@ mod tests {
         let median = tally_pair(&mut ballot, reward_band, &mut claims).unwrap();
         assert_eq!(median, fixed18(101u64));
 
-        // Voters 1 and 2 should have won, voter 3 should have missed
+        // Voters 1 and 2 should have won. Voter 3 should have missed.
         assert_eq!(claims[0].1.win_count, 1); // addr1: rate 100, in range
         assert_eq!(claims[1].1.win_count, 1); // addr2: rate 101, in range
         assert_eq!(claims[2].1.win_count, 0); // addr3: rate 200, out of range

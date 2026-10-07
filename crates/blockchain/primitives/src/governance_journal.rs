@@ -1,24 +1,25 @@
 //! Append-only JSONL journal for Vote / governance critical events.
 //!
-//! The journal is a process-local sidecar to the standard reth log. It is
-//! written one JSON record per critical state-transition event under a
-//! single file path (`<datadir>/governance-journal.jsonl`) and is **never
-//! rotated** by the application. Operators may snapshot or trim the file
-//! manually; the runtime never truncates it.
+//! The journal is a process-local sidecar to the standard reth log. The
+//! runtime writes one JSON record per critical state-transition event to a
+//! single file path (`<datadir>/governance-journal.jsonl`). The application
+//! **never rotates** the journal. Operators may snapshot or trim the file
+//! manually. The runtime never truncates it.
 //!
 //! ## Best-effort semantics
 //!
-//! The journal is **best-effort** observability - writes that fail (disk
-//! full, permission error, file unwritable) emit a `tracing::warn!` and
-//! are dropped. They never block the consensus / state-transition path
-//! that produced them. Determinism is unaffected: the journal is a side
-//! effect identical on every node, and absence of the journal does not
+//! The journal is **best-effort** observability. A write that fails (disk
+//! full, permission error, file unwritable) emits a `tracing::warn!`, and
+//! the runtime drops it. Failed writes never block the consensus /
+//! state-transition path that produced them. Determinism is unaffected because
+//! the journal is off-chain. Its content is not identical on every node: each
+//! record carries the local wall-clock time. Absence of the journal does not
 //! change the on-chain state.
 //!
 //! ## Initialization
 //!
-//! [`init`] is called once at node startup with the data directory. If
-//! [`init`] is not called (e.g. tests), [`record`] silently no-ops.
+//! The node calls [`init`] once at startup with the data directory. If
+//! nothing calls [`init`] (e.g. tests), [`record`] silently no-ops.
 
 use crate::journal_writer::Journal;
 
@@ -221,8 +222,8 @@ static JOURNAL: OnceLock<Journal> = OnceLock::new();
 /// Initialize the journal. Must be called once at node startup before any
 /// state-transition path runs. Subsequent calls are no-ops.
 ///
-/// `datadir` is created if missing; the journal file is opened in append
-/// mode so existing content is preserved across node restarts.
+/// `datadir` is created if missing. The journal file is opened in append
+/// mode, so existing content is preserved across node restarts.
 pub fn init(datadir: &Path) -> std::io::Result<()> {
     if JOURNAL.get().is_some() {
         return Ok(());
@@ -244,8 +245,8 @@ pub fn journal_path(datadir: &Path) -> PathBuf {
 }
 
 /// Append `record` to the journal. If [`init`] has not been called, this
-/// is a no-op (test-friendly). Write errors are logged at WARN and
-/// swallowed - never blocks the caller's state-transition path.
+/// is a no-op (test-friendly). This function logs write errors at WARN and
+/// swallows them. It never blocks the caller's state-transition path.
 pub fn record(record: JournalRecord) {
     let Some(journal) = JOURNAL.get() else {
         return;

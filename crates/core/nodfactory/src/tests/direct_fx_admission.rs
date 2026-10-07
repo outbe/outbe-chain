@@ -4,8 +4,8 @@
 use super::*;
 
 /// The euro trades live and the dollar leg is priced in the window, but the
-/// window holds no euro price: the direct euro settlement is refused as oracle
-/// unavailable and the provider records no write or event.
+/// window holds no euro price. The rail refuses the direct euro settlement as
+/// oracle unavailable, and the provider records no write or event.
 #[test]
 fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_writes() {
     let mut world = World::new();

@@ -1,9 +1,9 @@
 //! Independent aggregation of completed OCOMP lane scenario records.
 //!
 //! Cucumber steps exercise the product and publish observational scenario JSON.
-//! This module does not trust the scenario name alone: it re-checks the public
-//! receipts, heights, vote slots, balances and terminal state needed by each
-//! stable lane ID before publishing an assertion.
+//! This module does not trust the scenario name alone. For each stable lane ID,
+//! it re-checks the public receipts, heights, vote slots, balances and terminal
+//! state that the ID needs. It does this before it publishes an assertion.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

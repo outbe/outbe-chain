@@ -1,11 +1,11 @@
 //! Live `IDaInbox.groupPubKey()` key resolution through real EVM frames.
 //!
 //! A network registered without a pinned key resolves its BLS key by
-//! STATICCALLing its registered L1 address on every read, so `getNetwork` and
-//! `TributeFactory.offerTribute` both see the inbox's current answer. The inbox
-//! here is hand-written runtime bytecode answering `abi.encode(bytes)` with a
-//! 256-byte EIP-2537 G2 key; registration goes through
-//! `DirectStorageProvider` and reads through `OutbeEvmFactory`. Provider-level
+//! STATICCALLing its registered L1 address on every read. As a result,
+//! `getNetwork` and `TributeFactory.offerTribute` both see the inbox's current
+//! answer. The inbox here is hand-written runtime bytecode answering
+//! `abi.encode(bytes)` with a 256-byte EIP-2537 G2 key. Registration goes through
+//! `DirectStorageProvider`, and reads go through `OutbeEvmFactory`. Provider-level
 //! coverage of the same resolution lives with the registry.
 
 use std::sync::Arc;
@@ -197,7 +197,7 @@ fn database(key: &[u8; 256]) -> CacheDB<EmptyDB> {
     db
 }
 
-/// Registers `chain_id` for `l1_address` with `public_key`; an empty key or 256
+/// Registers `chain_id` for `l1_address` with `public_key`. An empty key or 256
 /// zero bytes selects live inbox resolution, in the same state the EVM reads.
 fn register(db: &mut CacheDB<EmptyDB>, chain_id: u64, l1_address: Address, public_key: &[u8]) {
     let context = BlockContext::empty_for_tests(1, NOW, CHAIN_ID);
@@ -252,7 +252,7 @@ fn get_network(db: &mut CacheDB<EmptyDB>, chain_id: u64) -> ExecutionResult {
     call(db, L2_REGISTRY_ADDRESS, calldata.into())
 }
 
-/// The decoded `getNetwork` answer; panics when the call did not succeed.
+/// The decoded `getNetwork` answer. Panics when the call did not succeed.
 fn network_of(db: &mut CacheDB<EmptyDB>, chain_id: u64) -> IL2Registry::getNetworkReturn {
     match get_network(db, chain_id) {
         ExecutionResult::Success {

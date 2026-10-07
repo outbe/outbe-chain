@@ -198,9 +198,9 @@ fn zk_verify_truncated_payload_errors() {
 }
 
 /// An offset word of `u64::MAX` used to wrap `offset + 32` to `31` in a
-/// release build, defeat the `input.len() < offset + 32` guard, and panic on
-/// the out-of-range slice index - a permissionless halt of every validator
-/// executing the `0xEE08` call.
+/// release build. Then it defeated the `input.len() < offset + 32` guard and
+/// caused a panic on the out-of-range slice index. That was a permissionless
+/// halt of every validator that executed the `0xEE08` call.
 #[test]
 fn zk_verify_max_offset_is_rejected_not_panicking() {
     let mut input = [0u8; 96];
@@ -223,8 +223,8 @@ fn zk_verify_offset_just_past_canonical_is_rejected() {
     ));
 }
 
-/// The in-bounds-but-non-canonical offset that decoded before the gate: it
-/// points one word past the length slot, so the input used to decode to a
+/// The in-bounds-but-non-canonical offset that decoded before the gate. It
+/// points one word past the length slot. Thus the input used to decode to a
 /// different proof slice than the one the encoder wrote.
 #[test]
 fn zk_verify_shifted_offset_is_rejected() {

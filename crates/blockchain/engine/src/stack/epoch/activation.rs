@@ -111,8 +111,10 @@ where
                         activated_participants != self.state.participants;
                     // invariant:
                     // `vrf_material_version` increments by exactly 1 per
-                    // successful reshare activation. Overflow is a
-                    // deterministic activation error, not saturation.
+                    // successful reshare activation. On this path, overflow
+                    // is a deterministic activation error, not saturation.
+                    // The dealer-only activation path below differs. It logs
+                    // the overflow and reuses the current version.
                     // The single source of truth lives in the
                     // `outbe-validatorset` crate so proposer and
                     // validator paths cannot diverge.
@@ -216,16 +218,16 @@ where
                         is_validator_set_change = activated_is_validator_set_change,
                         "DKG activation advanced consensus epoch; restarting Simplex engine"
                     );
-                    // DKG activation race: before bouncing back
-                    // into the epoch loop (which will call `engine.start`
-                    // for the new epoch), wait for the FinalizationActor
-                    // to publish the activation block as finalized. The
-                    // generic `current_epoch > 0` guard at the top of
-                    // the loop checks only that *some* finalized anchor
-                    // exists, which is a weaker condition than
-                    // `last_finalized_number >= activation_height` - a
-                    // stale anchor would still satisfy the generic
-                    // guard while pointing Simplex at the wrong parent.
+                    // DKG activation race: wait for the FinalizationActor
+                    // to publish the activation block as finalized. Do this
+                    // before the return to the epoch loop (which will call
+                    // `engine.start` for the new epoch). The generic
+                    // `current_epoch > 0` guard at the top of the loop
+                    // checks only that *some* finalized anchor exists. That
+                    // is a weaker condition than
+                    // `last_finalized_number >= activation_height`. A stale
+                    // anchor would still satisfy the generic guard while
+                    // pointing Simplex at the wrong parent.
                     let activation_height = self.state.last_dkg_activation_height;
                     super::continuity::wait_for_activation_anchor(
                         ctx,
@@ -386,18 +388,22 @@ where
                     activation_anchor: activation_height,
                 } => {
                     // S3 demotion: an exited validator (deactivated/unstaked) is a
-                    // previous-output dealer but not a frozen-target player, so it
-                    // finishes its dealer duties for the resharded committee and then,
-                    // instead of looping until VRF expiry kills the process, DEMOTES to
-                    // a share-less verifier-follower of the smaller (N-1) committee. It
-                    // adopts the new group polynomial reconstructed from the finalized
-                    // dealer logs it just helped produce (`canonical_output` for the
-                    // ceremony epoch), drops its share, advances its epoch, and restarts
-                    // the Simplex engine in verifier mode - the same finalized-follower
-                    // path a non-staked TEE full-node uses. The reshared output is a
-                    // membership change, so unlike the same-membership verifier-follow
-                    // the node MUST take the new polynomial + participant set here (it
-                    // has them from the ceremony) rather than reusing the old ones.
+                    // previous-output dealer but not a frozen-target player. So it
+                    // finishes its dealer duties for the resharded committee. Then it
+                    // does not loop until VRF expiry kills the process. Instead, it
+                    // DEMOTES to a share-less verifier-follower of the smaller (N-1)
+                    // committee. It:
+                    // - adopts the new group polynomial reconstructed from the finalized
+                    //   dealer logs it just helped produce (`canonical_output` for the
+                    //   ceremony epoch),
+                    // - drops its share,
+                    // - advances its epoch,
+                    // - restarts the Simplex engine in verifier mode.
+                    // This is the same finalized-follower path that a non-staked TEE
+                    // full-node uses. The reshared output is a membership change. So,
+                    // unlike the same-membership verifier-follow, the node MUST take the
+                    // new polynomial + participant set here (it has them from the
+                    // ceremony) rather than reuse the old ones.
                     let canonical_output = select_pending_canonical_output(
                                     self.dkg_manager.canonical_output(self.state.current_epoch),
                                     self.rotation.dealer_only_dkg_activation

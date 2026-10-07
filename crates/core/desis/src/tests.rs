@@ -41,7 +41,7 @@ const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = 1_000_000_000_000;
 /// The launch decade: 100 000 PROMIS at COEN/USD = 0.001.
 const LAUNCH_EXPONENT: u32 = 11;
 
-/// The anchor a 0.001 launch captures; every deadband fixture below runs on it.
+/// The anchor a 0.001 launch captures. Every deadband fixture below runs on it.
 const ANCHOR_DIGITS: u32 = LAUNCH_EXPONENT + 4;
 
 fn ladder(current: Option<u32>, rate_minor: u128) -> u32 {
@@ -86,7 +86,7 @@ fn a_launch_anchor_below_the_stored_exponent_cannot_underflow_the_decade() {
     runtime::promis_load_exponent(27, Some(0), U256::from(1u8));
 }
 
-/// The override is an e2e affordance; a production build must run the ladder.
+/// The override is an e2e affordance. A production build must run the ladder.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_production_build_has_no_load_override() {
@@ -138,7 +138,7 @@ fn an_anchored_chain_takes_the_anchors_answer() {
 
 #[test]
 fn the_load_steps_down_only_past_the_widened_upper_edge() {
-    // The 0.01 boundary sits at 10_000; the band pushes the step to 10_200.
+    // The 0.01 boundary sits at 10_000. The band pushes the step to 10_200.
     assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_000), LAUNCH_EXPONENT);
     assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_199), LAUNCH_EXPONENT);
     assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_200), LAUNCH_EXPONENT - 1);
@@ -215,22 +215,22 @@ fn targets_stub(chains: &[u32]) -> Bytes {
 fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    // Stub OriginRouter: `targetsOf` returns the snapshot; send* returns are ignored by the runtime.
+    // Stub OriginRouter: `targetsOf` returns the snapshot. The runtime ignores send* returns.
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(chains));
-    // Stub IntexNFT1155: createSeries/settle/burnSettled are void; balanceOf returns 0 (32 bytes).
+    // Stub IntexNFT1155: createSeries/settle/burnSettled are void. balanceOf returns 0 (32 bytes).
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |handle| {
-        // These cases assert the PROD intex terms; an unset profile resolves by
+        // These cases assert the PROD intex terms. An unset profile resolves by
         // chain id, and the test chain is not mainnet.
         outbe_intexfactory::schema::IntexFactoryContract::new(handle.clone())
             .config_profile
             .write(outbe_intexfactory::config::PROFILE_PROD)
             .unwrap();
         // A day is priced when its auction starts, so every day a start can land on
-        // needs a price here - a day briefed later reads a later one.
+        // needs a price here. A day briefed later reads a later one.
         for day in 0..5 {
             seed_rate(&handle, NOW + day * 86_400, ENTRY_PRICE);
         }
@@ -300,7 +300,7 @@ fn brief_at_rate(
     brief_at_rate_from(s, worldwide_day, desis_limit_minor, rate, green, NOW)
 }
 
-/// The same, for a day briefed at `now` - which is what fixes both its schedule
+/// The same, for a day briefed at `now`. The brief time fixes both its schedule
 /// anchor and the UTC day its start will price from.
 fn brief_at_rate_from(
     s: &StorageHandle,
@@ -314,11 +314,13 @@ fn brief_at_rate_from(
     assert_eq!(
         crate::api::dispatch_auction_brief(
             s.clone(),
-            worldwide_day,
-            U256::from(desis_limit_minor),
-            green,
+            crate::api::AuctionBrief {
+                worldwide_day,
+                desis_limit_minor: U256::from(desis_limit_minor),
+                is_green: green
+            },
             now,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::CarryOver
         )
         .unwrap(),
         AuctionBriefReceipt::Accepted
@@ -353,9 +355,11 @@ fn open_clearing(s: &StorageHandle, units: u128) {
 fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32) {
     runtime::process_bids_done(
         s.clone(),
-        ORIGIN_ROUTER_ADDRESS,
-        WORLDWIDE_DAY,
-        chain,
+        runtime::Inbound {
+            caller: ORIGIN_ROUTER_ADDRESS,
+            worldwide_day: WORLDWIDE_DAY,
+            src_chain_id: chain,
+        },
         total_batches,
         total_bids,
     )
@@ -363,7 +367,7 @@ fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32)
 }
 
 /// Relay `n` bids the way the codec does: batches no wider than one message, then
-/// the done marker. A single oversized batch is refused at the intake.
+/// the done marker. The intake refuses a single oversized batch.
 fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
     let cap = u8::try_from(crate::constants::MAX_BIDS_PER_BATCH).unwrap();
     let total_batches = u16::from(n.div_ceil(cap));
@@ -372,9 +376,11 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
         let end = start.saturating_add(cap).min(n);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain,
+            },
             batch_index,
             total_batches,
             (start..end)
@@ -420,9 +426,11 @@ fn dispatch_auction_brief_records_the_brief() {
     with_storage(|s| {
         let receipt = crate::api::dispatch_auction_brief(
             s.clone(),
-            WORLDWIDE_DAY,
-            U256::from(10 * PROMIS_LOAD_MINOR),
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
+                is_green: true,
+            },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
         )
@@ -464,9 +472,11 @@ fn dispatch_auction_brief_records_a_red_day() {
     with_storage(|s| {
         let receipt = crate::api::dispatch_auction_brief(
             s.clone(),
-            WORLDWIDE_DAY,
-            U256::from(PROMIS_LOAD_MINOR),
-            false,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
+                is_green: false,
+            },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
         )
@@ -487,10 +497,12 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
         let digest = crate::ocomp_limits::apply_request_desis_limit(
             s.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(7 * PROMIS_LOAD_MINOR),
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                is_green: true,
+            },
             NOW,
-            true,
         )
         .expect("strict request brief");
 
@@ -523,20 +535,24 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
         crate::ocomp_limits::apply_request_desis_limit(
             s.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(7 * PROMIS_LOAD_MINOR),
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                is_green: true,
+            },
             NOW,
-            true,
         )
         .unwrap();
 
         assert!(crate::ocomp_limits::apply_request_desis_limit(
             s.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(9 * PROMIS_LOAD_MINOR),
-            NOW,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(9 * PROMIS_LOAD_MINOR),
+                is_green: true
+            },
+            NOW
         )
         .is_err());
 
@@ -558,10 +574,12 @@ fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
         assert!(crate::ocomp_limits::apply_request_desis_limit(
             s.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::MAX,
-            NOW,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::MAX,
+                is_green: true
+            },
+            NOW
         )
         .is_err());
 
@@ -614,10 +632,12 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
             crate::ocomp_limits::apply_request_desis_limit(
                 storage,
                 B256::repeat_byte(0x41),
-                WORLDWIDE_DAY,
-                U256::from(7 * PROMIS_LOAD_MINOR),
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                    is_green: true,
+                },
                 NOW,
-                true,
             )
         });
         assert!(result.is_ok());
@@ -635,10 +655,12 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
             crate::ocomp_limits::apply_request_desis_limit(
                 storage,
                 B256::repeat_byte(0x41),
-                WORLDWIDE_DAY,
-                U256::from(7 * PROMIS_LOAD_MINOR),
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                    is_green: true,
+                },
                 NOW,
-                true,
             )
         });
         assert!(
@@ -659,10 +681,12 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         crate::ocomp_limits::apply_request_desis_limit(
             storage.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(7 * LOAD_MINOR),
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(7 * LOAD_MINOR),
+                is_green: true,
+            },
             NOW,
-            true,
         )
         .unwrap();
         runtime::schedule_tick(&storage, NOW).unwrap();
@@ -678,10 +702,12 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         assert!(crate::ocomp_limits::apply_request_desis_limit(
             storage.clone(),
             B256::repeat_byte(0x41),
-            WORLDWIDE_DAY,
-            U256::from(9 * LOAD_MINOR),
-            NOW,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(9 * LOAD_MINOR),
+                is_green: true
+            },
+            NOW
         )
         .is_err());
 
@@ -722,22 +748,26 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 s.clone(),
-                WORLDWIDE_DAY,
-                U256::from(10 * PROMIS_LOAD_MINOR),
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
+                    is_green: true
+                },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
         );
         assert!(crate::api::dispatch_auction_brief(
             s.clone(),
-            WORLDWIDE_DAY,
-            U256::from(7 * PROMIS_LOAD_MINOR),
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                is_green: true
+            },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::CarryOver
         )
         .is_err());
         let contract = s.contract::<DesisContract>();
@@ -767,11 +797,13 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_full_carry_over() {
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 s.clone(),
-                WORLDWIDE_DAY,
-                U256::MAX,
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::MAX,
+                    is_green: true
+                },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
@@ -807,11 +839,13 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 storage.clone(),
-                WORLDWIDE_DAY,
-                U256::from(u128::MAX),
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(u128::MAX),
+                    is_green: true
+                },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -824,11 +858,13 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 storage.clone(),
-                WORLDWIDE_DAY,
-                supply,
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: supply,
+                    is_green: true
+                },
                 NOW,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
@@ -860,32 +896,38 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
     StorageHandle::enter(&mut provider, |storage| {
         assert!(crate::api::dispatch_auction_brief(
             storage.clone(),
-            WorldwideDay::new(0),
-            U256::MAX,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WorldwideDay::new(0),
+                desis_limit_minor: U256::MAX,
+                is_green: true
+            },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::CarryOver
         )
         .is_err());
 
         brief_at(&storage, WORLDWIDE_DAY, 1, true);
         assert!(crate::api::dispatch_auction_brief(
             storage.clone(),
-            WORLDWIDE_DAY,
-            U256::MAX,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::MAX,
+                is_green: true
+            },
             NOW,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::CarryOver
         )
         .is_err());
 
         assert!(crate::api::dispatch_auction_brief(
             storage,
-            NEXT_WORLDWIDE_DAY,
-            U256::MAX,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: NEXT_WORLDWIDE_DAY,
+                desis_limit_minor: U256::MAX,
+                is_green: true
+            },
             u64::MAX,
-            crate::api::BriefOverflowPolicy::CarryOver,
+            crate::api::BriefOverflowPolicy::CarryOver
         )
         .is_err());
     });
@@ -901,9 +943,11 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
         let result = StorageHandle::enter(&mut provider, |storage| {
             crate::api::dispatch_auction_brief(
                 storage,
-                WORLDWIDE_DAY,
-                U256::from(7 * PROMIS_LOAD_MINOR),
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                    is_green: true,
+                },
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
             )
@@ -919,9 +963,11 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
         let result = StorageHandle::enter(&mut provider, |storage| {
             crate::api::dispatch_auction_brief(
                 storage,
-                WORLDWIDE_DAY,
-                U256::from(7 * PROMIS_LOAD_MINOR),
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
+                    is_green: true,
+                },
                 NOW,
                 crate::api::BriefOverflowPolicy::CarryOver,
             )
@@ -939,9 +985,11 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
     let result = StorageHandle::enter(&mut rejection_provider, |storage| {
         crate::api::dispatch_auction_brief(
             storage,
-            WORLDWIDE_DAY,
-            U256::MAX,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::MAX,
+                is_green: true,
+            },
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
         )
@@ -961,11 +1009,13 @@ fn brief_anchor_at(now: u64) -> u64 {
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 s.clone(),
-                WORLDWIDE_DAY,
-                U256::from(LOAD_MINOR),
-                true,
+                crate::api::AuctionBrief {
+                    worldwide_day: WORLDWIDE_DAY,
+                    desis_limit_minor: U256::from(LOAD_MINOR),
+                    is_green: true
+                },
                 now,
-                crate::api::BriefOverflowPolicy::CarryOver,
+                crate::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -1064,8 +1114,8 @@ fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit(
     );
 }
 
-/// A late day goes out as a red START, so a router that cannot take it keeps the
-/// day briefed for the next tick instead of cancelling it unannounced.
+/// A late day goes out as a red START. A router that cannot take it therefore keeps
+/// the day briefed for the next tick and does not cancel it unannounced.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_late_day_is_cancelled_only_once_its_red_start_is_sent() {
@@ -1081,16 +1131,19 @@ fn ocomp_brief_at_now(s: &StorageHandle) {
     crate::ocomp_limits::apply_request_desis_limit(
         s.clone(),
         B256::repeat_byte(0x41),
-        WORLDWIDE_DAY,
-        U256::from(10 * LOAD_MINOR),
+        crate::api::AuctionBrief {
+            worldwide_day: WORLDWIDE_DAY,
+            desis_limit_minor: U256::from(10 * LOAD_MINOR),
+            is_green: true,
+        },
         NOW,
-        true,
     )
     .expect("strict request brief");
 }
 
-/// An OCOMP brief carries its request time, so a quorum that lands hours into the day
-/// still anchors to its midnight, and the start measures what is left of the window.
+/// An OCOMP brief carries its request time. A quorum that lands hours into the day
+/// therefore still anchors to its midnight. The start therefore measures what is left of
+/// the window.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_late_ocomp_brief_cancels_its_day() {
@@ -1102,7 +1155,7 @@ fn a_late_ocomp_brief_cancels_its_day() {
 }
 
 /// A day that never started is still a late start past its whole issuance window, so
-/// its targets hear of it; only a started day is retired as overdue.
+/// its targets hear of it. Only a started day is retired as overdue.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_brief_past_the_issuance_window_is_still_a_late_start() {
@@ -1113,8 +1166,8 @@ fn a_brief_past_the_issuance_window_is_still_a_late_start() {
     );
 }
 
-/// Past its issuance window a day whose START the router still refuses is retired as
-/// overdue, so its limit does not wait on the router forever.
+/// Past its issuance window, a day whose START the router still refuses is retired as
+/// overdue. Its limit therefore does not wait on the router forever.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_briefed_day_the_router_never_takes_is_retired_past_its_issuance_window() {
@@ -1320,8 +1373,8 @@ fn schedule_retires_an_overdue_day() {
     assert!(found, "expected AuctionOverdue event");
 }
 
-/// One decade up the rate ladder the same PROMIS buys ten times the Intexes, and
-/// the bid floor has to be restated with it or it sits above the whole tirage.
+/// One decade up the rate ladder, the same PROMIS buys ten times the Intexes. The
+/// bid floor has to be restated with it, or it sits above the whole tirage.
 #[test]
 fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
     with_storage(|s| {
@@ -1330,8 +1383,8 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         assert_eq!(clear(&s).issued_units, 100);
 
         // Ten times the rate of the fixture, which is past the deadband. The day
-        // is briefed a day later so its start reads a different closed UTC day,
-        // which is the only way the two days can be quoted differently at all.
+        // is briefed a day later so its start reads a different closed UTC day.
+        // That is the only way the two days can be quoted differently at all.
         brief_at_rate_from(
             &s,
             NEXT_WORLDWIDE_DAY,
@@ -1402,12 +1455,14 @@ fn process_bids_in_non_revealing_stage_fails() {
     with_storage(|s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        // Stage is Started, not Revealing - must be rejected.
+        // Stage is Started, not Revealing. The call must be rejected.
         assert!(runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN
+            },
             0,
             1,
             bids(2, 200)
@@ -1424,9 +1479,11 @@ fn process_bids_rejects_non_origin_caller() {
         let attacker = bidder(99);
         assert!(runtime::process_bids_batch(
             s.clone(),
-            attacker,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: attacker,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN
+            },
             0,
             1,
             bids(3, 200)
@@ -1445,9 +1502,11 @@ fn process_bids_rejects_an_oversized_batch() {
         let over = u8::try_from(MAX_BIDS_PER_BATCH + 1).unwrap();
         let error = runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(over, 200),
@@ -1471,12 +1530,14 @@ fn process_bids_accumulate_across_batches() {
         open_revealing(&s);
 
         // Two batches (total_batches=2) accumulate for the chain. Intake stays
-        // Revealing - nothing auto-transitions; the chain finalizes only on its BIDS_DONE marker.
+        // Revealing. Nothing auto-transitions. The chain finalizes only on its BIDS_DONE marker.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             2,
             bids(3, 200),
@@ -1484,9 +1545,11 @@ fn process_bids_accumulate_across_batches() {
         .unwrap();
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             1,
             2,
             bids(2, 150),
@@ -1516,9 +1579,11 @@ fn marker_finalizes_chain_once_batches_and_totals_match() {
         open_revealing(&s);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(4, 200),
@@ -1548,9 +1613,11 @@ fn marker_arriving_before_batches_still_finalizes() {
         assert!(s.contract::<DesisContract>().chain_done.read(&key).unwrap() == 0);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(2, 200),
@@ -1567,9 +1634,11 @@ fn marker_total_mismatch_keeps_chain_not_done() {
         open_revealing(&s);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(3, 200),
@@ -1595,9 +1664,11 @@ fn a_redelivered_batch_counts_once() {
         for _ in 0..2 {
             runtime::process_bids_batch(
                 s.clone(),
-                ORIGIN_ROUTER_ADDRESS,
-                WORLDWIDE_DAY,
-                SRC_CHAIN,
+                runtime::Inbound {
+                    caller: ORIGIN_ROUTER_ADDRESS,
+                    worldwide_day: WORLDWIDE_DAY,
+                    src_chain_id: SRC_CHAIN,
+                },
                 0,
                 2,
                 bids(3, 200),
@@ -1621,9 +1692,11 @@ fn a_batch_declaring_another_total_is_refused() {
         // The first batch fixes the chain's span: a batch claiming another could complete the set early.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             2,
             bids(1, 200),
@@ -1631,9 +1704,11 @@ fn a_batch_declaring_another_total_is_refused() {
         .unwrap();
         assert!(runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN
+            },
             1,
             3,
             bids(1, 200),
@@ -1653,9 +1728,11 @@ fn no_bids_clears_as_no_sale() {
         // A single empty batch (batch 0 of 1) plus a zero-bid marker finalizes the chain.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             vec![],
@@ -1663,8 +1740,8 @@ fn no_bids_clears_as_no_sale() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 0);
 
-        // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
-        // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
+        // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners. The
+        // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling.
         let result = clear(&s);
         assert_eq!(result.issued_units, 0);
         assert!(result.winners.is_empty());
@@ -1687,9 +1764,11 @@ fn clearing_allocates_up_to_the_limit() {
         // 5 bidders competing for 3 supply units.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(5, 200),
@@ -1708,9 +1787,11 @@ fn clearing_transitions_to_cleared() {
         open_clearing(&s, 1);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -1875,9 +1956,11 @@ fn clearing_uniform_price_is_last_allocated_bid() {
         ];
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             three_bids,
@@ -1919,9 +2002,11 @@ fn clear_bids_below_min_price_skipped() {
         ];
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             low_bids,
@@ -1960,9 +2045,11 @@ fn clear_refunds_equal_locked_minus_paid() {
         ];
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             two_bids,
@@ -2028,9 +2115,11 @@ fn clear_rate_escrow_scales_by_basis() {
         ];
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             rate_bids,
@@ -2074,9 +2163,11 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
         arm_clearing(&s);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -2118,9 +2209,11 @@ fn two_chain_bids_merge_and_carry_source_chain() {
         // Chain A: one bid at 300. Chain B: one bid at 200.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_a,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain_a,
+            },
             0,
             1,
             vec![BidData {
@@ -2136,9 +2229,11 @@ fn two_chain_bids_merge_and_carry_source_chain() {
         mark_done(&s, chain_a, 1, 1);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_b,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain_b,
+            },
             0,
             1,
             vec![BidData {
@@ -2174,9 +2269,11 @@ fn force_clear_waits_then_fires_when_all_done() {
         open_clearing(&s, 2);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_a,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain_a,
+            },
             0,
             1,
             bids(1, 200),
@@ -2197,9 +2294,11 @@ fn force_clear_waits_then_fires_when_all_done() {
         // Chain B reports -> the gate opens and the tick clears.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_b,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain_b,
+            },
             0,
             1,
             bids(1, 200),
@@ -2275,9 +2374,11 @@ fn force_clear_skips_missing_chain_after_deadline() {
         // Only chain A finalizes.
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_a,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain_a,
+            },
             0,
             1,
             bids(1, 200),
@@ -2327,9 +2428,11 @@ fn tick_gate_clears_ready_day() {
         open_clearing(&s, 1);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -2355,9 +2458,10 @@ fn test_iface_id_matches_selector_xor() {
     use alloy_sol_types::SolCall;
 
     // `IDESIS_INTERFACE_ID` is what OriginRouter probes: `type(IDesis).interfaceId` of the
-    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol) - the four
-    // functions it declares. The precompile's extra diagnostic views (getChainBidsCount,
-    // isChainDone) are not part of that interface, so they are excluded from the XOR.
+    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol). It covers the
+    // four functions that interface declares. The precompile's extra diagnostic views
+    // (getChainBidsCount, isChainDone) are not part of that interface, so they are excluded from
+    // the XOR.
     let xor: [u8; 4] = [
         IDesis::processBidsBatchCall::SELECTOR,
         IDesis::processBidsDoneCall::SELECTOR,
@@ -2383,9 +2487,9 @@ fn test_iface_id_matches_selector_xor() {
 
 // --- Clearing: one series per currency pair ---
 
-/// Brief `units` of Desis Limit against a day that priced exactly `references` -
-/// the fixture's own currency included only when it is one of them - and drive the
-/// schedule until the clearing gate is armed.
+/// Brief `units` of Desis Limit against a day that priced exactly `references`, and
+/// drive the schedule until the clearing gate is armed. The fixture's own currency is
+/// included only when it is one of the `references`.
 fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
     brief_at(s, WORLDWIDE_DAY, units * LOAD_MINOR, true);
     unprice_day(s, NOW);
@@ -2425,9 +2529,11 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
         relayed[2].reference_currency = 978;
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain,
+            },
             0,
             1,
             relayed,
@@ -2485,7 +2591,7 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
 
 #[test]
 fn escrow_basis_is_promis_load() {
-    // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
+    // wCOEN escrow basis = promis_load per Intex. Entry no longer drives it.
     let cfg = AuctionConfig::from_reference_prices(
         vec![crate::schema::ReferenceCurrencyPrice {
             iso_code: REFERENCE_ISO,
@@ -2511,7 +2617,7 @@ fn a_chains_winners_ship_in_chunks_the_encoder_can_carry() {
         2
     );
 
-    // The arrival set's ceiling; one winner more is refused rather than truncated.
+    // The arrival set's ceiling. One winner more is refused rather than truncated.
     let ceiling = REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS;
     assert_eq!(
         runtime::refund_chunk_count(ceiling).unwrap(),
@@ -2590,9 +2696,11 @@ fn clearing_marks_the_bid_supply_ran_out_in() {
         };
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             vec![bid(0, 900_000, 2), bid(1, 800_000, 2), bid(2, 700_000, 1)],
@@ -2660,7 +2768,7 @@ fn a_day_without_a_strike_price_carries_the_launch_load_and_anchors_nothing() {
 
 #[test]
 fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
-    // An oracle gap prices nothing - the same condition that makes a day red.
+    // An oracle gap prices nothing. That is the same condition that makes a day red.
     // Settlement still has to complete, so the day must reach a terminal stage
     // instead of failing the brief.
     with_storage(|s| {
@@ -2681,7 +2789,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
             0,
             "and leaves the schedule"
         );
-        // It was briefed green, so it holds the day's PROMIS - unlike a red day, which
+        // It was briefed green, so it holds the day's PROMIS. A red day, unlike it,
         // is briefed with none. Cancelling it must give that limit back.
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(s.clone())
@@ -2697,7 +2805,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
 
 #[test]
 fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
-    // A code no series id can spell would otherwise surface at clearing, which is the
+    // A code no series id can spell would otherwise surface at clearing. Clearing is the
     // one place that cannot recover: the day would revert every block until it expired.
     let chain = 10u32;
     with_targets(&[chain], |s| {
@@ -2707,9 +2815,11 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
 
         let err = runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: chain,
+            },
             0,
             1,
             relayed,
@@ -2754,9 +2864,11 @@ fn a_batch_for_a_day_never_briefed_is_acknowledged() {
     StorageHandle::enter(&mut storage, |s| {
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            UNBRIEFED_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: UNBRIEFED_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -2776,9 +2888,11 @@ fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
         open_clearing(&s, 10);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             vec![],
@@ -2788,9 +2902,11 @@ fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
         clear(&s);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -2808,9 +2924,11 @@ fn a_batch_before_reveal_still_reverts_so_the_transport_redelivers() {
         runtime::schedule_tick(&s, NOW).unwrap(); // Started, commit stage running
         assert!(runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN
+            },
             0,
             1,
             bids(1, 200),
@@ -2829,9 +2947,11 @@ fn an_early_marker_stands_against_a_conflicting_one() {
         for total_bids in [1u32, 2] {
             runtime::process_bids_done(
                 s.clone(),
-                ORIGIN_ROUTER_ADDRESS,
-                WORLDWIDE_DAY,
-                SRC_CHAIN,
+                runtime::Inbound {
+                    caller: ORIGIN_ROUTER_ADDRESS,
+                    worldwide_day: WORLDWIDE_DAY,
+                    src_chain_id: SRC_CHAIN,
+                },
                 1,
                 total_bids,
             )
@@ -2839,9 +2959,11 @@ fn an_early_marker_stands_against_a_conflicting_one() {
         }
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             1,
             bids(1, 200),
@@ -2862,22 +2984,26 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
         open_revealing(&s);
         runtime::process_bids_batch(
             s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
+            runtime::Inbound {
+                caller: ORIGIN_ROUTER_ADDRESS,
+                worldwide_day: WORLDWIDE_DAY,
+                src_chain_id: SRC_CHAIN,
+            },
             0,
             2,
             bids(1, 200),
         )
         .unwrap();
-        // The marker claims 2 batches / 3 bids while the second batch is still missing; the repeat
+        // The marker claims 2 batches / 3 bids while the second batch is still missing. The repeat
         // is a no-op and the disagreeing marker loses to the first.
         for total_bids in [3u32, 3, 5] {
             runtime::process_bids_done(
                 s.clone(),
-                ORIGIN_ROUTER_ADDRESS,
-                WORLDWIDE_DAY,
-                SRC_CHAIN,
+                runtime::Inbound {
+                    caller: ORIGIN_ROUTER_ADDRESS,
+                    worldwide_day: WORLDWIDE_DAY,
+                    src_chain_id: SRC_CHAIN,
+                },
                 2,
                 total_bids,
             )
@@ -2897,9 +3023,11 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
     StorageHandle::enter(&mut storage, |s| {
         let error = crate::api::dispatch_auction_brief(
             s.clone(),
-            WORLDWIDE_DAY,
-            U256::MAX,
-            true,
+            crate::api::AuctionBrief {
+                worldwide_day: WORLDWIDE_DAY,
+                desis_limit_minor: U256::MAX,
+                is_green: true,
+            },
             NOW,
             crate::api::BriefOverflowPolicy::Reject,
         )
@@ -2922,8 +3050,8 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
         .is_empty());
 }
 
-/// A round is sized from the busiest of the chain's recent days, floored at a small day's worth: a miss
-/// only costs another round, so the estimate has to be close, not exact.
+/// A round is sized from the busiest of the chain's recent days, floored at a small day's worth.
+/// A miss only costs another round, so the estimate has to be close, not exact.
 #[test]
 fn a_clearing_round_is_sized_from_the_chains_recent_days() {
     let day = WorldwideDay::new(20260501);

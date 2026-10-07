@@ -18,15 +18,15 @@ use crate::{
 };
 
 /// Boxed, `Send` future returned by [`AncestryReader`] lookups. Mirrors the
-/// marshal-backed block lookup that the application handler provides; the trait
+/// marshal-backed block lookup that the application handler provides. The trait
 /// methods carry no async context, so each returns an owned future.
 pub type BlockLookupFuture<'a> = Pin<Box<dyn Future<Output = Option<ConsensusBlock>> + Send + 'a>>;
 
 /// Read-only ancestry access used by [`Mailbox::resolve_boundary`] to walk a
 /// proposal/verification parent chain looking for an already-committed DKG
 /// boundary. The production implementation (`MarshalAncestryReader`) lives in
-/// the application handler - `dkg_manager` is the sole consumer and defines the
-/// contract it needs.
+/// `crate::application::ancestry`. `dkg_manager` is the sole consumer and
+/// defines the contract it needs.
 pub trait AncestryReader: Send + Sync {
     fn get_block_by_height<'a>(&'a self, height: u64) -> BlockLookupFuture<'a>;
     fn get_block_by_hash<'a>(&'a self, hash: B256) -> BlockLookupFuture<'a>;
@@ -44,7 +44,7 @@ pub enum BoundaryRequirement {
 }
 
 /// Failure modes of [`Mailbox::resolve_boundary`]. `Unavailable` means the
-/// ancestry could not be read (retry/forfeit), `Conflict` means the ancestry
+/// ancestry could not be read (retry/forfeit). `Conflict` means the ancestry
 /// carries a contradictory boundary (deterministic reject).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoundaryRequirementError {
@@ -93,9 +93,10 @@ pub struct CommittedDkgBoundary {
     pub block_hash: B256,
 }
 
-// `BoundaryCommitted` carries the full committed boundary; the other variants are
+// `BoundaryCommitted` carries the full committed boundary. The other variants are
 // unit. Boxing it would ripple through every match/construct site for a status
-// enum that is held briefly per epoch - not worth it for the stack-size delta.
+// enum that is held briefly per epoch. That is not worth it for the stack-size
+// delta.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BoundaryStatus {
@@ -203,15 +204,16 @@ impl Mailbox {
     /// `BoundaryOutcome`, whether the parent ancestry already committed it, or
     /// whether there is no pending boundary.
     ///
-    /// The boundary-status cache (process-local memoization keyed by
-    /// `(parent_hash, pending_artifact_hash)`) is consulted first; on a miss the
-    /// parent chain is walked via `ancestry` down to `boundary_scan_floor`, and
-    /// the resolved verdict is cached. Each cache touch is a discrete
-    /// `with_state` call - no lock guard is ever held across an `.await`.
+    /// This method consults the boundary-status cache (process-local memoization
+    /// keyed by `(parent_hash, pending_artifact_hash)`) first. On a miss, it walks
+    /// the parent chain via `ancestry` down to `boundary_scan_floor` and caches
+    /// the resolved verdict. Each cache touch is a discrete `with_state` call.
+    /// No lock guard is ever held across an `.await`.
     ///
-    /// Both the propose path (`build_block`) and the verify path
-    /// (`validate_header_consensus_artifacts`) call this, so the result must be
-    /// deterministic for a given `(parent, pending)` pair.
+    /// Both the propose path ([`Mailbox::plan_header_artifact`]) and the verify
+    /// path ([`Mailbox::admit_header_artifact`], from
+    /// `validate_header_consensus_artifacts_for_activation`) call this. Thus the
+    /// result must be deterministic for a given `(parent, pending)` pair.
     pub async fn resolve_boundary<R: AncestryReader>(
         &self,
         parent: Option<&ConsensusBlock>,

@@ -65,7 +65,7 @@ pub(super) fn decode_payload(payload: &[u8]) -> Result<LateFinalizeCreditsArtifa
 
     for _ in 0..batch_count {
         let credit = decode_credit(payload, &mut offset)?;
-        // Canonical order: strictly ascending (fb_number, fb_hash); reject
+        // Canonical order: strictly ascending (fb_number, fb_hash). Reject
         // out-of-order or duplicate targets for byte-deterministic decoding.
         let key = (credit.fb_number, credit.fb_hash);
         if let Some(prev_key) = prev {

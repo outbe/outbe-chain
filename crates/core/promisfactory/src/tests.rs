@@ -1,6 +1,6 @@
 //! Promisfactory tests driven by the in-process Promis enclave stand-in. Mint/burn
-//! are enclave-routed and modify-key authorized, so balances are asserted by
-//! decrypting the ciphertext with the account's view key.
+//! are enclave-routed and modify-key authorized. The tests therefore check balances
+//! by decrypting the ciphertext with the account's view key.
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
@@ -170,7 +170,7 @@ fn rejects_msg_value() {
 }
 
 /// Run `f` with the Promis, Gratis and Fidelity in-process enclaves installed and
-/// the block time set - the gratis mint records a Fidelity acquisition cohort at
+/// the block time set. The gratis mint records a Fidelity acquisition cohort at
 /// `now`, so a zero timestamp would not exercise it.
 fn with_gratis_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     test_enclave::install();
@@ -226,10 +226,10 @@ fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
     with_gratis_env(|storage| {
         let amount = U256::from(1_000u64);
 
-        // Seed only (confidential) promis to convert - no Fidelity cohort yet.
+        // Seed only (confidential) promis to convert. No Fidelity cohort exists yet.
         // Promis is fidelity-neutral, so the aged RCFI a year out sits at the floor
-        // up front; the post-conversion check then proves the conversion recorded a
-        // fresh gratis cohort rather than it having pre-existed.
+        // up front. The post-conversion check then proves that the conversion
+        // recorded a fresh gratis cohort, and that the cohort did not pre-exist.
         promis_api::mint(
             storage.clone(),
             alice(),
@@ -243,8 +243,8 @@ fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         assert_eq!(league_before, MIN_LEAGUE);
 
         // Both ledgers are enclave-confidential and independently keyed, so the call
-        // carries two modify authorizations at each ledger's current op-nonce: promis
-        // already advanced to 1 by the seed mint, gratis is fresh (0).
+        // carries two modify authorizations at each ledger's current op-nonce. The
+        // seed mint already advanced promis to 1. Gratis is fresh (0).
         let pa = auth(PromisOp::Burn, alice(), amount, 1);
         let ga = gratis_auth(GratisOp::Mint, alice(), amount, 0);
         let call = mine_gratis_call(amount, &pa, &ga);
@@ -287,9 +287,9 @@ fn mine_gratis_rejects_insufficient_balance() {
         )
         .unwrap();
 
-        // The promis burn fails before the gratis mint is reached; the gratis auth is
-        // never checked (zero placeholder), but the promis burn auth must be valid to
-        // reach the balance check (op-nonce 1 after the seed mint).
+        // The promis burn fails before execution reaches the gratis mint. Nothing
+        // checks the gratis auth (zero placeholder). The promis burn auth must be
+        // valid to reach the balance check (op-nonce 1 after the seed mint).
         let pa = auth(PromisOp::Burn, alice(), U256::from(200u64), 1);
         let placeholder = ModifyAuth {
             mac: [0u8; 32],

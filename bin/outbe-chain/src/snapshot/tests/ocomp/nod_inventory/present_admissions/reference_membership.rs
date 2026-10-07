@@ -214,7 +214,7 @@ fn membership_does_not_substitute_for_current_cas_bytes_and_error_paths_cleanup(
             *bytes.last_mut().unwrap() ^= 1;
             fs::write(path, bytes).unwrap();
         }
-        // Mutation is test setup; verification must not repair or alter it.
+        // Mutation is test setup. Verification must not repair or alter it.
         let before = fingerprint(root.path());
         let cas = FilesystemCasReader::open(&f.cas_root, CAS_LIMITS).unwrap();
         for complete in [false, true] {

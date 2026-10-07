@@ -7,10 +7,10 @@ use super::*;
 // T3 - ordered::Set index shift on prefix-sort join (must pass).
 //
 // Prepending a BLS pubkey that sorts before all existing keys to an ordered::Set
-// shifts the indices of every original key by +1. Production code that builds
-// `participants` from a live 4-key set after a 3-key DKG would therefore observe
-// participant indices that no longer match the share.index baked into the
-// saved DKG output (hybrid.rs:472-481, invariant).
+// shifts the indices of every original key by +1. Assume that production code
+// builds `participants` from a live 4-key set after a 3-key DKG. That code would
+// therefore observe participant indices that no longer match the share.index
+// baked into the saved DKG output (hybrid.rs:472-481, invariant).
 //
 // This is a structural assertion about ordered::Set, not a probabilistic one.
 // =============================================================================
@@ -37,9 +37,9 @@ fn ordered_set_index_shift_on_prefix_join() {
         .collect();
 
     // Find a 4th BLS pubkey whose encoding sorts before all 3 originals.
-    // BLS pubkeys are compressed G1 elements with byte values uniformly
-    // distributed enough that a sort-before key is found within a small
-    // seed window in practice.
+    // BLS pubkeys are compressed G1 elements. Their byte values are uniformly
+    // distributed enough that, in practice, the search finds a sort-before key
+    // within a small seed window.
     let smallest = commonware_codec::Encode::encode(&keys[0].public_key());
     let new_key = (4u64..1_000_000)
         .find_map(|seed| {
@@ -88,10 +88,10 @@ fn ordered_set_index_shift_on_prefix_join() {
 // T1 / T2a / T2b / T5 - multi-node simplex deterministic harness.
 //
 // These tests run the actual `simplex::Engine` over a deterministic
-// simulated network with outbe-chain's `HybridScheme<MinSig>` and the
+// simulated network. They use outbe-chain's `HybridScheme<MinSig>` and the
 // shared `crate::epoch_subchannels::register_epoch_subchannels` /
-// `take_or_register_current` helper that production also uses in
-// `stack.rs`. Toggling `use_pre_registration` in the harness switches
+// `take_or_register_current` helper. Production also uses this helper in
+// the `stack::epoch` module. Toggling `use_pre_registration` in the harness switches
 // between the pre-fix lazy path and the post-fix pre-register path.
 //
 // Foundation tests T0 (`muxer_contract::*`) and T3
@@ -109,8 +109,8 @@ fn epoch_transition_finalizes_view_one() {
     let runner = deterministic::Runner::timed(Duration::from_secs(30));
     runner.start(|ctx| async move {
         let mut harness = outbe_consensus::test_harness::Harness::new(&ctx, 3).await;
-        // Epoch::new(2) -> RoundRobin leader = (2+1) % 3 = 0; arbitrary
-        // baseline cycle.
+        // Epoch::new(2) -> RoundRobin leader = (2+1) % 3 = 0. This is an
+        // arbitrary baseline cycle.
         let outcome = harness
             .run_cycle(
                 Epoch::new(2),
@@ -145,10 +145,10 @@ fn cross_node_race_stalls_under_lazy_registration() {
         let leader = harness.leader_for_view_one(epoch);
 
         // Identical timing to T2b. Only `use_pre_registration: false`
-        // differs. In the lazy path, `dkg_completion_delay` is ignored
-        // (no pre-register) so followers' Mux registers the new epoch
-        // only at `activation_delay = 500ms`. Leader fires at 150ms;
-        // 150-500ms window has no follower route -> Mux drop -> stall.
+        // differs. In the lazy path, the harness ignores `dkg_completion_delay`
+        // (no pre-register), so followers' Mux registers the new epoch
+        // only at `activation_delay = 500ms`. The leader fires at 150ms.
+        // The 150-500ms window has no follower route -> Mux drop -> stall.
         let mut dkg_completion = HashMap::new();
         let mut activation = HashMap::new();
         for i in 0..3 {
@@ -205,10 +205,10 @@ fn pre_register_helper_avoids_cross_node_race() {
 
         // Same timing scenario as T2a: leader activates fast,
         // followers slow. The only difference is `use_pre_registration:
-        // true`, which in the harness invokes
-        // `register_epoch_subchannels` at modeled DKG completion -
-        // exactly the function the production fix calls in
-        // stack.rs:1124-1190.
+        // true`. In the harness, this flag invokes
+        // `register_epoch_subchannels` at modeled DKG completion. This is
+        // exactly the function that the production fix calls in
+        // `stack::epoch::completion`.
         let mut dkg_completion = HashMap::new();
         let mut activation = HashMap::new();
         for i in 0..3 {

@@ -27,17 +27,17 @@ use crate::marshal_types::MarshalMailbox;
 const TIP_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Re-query the upstream tip only every Nth wakeup. Hints re-issue every wakeup
-/// (the marshal needs steady re-hinting as its floor advances), but the upstream
-/// `outbe_consensusStatus` tip query is throttled to avoid HTTP 429 rate-limits
+/// (the marshal needs steady re-hinting as its floor advances). The driver throttles
+/// the upstream `outbe_consensusStatus` tip query to avoid HTTP 429 rate-limits
 /// on a busy upstream. Between tip queries the driver drives toward the last
 /// known tip.
 const TIP_REFRESH_EVERY: u32 = 4;
 
 /// How many heights above the marshal's processed floor to keep hinted at once.
-/// The marshal fetches the lowest permitted height and processes in order; a
+/// The marshal fetches the lowest permitted height and processes in order. A
 /// modest window keeps a backlog of in-flight resolver fetches without flooding
 /// the bounded handler mailbox. Re-hinting the (sliding) window each tick is
-/// idempotent - a height already finalized locally is skipped by the marshal.
+/// idempotent. The marshal skips a height that is already finalized locally.
 const HINT_WINDOW: u64 = 64;
 
 fn hint_range(
@@ -54,8 +54,8 @@ fn hint_range(
 }
 
 /// A stub target peer for `hint_finalized`. The follower has no real consensus
-/// peers; the resolver ignores targets and serves from the upstream regardless,
-/// but `hint_finalized` requires a non-empty target set.
+/// peers. The resolver ignores targets and serves from the upstream regardless.
+/// But `hint_finalized` requires a non-empty target set.
 fn stub_targets() -> NonEmptyVec<bls12381::PublicKey> {
     use commonware_cryptography::Signer as _;
     NonEmptyVec::new(bls12381::PrivateKey::from_seed(0).public_key())
@@ -63,7 +63,7 @@ fn stub_targets() -> NonEmptyVec<bls12381::PublicKey> {
 
 /// Configuration for the follow driver.
 pub(super) struct Config<T> {
-    /// Marshal mailbox - receives `hint_finalized` for each height to pull.
+    /// Marshal mailbox. It receives `hint_finalized` for each height to pull.
     pub(super) marshal: MarshalMailbox,
     /// Upstream tip discovery.
     pub(super) tip: T,
@@ -105,14 +105,14 @@ where
 
     async fn drive(&mut self) {
         // Last successfully discovered upstream tip. A fresh tip query can fail
-        // transiently (e.g. the upstream RPC rate-limits our poll with HTTP 429);
-        // we keep driving the marshal toward the last known tip rather than
+        // transiently (e.g. the upstream RPC rate-limits our poll with HTTP 429).
+        // The driver keeps driving the marshal toward the last known tip rather than
         // stalling the whole sync on one failed status call.
         let mut last_tip: Option<Height> = None;
         let mut wakeups: u32 = 0;
         loop {
             // Refresh the tip on the first wakeup and every TIP_REFRESH_EVERY
-            // after; otherwise reuse the last known tip and just re-hint.
+            // after. Otherwise reuse the last known tip and just re-hint.
             if wakeups.is_multiple_of(TIP_REFRESH_EVERY) {
                 match self.config.tip.finalized_tip().await {
                     Some(tip) => last_tip = Some(tip),
@@ -129,15 +129,16 @@ where
 
     /// Drive the marshal forward to `tip`.
     ///
-    /// The marshal advances its finalized chain ONE height at a time and only
-    /// admits a resolver fetch for a height ABOVE its processed floor (a flooded
-    /// batch of out-of-order hints is silently dropped - `hint_finalized` is
-    /// fire-and-forget). So each tick we read the marshal's current processed
-    /// height and (re-)hint a small contiguous WINDOW just above it, after
-    /// ensuring every epoch the window spans has its committee registered. As
-    /// the marshal processes the lowest height the floor rises, and the next
-    /// tick's window slides up - keeping a bounded backlog of in-flight fetches
-    /// without ever leaving a gap unhinted.
+    /// The marshal advances its finalized chain ONE height at a time. It only
+    /// admits a resolver fetch for a height ABOVE its processed floor. The marshal
+    /// silently drops a flooded batch of out-of-order hints. `hint_finalized` is
+    /// fire-and-forget. So each tick the driver reads the
+    /// marshal's current processed height and (re-)hints a small contiguous WINDOW
+    /// just above it. The epocher's `supported_ceiling()` caps the window. The
+    /// driver registers no committees. The resolver admission path does that.
+    /// As the marshal processes the lowest height,
+    /// the floor rises and the next tick's window slides up. This keeps a bounded
+    /// backlog of in-flight fetches and never leaves a gap unhinted.
     async fn pull_to(&mut self, tip: Height) {
         // Marshal's processed floor (genesis anchor = height 0 on a fresh node).
         let processed = self.config.marshal.get_processed_height().await;
@@ -149,7 +150,7 @@ where
                 "follow driver has no eligible hint range"
             );
             // Missing progress is not genesis or rollback. The engine supervises
-            // marshal termination; this driver must not fabricate new work.
+            // marshal termination. This driver must not fabricate new work.
             return;
         };
 

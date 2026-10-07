@@ -188,9 +188,9 @@ fn settled_nod_body_round_trips_without_changing_legacy_encoding() {
 
 /// Field 8 carried the Nod's cost until it became a derivation from the
 /// bucket's entry price and the Nod's gratis load. Every body wrote it, so
-/// retiring it is a deliberate wire break: a body that still carries it states
-/// a cost this schema no longer owns, and must be refused rather than decoded
-/// with the value dropped on the floor.
+/// retiring it is a deliberate wire break. A body that still carries it states
+/// a cost this schema no longer owns. The decoder must refuse that body, not
+/// decode it and drop the value.
 #[test]
 fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
     // Field 8 sits in its canonical position between `bucket_key` and `issuance_currency`.
@@ -303,8 +303,8 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         "a body without field 7 must decode to reference_currency 0"
     );
 
-    // An explicitly-encoded zero is a second encoding of the same body and
-    // must be rejected by the strict re-encode check.
+    // An explicitly-encoded zero is a second encoding of the same body. The
+    // strict re-encode check must reject it.
     let mut explicit_zero = unpriced_payload.clone();
     explicit_zero.extend_from_slice(&[0x38, 0x00]);
     assert!(matches!(
@@ -613,13 +613,13 @@ fn commitment_golden_vectors_are_pinned() {
 
 /// The identity-dependent half of the CES1 conformance set.
 ///
-/// These vectors were produced by an independent `@noble/curves` Poseidon, which
-/// is the entire point of the file: regenerating them from this crate would turn
-/// a cross-implementation check into a tautology. Narrowing identities to 32
-/// bytes changed every Poseidon input here, so the vectors must be reproduced by
-/// re-running that reference against the new identities before this can run
-/// again. The tag and `pbytes` vectors above are identity-independent and still
-/// cover the permutation itself.
+/// An independent `@noble/curves` Poseidon produced these vectors. That is the
+/// entire point of the file. Regenerating them from this crate would turn a
+/// cross-implementation check into a tautology. Narrowing identities to 32 bytes
+/// changed every Poseidon input here. Before this can run again, re-run that
+/// reference against the new identities to reproduce the vectors. The tag and
+/// `pbytes` vectors above are identity-independent and still cover the
+/// permutation itself.
 #[ignore = "CES1 identity/body vectors need regeneration from the @noble/curves reference for 32-byte identities"]
 #[test]
 fn commitment_identity_and_body_golden_vectors_are_pinned() {

@@ -1,4 +1,4 @@
-//! Operator-selected offline checks; no node startup or recovery integration.
+//! Operator-selected offline checks. No node startup or recovery integration.
 
 pub(crate) mod bodies;
 pub(crate) mod canonical_state;

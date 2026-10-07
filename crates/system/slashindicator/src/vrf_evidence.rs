@@ -25,9 +25,9 @@
 //! ```
 //!
 //! Fixed prefix size = 4 + 1 + 8 + 32 + 8 + 8 + 32 + 2 + 4 = 99 bytes.
-//! Trailing bytes are rejected. Total size is bounded by
-//! `OutbeProtocolSchedule::invalid_vrf_evidence_max_bytes` at the call site;
-//! the codec itself only enforces internal consistency.
+//! The codec rejects trailing bytes. The call site bounds the total size by
+//! `OutbeProtocolSchedule::invalid_vrf_evidence_max_bytes`. The codec itself
+//! only enforces internal consistency.
 //!
 //! `failure_code` is a non-authoritative hint from the submitter. The
 //! runtime ignores it and re-derives the VRF failure class from
@@ -37,7 +37,7 @@
 use alloy_primitives::B256;
 use outbe_primitives::error::{PrecompileError, Result};
 
-/// Wire-format magic. The trailing `1` is the version family. A breaking
+/// Wire-format magic. The trailing `2` is the version family. A breaking
 /// wire change bumps both the magic and the `VERSION` byte.
 pub const MAGIC: [u8; 4] = *b"IVE2";
 
@@ -89,7 +89,7 @@ pub struct InvalidVrfProofEvidence {
 impl InvalidVrfProofEvidence {
     /// Encodes evidence into its canonical wire form.
     ///
-    /// Output is byte-for-byte deterministic - two encoders running on
+    /// Output is byte-for-byte deterministic. Two encoders running on
     /// identical input produce identical bytes.
     pub fn encode(&self) -> Vec<u8> {
         let total = FIXED_PREFIX_LEN + self.phase1_tx_bytes.len();
@@ -165,9 +165,9 @@ impl InvalidVrfProofEvidence {
     }
 }
 
-// Field readers below assume the caller has already proved the fixed-prefix
-// length is available; they only panic-free read with explicit Result on the
-// variable-length section.
+// Field readers below assume that the caller already proved the fixed-prefix
+// length is available. They use a panic-free read with an explicit Result only
+// on the variable-length section.
 
 fn read_u16_be(input: &[u8], cur: &mut usize) -> u16 {
     let v = u16::from_be_bytes([input[*cur], input[*cur + 1]]);
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn changing_any_field_changes_encoding() {
         // Pins that the codec doesn't accidentally collapse fields into
-        // the same byte slot - a regression would mean two distinct
+        // the same byte slot. A regression would mean that two distinct
         // evidence blobs produce identical wire bytes.
         let base = sample().encode();
 

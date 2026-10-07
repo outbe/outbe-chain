@@ -21,7 +21,7 @@ interface ISlashIndicator {
         address indexed validator, address indexed submitter, uint256 slashedAmount, uint256 submitterReward
     );
 
-    /// Emitted when byzantine behavior is detected by the consensus layer
+    /// Emitted when the consensus layer detects byzantine behavior
     /// (equivocation: ConflictingNotarize/ConflictingFinalize/NullifyFinalize).
     event ByzantineFelony(address indexed validator, uint256 slashedAmount, uint64 felonyCount);
 

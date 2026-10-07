@@ -95,7 +95,7 @@ impl From<MetadosisError> for PrecompileError {
 
 pub type MetadosisResult<T> = std::result::Result<T, MetadosisError>;
 
-/// Sole constructor for fatal Metadosis failures. Callers must use it only
+/// Report fatal storage corruption. Callers must use this helper only
 /// when authenticated persisted state cannot satisfy its storage invariants.
 pub(crate) fn storage_corruption(message: String) -> PrecompileError {
     PrecompileError::Fatal(message)

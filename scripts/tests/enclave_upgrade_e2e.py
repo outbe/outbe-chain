@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated four-validator process E2E; software SGX fixtures, never hardware evidence."""
+"""Isolated four-validator process E2E. It uses software SGX fixtures, never hardware evidence."""
 from __future__ import annotations
 import argparse
 import hashlib

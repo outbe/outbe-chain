@@ -14,7 +14,7 @@ interface IGovernance {
         string text;
     }
 
-    // Identical to Oip today; a distinct type so GIP can diverge later.
+    // Identical to Oip today. It is a distinct type so GIP can diverge later.
     struct Gip {
         uint256 id;
         uint8 status;

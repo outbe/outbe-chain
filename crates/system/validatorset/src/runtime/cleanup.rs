@@ -6,7 +6,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 impl ValidatorSet<'_> {
     /// Removes INACTIVE validator entries from the registry via swap-remove.
     ///
-    /// `max_removals` caps how many entries are cleaned per call (0 = unlimited).
+    /// `max_removals` caps how many entries one call cleans (0 = unlimited).
     /// Returns the number of entries removed.
     pub fn cleanup_inactive_validators(&mut self, max_removals: u32) -> Result<u32> {
         let guard = self.storage.checkpoint_guard();
@@ -66,7 +66,7 @@ impl ValidatorSet<'_> {
             self.address_to_index.write(&addr, 0)?;
             count -= 1;
             removed += 1;
-            // Don't increment i - the swapped-in entry needs checking
+            // Don't increment i. The swapped-in entry still needs checking.
         }
 
         self.validator_count.write(count)?;
@@ -100,9 +100,9 @@ impl ValidatorSet<'_> {
         self.val_has_bls_share.write(addr, false)?;
         self.val_p2p_address_version.write(addr, 0)?;
         self.val_p2p_address_payload.get_bytes(addr).clear()?;
-        // Stale-join + jail per-validator state must be cleared too, so a future
-        // re-registration at the same address starts clean (a leaked
-        // `val_join_confirmed = true` would bypass the stale-join guard). The
+        // Also clear the stale-join + jail per-validator state, so a future
+        // re-registration at the same address starts clean. A leaked
+        // `val_join_confirmed = true` would bypass the stale-join guard. The
         // admitted V1 OCOMP key and reverse reservation deliberately survive:
         // key_epoch=1 has no rotation, loss, or recovery path.
         self.val_join_confirmed.write(addr, false)?;

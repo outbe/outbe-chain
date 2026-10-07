@@ -1,13 +1,13 @@
-//! End-to-end for the Governance precompile driven through its real ABI
-//! dispatch (`outbe_governance::precompile::dispatch`) - the same entrypoint the
-//! EVM registers at `GOVERNANCE_ADDRESS`. Unlike the crate's unit tests (which
-//! call the contract methods directly), this exercises the full path: ABI decode
-//! -> dispatch -> caller gating -> ABI encode of the return value.
+//! End-to-end test for the Governance precompile. The test drives the precompile through its
+//! real ABI dispatch (`outbe_governance::precompile::dispatch`). The EVM registers this same
+//! entrypoint at `GOVERNANCE_ADDRESS`. The crate's unit tests call the contract methods
+//! directly. Unlike them, this test exercises the full path: ABI decode -> dispatch -> caller
+//! gating -> ABI encode of the return value.
 //!
-//! Flow: seed one authority (as genesis does) -> update canon/meta-canon ->
-//! submit an OIP -> drive its status Draft -> Approved -> Implemented -> submit a
-//! GIP and diff it against the canon. Plus the negative paths: a non-authority
-//! cannot write the canon or move a proposal's status.
+//! Flow: seed one authority (as genesis does) -> update canon/meta-canon -> submit an OIP ->
+//! drive its status Draft -> Approved -> Implemented -> submit a GIP and diff it against the
+//! canon. The test also covers the negative paths: a non-authority cannot write the canon or
+//! move a proposal's status.
 
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
@@ -156,7 +156,7 @@ fn governance_full_lifecycle_via_dispatch() {
         );
 
         // index reads via dispatch: oip_id reached Implemented and was authored
-        // by AUTHOR; both return ProposalMeta[] with no text.
+        // by AUTHOR. Both reads return ProposalMeta[] with no text.
         let out = gov_dispatch(
             storage.clone(),
             &IGovernance::getOipsByStatusCall {

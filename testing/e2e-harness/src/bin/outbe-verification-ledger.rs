@@ -80,7 +80,7 @@ fn main() -> Result<()> {
                 if domain.namespace == metadosis_evidence::METADOSIS_NAMESPACE {
                     // Generic closure validates identity, catalog shape and
                     // member bytes. Metadosis additionally derives every
-                    // status from its retained runner receipt; invoke that
+                    // status from its retained runner receipt. Invoke that
                     // domain adapter before accepting the cross-pack set.
                     metadosis_evidence::verify(&repo, &index, bundle_root, evidence_path)?;
                 }

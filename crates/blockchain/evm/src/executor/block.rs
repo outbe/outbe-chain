@@ -4,8 +4,12 @@ use super::*;
 ///
 /// Wraps the standard [`EthBlockExecutor`] and routes Outbe system transactions
 /// through the same ordered transaction/receipt path as user transactions.
-/// `apply_pre_execution_changes()` only performs pre-block setup; begin-zone
-/// phases execute when their reserved-address body transaction reaches the loop.
+/// `apply_pre_execution_changes()` performs pre-block setup. On blocks with
+/// Phase 1, it also verifies, executes, and commits the Phase 1
+/// (`CertifiedParentAccounting`) system tx. Then it runs the begin-block storage
+/// hooks. In the main loop, the executor validates `body[0]` against that witness
+/// and does not execute it again. The other begin-zone phases execute when their
+/// reserved-address body transaction reaches the loop.
 pub struct OutbeBlockExecutor<'a, Evm> {
     /// Inner Ethereum execution strategy.
     pub inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
@@ -16,9 +20,9 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Header-carried consensus artifact bytes (`extra_data`) used by begin-zone phases.
     pub(super) block_extra_data: Bytes,
     /// Canonical final header `extra_data` bytes. On the verifier path this is
-    /// initialized from the sealed block header; on the proposer path the block
-    /// builder overwrites it after injecting the execution summary and timestamp
-    /// millis but before `finish()`.
+    /// initialized from the sealed block header. On the proposer path the block
+    /// builder overwrites it after it injects the execution summary and timestamp
+    /// millis, but before `finish()`.
     pub(super) final_extra_data: Bytes,
     /// Historical header artifact reader used for finalized-block settlement.
     pub(super) accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
@@ -36,8 +40,9 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Priority/coinbase fees collected by user transactions in this block.
     pub(super) current_block_validator_fees: U256,
     /// Internal gas consumed by begin-zone system transactions under the
-    /// Outbe-only 100M execution lane. The Ethereum-visible block counters use
-    /// each system tx envelope's visible intrinsic gas instead.
+    /// Outbe-only execution lane (`SYSTEM_TX_ARTIFACT_GAS_LIMIT`, 10B gas). The
+    /// Ethereum-visible block counters use each system tx envelope's visible
+    /// intrinsic gas instead.
     pub(super) system_tx_execution_gas: u64,
     /// Validator-mode signer used by proposer path to sign system-tx artifacts.
     pub(super) evm_signer: Option<SharedOutbeEvmSigner>,
@@ -53,40 +58,40 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub(super) parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
     pub(super) proposer_evm_address: Option<Address>,
     pub(super) execute_outbe_block_hooks: bool,
-    /// cursor that drives begin-zone phase routing inside
+    /// Cursor that drives begin-zone phase routing inside
     /// `execute_transaction_with_commit_condition` instead of
-    /// `self.inner.receipts.len()`. Set to the per-block initial value when
-    /// the executor enters `apply_pre_execution_changes` and advanced once
-    /// per consumed begin-zone system tx.
+    /// `self.inner.receipts.len()`. The executor sets it to the per-block
+    /// initial value when it enters `apply_pre_execution_changes`. The executor
+    /// advances it once per consumed begin-zone system tx.
     pub(super) system_tx_phase_cursor: crate::system_tx::SystemTxPhase,
-    /// proposer-side prebuilt Phase 1 body[0] tx. Set by the payload
-    /// builder before `apply_pre_execution_changes`; consumed inside
-    /// `apply_phase1_commit_in_preexec` as the canonical witness whose
-    /// `signature_hash` is cached in the phase cursor. `None` on the validator
-    /// path (witness comes from `expected_begin_system_txs.first()`) and for
+    /// Proposer-side prebuilt Phase 1 body[0] tx. The payload builder sets it
+    /// before `apply_pre_execution_changes`. `apply_phase1_commit_in_preexec`
+    /// consumes it as the canonical witness whose `signature_hash` is cached in
+    /// the phase cursor. It is `None` on the validator path (the witness comes
+    /// from `expected_begin_system_txs.first()`) and for
     /// `block_number <= GENESIS_BOOTSTRAP_BLOCK_NUMBER`.
     pub(super) prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
-    /// optional accounted-parent artifact hint supplied by the
-    /// payload builder. Consumed by
-    /// [`Self::accounted_parent_artifact_for_metadata`] when the
-    /// [`AccountedParentArtifactProvider`] returns `None`. Accepted only if
-    /// the metadata's `(finalized_block_number, finalized_block_hash)`
-    /// matches `(self.parent_block_number(), self.parent_hash)`.
+    /// Optional accounted-parent artifact hint from the payload builder.
+    /// [`Self::accounted_parent_artifact_for_metadata`] consumes it when the
+    /// [`AccountedParentArtifactProvider`] returns `None`. That function accepts
+    /// the hint only if the metadata's `(finalized_block_number, finalized_block_hash)`
+    /// matches `(block_number - 1, self.parent_hash)`.
     pub(super) parent_artifact_hint: Option<AccountedParentArtifact>,
-    /// canonical VRF proof hash captured by
-    /// `verify_phase1_in_preexec` from the verified parent certificate
+    /// Canonical VRF proof hash that `verify_phase1_in_preexec` captures from
+    /// the verified parent certificate
     /// (`outbe_consensus::proof::VerifiedProof::vrf_proof_hash`).
-    /// Consumed by `apply_phase1_commit_in_preexec` and the main-tx-loop
-    /// Phase 1 path to populate `PreloadedSystemTxContext.canonical_vrf_proof_hash`,
-    /// which the V3 Rewards fingerprint binds. `None` until the preflight
-    /// has run; remains `None` for skip paths (block 0 / 1, test opt-out).
+    /// `apply_phase1_commit_in_preexec` and the main-tx-loop Phase 1 path
+    /// consume it to populate `PreloadedSystemTxContext.canonical_vrf_proof_hash`.
+    /// The V3 Rewards fingerprint binds that field. It is `None` until the
+    /// preflight runs. It remains `None` for skip paths (block 0 / 1, test opt-out).
     pub(super) verified_phase1_vrf_proof_hash: Option<B256>,
     /// Proposer-only one-time Phase 3b `TeeBootstrap` payload. When `Some` on the
     /// proposer path, `begin_block_system_tx_inputs` injects the bootstrap system
-    /// tx after `BoundaryOutcome` - identically to `build_begin_system_txs` so the
-    /// body the proposer signs and the inputs the executor expects match. `None`
-    /// on the validator path (the body carries it via `expected_begin_system_txs`)
-    /// and until the tribute-DKG bootstrap producer supplies a payload.
+    /// tx after `BoundaryOutcome`. It does this identically to
+    /// `build_begin_system_txs`, so the body that the proposer signs matches the
+    /// inputs that the executor expects. It is `None` on the validator path (the
+    /// body carries it via `expected_begin_system_txs`) and until the tribute-DKG
+    /// bootstrap producer supplies a payload.
     pub(super) pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     /// Whitelisted pre-exec hook logs published through the mandatory
     /// `HookEvents` system tx receipt at the end of the begin zone.
@@ -94,7 +99,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Number of zero-fee soft-failure receipts emitted in THIS
     /// block. Bounds block-stuffing by zero-cost 21k soft-failures (see
     /// [`Self::record_zero_fee_soft_failure`]). The executor is constructed
-    /// fresh per block, so this resets per block; it is identical on the
+    /// fresh per block, so this resets per block. It is identical on the
     /// proposer (build) and validator (re-execution) paths.
     pub(super) zero_fee_soft_failures: u32,
     /// Least-authority off-chain readers used by lifecycle body reads.
@@ -176,14 +181,14 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             parent_consensus_metadata,
             proposer_evm_address,
             execute_outbe_block_hooks,
-            // placeholder; the real initial value is computed in
-            // `apply_pre_execution_changes` once `block_number` is known and
-            // the Phase 1 preflight has (or has not) been performed.
+            // Placeholder. `apply_pre_execution_changes` computes the real
+            // initial value once `block_number` is known and the Phase 1
+            // preflight ran (or did not run).
             system_tx_phase_cursor: crate::system_tx::SystemTxPhase::UserTxs,
             prebuilt_phase1_tx,
             parent_artifact_hint,
-            // populated by `verify_phase1_in_preexec` on real
-            // verify; remains `None` for skip paths.
+            // `verify_phase1_in_preexec` populates this on a real
+            // verify. It remains `None` for skip paths.
             verified_phase1_vrf_proof_hash: None,
             pending_tee_bootstrap,
             whitelisted_hook_event_logs: Vec::new(),
@@ -204,10 +209,10 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Evm: reth_ethereum::evm::primitives::Evm,
     {
         // ExecutionSummaryArtifact wire format v0x04 carries
-        // only `validator_fee_sum`; the per-block emission field has
-        // been removed because daily emission is computed by the Cycle
-        // handler from the closed-form formula and does not need to
-        // travel in `extra_data`.
+        // only `validator_fee_sum`. The per-block emission field is
+        // removed. The Cycle handler computes daily emission from the
+        // closed-form formula, so emission does not need to travel in
+        // `extra_data`.
         ExecutionSummaryArtifact {
             validator_fee_sum: self.current_block_validator_fees,
         }
@@ -224,7 +229,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     }
 
     /// Pre-encodes the final execution-produced artifact fields after CE seal.
-    /// The block-builder adapter owns the encoding; this executor entry point
+    /// The block-builder adapter owns the encoding. This executor entry point
     /// lets the opaque Reth builder path invoke it before parallel root freeze.
     pub fn prepare_final_header_artifacts(
         &mut self,
@@ -248,9 +253,9 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
 
     // Half C-parlia step 11: `set_pending_consensus_metadata` and
     // `ingest_consensus_metadata_tx` are deleted. Finalized-parent
-    // metadata now lives in the begin-zone Phase 1 system transaction input;
-    // the pre-exec dispatch arm at `execute_transaction_with_commit_condition`
-    // no longer accepts consensus metadata transactions, and the proposer no
+    // metadata now lives in the begin-zone Phase 1 system transaction input.
+    // The pre-exec dispatch arm at `execute_transaction_with_commit_condition`
+    // no longer accepts consensus metadata transactions. The proposer no
     // longer produces them.
 }
 
@@ -410,8 +415,8 @@ where
         let evm = self.inner.evm;
         // Validator/import execution ends before Reth validates receipt and
         // state roots, so it must not publish speculative CE state here. The
-        // proposer publishes only after block assembly supplies the final hash;
-        // a finalized validator block is reconstructed from durable canonical
+        // proposer publishes only after block assembly supplies the final hash.
+        // A finalized validator block is reconstructed from durable canonical
         // receipts after the DB-only persistence barrier.
         if let (Some(bridge), Some(block_hash), Some(summary)) = (
             self.bridge.as_ref(),

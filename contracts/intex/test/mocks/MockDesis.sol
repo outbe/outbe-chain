@@ -7,9 +7,9 @@ import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 
 /// @notice Minimal stand-in that advertises the `IDesis` interface via ERC-165.
 /// @dev Lets `OriginRouter.wire` accept it during tests without pulling in the full
-///      `Desis` dependency graph. Outbound-direction tests prank the wired address; the
-///      bid-processing path is never invoked, so the interface methods are not implemented
-///      (we intentionally avoid `is IDesis` so the mock stays light).
+///      `Desis` dependency graph. Outbound-direction tests prank the wired address. No test
+///      invokes the bid-processing path, so the mock does not implement the interface methods.
+///      The mock intentionally avoids `is IDesis` to stay light.
 contract MockDesis {
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
@@ -27,7 +27,8 @@ contract MockDesis {
         uint256[] calldata /* packedBids */
     ) external {}
 
-    /// @dev Accepts every BIDS_DONE completeness marker and discards it, mirroring `processBidsBatch`.
+    /// @dev Accepts every BIDS_DONE completeness marker and discards it, as `processBidsBatch`
+    ///      does.
     function processBidsDone(
         uint32, /* worldwideDay */
         uint32, /* srcChainId */

@@ -1,11 +1,10 @@
 //! Local storage helpers around [`crate::schema::Accounting`].
 //!
-//! These helpers are the only sanctioned mutation surface for slot 0
-//! (INV4). They are `pub(crate)`-style internals exposed at crate root
-//! only through [`crate::runtime`]: external callers must go through the
-//! runtime entrypoints so the V2 Phase 1 commit invariant ("only the
-//! executor Phase 1 path may write slot 0") stays enforceable from a
-//! single place.
+//! These helpers are the sanctioned mutation surface for slot 0 (INV4).
+//! They stay crate-private. The crate root exposes writes only through
+//! [`crate::runtime`]. The schema field is public.
+//! Another crate can write the slot through that field.
+//! These helpers do not enforce the single-writer rule.
 
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -21,12 +20,12 @@ pub(crate) fn last_accounted_block_number(ctx: &BlockRuntimeContext) -> Result<u
     accounting.last_accounted_block_number.read()
 }
 
-/// Writes `last_accounted_block_number` to EVM storage. Intended to be
-/// called exclusively by the V2 executor Phase 1 path.
+/// Writes `last_accounted_block_number` to EVM storage. The V2 executor
+/// Phase 1 path is the only intended caller.
 ///
-/// The function takes a `BlockRuntimeContext` rather than a raw
-/// `StorageHandle` so the storage scope is bound to the same block whose
-/// Phase 1 is committing - preventing accidental cross-block writes.
+/// The function takes a `BlockRuntimeContext`, not a raw `StorageHandle`.
+/// Thus the storage scope stays bound to the same block whose Phase 1 is
+/// committing. This prevents accidental cross-block writes.
 pub(crate) fn set_last_accounted_block_number(
     ctx: &BlockRuntimeContext,
     block_number: u64,

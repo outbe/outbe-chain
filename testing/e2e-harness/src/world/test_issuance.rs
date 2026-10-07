@@ -1,6 +1,6 @@
 //! Issue an Intex series straight into the engine, without running an auction.
 //!
-//! The node exposes `issueForTest` only under its `e2e-test` feature; the entry
+//! The node exposes `issueForTest` only under its `e2e-test` feature. The entry
 //! makes the two calls the clearing engine makes, so the series is indexed for
 //! the qualify sweep and its mints travel as real issuance instructions.
 
@@ -10,7 +10,7 @@ use eyre::{eyre, Result};
 
 use crate::internal::eth;
 
-/// Send `call` and prove the receipt says success: a reverted transaction still
+/// Send `call` and prove that the receipt says success. A reverted transaction still
 /// returns a hash, so an unchecked send hides the failure it was meant to catch.
 fn send_checked<C: alloy_sol_types::SolCall>(
     url: &str,
@@ -119,12 +119,6 @@ sol! {
         function quoteSend(SendParam sendParam) external view returns (uint256 fee);
         function send(SendParam sendParam) external payable returns (bytes32 sendId);
     }
-
-    interface ITestToken {
-        function mint(address to, uint256 amount) external;
-        function approve(address spender, uint256 amount) external returns (bool);
-        function balanceOf(address account) external view returns (uint256);
-    }
 }
 
 /// One series to issue. `issuance` is its three-byte currency code, which with the
@@ -174,8 +168,8 @@ pub fn issue_series(
         .map(|spec| series_id(worldwide_day, spec.issuance, reference_byte))
         .collect();
 
-    // One call for the whole day: the engine counts issuance chunks over the legs it
-    // is handed, so a second send would announce a one-chunk day twice.
+    // Send one call for the whole day. The engine counts issuance chunks over the
+    // legs it is handed, so a second send would announce a one-chunk day twice.
     send_checked(
         url,
         INTEX_FACTORY,
@@ -359,7 +353,7 @@ pub fn close_call_notice(
 
 /// Bring `units` of `series` home from the chain `bridge` lives on.
 ///
-/// While a series is tradable the hop may change hands; once it is Called only a
+/// While a series is tradable the hop may change hands. Once it is Called only a
 /// move to the owner's own address is allowed, so `to` is always the owner here.
 pub fn bridge_home(
     url: &str,

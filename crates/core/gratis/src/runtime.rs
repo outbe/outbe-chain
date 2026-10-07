@@ -14,7 +14,7 @@ use crate::precompile::IGratis;
 use crate::schema::Gratis;
 
 /// A co-located fidelity section was sent, so the enclave must return its
-/// outcome; a missing one is an enclave/transport fault.
+/// outcome. A missing outcome is an enclave/transport fault.
 fn require_fidelity_outcome(outcome: Option<FidelityOpOutcome>) -> Result<FidelityOpOutcome> {
     outcome.ok_or_else(|| {
         PrecompileError::Fatal("enclave dropped the fidelity section outcome".to_string())
@@ -28,7 +28,7 @@ fn chain_id_b256(storage: &StorageHandle<'_>) -> Result<B256> {
     Ok(B256::from(U256::from(storage.chain_id()?)))
 }
 
-/// Proof-backed and position-backed operations are authorized by the runtime.
+/// The runtime authorizes proof-backed and position-backed operations.
 fn no_auth() -> ModifyAuth {
     ModifyAuth {
         mac: [0u8; 32],
@@ -50,7 +50,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
 }
 
 /// Reject unless the supplied op-nonce equals the account's current on-chain
-/// counter - this is what makes a captured modify-auth non-replayable.
+/// counter. This check makes a captured modify-auth non-replayable.
 fn check_op_nonce(gratis: &Gratis<'_>, account: Address, provided: u64) -> Result<()> {
     let current = gratis.op_nonce_of(account)?;
     if provided != current {
@@ -137,7 +137,7 @@ pub(crate) fn mint(
 }
 
 /// Mint gratis and apply a co-located fidelity cohort acquisition in one
-/// enclave round-trip; returns the fidelity outcome for the caller to persist.
+/// enclave round-trip. Returns the fidelity outcome for the caller to persist.
 pub(crate) fn mint_with_fidelity(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -174,7 +174,7 @@ pub(crate) fn burn(
 }
 
 /// Burn gratis and apply a co-located fidelity cohort sale in one enclave
-/// round-trip; returns the fidelity outcome for the caller to persist.
+/// round-trip. Returns the fidelity outcome for the caller to persist.
 pub(crate) fn burn_with_fidelity(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -220,7 +220,8 @@ pub(crate) fn pledge_with_fidelity(
     })
 }
 
-/// Only called after runtime proof/position authorization, never through a public balance-write ABI.
+/// Call this only after runtime proof/position authorization. Never call it through a
+/// public balance-write ABI.
 fn collateral_balance(
     storage: &StorageHandle<'_>,
     account: Address,

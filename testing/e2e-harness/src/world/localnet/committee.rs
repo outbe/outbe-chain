@@ -96,7 +96,7 @@ fn reap_stopped_committee(validators: &mut HashMap<usize, proc::ChildGuard>) -> 
     Ok(())
 }
 
-/// Preparation may block on external services; no node gets a head start while
+/// Preparation may block on external services. No node gets a head start while
 /// another member is still preparing. Keep launch ownership with the caller.
 fn start_prepared_cohort<C>(
     context: &mut C,
@@ -141,8 +141,8 @@ fn verify_pre_dkg_public_identity(
 
 impl Localnet {
     /// Start the committee (and, when TEE is enabled, its enclaves). Idempotent:
-    /// indices whose owned node is still alive are skipped, so [`restart`] only
-    /// relaunches the ones that died.
+    /// this method skips indices whose owned node is still alive, so [`restart`]
+    /// only relaunches the ones that died.
     pub fn start(&mut self, opts: &StartOpts) -> Result<()> {
         if let Some(window) = opts.voting_window {
             let genesis = serde_json::from_slice(&fs::read(self.cfg.dir.join("genesis.json"))?)?;
@@ -171,7 +171,7 @@ impl Localnet {
 
         // TCP listening alone does not prove authenticated NodeHost readiness.
         // Complete cold initialization before any node starts its independent
-        // genesis-formation timer; actual formation and DKG remain node-owned.
+        // genesis-formation timer. Actual formation and DKG remain node-owned.
         start_prepared_cohort(
             self,
             &launched,
@@ -186,7 +186,7 @@ impl Localnet {
         )?;
 
         // Survival check: a node that dies in the first couple seconds is a
-        // config error - surface it with its log tail (`run-testnet.sh:386-407`).
+        // config error. Surface it with its log tail (`run-testnet.sh:386-407`).
         sleep(Duration::from_secs(2));
         for &i in &launched {
             if self.validators.get_mut(&i).is_some_and(|g| g.exited()) {
@@ -227,9 +227,10 @@ impl Localnet {
     /// Stop the complete validator committee before changing the shared
     /// testnet-only logical clock, then relaunch every validator with preserved
     /// datadirs and enclaves. Freeze the whole cohort with one signal before
-    /// dropping any child guard: stopping validators one by one leaves a live
-    /// quorum long enough to certify a new block between process exits, which
-    /// is not a valid quiescent barrier for a test-only clock change.
+    /// dropping any child guard. Stopping validators one by one leaves a live
+    /// quorum long enough to certify a new block between process exits. A
+    /// one-by-one stop is not a valid quiescent barrier for a test-only clock
+    /// change.
     pub fn restart_committee_at_unix_time_offset(&mut self, offset_secs: i64) -> Result<()> {
         self.stop_committee_preserving_enclaves()?;
         let mut opts = self.start_opts.clone();
@@ -417,7 +418,7 @@ impl Localnet {
 
     /// Build the replacement executable from the exact source revision under
     /// test, without modifying the developer's checkout. The temporary detached
-    /// worktree receives only the workspace package-version bump; Cargo writes to
+    /// worktree receives only the workspace package-version bump. Cargo writes to
     /// a stable version-specific target so repeated update scenarios reuse heavy
     /// third-party artifacts.
     fn build_upgraded_binary(&self, version: &str) -> Result<PathBuf> {
@@ -515,9 +516,9 @@ impl Localnet {
     }
 
     /// Restart ONLY validator `i`'s enclave sidecar, preserving its sealed TEE
-    /// state; the node keeps running. Its enclave session must reconnect (with
-    /// identity re-validation) on the next request - a node restart is not
-    /// required and this verb is the first that proves it.
+    /// state. The node keeps running. Its enclave session must reconnect (with
+    /// identity re-validation) on the next request. A node restart is not
+    /// required, and this verb is the first that proves it.
     pub(crate) fn restart_enclave_only(
         &mut self,
         i: usize,
@@ -530,7 +531,7 @@ impl Localnet {
     }
 
     /// Replace only the enclave, retaining its original seal for recovery. The
-    /// replacement uses a separate, publicly initialized NodeHost fixture; the
+    /// replacement uses a separate, publicly initialized NodeHost fixture. The
     /// running node's persistent manifest and authorization are never changed.
     pub(crate) fn restart_enclave_with_fresh_identity(
         &mut self,
@@ -694,9 +695,9 @@ impl Localnet {
     }
 
     /// Rebuild one validator's derived CE database from its preserved canonical
-    /// Reth history. Only the scenario-owned CE directory is removed, after the
-    /// owned node has stopped; chain DB, keys, consensus state and OCOMP state
-    /// remain untouched.
+    /// Reth history. This method removes only the scenario-owned CE directory,
+    /// after the owned node has stopped. Chain DB, keys, consensus state and
+    /// OCOMP state remain untouched.
     #[cfg(feature = "ocomp-integration")]
     pub(super) fn restart_validator_after_ce_reset(&mut self, i: usize) -> Result<()> {
         verified_compressed_entities_reconstruction_path(&self.cfg.dir, self.committee_size(), i)?;
@@ -728,7 +729,7 @@ impl Localnet {
         let vd = self.cfg.validator_dir(i);
         fs::create_dir_all(vd.join("data"))?;
         fs::create_dir_all(vd.join("logs"))?;
-        // A prior SIGKILL can leave the MDBX lock behind; clear it before relaunch.
+        // A prior SIGKILL can leave the MDBX lock behind. Clear it before relaunch.
         let _ = fs::remove_file(vd.join("data/db/lock"));
 
         let mut a = self.reth_base_args(&vd, i);
@@ -925,7 +926,7 @@ impl Localnet {
         Ok(())
     }
 
-    /// [`Self::start_enclave`] with an explicit DKG-seed override - the
+    /// [`Self::start_enclave`] with an explicit DKG-seed override. The
     /// fresh-identity restart verb uses a different seed so the relaunched
     /// enclave presents different keys.
     fn start_enclave_with_seed(
@@ -946,7 +947,7 @@ impl Localnet {
         } else {
             self.real_enclave_bin()?
         };
-        // The harness always seals (localnet start sets OUTBE_TEE_SEAL); the host
+        // The harness always seals (localnet start sets OUTBE_TEE_SEAL). The host
         // dkg-seed is passed except for real+seal, where the enclave self-seals.
         let seal = Some(SealSpec {
             tee_dir: vd.join("tee"),

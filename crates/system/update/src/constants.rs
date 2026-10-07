@@ -6,9 +6,9 @@
 pub const MIN_ACTIVATION_BUFFER: u64 = 100;
 
 /// Activation buffer for `chain_id`. Zero on the localnet chain so e2e updates
-/// activate promptly; the standard [`MIN_ACTIVATION_BUFFER`] everywhere else.
-/// Mirrors how `outbe_vote` shortens the voting window for localnet - but
-/// keyed purely on the chain id, with no env/config override.
+/// activate promptly. The standard [`MIN_ACTIVATION_BUFFER`] applies everywhere else.
+/// This mirrors how `outbe_vote` shortens the voting window for localnet. But this
+/// function keys only on the chain id, with no env/config override.
 pub fn min_activation_buffer(chain_id: u64) -> u64 {
     if chain_id == outbe_primitives::chain::TESTNET_CHAIN_ID {
         0
@@ -26,8 +26,8 @@ pub const PROTOCOL_VERSION: crate::ProtocolVersion =
 
 /// Max version that may be activated on `chain_id`.
 ///
-/// Every network is strict: an update can activate only after the operator has
-/// installed a binary whose own protocol version supports it.
+/// Every network is strict: an update can activate only after the operator
+/// installs a binary whose own protocol version supports it.
 pub fn max_activatable_version(_chain_id: u64) -> crate::ProtocolVersion {
     PROTOCOL_VERSION
 }

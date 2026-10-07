@@ -10,16 +10,16 @@ use outbe_primitives::units::checked_protocol_to_native;
 // ------------------------------------------------------------------------
 
 /// One of the three reward pools that AgentReward owns end-to-end. The
-/// validator pool is intentionally NOT part of this enum: validator
-/// emission is orchestrated by the EmissionLimit Cycle handler
-/// directly against `outbe_rewards::api`, both because the
-/// natural dependency direction is `emissionlimit -> rewards` and to
-/// avoid an `agentreward -> rewards -> emissionlimit -> agentreward`
-/// crate cycle.
+/// validator pool is intentionally NOT part of this enum. The EmissionLimit
+/// Cycle handler orchestrates validator emission directly against
+/// `outbe_rewards::api` for two reasons:
+/// * the natural dependency direction is `emissionlimit -> rewards`;
+/// * this avoids an `agentreward -> rewards -> emissionlimit -> agentreward`
+///   crate cycle.
 ///
-/// The split between pool kinds happens in the EmissionLimit daily
-/// handler; this enum is the protocol contract between that
-/// orchestrator and AgentReward.
+/// The EmissionLimit daily handler splits the emission between pool kinds.
+/// This enum is the protocol contract between that orchestrator and
+/// AgentReward.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PoolKind {
     /// WAA (wallet) capped distribution pool. Uses tribute counts kept
@@ -43,7 +43,7 @@ pub enum PoolKind {
 /// * `Cca`: rounding residue only, or the whole pool when no positive
 ///   eligible weight exists. CCA shares are not capped per address.
 ///
-/// Backing is minted at AGENT_REWARD_ADDRESS only for credited rewards.
+/// The function mints backing at AGENT_REWARD_ADDRESS only for credited rewards.
 /// Claimable balances use native units; returned excess uses protocol units.
 pub fn distribute_daily(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
@@ -64,9 +64,9 @@ pub fn distribute_daily(
     })
 }
 
-/// Allocates one agent pool. WAA and SRA use the per-address cap; CCA is
-/// proportional. One conversion to native COEN backs each credited share;
-/// undistributed protocol units are returned.
+/// Allocates one agent pool. WAA and SRA use the per-address cap. CCA is
+/// proportional. One conversion to native COEN backs each credited share.
+/// The function returns the undistributed protocol units.
 fn distribute_pool(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
     prev_day: WorldwideDay,
@@ -311,8 +311,8 @@ pub fn calculate_distribution_with_cap(
 ///
 /// Each positive weight receives `floor(pool * weight / total_weight)`.
 /// The undistributed remainder is excess, including an empty or all-zero
-/// weight set. Callers supply one weight per distinct address. Results are
-/// ordered by address.
+/// weight set. Callers supply one weight per distinct address. The function
+/// orders the results by address.
 pub(crate) fn calculate_proportional_distribution(
     total_pool: U256,
     counts: &[(Address, U256)],
@@ -386,7 +386,7 @@ mod tests {
         let dave = address!("0x4444444444444444444444444444444444444444");
 
         // 4 addresses with equal tributes, each gets 25%.
-        // 25% < 32% cap so no capping; all pool is distributed.
+        // 25% < 32% cap, so no capping occurs. The function distributes all of the pool.
         let pool = U256::from(1000u64);
         let counts = vec![
             (alice, U256::ONE),
@@ -412,8 +412,8 @@ mod tests {
         let bob = address!("0x2222222222222222222222222222222222222222");
 
         // Alice has 9 tributes, Bob has 1 - Alice would get 90% but is capped at 32%.
-        // Excess (58%) is redistributed to Bob who is uncapped; Bob ends up at 32%
-        // as well because 68% > 32%. Final excess = 100% - 32% - 32% = 36%.
+        // The function redistributes the excess (58%) to Bob, who is uncapped. Bob is also
+        // capped at 32% because 68% > 32%. Final excess = 100% - 32% - 32% = 36%.
         let pool = U256::from(1000u64);
         let counts = vec![(alice, U256::from(9)), (bob, U256::ONE)];
 
@@ -434,7 +434,7 @@ mod tests {
     fn test_distribution_all_capped() {
         // 4 addresses, each with equal tributes.
         // Total pool = 1000, each would proportionally get 250 (25%), under the 32% cap.
-        // No capping occurs, all pool is distributed.
+        // No capping occurs. The function distributes all of the pool.
         let a = address!("0x1111111111111111111111111111111111111111");
         let b = address!("0x2222222222222222222222222222222222222222");
         let c = address!("0x3333333333333333333333333333333333333333");
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_distribution_all_capped_with_excess() {
-        // 3 addresses with exactly equal shares - 33.3% each, all exceed 32% cap.
+        // 3 addresses with exactly equal shares. Each has 33.3%, and all exceed the 32% cap.
         // After capping: each gets 32%, total = 96%, excess = 4%.
         // Redistribution cannot help (all capped), so excess stays.
         let a = address!("0x1111111111111111111111111111111111111111");
@@ -489,7 +489,7 @@ mod tests {
         let (rewards, excess) = calculate_distribution_with_cap(pool, &counts).unwrap();
 
         assert!(rewards.is_empty());
-        // Full pool returned as excess.
+        // The function returns the full pool as excess.
         assert_eq!(excess, pool);
     }
 

@@ -1,15 +1,15 @@
 //! Proposer-side VRF/DKG freshness gate.
 //!
-//! `VrfSafetyGate` is a *proposer-side* hygiene check - it gates whether the
-//! local node may continue to propose blocks given the freshness of the
+//! `VrfSafetyGate` is a *proposer-side* hygiene check. It gates whether the
+//! local node may continue to propose blocks, given the freshness of the
 //! active VRF material. It is **not** a verifier:
 //!
-//! - **Do not import** [`VrfSafetyGate`] into import-time paths (the block
+//! - **Do not import** [`VrfSafetyGate`] into import-time paths. The block
 //!   import pipeline must consult the state-backed canonical
-//!   `CommitteeSnapshotStore` instead - this gate is process-local and would
-//!   diverge from the snapshot on restart).
-//! - **Do not import** it into the V2 verifier (`outbe-consensus-proof`)
-//!   either; verifier inputs come from chain state, not from local
+//!   `CommitteeSnapshotStore` instead. This gate is process-local and would
+//!   diverge from the snapshot on restart.
+//! - **Do not import** it into the V2 verifier (`crate::proof`)
+//!   either. Verifier inputs come from chain state, not from local
 //!   bookkeeping.
 //! - Legitimate importers:
 //!   1. [`crate::application::handler`] - proposer emission path
@@ -20,7 +20,7 @@
 //!      block-import path, and so do not violate the narrowing.
 //! - Any new importer that runs during block import or in the verifier MUST
 //!   first re-derive its values from the canonical
-//!   `CommitteeSnapshotStore` rather than reading [`VrfSafetyGate`] state.
+//!   `CommitteeSnapshotStore`, not from [`VrfSafetyGate`] state.
 
 use std::sync::{Arc, Mutex};
 

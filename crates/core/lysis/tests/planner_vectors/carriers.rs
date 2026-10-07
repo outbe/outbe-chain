@@ -563,7 +563,7 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
     // partitioned by the primary Tribute shard. A valid contributor page can
     // therefore carry more nominal value than the unrelated Tribute page at
     // the same ordinal. Conservation only becomes meaningful at the complete
-    // root, after all pages have been reduced.
+    // root, after all pages are reduced.
     let mut owner_paged_left = left.clone();
     owner_paged_left.tribute_nominal_total = U256::from(1_000);
     owner_paged_left.eligible_nominal_total = U256::from(2_000);

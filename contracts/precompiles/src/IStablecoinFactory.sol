@@ -40,7 +40,7 @@ interface IStablecoinFactory {
 
     /// @notice Returns up to `limit` registered token addresses starting at `offset`.
     /// @dev `limit` must be between 1 and 100. `offset >= tokenCount()` returns an
-    ///      empty array; the final page is clamped to the current count. No ordering
+    ///      empty array. The final page is clamped to the current count. No ordering
     ///      guarantee is provided.
     function listTokens(uint256 offset, uint256 limit) external view returns (address[] memory);
 

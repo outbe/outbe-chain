@@ -283,7 +283,7 @@ fn test_stale_join_guard_resets_on_restake() {
         };
         assert!(in_target(vs, pend), "confirmed PENDING is in the target");
 
-        // Promotion clears the flag; demote back to REGISTERED then re-PENDING.
+        // Promotion clears the flag. Demote back to REGISTERED, then re-PENDING.
         vs.activate_reshared_set(&[pend], B256::ZERO).unwrap();
         // Force back to REGISTERED to simulate a churn that returns it to PENDING.
         vs.deactivate_validator(OWNER, pend).unwrap();

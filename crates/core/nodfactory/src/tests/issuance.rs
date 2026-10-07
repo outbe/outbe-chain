@@ -186,11 +186,10 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
 #[test]
 fn failed_authorization_preserves_the_loaded_nod() {
     let mut world = World::new();
-    let input = params(Address::repeat_byte(0x33));
+    let input = free(Address::repeat_byte(0x33));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    let proof = world.covering_proof(nod_id, &input);
-    world.settle(nod_id, input.owner, &proof).unwrap();
+    world.settle(nod_id, input.owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
     world
         .enter(|storage, scope, parent| {
@@ -217,11 +216,10 @@ fn failed_authorization_preserves_the_loaded_nod() {
 #[test]
 fn invalid_gratis_mac_rolls_back_the_nod_burn() {
     let mut world = World::new();
-    let input = params(Address::repeat_byte(0x45));
+    let input = free(Address::repeat_byte(0x45));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    let proof = world.covering_proof(nod_id, &input);
-    world.settle(nod_id, input.owner, &proof).unwrap();
+    world.settle(nod_id, input.owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
 
     world
@@ -248,13 +246,12 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
 #[test]
 fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     let mut world = World::new();
-    let input = params(Address::repeat_byte(0x55));
+    let input = free(Address::repeat_byte(0x55));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.provider.clear_events(NOD_ADDRESS);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
-    let proof = world.covering_proof(nod_id, &input);
-    world.settle(nod_id, input.owner, &proof).unwrap();
+    world.settle(nod_id, input.owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let minted = world
         .mine_gratis(api::MineGratisRequest {
@@ -311,13 +308,12 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
 #[test]
 fn a_nod_qualifying_after_issuance_still_mines() {
     let mut world = World::new();
-    let input = params(Address::repeat_byte(0x5a));
+    let input = free(Address::repeat_byte(0x5a));
     let nod_id = world.issue(&input);
 
     world.qualify(nod_id);
 
-    let proof = world.covering_proof(nod_id, &input);
-    world.settle(nod_id, input.owner, &proof).unwrap();
+    world.settle(nod_id, input.owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let minted = world
         .mine_gratis(api::MineGratisRequest {
@@ -358,4 +354,71 @@ fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
             "{decimals} decimals"
         );
     }
+}
+
+#[test]
+fn a_stranger_can_mine_with_the_owners_auth() {
+    let mut world = World::new();
+    let input = free(Address::repeat_byte(0x6a));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.settle(nod_id, input.owner).unwrap();
+    let nonce = world.pow_nonce(nod_id);
+    let stranger = Address::repeat_byte(0x6b);
+
+    let minted = world
+        .enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                api::MineGratisRequest {
+                    caller: stranger,
+                    nod_id,
+                    nonce,
+                    auth: mine_auth(input.owner, input.gratis_load_minor),
+                },
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        decrypt_gratis(input.owner, &minted),
+        input.gratis_load_minor
+    );
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_none());
+    let exercised = world
+        .provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| INodFactory::NodExercised::decode_log_data(&event.data).ok())
+        .last()
+        .expect("NodExercised event");
+    assert_eq!(exercised.owner, input.owner);
+    assert_eq!(exercised.nodId, nod_id.to_u256());
+}
+
+#[test]
+fn certified_generation_has_no_public_installation_selector() {
+    let mut world = World::new();
+    let selector_hash = alloy_primitives::keccak256("installCertifiedGeneration(bytes)".as_bytes());
+    let calldata = selector_hash[..4].to_vec();
+    let storage_before = world.provider.storage.clone();
+    let events_before = world.provider.get_ordered_events().to_vec();
+
+    let result = world.enter(|storage, scope, parent| {
+        crate::precompile::dispatch(
+            storage,
+            ExecutionReaders { scope, parent },
+            &calldata,
+            Address::repeat_byte(0x91),
+            U256::ZERO,
+        )
+    });
+
+    assert!(result.is_err());
+    assert_eq!(world.provider.storage, storage_before);
+    assert_eq!(world.provider.get_ordered_events(), events_before);
 }

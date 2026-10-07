@@ -251,15 +251,13 @@ fn verify_request_receipt(
         "Lysis request receipt hash",
     )?;
     let expected = plan.request_limit_split();
-    ensure(
-        receipt.protocol_bundle_hash == expected.protocol_bundle_hash
-            && receipt.wwd == expected.wwd
-            && receipt.day_type == expected.day_type
-            && receipt.day_limit == expected.day_limit
-            && receipt.lysis_limit_minor == expected.lysis_limit_minor
-            && receipt.desis_limit_minor == expected.desis_limit_minor,
-        "Lysis request receipt fields",
-    )?;
+    let day_matches = receipt.protocol_bundle_hash == expected.protocol_bundle_hash
+        && receipt.wwd == expected.wwd
+        && receipt.day_type == expected.day_type;
+    let limits_match = receipt.day_limit == expected.day_limit
+        && receipt.lysis_limit_minor == expected.lysis_limit_minor
+        && receipt.desis_limit_minor == expected.desis_limit_minor;
+    ensure(day_matches && limits_match, "Lysis request receipt fields")?;
     ensure(
         receipt.pending_nonce <= expected.pending_nonce,
         "Lysis request receipt effect nonce",
@@ -293,15 +291,13 @@ fn verify_nod_receipt(
 ) -> Result<(), ProtocolError> {
     ensure(receipt.binding == *plan.binding(), "Lysis Nod binding")?;
     let expected = plan.nod();
-    ensure(
-        receipt.nod_target_precondition == *expected.precondition()
-            && receipt.nod_count == expected.exact_counts().nod_count
-            && receipt.nod_root == expected.nod_root()
-            && receipt.nod_amount_total == expected.nod_amount_total()
-            && receipt.lysis_allocation_minor == expected.lysis_allocation_minor()
-            && receipt.issued_at == expected.issued_at(),
-        "Lysis Nod receipt",
-    )?;
+    let target_matches = receipt.nod_target_precondition == *expected.precondition()
+        && receipt.nod_count == expected.exact_counts().nod_count
+        && receipt.nod_root == expected.nod_root();
+    let amounts_match = receipt.nod_amount_total == expected.nod_amount_total()
+        && receipt.lysis_allocation_minor == expected.lysis_allocation_minor()
+        && receipt.issued_at == expected.issued_at();
+    ensure(target_matches && amounts_match, "Lysis Nod receipt")?;
     let projection = NodStateEventProjectionV1 {
         wwd: expected.precondition().wwd,
         target_generation: expected.precondition().target_generation,
@@ -359,12 +355,13 @@ fn verify_tribute_receipt(
 ) -> Result<(), ProtocolError> {
     ensure(receipt.binding == *plan.binding(), "Lysis Tribute binding")?;
     let expected = plan.tribute();
+    let input_matches = receipt.tribute_input_binding == *expected.input_binding()
+        && receipt.sealed_collection_root == expected.input_binding().sealed_collection_root;
+    let consumption_matches = receipt.consumed_count == expected.consumed_count()
+        && receipt.consumed_nominal_total == expected.consumed_nominal_total()
+        && receipt.retired_generation == expected.retired_generation();
     ensure(
-        receipt.tribute_input_binding == *expected.input_binding()
-            && receipt.sealed_collection_root == expected.input_binding().sealed_collection_root
-            && receipt.consumed_count == expected.consumed_count()
-            && receipt.consumed_nominal_total == expected.consumed_nominal_total()
-            && receipt.retired_generation == expected.retired_generation(),
+        input_matches && consumption_matches,
         "Lysis Tribute receipt",
     )?;
     let projection = TributeStateEventProjectionV1 {

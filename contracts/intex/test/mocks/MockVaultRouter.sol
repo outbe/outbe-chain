@@ -9,7 +9,8 @@ import {MockSettlementVault} from "./MockSettlementVault.sol";
 /// @notice Minimal test double mirroring `outbe-vault/VaultRouter` for the methods
 ///         `EscrowAdapter` actually calls (`deposit`).
 /// @dev Wraps `MockSettlementVault` per asset. `addVault` / `addLiquiditySource` are open
-///      (no role checks) - test-helper only. Production `VaultRouter` is `onlyOwner` for both.
+///      (no role checks) and exist as test helpers only. Production `VaultRouter` is `onlyOwner`
+///      for both.
 contract MockVaultRouter {
     using SafeERC20 for IERC20;
 
@@ -20,7 +21,7 @@ contract MockVaultRouter {
     ///      (`Unknown` = 0 means not registered -> `deposit` reverts).
     mapping(address => IVaultRouter.StablesSource) public liquiditySourceTypes;
 
-    /// @dev When true, `deposit` reverts - used to simulate a vault-side failure during
+    /// @dev When true, `deposit` reverts. Tests use this to simulate a vault-side failure during
     ///      finalization (the instruction's split is valid but the payout deposit fails).
     bool public revertOnDeposit;
 
@@ -48,9 +49,8 @@ contract MockVaultRouter {
         liquiditySourceTypes[source] = sourceType;
     }
 
-    /// @notice Mirrors `IVaultRouter.deposit` semantics:
-    ///         pulls `assets` from `msg.sender`, deposits them into the registered vault,
-    ///         shares accrue on this contract.
+    /// @notice Mirrors `IVaultRouter.deposit` semantics. It pulls `assets` from `msg.sender` and
+    ///         deposits them into the registered vault. The shares accrue on this contract.
     function deposit(address asset, uint256 assets) external returns (uint256 shares) {
         if (revertOnDeposit) revert DepositReverted();
         if (liquiditySourceTypes[msg.sender] == IVaultRouter.StablesSource.Unknown) {

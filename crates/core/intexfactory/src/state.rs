@@ -52,7 +52,7 @@ impl IntexFactoryContract<'_> {
         keccak256(buf)
     }
 
-    /// Composite key for a group's member list; the layout `bin_index_key` uses,
+    /// Composite key for a group's member list. It uses the layout of `bin_index_key`,
     /// over a separate column keyed by worldwide day instead of bin id.
     pub(crate) fn group_member_key(
         reference_currency: u16,
@@ -62,7 +62,7 @@ impl IntexFactoryContract<'_> {
         Self::bin_index_key(reference_currency, worldwide_day.value(), index)
     }
 
-    /// Enroll a series in its call-price bin; its day's group is created with the first member.
+    /// Enroll a series in its call-price bin. Its day's group is created with the first member.
     pub(crate) fn insert_call_bin(
         &mut self,
         series_id: SeriesId,
@@ -198,7 +198,7 @@ impl IntexFactoryContract<'_> {
     }
 
     /// Move a group the sweep could not finish into a later bucket. Its members
-    /// and deadline stay put; only where the sweep next finds it changes.
+    /// and deadline do not change. Only the place where the sweep next finds it changes.
     pub(crate) fn defer_called_group(
         &mut self,
         reference_currency: u16,
@@ -214,21 +214,15 @@ impl IntexFactoryContract<'_> {
         self.place_in_expiry_bucket(key, day)
     }
 
-    fn place_in_expiry_bucket(&mut self, key: u64, day: u32) -> Result<()> {
-        let slot = self.expiry_bucket_len.read(&day)?;
-        self.expiry_bucket_at
-            .write(&Self::bucket_slot_key(day, slot), key)?;
-        self.expiry_bucket_len.write(&day, slot.saturating_add(1))?;
-        self.called_group_slot
-            .write(&key, Self::packed_slot(day, slot))?;
-
-        let live = self.expiry_bucket_live.read(&day)?;
-        self.expiry_bucket_live
-            .write(&day, live.saturating_add(1))?;
-        if live == 0 {
-            tree_math::add(&ExpiryDayTree(&*self), day)?;
-        }
-        Ok(())
+    outbe_common::expiry_queue_placement! {
+        fn place_in_expiry_bucket(entry: u64);
+        len: expiry_bucket_len,
+        at: expiry_bucket_at,
+        slot_key: Self::bucket_slot_key,
+        slot_of: called_group_slot,
+        packed_slot: Self::packed_slot,
+        live: expiry_bucket_live,
+        tree: ExpiryDayTree,
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
@@ -341,7 +335,7 @@ impl IntexFactoryContract<'_> {
     }
 
     /// Retire a bucket the sweep has finished. Every group still in it moves to the
-    /// bucket its deadline falls in, never before the next hour; returns where each went.
+    /// bucket its deadline falls in, never before the next hour. Returns where each went.
     pub(crate) fn force_retire_bucket(
         &mut self,
         day: u32,
@@ -528,7 +522,7 @@ impl GroupIndex<'_> {
         Ok(())
     }
 
-    /// Drop the group's bin entry (swap-and-pop); clear the trie bit when the bin
+    /// Drop the group's bin entry (swap-and-pop). Clear the trie bit when the bin
     /// empties.
     fn detach(
         &self,
@@ -573,55 +567,17 @@ impl GroupIndex<'_> {
 /// Buckets holding a called group whose settlement window has not closed yet.
 pub(crate) struct ExpiryDayTree<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>);
 
-impl BinTreeStorage for ExpiryDayTree<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.expiry_tree_root.read()
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.expiry_tree_root.write(value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0.expiry_tree_mid.read(&key)
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0.expiry_tree_mid.write(&key, value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0.expiry_tree_leaf.read(&key)
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0.expiry_tree_leaf.write(&key, value)
-    }
-}
+outbe_primitives::impl_bin_tree_storage!(ExpiryDayTree {
+    root: expiry_tree_root,
+    mid: expiry_tree_mid,
+    leaf: expiry_tree_leaf,
+});
 
 /// The call-price trie of one reference currency.
 pub(crate) struct CallBins<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>, pub(crate) u16);
 
-impl BinTreeStorage for CallBins<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.call_bin_tree_root.read(&self.1)
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.call_bin_tree_root.write(&self.1, value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0
-            .call_bin_tree_mid
-            .read(&IntexFactoryContract::scoped(self.1, key))
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .call_bin_tree_mid
-            .write(&IntexFactoryContract::scoped(self.1, key), value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0
-            .call_bin_tree_leaf
-            .read(&IntexFactoryContract::scoped(self.1, key))
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .call_bin_tree_leaf
-            .write(&IntexFactoryContract::scoped(self.1, key), value)
-    }
-}
+outbe_primitives::impl_bin_tree_storage!(CallBins scoped by IntexFactoryContract::scoped {
+    root: call_bin_tree_root,
+    mid: call_bin_tree_mid,
+    leaf: call_bin_tree_leaf,
+});

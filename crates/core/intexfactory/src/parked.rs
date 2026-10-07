@@ -1,12 +1,12 @@
 //! Sweeping the origin router's parked work: a send the relay float could not pay for, and proceeds
 //! this factory refused. Both entries are permissionless, so the cycle trigger is the one who pushes.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
-    storage::StorageHandle,
+    storage::{dsl::Value, StorageHandle},
 };
 
 use crate::constants::{MAX_PARKED_CALLS_PER_FIRING, MAX_PARKED_FAILURES_PER_FIRING};
@@ -18,8 +18,8 @@ use outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS;
 pub fn drain(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let mut budget = MAX_PARKED_CALLS_PER_FIRING;
-    drain_messages(&storage, &mut budget)?;
-    drain_proceeds(&storage, &mut budget)
+    drain_queue::<ParkedMessages>(&storage, &mut budget)?;
+    drain_queue::<ParkedProceeds>(&storage, &mut budget)
 }
 
 /// Where the next pass starts, and how far the resolved prefix reaches once it ends.
@@ -40,7 +40,7 @@ impl Cursor {
         }
     }
 
-    /// An entry that needs nothing more from us; the cursor may pass it for good.
+    /// An entry that needs nothing more from us. The cursor may pass it for good.
     pub(crate) fn resolved(&mut self) {
         if self.prefix_resolved {
             self.head = self.at.saturating_add(1);
@@ -59,13 +59,100 @@ impl Cursor {
     }
 }
 
-fn drain_messages(storage: &StorageHandle<'_>, budget: &mut u32) -> Result<()> {
+/// One parked router queue: its count, its cursor here, and how to read and push an entry.
+trait ParkedQueue {
+    const KIND: &'static str;
+    fn count(storage: &StorageHandle<'_>) -> Result<u64>;
+    fn cursor<'f, 's>(factory: &'f IntexFactoryContract<'s>) -> &'f Value<'s, u64>;
+    fn read_call(idx: U256) -> Bytes;
+    /// Whether the entry still waits for a push. `None` when the return does not decode.
+    fn waiting(ret: &[u8]) -> Option<bool>;
+    fn push_call(idx: U256) -> Bytes;
+}
+
+struct ParkedMessages;
+
+impl ParkedQueue for ParkedMessages {
+    const KIND: &'static str = "message";
+
+    fn count(storage: &StorageHandle<'_>) -> Result<u64> {
+        let ret = storage.staticcall(
+            ORIGIN_ROUTER_ADDRESS,
+            IOriginRouter::parkedMessageCountCall {}.abi_encode().into(),
+        )?;
+        Ok(to_index(
+            IOriginRouter::parkedMessageCountCall::abi_decode_returns(&ret).unwrap_or_default(),
+        ))
+    }
+
+    fn cursor<'f, 's>(factory: &'f IntexFactoryContract<'s>) -> &'f Value<'s, u64> {
+        &factory.parked_message_cursor
+    }
+
+    fn read_call(idx: U256) -> Bytes {
+        IOriginRouter::parkedMessageCall { idx }.abi_encode().into()
+    }
+
+    fn waiting(ret: &[u8]) -> Option<bool> {
+        let entry = IOriginRouter::parkedMessageCall::abi_decode_returns(ret).ok()?;
+        // An empty payload is an index the router never filled. `sent` is one we
+        // already pushed.
+        Some(!entry.sent && !entry.payload.is_empty())
+    }
+
+    fn push_call(idx: U256) -> Bytes {
+        IOriginRouter::resendParkedMessageCall { idx }
+            .abi_encode()
+            .into()
+    }
+}
+
+struct ParkedProceeds;
+
+impl ParkedQueue for ParkedProceeds {
+    const KIND: &'static str = "proceeds";
+
+    fn count(storage: &StorageHandle<'_>) -> Result<u64> {
+        let ret = storage.staticcall(
+            ORIGIN_ROUTER_ADDRESS,
+            IOriginRouter::parkedProceedsCountCall {}
+                .abi_encode()
+                .into(),
+        )?;
+        Ok(to_index(
+            IOriginRouter::parkedProceedsCountCall::abi_decode_returns(&ret).unwrap_or_default(),
+        ))
+    }
+
+    fn cursor<'f, 's>(factory: &'f IntexFactoryContract<'s>) -> &'f Value<'s, u64> {
+        &factory.parked_proceeds_cursor
+    }
+
+    fn read_call(idx: U256) -> Bytes {
+        IOriginRouter::parkedProceedsCall { idx }
+            .abi_encode()
+            .into()
+    }
+
+    fn waiting(ret: &[u8]) -> Option<bool> {
+        let entry = IOriginRouter::parkedProceedsCall::abi_decode_returns(ret).ok()?;
+        Some(!entry.settled && entry.amount > 0)
+    }
+
+    fn push_call(idx: U256) -> Bytes {
+        IOriginRouter::distributeParkedProceedsCall { idx }
+            .abi_encode()
+            .into()
+    }
+}
+
+fn drain_queue<Q: ParkedQueue>(storage: &StorageHandle<'_>, budget: &mut u32) -> Result<()> {
     let factory = IntexFactoryContract::new(storage.clone());
-    let total = match message_count(storage) {
+    let total = match Q::count(storage) {
         Ok(total) => total,
         Err(error) => return skip_unless_node_local(error),
     };
-    let start = match factory.parked_message_cursor.read() {
+    let start = match Q::cursor(&factory).read() {
         Ok(start) => start,
         Err(error) => return skip_unless_node_local(error),
     };
@@ -73,14 +160,7 @@ fn drain_messages(storage: &StorageHandle<'_>, budget: &mut u32) -> Result<()> {
     let mut cursor = Cursor::new(start);
     while cursor.at < total && *budget > 0 && !cursor.spent() {
         *budget = budget.saturating_sub(1);
-        let read = storage.staticcall(
-            ORIGIN_ROUTER_ADDRESS,
-            IOriginRouter::parkedMessageCall {
-                idx: U256::from(cursor.at),
-            }
-            .abi_encode()
-            .into(),
-        );
+        let read = storage.staticcall(ORIGIN_ROUTER_ADDRESS, Q::read_call(U256::from(cursor.at)));
         let read = match read {
             Ok(ret) => Some(ret),
             Err(error) => {
@@ -88,144 +168,49 @@ fn drain_messages(storage: &StorageHandle<'_>, budget: &mut u32) -> Result<()> {
                 None
             }
         };
-        let parked =
-            read.and_then(|ret| IOriginRouter::parkedMessageCall::abi_decode_returns(&ret).ok());
-        match parked {
-            // An empty payload is an index the router never filled; `sent` is one we already pushed.
-            Some(entry) if !entry.sent && !entry.payload.is_empty() => {
-                let idx = cursor.at;
-                let sent = storage.with_checkpoint(|| {
-                    storage.call(
-                        ORIGIN_ROUTER_ADDRESS,
-                        U256::ZERO,
-                        IOriginRouter::resendParkedMessageCall {
-                            idx: U256::from(idx),
-                        }
-                        .abi_encode()
-                        .into(),
-                    )?;
-                    Ok(())
-                });
-                match sent {
-                    Ok(()) => cursor.resolved(),
-                    Err(error) if error.sweep_failure() == SweepFailure::Propagate => {
-                        return Err(error);
-                    }
-                    Err(error) => {
-                        tracing::warn!(target: "outbe::intexfactory", idx, error = ?error, "parked message: leaving it");
-                        cursor.stuck();
-                    }
-                }
-            }
-            Some(_) => cursor.resolved(),
+        match read.and_then(|ret| Q::waiting(&ret)) {
+            Some(true) => push_entry::<Q>(storage, &mut cursor)?,
+            Some(false) => cursor.resolved(),
             None => cursor.stuck(),
         }
         cursor.at = cursor.at.saturating_add(1);
     }
 
-    factory
-        .parked_message_cursor
+    Q::cursor(&factory)
         .write(cursor.head)
         .or_else(skip_unless_node_local)
 }
 
-fn drain_proceeds(storage: &StorageHandle<'_>, budget: &mut u32) -> Result<()> {
-    let factory = IntexFactoryContract::new(storage.clone());
-    let total = match proceeds_count(storage) {
-        Ok(total) => total,
-        Err(error) => return skip_unless_node_local(error),
-    };
-    let start = match factory.parked_proceeds_cursor.read() {
-        Ok(start) => start,
-        Err(error) => return skip_unless_node_local(error),
-    };
-
-    let mut cursor = Cursor::new(start);
-    while cursor.at < total && *budget > 0 && !cursor.spent() {
-        *budget = budget.saturating_sub(1);
-        let read = storage.staticcall(
+fn push_entry<Q: ParkedQueue>(storage: &StorageHandle<'_>, cursor: &mut Cursor) -> Result<()> {
+    let idx = cursor.at;
+    let pushed = storage.with_checkpoint(|| {
+        storage.call(
             ORIGIN_ROUTER_ADDRESS,
-            IOriginRouter::parkedProceedsCall {
-                idx: U256::from(cursor.at),
-            }
-            .abi_encode()
-            .into(),
-        );
-        let read = match read {
-            Ok(ret) => Some(ret),
-            Err(error) => {
-                skip_unless_node_local(error)?;
-                None
-            }
-        };
-        let parked =
-            read.and_then(|ret| IOriginRouter::parkedProceedsCall::abi_decode_returns(&ret).ok());
-        match parked {
-            Some(entry) if !entry.settled && entry.amount > 0 => {
-                let idx = cursor.at;
-                let settled = storage.with_checkpoint(|| {
-                    storage.call(
-                        ORIGIN_ROUTER_ADDRESS,
-                        U256::ZERO,
-                        IOriginRouter::distributeParkedProceedsCall {
-                            idx: U256::from(idx),
-                        }
-                        .abi_encode()
-                        .into(),
-                    )?;
-                    Ok(())
-                });
-                match settled {
-                    Ok(()) => cursor.resolved(),
-                    Err(error) if error.sweep_failure() == SweepFailure::Propagate => {
-                        return Err(error);
-                    }
-                    Err(error) => {
-                        tracing::warn!(target: "outbe::intexfactory", idx, error = ?error, "parked proceeds: leaving it");
-                        cursor.stuck();
-                    }
-                }
-            }
-            Some(_) => cursor.resolved(),
-            None => cursor.stuck(),
+            U256::ZERO,
+            Q::push_call(U256::from(idx)),
+        )?;
+        Ok(())
+    });
+    match pushed {
+        Ok(()) => cursor.resolved(),
+        Err(error) if error.sweep_failure() == SweepFailure::Propagate => {
+            return Err(error);
         }
-        cursor.at = cursor.at.saturating_add(1);
+        Err(error) => {
+            tracing::warn!(target: "outbe::intexfactory", idx, error = ?error, "parked {}: leaving it", Q::KIND);
+            cursor.stuck();
+        }
     }
-
-    factory
-        .parked_proceeds_cursor
-        .write(cursor.head)
-        .or_else(skip_unless_node_local)
+    Ok(())
 }
 
-/// A failure every node meets leaves the entry for a later pass; a node-local one fails the block.
+/// A failure every node meets leaves the entry for a later pass. A node-local failure fails the
+/// block.
 fn skip_unless_node_local(error: PrecompileError) -> Result<()> {
     match error.sweep_failure() {
         SweepFailure::Propagate => Err(error),
         SweepFailure::Skip | SweepFailure::Stop => Ok(()),
     }
-}
-
-fn message_count(storage: &StorageHandle<'_>) -> Result<u64> {
-    let ret = storage.staticcall(
-        ORIGIN_ROUTER_ADDRESS,
-        IOriginRouter::parkedMessageCountCall {}.abi_encode().into(),
-    )?;
-    Ok(to_index(
-        IOriginRouter::parkedMessageCountCall::abi_decode_returns(&ret).unwrap_or_default(),
-    ))
-}
-
-fn proceeds_count(storage: &StorageHandle<'_>) -> Result<u64> {
-    let ret = storage.staticcall(
-        ORIGIN_ROUTER_ADDRESS,
-        IOriginRouter::parkedProceedsCountCall {}
-            .abi_encode()
-            .into(),
-    )?;
-    Ok(to_index(
-        IOriginRouter::parkedProceedsCountCall::abi_decode_returns(&ret).unwrap_or_default(),
-    ))
 }
 
 fn to_index(total: U256) -> u64 {

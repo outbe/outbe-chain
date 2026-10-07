@@ -10,9 +10,9 @@
 //! byte-identical ciphertext (consensus determinism).
 //!
 //! This is pure code-motion of the key-derivation / amount-AEAD / modify-MAC
-//! primitives that previously lived inline in `gratis.rs`; the `GRATIS` domain
-//! reproduces those byte layouts exactly (guarded by the `gratis.rs` known-answer
-//! vectors).
+//! primitives that previously lived inline in `gratis.rs`. The `GRATIS` domain
+//! reproduces those byte layouts exactly. The `gratis.rs` known-answer vectors
+//! guard this.
 
 use alloy_primitives::{Address, B256, U256};
 use ring::hmac;
@@ -23,8 +23,8 @@ use crate::crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha
 use crate::errors::{Result, TeeError};
 
 /// Balance amount-slot field tag folded into the nonce derivation. Shared: every
-/// ledger's primary balance uses tag `0` (higher tags - e.g. Gratis pledged/eoa -
-/// are ledger-local).
+/// ledger's primary balance uses tag `0`. A ledger can define higher tags as
+/// ledger-local fields.
 pub const FIELD_BALANCE: u8 = 0;
 
 /// Amount blob length: `version(8, BE) || ChaCha20Poly1305(U256 32B) (+16B tag)` =
@@ -107,7 +107,7 @@ impl Domain {
         hkdf_sha256(state_key, account.as_slice(), self.view_info)
     }
 
-    /// Per-account modify key: authorizes writes (via HMAC); never decrypts state.
+    /// Per-account modify key: authorizes writes (via HMAC). It never decrypts state.
     pub fn derive_modify_key(&self, state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
         hkdf_sha256(state_key, account.as_slice(), self.modify_info)
     }
@@ -122,7 +122,7 @@ impl Domain {
         Ok(nonce)
     }
 
-    /// Decrypt a `version || ct` amount blob; an empty blob is a fresh slot (`0`).
+    /// Decrypt a `version || ct` amount blob. An empty blob is a fresh slot (`0`).
     pub fn read_amount(
         &self,
         view_key: &[u8; 32],
@@ -202,8 +202,8 @@ impl Domain {
 
     /// Encrypt a variable-length record plaintext into a fresh `version+1 || ct`
     /// blob (the [`Domain::write_amount`] analogue for non-amount payloads).
-    /// Unlike amounts, the ciphertext length follows the plaintext length -
-    /// callers that must not leak record cardinality pad the plaintext to a
+    /// Unlike amounts, the ciphertext length follows the plaintext length.
+    /// Callers that must not leak record cardinality pad the plaintext to a
     /// deterministic bucket before calling.
     pub fn write_blob(
         &self,

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
+use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::time::WorldwideDay;
@@ -44,7 +44,7 @@ const OTHER_ISO: u16 = 978;
 const START: u64 = 1_800_000_000;
 
 /// The worldwide day [`START`] falls in. The breach walk now stops at
-/// `first_full_day(issued_at)`, not this WWD key; the two still have to
+/// `first_full_day(issued_at)`, not this WWD key. The two still have to
 /// agree so fixtures that reason in WWD days do not silently miss the
 /// issuance cutoff.
 const WWD: u32 = 20_270_115;
@@ -241,7 +241,12 @@ fn try_forfeit(
 ) -> outbe_primitives::error::Result<u32> {
     storage.with_checkpoint(|| {
         let mut nod = NodContract::new(storage.clone());
-        crate::called::forfeit_members(storage, &mut nod, scope, parent, bucket_key, budget)
+        let bodies = crate::called::Bodies {
+            storage,
+            scope,
+            parent,
+        };
+        crate::called::forfeit_members(&bodies, &mut nod, bucket_key, budget)
     })
 }
 
@@ -344,8 +349,8 @@ fn reterm(storage: &StorageHandle<'_>, bucket_key: B256, iso: u16, terms: Sealed
     }
 }
 
-/// Issuance seals the terms, the constants are read exactly once there, and
-/// enrolls the bucket in the call index.
+/// Issuance seals the terms, reads the constants exactly once, and enrolls the
+/// bucket in the call index.
 #[test]
 fn issuance_seals_the_call_terms_on_the_bucket() {
     harness(|storage, scope, parent| {
@@ -484,8 +489,9 @@ fn a_later_member_does_not_reissue_the_bucket_stamp() {
 
 /// The terms a bucket is called and forfeited under are the ones sealed at
 /// issuance, not the live constants. A `const` cannot be retuned at
-/// runtime, so this proves it from the other side: rewrite what the bucket
-/// holds and watch the scan follow the bucket rather than the constant.
+/// runtime, so this test proves it from the other side. It rewrites what the
+/// bucket holds and checks that the scan follows the bucket rather than the
+/// constant.
 #[test]
 fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
     harness(|storage, scope, parent| {
@@ -532,7 +538,7 @@ fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
 }
 
 /// A bucket whose sealed window outruns the current constant still gets its
-/// whole span collected: the scan sizes the shared per-currency window off the
+/// whole span collected. The scan sizes the shared per-currency window off the
 /// `max_call_window_seconds` high-water mark, not off the constant.
 #[test]
 fn a_window_wider_than_the_constant_is_collected_in_full() {
@@ -670,9 +676,9 @@ fn missing_days_do_not_count_as_breaches() {
 fn a_breach_run_that_predates_the_bucket_does_not_call_it() {
     harness(|storage, scope, parent| {
         let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
-        // Scan two days after issuance: only a couple of closed UTC days sit at
-        // or after `first_full_day(issued_at)`, so the pre-existence run beyond
-        // them is ignored even though the whole series breaches.
+        // Scan two days after issuance. Only a couple of closed UTC days sit at
+        // or after `first_full_day(issued_at)`. The scan ignores the
+        // pre-existence run beyond them, even though the whole series breaches.
         let at = START + 2 * DAY;
         fill_days(
             storage,
@@ -1062,8 +1068,8 @@ fn forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours() {
         );
         assert_eq!(scan(storage, scope, parent, at), 3, "all three call");
 
-        // Keep the one on top of the called list inside its notice, so the walk
-        // swap-pops it down into each hole the two lapsed ones leave below it.
+        // Keep the one on top of the called list inside its notice. The walk then
+        // swap-pops it down into each hole that the two lapsed ones leave below it.
         let nod = NodContract::new(storage.clone());
         let top = nod
             .called_buckets
@@ -1089,8 +1095,8 @@ fn forfeiting_a_bucket_mid_list_does_not_skip_its_neighbours() {
     });
 }
 
-/// A walk that runs out of visits inside a bin resumes there, and the bucket a
-/// call swap-pops into each hole is neither visited twice nor skipped.
+/// A walk that runs out of visits inside a bin resumes there. The walk neither
+/// visits twice nor skips the bucket that a call swap-pops into each hole.
 #[test]
 fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
     harness(|storage, scope, parent| {
@@ -1131,9 +1137,11 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             crate::called::call_currency(
                 &ctx,
                 &mut nod,
-                ISO,
-                &window,
-                MAX_BIN_ID,
+                crate::called::CurrencyScan {
+                    iso_code: ISO,
+                    window: &window,
+                    ceiling: MAX_BIN_ID,
+                },
                 &mut visits,
                 &mut std::collections::BTreeSet::new(),
             )
@@ -1145,9 +1153,11 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             crate::called::call_currency(
                 &ctx,
                 &mut nod,
-                ISO,
-                &window,
-                MAX_BIN_ID,
+                crate::called::CurrencyScan {
+                    iso_code: ISO,
+                    window: &window,
+                    ceiling: MAX_BIN_ID,
+                },
                 &mut visits,
                 &mut std::collections::BTreeSet::new(),
             )
@@ -2140,7 +2150,17 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
                 nodId: item.nod_id.to_u256(),
             }
             .abi_encode();
-            let out = dispatch(storage, &scope, &parent, &data, Address::ZERO, U256::ZERO).unwrap();
+            let out = dispatch(
+                storage,
+                ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
+                &data,
+                Address::ZERO,
+                U256::ZERO,
+            )
+            .unwrap();
             let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
             let json = base64::engine::general_purpose::STANDARD
                 .decode(uri.strip_prefix("data:application/json;base64,").unwrap())

@@ -251,7 +251,7 @@ fn later_fifo_budget_preserves_discovered_active_identity_and_partial_scan_bound
             |request| {
                 let mut prepared = fixture(request, Phase::AwaitingFinality, |_| {});
                 // Replace only the fixture's empty NOD inventory with two native
-                // queued generations; Metadosis/Registry authority stays intact.
+                // queued generations. Metadosis/Registry authority stays intact.
                 prepared.owner.storage.extend(queued_owner(2).storage);
                 prepared.owner
             },
@@ -652,7 +652,7 @@ fn fixture_for_identity(
         seed_ready_worldwide_days_for_capacity(storage, &[DAY]).unwrap();
     });
     // Native schema scalar mappings use DAY.mapping_slot(base+field_offset).
-    // Ready aggregate membership was created by the public owner fixture.
+    // The public owner fixture created the Ready aggregate membership.
     let status_slot = DAY.mapping_slot(U256::from(1));
     assert_eq!(
         owner.storage.get(&(METADOSIS_ADDRESS, status_slot)),
@@ -691,7 +691,7 @@ fn fixture_for_identity(
     scheduler.extend_from_slice(&live.retained_effect.lysis_limit_minor.to_be_bytes::<32>());
     scheduler.extend_from_slice(live.retained_effect.receipt_hash.as_slice());
     assert_eq!(scheduler.len(), 148);
-    // OMLI/v2 stores only the WWD/IntentId keys; the FSM is persisted separately.
+    // OMLI/v2 stores only the WWD/IntentId keys. The FSM is persisted separately.
     let mut live_index = b"OMLI".to_vec();
     live_index.extend_from_slice(&2_u16.to_be_bytes());
     live_index.extend_from_slice(&1_u16.to_be_bytes());

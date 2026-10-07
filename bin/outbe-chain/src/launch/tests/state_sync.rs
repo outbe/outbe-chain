@@ -142,7 +142,7 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
     .expect("snapshot height is not a replacement for native start_block");
     assert!(error.to_string().contains("start_block 1"));
     // A rejected preflight also owns an asynchronous storage close. Observe it
-    // before opening storage so the process cannot exit while RocksDB tears down.
+    // before opening storage so the process cannot exit while RocksDB still closes.
     let completions = Arc::new(std::sync::Mutex::new(Vec::new()));
     let observed = completions.clone();
     assert!(
@@ -330,8 +330,8 @@ mod copied_unequal_ce_projection {
         (FinalizedProjectionSink::new(ready), readiness)
     }
 
-    // Native empty-body storage fixture: no EVM execution/state-root proof is
-    // claimed. Actual CE roots, receipts and historical headers are read below.
+    // Native empty-body storage fixture: it claims no EVM execution/state-root proof.
+    // The code below reads the actual CE roots, receipts and historical headers.
     fn seed_reth(root: &Path, headers: &[OutbeHeader]) {
         let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
         let tx = db.tx_mut().unwrap();
@@ -359,7 +359,7 @@ mod copied_unequal_ce_projection {
         tx.put::<tables::PlainAccountState>(COMPRESSED_ENTITIES_ADDRESS, Default::default())
             .unwrap();
         // CE never changes in these blocks, so the actual native root slot is
-        // identical at every queried historical height; no state-provider stub.
+        // identical at every queried historical height. No state-provider stub.
         tx.put::<tables::PlainStorageState>(
             COMPRESSED_ENTITIES_ADDRESS,
             StorageWord {
@@ -368,7 +368,7 @@ mod copied_unequal_ce_projection {
             },
         )
         .unwrap();
-        // A nonzero genesis slot must also be indexed as previously written.
+        // The history index must also record a nonzero genesis slot as previously written.
         // Otherwise native historical lookup classifies it as NotYetWritten.
         type HistoryKey = <tables::StoragesHistory as Table>::Key;
         type HistoryBlocks = <tables::StoragesHistory as Table>::Value;
@@ -595,8 +595,8 @@ mod copied_unequal_ce_projection {
                 let tree = open_tree(recipient.path());
                 let marker = tree.finalized_marker().unwrap();
                 let source = Arc::new(RethDurableCeState::new(provider.clone()));
-                // Equal/header/root prerequisites survive; only H's replay body
-                // and receipt lookup was cut. No common marker is manufactured.
+                // Equal/header/root prerequisites survive. The test cut only H's replay
+                // body and receipt lookup. The test manufactures no common marker.
                 assert!(source.durable_checkpoint(H).unwrap().is_some());
                 assert_eq!(
                     provider.block_hash(H).unwrap(),

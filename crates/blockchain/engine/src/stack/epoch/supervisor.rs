@@ -47,10 +47,9 @@ where
         'epoch_loop: loop {
             // -- a. Register or take pre-registered epoch sub-channels -------
             // Activation pre-registers `next_epoch_subchannels` at DKG
-            // completion (see DKG completion handler below); the top of the
+            // completion (see DKG completion handler below). The top of the
             // next iteration consumes it. The fallback path covers the
-            // genesis-bootstrap iteration where no prior DKG completion has
-            // run.
+            // genesis-bootstrap iteration where no prior DKG completion ran.
             let current_subchannels = if self.channels.replacement_epoch_subchannels.is_some() {
                 outbe_consensus::epoch_subchannels::take_or_register_current(
                     self.state.current_epoch,
@@ -198,9 +197,9 @@ where
                     }
                 },
 
-                // Block-height based DKG/VRF rotation. This is driven by execution-finalized
-                // height notifications after successful new_payload + FCU, not wall-clock
-                // polling or raw consensus finalization.
+                // Block-height based DKG/VRF rotation. Execution-finalized height
+                // notifications after successful new_payload + FCU drive it. Wall-clock
+                // polling and raw consensus finalization do not drive it.
                 Some(current_height) = wait_for_execution_finalized_height => {
                     match latest_consensus_tip {
                         Some(tip) => {
@@ -269,7 +268,7 @@ where
                 // availability, finalized-block delivery to the executor). With
                 // `catch_panics`, a marshal panic (e.g. an unacknowledged Exact,
                 // or a future telemetry-label assert) resolves its handle instead
-                // of aborting the process - so an UNmonitored handle would leave
+                // of aborting the process. So an UNmonitored handle would leave
                 // the node silently stalled (no blocks delivered, consensus
                 // wedged). Monitor it like the other components: a marshal exit
                 // is fatal and shuts the node down with the cause.
@@ -278,8 +277,8 @@ where
                     result.map_err(|e| eyre::eyre!("marshal actor exited: {e:?}"))?;
                     return Ok(EpochLoopOutcome::StackExit);
                 },
-                // The broadcast (buffered dissemination) handle remains managed by
-                // the Commonware runtime; its failure degrades to the marshal
+                // The Commonware runtime still manages the broadcast (buffered
+                // dissemination) handle. Its failure degrades to the marshal
                 // pull/serve path rather than a consensus stall.
             }
             }

@@ -14,7 +14,6 @@ outbe-primitives.workspace = true
 outbe-nod.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-oracle.workspace = true
-outbe-paynote.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-validatorset.workspace = true
 outbe-tribute.workspace = true
@@ -38,8 +37,6 @@ outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-protocol.workspace = true
 outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
-# Real PayNote proofs for the cost-discharge tests.
-outbe-paynote = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }

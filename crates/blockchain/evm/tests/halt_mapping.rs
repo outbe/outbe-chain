@@ -51,7 +51,7 @@ fn revert_msg_becomes_error_string_bytes() {
     let result = map_outbe_precompile_result(Err(PrecompileError::Revert(msg.clone())), ACTUAL_GAS)
         .expect("revert is non-fatal");
     assert!(matches!(result.status, PrecompileStatus::Revert));
-    // Reason is ABI-encoded as the Solidity-standard `Error(string)`
+    // The mapper ABI-encodes the reason as the Solidity-standard `Error(string)`
     // (selector 0x08c379a0 ++ abi.encode(reason)) so ethers/viem/foundry
     // can decode it instead of seeing raw UTF-8 ("invalid data length").
     assert_eq!(
@@ -93,7 +93,7 @@ fn write_protection_halts_with_static_call_message() {
     match result.status {
         PrecompileStatus::Halt(reason) => {
             // The message text is part of the public surface for test
-            // assertion; if you rename the literal, update both call sites.
+            // assertion. If you rename the literal, update both call sites.
             let msg = format!("{reason:?}");
             assert!(
                 msg.contains("state change during static call"),
@@ -165,8 +165,8 @@ fn fatal_passes_through_to_fatal() {
     );
     match result {
         Err(revm::precompile::PrecompileError::Fatal(msg)) => {
-            // outbe `PrecompileError::Fatal` Display-formats as "fatal: <msg>";
-            // the mapper feeds `e.to_string()` to revm Fatal, so the prefix
+            // outbe `PrecompileError::Fatal` Display-formats as "fatal: <msg>".
+            // The mapper feeds `e.to_string()` to revm Fatal, so the prefix
             // is expected. The test asserts the original payload survives
             // the round-trip rather than locking the exact format.
             assert!(

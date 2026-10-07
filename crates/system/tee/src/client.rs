@@ -4,11 +4,12 @@
 //! node-signed manifest, and proves possession of its persistent `NodeHost` Noise
 //! initiator key. Later connections use `OpenSession` plus the same key. The
 //! legacy `EnclaveClient` GetQuote flow remains for the separate dev/mock
-//! transport and is not accepted by the production enclave.
+//! transport. The production enclave does not accept this flow.
 //!
-//! The client is fully synchronous: it is meant to be driven straight from the
-//! `offerTributeBatch` precompile path with a blocking UDS round-trip - no
-//! async, no `spawn`, nothing that would capture a `StorageHandle`.
+//! The client is fully synchronous. The `offerTribute` precompile drives it
+//! with a blocking UDS round-trip. The enclave batch request is
+//! `ProcessTributeOfferBatch`. It uses no async,
+//! no `spawn`, and nothing that would capture a `StorageHandle`.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -80,8 +81,8 @@ struct QuoteIdentity {
     mrsigner: B256,
     isv_svn: u16,
     attestation_pub: [u8; 32],
-    /// The enclave's Noise static key as pinned by [`verify_quote`] - the key
-    /// the Noise-IK handshake actually authenticated. Retained so a session
+    /// The enclave's Noise static key as pinned by [`verify_quote`]. This is the
+    /// key the Noise-IK handshake actually authenticated. Retained so a session
     /// reconnect can require the byte-identical peer.
     noise_static_pub: [u8; 32],
     /// The attestation environment the enclave self-reported (e.g.
@@ -96,12 +97,12 @@ pub struct EnclaveClient {
     identity: QuoteIdentity,
     /// The raw `EnclaveResponse::Quote` this session verified at connect. Retained
     /// for development/bootstrap flows that must relay the exact quote bytes after
-    /// local verification; it grants no key-delivery capability by itself.
+    /// local verification. It grants no key-delivery capability by itself.
     raw_quote: EnclaveResponse,
 }
 
 /// Persistent Noise IK initiator identity authorized by one enclave manifest.
-/// The private bytes are zeroized on drop and are never exposed by this API.
+/// The private bytes are zeroized on drop. This API never exposes them.
 #[derive(Clone)]
 pub struct NodeHostNoiseKey {
     private: Zeroizing<[u8; 32]>,
@@ -130,7 +131,7 @@ impl NodeHostNoiseKey {
     }
 
     /// Create the NodeHost identity exactly once with owner-only permissions.
-    /// Existing files reject; callers must never rotate this key implicitly.
+    /// Existing files reject. Callers must never rotate this key implicitly.
     pub fn create_new(path: &Path) -> Result<Self, TransportError> {
         let mut private = Zeroizing::new([0u8; 32]);
         rand::rngs::OsRng.fill_bytes(&mut *private);
@@ -148,7 +149,7 @@ impl NodeHostNoiseKey {
     }
 
     /// Load the one existing NodeHost identity. Missing, truncated, symlinked or
-    /// over-permissive/foreign-owned files fail closed; loss never triggers key
+    /// over-permissive/foreign-owned files fail closed. Loss never triggers key
     /// regeneration. `O_NOFOLLOW` and metadata from the opened descriptor avoid
     /// a path-check/read race.
     pub fn load(path: &Path) -> Result<Self, TransportError> {
@@ -242,8 +243,8 @@ impl RemoteSessionTicketV1 {
 }
 
 /// Remote peer session. Its intentionally small interface exposes only the
-/// non-secret public-key request; owner and secret-bearing commands are not
-/// part of this client surface and remain denied by the enclave matrix.
+/// non-secret public-key request. Owner and secret-bearing commands are not
+/// part of this client surface, and the enclave matrix still denies them.
 pub struct RemoteEnclaveClient {
     stream: Transport,
     noise: snow::TransportState,
@@ -263,10 +264,11 @@ pub struct RemoteEnclavePublicKeysV1 {
     pub dkg_enc_sig: Vec<u8>,
 }
 
-/// Bound on a single blocking enclave read/write: a wedged enclave that accepts
-/// the connection but never responds surfaces as a timeout error instead of hanging
-/// the caller (e.g. node startup) forever. Generous - every real enclave op (quote,
-/// Noise handshake, seal, offer-batch decrypt) completes well within this.
+/// Bound on a single blocking enclave read/write. A wedged enclave that accepts
+/// the connection but never responds surfaces as a timeout error instead of
+/// hanging the caller (e.g. node startup) forever. The bound is generous: every
+/// real enclave op (quote, Noise handshake, seal, offer-batch decrypt) completes
+/// well within it.
 const DEFAULT_ENCLAVE_IO_TIMEOUT_SECS: u64 = 30;
 
 /// Hardware SGX can spend substantially longer than gramine-direct servicing a
@@ -319,8 +321,8 @@ impl EnclaveClient {
         Self::from_transport(Transport::Unix(stream))
     }
 
-    /// Connect to the enclave over TCP (`host:port`) - used when the enclave runs
-    /// under Gramine, whose pathname UDS cannot be reached from a host process.
+    /// Connect to the enclave over TCP (`host:port`). Use this when the enclave
+    /// runs under Gramine, whose pathname UDS a host process cannot reach.
     pub fn connect_tcp(addr: &str) -> Result<Self, TransportError> {
         let stream = TcpStream::connect(addr)?;
         let _ = stream.set_nodelay(true);
@@ -331,11 +333,12 @@ impl EnclaveClient {
 
     /// True when the enclave reports a DCAP/EPID attestation type. This structural
     /// connect path does not verify the quote signature or establish production
-    /// admission; those guarantees come from native QVL and TeeRegistry. Under
-    /// gramine-sgx with `sgx.remote_attestation = "none"` the enclave reports REAL measurements
-    /// (read from the local SGX report) but produces no quote, so it is confidential
-    /// and measured yet unattested. False under gramine-direct / bare too. Gate
-    /// quote-dependent trust on this, not on non-zero measurements.
+    /// admission. Those guarantees come from native QVL and TeeRegistry. Under
+    /// gramine-sgx with `sgx.remote_attestation = "none"`, the enclave reports
+    /// REAL measurements (read from the local SGX report) but produces no quote.
+    /// It is therefore confidential and measured, yet unattested. False under
+    /// gramine-direct / bare too. Gate quote-dependent trust on this, not on
+    /// non-zero measurements.
     pub fn is_hardware_attested(&self) -> bool {
         let a = &self.identity.attestation;
         a.starts_with("dcap") || a.starts_with("epid")
@@ -357,8 +360,8 @@ impl EnclaveClient {
     }
 
     /// The enclave's Ed25519 attestation public key, pinned from this session's
-    /// structurally validated quote response. Used to verify
-    /// per-offer attestation tags (`verify_tribute_offer_attestation`) - a local
+    /// structurally validated quote response. Used to verify per-offer
+    /// attestation tags (`verify_tribute_offer_attestation`). That is a local
     /// verify-then-discard check that binds a batch's results to the peer holding
     /// this session key. Production enclave identity is established separately.
     pub fn attestation_pub(&self) -> [u8; 32] {
@@ -400,7 +403,7 @@ impl EnclaveClient {
         let identity = quote_identity(&quote, enclave_static)?;
 
         // 2. Noise-IK handshake (initiator). The host static key is ephemeral
-        //    per connection; the enclave static key is the bound, pinned one.
+        //    per connection. The enclave static key is the bound, pinned one.
         let params = NOISE_PARAMS
             .parse()
             .map_err(|e| TransportError::Noise(format!("{e:?}")))?;
@@ -444,7 +447,7 @@ impl EnclaveClient {
         &self.raw_quote
     }
 
-    /// Send an operation with an explicit block context; retries preserve it.
+    /// Send an operation with an explicit block context. Retries preserve it.
     pub fn request_with_context(
         &mut self,
         ctx: crate::call_context::EnclaveCallContextV1,
@@ -664,7 +667,7 @@ impl AuthorizedEnclaveClient {
         Ok(response)
     }
 
-    /// Send an operation with an explicit block context; retries preserve it.
+    /// Send an operation with an explicit block context. Retries preserve it.
     pub fn request_with_context(
         &mut self,
         ctx: crate::call_context::EnclaveCallContextV1,
@@ -892,7 +895,7 @@ impl AuthorizedEnclaveClient {
 
     /// Installs one one-use remote admission after the caller has verified its
     /// source and target bindings from local or anchored finalized state.
-    /// Production node code uses the finalized facade in `outbe-node`; this
+    /// Production node code uses the finalized facade in `outbe-node`. This
     /// low-level transport method remains public only across the crate seam.
     #[doc(hidden)]
     pub fn authorize_remote_session(
@@ -982,8 +985,8 @@ impl AuthorizedEnclaveClient {
     }
 
     /// Verify exact canonical evidence against exact canonical policy and
-    /// consensus time inside the initialized Gramine enclave. The bounded
-    /// multi-frame protocol is hidden from callers.
+    /// consensus time inside the initialized Gramine enclave. This method hides
+    /// the bounded multi-frame protocol from callers.
     pub fn verify_dcap_evidence_v1(
         &mut self,
         evidence: &[u8],
@@ -1547,14 +1550,16 @@ pub struct AttestedPeerKeys {
 }
 
 /// Validate an enclave quote response and return its bound keys. The connect
-/// path pins `noise_static_pub`; callers may also bind a one-time registration
+/// path pins `noise_static_pub`. Callers may also bind a one-time registration
 /// recipient without gaining any peer key-recovery surface.
 ///
-/// Chain: (1) the cleartext public keys must hash to `report_data` (key
-/// binding); (2) for a non-empty quote, cleartext measurements and report_data
-/// must match the fields parsed from the quote. Empty quotes are accepted for
-/// development transports. Production attestation is enforced separately by
-/// the enclave-resident native QVL and TeeRegistry.
+/// Chain:
+/// 1. The cleartext public keys must hash to `report_data` (key binding).
+/// 2. For a non-empty quote, cleartext measurements and report_data must match
+///    the fields parsed from the quote.
+///
+/// Empty quotes are accepted for development transports. The enclave-resident
+/// native QVL and TeeRegistry enforce production attestation separately.
 pub fn verify_peer_quote(quote: &EnclaveResponse) -> Result<AttestedPeerKeys, TransportError> {
     let EnclaveResponse::Quote {
         mrenclave,
@@ -1616,12 +1621,12 @@ fn verify_quote(quote: &EnclaveResponse) -> Result<[u8; 32], TransportError> {
     Ok(verify_peer_quote(quote)?.noise_static_pub)
 }
 
-/// Verify a per-offer attestation tag - an Ed25519 signature over
-/// [`crate::protocol::tribute_offer_attestation_preimage`] - against the peer's
-/// session attestation public key, which [`verify_peer_quote`] binds to the quote
-/// report data. This proves that the session-key holder signed the results; it is
-/// not an independent enclave-attestation verdict. The tag is never persisted.
-/// Returns a typed error on any mismatch.
+/// Verify a per-offer attestation tag against the peer's session attestation
+/// public key. The tag is an Ed25519 signature over
+/// [`crate::protocol::tribute_offer_attestation_preimage`]. [`verify_peer_quote`]
+/// binds the key to the quote report data. This proves that the session-key
+/// holder signed the results. It is not an independent enclave-attestation
+/// verdict. The tag is never persisted. Returns a typed error on any mismatch.
 pub fn verify_tribute_offer_attestation(
     attestation_pub: &[u8; 32],
     inputs_canonical_hash: B256,
@@ -1643,10 +1648,11 @@ pub fn verify_tribute_offer_attestation(
         .map_err(|e| TransportError::TributeOfferAttestation(format!("signature invalid: {e}")))
 }
 
-/// Verify a Gratis-op attestation tag - an Ed25519 signature over
-/// [`crate::protocol::gratis_op_attestation_preimage`] - against the peer's
-/// session attestation key. Same session-key-holder and verify-then-discard
-/// semantics as [`verify_tribute_offer_attestation`]; the tag is never persisted.
+/// Verify a Gratis-op attestation tag against the peer's session attestation
+/// key. The tag is an Ed25519 signature over
+/// [`crate::protocol::gratis_op_attestation_preimage`]. Same session-key-holder
+/// and verify-then-discard semantics as [`verify_tribute_offer_attestation`].
+/// The tag is never persisted.
 pub fn verify_gratis_op_attestation(
     attestation_pub: &[u8; 32],
     inputs_canonical_hash: B256,
@@ -1666,10 +1672,10 @@ pub fn verify_gratis_op_attestation(
         .map_err(|e| TransportError::GratisOpAttestation(format!("signature invalid: {e}")))
 }
 
-/// Verify a Promis-op attestation tag - the [`verify_gratis_op_attestation`]
-/// analogue over [`crate::protocol::promis_op_attestation_preimage`]. Same
-/// session-key-holder and verify-then-discard semantics; the tag is never
-/// persisted.
+/// Verify a Promis-op attestation tag. This is the
+/// [`verify_gratis_op_attestation`] analogue over
+/// [`crate::protocol::promis_op_attestation_preimage`]. Same session-key-holder
+/// and verify-then-discard semantics. The tag is never persisted.
 pub fn verify_promis_op_attestation(
     attestation_pub: &[u8; 32],
     inputs_canonical_hash: B256,
@@ -2106,8 +2112,8 @@ mod tests {
         assert_eq!(pinned, [1u8; 32]);
     }
 
-    /// A valid per-offer attestation tag verifies; tampering with the
-    /// results, the inputs hash, the key, or the tag length is rejected.
+    /// A valid per-offer attestation tag verifies. The verifier rejects any
+    /// tampering with the results, the inputs hash, the key, or the tag length.
     #[test]
     fn verify_tribute_offer_attestation_accepts_valid_rejects_tampering() {
         use crate::protocol::{TributeOfferResult, TributeOfferStatus};
@@ -2157,7 +2163,7 @@ mod tests {
     }
 
     /// Pin the REPORT_DATA preimage byte order on the host side. The host
-    /// binds `keccak256(noise || recipient || attestation)`; a quote whose
+    /// binds `keccak256(noise || recipient || attestation)`. A quote whose
     /// report_data uses any other field order must fail the binding. Mirrors the
     /// enclave's `report_data_preimage_order_is_pinned`.
     #[test]

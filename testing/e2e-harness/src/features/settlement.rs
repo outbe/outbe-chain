@@ -18,7 +18,6 @@ use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 
 use crate::env::environment;
-use crate::features::paynote;
 use crate::internal::{addresses, eth};
 use crate::world::forge::{self, address_from, DEPLOYER_KEY};
 use crate::world::test_issuance;
@@ -375,8 +374,8 @@ fn validator_redeems_reward_gem(world: &mut World) {
     let (owner, gem_id, mut gem) = wait_for_validator_reward_gem(world);
     let fixture = deploy_settlement_fixture(world);
     let url = world.rpc.url(world.validators.primary_port());
-    // A reward Gem qualifies on a closed day it held in full, and this one was delivered
-    // minutes ago: stamp it behind the day that is then seeded above its floor.
+    // A reward Gem qualifies on a closed day that it held in full. This one was delivered
+    // minutes ago. Stamp it behind the day that is then seeded above its floor.
     if !crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id) {
         let now = world
             .rpc
@@ -429,8 +428,8 @@ fn validator_redeems_reward_gem(world: &mut World) {
         crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id),
         "reward Gem must be qualified for settlement"
     );
-    // The cost is derived, so what to fund is the factory's own quote — already in
-    // the settlement asset's units, which the reference amount never was.
+    // The cost is derived, so the amount to fund is the factory's own quote. That quote
+    // is already in the settlement asset's units. The reference amount never was.
     let quote = eth::read_call(
         &url,
         addresses::GEM_FACTORY_ADDR,
@@ -441,27 +440,14 @@ fn validator_redeems_reward_gem(world: &mut World) {
     )
     .expect("quote settling the reward Gem");
     let payable = quote.paymentMinor;
-    // The vault is credited here, not at settle time. Before the drain: this is an
-    // ordinary transaction and pays its own gas.
-    let paynote_proof = paynote::deposit_and_prove(
+    // The token is not a sponsored target. So the approval pays its own gas before the drain.
+    fund_and_approve(
         world,
-        world.validators.primary_port(),
+        fixture.asset,
         &key,
         owner,
-        fixture.asset,
+        addresses::GEM_FACTORY_ADDR,
         payable,
-        paynote::gem_context(gem_id, quote.snapshotId),
-    );
-    assert_eq!(
-        eth::read_call(
-            &url,
-            fixture.asset,
-            &ISettlementAsset::balanceOfCall {
-                account: fixture.vault,
-            },
-        ),
-        Some(payable),
-        "reserve vault did not receive exact Gem cost at deposit time"
     );
     let keys =
         eth::derive_account_keys(&url, &key, Ledger::Promis).expect("derive validator Promis keys");
@@ -509,19 +495,31 @@ fn validator_redeems_reward_gem(world: &mut World) {
         &url,
         &key,
         addresses::GEM_FACTORY_ADDR,
-        350_000,
-        &eth::IGemFactory::settleGemWithPayNoteCall {
+        500_000,
+        &eth::IGemFactory::settleGemCall {
             gemId: gem_id,
-            payNoteProof: paynote_proof.into(),
+            asset: fixture.asset,
+            snapshotId: quote.snapshotId,
         },
     )
     .expect("sponsored settle reward Gem");
     assert_mined_success(&settle, "sponsored settle reward Gem");
     eprintln!(
-        "settlement_evidence kind=sponsored_settle_gem tx={} gas_limit=350000 gas_used={}",
+        "settlement_evidence kind=sponsored_settle_gem tx={} gas_limit=500000 gas_used={}",
         settle.transaction_hash, settle.receipt["gasUsed"]
     );
     assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
+    assert_eq!(
+        eth::read_call(
+            &url,
+            fixture.asset,
+            &ISettlementAsset::balanceOfCall {
+                account: fixture.vault,
+            },
+        ),
+        Some(payable),
+        "reserve vault did not receive exact Gem cost"
+    );
 
     let promis_before = promis_balance(&url, owner, &keys.view);
     let promis_nonce = eth::read_call(
@@ -639,8 +637,8 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         .expect("all validators finalize the reward Gem delivery");
     let qualified = || crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id);
     if !qualified() {
-        // A reward Gem qualifies on a closed day it held in full, and this one was delivered
-        // minutes ago: stamp it behind the day that is then seeded above its floor.
+        // A reward Gem qualifies on a closed day that it held in full. This one was
+        // delivered minutes ago. Stamp it behind the day that is then seeded above its floor.
         let now = world
             .rpc
             .latest_block_timestamp(port)
@@ -707,25 +705,14 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         asset,
         &ISettlementAsset::balanceOfCall { account: vault },
     )
-    .expect("reserve before deposit");
-    let proof = paynote::deposit_and_prove(
+    .expect("reserve before settlement");
+    fund_and_approve(
         world,
-        port,
+        asset,
         &key,
         owner,
-        asset,
+        addresses::GEM_FACTORY_ADDR,
         payable,
-        paynote::gem_context(gem_id, quote.snapshotId),
-    );
-    assert_eq!(
-        eth::read_call(
-            &url,
-            asset,
-            &ISettlementAsset::balanceOfCall { account: vault }
-        )
-        .expect("reserve after deposit"),
-        reserve_before + payable,
-        "PayNote must credit the exact additional Gem cost"
     );
 
     let keys = eth::derive_account_keys(&url, &key, Ledger::Promis)
@@ -750,9 +737,10 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
             &url,
             addresses::GEM_FACTORY_ADDR,
             &key,
-            &eth::IGemFactory::settleGemWithPayNoteCall {
+            &eth::IGemFactory::settleGemCall {
                 gemId: gem_id,
-                payNoteProof: proof.into(),
+                asset,
+                snapshotId: quote.snapshotId,
             },
             None,
         )
@@ -770,6 +758,17 @@ fn validator_redeems_reward_gem_with_paid_transactions(world: &mut World) {
         assert_eq!(observed.state, 3, "reward Gem must be Settled");
         assert_eq!(observed.owner, owner);
         assert_eq!(observed.promisLoadMinor, gem.promisLoadMinor);
+        assert_eq!(
+            eth::read_call_at_result(
+                &world.rpc.url(p),
+                asset,
+                &ISettlementAsset::balanceOfCall { account: vault },
+                settled.height,
+            )
+            .expect("finalized reserve after settlement"),
+            reserve_before + payable,
+            "settlement must credit the exact additional Gem cost"
+        );
     }
     let promis_before = promis_balance_at(&url, owner, &keys.view, settled.height);
     let nonce = eth::read_call(
@@ -1066,9 +1065,6 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     assert!(body.isQualified, "the Nod must be qualified to be mineable");
 
     let fixture = deploy_settlement_fixture(world);
-    // The cost is paid by depositing a note and then spending it. The value
-    // reaches the reserve vault at deposit time, so the owner funds and
-    // approves the PayNote pool rather than the NodFactory.
     let nod_word = U256::from_be_slice(&nod_id);
     let quote = eth::read_call(
         &url,
@@ -1080,15 +1076,28 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     )
     .expect("quote settling the materialized Nod");
     assert_eq!(quote.paymentMinor, body.settlementCostMinor);
-    let paynote_proof = paynote::deposit_and_prove(
+    fund_and_approve(
         world,
-        port,
+        fixture.asset,
         &key,
         owner,
-        fixture.asset,
+        addresses::NOD_FACTORY_ADDR,
         quote.paymentMinor,
-        paynote::nod_context(nod_word, quote.snapshotId),
     );
+
+    let settlement = eth::send_call_outcome(
+        &url,
+        addresses::NOD_FACTORY_ADDR,
+        &key,
+        &eth::INodFactory::settleNodCall {
+            nodId: nod_word,
+            asset: fixture.asset,
+            snapshotId: quote.snapshotId,
+        },
+        None,
+    )
+    .expect("settle Nod by ERC20");
+    assert_mined_success(&settlement, "settle Nod by ERC20");
     assert_eq!(
         eth::read_call(
             &url,
@@ -1098,21 +1107,8 @@ fn owner_redeems_materialized_nod(world: &mut World) {
             },
         ),
         Some(body.settlementCostMinor),
-        "reserve vault did not receive exact Nod cost at deposit time"
+        "reserve vault did not receive exact Nod cost"
     );
-
-    let settlement = eth::send_call_outcome(
-        &url,
-        addresses::NOD_FACTORY_ADDR,
-        &key,
-        &eth::INodFactory::settleNodWithPayNoteCall {
-            nodId: U256::from_be_slice(&nod_id),
-            payNoteProof: paynote_proof.into(),
-        },
-        None,
-    )
-    .expect("settle Nod with deposited PayNote");
-    assert_mined_success(&settlement, "settle Nod with deposited PayNote");
 
     let keys = eth::derive_account_keys(&url, &key, Ledger::Gratis)
         .expect("derive public Tribute owner Gratis keys");

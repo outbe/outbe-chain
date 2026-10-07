@@ -3,7 +3,7 @@
 //
 // Conventions
 // - worldwideDay: 8-digit numeric in yyyymmdd format (uint32 on-chain), e.g. 20250924.
-//   A plain TypeScript `number` keys every auction; the series id is derived from it.
+//   A plain TypeScript `number` keys every auction. The series id is derived from it.
 
 // =============================================================================
 // Parsing

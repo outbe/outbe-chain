@@ -255,8 +255,8 @@ fn body_and_index_reads_use_the_finalized_parent_repository() {
     finish(&mut provider, &scope, &tree);
 }
 
-// Stable historical ID retained after moving duplicate admission out of the
-// OCOMP four-node E2E lane. OCM-EXP-001 separately proves exact export
+// This test keeps its stable historical ID after duplicate admission moved out
+// of the OCOMP four-node E2E lane. OCM-EXP-001 separately proves exact export
 // completeness from retained accepted inputs.
 // OCOMP-TEST-ID: OCM-E2E-004
 #[test]
@@ -681,8 +681,10 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
         };
         let output = outbe_tribute::precompile::dispatch(
             storage,
-            &scope,
-            &reader,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &reader,
+            },
             &call.abi_encode(),
             Address::ZERO,
             U256::ZERO,

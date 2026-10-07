@@ -71,15 +71,15 @@ impl ApplicationShared {
             return Ok(false);
         }
 
-        // `handle_verify` performs ONLY structural
-        // checks - Phase 1 system tx decode succeeds, header artifacts well-
-        // formed, parent binding correct, VRF window not expired. It does NOT
-        // perform BLS decode/verify on the carried certificate, does not
-        // perform accounting checks, and does not look up committee snapshots.
-        // The full V2 cryptographic verify is delegated to the EVM-side V2
-        // verifier (`outbe-consensus-proof::verify_v2_proof`, consumed by
-        // class verifier wiring), keeping `handle_verify` cheap and
-        // stateless across every validator.
+        // This Phase 1 check only decodes the system tx structure. It does not
+        // decode or check the carried BLS certificate, and it does not check
+        // accounting. The header artifact check above is not only structural:
+        // it reads the epoch committee snapshot and certificate scheme to bind
+        // the leader, and it runs DKG boundary admission against ancestry.
+        // After these prechecks, `handle_verify` runs full execution
+        // verification through the executor. There, the EVM-side V2 verifier
+        // (`outbe_consensus::proof::verify_v2_proof`) does the full V2
+        // cryptographic verification.
         if let Err(error) = finalized_parent_attestation_from_phase1_system_tx(block) {
             warn!(
                 digest = %payload_digest.0,

@@ -3,7 +3,7 @@
 //! The precompile is called through `transact_system_call` with
 //! `SYSTEM_ADDRESS` as the EVM caller. It decodes a versioned
 //! [`SystemTxInputV2`](crate::system_tx::SystemTxInputV2) payload and routes to
-//! the begin_block system tx body so runtime events are emitted through the
+//! the begin_block system tx body. Thus runtime events are emitted through the
 //! EVM journal and become receipt-visible.
 
 use crate::system_tx::SystemTxInputV2;
@@ -74,10 +74,11 @@ pub fn dispatch(
 }
 
 /// Read-only body authority for begin-block execution in a particular scope.
-pub struct BeginBlockReaders<'scope, 'readers> {
-    pub scope: &'scope outbe_compressed_entities::ExecutionScope,
-    pub parent: &'readers outbe_offchain_data::RuntimeBodyReaders,
-}
+pub type BeginBlockReaders<'scope, 'readers> = outbe_compressed_entities::ExecutionReaders<
+    'scope,
+    'readers,
+    outbe_offchain_data::RuntimeBodyReaders,
+>;
 
 /// Dispatches begin-block work with explicit read-only body authority.
 pub fn dispatch_with_readers(

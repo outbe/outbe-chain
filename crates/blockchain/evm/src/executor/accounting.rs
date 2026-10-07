@@ -3,8 +3,8 @@ use super::*;
 /// Structural sanity checks for finalized-parent consensus metadata.
 ///
 /// `metadata.ordered_committee` is the canonical historical committee for the
-/// finalized-parent certificate, already verified by the consensus/application
-/// layer. This validation enforces post-exec invariants that do not require
+/// finalized-parent certificate. The consensus/application layer already
+/// verified it. This validation enforces post-exec invariants that do not require
 /// the live active set:
 ///
 /// - signer bitmap length matches committee length
@@ -59,13 +59,13 @@ pub(crate) fn validate_finalized_metadata(
     Ok(())
 }
 
-/// parent-block execution artifact (`ExecutionSummaryArtifact`
+/// Parent-block execution artifact (`ExecutionSummaryArtifact`
 /// from `header.extra_data`) paired with the parent block's timestamp.
-/// Returned by [`AccountedParentArtifactProvider`] and consumed by the
-/// Phase 1 `CertifiedParentAccounting` precompile via
+/// [`AccountedParentArtifactProvider`] returns it, and the Phase 1
+/// `CertifiedParentAccounting` precompile consumes it via
 /// `PreloadedSystemTxContext.finalized_summary`. Renamed from
 /// `FinalizedExecutionSummary` because under V2 the parent need not be
-/// finalized - it only needs to be the certified-parent of the block
+/// finalized. It only needs to be the certified-parent of the block
 /// being executed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccountedParentArtifact {
@@ -84,8 +84,8 @@ pub struct AccountedParentArtifact {
 /// Replaces `FinalizedExecutionSummaryProvider`. The return type is
 /// [`AccountedParentArtifact`] (artifact + parent header timestamp) because
 /// `outbe_rewards::on_finalized_metadata` consumes the parent timestamp
-/// downstream and the timestamp is available from the same
-/// `sealed_header_by_hash` lookup at zero extra cost.
+/// downstream. The same `sealed_header_by_hash` lookup also gives the
+/// timestamp at zero extra cost.
 ///
 /// Required lookup priority (impls must follow):
 /// 1. Exact cache lookup keyed by `(block_number, block_hash)`.
@@ -125,17 +125,20 @@ where
     /// 2. Payload-builder-supplied [`AccountedParentArtifact`] hint.
     ///    Accepted only when the metadata's
     ///    `(finalized_block_number, finalized_block_hash)` matches
-    ///    `(block_number - 1, self.parent_hash)` - i.e., the hint must be for
+    ///    `(block_number - 1, self.parent_hash)`, i.e. the hint must be for
     ///    the actual parent of the block being executed. The proposer payload
     ///    builder decodes this from `parent_header.extra_data` at build time,
     ///    so the hint inherits the integrity of the parent block hash chain.
     ///
-    /// Returns an error only on real provider I/O failure. `HeaderNotFound`
-    /// is a visibility miss (e.g. the FCU-Valid -> MDBX-commit race), so the
-    /// executor treats it like `Ok(None)` and lets the checked
-    /// `parent_artifact_hint` fallback engage. A provider miss with no usable
-    /// hint is fatal - the executor never silently accepts a
-    /// canonical-by-number artifact.
+    /// Returns an error in these cases:
+    /// - a provider I/O failure,
+    /// - a provider miss and a hint that does not match the actual parent,
+    /// - a provider miss and no hint.
+    ///
+    /// `HeaderNotFound` is a visibility miss (e.g. the FCU-Valid -> MDBX-commit
+    /// race), so the executor treats it like `Ok(None)` and lets the checked
+    /// `parent_artifact_hint` fallback engage. The executor never silently
+    /// accepts a canonical-by-number artifact.
     pub(in crate::executor) fn accounted_parent_artifact_for_metadata(
         &self,
         metadata: &CertifiedParentAccountingMetadata,
@@ -157,11 +160,11 @@ where
             }
         }
 
-        // accept the payload-builder-supplied hint only when it matches
+        // Accept the payload-builder-supplied hint only when it matches
         // this block's actual parent. The metadata's parent
         // `(finalized_block_number, finalized_block_hash)` must equal
-        // `(block_number - 1, self.parent_hash)`; any other value is a stale
-        // or competing-branch artifact and must be rejected.
+        // `(block_number - 1, self.parent_hash)`. Any other value is a stale
+        // or competing-branch artifact, and the executor must reject it.
         if let Some(hint) = self.parent_artifact_hint.as_ref() {
             let block_number = self.inner.evm.block().number().saturating_to::<u64>();
             let parent_block_number = block_number.saturating_sub(1);
@@ -195,23 +198,23 @@ where
     /// V2 Phase 1 preflight.
     ///
     /// For block `n >= 2` (greenfield, where `GENESIS_BOOTSTRAP_BLOCK_NUMBER`
-    /// equals `1`) this verifies the `CertifiedParentAccounting` metadata
+    /// equals `1`), this verifies the `CertifiedParentAccounting` metadata
     /// via `outbe_consensus::proof::verify_v2_proof` BEFORE any begin-zone
     /// state mutation is committed. The verifier is a synchronous pure
-    /// function; on `Err` the executor returns `BlockExecutionError` with
+    /// function. On `Err`, the executor returns `BlockExecutionError` with
     /// no state changes (no soft receipt because Phase 1 failures are
     /// fatal).
     ///
     /// Block `0` and block `1` (genesis bootstrap) skip Phase 1 entirely
     /// and return `Ok(())` without reading any storage.
     ///
-    /// safety contract: the preflight runs in `apply_pre_execution_changes`
-    /// AFTER marker preservation plus pending-RPC short-circuit AND BEFORE
+    /// Safety contract: the preflight runs in `apply_pre_execution_changes`
+    /// AFTER marker preservation plus pending-RPC short-circuit. It runs BEFORE
     /// `run_outbe_pre_execution_hooks` plus the main tx loop. Marker
     /// preservation commit is the only state-root signal that precedes
-    /// Phase 1 verify. The lifecycle hook commits and the Phase 1
-    /// commit itself (still in the main tx loop pending 's
-    /// gating consumer) only happen after a successful verify.
+    /// Phase 1 verify. The Phase 1 commit (`apply_phase1_commit_in_preexec`,
+    /// also in pre-execution) and the lifecycle hook commits happen only
+    /// after a successful verify.
     pub(in crate::executor) fn verify_phase1_in_preexec(
         &mut self,
         block_number: u64,
@@ -232,8 +235,8 @@ where
         }
 
         // Reuse the existing builder to produce the canonical Phase 1 input
-        // for this block (validator-mode: proposer-supplied; proposer-mode:
-        // derived from `parent_consensus_metadata`). The metadata struct
+        // for this block (proposer-supplied in validator mode, derived from
+        // `parent_consensus_metadata` in proposer mode). The metadata struct
         // carries the V2 wire fields the verifier needs.
         let input = self.phase1_verification_input(block_number, block_artifacts)?;
         let SystemTxInputV2::CertifiedParentAccounting { metadata } = &input else {
@@ -245,7 +248,7 @@ where
         };
 
         // Resolve the active committee snapshot for the parent's epoch via
-        // 's `CommitteeSnapshotStore`. The `(epoch, committee_set_hash)`
+        // the `CommitteeSnapshotStore`. The `(epoch, committee_set_hash)`
         // pair from the metadata yields the canonical storage key.
         let snapshot_key =
             committee_snapshot_key(metadata.finalized_epoch, metadata.committee_set_hash);
@@ -323,19 +326,21 @@ where
     /// post-Phase-1 accounting state (consumer Cycle Phase 2
     /// gating on `AccountingProgressStore`).
     ///
-    /// The commit is performed via `inner.commit_transaction`, which is the
-    /// same code path the main tx loop uses for system txs - it pushes the
-    /// Phase 1 receipt at `receipts[0]`, commits state via `db.commit`,
-    /// signals Reth's parallel state-root task via `State::commit`,
-    /// and updates the executor's gas accumulators. State-root ordering is
-    /// preserved because `verify_phase1_in_preexec` ran (and accepted) the
-    /// proof before this method is called.
+    /// The commit goes through `inner.commit_transaction`, the same code path
+    /// that the main tx loop uses for system txs. That path:
+    /// - pushes the Phase 1 receipt at `receipts[0]`.
+    /// - commits state via `db.commit`.
+    /// - signals Reth's parallel state-root task via `State::commit`.
+    /// - updates the executor's gas accumulators.
+    ///
+    /// State-root ordering is preserved because `verify_phase1_in_preexec` ran
+    /// (and accepted) the proof before this method is called.
     ///
     /// The proposer-supplied body[0] arrives later in the main tx loop. The
     /// `execute_transaction_with_commit_condition` intercept (cursor
-    /// variant `Phase1Preexecuted` with non-zero `tx_hash`) validates the
-    /// body[0] tx matches the cached `signature_hash` and returns `Ok(None)`
-    /// without re-executing or re-committing - receipt and state are
+    /// variant `Phase1Preexecuted` with non-zero `tx_hash`) validates that the
+    /// body[0] tx matches the cached `signature_hash`. It then returns
+    /// `Ok(None)` without re-executing or re-committing. Receipt and state are
     /// already in place from this pre-exec call.
     ///
     /// Skip conditions:
@@ -381,9 +386,9 @@ where
             ))
         })?;
 
-        // Resolve proposer first - `begin_zone_proposer` is `Option`-aware
+        // Resolve proposer first. `begin_zone_proposer` is `Option`-aware
         // and may consult `expected_begin_system_txs` or the configured EVM
-        // signer; the prebuilt validation below pins
+        // signer. The prebuilt validation below pins
         // `prebuilt.signer()` against this address.
         let proposer = self
             .begin_zone_proposer(block_number)?
@@ -399,7 +404,7 @@ where
         //      `expected_begin_system_txs.first()` from the sealed block.
         //   3. Legacy proposer fallback that re-signs the artifact through
         //      `evm_signer`. Determinism preserved because the signer is
-        //      RFC 6979 (see `crates/blockchain/evm/src/signer.rs`).
+        //      RFC 6979 (see `outbe_primitives::signer::OutbeEvmSigner`).
         let Some((cached_tx_hash, signed_gas_limit)) =
             self.resolve_phase1_witness(&calldata, proposer, block_number)?
         else {
@@ -449,8 +454,8 @@ where
         drop(gas_window);
         if !result.result.is_success() {
             // Phase 1 (CertifiedParentAccounting) is consensus-critical
-            // (`SystemTxKind::revert_fails_block()` is true for it), so a revert here
-            // is a hard block failure, not a soft-receipt skip - its finalized-parent
+            // (`SystemTxKind::revert_fails_block()` is true for it). A revert here is
+            // therefore a hard block failure, not a soft-receipt skip. Its finalized-parent
             // accounting is one-shot and never retried. The revert is deterministic in
             // committed chain state, so every validator rejects the same block.
             let reason = format!(
@@ -563,7 +568,7 @@ where
             let tx_hash = validate_witness(&signed, "signed")?;
             (tx_hash, signed_gas_limit)
         } else {
-            // No witness source. Skip the commit move; the legacy main-loop
+            // No witness source. Skip the commit move. The legacy main-loop
             // path will run Phase 1 like before. The commit move only binds when a
             // witness source is available.
             return Ok(None);

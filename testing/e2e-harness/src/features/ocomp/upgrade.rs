@@ -545,7 +545,7 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
         first_protocol_cycle_at_or_after(world, schedule.scheduled_process_time);
     let _ = restart_committee_at_logical_time(world, processing_target);
     // Request discovery and the held-worker barrier consume the same existing
-    // V2 artifact budget; do not reset it when the cohort is released.
+    // V2 artifact budget. Do not reset it when the cohort is released.
     let completion_deadline =
         Instant::now() + Duration::from_secs(OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS);
 

@@ -4,11 +4,14 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 use crate::schema::ValidatorSet;
 use crate::state::{self, CommitteeSnapshot};
 
-/// Returns `true` if an epoch boundary has been reached at the given block height.
+/// Returns `true` if the given block height reaches an epoch boundary.
 ///
-/// Does NOT transition the epoch - the caller is responsible for orchestrating
-/// the full epoch transition sequence (distribute rewards, reset slash counters,
-/// then call `transition_epoch`).
+/// Does NOT transition the epoch. The caller orchestrates the full epoch
+/// transition sequence:
+///
+/// 1. Distribute rewards.
+/// 2. Reset slash counters.
+/// 3. Call `transition_epoch`.
 pub fn is_epoch_boundary(storage: StorageHandle, block_number: u64) -> Result<bool> {
     let vs = ValidatorSet::new(storage);
     let epoch_start_block = vs.epoch_start_block.read()?;
@@ -23,7 +26,7 @@ pub fn is_epoch_boundary(storage: StorageHandle, block_number: u64) -> Result<bo
 
 /// Transitions to a new epoch: resets per-epoch counters, increments epoch number.
 ///
-/// Should be called AFTER reward distribution and slash counter resets.
+/// The caller should call it AFTER reward distribution and slash counter resets.
 pub fn transition_epoch(storage: StorageHandle, timestamp: u64, block_number: u64) -> Result<()> {
     let mut vs = ValidatorSet::new(storage);
     vs.update_epoch(timestamp, block_number)
@@ -35,8 +38,8 @@ pub fn reset_epoch_counters(storage: StorageHandle) -> Result<()> {
     ValidatorSet::new(storage).reset_epoch_counters()
 }
 
-/// Advances the activated epoch anchor after its counters were reset by the
-/// boundary-conditioned pre-execution path.
+/// Advances the activated epoch anchor after the boundary-conditioned
+/// pre-execution path reset its counters.
 pub fn advance_epoch(storage: StorageHandle, timestamp: u64, block_number: u64) -> Result<()> {
     ValidatorSet::new(storage).advance_epoch(timestamp, block_number)
 }
@@ -69,9 +72,9 @@ pub fn record_participation(
 /// historical (finalized-parent) committee. Accepts registered
 /// validators that may no longer be current consensus participants.
 ///
-/// Idempotent under metadata-tx replays: the
+/// Idempotent under metadata-tx replays. The
 /// `finalized_participation_recorded[fb_hash]` guard short-circuits
-/// the inner counter update so replays of the same metadata-tx do not
+/// the inner counter update. Replays of the same metadata-tx therefore do not
 /// double-increment `val_missed_votes`. `fb_hash` is the finalized
 /// block hash (`metadata.finalized_block_hash`).
 pub fn record_finalized_participation(
@@ -92,9 +95,9 @@ pub fn record_finalized_participation(
 
     // Prune ring: bound the guard (slot 30) to the last
     // FINALIZED_PARTICIPATION_RETAIN finalized blocks. A finalized block older than
-    // the K-block late-finalize window can never be replayed, so clearing the guard
-    // flag of the block RETAIN records ago reclaims its slot without weakening the
-    // replay protection for any block still inside the window.
+    // the K-block late-finalize window can never be replayed. Clearing the guard
+    // flag of the block RETAIN records ago therefore reclaims its slot. This does
+    // not weaken the replay protection for any block still inside the window.
     let seq = vs.finalized_participation_ring_seq.read()?;
     let idx = seq % FINALIZED_PARTICIPATION_RETAIN;
     let evicted = vs.finalized_participation_ring.read(&idx)?;
@@ -113,8 +116,9 @@ pub fn record_finalized_participation(
 
 /// Number of recent finalized blocks whose participation guard (slot 30) stays
 /// live. The replay horizon is the K-block late-finalize window, so retaining the
-/// last `FINALIZED_PARTICIPATION_RETAIN` blocks is generous; older guard flags are
-/// pruned by [`record_finalized_participation`]. Changing it is a hard fork.
+/// last `FINALIZED_PARTICIPATION_RETAIN` blocks is generous.
+/// [`record_finalized_participation`] prunes older guard flags. Changing it is a
+/// hard fork.
 pub const FINALIZED_PARTICIPATION_RETAIN: u64 = 64;
 
 /// Inputs for the V2 atomic boundary activation hook.
@@ -131,9 +135,10 @@ pub struct BoundaryActivationInputs {
     pub incoming_epoch: u64,
     pub incoming: CommitteeSnapshot,
     /// Historical EVM height at which consensus froze the target committee.
-    /// Runtime transition validation uses this to distinguish a validator that
-    /// exited or was jailed after the freeze from a malformed boundary that
-    /// includes a validator already ineligible at the freeze height.
+    /// Runtime transition validation uses this height to separate two cases.
+    /// In the first, a validator exited or was jailed after the freeze. In the
+    /// second, a malformed boundary includes a validator that was already
+    /// ineligible at the freeze height.
     pub freeze_height: u64,
     pub new_active_set: Vec<Address>,
     pub active_set_hash: B256,
