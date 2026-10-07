@@ -354,15 +354,16 @@ mod protocol_parameter_tests {
 
     #[test]
     fn protocol_cycle_uses_the_genesis_interval() {
-        // The gem sweeps are daily in a release build; e2e shortens them.
+        // The gem and credis sweeps are daily in a release build; e2e shortens them.
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(
             (
                 GEM_DAILY_PERIOD_SECONDS,
                 GEM_POSITION_PERIOD_SECONDS,
-                INTEX_NOTIFY_PERIOD_SECONDS
+                INTEX_NOTIFY_PERIOD_SECONDS,
+                CREDIS_DAILY_PERIOD_SECONDS
             ),
-            (86_400, 86_400, 300)
+            (86_400, 86_400, 300, 86_400)
         );
         let configured = active_triggers(10);
         assert_eq!(configured[0].period_seconds, 10);

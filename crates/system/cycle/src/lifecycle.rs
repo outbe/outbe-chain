@@ -67,7 +67,7 @@ impl BlockLifecycle for CycleLifecycle {
         // in a pre-exec hook. Slices run before the daily trigger so an
         // unfinished walk keeps the day it opened on.
         outbe_nod::hooks::continue_sweeps(&ctx.runtime, ctx.scope, &ctx.parent)?;
-        // Credis voids make TEE calls and emit Credis events, so they continue here too.
+        // Credis voids make TEE calls, so they continue here too.
         outbe_credisfactory::called::continue_sweeps(&ctx.runtime)?;
         crate::runtime::dispatch_triggers(&ctx.runtime, ctx.scope, &ctx.parent)
     }

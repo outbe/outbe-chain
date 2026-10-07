@@ -805,7 +805,7 @@ fn each_bucket_reads_its_own_currency_series() {
     });
 }
 
-// --- Forfeit arm -----------------------------------------------------------
+// --- Forfeit sweep ---------------------------------------------------------
 
 /// Calls a bucket at `at`, returning the issued Nod.
 fn call_bucket(

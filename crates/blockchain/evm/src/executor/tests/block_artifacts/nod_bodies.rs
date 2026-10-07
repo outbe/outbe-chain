@@ -425,7 +425,7 @@ fn seed_called_nod(
         &fixture.item,
         fixture.entry_price_minor,
     )?;
-    // CycleTick forfeits a lapsed called bucket and deletes both bodies.
+    // CycleTick forfeits the lapsed called bucket and deletes both bodies.
     let nod = NodContract::new(storage.clone());
     nod.bucket_called_at.write(&bucket_key, 1)?;
     let notice = nod

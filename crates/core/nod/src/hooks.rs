@@ -1,4 +1,4 @@
-//! Daily Nod call and forfeit hook.
+//! Nod call and forfeit sweep entry points.
 //!
 //! Qualification is derived when read (`api::is_qualified`).
 
