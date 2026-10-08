@@ -158,6 +158,18 @@ pub fn remove<'s, S: CallBinStore<'s>>(store: &S, entry: S::Entry) -> Result<boo
     Ok(true)
 }
 
+/// Whether a bin at or above the walk's cursor still holds an entry. A drained
+/// currency resets its cursor, so the check costs a few reads, not a price window.
+pub fn pending<'s, S: CallBinStore<'s>>(store: &S) -> Result<bool> {
+    let iso = store.currency();
+    let (from_bin, _) = unpack_cursor(store.scan_cursor().read(&iso)?);
+    if tree_math::find_first_left_inclusive(store, from_bin)?.is_some() {
+        return Ok(true);
+    }
+    store.scan_cursor().write(&iso, 0)?;
+    Ok(false)
+}
+
 /// What visiting one entry did to the walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Visit {

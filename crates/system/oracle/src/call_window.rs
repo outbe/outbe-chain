@@ -75,6 +75,11 @@ impl CallWindows {
         }
     }
 
+    /// The closed day the windows end at.
+    pub const fn last_day(&self) -> u32 {
+        self.last_day
+    }
+
     pub fn window(
         &mut self,
         storage: &StorageHandle<'_>,

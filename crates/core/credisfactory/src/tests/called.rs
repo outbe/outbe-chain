@@ -722,7 +722,7 @@ fn a_newer_closed_day_waits_for_the_pass_in_flight() {
         );
         pin_sweep(&storage, last_closed_day(at), ids[0], 2);
 
-        assert_eq!(scan(&storage, next), 0, "the newer day only queues");
+        schedule(&storage, next);
         assert_eq!(
             sweep_days(&storage),
             (last_closed_day(at), last_closed_day(next))
@@ -763,7 +763,7 @@ fn a_third_closed_day_replaces_the_waiting_one_and_names_it() {
             .write(last_closed_day(at + DAY))
             .unwrap();
 
-        assert_eq!(scan(&storage, later), 0);
+        schedule(&storage, later);
         assert_eq!(
             sweep_days(&storage),
             (last_closed_day(at), last_closed_day(later))

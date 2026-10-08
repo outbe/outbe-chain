@@ -2,12 +2,13 @@ use std::collections::BTreeSet;
 
 use alloy_primitives::B256;
 use outbe_oracle::api::get_all_reference_currencies;
+use outbe_oracle::call_sweep::{self, Decided};
 use outbe_oracle::call_window::{CallWindow, CallWindows};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins::{self, Visit},
     call_breach::{BreachTerms, ScanTerms},
-    error::{Result, SweepFailure},
+    error::Result,
     sweep_budget::SweepBudget,
     time::first_full_day,
 };
@@ -31,6 +32,7 @@ pub(super) fn call_arm(
     budget: &mut SweepBudget,
     called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
+    let pinned_day = windows.last_day();
     let currencies = get_all_reference_currencies(ctx)?;
     let params = crate::config::read_from(nod, ctx.block.chain_id)?;
     let cursor = NodContract::new(ctx.storage.clone());
@@ -40,13 +42,28 @@ pub(super) fn call_arm(
         &cursor.call_currency_cursor,
         budget,
         |iso_code, budget| {
-            if nod.call_bin_tree_root.read(&iso_code)?.is_zero() {
+            if nod.call_scan_failed_day.read(&iso_code)? == pinned_day
+                || !call_bins::pending(&CallBins(nod, iso_code))?
+            {
                 return Ok(true);
             }
             let window = windows.window(&ctx.storage, iso_code, || {
                 scan_terms(nod, iso_code, &params)
             })?;
-            let Some(ceiling) = window_ceiling(window, iso_code) else {
+            let skipped = || {
+                NodContract::new(ctx.storage.clone()).emit(INod::CallScanSkipped {
+                    referenceCurrency: iso_code,
+                    utcDay: pinned_day,
+                })
+            };
+            let Some(ceiling) = call_sweep::ceiling_bin(
+                window,
+                &nod.call_scan_failed_day,
+                iso_code,
+                pinned_day,
+                skipped,
+            )?
+            else {
                 return Ok(true);
             };
             let scan = CurrencyScan {
@@ -75,22 +92,6 @@ fn scan_terms(
         params.call_window_seconds,
         params.call_threshold_seconds,
     )
-}
-
-/// The bin of the window's ceiling, or `None` when nothing in it can have breached.
-fn window_ceiling(window: &CallWindow, iso_code: u16) -> Option<u32> {
-    match NodContract::price_to_bin(window.ceiling()?) {
-        Ok(bin) => Some(bin),
-        Err(error) => {
-            tracing::warn!(
-                target: "outbe::nod",
-                iso_code,
-                error = ?error,
-                "nod call scan: window price out of range, skipping currency for the day"
-            );
-            None
-        }
-    }
 }
 
 /// Walks the currency's bins up to the window's ceiling, resuming where it stopped.
@@ -152,16 +153,16 @@ fn try_call(
     if materializing(nod, bucket_key)? {
         return Ok(Some(false));
     }
-    match ctx
+    let outcome = ctx
         .storage
-        .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period_seconds))
-    {
-        Ok(()) => Ok(Some(true)),
-        Err(error) => match sweep_failure(&error) {
-            SweepFailure::Skip => Ok(Some(false)),
-            SweepFailure::Stop => Ok(None),
-            SweepFailure::Propagate => Err(error),
-        },
+        .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period_seconds));
+    match call_sweep::decide(outcome, sweep_failure)? {
+        Decided::Done(()) => Ok(Some(true)),
+        Decided::Stopped => Ok(None),
+        Decided::Skipped(error) => {
+            tracing::warn!(target: "outbe::nod", %bucket_key, error = ?error, "call scan: skipping bucket");
+            Ok(Some(false))
+        }
     }
 }
 

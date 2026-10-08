@@ -116,10 +116,12 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             };
             let first = issue(Address::repeat_byte(0x51), 13);
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
+            outbe_nod::called::run_call_slice(&ctx)?;
             assert_eq!(called_at(first), 0);
 
             let ctx = BlockRuntimeContext::new(block_ctx(3, midnight), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
+            outbe_nod::called::run_call_slice(&ctx)?;
             assert_eq!(called_at(first), midnight);
             assert_eq!(cycle.last_executed_at.read(&trigger)?, midnight);
 
@@ -127,6 +129,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             let second = issue(Address::repeat_byte(0x52), 14);
             let ctx = BlockRuntimeContext::new(block_ctx(4, midnight + 1), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
+            outbe_nod::called::run_call_slice(&ctx)?;
             assert_eq!(called_at(second), 0);
 
             // A multi-day halt runs once against the latest completed day,
@@ -144,11 +147,13 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             oracle.utc_day_vwap_last_finalized.write(previous)?;
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
+            outbe_nod::called::run_call_slice(&ctx)?;
             assert_eq!(called_at(second), late);
             assert_eq!(cycle.last_executed_at.read(&trigger)?, late);
             let third = issue(Address::repeat_byte(0x53), 15);
             let ctx = BlockRuntimeContext::new(block_ctx(6, late + 1), storage.clone());
             crate::runtime::dispatch_triggers(&ctx, scope, &parent)?;
+            outbe_nod::called::run_call_slice(&ctx)?;
             assert_eq!(called_at(third), 0);
             Ok(())
         })

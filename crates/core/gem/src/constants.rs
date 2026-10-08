@@ -11,9 +11,6 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
 /// the next block.
 pub const MAX_BUCKET_VISITS_PER_BLOCK: u32 = 256;
 
-/// `SweepDaySkipped.sweep` of the Called sweep.
-pub const CALL_SWEEP: u8 = 1;
-
 /// Slots one block's expiry sweep may step through. A block hook is not gas-metered.
 pub const MAX_EXPIRY_STEPS_PER_BLOCK: u32 = 64;
 

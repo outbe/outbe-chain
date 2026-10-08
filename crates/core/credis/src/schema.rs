@@ -259,6 +259,10 @@ pub struct CredisContract {
     /// `(bin << 32) | positions of that bin still to visit`. 0 = start from the lowest bin.
     #[attribute(order = 26)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
+    /// UTC day the call sweep could not price a reference currency on. The rest of that
+    /// day's pass passes it by.
+    #[attribute(order = 27)]
+    pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl CredisContract<'_> {

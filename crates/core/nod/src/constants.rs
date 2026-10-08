@@ -57,6 +57,3 @@ pub const MAX_NOD_CALL_VISITS_PER_BLOCK: u32 = 4096;
 /// A correlated mass-forfeit is the expected shape of a call event, not a tail
 /// case, so the burst needs its own cap.
 pub const MAX_NOD_FORFEITS_PER_BLOCK: u32 = 256;
-
-/// `SweepDaySkipped.sweep` of the Called sweep.
-pub const CALL_SWEEP: u8 = 1;

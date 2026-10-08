@@ -25,9 +25,8 @@ use outbe_primitives::{
 use crate::{
     api,
     constants::{
-        CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_SWEEP, CALL_THRESHOLD,
-        CALL_THRESHOLD_DAYS, CALL_WINDOW, MAX_NOD_CALL_VISITS_PER_BLOCK,
-        MAX_NOD_FORFEITS_PER_BLOCK, SECS_PER_DAY,
+        CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_THRESHOLD_DAYS,
+        CALL_WINDOW, MAX_NOD_CALL_VISITS_PER_BLOCK, MAX_NOD_FORFEITS_PER_BLOCK, SECS_PER_DAY,
     },
     precompile::INod,
     NodContract, NodItemState, NodRepositoryReader,
@@ -1663,12 +1662,12 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         nod.call_sweep_day.write(closed[0]).unwrap();
         nod.call_bin_cursor.write(&ISO, 1).unwrap();
 
-        crate::called::scan_and_call(&BlockRuntimeContext::new(
+        crate::called::schedule(&BlockRuntimeContext::new(
             BlockContext::empty_for_tests(BLOCK_NUMBER, at + DAY, CHAIN_ID),
             storage.clone(),
         ))
         .unwrap();
-        crate::called::scan_and_call(&BlockRuntimeContext::new(
+        crate::called::schedule(&BlockRuntimeContext::new(
             BlockContext::empty_for_tests(BLOCK_NUMBER, at + 2 * DAY, CHAIN_ID),
             storage.clone(),
         ))
@@ -1689,7 +1688,7 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         .filter_map(|log| INod::SweepDaySkipped::decode_log_data(log).ok())
         .collect();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].sweep, CALL_SWEEP);
+    assert_eq!(events[0].sweep, outbe_oracle::call_sweep::CALL_SWEEP);
     assert_eq!(events[0].skippedDay, skipped);
     assert_eq!(events[0].inFlightDay, in_flight);
 }

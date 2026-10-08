@@ -795,7 +795,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
             .unwrap();
 
         let ctx = block_ctx(storage);
-        crate::hooks::run_daily(&ctx).unwrap();
+        crate::hooks::scan_and_call(&ctx).unwrap();
         let gem = GemContract::new(storage.clone());
         assert_eq!(
             api::get_gem(storage, first_id).unwrap().unwrap().state,
@@ -1690,7 +1690,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         let next_day = previous_date_key(timestamp_to_date_key(next_ts));
         priced_window(storage, pair, next_day, U256::from(300_000u64));
         let next = block_ctx_at(storage, next_ts);
-        assert_eq!(crate::hooks::scan_and_call(&next).unwrap(), 0);
+        crate::hooks::run_daily(&next).unwrap();
         assert_eq!(gem.call_sweep_day.read().unwrap(), day);
         assert_eq!(gem.call_pending_day.read().unwrap(), next_day);
         assert_eq!(
@@ -1738,7 +1738,13 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
             let ts = T_NOW + offset * 86_400;
             let day = previous_date_key(timestamp_to_date_key(ts));
             priced_window(&storage, pair, day, U256::from(300_000u64));
-            crate::hooks::scan_and_call(&block_ctx_at(&storage, ts)).unwrap();
+            // Only the first trigger's block walks: the later days arrive meanwhile.
+            let ctx = block_ctx_at(&storage, ts);
+            match offset {
+                0 => crate::hooks::scan_and_call(&ctx).map(drop),
+                _ => crate::hooks::run_daily(&ctx),
+            }
+            .unwrap();
             closed.push(day);
         }
         let gem = GemContract::new(storage.clone());
@@ -1753,7 +1759,7 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         .filter_map(|log| IGem::SweepDaySkipped::decode_log_data(log).ok())
         .collect();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].sweep, crate::constants::CALL_SWEEP);
+    assert_eq!(events[0].sweep, outbe_oracle::call_sweep::CALL_SWEEP);
     assert_eq!(events[0].skippedDay, skipped);
     assert_eq!(events[0].inFlightDay, in_flight);
 }

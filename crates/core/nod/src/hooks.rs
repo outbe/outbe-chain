@@ -8,8 +8,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 /// Daily cycle-trigger entry. Opens the day's call sweep and runs its first
 /// slice. Later CycleTicks carry the remainder on through [`continue_sweeps`].
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    crate::called::scan_and_call(ctx)?;
-    Ok(())
+    crate::called::schedule(ctx)
 }
 
 /// Runs from CycleTick every block, before the daily trigger can queue a newer day.

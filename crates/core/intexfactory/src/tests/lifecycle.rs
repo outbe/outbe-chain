@@ -1103,7 +1103,7 @@ mod call_sweep {
                 BlockContext::empty_for_tests(2, next_ts, CHAIN_ID),
                 s.clone(),
             );
-            assert_eq!(called::scan_and_call(&next).unwrap(), 0);
+            called::run_daily(&next).unwrap();
             assert_eq!(factory.call_sweep_day.read().unwrap(), day);
             assert_eq!(factory.call_pending_day.read().unwrap(), next_day);
             assert_eq!(
@@ -1145,7 +1145,12 @@ mod call_sweep {
                     BlockContext::empty_for_tests(1 + offset, ts, CHAIN_ID),
                     s.clone(),
                 );
-                called::scan_and_call(&ctx).unwrap();
+                // Only the first trigger's block walks: the later days arrive meanwhile.
+                match offset {
+                    0 => called::scan_and_call(&ctx).map(drop),
+                    _ => called::run_daily(&ctx),
+                }
+                .unwrap();
                 closed.push(day);
             }
             let factory = IntexFactoryContract::new(s.clone());
@@ -1162,7 +1167,7 @@ mod call_sweep {
             })
             .collect();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].sweep, crate::constants::CALL_SWEEP);
+        assert_eq!(events[0].sweep, outbe_oracle::call_sweep::CALL_SWEEP);
         assert_eq!(events[0].skippedDay, skipped);
         assert_eq!(events[0].inFlightDay, in_flight);
     }

@@ -409,6 +409,11 @@ pub struct NodContract {
     /// With the widest window it bounds the call prices the scan visits.
     #[attribute(order = 81)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    /// UTC day the call sweep could not price a reference currency on. The rest of that
+    /// day's pass passes it by.
+    #[attribute(order = 82)]
+    pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl<'storage> NodContract<'storage> {

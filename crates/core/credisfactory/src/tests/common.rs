@@ -411,6 +411,11 @@ fn block_at<'storage>(
     )
 }
 
+/// The daily trigger alone: it schedules the closed day and walks nothing.
+pub fn schedule(storage: &StorageHandle<'_>, timestamp: u64) {
+    crate::called::run_daily(&block_at(storage, timestamp)).unwrap()
+}
+
 pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     crate::called::scan_and_call(&block_at(storage, timestamp)).unwrap()
 }

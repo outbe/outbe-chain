@@ -25,9 +25,6 @@ pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
 
-/// `SweepDaySkipped.sweep` of the Called sweep.
-pub const CALL_SWEEP: u8 = 1;
-
 /// Router calls one `intex_drain_notices` firing may make; an entry costing none still
 /// spends one. Sized to clear a day of calls inside [`CALL_NOTICE_PERIOD`] while
 /// leaving CycleTick its block headroom.

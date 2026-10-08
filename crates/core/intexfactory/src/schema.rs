@@ -146,6 +146,11 @@ pub struct IntexFactoryContract {
     /// send.
     #[attribute(order = 47)]
     pub vwap_sent_day: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// UTC day the call sweep could not price a reference currency on. The rest of that
+    /// day's pass passes it by.
+    #[attribute(order = 48)]
+    pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl IntexFactoryContract<'_> {
