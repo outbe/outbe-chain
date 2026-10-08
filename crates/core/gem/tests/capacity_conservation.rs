@@ -1,14 +1,12 @@
 //! Included Gem subtypes conserve live load through real call/expiry hooks.
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use outbe_gem::{
-    api, config::PROFILE_PROD, hooks, GemAddParams, GemContract, GemLifecycle, GemState,
-};
+use outbe_gem::{api, config::PROFILE_PROD, hooks, GemAddParams, GemContract, GemState};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     address_pair::AddressPair,
     addresses::GEM_ADDRESS,
-    block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
+    block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key},
@@ -94,7 +92,7 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
 fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
-        GemLifecycle::begin_block(&BlockRuntimeContext::new(
+        hooks::continue_sweeps(&BlockRuntimeContext::new(
             BlockContext::empty_for_tests(2, at, 1),
             s,
         ))

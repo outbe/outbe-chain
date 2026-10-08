@@ -1,5 +1,5 @@
 //! Realized units remain disjoint and only the unpaid remainder returns.
-use crate::{IntexFactoryContract, IntexLifecycle};
+use crate::IntexFactoryContract;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_intex::{
@@ -9,7 +9,7 @@ use outbe_intex::{
 };
 use outbe_primitives::{
     addresses::INTEX_FACTORY_ADDRESS,
-    block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
+    block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
@@ -69,7 +69,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
 fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
-        IntexLifecycle::begin_block(&BlockRuntimeContext::new(
+        crate::hooks::continue_sweeps(&BlockRuntimeContext::new(
             BlockContext::empty_for_tests(2, at, 1),
             s,
         ))

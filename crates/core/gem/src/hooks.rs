@@ -5,7 +5,7 @@ use outbe_oracle::{
     call_window::{CallWindow, CallWindows},
 };
 use outbe_primitives::{
-    block::{BlockLifecycle, BlockRuntimeContext},
+    block::BlockRuntimeContext,
     call_bins::{self, Visit},
     call_breach::ScanTerms,
     daily_sweep::PinnedDay,
@@ -21,23 +21,17 @@ use crate::state::BucketBins;
 
 mod expiry;
 
-pub struct GemLifecycle;
+/// Burns the called buckets whose notice period lapsed.
+pub fn sweep_forfeits(ctx: &BlockRuntimeContext) -> Result<()> {
+    expiry::sweep_expired(ctx)?;
+    Ok(())
+}
 
-impl BlockLifecycle for GemLifecycle {
-    type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
-    type EndBlockResult = ();
-
-    fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        // A call sweep that the daily trigger could not finish in one pass continues
-        // here. It continues block by block and does not wait a day for the next trigger.
-        run_call_slice(ctx)?;
-        expiry::sweep_expired(ctx)?;
-        Ok(())
-    }
-
-    fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
-        Ok(())
-    }
+/// One block of every Gem sweep: what fell due, then a slice of the call sweep.
+pub fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
+    sweep_forfeits(ctx)?;
+    run_call_slice(ctx)?;
+    Ok(())
 }
 
 #[cfg(test)]

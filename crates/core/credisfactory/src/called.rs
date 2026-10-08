@@ -45,10 +45,16 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut CredisCallSweep::new(ctx))
 }
 
-/// Runs from CycleTick every block, before the daily trigger can queue a newer day.
-pub fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
-    run_call_slice(ctx)?;
+/// Voids the called positions whose settlement window lapsed.
+pub fn sweep_forfeits(ctx: &BlockRuntimeContext) -> Result<()> {
     crate::expired::sweep_expired(ctx)?;
+    Ok(())
+}
+
+/// One block of every Credis sweep: what fell due, then a slice of the call sweep.
+pub fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
+    sweep_forfeits(ctx)?;
+    run_call_slice(ctx)?;
     Ok(())
 }
 

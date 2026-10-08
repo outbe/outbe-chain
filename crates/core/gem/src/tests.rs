@@ -888,8 +888,7 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
             .promis_load_minor;
 
         let ctx = block_ctx_at(storage, GemContract::hour_end(day));
-        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
-            .unwrap();
+        crate::hooks::continue_sweeps(&ctx).unwrap();
 
         assert_eq!(gem.expiry_slot(day, 0).unwrap(), None, "the ghost is out");
         assert_eq!(
@@ -912,8 +911,7 @@ fn a_due_entry_that_cannot_burn_credits_nothing() {
             storage,
             GemContract::hour_end(GemContract::deadline_hour(T_NOW)),
         );
-        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
-            .unwrap();
+        crate::hooks::continue_sweeps(&ctx).unwrap();
 
         assert_eq!(unallocated(storage), U256::ZERO);
     });
@@ -1264,8 +1262,7 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
             .unwrap();
 
         let ctx = block_ctx_at(storage, GemContract::hour_end(bucket));
-        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
-            .unwrap();
+        crate::hooks::continue_sweeps(&ctx).unwrap();
 
         let retry = GemContract::deadline_hour(GemContract::hour_end(bucket)) + 1;
         assert_eq!(
@@ -1280,8 +1277,7 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
         );
 
         let ctx = block_ctx_at(storage, GemContract::hour_end(retry));
-        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
-            .unwrap();
+        crate::hooks::continue_sweeps(&ctx).unwrap();
         assert!(api::get_gem(storage, gem_id).unwrap().is_none());
     });
 }
@@ -1318,8 +1314,7 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
 
         let now = GemContract::hour_end(hour);
         let ctx = block_ctx_at(&storage, now);
-        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
-            .unwrap();
+        crate::hooks::continue_sweeps(&ctx).unwrap();
 
         let retry = GemContract::deadline_hour(now) + 1;
         assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
@@ -1337,8 +1332,7 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
             .checked_take_carry_over_up_to(U256::MAX)
             .unwrap();
         let ctx = block_ctx_at(&storage, GemContract::hour_end(retry));
-        <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(&ctx)
-            .unwrap();
+        crate::hooks::continue_sweeps(&ctx).unwrap();
 
         assert!(api::get_gem(&storage, gem_id).unwrap().is_none());
         assert_eq!(unallocated(&storage), load);
@@ -1375,10 +1369,7 @@ fn first_due_block(storage: &StorageHandle, gem_id: U256) -> u64 {
 }
 
 fn begin_block_at(storage: &StorageHandle, ts: u64) {
-    <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(
-        &block_ctx_at(storage, ts),
-    )
-    .unwrap();
+    crate::hooks::continue_sweeps(&block_ctx_at(storage, ts)).unwrap();
 }
 
 /// One member that cannot burn leaves its bucket. The others burn on time.
@@ -1513,12 +1504,7 @@ fn a_called_bucket_wider_than_the_budget_burns_over_several_blocks() {
             .unwrap()
             .call_notice_period_seconds;
         let now = GemContract::hour_end(GemContract::deadline_hour(T_NOW + u64::from(notice)));
-        let begin = |ts: u64| {
-            <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(
-                &block_ctx_at(storage, ts),
-            )
-            .unwrap()
-        };
+        let begin = |ts: u64| crate::hooks::continue_sweeps(&block_ctx_at(storage, ts)).unwrap();
         let live = || {
             gems.iter()
                 .filter(|id| api::get_gem(storage, **id).unwrap().is_some())
@@ -1579,11 +1565,7 @@ fn a_storage_fault_in_a_forfeit_fails_the_block() {
     provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = block_ctx_at(&storage, now);
-        let error =
-            <crate::hooks::GemLifecycle as outbe_primitives::block::BlockLifecycle>::begin_block(
-                &ctx,
-            )
-            .unwrap_err();
+        let error = crate::hooks::continue_sweeps(&ctx).unwrap_err();
         assert!(matches!(
             error,
             outbe_primitives::error::PrecompileError::Storage(_)

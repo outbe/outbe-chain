@@ -12,7 +12,6 @@ pub(crate) mod state;
 
 pub use config::GemParams;
 pub use constants::{CALL_THRESHOLD, CALL_WINDOW};
-pub use hooks::GemLifecycle;
 pub use schema::{GemAddParams, GemContract, GemData, GemState, GENESIS_GEM_TYPE};
 
 #[cfg(test)]
