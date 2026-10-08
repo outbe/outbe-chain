@@ -12,7 +12,7 @@ use outbe_nod::config::NodParams;
 use outbe_nod::constants::FLOOR_RATE_PCT;
 
 use crate::features::entity_lifecycle::chain::{
-    assert_single_event, finalized_checkpoint, head_time, poll_until,
+    assert_single_event, finalized_checkpoint, head_time, poll_until, settlement_read,
 };
 use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target, Terms};
 use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
@@ -28,6 +28,7 @@ alloy_sol_types::sol! {
     interface INodFactoryTestArming {
         function issueForTest(
             address owner,
+            bytes32 creatorPublicKey,
             uint32 worldwideDay,
             uint256 gratisLoadMinor,
             uint256 entryPriceMinor,
@@ -81,6 +82,7 @@ fn issue_five_nods(world: &mut World) {
         let owner = owner_address(index);
         let issue = INodFactoryTestArming::issueForTestCall {
             owner,
+            creatorPublicKey: crate::internal::nod_keys::public(owner),
             worldwideDay: day,
             gratisLoadMinor: U256::from(GRATIS_LOAD_MINOR),
             entryPriceMinor: U256::from(ENTRY_PRICE_MINOR),
@@ -118,7 +120,37 @@ impl Lifecycle for NodLifecycle {
         let data = read_nod(world, *id);
         Terms {
             entry_price: data.entryPriceMinor,
-            load: data.gratisLoadMinor,
+            load: crate::internal::nod_keys::decrypt(world, &data),
+        }
+    }
+
+    fn settlement_terms(&self, world: &World, target: &Target, phase: Phase) -> Terms {
+        let Item::Nod(id) = target.item else {
+            unreachable!("a Nod scenario pays only for Nods")
+        };
+        let url = world.rpc.url(world.validators.primary_port());
+        let expected_state = match phase {
+            Phase::Qualified => QUALIFIED,
+            Phase::Called => CALLED,
+        };
+        let data = settlement_read(|| {
+            let data = eth::read_call_result(
+                &url,
+                addresses::NOD_ADDR,
+                &eth::INod::nodDataCall { nodId: id },
+            )?;
+            if data.owner != target.owner || data.isSettled || data.effectiveState != expected_state {
+                return Err(format!(
+                    "Nod {id} is not ready for {phase:?} settlement: owner={}, settled={}, state={}",
+                    data.owner, data.isSettled, data.effectiveState
+                ));
+            }
+            Ok(data)
+        })
+        .unwrap_or_else(|error| panic!("Nod {id}: {error}"));
+        Terms {
+            entry_price: data.entryPriceMinor,
+            load: crate::internal::nod_keys::decrypt(world, &data),
         }
     }
 
@@ -139,7 +171,10 @@ impl Lifecycle for NodLifecycle {
                 (issuance_currency, USD_ISO)
             );
             assert_eq!(data.entryPriceMinor, entry);
-            assert_eq!(data.gratisLoadMinor, U256::from(GRATIS_LOAD_MINOR));
+            assert_eq!(
+                crate::internal::nod_keys::decrypt(world, &data),
+                U256::from(GRATIS_LOAD_MINOR)
+            );
             assert_eq!(
                 data.settlementCostMinor,
                 entry * U256::from(GRATIS_LOAD_MINOR) / U256::from(1_000_000)
@@ -219,7 +254,10 @@ impl Lifecycle for NodLifecycle {
         )
         .expect("unallocated pool before the forfeit");
         world.state.entity_lifecycle.pool_before_forfeit = Some((height, pool));
-        let called = read_nod(world, nod(world, FORFEITED));
+        let id = nod(world, FORFEITED);
+        let called = read_nod(world, id);
+        world.state.entity_lifecycle.nod_before_forfeit =
+            Some((height, id, called.encryptedGratisAmount.clone()));
         let deadline = called.settlementDeadline + NOTICE_MARGIN_SECS;
         poll_until(
             Duration::from_secs(u64::from(called.callNoticePeriod)) + FORFEIT_TIMEOUT,
@@ -239,6 +277,13 @@ impl Lifecycle for NodLifecycle {
             .pool_before_forfeit
             .expect("the pool was read before the notice lapsed");
         let height = finalized_checkpoint(world).height;
+        let (captured_height, captured_id, encrypted_amount) = world
+            .state
+            .entity_lifecycle
+            .nod_before_forfeit
+            .as_ref()
+            .expect("encrypted NOD captured before the notice lapsed");
+        assert_eq!((*captured_height, *captured_id), (from, id));
         let load = U256::from(GRATIS_LOAD_MINOR);
         assert_single_event(
             &url,
@@ -248,7 +293,7 @@ impl Lifecycle for NodLifecycle {
             eth::INod::NodForfeited {
                 owner,
                 nodId: id,
-                gratisLoadMinor: load,
+                encryptedGratisAmount: encrypted_amount.clone(),
             },
         );
         assert_eq!(
@@ -277,16 +322,7 @@ impl Lifecycle for NodLifecycle {
                     &url,
                     addresses::NOD_FACTORY_ADDR,
                     &key,
-                    &eth::INodFactory::mineGratisCall {
-                        nodId: id,
-                        nonce: find_mining_pow_nonce(
-                            outbe_common::pow::MiningDomain::Nod,
-                            id,
-                            owner,
-                        ),
-                        mac,
-                        opNonce: op_nonce,
-                    },
+                    &paid_nod_mining_call(id, owner, mac, op_nonce),
                     None,
                 )
                 .expect("submit Gratis mining");
@@ -389,4 +425,18 @@ fn wait_for_nod_of(url: &str, owner: Address) -> U256 {
         },
     );
     id.expect("owner's Nod id")
+}
+
+fn paid_nod_mining_call(
+    id: U256,
+    owner: Address,
+    mac: alloy_primitives::B256,
+    op_nonce: u64,
+) -> eth::INodFactory::mineGratisCall {
+    eth::INodFactory::mineGratisCall {
+        nodId: id,
+        nonce: find_mining_pow_nonce(outbe_common::pow::MiningDomain::Nod, id, owner),
+        mac,
+        opNonce: op_nonce,
+    }
 }

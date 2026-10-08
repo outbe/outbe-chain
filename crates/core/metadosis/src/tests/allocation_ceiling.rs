@@ -60,7 +60,7 @@ fn apply_without_owner_writes(fixture: &mut ActivationFixture) -> String {
 
 #[test]
 fn a_green_activation_preserves_the_day_limit_and_returns_unused_lysis() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     fixture.apply().unwrap();
     let snapshot = fixture.semantic_snapshot();
     let reserved = StorageHandle::enter(&mut fixture.provider, |s| {
@@ -83,7 +83,7 @@ fn a_green_activation_preserves_the_day_limit_and_returns_unused_lysis() {
 
 #[test]
 fn a_hash_bound_over_ceiling_desis_limit_fails_activation_before_any_owner_write() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     let receipt = over_ceiling_receipt(&fixture);
     fixture.replace_request_receipt(&receipt);
     rebind_retained_receipt_hash(&mut fixture, &receipt);
@@ -98,7 +98,7 @@ fn a_hash_bound_over_ceiling_desis_limit_fails_activation_before_any_owner_write
 
 #[test]
 fn a_tampered_receipt_without_its_retained_hash_is_rejected_before_any_owner_write() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     let receipt = over_ceiling_receipt(&fixture);
     fixture.replace_request_receipt(&receipt);
     let before = fixture.rollback_snapshot();

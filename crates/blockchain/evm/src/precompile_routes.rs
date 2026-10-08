@@ -541,7 +541,7 @@ mod tests {
             .unwrap()
             .dispatch(
                 storage,
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 RouteCall {
                     callee: TRIBUTE_ADDRESS,
@@ -609,7 +609,7 @@ mod tests {
         let output = route
             .dispatch(
                 StorageHandle::new(&mut provider),
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 RouteCall {
                     callee: TEE_REGISTRY_ADDRESS,
@@ -634,7 +634,7 @@ mod tests {
         assert!(route
             .dispatch(
                 StorageHandle::new(&mut provider),
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 RouteCall {
                     callee: TEE_REGISTRY_ADDRESS,
@@ -659,7 +659,7 @@ mod tests {
         let output = route
             .dispatch(
                 storage,
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 RouteCall {
                     callee: STABLECOIN_POLICY_REGISTRY_ADDRESS,
@@ -682,7 +682,7 @@ mod tests {
         let output = route
             .dispatch(
                 storage,
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 RouteCall {
                     callee: STABLECOIN_FACTORY_ADDRESS,
@@ -774,7 +774,7 @@ mod tests {
         assert!(matches!(
             route.dispatch(
                 storage,
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 RouteCall {
                     value: U256::from(1u64),
@@ -798,7 +798,7 @@ mod tests {
             route
                 .dispatch(
                     storage.clone(),
-                    &ExecutionScope::new(),
+                    &ExecutionScope::default(),
                     None,
                     RouteCall {
                         value: U256::from(1u64),
@@ -811,7 +811,7 @@ mod tests {
         assert!(matches!(
             route.dispatch(
                 storage,
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 class_call(token, &[]),
             ),
@@ -829,7 +829,7 @@ mod tests {
         assert!(matches!(
             route.dispatch(
                 storage.clone(),
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 class_call(token, &[]),
             ),
@@ -845,7 +845,7 @@ mod tests {
         assert!(matches!(
             route.dispatch(
                 storage.clone(),
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 class_call(token, &[]),
             ),
@@ -863,7 +863,7 @@ mod tests {
             .unwrap()
             .dispatch(
                 storage.clone(),
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 class_call(token, &call.abi_encode()),
             )
@@ -880,7 +880,7 @@ mod tests {
         assert!(matches!(
             resolve(&token).unwrap().dispatch(
                 storage,
-                &ExecutionScope::new(),
+                &ExecutionScope::default(),
                 None,
                 class_call(token, &call.abi_encode()),
             ),

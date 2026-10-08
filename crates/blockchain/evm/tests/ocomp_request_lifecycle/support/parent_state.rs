@@ -15,6 +15,7 @@ pub(in crate::lifecycle) fn prepare_parent(
     genesis_hash: B256,
     fork_install: &outbe_metadosis::config::OcompForkInstallV1,
 ) -> PreparedParent {
+    outbe_tribute::enclave_client::test_enclave::install();
     let directory = tempfile::tempdir().unwrap();
     let db = CeMdbx::open(
         directory.path(),
@@ -56,7 +57,10 @@ pub(in crate::lifecycle) fn prepare_parent(
             root: marker.new_root,
         })
         .unwrap();
-    let scope = ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
+    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
+        parent_tree,
+        CeWorkConfig::new(0, 0, u64::MAX),
+    );
     let mut seed = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
     seed.set_block_number(PARENT_HEIGHT);
     seed.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
@@ -144,7 +148,7 @@ pub(in crate::lifecycle) fn prepare_parent(
                 &scope,
                 &EmptyParent,
                 &TributeData {
-                    tribute_id: NodContract::generate_nod_id(owner, wwd).unwrap(),
+                    tribute_id: outbe_nod::identity::generate_nod_id(owner, wwd).unwrap(),
                     owner,
                     worldwide_day: wwd,
                     issuance_amount_minor: nominal,

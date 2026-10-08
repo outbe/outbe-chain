@@ -11,7 +11,7 @@ use outbe_node::projection::{
     prepare_offchain_data_projection, validate_offchain_data_checkpoint,
     OffchainDataProjectionConfig,
 };
-use outbe_offchain_data::{FinalizedBlock, OffchainDataProjection, ProjectionConfig};
+use outbe_offchain_data::{FinalizedBlock, ProjectionConfig};
 use outbe_offchain_storage::{MongoStorage, MongoStorageConfig};
 use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use reth_chainspec::ChainInfo;
@@ -46,7 +46,7 @@ fn rocksdb_startup_reopens_durable_checkpoint_and_rejects_wrong_chain_or_hash() 
             .unwrap();
         storage.ownership.activate().unwrap();
         let completion = storage.ownership.completion();
-        let mut projection = OffchainDataProjection::open(
+        let mut projection = outbe_offchain_data::open_projection(
             ProjectionConfig {
                 chain_id: config.chain_id,
                 genesis_hash: config.genesis_hash,
@@ -69,24 +69,30 @@ fn rocksdb_startup_reopens_durable_checkpoint_and_rejects_wrong_chain_or_hash() 
     }
     for _ in 0..2 {
         let prepared = prepare_offchain_data_projection(config.clone()).unwrap();
+        let completion = prepared.storage_completion();
         validate_offchain_data_checkpoint(prepared, &canonical)
             .map(drop)
             .unwrap();
+        completion.wait_timeout(Duration::from_secs(5)).unwrap();
     }
     let wrong_canonical = MockEthProvider::new();
     let wrong_hash = add_empty_block(&wrong_canonical, 1, 2);
     let wrong_canonical =
         FinalizedMockProvider::new(wrong_canonical, BlockNumHash::new(1, wrong_hash));
     let prepared = prepare_offchain_data_projection(config.clone()).unwrap();
+    let completion = prepared.storage_completion();
     assert!(validate_offchain_data_checkpoint(prepared, &wrong_canonical).is_err());
+    completion.wait_timeout(Duration::from_secs(5)).unwrap();
     let mut wrong_identity = config.clone();
     wrong_identity.genesis_hash = B256::repeat_byte(0x99);
-    assert!(prepare_offchain_data_projection(wrong_identity).is_err());
+    assert_preflight_rejection_closes_storage(wrong_identity);
     // Failed preparation releases its primary handle too.
     let prepared = prepare_offchain_data_projection(config).unwrap();
+    let completion = prepared.storage_completion();
     validate_offchain_data_checkpoint(prepared, &canonical)
         .map(drop)
         .unwrap();
+    completion.wait_timeout(Duration::from_secs(5)).unwrap();
 }
 
 #[test]
@@ -133,7 +139,7 @@ fn replica_set_passes_startup_and_persisted_identity_is_validated() {
         ),
         outbe_offchain_data::entity_partition_routing().unwrap(),
     ));
-    let mut projector = OffchainDataProjection::open(
+    let mut projector = outbe_offchain_data::open_projection(
         ProjectionConfig {
             chain_id: first.chain_id,
             genesis_hash: first.genesis_hash,
@@ -301,14 +307,18 @@ fn rocksdb_secondary_checkpoint_is_frozen_and_next_session_catches_up() {
     .unwrap();
     let storage = provider.open_writer().unwrap();
     storage.ownership.activate().unwrap();
+    let completion = storage.ownership.completion();
     let config = ProjectionConfig {
         chain_id: DEVNET_CHAIN_ID,
         genesis_hash: B256::repeat_byte(0x11),
         start_block: 1,
     };
-    let mut projection =
-        OffchainDataProjection::open(config, storage.reader.clone(), storage.writer.clone())
-            .unwrap();
+    let mut projection = outbe_offchain_data::open_projection(
+        config,
+        storage.reader.clone(),
+        storage.writer.clone(),
+    )
+    .unwrap();
     let canonical = MockEthProvider::new();
     let hashes = (1..=3)
         .map(|number| add_empty_block(&canonical, number, number))
@@ -369,6 +379,9 @@ fn rocksdb_secondary_checkpoint_is_frozen_and_next_session_catches_up() {
             .block_number,
         3
     );
+    drop(projection);
+    drop(storage);
+    completion.wait_timeout(Duration::from_secs(5)).unwrap();
 }
 
 #[test]
@@ -401,7 +414,8 @@ fn canonical_rejection_preserves_prepared_journal_until_validated_activation() {
     };
     let memory = Arc::new(MemoryStorage::new());
     let mut projector =
-        OffchainDataProjection::open(projection_config, memory.clone(), memory.clone()).unwrap();
+        outbe_offchain_data::open_projection(projection_config, memory.clone(), memory.clone())
+            .unwrap();
     projector
         .project_block(&FinalizedBlock {
             number: 1,
@@ -477,10 +491,6 @@ fn canonical_rejection_preserves_prepared_journal_until_validated_activation() {
 
 #[test]
 fn failed_preflight_registers_completion_before_releasing_ownership() {
-    use outbe_node::{
-        ocomp::retention::SharedOcompRetentionSelector,
-        projection::prepare_offchain_data_projection_with_retention,
-    };
     use outbe_offchain_storage::{RocksDbConfig, StorageBackend, StorageConfig};
     let root = tempfile::tempdir().unwrap();
     let config = OffchainDataProjectionConfig {
@@ -500,10 +510,22 @@ fn failed_preflight_registers_completion_before_releasing_ownership() {
     completion.wait_timeout(Duration::from_secs(5)).unwrap();
     let mut wrong = config.clone();
     wrong.genesis_hash = B256::repeat_byte(0x99);
+    assert_preflight_rejection_closes_storage(wrong);
+    let reopened = prepare_offchain_data_projection(config).unwrap();
+    let completion = reopened.storage_completion();
+    drop(reopened);
+    completion.wait_timeout(Duration::from_secs(5)).unwrap();
+}
+
+fn assert_preflight_rejection_closes_storage(config: OffchainDataProjectionConfig) {
+    use outbe_node::{
+        ocomp::retention::SharedOcompRetentionSelector,
+        projection::prepare_offchain_data_projection_with_retention,
+    };
     let completions = Arc::new(std::sync::Mutex::new(Vec::new()));
     let observed = completions.clone();
     assert!(prepare_offchain_data_projection_with_retention(
-        wrong,
+        config,
         Arc::new(SharedOcompRetentionSelector::new()),
         move |completion| observed.lock().unwrap().push(completion),
     )
@@ -511,8 +533,4 @@ fn failed_preflight_registers_completion_before_releasing_ownership() {
     let completions = completions.lock().unwrap();
     assert_eq!(completions.len(), 1);
     completions[0].wait_timeout(Duration::from_secs(5)).unwrap();
-    let reopened = prepare_offchain_data_projection(config).unwrap();
-    let completion = reopened.storage_completion();
-    drop(reopened);
-    completion.wait_timeout(Duration::from_secs(5)).unwrap();
 }

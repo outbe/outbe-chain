@@ -11,6 +11,18 @@ struct ValidatedReservedSystemTx {
     proposer: Address,
 }
 
+struct ReservedSystemReceiptContext {
+    body_index: usize,
+    expected_phase: SystemTxKind,
+    block_number: u64,
+    visible_base_gas: u64,
+    visible_gas_limit: u64,
+    ce_gas_limit: u64,
+    compressed_entities_gas: u64,
+    has_boundary_outcome: bool,
+    has_tee_bootstrap: bool,
+}
+
 #[allow(private_bounds)]
 impl<DB, E> OutbeBlockExecutor<'_, E>
 where
@@ -60,24 +72,7 @@ where
         } = self.validate_reserved_system_tx((tx, signer), block_number, &block_artifacts)?;
 
         if expected_phase == SystemTxKind::HookEvents {
-            let has_boundary_outcome = matches!(
-                block_artifacts.consensus_header_artifact,
-                Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-            );
-            let has_tee_bootstrap = self.block_has_tee_bootstrap();
-            let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
-            let commit_outcome = self
-                .push_hook_events_receipt(tx.tx_type(), logs, visible_base_gas)
-                .map(Some);
-            if commit_outcome.is_ok() {
-                self.system_tx_phase_cursor =
-                    self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
-                        has_boundary_outcome,
-                        has_tee_bootstrap,
-                        self.ocomp_lifecycle_active,
-                    );
-            }
-            return commit_outcome;
+            return self.commit_reserved_hook_receipt(tx, &block_artifacts, visible_base_gas);
         }
 
         let phase_context = PreloadedSystemTxContext {
@@ -101,28 +96,12 @@ where
         // path. Body-parity validation above (decode / phase / calldata / signature /
         // signer) also remains fatal: those are validator-side checks that the proposer
         // never produces for itself.
-        let ce_gas_limit = visible_gas_limit
-            .checked_sub(visible_base_gas)
-            .ok_or_else(|| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!(
-                        "system tx signed gas below visible base at body_index={body_index}: \
-                 signed={visible_gas_limit}, visible_base={visible_base_gas}"
-                    )
-                    .into(),
-                ))
-            })?;
-        let gas_window = self
-            .compressed_entities_scope
-            .begin_explicit_gas_window(ce_gas_limit)
-            .map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!(
-                    "open CE gas window for {expected_phase:?} at body_index={body_index}: {error}"
-                )
-                    .into(),
-                ))
-            })?;
+        let (ce_gas_limit, gas_window) = open_reserved_gas_window(
+            &self.compressed_entities_scope,
+            body_index,
+            expected_phase,
+            (visible_base_gas, visible_gas_limit),
+        )?;
         let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
             self.inner.evm.transact_system_call(
                 outbe_primitives::addresses::SYSTEM_ADDRESS,
@@ -145,8 +124,10 @@ where
             let reason = format!(
                 "system tx {expected_phase:?} execution failed at body_index={body_index}: {error}"
             );
-            tracing::error!(target: "outbe::executor", %reason);
-            BlockExecutionError::Internal(InternalBlockExecutionError::Other(reason.into()))
+            if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_none() {
+                tracing::error!(target: "outbe::executor", %reason);
+            }
+            BlockExecutionError::other(error)
         })?;
         let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
             BlockExecutionError::Internal(InternalBlockExecutionError::Other(
@@ -157,82 +138,71 @@ where
             ))
         })?;
         drop(gas_window);
+        let receipt_context = ReservedSystemReceiptContext {
+            body_index,
+            expected_phase,
+            block_number,
+            visible_base_gas,
+            visible_gas_limit,
+            ce_gas_limit,
+            compressed_entities_gas,
+            has_boundary_outcome,
+            has_tee_bootstrap,
+        };
         if !result.result.is_success() {
-            tracing::error!(
-                target: "outbe::executor",
-                ?expected_phase,
-                body_index,
-                block_number,
-                gas_used = result.result.tx_gas_used(),
-                gas_limit = tx.gas_limit(),
-                result = ?result.result,
-                "system tx failed"
-            );
-            let code = system_tx_failure_code_for_result(&result.result);
-            // a revert/halt in a consensus- or economic-critical
-            // begin-zone phase is a hard block failure, not a soft-receipt
-            // skip. Their work is one-shot and never retried, so swallowing a
-            // revert permanently loses it (stranded fee escrow, dropped
-            // emission/reshare, unrecorded parent accounting). The revert is a
-            // deterministic function of committed chain state, so every
-            // validator rejects the same block identically. There is no
-            // state-root split. Non-critical phases (RewardsGemDelivery,
-            // OracleSlashWindow) keep the soft-receipt skip for failures that fit within the
-            // aggregate internal-work budget. An OOG consumes the full
-            // system-call gas limit and therefore remains a hard aggregate
-            // budget failure once earlier mandatory phases have run.
-            if expected_phase.revert_fails_block() {
-                let reason = format!(
-                    "critical system tx {expected_phase:?} did not succeed (revert/halt) at \
-                 body_index={body_index}, block_number={block_number}, \
-                 failure_code={code}: {:?}",
-                    result.result
-                );
-                tracing::error!(target: "outbe::executor", %reason, "critical begin-zone phase did not succeed; failing block");
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(reason.into()),
-                ));
-            }
-            let reason = format!(
-                "system tx {expected_phase:?} did not succeed at body_index={body_index}: {:?}",
-                result.result
-            );
-            let tx_type = tx.tx_type();
-            let receipt_ce_gas = if matches!(
-                result.result,
-                ExecutionResult::Halt {
-                    reason: HaltReason::OutOfGas(_),
-                    ..
-                }
-            ) {
-                ce_gas_limit
-            } else {
-                compressed_entities_gas
-            };
-            let gas_output = self.push_system_failure_receipt(SystemFailureReceiptInput {
-                tx_type,
-                log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                code,
-                reason,
-                visible_base_gas,
-                compressed_entities_gas: receipt_ce_gas,
-                signed_gas_limit: visible_gas_limit,
-                internal_gas_used: result.result.tx_gas_used(),
-            })?;
+            return self.commit_reserved_failure_receipt(tx, &result.result, receipt_context);
+        }
+        let output = EthTxResult {
+            result,
+            blob_gas_used: 0,
+            tx_type: tx.tx_type(),
+        };
+        self.commit_reserved_success_receipt(output, receipt_context, f)
+    }
+
+    fn commit_reserved_hook_receipt(
+        &mut self,
+        tx: &TransactionSigned,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+        visible_base_gas: u64,
+    ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        let has_boundary_outcome = matches!(
+            block_artifacts.consensus_header_artifact,
+            Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+        );
+        let has_tee_bootstrap = self.block_has_tee_bootstrap();
+        let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
+        let commit_outcome = self
+            .push_hook_events_receipt(tx.tx_type(), logs, visible_base_gas)
+            .map(Some);
+        if commit_outcome.is_ok() {
             self.system_tx_phase_cursor =
                 self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
                     has_boundary_outcome,
                     has_tee_bootstrap,
                     self.ocomp_lifecycle_active,
                 );
-            return Ok(Some(gas_output));
         }
+        commit_outcome
+    }
 
-        let output = EthTxResult {
-            result,
-            blob_gas_used: 0,
-            tx_type: tx.tx_type(),
-        };
+    fn commit_reserved_success_receipt<F>(
+        &mut self,
+        output: EthTxResult<E::HaltReason, reth_ethereum::TxType>,
+        context: ReservedSystemReceiptContext,
+        f: F,
+    ) -> Result<Option<GasOutput>, BlockExecutionError>
+    where
+        F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
+    {
+        let ReservedSystemReceiptContext {
+            visible_base_gas,
+            compressed_entities_gas,
+            visible_gas_limit,
+            has_boundary_outcome,
+            has_tee_bootstrap,
+            ..
+        } = context;
         if !f(&output).should_commit() {
             // Cursor does not advance: the caller chose not to commit,
             // so the body-index slot remains owned by this phase.
@@ -255,6 +225,92 @@ where
                 );
         }
         commit_outcome
+    }
+
+    fn commit_reserved_failure_receipt(
+        &mut self,
+        tx: &TransactionSigned,
+        result: &ExecutionResult<HaltReason>,
+        context: ReservedSystemReceiptContext,
+    ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        let ReservedSystemReceiptContext {
+            body_index,
+            expected_phase,
+            block_number,
+            visible_base_gas,
+            visible_gas_limit,
+            ce_gas_limit,
+            compressed_entities_gas,
+            has_boundary_outcome,
+            has_tee_bootstrap,
+        } = context;
+        tracing::error!(
+            target: "outbe::executor",
+            ?expected_phase,
+            body_index,
+            block_number,
+            gas_used = result.tx_gas_used(),
+            gas_limit = tx.gas_limit(),
+            result = ?result,
+            "system tx failed"
+        );
+        let code = system_tx_failure_code_for_result(result);
+        // a revert/halt in a consensus- or economic-critical
+        // begin-zone phase is a hard block failure, not a soft-receipt
+        // skip. Their work is one-shot and never retried, so swallowing a
+        // revert permanently loses it (stranded fee escrow, dropped
+        // emission/reshare, unrecorded parent accounting). The revert is a
+        // deterministic function of committed chain state, so every
+        // validator rejects the same block identically. There is no
+        // state-root split. Non-critical phases (RewardsGemDelivery,
+        // OracleSlashWindow) keep the soft-receipt skip for failures that fit within the
+        // aggregate internal-work budget. An OOG consumes the full
+        // system-call gas limit and therefore remains a hard aggregate
+        // budget failure once earlier mandatory phases have run.
+        if expected_phase.revert_fails_block() {
+            let reason = format!(
+                "critical system tx {expected_phase:?} did not succeed (revert/halt) at \
+             body_index={body_index}, block_number={block_number}, \
+             failure_code={code}: {:?}",
+                result
+            );
+            tracing::error!(target: "outbe::executor", %reason, "critical begin-zone phase did not succeed; failing block");
+            return Err(BlockExecutionError::Internal(
+                InternalBlockExecutionError::Other(reason.into()),
+            ));
+        }
+        let reason = format!(
+            "system tx {expected_phase:?} did not succeed at body_index={body_index}: {:?}",
+            result
+        );
+        let tx_type = tx.tx_type();
+        let receipt_ce_gas = if matches!(
+            result,
+            ExecutionResult::Halt {
+                reason: HaltReason::OutOfGas(_),
+                ..
+            }
+        ) {
+            ce_gas_limit
+        } else {
+            compressed_entities_gas
+        };
+        let gas_output = self.push_system_failure_receipt(SystemFailureReceiptInput {
+            tx_type,
+            log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+            code,
+            reason,
+            visible_base_gas,
+            compressed_entities_gas: receipt_ce_gas,
+            signed_gas_limit: visible_gas_limit,
+            internal_gas_used: result.tx_gas_used(),
+        })?;
+        self.system_tx_phase_cursor = self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+            has_boundary_outcome,
+            has_tee_bootstrap,
+            self.ocomp_lifecycle_active,
+        );
+        Ok(Some(gas_output))
     }
 
     fn consume_preexecuted_phase1_witness(
@@ -552,4 +608,35 @@ fn validate_reserved_system_input(
     }
 
     Ok(())
+}
+
+fn open_reserved_gas_window(
+    scope: &ExecutionScope,
+    body_index: usize,
+    expected_phase: SystemTxKind,
+    visible_gas: (u64, u64),
+) -> Result<(u64, outbe_compressed_entities::ExplicitGasWindow<'_>), BlockExecutionError> {
+    let (visible_base_gas, visible_gas_limit) = visible_gas;
+    let ce_gas_limit = visible_gas_limit
+        .checked_sub(visible_base_gas)
+        .ok_or_else(|| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!(
+                    "system tx signed gas below visible base at body_index={body_index}: \
+             signed={visible_gas_limit}, visible_base={visible_base_gas}"
+                )
+                .into(),
+            ))
+        })?;
+    let gas_window = scope
+        .begin_explicit_gas_window(ce_gas_limit)
+        .map_err(|error| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!(
+                    "open CE gas window for {expected_phase:?} at body_index={body_index}: {error}"
+                )
+                .into(),
+            ))
+        })?;
+    Ok((ce_gas_limit, gas_window))
 }

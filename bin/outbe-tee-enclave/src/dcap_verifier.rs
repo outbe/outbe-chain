@@ -264,91 +264,72 @@ pub(crate) fn complete_verification_response(
     let outcome: Result<DcapVerificationOutcomeV1, &'static str> =
         Err("enclave was built without the pinned native DCAP verifier");
 
-    let mut outcome = match outcome {
-        Ok(outcome) => outcome,
-        Err(message) => {
-            return EnclaveResponse::Error {
-                message: message.to_string(),
-            };
-        }
-    };
-    let onboarding_artifact = if matches!(
+    outcome
+        .and_then(|outcome| {
+            prepare_verification_response(
+                &request,
+                outcome,
+                keys,
+                resident_offer_key,
+                source_manifest,
+            )
+        })
+        .unwrap_or_else(|message| EnclaveResponse::Error {
+            message: message.to_string(),
+        })
+}
+
+fn prepare_verification_response(
+    request: &CompleteDcapVerificationV1,
+    mut outcome: DcapVerificationOutcomeV1,
+    keys: &EnclaveKeys,
+    resident_offer_key: Option<&DerivedTributeOfferKey>,
+    source_manifest: Option<&outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1>,
+) -> Result<EnclaveResponse, &'static str> {
+    let onboarding = matches!(
         request.purpose,
         VerificationPurposeV1::RegisterOnboarding { .. }
-    ) {
-        match build_onboarding_artifact(
-            &request,
+    );
+    let artifact = if onboarding {
+        build_onboarding_artifact(
+            request,
             &mut outcome,
             resident_offer_key,
             source_manifest,
             keys.code_identity(),
-        ) {
-            Ok(artifact) => artifact,
-            Err(message) => {
-                return EnclaveResponse::Error {
-                    message: message.to_string(),
-                };
-            }
-        }
+        )?
     } else {
         None
     };
-    let outcome = match outcome.encode_canonical() {
-        Ok(outcome) => outcome,
-        Err(_) => {
-            return EnclaveResponse::Error {
-                message: "enclave produced a non-canonical DCAP outcome".to_string(),
-            };
-        }
-    };
-    if matches!(
-        request.purpose,
-        VerificationPurposeV1::RegisterOnboarding { .. }
-    ) {
-        let onboarding_artifact = match onboarding_artifact
+    let outcome = outcome
+        .encode_canonical()
+        .map_err(|_| "enclave produced a non-canonical DCAP outcome")?;
+    if onboarding {
+        let onboarding_artifact = artifact
             .map(|artifact| artifact.encode_canonical())
             .transpose()
-        {
-            Ok(Some(artifact)) => artifact,
-            Ok(None) => Vec::new(),
-            Err(_) => {
-                return EnclaveResponse::Error {
-                    message: "enclave produced a non-canonical onboarding artifact".to_string(),
-                };
-            }
-        };
-        let preimage = match dcap_onboarding_attestation_preimage(
+            .map_err(|_| "enclave produced a non-canonical onboarding artifact")?
+            .unwrap_or_default();
+        let preimage = dcap_onboarding_attestation_preimage(
             request.request_hash,
             &outcome,
             &onboarding_artifact,
-        ) {
-            Ok(preimage) => preimage,
-            Err(_) => {
-                return EnclaveResponse::Error {
-                    message: "enclave produced an oversized onboarding result".to_string(),
-                };
-            }
-        };
-        return EnclaveResponse::DcapOnboardingVerificationFinishedV1 {
+        )
+        .map_err(|_| "enclave produced an oversized onboarding result")?;
+        return Ok(EnclaveResponse::DcapOnboardingVerificationFinishedV1 {
             request_hash: request.request_hash,
             outcome,
             onboarding_artifact,
             attestation_tag: keys.sign_attestation(&preimage).to_vec(),
-        };
+        });
     }
-    let preimage = match dcap_verification_attestation_preimage(request.request_hash, &outcome) {
-        Ok(preimage) => preimage,
-        Err(_) => {
-            return EnclaveResponse::Error {
-                message: "enclave produced an oversized DCAP outcome".to_string(),
-            };
-        }
-    };
-    EnclaveResponse::DcapVerificationFinishedV1 {
+    let preimage = dcap_verification_attestation_preimage(request.request_hash, &outcome)
+        .map_err(|_| "enclave produced an oversized DCAP outcome")?;
+    Ok(EnclaveResponse::DcapVerificationFinishedV1 {
         request_hash: request.request_hash,
         outcome,
         attestation_tag: keys.sign_attestation(&preimage).to_vec(),
-    }
+    })
 }
 
 /// Build a deterministic purpose-bound artifact after TeeRegistry has already
@@ -437,8 +418,6 @@ fn build_onboarding_artifact(
     source_manifest: Option<&outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1>,
     source_code_identity: (B256, B256, u16, u16),
 ) -> Result<Option<outbe_tee::dcap_protocol::DcapOnboardingArtifactV1>, &'static str> {
-    use outbe_primitives::tee_attestation_v1::{AttestationEvidenceV1, AttestationOperationV1};
-
     if !matches!(outcome, DcapVerificationOutcomeV1::Accepted(_)) {
         return Ok(None);
     }
@@ -452,26 +431,18 @@ fn build_onboarding_artifact(
     else {
         return Ok(None);
     };
-    let evidence = match AttestationEvidenceV1::decode_canonical(&request.evidence) {
-        Ok(AttestationEvidenceV1::Dcap(evidence)) => evidence,
-        _ => {
-            *outcome = DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::EvidenceNonCanonical);
+    let evidence = match validate_onboarding_registration(
+        &request.evidence,
+        node_signature,
+        enclave_signature,
+    ) {
+        Ok(evidence) => evidence,
+        Err(code) => {
+            *outcome = DcapVerificationOutcomeV1::Rejected(code);
             return Ok(None);
         }
     };
     let intent = &evidence.intent;
-    if intent.operation != AttestationOperationV1::RegisterEnclave {
-        *outcome = DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::OperationMismatch);
-        return Ok(None);
-    }
-    if !intent.verify_node_signature(node_signature) {
-        *outcome = DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::NodeSignatureInvalid);
-        return Ok(None);
-    }
-    if !intent.verify_enclave_signature(enclave_signature) {
-        *outcome = DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::EnclaveSignatureInvalid);
-        return Ok(None);
-    }
     let source_manifest = source_manifest.ok_or("onboarding source is not initialized")?;
     let resident_offer_key =
         resident_offer_key.ok_or("onboarding source offer key is not ready")?;
@@ -490,12 +461,12 @@ fn build_onboarding_artifact(
         *outcome = DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::MeasurementRejected);
         return Ok(None);
     }
-    if intent.chain_id != source_manifest.chain_id
-        || intent.genesis_hash != source_manifest.genesis_hash
-        || resident_offer_key.public() != *expected_tribute_offer_public
-        || resident_offer_key.key_epoch() != *key_epoch
-        || resident_offer_key.tribute_offer_epoch() != *tribute_offer_epoch
-    {
+    if !onboarding_context_matches(
+        intent,
+        source_manifest,
+        resident_offer_key,
+        &request.purpose,
+    ) {
         *outcome = DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::OnboardingContextMismatch);
         return Ok(None);
     }
@@ -526,6 +497,53 @@ fn build_onboarding_artifact(
     )
     .map(Some)
     .map_err(|_| "purpose-bound onboarding artifact encryption failed")
+}
+
+fn validate_onboarding_registration(
+    bytes: &[u8],
+    node_signature: &[u8; 65],
+    enclave_signature: &[u8; 64],
+) -> Result<outbe_primitives::tee_attestation_v1::DcapEvidenceV1, DcapRejectCodeV1> {
+    use outbe_primitives::tee_attestation_v1::{AttestationEvidenceV1, AttestationOperationV1};
+    let evidence = match AttestationEvidenceV1::decode_canonical(bytes) {
+        Ok(AttestationEvidenceV1::Dcap(evidence)) => evidence,
+        _ => return Err(DcapRejectCodeV1::EvidenceNonCanonical),
+    };
+    let intent = &evidence.intent;
+    if intent.operation != AttestationOperationV1::RegisterEnclave {
+        return Err(DcapRejectCodeV1::OperationMismatch);
+    }
+    if !intent.verify_node_signature(node_signature) {
+        return Err(DcapRejectCodeV1::NodeSignatureInvalid);
+    }
+    if !intent.verify_enclave_signature(enclave_signature) {
+        return Err(DcapRejectCodeV1::EnclaveSignatureInvalid);
+    }
+    Ok(evidence)
+}
+
+fn onboarding_context_matches(
+    intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
+    manifest: &outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+    offer_key: &DerivedTributeOfferKey,
+    purpose: &VerificationPurposeV1,
+) -> bool {
+    if intent.chain_id != manifest.chain_id || intent.genesis_hash != manifest.genesis_hash {
+        return false;
+    }
+    match purpose {
+        VerificationPurposeV1::RegisterOnboarding {
+            expected_tribute_offer_public,
+            key_epoch,
+            tribute_offer_epoch,
+            ..
+        } => {
+            offer_key.public() == *expected_tribute_offer_public
+                && offer_key.key_epoch() == *key_epoch
+                && offer_key.tribute_offer_epoch() == *tribute_offer_epoch
+        }
+        VerificationPurposeV1::Generic => false,
+    }
 }
 
 #[cfg(feature = "native-dcap")]
@@ -601,23 +619,9 @@ mod tests {
             noise_responder_x25519: keys.noise_public(),
         };
         let mut intent = RegistrationIntentV1 {
-            chain_id: manifest.chain_id,
-            genesis_hash: manifest.genesis_hash,
-            operation: AttestationOperationV1::RegisterEnclave,
-            attestation_mode: AttestationMode::DcapRequired,
             policy_hash: B256::repeat_byte(0x87),
-            node_id: manifest.node_id.clone(),
-            enclave_id: manifest.enclave_id().unwrap(),
             binding_id: B256::repeat_byte(0x88),
-            binding_version: 1,
-            registration_version: 0,
-            renewal_nonce: 0,
-            transition_nonce: 0,
-            requested_valid_until: 7_200,
-            recipient_x25519: manifest.recipient_x25519,
-            attestation_ed25519: manifest.attestation_ed25519,
-            noise_responder_x25519: manifest.noise_responder_x25519,
-            node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+            ..crate::initialization::test_support::registration_intent_for_manifest(&manifest)
         };
         intent.enclave_id = intent.derived_enclave_id().unwrap();
         let intent_hash = intent.intent_hash().unwrap();

@@ -28,7 +28,7 @@ pub(super) struct DayRoute {
     pub(super) wrap: Option<DayReadWrap>,
 }
 
-pub(super) fn migrate(reader: &TributeRepositoryReader) -> Result<(), TributeRepositoryError> {
+pub(super) fn migrate(reader: &super::TributeReadView) -> Result<(), TributeRepositoryError> {
     let Some(route) = &reader.route else {
         return Ok(());
     };
@@ -88,11 +88,11 @@ pub(super) fn migrate(reader: &TributeRepositoryReader) -> Result<(), TributeRep
 }
 
 pub(super) fn get_with_metadata(
-    reader: &TributeRepositoryReader,
+    reader: &super::TributeReadView,
     tribute_id: WwdEntityId,
 ) -> Result<
     Option<(
-        crate::TributeData,
+        crate::TributeRecord,
         Option<outbe_offchain_storage::StorageMetadata>,
     )>,
     TributeRepositoryError,
@@ -109,7 +109,7 @@ pub(super) fn get_with_metadata(
 }
 
 pub(super) fn get_stored_body(
-    reader: &TributeRepositoryReader,
+    reader: &super::TributeReadView,
     tribute_id: WwdEntityId,
 ) -> Result<Option<outbe_compressed_entities::StoredBody>, TributeRepositoryError> {
     migrate(reader)?;
@@ -124,7 +124,7 @@ pub(super) fn get_stored_body(
 }
 
 pub(super) fn projection_session(
-    reader: &TributeRepositoryReader,
+    reader: &super::TributeReadView,
     tribute_ids: &[WwdEntityId],
 ) -> Result<crate::projection::TributeProjectionSession, TributeRepositoryError> {
     migrate(reader)?;
@@ -147,7 +147,7 @@ pub(super) fn projection_session(
 }
 
 pub(super) fn list_by_owner(
-    reader: &TributeRepositoryReader,
+    reader: &super::TributeReadView,
     owner: Address,
     request: TributePageRequest,
 ) -> Result<TributePage, TributeRepositoryError> {
@@ -201,7 +201,7 @@ pub(super) fn list_by_owner(
 }
 
 pub(super) fn list_ids_by_owner(
-    reader: &TributeRepositoryReader,
+    reader: &super::TributeReadView,
     owner: Address,
     request: IdPageRequest,
 ) -> Result<IdPage, TributeRepositoryError> {
@@ -216,9 +216,11 @@ pub(super) fn list_ids_by_owner(
     walk_ids(
         route,
         &days,
-        start,
-        request.after,
-        limit,
+        IdWalk {
+            start,
+            after: request.after,
+            limit,
+        },
         |day_reader, after, limit| {
             day_reader.list_ids_by_owner(owner, IdPageRequest { after, limit })
         },
@@ -226,7 +228,7 @@ pub(super) fn list_ids_by_owner(
 }
 
 pub(super) fn list_ids_by_day(
-    reader: &TributeRepositoryReader,
+    reader: &super::TributeReadView,
     worldwide_day: WorldwideDay,
     request: IdPageRequest,
 ) -> Result<IdPage, TributeRepositoryError> {
@@ -243,7 +245,7 @@ pub(super) fn list_ids_by_day(
 }
 
 pub(super) fn put(
-    writer: &TributeRepositoryWriter,
+    writer: &super::TributeMutationView,
     tribute: &crate::TributeData,
 ) -> Result<(), TributeRepositoryError> {
     migrate(&writer.reader)?;
@@ -256,7 +258,7 @@ pub(super) fn put(
 }
 
 pub(super) fn delete(
-    writer: &TributeRepositoryWriter,
+    writer: &super::TributeMutationView,
     tribute_id: WwdEntityId,
 ) -> Result<(), TributeRepositoryError> {
     migrate(&writer.reader)?;
@@ -271,7 +273,7 @@ pub(super) fn delete(
     TributeRepositoryWriter::new(reader, writer).delete(tribute_id)
 }
 
-fn route(reader: &TributeRepositoryReader) -> Result<&DayRoute, TributeRepositoryError> {
+fn route(reader: &super::TributeReadView) -> Result<&DayRoute, TributeRepositoryError> {
     reader.route.as_ref().ok_or_else(|| {
         TributeRepositoryError::Storage(outbe_offchain_storage::StorageError::InvalidArgument(
             "Tribute day route is missing".into(),
@@ -312,18 +314,27 @@ fn later_owner(
     Ok(false)
 }
 
+struct IdWalk {
+    start: u32,
+    after: Option<WwdEntityId>,
+    limit: usize,
+}
+
 fn walk_ids(
     route: &DayRoute,
     days: &[u32],
-    start: u32,
-    request_after: Option<WwdEntityId>,
-    limit: usize,
+    request: IdWalk,
     mut read_page: impl FnMut(
-        &TributeRepositoryReader,
+        &super::TributeReadView,
         Option<WwdEntityId>,
         u32,
     ) -> Result<IdPage, TributeRepositoryError>,
 ) -> Result<IdPage, TributeRepositoryError> {
+    let IdWalk {
+        start,
+        after: request_after,
+        limit,
+    } = request;
     let mut ids = Vec::new();
     let mut remaining = u32::try_from(limit).unwrap_or(u32::MAX);
     for day in days.iter().copied().filter(|day| *day >= start) {
@@ -362,7 +373,7 @@ fn later_id(
     current: u32,
     route: &DayRoute,
     read_page: &mut impl FnMut(
-        &TributeRepositoryReader,
+        &super::TributeReadView,
         Option<WwdEntityId>,
         u32,
     ) -> Result<IdPage, TributeRepositoryError>,

@@ -121,13 +121,15 @@ fn production_publisher_streams_one_million_records_with_a_256_record_peak() {
     .unwrap();
 
     let mut publisher = DurableInputArtifactPublisher::open(
-        &cas,
+        outbe_ocomp::input_artifacts::InputArtifactContext {
+            cas: &cas,
+            bundle: &bundle,
+            limits,
+            list_limits: poc_input_list_limits(),
+        },
         &reader,
         &catalog_root,
-        &bundle,
         identity,
-        limits,
-        poc_input_list_limits(),
     )
     .unwrap();
     for index in 0..COUNT {
@@ -286,16 +288,22 @@ fn durable_publisher_matches_existing_chunk_root_catalog_and_manifest_bytes() {
     .unwrap();
     let mut baseline_bodies = canonical.clone().into_iter();
     let baseline = publish_streaming_input_artifact_set(
-        &baseline_cas,
+        outbe_ocomp::input_artifacts::InputArtifactContext {
+            cas: &baseline_cas,
+            bundle: &bundle,
+            limits,
+            list_limits: poc_input_list_limits(),
+        },
         &baseline_catalog_root,
-        &bundle,
         identity.clone(),
-        COUNT,
-        || Ok(baseline_bodies.next()),
-        fidelity_openings.clone(),
-        oracle_opening.clone(),
-        &limits,
-        poc_input_list_limits(),
+        outbe_ocomp::input_artifacts::TributeInputStream {
+            expected_count: COUNT,
+            next: || Ok(baseline_bodies.next()),
+        },
+        outbe_ocomp::input_artifacts::InputArtifactOpenings {
+            fidelity: fidelity_openings.clone(),
+            oracle: oracle_opening.clone(),
+        },
     )
     .unwrap();
 
@@ -309,13 +317,15 @@ fn durable_publisher_matches_existing_chunk_root_catalog_and_manifest_bytes() {
     .unwrap();
     let durable_reader = FilesystemCasReader::open(&durable_cas_root, cas_limits).unwrap();
     let mut durable = DurableInputArtifactPublisher::open(
-        &durable_cas,
+        outbe_ocomp::input_artifacts::InputArtifactContext {
+            cas: &durable_cas,
+            bundle: &bundle,
+            limits,
+            list_limits: poc_input_list_limits(),
+        },
         &durable_reader,
         &durable_catalog_root,
-        &bundle,
         identity,
-        limits,
-        poc_input_list_limits(),
     )
     .unwrap();
     for body in canonical {
@@ -484,13 +494,15 @@ fn durable_publisher_replays_10000_tributes_without_population_sized_results() {
 
     let publish = || {
         let mut publisher = DurableInputArtifactPublisher::open(
-            &cas,
+            outbe_ocomp::input_artifacts::InputArtifactContext {
+                cas: &cas,
+                bundle: &bundle,
+                limits,
+                list_limits: poc_input_list_limits(),
+            },
             &reader,
             &catalog_root,
-            &bundle,
             identity.clone(),
-            limits,
-            poc_input_list_limits(),
         )
         .unwrap();
         for index in 0..COUNT {
@@ -642,9 +654,13 @@ fn population_above_the_old_4096_ceiling_streams_into_existing_256_record_chunks
         .iter()
         .map(|tribute| encode_tribute_v1(tribute).unwrap());
     let published = publish_streaming_input_artifact_set(
-        &cas,
+        outbe_ocomp::input_artifacts::InputArtifactContext {
+            cas: &cas,
+            bundle: &bundle,
+            limits,
+            list_limits: poc_input_list_limits(),
+        },
         directory.path().join("input-refs"),
-        &bundle,
         InputArtifactIdentity {
             job_id,
             attempt: 0,
@@ -659,12 +675,14 @@ fn population_above_the_old_4096_ceiling_streams_into_existing_256_record_chunks
             sealed_tribute_collection_key: B256::repeat_byte(0x79),
             sealed_tribute_collection_root: B256::repeat_byte(0x7a),
         },
-        4_097,
-        || Ok(canonical.next()),
-        fidelity_openings,
-        oracle_opening.unwrap(),
-        &limits,
-        poc_input_list_limits(),
+        outbe_ocomp::input_artifacts::TributeInputStream {
+            expected_count: 4_097,
+            next: || Ok(canonical.next()),
+        },
+        outbe_ocomp::input_artifacts::InputArtifactOpenings {
+            fidelity: fidelity_openings,
+            oracle: oracle_opening.unwrap(),
+        },
     )
     .unwrap();
 

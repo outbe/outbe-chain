@@ -1,4 +1,5 @@
 //! Real Intex/Gem factory and router execution with stateful ERC20, vault and NFT counterparties.
+use outbe_offchain_data::runtime_body_readers;
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
@@ -138,8 +139,8 @@ impl World {
                 },
             );
         }
-        let readers = RuntimeBodyReaders::new(Arc::new(MemoryStorage::new()));
-        let scope = Arc::new(ExecutionScope::new());
+        let readers = runtime_body_readers(Arc::new(MemoryStorage::new()));
+        let scope = Arc::new(ExecutionScope::default());
         let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, OWNER, vec![OWNER]);
         let mut provider = DirectStorageProvider::new(&mut db, block);
         let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {

@@ -1,57 +1,61 @@
-//! Nod owns its placement and lookup rules; datasources only implement scopes.
+//! NOD bodies use ID-derived shards. The shared index lists IDs by owner.
 
-use alloy_primitives::Address;
-use outbe_offchain_storage::partitioned::routing::{
-    LocatedRouting, OwnerPrefixRouting, RoutingRegistry, SharedRouting,
-};
+use alloy_primitives::U256;
+use outbe_compressed_entities::WwdEntityId;
+use outbe_offchain_storage::partitioned::routing::{RoutingRegistry, SharedRouting};
+use outbe_offchain_storage::partitioned::{PartitionRouting, ReadLocation};
 use outbe_offchain_storage::{
-    OwnerModuloPartition, PartitionContext, PartitionId, PartitionStrategy, StorageError,
-    StorageScope,
+    Key, Namespace, PartitionId, PartitionReadSource, ScanRequest, StorageError, StorageScope,
 };
 use std::sync::Arc;
 
-pub const NOD_LOCATIONS_NAMESPACE: &str = "nod_locations";
-pub const NOD_SHARD_COUNT: u16 = 32;
+pub const NOD_SHARD_COUNT: u16 = 256;
 pub const NOD_SHARD_FAMILY: &str = "nod-shards";
 
-pub fn item_scope(owner: Address) -> Result<StorageScope, StorageError> {
-    let strategy = OwnerModuloPartition::new(NOD_SHARD_FAMILY, NOD_SHARD_COUNT)?;
-    StorageScope::new(
-        "nod",
-        strategy.partition(&PartitionContext {
-            entity_id: &[],
-            worldwide_day: None,
-            owner: Some(owner.into_array()),
-        })?,
-    )
+pub fn item_shard(nod_id: WwdEntityId) -> u32 {
+    (nod_id.to_u256() % U256::from(NOD_SHARD_COUNT)).to::<u32>()
 }
 
-pub fn owner_shard(owner: Address) -> Result<u32, StorageError> {
-    let PartitionId::Numbered { index, .. } = item_scope(owner)?.partition else {
-        unreachable!("owner strategy always returns a numbered partition")
-    };
-    Ok(index)
+pub fn item_scope(nod_id: WwdEntityId) -> Result<StorageScope, StorageError> {
+    StorageScope::numbered("nod", NOD_SHARD_FAMILY, item_shard(nod_id))
 }
 
 pub fn register(registry: &mut RoutingRegistry) -> Result<(), StorageError> {
-    registry.register(
-        "nods",
-        Arc::new(LocatedRouting::new(
-            "nod",
-            NOD_LOCATIONS_NAMESPACE,
-            NOD_SHARD_FAMILY,
-            NOD_SHARD_COUNT,
-        )?),
-    )?;
-    registry.register(
-        "nods_by_owner",
-        Arc::new(OwnerPrefixRouting::new(
-            "nod",
-            NOD_SHARD_FAMILY,
-            NOD_SHARD_COUNT,
-        )?),
-    )?;
+    registry.register("nods", Arc::new(NodItemRouting))?;
     let shared = Arc::new(SharedRouting(StorageScope::shared("nod")?));
-    registry.register("nod_buckets", shared.clone())?;
-    registry.register(NOD_LOCATIONS_NAMESPACE, shared)
+    registry.register("nods_by_owner", shared.clone())?;
+    registry.register("nod_buckets", shared)
+}
+
+struct NodItemRouting;
+
+impl PartitionRouting for NodItemRouting {
+    fn point(
+        &self,
+        _: &Namespace,
+        key: &Key,
+        _: &dyn PartitionReadSource,
+    ) -> Result<Option<ReadLocation>, StorageError> {
+        let nod_id = WwdEntityId::try_from(key.as_bytes())
+            .map_err(|_| StorageError::Corruption("invalid NOD primary key width".into()))?;
+        Ok(Some(ReadLocation {
+            scope: item_scope(nod_id)?,
+            require_present: false,
+        }))
+    }
+
+    fn scan(
+        &self,
+        _: &Namespace,
+        _: ScanRequest<'_>,
+        source: &dyn PartitionReadSource,
+    ) -> Result<Vec<StorageScope>, StorageError> {
+        Ok(source
+            .list_scopes("nod")?
+            .into_iter()
+            .filter(|scope| {
+                matches!(&scope.partition, PartitionId::Numbered { family, .. } if family == NOD_SHARD_FAMILY)
+            })
+            .collect())
+    }
 }

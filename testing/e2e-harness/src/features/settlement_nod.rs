@@ -2,8 +2,8 @@
 use super::*;
 use alloy_sol_types::{SolCall as _, SolError as _, SolValue as _};
 use outbe_compressed_entities::{
-    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, verify_point_read_v1, NodBucketBodyV1,
-    NodItemBodyV1, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1, VerifiedPointReadV1,
+    decode_stored_nod_bucket_v1, decode_stored_nod_item_v2, verify_point_read_v1, NodBucketBodyV1,
+    NodItemBodyV2, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1, VerifiedPointReadV1,
     WwdEntityId,
 };
 
@@ -13,435 +13,18 @@ const PAYER_KEY: &str = "0x77777777777777777777777777777777777777777777777777777
 
 #[then("a third party pays another public Nod in ERC20 and mines Gratis only for its owner")]
 fn third_party_settles_and_mines(world: &mut World) {
-    let port = world.validators.primary_port();
-    let ports = world.validators.committee_ports();
-    let url = world.rpc.url(port);
-    let owner_key = world
-        .validators
-        .get(1)
-        .evm_key()
-        .expect("successor Tribute owner key");
-    let owner = eth::address_of(&owner_key).expect("successor owner");
-    let payer = eth::address_of(PAYER_KEY).expect("independent settlement payer");
-    assert_ne!(owner, payer);
-    let funding = world
-        .rpc
-        .fund_key(&world.validators.get(0), PAYER_KEY, 100)
-        .expect("fund payer gas");
-    assert!(world.rpc.wait_successful_receipt(&funding, 120));
-    let materialization_deadline =
-        Instant::now() + Duration::from_secs(MATERIALIZED_NOD_TIMEOUT_SECS);
-    let (id_bytes, initial) = loop {
-        let observed = stable_live_read(world, port, 0, || {
-            world
-                .rpc
-                .materialized_nod_for_owner(port, owner)
-                .expect("live materialized Nod lookup")
-        });
-        if let Some(nod) = observed {
-            break nod;
-        }
-        assert!(
-            Instant::now() < materialization_deadline,
-            "successor Nod did not materialize"
-        );
-        sleep(Duration::from_millis(250));
-    };
-    let id = WwdEntityId::try_from(id_bytes.as_slice()).expect("public Nod identity");
-    assert_eq!(
-        initial.worldwideDay,
-        world
-            .state
-            .ocomp_successor_job_request
-            .as_ref()
-            .expect("retained real successor JobIntent")
-            .worldwide_day
-    );
-    assert_eq!(initial.owner, owner);
-    assert!(!initial.isSettled);
-    assert!(!initial.settlementCostMinor.is_zero());
-    qualify_public_nod(world, id, owner, initial.floorPriceMinor, initial.issuedAt);
-    let head = world.rpc.head(port).expect("qualified head");
-    world
-        .rpc
-        .wait_finalized_checkpoint(&ports, head, 120)
-        .expect("qualification finalized");
-    let qualified = nod_snapshot(world, owner, id, head);
-    let qualified_bodies = nod_bodies(world, id, head);
-    assert_snapshot_bodies(&qualified, &qualified_bodies);
-    let body = qualified.body.as_ref().expect("qualified public Nod");
-    assert!(body.isQualified);
-    assert!(!body.isSettled);
-    let bucket_id = qualified_bodies.1.entity_id();
-    let vault = eth::read_call(
-        &url,
-        addresses::VAULT_ROUTER_ADDR,
-        &eth::IVaultRouter::referenceCurrencyVaultAtCall {
-            isoCode: USD_ISO,
-            index: U256::ZERO,
-        },
-    )
-    .expect("the owner's Nod settlement registered the USD reserve");
-    assert_ne!(vault, Address::ZERO);
-    let asset =
-        eth::read_call(&url, vault, &ISettlementVault::assetCall {}).expect("reserve asset");
-    assert_eq!(body.referenceCurrency, USD_ISO);
-    // Keep enough allowance and funds for a duplicate to pay if its guard regresses.
-    fund_and_approve(
-        world,
-        asset,
-        PAYER_KEY,
-        payer,
-        addresses::NOD_FACTORY_ADDR,
-        body.settlementCostMinor
-            .checked_mul(U256::from(2))
-            .expect("two settlement costs"),
-    );
-    let owner_keys =
-        eth::derive_account_keys(&url, &owner_key, Ledger::Gratis).expect("owner Gratis keys");
-    let payer_keys =
-        eth::derive_account_keys(&url, PAYER_KEY, Ledger::Gratis).expect("payer Gratis keys");
-    let pay = eth::INodFactory::settleNodCall {
-        nodId: id.to_u256(),
-        asset,
-        snapshotId: U256::ZERO,
-    };
-    // Capture compressed-entity prestate before submitting the mutation. These
-    // live observations are finalized checkpoints, not historical eth_call reads.
-    let before_indexes = nod_snapshot(world, owner, id, head);
-    let before = nod_bodies(world, id, head);
-    assert_snapshot_bodies(&before_indexes, &before);
-    assert_same_snapshot(&qualified, &before_indexes);
-    let settled = eth::send_call_outcome(&url, addresses::NOD_FACTORY_ADDR, PAYER_KEY, &pay, None)
-        .expect("independent ERC20 settlement");
-    assert_mined_success(&settled, "third-party ERC20 settlement");
-    let settled_height = finalize(world, &settled);
-    assert_relay_transaction(world, &settled, payer, &pay.abi_encode());
-    assert_receipt_event(
-        &settled.receipt,
-        addresses::NOD_FACTORY_ADDR,
-        &eth::INodFactory::NodPaid {
-            owner,
-            nodId: id.to_u256(),
-            asset,
-            paymentMinor: body.settlementCostMinor,
-        },
-    );
-    for &peer in &ports {
-        let peer_url = world.rpc.url(peer);
-        let balances_before = asset_balances(
-            &peer_url,
-            asset,
-            [payer, vault, owner, addresses::NOD_FACTORY_ADDR],
-            settled_height - 1,
-        );
-        let balances_after = asset_balances(
-            &peer_url,
-            asset,
-            [payer, vault, owner, addresses::NOD_FACTORY_ADDR],
-            settled_height,
-        );
-        assert_payment_delta(balances_before, balances_after, body.settlementCostMinor);
-        let fee = crate::world::rpc::Rpc::receipt_gas_cost(&settled.receipt).expect("payer gas");
-        assert_eq!(
-            native_balance_at(&peer_url, payer, settled_height) + fee,
-            native_balance_at(&peer_url, payer, settled_height - 1)
-        );
-    }
-    let paid = nod_bodies(world, id, settled_height);
-    assert_paid_transition(&before, &paid);
-    let paid_indexes = nod_snapshot(world, owner, id, settled_height);
-    assert_snapshot_bodies(&paid_indexes, &paid);
-    assert_index_transition(
-        &before_indexes.index,
-        &paid_indexes.index,
-        id.to_u256(),
-        false,
-    );
-    let duplicate_before = nod_snapshot(world, owner, id, settled_height);
-    assert_same_snapshot(&paid_indexes, &duplicate_before);
-    let duplicate = assert_live_nod_revert(world, &pay, "nod is already settled");
-    let duplicate_height = duplicate.block_number().expect("duplicate receipt block");
-    assert_eq!(nod_bodies(world, id, duplicate_height), paid);
-    let duplicate_after = nod_snapshot(world, owner, id, duplicate_height);
-    assert_same_snapshot(&duplicate_before, &duplicate_after);
-    for &peer in &ports {
-        let peer_url = world.rpc.url(peer);
-        assert_eq!(
-            asset_balances(
-                &peer_url,
-                asset,
-                [payer, vault, owner, addresses::NOD_FACTORY_ADDR],
-                duplicate_height - 1
-            ),
-            asset_balances(
-                &peer_url,
-                asset,
-                [payer, vault, owner, addresses::NOD_FACTORY_ADDR],
-                duplicate_height
-            ),
-            "duplicate payment rollback"
-        );
-    }
-    let nonce = eth::read_call(
-        &url,
-        addresses::GRATIS_ADDR,
-        &eth::IGratis::opNonceOfCall { account: owner },
-    )
-    .expect("owner mint nonce");
-    let pow = find_mining_pow_nonce(outbe_common::pow::MiningDomain::Nod, id.to_u256(), owner);
-    let pair_chain_id = chain_id_b256(world);
-    // This is a valid MAC for the payer's own account, never the Nod owner's.
-    let wrong_mac = outbe_tee_enclave::gratis::modify_mac(
-        &payer_keys.modify,
-        payer,
-        GratisOp::Mint,
-        body.gratisLoadMinor,
-        nonce,
-        pair_chain_id,
-    );
-    let mut mine = eth::INodFactory::mineGratisCall {
-        nodId: id.to_u256(),
-        nonce: pow,
-        mac: B256::from(wrong_mac),
-        opNonce: nonce,
-    };
-    let rejected_before = nod_snapshot(world, owner, id, duplicate_height);
-    assert_same_snapshot(&paid_indexes, &rejected_before);
-    for &peer in &ports {
-        assert_eq!(
-            eth::read_call_result(
-                &world.rpc.url(peer),
-                addresses::GRATIS_ADDR,
-                &eth::IGratis::opNonceOfCall { account: owner }
-            )
-            .expect("owner nonce before wrong MAC"),
-            nonce
-        );
-    }
-    let wrong_call = mine.abi_encode();
-    let pair_accounts = [payer, vault, owner, addresses::NOD_FACTORY_ADDR];
-    let pair_height = live_checkpoint(world, port).height;
-    world
-        .rpc
-        .wait_finalized_checkpoint(&ports, pair_height, 120)
-        .expect("MAC pair prestate finalized");
-    let pair_before = mac_pair_state(world, asset, pair_accounts, pair_height);
-    assert_eq!(pair_before.owner_gratis.1, nonce);
-    let rejected = assert_mined_nod_rejection(world, &mine);
-    let rejected_height = rejected.block_number().expect("wrong MAC receipt block");
-    assert_eq!(
-        mac_pair_state(world, asset, pair_accounts, rejected_height - 1),
-        pair_before,
-        "MAC guard inputs changed before the failed transaction"
-    );
-    let pair_rejected = mac_pair_state(world, asset, pair_accounts, rejected_height);
-    assert_eq!(
-        pair_rejected, pair_before,
-        "wrong MAC must roll back raw Gratis, nonces and ERC20"
-    );
-    assert_eq!(
-        nod_bodies(world, id, rejected_height),
-        paid,
-        "wrong MAC must preserve the paid item and bucket"
-    );
-    let rejected_after = nod_snapshot(world, owner, id, rejected_height);
-    assert_same_snapshot(&rejected_before, &rejected_after);
-    for &peer in &ports {
-        let peer_url = world.rpc.url(peer);
-        let fee =
-            crate::world::rpc::Rpc::receipt_gas_cost(&rejected.receipt).expect("wrong MAC gas");
-        assert_eq!(
-            native_balance_at(&peer_url, payer, rejected_height) + fee,
-            native_balance_at(&peer_url, payer, rejected_height - 1),
-            "wrong MAC debits only relayer gas"
-        );
-        assert_eq!(
-            eth::read_call_at_result(
-                &peer_url,
-                addresses::GRATIS_ADDR,
-                &eth::IGratis::opNonceOfCall { account: owner },
-                rejected_height
-            )
-            .expect("owner nonce after wrong MAC"),
-            nonce
-        );
-        for (account, keys) in [(owner, &owner_keys), (payer, &payer_keys)] {
-            assert_eq!(
-                gratis_at(&peer_url, account, &keys.view, rejected_height - 1),
-                gratis_at(&peer_url, account, &keys.view, rejected_height),
-                "wrong MAC changed Gratis"
-            );
-            assert_eq!(
-                eth::read_call_at_result(
-                    &peer_url,
-                    addresses::GRATIS_ADDR,
-                    &eth::IGratis::opNonceOfCall { account },
-                    rejected_height - 1
-                )
-                .expect("pre-rejection nonce"),
-                eth::read_call_at_result(
-                    &peer_url,
-                    addresses::GRATIS_ADDR,
-                    &eth::IGratis::opNonceOfCall { account },
-                    rejected_height
-                )
-                .expect("post-rejection nonce")
-            );
-        }
-    }
-    mine.mac = B256::from(outbe_tee_enclave::gratis::modify_mac(
-        &owner_keys.modify,
-        owner,
-        GratisOp::Mint,
-        body.gratisLoadMinor,
-        nonce,
-        pair_chain_id,
-    ));
-    assert_only_mac_changed(&wrong_call, &mine);
-    assert_eq!(
-        chain_id_b256(world),
-        pair_chain_id,
-        "MAC chain binding changed"
-    );
-    let minted_before = nod_snapshot(world, owner, id, rejected_height);
-    assert_same_snapshot(&paid_indexes, &minted_before);
-    assert_eq!(
-        nod_bodies(world, id, rejected_height),
-        paid,
-        "paid bodies changed before the valid retry"
-    );
-    let retry_height = live_checkpoint(world, port).height;
-    world
-        .rpc
-        .wait_finalized_checkpoint(&ports, retry_height, 120)
-        .expect("MAC retry prestate finalized");
-    assert_eq!(
-        mac_pair_state(world, asset, pair_accounts, retry_height),
-        pair_rejected,
-        "MAC guard inputs changed before the valid retry"
-    );
-    let minted = eth::send_call_outcome(&url, addresses::NOD_FACTORY_ADDR, PAYER_KEY, &mine, None)
-        .expect("owner-authorized relayed mining retry");
-    assert_mined_success(&minted, "owner-authorized relayed mining");
-    let minted_height = finalize(world, &minted);
-    assert_eq!(
-        mac_pair_state(world, asset, pair_accounts, minted_height - 1),
-        pair_rejected,
-        "MAC guard inputs changed before valid transaction execution"
-    );
-    let pair_minted = mac_pair_state(world, asset, pair_accounts, minted_height);
-    assert_eq!(
-        pair_minted.owner_gratis.1,
-        nonce.checked_add(1).expect("owner nonce increment")
-    );
-    assert_eq!(
-        pair_minted.payer_gratis, pair_rejected.payer_gratis,
-        "relayer Gratis remains unchanged"
-    );
-    assert_eq!(
-        pair_minted.assets, pair_rejected.assets,
-        "valid retry leaves settlement tokens unchanged"
-    );
-    for &peer in &ports {
-        let tx = eth::raw_json_result(
-            &world.rpc.url(peer),
-            "eth_getTransactionByHash",
-            serde_json::json!([minted.transaction_hash]),
-        )
-        .expect("valid MAC transaction gas");
-        let gas = U256::from_str_radix(
-            tx["gas"]
-                .as_str()
-                .expect("submitted gas")
-                .trim_start_matches("0x"),
-            16,
-        )
-        .expect("submitted gas hex");
-        assert_eq!(
-            gas,
-            U256::from(NOD_CALL_GAS_LIMIT),
-            "both MAC calls use identical gas limits"
-        );
-    }
-    let minted_after = nod_snapshot(world, owner, id, minted_height);
-    assert_index_transition(
-        &minted_before.index,
-        &minted_after.index,
-        id.to_u256(),
-        true,
-    );
-    assert!(
-        minted_after.body.is_none(),
-        "mined Nod left the live owner index"
-    );
-    assert_relay_transaction(world, &minted, payer, &mine.abi_encode());
-    assert_receipt_event(
-        &minted.receipt,
-        addresses::NOD_FACTORY_ADDR,
-        &eth::INodFactory::NodExercised {
-            owner,
-            nodId: id.to_u256(),
-            gratisLoadMinor: body.gratisLoadMinor,
-        },
-    );
-    assert_receipt_event(
-        &minted.receipt,
-        addresses::NOD_FACTORY_ADDR,
-        &eth::INodFactory::NodBurned {
-            owner,
-            nodId: id.to_u256(),
-            gratisLoadMinor: body.gratisLoadMinor,
-        },
-    );
-    for &peer in &ports {
-        let peer_url = world.rpc.url(peer);
-        assert_eq!(
-            gratis_at(&peer_url, owner, &owner_keys.view, minted_height),
-            gratis_at(&peer_url, owner, &owner_keys.view, minted_height - 1) + body.gratisLoadMinor
-        );
-        assert_eq!(
-            gratis_at(&peer_url, payer, &payer_keys.view, minted_height),
-            gratis_at(&peer_url, payer, &payer_keys.view, minted_height - 1)
-        );
-        assert_eq!(
-            asset_balances(
-                &peer_url,
-                asset,
-                [payer, vault, owner, addresses::NOD_FACTORY_ADDR],
-                minted_height - 1
-            ),
-            asset_balances(
-                &peer_url,
-                asset,
-                [payer, vault, owner, addresses::NOD_FACTORY_ADDR],
-                minted_height
-            ),
-            "relayed mining must not move settlement tokens"
-        );
-        let fee =
-            crate::world::rpc::Rpc::receipt_gas_cost(&minted.receipt).expect("relayer mining gas");
-        assert_eq!(
-            native_balance_at(&peer_url, payer, minted_height) + fee,
-            native_balance_at(&peer_url, payer, minted_height - 1)
-        );
-        assert!(
-            compressed_body(world, peer, 2, id, minted_height).is_none(),
-            "mined Nod must have authenticated absence"
-        );
-        // The V2 fixture issued a singleton bucket. Mining its one paid right
-        // must remove the bucket instead of leaving an orphan settled counter.
-        assert_eq!(paid.1.settled_nods, 1);
-        assert!(
-            compressed_body(world, peer, 3, bucket_id, minted_height).is_none(),
-            "empty paid bucket must be deleted"
-        );
-    }
-    eprintln!("settlement_evidence kind=controlled_mac_pair rejected_tx={} accepted_tx={} negative_status=0 positive_status=1 only_call_mac_changed=true guard_state_preserved=true gas_limit={NOD_CALL_GAS_LIMIT}",
-        rejected.transaction_hash, minted.transaction_hash);
-    eprintln!("settlement_evidence kind=erc20_relayed_nod owner={owner:#x} payer={payer:#x} nod={} settle={} duplicate={} wrong_mac={} mine={}",
-        id.to_u256(), settled.transaction_hash, duplicate.transaction_hash, rejected.transaction_hash, minted.transaction_hash);
+    let day = world
+        .state
+        .ocomp_successor_job_request
+        .as_ref()
+        .expect("successor JobIntent")
+        .worldwide_day;
+    run_relayed_mining(world, 1, day, false);
 }
+
+#[path = "settlement_nod/relayed.rs"]
+mod relayed;
+pub(super) use relayed::run_relayed_mining;
 
 fn assert_only_mac_changed(wrong_call: &[u8], correct: &eth::INodFactory::mineGratisCall) {
     let wrong =
@@ -468,6 +51,8 @@ struct MacPairState {
     assets: [U256; 4],
     owner_gratis: (alloy_primitives::Bytes, u64),
     payer_gratis: (alloy_primitives::Bytes, u64),
+    fidelity: [Vec<U256>; 2],
+    first_qualified_start: U256,
 }
 
 /// Ordinary EVM storage remains available at exact receipt boundaries. The
@@ -503,6 +88,16 @@ fn mac_pair_state(
             assets: asset_balances(&url, asset, accounts, height),
             owner_gratis: gratis(accounts[2]),
             payer_gratis: gratis(accounts[0]),
+            fidelity: [
+                fidelity_storage_at(&url, accounts[2], height),
+                fidelity_storage_at(&url, accounts[0], height),
+            ],
+            first_qualified_start: storage_word_at(
+                &url,
+                outbe_primitives::addresses::FIDELITY_ADDRESS,
+                U256::ONE,
+                height,
+            ),
         };
         if let Some(expected) = &expected {
             assert_eq!(expected, &state, "MAC-pair state differs across validators");
@@ -513,134 +108,50 @@ fn mac_pair_state(
     expected.expect("nonempty MAC-pair observer cohort")
 }
 
-pub(super) fn qualify_public_nod(
-    world: &mut World,
-    id: WwdEntityId,
-    owner: Address,
-    floor: U256,
-    issued_at: u64,
-) {
-    assert_ne!(
-        issued_at, 0,
-        "public Nod must have a sealed issuance timestamp"
-    );
-    let first_full_day = outbe_primitives::time::first_full_day(issued_at);
-    let port = world.validators.primary_port();
-    let ports = world.validators.committee_ports();
-    let head = world.rpc.head(port).expect("successor qualification head");
-    world
-        .rpc
-        .wait_finalized_checkpoint(&ports, head, 120)
-        .expect("qualification precondition finality");
-    if successor_is_qualified(world, owner, id, head) {
-        return;
-    }
-    let rate = floor
-        .checked_mul(U256::from(2))
-        .expect("successor qualification quote");
-    assert!(rate > floor);
-    let mut first_boundary_day = None;
-    // The first closed day can be the partial issuance day or contain earlier
-    // low-price samples. The next entire UTC day uses only the declared quote.
-    // Two transitions are sufficient. No Nod state or Oracle history is injected.
-    for boundary in 0..2 {
-        crate::features::price_oracle::publish_controlled_quote(world, rate);
-        let publication = world
-            .price_oracle
-            .last_oracle_block()
-            .expect("fresh high quote finalized");
-        let published_at = world
-            .rpc
-            .block_timestamp(port, publication)
-            .expect("qualification quote timestamp");
-        let now = world
-            .rpc
-            .latest_block_timestamp(port)
-            .expect("qualification clock");
-        assert_eq!(
-            published_at / 86_400,
-            now / 86_400,
-            "high quote must finalize within the day being closed"
-        );
-        if let Some(expected_day) = first_boundary_day {
-            assert_eq!(
-                published_at / 86_400,
-                expected_day,
-                "fallback must close the complete subsequent UTC day"
-            );
-        }
-        let target = (now / 86_400 + 1)
-            .checked_mul(86_400)
-            .and_then(|v| v.checked_add(1))
-            .expect("next UTC boundary");
-        let closed_day = outbe_primitives::time::timestamp_to_date_key(now);
-        let (_, _, height, pending) =
-            crate::features::ocomp::restart_committee_at_logical_time(world, target);
-        for &peer in &ports {
-            assert!(world.rpc.wait_finalized_at_least(peer, height, 240));
-        }
-        let deadline = Instant::now() + Duration::from_secs(120);
-        if let Some(pending) = pending {
-            while !crate::features::price_oracle::observe_pending_publication(world, &pending) {
-                assert!(
-                    Instant::now() < deadline,
-                    "post-jump feeder did not finalize"
-                );
-                sleep(Duration::from_millis(500));
-            }
-        }
-        loop {
-            let latest = world
-                .rpc
-                .finalized(port)
-                .expect("qualification finalized height");
-            let checkpoint = world
-                .rpc
-                .wait_finalized_checkpoint(&ports, latest, 120)
-                .expect("common closed-day qualification checkpoint");
-            let values = ports
-                .iter()
-                .map(|&peer| {
-                    eth::read_call_at(
-                        &world.rpc.url(peer),
-                        outbe_primitives::addresses::ORACLE_ADDRESS,
-                        &eth::IOracle::getUtcDayVwapCall {
-                            base: Address::ZERO,
-                            quote: outbe_primitives::asset_type::currency_address(USD_ISO),
-                            utcDay: closed_day,
-                        },
-                        checkpoint.height,
-                    )
-                })
-                .collect::<Vec<_>>();
-            if let Some(vwap) = values.first().copied().flatten() {
-                if values.iter().all(|value| *value == Some(vwap)) {
-                    if boundary == 1 {
-                        assert_eq!(
-                            vwap, rate,
-                            "the full fallback UTC day must contain only the declared high quote"
-                        );
-                    }
-                    if closed_day < first_full_day || vwap <= floor {
-                        assert_eq!(boundary, 0, "isolated high-price day must exceed Nod floor");
-                        eprintln!("settlement_evidence kind=qualification_fallback day={closed_day} first_full_day={first_full_day} vwap={vwap} floor={floor}");
-                        first_boundary_day = Some(target / 86_400);
-                        break;
-                    }
-                    if successor_is_qualified(world, owner, id, checkpoint.height) {
-                        eprintln!("settlement_evidence kind=successor_qualified day={closed_day} vwap={vwap} floor={floor} boundary={} height={}", boundary + 1, checkpoint.height);
-                        return;
-                    }
-                }
-            }
-            assert!(Instant::now() < deadline,
-                "successor qualification failed: boundary={} day={closed_day} floor={floor} rate={rate} finalized={} observed_vwaps={values:?}",
-                boundary + 1, checkpoint.height);
-            sleep(Duration::from_millis(500));
-        }
-    }
-    panic!("successor remained unqualified after two closed UTC days");
+fn storage_word_at(url: &str, address: Address, slot: U256, height: u64) -> U256 {
+    let word = eth::raw_json_result(
+        url,
+        "eth_getStorageAt",
+        serde_json::json!([
+            format!("{address:#x}"),
+            format!("{slot:#066x}"),
+            format!("0x{height:x}")
+        ]),
+    )
+    .expect("raw finalized ledger storage");
+    U256::from_str_radix(
+        word.as_str()
+            .expect("storage word")
+            .trim_start_matches("0x"),
+        16,
+    )
+    .expect("hex storage word")
 }
+
+fn fidelity_storage_at(url: &str, owner: Address, height: u64) -> Vec<U256> {
+    let address = outbe_primitives::addresses::FIDELITY_ADDRESS;
+    let slot = owner.mapping_slot(U256::ZERO);
+    let base = storage_word_at(url, address, slot, height);
+    let mut words = vec![base];
+    if base.bit(0) {
+        let len = ((base - U256::ONE) / U256::from(2)).to::<usize>();
+        assert!(len <= 1 << 20, "bounded Fidelity cohort fixture");
+        let start = U256::from_be_bytes(alloy_primitives::keccak256(slot.to_be_bytes::<32>()).0);
+        for offset in 0..len.div_ceil(32) {
+            words.push(storage_word_at(
+                url,
+                address,
+                start + U256::from(offset),
+                height,
+            ));
+        }
+    }
+    words
+}
+
+#[path = "settlement_nod/qualification.rs"]
+mod qualification;
+pub(super) use qualification::qualify_public_nod;
 
 /// The Nod owner is an active voter and may receive delayed native fee credits.
 /// Prove the relayer's exact transaction and gas debit instead of assuming the
@@ -717,8 +228,8 @@ fn assert_payment_delta(before: [U256; 4], after: [U256; 4], amount: U256) {
 }
 
 fn assert_paid_transition(
-    before: &(NodItemBodyV1, NodBucketBodyV1),
-    after: &(NodItemBodyV1, NodBucketBodyV1),
+    before: &(NodItemBodyV2, NodBucketBodyV1),
+    after: &(NodItemBodyV2, NodBucketBodyV1),
 ) {
     assert!(!before.0.is_settled);
     let mut item = before.0.clone();
@@ -743,40 +254,49 @@ struct NodSnapshot {
     body: Option<eth::INod::NodData>,
 }
 
-/// Read live CE views without mixing blocks. This function retries only successful
-/// observations that straddle a head change. RPC and decoding failures remain fatal.
-fn stable_live_read<T>(world: &World, port: u16, minimum: u64, read: impl Fn() -> T) -> T {
+/// Read live CE views without mixing blocks.
+/// Retry successful reads across head changes and corresponding CE parent races.
+/// Retry other read failures twice. Stop the scenario if all three attempts fail.
+fn stable_live_read<T>(
+    world: &World,
+    port: u16,
+    minimum: u64,
+    read: impl Fn() -> Result<T, String>,
+) -> T {
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         assert!(
             Instant::now() < deadline,
             "live Nod checkpoint did not stabilize on {port}"
         );
-        let before = live_checkpoint(world, port);
-        if before.height < minimum {
+        let observation = crate::features::entity_lifecycle::chain::settlement_read(|| {
+            let before = live_checkpoint(world, port);
+            if before.height < minimum {
+                return Ok(None);
+            }
+            let result = read();
+            let after = live_checkpoint(world, port);
+            crate::internal::live_ce_read::resolve_live_ce_read(result, before != after)
+                .map(|value| value.map(|value| (before, value)))
+        });
+        let Some((before, value)) = observation.expect("live Nod observation failed") else {
             sleep(Duration::from_millis(100));
             continue;
-        }
-        let value = read();
-        let after = live_checkpoint(world, port);
-        if before != after {
-            continue;
-        }
-        let finalized = world
+        };
+        world
             .rpc
             .wait_finalized_checkpoint(&world.validators.committee_ports(), before.height, 120)
             .expect("live Nod observation finalized with cohort parity");
-        assert_eq!(
-            finalized, before,
-            "live Nod observation changed before finality"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, before.height)
-                .expect("recheck live Nod checkpoint"),
-            before
-        );
+        for peer in world.validators.committee_ports() {
+            assert_eq!(
+                world
+                    .rpc
+                    .checkpoint_at(peer, before.height)
+                    .expect("recheck original live Nod checkpoint"),
+                before,
+                "original live Nod checkpoint differs on peer {peer}"
+            );
+        }
         eprintln!("settlement_evidence kind=live_nod_checkpoint port={port} minimum={minimum} height={} hash={:#x}", before.height, before.block_hash);
         return value;
     }
@@ -805,16 +325,19 @@ fn assert_live_nod_revert<C: alloy_sol_types::SolCall>(
                     addresses::NOD_FACTORY_ADDR,
                     payer,
                     call,
-                    U256::ZERO,
-                    alloy_eips::BlockId::latest(),
-                    gas_limit,
+                    crate::internal::eth::RevertReplay {
+                        value: U256::ZERO,
+                        block: alloy_eips::BlockId::latest(),
+                        gas_limit,
+                    },
                 )
-                .expect("live Nod rejection with exact EVM revert data");
+                .map_err(|error| error.to_string())?;
                 assert_eq!(
                     actual.as_ref(),
                     expected.as_slice(),
                     "unexpected live Nod guard on {port}"
                 );
+                Ok(())
             });
         }
     };
@@ -955,13 +478,12 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
     let mut expected = None;
     for port in world.validators.committee_ports() {
         let url = world.rpc.url(port);
-        let snapshot = stable_live_read(world, port, minimum, || {
+        let snapshot = stable_live_read(world, port, minimum, || -> Result<_, String> {
             let count: usize = eth::read_call_result(
                 &url,
                 addresses::NOD_ADDR,
                 &eth::INod::balanceOfCall { owner },
-            )
-            .expect("live Nod owner count")
+            )?
             .try_into()
             .expect("bounded Nod count");
             assert!(count <= 32, "bounded Nod owner inventory");
@@ -975,9 +497,8 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
                             index: U256::from(index),
                         },
                     )
-                    .expect("live Nod owner index")
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, String>>()?;
             assert_eq!(
                 owner_ids
                     .iter()
@@ -987,28 +508,28 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
                 "duplicate Nod owner index"
             );
             let total_supply =
-                eth::read_call_result(&url, addresses::NOD_ADDR, &eth::INod::totalSupplyCall {})
-                    .expect("live Nod supply");
-            let body = owner_ids.contains(&id.to_u256()).then(|| {
+                eth::read_call_result(&url, addresses::NOD_ADDR, &eth::INod::totalSupplyCall {})?;
+            let body = if owner_ids.contains(&id.to_u256()) {
                 let body = eth::read_call_result(
                     &url,
                     addresses::NOD_ADDR,
                     &eth::INod::nodDataCall {
                         nodId: id.to_u256(),
                     },
-                )
-                .expect("live Nod body");
+                )?;
                 assert_eq!(body.owner, owner);
                 assert_eq!(body.nodId, id.to_u256());
-                body
-            });
-            NodSnapshot {
+                Some(body)
+            } else {
+                None
+            };
+            Ok(NodSnapshot {
                 index: NodIndexSnapshot {
                     owner_ids,
                     total_supply,
                 },
                 body,
-            }
+            })
         });
         if let Some(expected) = &expected {
             assert_same_snapshot(expected, &snapshot);
@@ -1082,20 +603,38 @@ fn assert_index_transition(
     }
 }
 
-fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodBucketBodyV1)) {
+fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV2, NodBucketBodyV1)) {
     let body = snapshot.body.as_ref().expect("live Nod body present");
     let item = &bodies.0;
-    assert_eq!(body.nodId, item.nod_id.to_u256());
-    assert_eq!(body.owner, item.owner);
-    assert_eq!(body.worldwideDay, item.worldwide_day.value());
-    assert_eq!(body.leagueId, item.league_id);
+    assert_eq!(body.nodId, item.encrypted.terms.nod_id.to_u256());
+    assert_eq!(body.owner, item.encrypted.terms.owner);
+    assert_eq!(
+        body.worldwideDay,
+        item.encrypted.terms.worldwide_day.value()
+    );
+    assert_eq!(body.leagueId, item.encrypted.terms.league_id);
     assert_eq!(
         Some(body.floorPriceMinor),
-        outbe_nod::NodContract::floor_price_minor(bodies.1.entry_price_minor)
+        outbe_nod::pricing::floor_price_minor(bodies.1.entry_price_minor)
     );
-    assert_eq!(body.gratisLoadMinor, item.gratis_load_minor);
-    assert_eq!(body.issuanceCurrency, item.issuance_currency);
-    assert_eq!(body.referenceCurrency, item.reference_currency);
+    assert_eq!(
+        body.encryptedGratisAmount.as_ref(),
+        item.encrypted.encrypted_gratis_amount
+    );
+    assert_eq!(
+        body.encryptedCreatorPublicKey.as_ref(),
+        item.encrypted.encrypted_creator_public_key
+    );
+    assert_eq!(body.encryptionBinding, item.encrypted.encryption_binding);
+    assert_eq!(body.chainId, item.encrypted.terms.chain_id);
+    assert_eq!(
+        body.issuanceCurrency,
+        item.encrypted.terms.issuance_currency
+    );
+    assert_eq!(
+        body.referenceCurrency,
+        item.encrypted.terms.reference_currency
+    );
     assert_eq!(body.issuedAt, item.issued_at);
     assert_eq!(body.isSettled, item.is_settled);
 }
@@ -1119,22 +658,21 @@ fn gratis_at(url: &str, owner: Address, view: &[u8; 32], height: u64) -> U256 {
         height,
     )
     .expect("finalized Gratis ciphertext");
-    if encrypted.is_empty() {
-        U256::ZERO
-    } else {
-        outbe_tee_enclave::gratis::decrypt_balance(view, owner, encrypted.as_ref())
+    decrypted_balance_or_zero(encrypted.as_ref(), |ciphertext| {
+        outbe_tee_enclave::gratis::decrypt_balance(view, owner, ciphertext)
             .expect("decrypt finalized Gratis")
-    }
+    })
 }
 
-fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV1, NodBucketBodyV1) {
+fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV2, NodBucketBodyV1) {
     let mut expected = None;
     for port in world.validators.committee_ports() {
-        let item = decode_stored_nod_item_v1(
+        let item = decode_stored_nod_item_v2(
             &compressed_body(world, port, 2, id, minimum).expect("Nod body present"),
         )
         .expect("canonical Nod body");
-        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+        let bucket_id =
+            WwdEntityId::from_day_and_digest(item.encrypted.terms.worldwide_day, item.bucket_key);
         let bucket = decode_stored_nod_bucket_v1(
             &compressed_body(world, port, 3, bucket_id, minimum).expect("bucket present"),
         )
@@ -1169,15 +707,20 @@ fn compressed_body(
         "proof predates finalized transaction"
     );
     let height = package.header.block_number;
-    let canonical = eth::block_commitment(&world.rpc.url(world.validators.primary_port()), height)
-        .expect("canonical proof header");
     world
         .rpc
         .wait_finalized_checkpoint(&world.validators.committee_ports(), height, 120)
         .expect("proof header finalized");
+    let primary = world.validators.primary_port();
+    let canonical = eth::block_commitment_result(&world.rpc.url(primary), height)
+        .unwrap_or_else(|error| {
+            panic!("canonical proof header primary={primary} selected={port} height={height} domain={domain_id} hash={:#x}: {error:#}", package.header.block_hash)
+        });
     for peer in world.validators.committee_ports() {
         assert_eq!(
-            eth::block_commitment(&world.rpc.url(peer), height).expect("peer proof header"),
+            eth::block_commitment_result(&world.rpc.url(peer), height).unwrap_or_else(|error| {
+                panic!("peer proof header peer={peer} selected={port} height={height} domain={domain_id} hash={:#x}: {error:#}", package.header.block_hash)
+            }),
             canonical
         );
     }
@@ -1320,15 +863,23 @@ mod tests {
     fn paid_nod_oracle_rejects_missing_count_and_changed_owner_or_load() {
         let day = outbe_primitives::time::WorldwideDay::new(20260917);
         let bucket_key = B256::repeat_byte(2);
-        let item = NodItemBodyV1 {
-            nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(1)),
-            owner: Address::repeat_byte(3),
-            gratis_load_minor: U256::from(100),
-            worldwide_day: day,
-            league_id: 0,
+        let item = NodItemBodyV2 {
+            encrypted: outbe_primitives::nod_encryption::EncryptedNodV2 {
+                terms: outbe_primitives::nod_encryption::NodTermsV2 {
+                    chain_id: 1,
+                    nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(1)),
+                    owner: Address::repeat_byte(3),
+                    worldwide_day: day,
+                    league_id: 0,
+                    entry_price_minor: U256::from(9),
+                    issuance_currency: 840,
+                    reference_currency: 840,
+                },
+                encryption_binding: B256::repeat_byte(4),
+                encrypted_gratis_amount: vec![0x23; 56],
+                encrypted_creator_public_key: vec![0x24; 56],
+            },
             bucket_key,
-            issuance_currency: 840,
-            reference_currency: 840,
             issued_at: 1,
             is_settled: false,
         };
@@ -1348,8 +899,8 @@ mod tests {
             let mut bad = paid.clone();
             match mutation {
                 0 => bad.1.settled_nods = 0,
-                1 => bad.0.owner = Address::repeat_byte(9),
-                2 => bad.0.gratis_load_minor += U256::ONE,
+                1 => bad.0.encrypted.terms.owner = Address::repeat_byte(9),
+                2 => bad.0.encrypted.encrypted_gratis_amount[8] ^= 1,
                 _ => bad.0.is_settled = false,
             }
             assert!(std::panic::catch_unwind(|| assert_paid_transition(&before, &bad)).is_err());

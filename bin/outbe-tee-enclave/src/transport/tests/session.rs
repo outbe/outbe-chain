@@ -2,9 +2,7 @@ use crate::transport::tests::*;
 
 #[test]
 fn authorized_node_host_client_signs_dev_evidence_in_sgx_no_attest_mode() {
-    use outbe_primitives::tee_attestation_v1::{
-        AttestationMode, AttestationOperationV1, RegistrationIntentV1,
-    };
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, RegistrationIntentV1};
     use outbe_tee::{AuthorizedEnclaveClient, NodeHostNoiseKey};
 
     let root = tempfile::tempdir().unwrap();
@@ -17,7 +15,7 @@ fn authorized_node_host_client_signs_dev_evidence_in_sgx_no_attest_mode() {
     ));
     let keys = Arc::new(EnclaveKeys::new([0x53; 32], Some([0x53; 32])).unwrap());
     let initialization = Arc::new(
-        InitializationState::production_with_challenge_and_attestation(
+        crate::initialization::factory::production_with_challenge_and_attestation(
             boot.clone(),
             &keys,
             [0x54; 32],
@@ -60,23 +58,10 @@ fn authorized_node_host_client_signs_dev_evidence_in_sgx_no_attest_mode() {
     )
     .unwrap();
     let intent = RegistrationIntentV1 {
-        chain_id: manifest.chain_id,
-        genesis_hash: manifest.genesis_hash,
-        operation: AttestationOperationV1::RegisterEnclave,
         attestation_mode: AttestationMode::GramineDirectDev,
         policy_hash: B256::repeat_byte(0x55),
-        node_id: manifest.node_id.clone(),
-        enclave_id: manifest.enclave_id().unwrap(),
         binding_id: B256::repeat_byte(0x56),
-        binding_version: 1,
-        registration_version: 0,
-        renewal_nonce: 0,
-        transition_nonce: 0,
-        requested_valid_until: 7_200,
-        recipient_x25519: manifest.recipient_x25519,
-        attestation_ed25519: manifest.attestation_ed25519,
-        noise_responder_x25519: manifest.noise_responder_x25519,
-        node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+        ..crate::initialization::test_support::registration_intent_for_manifest(&manifest)
     };
     let signature = client.sign_registration_intent_dev_v1(&intent).unwrap();
     assert!(intent.verify_enclave_signature(&signature));
@@ -298,11 +283,7 @@ fn public_node_host_client_initializes_and_reconnects_role_neutral_identity() {
 
 #[test]
 fn preauthenticated_remote_ticket_opens_one_live_noise_session_and_cannot_replay() {
-    use outbe_primitives::tee_attestation_v1::{NodeHostAuthorizationWitnessV1, NodeIdV1};
-    use outbe_tee::{
-        admit_remote_session_v1, AuthorizedEnclaveClient, FinalizedRegistryBindingV1,
-        FinalizedRegistryViewV1, NodeHostNoiseKey, RemoteEnclaveClient, RemoteSessionExpectationV1,
-    };
+    use outbe_tee::{AuthorizedEnclaveClient, NodeHostNoiseKey, RemoteEnclaveClient};
 
     let root = tempfile::tempdir().unwrap();
     let socket = root.path().join("remote-enclave.sock");
@@ -351,22 +332,7 @@ fn preauthenticated_remote_ticket_opens_one_live_noise_session_and_cannot_replay
 
     let source_path = root.path().join("source-noise.key");
     let source = NodeHostNoiseKey::create_new(&source_path).unwrap();
-    let source_node = NodeIdV1 {
-        reth_p2p_public: k256::ecdsa::SigningKey::from_bytes((&[0xB1; 32]).into())
-            .unwrap()
-            .verifying_key()
-            .to_encoded_point(true)
-            .as_bytes()
-            .try_into()
-            .unwrap(),
-    };
-    let source_witness = NodeHostAuthorizationWitnessV1 {
-        chain_id: manifest.chain_id,
-        genesis_hash: manifest.genesis_hash,
-        attestation_mode: manifest.attestation_mode,
-        node_id: source_node.clone(),
-        node_host_noise_x25519: source.public(),
-    };
+    let source_witness = source_authorization_witness(&manifest, &source);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -382,47 +348,7 @@ fn preauthenticated_remote_ticket_opens_one_live_noise_session_and_cannot_replay
         Err(outbe_tee::TransportError::Handshake(message))
             if message.contains("finalized admission capability")
     ));
-    let view = FinalizedRegistryViewV1 {
-        chain_id: manifest.chain_id,
-        genesis_hash: manifest.genesis_hash,
-        block_number: 101,
-        block_hash: B256::repeat_byte(0xB3),
-        state_root: B256::repeat_byte(0xB4),
-        consensus_timestamp: now.saturating_sub(1),
-    };
-    let source_binding = FinalizedRegistryBindingV1 {
-        view,
-        node_id_hash: source_node.node_id_hash().unwrap(),
-        enclave_id: B256::repeat_byte(0xB5),
-        binding_id: B256::repeat_byte(0xB6),
-        intent_hash: B256::repeat_byte(0xB7),
-        valid_until: now + 600,
-        noise_responder_x25519: [0xB8; 32],
-        node_host_authorization_hash: source_witness.authorization_hash().unwrap(),
-    };
-    let target_hash = manifest.node_id.node_id_hash().unwrap();
-    let target_binding = FinalizedRegistryBindingV1 {
-        view,
-        node_id_hash: target_hash,
-        enclave_id: manifest.enclave_id().unwrap(),
-        binding_id: B256::repeat_byte(0xC1),
-        intent_hash: B256::repeat_byte(0xC2),
-        valid_until: now + 500,
-        noise_responder_x25519: manifest.noise_responder_x25519,
-        node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
-    };
-    let admission = admit_remote_session_v1(
-        RemoteSessionExpectationV1 {
-            chain_id: manifest.chain_id,
-            genesis_hash: manifest.genesis_hash,
-            source_node_id_hash: source_binding.node_id_hash,
-            target_node_id_hash: target_hash,
-        },
-        &source_witness,
-        source_binding,
-        target_binding,
-    )
-    .unwrap();
+    let admission = finalized_remote_admission(&manifest, &source_witness, now);
     let wrong_ticket = owner_client.authorize_remote_session(&admission).unwrap();
     let mut wrong_stream = std::os::unix::net::UnixStream::connect(&socket).unwrap();
     wrong_stream
@@ -471,7 +397,6 @@ fn preauthenticated_remote_ticket_opens_one_live_noise_session_and_cannot_replay
 #[test]
 fn node_host_state_initializes_once_and_reconnects_from_datadir() {
     use alloy_primitives::U256;
-    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
     use outbe_tee::{connect_or_initialize_node_host_enclave, NodeHostIdentityV1};
 
     let root = tempfile::tempdir().unwrap();
@@ -520,15 +445,7 @@ fn node_host_state_initializes_once_and_reconnects_from_datadir() {
             .try_into()
             .unwrap(),
     };
-    let sign = |hash: B256| {
-        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
-            .sign_prehash(hash.as_slice())
-            .map_err(|error| error.to_string())?;
-        let mut bytes = [0_u8; 65];
-        bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
-        bytes[64] = recovery.to_byte();
-        Ok(bytes)
-    };
+    let sign = |hash| sign_node_host_hash(&signing, hash);
     let node_data_dir = root.path().join("node-data");
     std::fs::create_dir(&node_data_dir).unwrap();
 
@@ -561,14 +478,10 @@ fn node_host_state_initializes_once_and_reconnects_from_datadir() {
 #[test]
 fn node_host_replacement_candidate_keeps_the_committed_enclave_active() {
     use alloy_primitives::U256;
-    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-    use outbe_primitives::tee_attestation_v1::{
-        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-        DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1, RegistrationIntentV1,
-    };
+    use outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1;
     use outbe_tee::{
-        connect_or_initialize_node_host_enclave, persist_replacement_candidate_submission,
-        prepare_node_host_enclave_replacement_candidate, NodeHostIdentityV1,
+        connect_or_initialize_node_host_enclave, prepare_node_host_enclave_replacement_candidate,
+        NodeHostIdentityV1,
     };
 
     let root = tempfile::tempdir().unwrap();
@@ -598,37 +511,9 @@ fn node_host_replacement_candidate_keeps_the_committed_enclave_active() {
     let initialization_b = Arc::new(production_dcap_state(boot_b.clone(), &keys_b));
 
     let listener_a = UnixListener::bind(&socket_a).unwrap();
-    let server_keys_a = keys_a.clone();
-    let server_a = std::thread::spawn(move || {
-        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        for _ in 0..3 {
-            let (stream, _) = listener_a.accept().unwrap();
-            serve_connection_with(
-                stream,
-                &server_keys_a,
-                &offer_key,
-                Some(&boot_a),
-                &initialization_a,
-            )
-            .unwrap();
-        }
-    });
+    let server_a = spawn_sequential_server(listener_a, keys_a.clone(), boot_a, initialization_a, 3);
     let listener_b = UnixListener::bind(&socket_b).unwrap();
-    let server_keys_b = keys_b.clone();
-    let server_b = std::thread::spawn(move || {
-        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        for _ in 0..3 {
-            let (stream, _) = listener_b.accept().unwrap();
-            serve_connection_with(
-                stream,
-                &server_keys_b,
-                &offer_key,
-                Some(&boot_b),
-                &initialization_b,
-            )
-            .unwrap();
-        }
-    });
+    let server_b = spawn_sequential_server(listener_b, keys_b.clone(), boot_b, initialization_b, 3);
 
     let signing = k256::ecdsa::SigningKey::from_bytes((&[0x63; 32]).into()).unwrap();
     let identity = NodeHostIdentityV1 {
@@ -644,15 +529,7 @@ fn node_host_replacement_candidate_keeps_the_committed_enclave_active() {
             .try_into()
             .unwrap(),
     };
-    let sign = |hash: B256| {
-        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
-            .sign_prehash(hash.as_slice())
-            .map_err(|error| error.to_string())?;
-        let mut bytes = [0_u8; 65];
-        bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
-        bytes[64] = recovery.to_byte();
-        Ok(bytes)
-    };
+    let sign = |hash| sign_node_host_hash(&signing, hash);
     let node_data_dir = root.path().join("node-data");
     std::fs::create_dir(&node_data_dir).unwrap();
 
@@ -699,72 +576,7 @@ fn node_host_replacement_candidate_keeps_the_committed_enclave_active() {
     assert_eq!(std::fs::read(&candidate_path).unwrap(), candidate_bytes);
     drop(resumed);
 
-    let intent = RegistrationIntentV1 {
-        chain_id: candidate_manifest.chain_id,
-        genesis_hash: candidate_manifest.genesis_hash,
-        operation: AttestationOperationV1::ReplaceEnclaveBinding,
-        attestation_mode: AttestationMode::DcapRequired,
-        policy_hash: B256::repeat_byte(0x21),
-        node_id: candidate_manifest.node_id.clone(),
-        enclave_id: candidate_manifest.enclave_id().unwrap(),
-        binding_id: B256::repeat_byte(0x45),
-        binding_version: 2,
-        registration_version: 1,
-        renewal_nonce: 0,
-        transition_nonce: 0,
-        requested_valid_until: 20_000,
-        recipient_x25519: candidate_manifest.recipient_x25519,
-        attestation_ed25519: candidate_manifest.attestation_ed25519,
-        noise_responder_x25519: candidate_manifest.noise_responder_x25519,
-        node_host_authorization_hash: candidate_manifest.node_host_authorization_hash().unwrap(),
-    };
-    candidate_manifest.validate_intent_binding(&intent).unwrap();
-    let intent_hash = intent.intent_hash().unwrap();
-    let node_signature = sign(intent_hash).unwrap();
-    let enclave_signature = keys_b.sign_attestation(intent_hash.as_slice());
-    let components = (1_u8..=8)
-        .map(|kind| DcapCollateralComponentV1 {
-            kind: DcapCollateralKind::try_from(kind).unwrap(),
-            bytes: vec![kind],
-        })
-        .collect();
-    let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
-        intent,
-        quote: vec![0x51],
-        components,
-        transition_key_ready_proof: None,
-    });
-    let submission = persist_replacement_candidate_submission(
-        &node_data_dir,
-        &evidence,
-        &node_signature,
-        &enclave_signature,
-    )
-    .unwrap();
-    assert_eq!(
-        persist_replacement_candidate_submission(
-            &node_data_dir,
-            &evidence,
-            &node_signature,
-            &enclave_signature,
-        )
-        .unwrap(),
-        submission
-    );
-    let mut conflicting = evidence;
-    let AttestationEvidenceV1::Dcap(conflicting_dcap) = &mut conflicting else {
-        unreachable!();
-    };
-    conflicting_dcap.quote[0] ^= 1;
-    assert!(persist_replacement_candidate_submission(
-        &node_data_dir,
-        &conflicting,
-        &node_signature,
-        &enclave_signature,
-    )
-    .unwrap_err()
-    .to_string()
-    .contains("conflicts with the durable replacement submission"));
+    assert_replacement_submission(&node_data_dir, &candidate_manifest, &keys_b, sign);
 
     let mut active_client =
         connect_or_initialize_node_host_enclave(&endpoint_a, &node_data_dir, identity, sign)
@@ -783,7 +595,6 @@ fn node_host_replacement_candidate_keeps_the_committed_enclave_active() {
 #[test]
 fn replacement_candidate_resumes_after_crash_between_stage_and_initialize() {
     use alloy_primitives::U256;
-    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
     use outbe_tee::{
         connect_or_initialize_node_host_enclave, prepare_node_host_enclave_replacement_candidate,
         NodeHostIdentityV1,
@@ -818,21 +629,13 @@ fn replacement_candidate_resumes_after_crash_between_stage_and_initialize() {
     ));
 
     let active_listener = UnixListener::bind(&active_socket).unwrap();
-    let active_server_keys = active_keys.clone();
-    let active_server = std::thread::spawn(move || {
-        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        for _ in 0..2 {
-            let (stream, _) = active_listener.accept().unwrap();
-            serve_connection_with(
-                stream,
-                &active_server_keys,
-                &offer_key,
-                Some(&active_boot),
-                &active_initialization,
-            )
-            .unwrap();
-        }
-    });
+    let active_server = spawn_sequential_server(
+        active_listener,
+        active_keys.clone(),
+        active_boot,
+        active_initialization,
+        2,
+    );
 
     let signing = k256::ecdsa::SigningKey::from_bytes((&[0x64; 32]).into()).unwrap();
     let identity = NodeHostIdentityV1 {
@@ -848,15 +651,7 @@ fn replacement_candidate_resumes_after_crash_between_stage_and_initialize() {
             .try_into()
             .unwrap(),
     };
-    let sign = |hash: B256| {
-        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
-            .sign_prehash(hash.as_slice())
-            .map_err(|error| error.to_string())?;
-        let mut bytes = [0_u8; 65];
-        bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
-        bytes[64] = recovery.to_byte();
-        Ok(bytes)
-    };
+    let sign = |hash| sign_node_host_hash(&signing, hash);
     let node_data_dir = root.path().join("node-data");
     std::fs::create_dir(&node_data_dir).unwrap();
     drop(
@@ -866,21 +661,13 @@ fn replacement_candidate_resumes_after_crash_between_stage_and_initialize() {
     active_server.join().unwrap();
 
     let first_listener = UnixListener::bind(&candidate_socket).unwrap();
-    let first_server_keys = candidate_keys.clone();
-    let first_boot = candidate_boot.clone();
-    let first_initialization = candidate_initialization.clone();
-    let first_server = std::thread::spawn(move || {
-        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        let (stream, _) = first_listener.accept().unwrap();
-        serve_connection_with(
-            stream,
-            &first_server_keys,
-            &offer_key,
-            Some(&first_boot),
-            &first_initialization,
-        )
-        .unwrap();
-    });
+    let first_server = spawn_sequential_server(
+        first_listener,
+        candidate_keys.clone(),
+        candidate_boot.clone(),
+        candidate_initialization.clone(),
+        1,
+    );
     assert!(prepare_node_host_enclave_replacement_candidate(
         &candidate_endpoint,
         &node_data_dir,
@@ -900,39 +687,12 @@ fn replacement_candidate_resumes_after_crash_between_stage_and_initialize() {
     retry_listener.set_nonblocking(true).unwrap();
     let retry_server_keys = candidate_keys.clone();
     let retry_server = std::thread::spawn(move || {
-        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut accepted = 0;
-        while accepted < 3 && std::time::Instant::now() < deadline {
-            match retry_listener.accept() {
-                Ok((stream, _)) => {
-                    // macOS propagates O_NONBLOCK from the listener to the
-                    // accepted socket. The enclave protocol itself is
-                    // intentionally blocking, so restore that contract.
-                    stream.set_nonblocking(false).unwrap();
-                    let result = serve_connection_with(
-                        stream,
-                        &retry_server_keys,
-                        &offer_key,
-                        Some(&candidate_boot),
-                        &restarted_candidate_initialization,
-                    );
-                    if let Err(error) = result {
-                        assert!(
-                            error.to_string().contains("enclave is not initialized")
-                                || error.to_string().contains("challenge mismatch"),
-                            "unexpected candidate retry error: {error}"
-                        );
-                    }
-                    accepted += 1;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                Err(error) => panic!("candidate retry listener failed: {error}"),
-            }
-        }
-        accepted
+        serve_candidate_retry(
+            retry_listener,
+            retry_server_keys,
+            candidate_boot,
+            restarted_candidate_initialization,
+        )
     });
     let retry = prepare_node_host_enclave_replacement_candidate(
         &candidate_endpoint,
@@ -953,7 +713,6 @@ fn replacement_candidate_resumes_after_crash_between_stage_and_initialize() {
 #[test]
 fn node_host_replacement_preserves_exact_reth_p2p_identity() {
     use alloy_primitives::U256;
-    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
     use outbe_primitives::tee_attestation_v1::{EnclaveInitializationManifestV1, NodeIdV1};
     use outbe_tee::{
         connect_or_initialize_node_host_enclave, prepare_node_host_enclave_replacement_candidate,
@@ -987,39 +746,16 @@ fn node_host_replacement_preserves_exact_reth_p2p_identity() {
         candidate_boot.clone(),
         &candidate_keys,
     ));
-    let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
     let listener = UnixListener::bind(&socket).unwrap();
-    let server_keys = keys.clone();
-    let server_initialization = initialization.clone();
-    let server = std::thread::spawn(move || {
-        for _ in 0..3 {
-            let (stream, _) = listener.accept().unwrap();
-            serve_connection_with(
-                stream,
-                &server_keys,
-                &offer_key,
-                Some(&boot),
-                &server_initialization,
-            )
-            .unwrap();
-        }
-    });
-    let candidate_offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+    let server = spawn_sequential_server(listener, keys.clone(), boot, initialization.clone(), 3);
     let candidate_listener = UnixListener::bind(&candidate_socket).unwrap();
-    let candidate_server_keys = candidate_keys.clone();
-    let candidate_server = std::thread::spawn(move || {
-        for _ in 0..2 {
-            let (stream, _) = candidate_listener.accept().unwrap();
-            serve_connection_with(
-                stream,
-                &candidate_server_keys,
-                &candidate_offer_key,
-                Some(&candidate_boot),
-                &candidate_initialization,
-            )
-            .unwrap();
-        }
-    });
+    let candidate_server = spawn_sequential_server(
+        candidate_listener,
+        candidate_keys.clone(),
+        candidate_boot,
+        candidate_initialization,
+        2,
+    );
 
     let signing = k256::ecdsa::SigningKey::from_bytes((&[0x62; 32]).into()).unwrap();
     let reth_p2p_public: [u8; 33] = signing
@@ -1036,15 +772,7 @@ fn node_host_replacement_preserves_exact_reth_p2p_identity() {
         },
         reth_p2p_public,
     };
-    let sign = |hash: B256| {
-        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
-            .sign_prehash(hash.as_slice())
-            .map_err(|error| error.to_string())?;
-        let mut bytes = [0_u8; 65];
-        bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
-        bytes[64] = recovery.to_byte();
-        Ok(bytes)
-    };
+    let sign = |hash| sign_node_host_hash(&signing, hash);
     let node_data_dir = root.path().join("node-data");
     std::fs::create_dir(&node_data_dir).unwrap();
 
@@ -1092,4 +820,210 @@ fn node_host_replacement_preserves_exact_reth_p2p_identity() {
         manifest.node_host_authorization_hash().unwrap(),
         candidate_manifest.node_host_authorization_hash().unwrap()
     );
+}
+
+fn finalized_remote_admission(
+    manifest: &outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+    source_witness: &outbe_primitives::tee_attestation_v1::NodeHostAuthorizationWitnessV1,
+    now: u64,
+) -> outbe_tee::RemoteSessionAdmissionV1 {
+    use outbe_tee::{
+        admit_remote_session_v1, FinalizedRegistryBindingV1, FinalizedRegistryViewV1,
+        RemoteSessionExpectationV1,
+    };
+    let view = FinalizedRegistryViewV1 {
+        chain_id: manifest.chain_id,
+        genesis_hash: manifest.genesis_hash,
+        block_number: 101,
+        block_hash: B256::repeat_byte(0xB3),
+        state_root: B256::repeat_byte(0xB4),
+        consensus_timestamp: now.saturating_sub(1),
+    };
+    let source_binding = FinalizedRegistryBindingV1 {
+        view,
+        node_id_hash: source_witness.node_id.node_id_hash().unwrap(),
+        enclave_id: B256::repeat_byte(0xB5),
+        binding_id: B256::repeat_byte(0xB6),
+        intent_hash: B256::repeat_byte(0xB7),
+        valid_until: now + 600,
+        noise_responder_x25519: [0xB8; 32],
+        node_host_authorization_hash: source_witness.authorization_hash().unwrap(),
+    };
+    let target_hash = manifest.node_id.node_id_hash().unwrap();
+    let target_binding = FinalizedRegistryBindingV1 {
+        view,
+        node_id_hash: target_hash,
+        enclave_id: manifest.enclave_id().unwrap(),
+        binding_id: B256::repeat_byte(0xC1),
+        intent_hash: B256::repeat_byte(0xC2),
+        valid_until: now + 500,
+        noise_responder_x25519: manifest.noise_responder_x25519,
+        node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+    };
+    admit_remote_session_v1(
+        RemoteSessionExpectationV1 {
+            chain_id: manifest.chain_id,
+            genesis_hash: manifest.genesis_hash,
+            source_node_id_hash: source_binding.node_id_hash,
+            target_node_id_hash: target_hash,
+        },
+        source_witness,
+        source_binding,
+        target_binding,
+    )
+    .unwrap()
+}
+
+fn spawn_sequential_server(
+    listener: UnixListener,
+    keys: Arc<EnclaveKeys>,
+    boot: Arc<EnclaveBootConfig>,
+    initialization: Arc<InitializationState>,
+    connections: usize,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        for _ in 0..connections {
+            let (stream, _) = listener.accept().unwrap();
+            serve_connection_with(stream, &keys, &offer_key, Some(&boot), &initialization).unwrap();
+        }
+    })
+}
+
+fn assert_replacement_submission(
+    node_data_dir: &std::path::Path,
+    candidate_manifest: &outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+    keys: &EnclaveKeys,
+    sign: impl Fn(B256) -> Result<[u8; 65], String>,
+) {
+    use outbe_primitives::tee_attestation_v1::{
+        AttestationEvidenceV1, AttestationOperationV1, DcapCollateralComponentV1,
+        DcapCollateralKind, DcapEvidenceV1, RegistrationIntentV1,
+    };
+    use outbe_tee::persist_replacement_candidate_submission;
+    let intent = RegistrationIntentV1 {
+        operation: AttestationOperationV1::ReplaceEnclaveBinding,
+        binding_id: B256::repeat_byte(0x45),
+        binding_version: 2,
+        registration_version: 1,
+        requested_valid_until: 20_000,
+        ..crate::initialization::test_support::registration_intent_for_manifest(candidate_manifest)
+    };
+    candidate_manifest.validate_intent_binding(&intent).unwrap();
+    let intent_hash = intent.intent_hash().unwrap();
+    let node_signature = sign(intent_hash).unwrap();
+    let enclave_signature = keys.sign_attestation(intent_hash.as_slice());
+    let components = (1_u8..=8)
+        .map(|kind| DcapCollateralComponentV1 {
+            kind: DcapCollateralKind::try_from(kind).unwrap(),
+            bytes: vec![kind],
+        })
+        .collect();
+    let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+        intent,
+        quote: vec![0x51],
+        components,
+        transition_key_ready_proof: None,
+    });
+    let submission = persist_replacement_candidate_submission(
+        node_data_dir,
+        &evidence,
+        &node_signature,
+        &enclave_signature,
+    )
+    .unwrap();
+    assert_eq!(
+        persist_replacement_candidate_submission(
+            node_data_dir,
+            &evidence,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap(),
+        submission
+    );
+    let mut conflicting = evidence;
+    let AttestationEvidenceV1::Dcap(conflicting_dcap) = &mut conflicting else {
+        unreachable!();
+    };
+    conflicting_dcap.quote[0] ^= 1;
+    assert!(persist_replacement_candidate_submission(
+        node_data_dir,
+        &conflicting,
+        &node_signature,
+        &enclave_signature,
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("conflicts with the durable replacement submission"));
+}
+
+fn serve_candidate_retry(
+    listener: UnixListener,
+    keys: Arc<EnclaveKeys>,
+    boot: Arc<EnclaveBootConfig>,
+    initialization: Arc<InitializationState>,
+) -> usize {
+    let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut accepted = 0;
+    while accepted < 3 && std::time::Instant::now() < deadline {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                // macOS propagates O_NONBLOCK from the listener to the
+                // accepted socket. The enclave protocol itself is
+                // intentionally blocking, so restore that contract.
+                stream.set_nonblocking(false).unwrap();
+                let result =
+                    serve_connection_with(stream, &keys, &offer_key, Some(&boot), &initialization);
+                if let Err(error) = result {
+                    assert!(
+                        error.to_string().contains("enclave is not initialized")
+                            || error.to_string().contains("challenge mismatch"),
+                        "unexpected candidate retry error: {error}"
+                    );
+                }
+                accepted += 1;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(error) => panic!("candidate retry listener failed: {error}"),
+        }
+    }
+    accepted
+}
+
+fn source_authorization_witness(
+    manifest: &outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+    source: &outbe_tee::NodeHostNoiseKey,
+) -> outbe_primitives::tee_attestation_v1::NodeHostAuthorizationWitnessV1 {
+    use outbe_primitives::tee_attestation_v1::{NodeHostAuthorizationWitnessV1, NodeIdV1};
+    let source_node = NodeIdV1 {
+        reth_p2p_public: k256::ecdsa::SigningKey::from_bytes((&[0xB1; 32]).into())
+            .unwrap()
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap(),
+    };
+    NodeHostAuthorizationWitnessV1 {
+        chain_id: manifest.chain_id,
+        genesis_hash: manifest.genesis_hash,
+        attestation_mode: manifest.attestation_mode,
+        node_id: source_node.clone(),
+        node_host_noise_x25519: source.public(),
+    }
+}
+
+fn sign_node_host_hash(signing: &k256::ecdsa::SigningKey, hash: B256) -> Result<[u8; 65], String> {
+    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+    let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
+        .sign_prehash(hash.as_slice())
+        .map_err(|error| error.to_string())?;
+    let mut bytes = [0_u8; 65];
+    bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+    bytes[64] = recovery.to_byte();
+    Ok(bytes)
 }

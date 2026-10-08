@@ -16,30 +16,42 @@ outbe-vaultrouter.workspace = true
 outbe-oracle.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-validatorset.workspace = true
+outbe-tribute.workspace = true
+outbe-tee.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 hex.workspace = true
 
+outbe-tee-enclave = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+x25519-dalek = { workspace = true, optional = true }
+
 [dev-dependencies]
+postcard.workspace = true
+tempfile.workspace = true
+x25519-dalek.workspace = true
+outbe-tee = { workspace = true, features = ["test-utils"] }
+outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
-outbe-nod = { workspace = true, features = ["test-utils"] }
+outbe-protocol.workspace = true
+outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # `test-enclave` drives the confidential Gratis path in `mine_gratis` tests via
 # the in-process enclave engine; unioned into the gratis dep for test builds.
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
-outbe-tee.workspace = true
 outbe-tee-enclave.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 revm.workspace = true
 
 [features]
 default = []
-test-utils = ["outbe-primitives/test-utils"]
+test-utils = ["outbe-primitives/test-utils", "outbe-nod/test-enclave", "outbe-tee/test-utils", "outbe-tribute/test-enclave", "dep:outbe-tee-enclave", "dep:postcard", "dep:tempfile", "dep:x25519-dalek"]
 # Test-only issuance and call-notice hooks for e2e runs. Never enabled in a release build.
-e2e-test = ["outbe-nod/e2e-test"]
+e2e-test = ["outbe-nod/e2e-test", "outbe-tee/e2e-test"]
 
 [package.metadata.cargo-machete]
 ignored = ["hex"]

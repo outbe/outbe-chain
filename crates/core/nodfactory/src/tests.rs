@@ -42,14 +42,29 @@ fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
     ModifyAuth {
         mac: modify_mac(
             &modify_key,
-            owner,
-            GratisOp::Mint,
-            amount,
-            0,
-            B256::from(U256::from(1)),
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account: owner,
+                op: GratisOp::Mint,
+                amount,
+                op_nonce: 0,
+                chain_id: B256::from(U256::from(1)),
+            },
         ),
         op_nonce: 0,
     }
+}
+
+fn decrypt_gratis(owner: Address, encrypted: &[u8]) -> U256 {
+    let key =
+        outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), owner).unwrap();
+    outbe_tee::gratis_decrypt::decrypt_gratis_balance(&key, owner, encrypted).unwrap()
+}
+
+fn gratis_balance(storage: &StorageHandle<'_>, owner: Address) -> U256 {
+    decrypt_gratis(
+        owner,
+        &outbe_gratis::api::balance_ct(storage.clone(), owner).unwrap(),
+    )
 }
 
 fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
@@ -121,7 +136,7 @@ impl World {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_block_number(1);
         provider.set_timestamp(U256::from(1_700_000_000));
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         provider.stub_sub_call_at_selector(
             outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
             IVaultRouter::assetVaultsCountCall::SELECTOR,
@@ -141,7 +156,7 @@ impl World {
         Self {
             provider,
             scope,
-            parent: NodRepositoryReader::new(Arc::new(MemoryStorage::new())),
+            parent: outbe_nod::nod_reader(Arc::new(MemoryStorage::new())),
         }
     }
 
@@ -155,12 +170,30 @@ impl World {
     }
 
     fn issue(&mut self, input: &NodIssueParams) -> WwdEntityId {
-        self.enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, input))
-            .unwrap()
+        self.enter(|storage, scope, parent| {
+            api::issue_nod(
+                &storage,
+                scope,
+                parent,
+                &outbe_nod::test_support::encrypted_fixture(input, CHAIN_ID),
+            )
+        })
+        .unwrap()
     }
 
     fn mine_gratis(&mut self, request: api::MineGratisRequest) -> Result<U256, PrecompileError> {
-        self.enter(|storage, scope, parent| api::mine_gratis(&storage, scope, parent, request))
+        self.enter(|storage, scope, parent| {
+            let owner = nod_api::get_item(&storage, scope, parent, request.nod_id)?
+                .expect("issued Nod")
+                .owner;
+            let before = gratis_balance(&storage, owner);
+            let encrypted = api::mine_gratis(&storage, scope, parent, request)?;
+            assert_eq!(
+                encrypted,
+                outbe_gratis::api::balance_ct(storage.clone(), owner)?
+            );
+            Ok(decrypt_gratis(owner, &encrypted) - before)
+        })
     }
 
     fn pow_nonce(&mut self, nod_id: WwdEntityId) -> u64 {
@@ -318,6 +351,8 @@ impl World {
         });
     }
 }
+
+const CHAIN_ID: u64 = 1;
 
 const PAYMENT_ASSET: Address = Address::new([0x71; 20]);
 const EUR_ASSET: Address = Address::new([0x72; 20]);

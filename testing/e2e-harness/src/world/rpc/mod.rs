@@ -112,3 +112,8 @@ use tribute::encode_reward_bearing_tribute_plaintext;
 use zero_fee::zerofee_rollover_wait_budget_secs;
 #[cfg(all(test, feature = "ocomp-integration"))]
 use zero_fee::SPONSORSHIP_TOPIC;
+
+#[cfg(feature = "ocomp-integration")]
+use tribute::RewardBearingTribute;
+pub use tribute::TributeOfferParams;
+pub(crate) use tribute::TributeProofInput;

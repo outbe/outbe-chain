@@ -95,7 +95,11 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
         parent.insert_nod_item(&stale_nod);
         parent.bodies.insert(
             EntityRef::NodBucket(stale_bucket_id),
-            StoredBody::new_v1(encode_nod_bucket_v1(&stale_bucket).unwrap()).unwrap(),
+            StoredBody::new(
+                crate::BODY_SCHEMA_V1,
+                encode_nod_bucket_v1(&stale_bucket).unwrap(),
+            )
+            .unwrap(),
         );
         tree.insert(
             EntityRef::NodBucket(missing_bucket_id),
@@ -309,7 +313,7 @@ fn all_four_query_kinds_resolve_same_block_membership_and_overlay_bodies() {
     let tribute = tribute(entity(21, 1), owner, 100);
     let nod = nod_item(entity(21, 2), owner);
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
@@ -515,7 +519,7 @@ fn pagination_and_parent_corruption_boundaries_fail_closed() {
     let id = entity(22, 1);
     let wrong_day = entity(23, 1);
 
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
@@ -569,7 +573,7 @@ fn pagination_and_parent_corruption_boundaries_fail_closed() {
             pages: RefCell::new(VecDeque::from([page])),
             ..ScriptedParent::default()
         };
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             begin_block(storage.clone(), &scope).unwrap();
@@ -597,7 +601,7 @@ fn pagination_and_parent_corruption_boundaries_fail_closed() {
         }])),
         ..ScriptedParent::default()
     };
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         begin_block(storage.clone(), &scope).unwrap();

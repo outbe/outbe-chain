@@ -28,7 +28,16 @@ fn auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth 
     let sk = test_enclave::state_key();
     let mk = derive_modify_key(&sk, account).unwrap();
     ModifyAuth {
-        mac: modify_mac(&mk, account, op, amount, nonce, chain_b256()),
+        mac: modify_mac(
+            &mk,
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account,
+                op,
+                amount,
+                op_nonce: nonce,
+                chain_id: chain_b256(),
+            },
+        ),
         op_nonce: nonce,
     }
 }
@@ -62,7 +71,6 @@ fn mine_credits_encrypted_balance() {
         .unwrap();
 
         assert_eq!(view_balance(storage.clone(), alice()), amount);
-        assert_eq!(api::total_supply(storage.clone()).unwrap(), amount);
         assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 1);
 
         // Second mine advances the op nonce and accumulates the (hidden) balance.
@@ -75,10 +83,6 @@ fn mine_credits_encrypted_balance() {
         )
         .unwrap();
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(1500u64));
-        assert_eq!(
-            api::total_supply(storage.clone()).unwrap(),
-            U256::from(1500u64)
-        );
     });
 }
 
@@ -95,7 +99,6 @@ fn one_whole_gratis_round_trips_as_one_million_raw_units() {
         .unwrap();
 
         assert_eq!(view_balance(storage.clone(), alice()), one_gratis);
-        assert_eq!(api::total_supply(storage).unwrap(), one_gratis);
     });
 }
 
@@ -121,7 +124,7 @@ fn mine_rejects_forged_auth() {
 }
 
 #[test]
-fn burn_reduces_balance_and_supply() {
+fn burn_reduces_encrypted_balance() {
     with_env(|storage| {
         api::mint(
             storage.clone(),
@@ -130,19 +133,14 @@ fn burn_reduces_balance_and_supply() {
             auth(GratisOp::Mint, alice(), U256::from(1000u64), 0),
         )
         .unwrap();
-        let remaining = api::burn(
+        api::burn(
             storage.clone(),
             alice(),
             U256::from(400u64),
             auth(GratisOp::Burn, alice(), U256::from(400u64), 1),
         )
         .unwrap();
-        assert_eq!(remaining, U256::from(600u64));
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(600u64));
-        assert_eq!(
-            api::total_supply(storage.clone()).unwrap(),
-            U256::from(600u64)
-        );
     });
 }
 
@@ -177,13 +175,21 @@ fn run_dispatch(call: Bytes, caller: Address) -> outbe_primitives::error::Result
 
 #[test]
 fn metadata_uses_six_decimal_gratis_units() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let gratis = crate::Gratis::new(storage);
-        assert_eq!(gratis.name(), "gratis");
-        assert_eq!(gratis.symbol(), "GRATIS");
-        assert_eq!(gratis.decimals(), 6);
-    });
+    let name = run_dispatch(IGratis::nameCall {}.abi_encode().into(), alice()).unwrap();
+    let symbol = run_dispatch(IGratis::symbolCall {}.abi_encode().into(), alice()).unwrap();
+    let decimals = run_dispatch(IGratis::decimalsCall {}.abi_encode().into(), alice()).unwrap();
+    assert_eq!(
+        IGratis::nameCall::abi_decode_returns(&name).unwrap(),
+        "gratis"
+    );
+    assert_eq!(
+        IGratis::symbolCall::abi_decode_returns(&symbol).unwrap(),
+        "GRATIS"
+    );
+    assert_eq!(
+        IGratis::decimalsCall::abi_decode_returns(&decimals).unwrap(),
+        6
+    );
 }
 
 #[test]
@@ -254,9 +260,8 @@ fn folded_fidelity_section_failure_reverts_the_whole_op() {
             "expected a fidelity-section rejection, got: {err}"
         );
 
-        // Atomic revert: no gratis state was written (balance, supply, op_nonce).
+        // Atomic revert: no gratis state was written (balance, op_nonce).
         assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
-        assert_eq!(api::total_supply(storage.clone()).unwrap(), U256::ZERO);
         assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 0);
     });
 }

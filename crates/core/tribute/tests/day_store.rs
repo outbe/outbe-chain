@@ -114,7 +114,10 @@ fn legacy_keys_move_once_and_read_from_the_day() {
 
     let reader = routed_reader(&store);
     let loaded = reader.get(tribute.tribute_id).unwrap().unwrap();
-    assert_eq!(loaded.issuance_amount_minor, tribute.issuance_amount_minor);
+    assert_eq!(
+        loaded.calculation_view().unwrap().issuance_amount_minor,
+        tribute.issuance_amount_minor
+    );
 
     let key = Key::new(tribute.tribute_id.as_slice().to_vec()).unwrap();
     let namespace = Namespace::new("tributes").unwrap();
@@ -129,6 +132,8 @@ fn legacy_keys_move_once_and_read_from_the_day() {
             .get(tribute.tribute_id)
             .unwrap()
             .unwrap()
+            .calculation_view()
+            .unwrap()
             .issuance_amount_minor,
         tribute.issuance_amount_minor
     );
@@ -141,7 +146,10 @@ fn legacy_keys_move_once_and_read_from_the_day() {
     )
     .unwrap();
     let again = reader.get(tribute.tribute_id).unwrap().unwrap();
-    assert_eq!(again.issuance_amount_minor, tribute.issuance_amount_minor);
+    assert_eq!(
+        again.calculation_view().unwrap().issuance_amount_minor,
+        tribute.issuance_amount_minor
+    );
     assert_eq!(
         StorageReader::get(store.shared.as_ref(), namespace, &key)
             .unwrap()

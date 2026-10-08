@@ -90,7 +90,7 @@ impl Default for World {
                     |error| panic!("start dedicated OCOMP capacity meter: {error:#}"),
                 )
             });
-        let projection = ProjectionFixture::new(&cfg);
+        let projection = projection::projection_fixture(&cfg);
         let target_chain = TargetChain::new(cfg.clone());
         Self {
             relay: None,

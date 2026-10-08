@@ -42,57 +42,6 @@ pub struct ActivationFixture {
 }
 
 impl ActivationFixture {
-    #[must_use]
-    pub fn new(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
-        Self::new_with_initial_votes(
-            current_height,
-            current_time,
-            seed_targets,
-            4,
-            2,
-            TEST_LOGICAL_TIME,
-        )
-    }
-
-    /// Default fixture whose OCOMP request clock is `logical_time`.
-    #[cfg(test)]
-    #[must_use]
-    pub fn new_with_request_clock(
-        current_height: u64,
-        current_time: u64,
-        logical_time: u64,
-    ) -> Self {
-        Self::new_with_initial_votes(current_height, current_time, true, 4, 2, logical_time)
-    }
-
-    /// Builds the default production-valid fixture before any validator vote
-    /// is recorded, without injecting quorum state.
-    #[cfg(test)]
-    #[must_use]
-    pub fn new_voting(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
-        Self::new_voting_with_member_count(current_height, current_time, seed_targets, 4)
-    }
-
-    /// Builds a production-valid voting fixture for the requested ValidatorSet
-    /// size without introducing an OCOMP-specific membership authority.
-    #[cfg(test)]
-    #[must_use]
-    pub fn new_voting_with_member_count(
-        current_height: u64,
-        current_time: u64,
-        seed_targets: bool,
-        member_count: u8,
-    ) -> Self {
-        Self::new_with_initial_votes(
-            current_height,
-            current_time,
-            seed_targets,
-            member_count,
-            0,
-            TEST_LOGICAL_TIME,
-        )
-    }
-
     /// Seeds the Staking-owned bonded balances used by recovery-policy tests.
     #[cfg(test)]
     pub fn seed_ocomp_recovery_stake_for_test(&mut self) {
@@ -173,44 +122,6 @@ impl ActivationFixture {
                 .unwrap()
                 .unwrap()
         })
-    }
-
-    fn new_with_initial_votes(
-        current_height: u64,
-        current_time: u64,
-        seed_targets: bool,
-        member_count: u8,
-        initial_vote_count: u8,
-        logical_time: u64,
-    ) -> Self {
-        let config = ActivationFixtureConfig {
-            current_height,
-            current_time,
-            seed_targets,
-            member_count,
-            initial_vote_count,
-            logical_time,
-        };
-        let mut provider = HashMapStorageProvider::new_with_chain_identity(1, hash(17));
-        let seed = prepare_activation_seed(&mut provider, &config);
-        provider.set_block_number(config.current_height);
-        provider.set_timestamp(U256::from(config.current_time));
-        let scope = begin_activation_scope(&mut provider);
-        StorageHandle::enter(&mut provider, |storage| {
-            seed_owner_targets(storage.clone(), config.seed_targets);
-            let finalized = seed_requested_job(storage.clone(), &seed, config.seed_targets);
-            seed_initial_votes(storage, &scope, &seed, &config, &finalized);
-        });
-        provider.clear_events(METADOSIS_ADDRESS);
-        Self {
-            provider,
-            scope,
-            result: seed.result,
-            finality: seed.finality,
-            intent_id: seed.intent_id,
-            limits: seed.limits,
-            request_receipt: seed.request_receipt,
-        }
     }
 
     /// Creates the canonical node-attested vote for one fixture committee
@@ -492,7 +403,7 @@ fn seed_owner_targets(storage: StorageHandle<'_>, seed_targets: bool) {
     nod.ocomp_materialization_tail_sequence.write(1).unwrap();
 
     if seed_targets {
-        let tribute = TributeContract::new(storage.clone());
+        let mut tribute = TributeContract::new(storage.clone());
         tribute.ocomp_profile_ready.write(true).unwrap();
         tribute.total_supply.write(2).unwrap();
         let mut totals = DayTotals::with_key(TEST_WWD);
@@ -500,7 +411,8 @@ fn seed_owner_targets(storage: StorageHandle<'_>, seed_targets: bool) {
         totals.is_sealed = true;
         totals.tribute_count = 2;
         totals.tribute_nominal_total_minor = U256::from(1_000);
-        tribute.day_totals.create(&totals).unwrap();
+        outbe_tribute::enclave_client::test_enclave::seed_day_totals(&mut tribute, &totals)
+            .unwrap();
         let mut admission = DayPreAdmission::with_key(TEST_WWD);
         admission.initialized = true;
         admission.is_sealed = true;
@@ -508,7 +420,8 @@ fn seed_owner_targets(storage: StorageHandle<'_>, seed_targets: bool) {
         admission.sealed_tribute_count = 2;
         admission.sealed_tribute_nominal_total_minor = U256::from(1_000);
         admission.source_generation = 0;
-        tribute.day_pre_admission.create(&admission).unwrap();
+        outbe_tribute::enclave_client::test_enclave::seed_pre_admission(&mut tribute, &admission)
+            .unwrap();
     }
 }
 fn seed_requested_job(
@@ -616,5 +529,95 @@ fn seed_initial_votes(
                 &seed.limits,
             )
             .unwrap();
+    }
+}
+
+/// Builds complete activation fixtures before their stateful operations begin.
+pub struct ActivationScenario;
+
+impl ActivationScenario {
+    #[must_use]
+    pub fn build(current_height: u64, current_time: u64, seed_targets: bool) -> ActivationFixture {
+        Self::new_with_initial_votes(ActivationFixtureConfig {
+            current_height,
+            current_time,
+            seed_targets,
+            member_count: 4,
+            initial_vote_count: 2,
+            logical_time: TEST_LOGICAL_TIME,
+        })
+    }
+
+    /// Default fixture whose OCOMP request clock is `logical_time`.
+    #[cfg(test)]
+    #[must_use]
+    pub fn new_with_request_clock(
+        current_height: u64,
+        current_time: u64,
+        logical_time: u64,
+    ) -> ActivationFixture {
+        Self::new_with_initial_votes(ActivationFixtureConfig {
+            current_height,
+            current_time,
+            seed_targets: true,
+            member_count: 4,
+            initial_vote_count: 2,
+            logical_time,
+        })
+    }
+
+    /// Builds the default production-valid fixture before any validator vote
+    /// is recorded, without injecting quorum state.
+    #[cfg(test)]
+    #[must_use]
+    pub fn new_voting(
+        current_height: u64,
+        current_time: u64,
+        seed_targets: bool,
+    ) -> ActivationFixture {
+        Self::new_voting_with_member_count(current_height, current_time, seed_targets, 4)
+    }
+
+    /// Builds a production-valid voting fixture for the requested ValidatorSet
+    /// size without introducing an OCOMP-specific membership authority.
+    #[cfg(test)]
+    #[must_use]
+    pub fn new_voting_with_member_count(
+        current_height: u64,
+        current_time: u64,
+        seed_targets: bool,
+        member_count: u8,
+    ) -> ActivationFixture {
+        Self::new_with_initial_votes(ActivationFixtureConfig {
+            current_height,
+            current_time,
+            seed_targets,
+            member_count,
+            initial_vote_count: 0,
+            logical_time: TEST_LOGICAL_TIME,
+        })
+    }
+
+    fn new_with_initial_votes(config: ActivationFixtureConfig) -> ActivationFixture {
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(1, hash(17));
+        let seed = prepare_activation_seed(&mut provider, &config);
+        provider.set_block_number(config.current_height);
+        provider.set_timestamp(U256::from(config.current_time));
+        let scope = begin_activation_scope(&mut provider);
+        StorageHandle::enter(&mut provider, |storage| {
+            seed_owner_targets(storage.clone(), config.seed_targets);
+            let finalized = seed_requested_job(storage.clone(), &seed, config.seed_targets);
+            seed_initial_votes(storage, &scope, &seed, &config, &finalized);
+        });
+        provider.clear_events(METADOSIS_ADDRESS);
+        ActivationFixture {
+            provider,
+            scope,
+            result: seed.result,
+            finality: seed.finality,
+            intent_id: seed.intent_id,
+            limits: seed.limits,
+            request_receipt: seed.request_receipt,
+        }
     }
 }

@@ -80,7 +80,10 @@ mod tests {
         assert!(observed.recv_timeout(Duration::from_millis(50)).is_err());
         drop(reader);
         observed.recv_timeout(Duration::from_secs(5)).unwrap();
-        drop(provider.open_writer().unwrap());
+        let reopened = provider.open_writer().unwrap();
+        let completion = reopened.ownership.completion();
+        drop(reopened);
+        completion.wait_timeout(Duration::from_secs(5)).unwrap();
         closing.join().unwrap();
     }
 }

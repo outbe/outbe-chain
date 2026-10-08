@@ -21,7 +21,7 @@ fn generated_quote_binding_rejects_post_syscall_report_data_substitution() {
 #[test]
 fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
     use outbe_primitives::tee_attestation_v1::{
-        AttestationMode, AttestationOperationV1, RegistrationIntentV1, TransitionKeyReadyProofV1,
+        AttestationOperationV1, RegistrationIntentV1, TransitionKeyReadyProofV1,
     };
 
     fn quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
@@ -49,23 +49,13 @@ fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
         .unwrap();
     initialization.commit(pending, &keys).unwrap();
     let intent = RegistrationIntentV1 {
-        chain_id: manifest.chain_id,
-        genesis_hash: manifest.genesis_hash,
         operation: AttestationOperationV1::TransitionEnclaveMeasurement,
-        attestation_mode: AttestationMode::DcapRequired,
         policy_hash: B256::repeat_byte(0x33),
-        node_id: manifest.node_id.clone(),
-        enclave_id: manifest.enclave_id().unwrap(),
         binding_id: B256::repeat_byte(0x34),
         binding_version: 2,
         registration_version: 1,
-        renewal_nonce: 0,
         transition_nonce: 5,
-        requested_valid_until: 7_200,
-        recipient_x25519: manifest.recipient_x25519,
-        attestation_ed25519: manifest.attestation_ed25519,
-        noise_responder_x25519: manifest.noise_responder_x25519,
-        node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+        ..crate::initialization::test_support::registration_intent_for_manifest(&manifest)
     };
     let request = EnclaveRequest::GenerateDcapQuote {
         intent: intent.encode_canonical().unwrap(),
@@ -77,8 +67,8 @@ fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
         &keys,
         &mut dkg,
         &offer_key,
-        B256::from(manifest.chain_id),
         DispatchInitializationContext {
+            chain_id: B256::from(manifest.chain_id),
             boot: Some(&boot),
             initialization: Some(&initialization),
             quote_generator: quote,
@@ -101,8 +91,8 @@ fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
         &keys,
         &mut dkg,
         &offer_key,
-        B256::from(manifest.chain_id),
         DispatchInitializationContext {
+            chain_id: B256::from(manifest.chain_id),
             boot: Some(&boot),
             initialization: Some(&initialization),
             quote_generator: quote,
@@ -128,14 +118,12 @@ fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
 
 #[test]
 fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
-    use outbe_primitives::tee_attestation_v1::{
-        AttestationMode, AttestationOperationV1, RegistrationIntentV1,
-    };
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, RegistrationIntentV1};
 
     let root = tempfile::tempdir().unwrap();
     let boot = EnclaveBootConfig::new(testnet_chain_word(), root.path().to_path_buf(), 0);
     let keys = EnclaveKeys::new([0x41; 32], Some([0x41; 32])).unwrap();
-    let initialization = InitializationState::production_with_challenge_and_attestation(
+    let initialization = crate::initialization::factory::production_with_challenge_and_attestation(
         Arc::new(boot.clone()),
         &keys,
         [0x42; 32],
@@ -157,23 +145,10 @@ fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
         .unwrap();
     initialization.commit(pending, &keys).unwrap();
     let intent = RegistrationIntentV1 {
-        chain_id: manifest.chain_id,
-        genesis_hash: manifest.genesis_hash,
-        operation: AttestationOperationV1::RegisterEnclave,
         attestation_mode: AttestationMode::GramineDirectDev,
         policy_hash: B256::repeat_byte(0x44),
-        node_id: manifest.node_id.clone(),
-        enclave_id: manifest.enclave_id().unwrap(),
         binding_id: B256::repeat_byte(0x45),
-        binding_version: 1,
-        registration_version: 0,
-        renewal_nonce: 0,
-        transition_nonce: 0,
-        requested_valid_until: 7_200,
-        recipient_x25519: manifest.recipient_x25519,
-        attestation_ed25519: manifest.attestation_ed25519,
-        noise_responder_x25519: manifest.noise_responder_x25519,
-        node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+        ..crate::initialization::test_support::registration_intent_for_manifest(&manifest)
     };
     let canonical = intent.encode_canonical().unwrap();
     let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
@@ -185,8 +160,8 @@ fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
         &keys,
         &mut dkg,
         &offer_key,
-        B256::from(manifest.chain_id),
         DispatchInitializationContext {
+            chain_id: B256::from(manifest.chain_id),
             boot: Some(&boot),
             initialization: Some(&initialization),
             quote_generator: |_| panic!("SGX-no-attest dev evidence must not request DCAP"),
@@ -324,13 +299,14 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         1,
     ));
     let target_keys = EnclaveKeys::new([0x25; 32], Some([0x25; 32])).unwrap();
-    let target_initialization = InitializationState::production_with_challenge_and_attestation(
-        target_boot.clone(),
-        &target_keys,
-        [0x26; 32],
-        crate::gramine::AttestationType::SgxNoAttest,
-    )
-    .unwrap();
+    let target_initialization =
+        crate::initialization::factory::production_with_challenge_and_attestation(
+            target_boot.clone(),
+            &target_keys,
+            [0x26; 32],
+            crate::gramine::AttestationType::SgxNoAttest,
+        )
+        .unwrap();
     let (target_manifest, target_node_signature) = signed_initialization_manifest_for_mode(
         &target_keys,
         [0x26; 32],

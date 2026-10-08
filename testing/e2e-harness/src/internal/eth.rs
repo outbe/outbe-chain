@@ -246,36 +246,6 @@ where
     rx.recv().expect("eth runtime dropped the task")
 }
 
-/// The one `E` event `emitter` logged in `receipt`.
-#[cfg(feature = "ocomp-integration")]
-pub(crate) fn receipt_event<E: alloy_sol_types::SolEvent>(
-    receipt: &serde_json::Value,
-    emitter: Address,
-) -> E {
-    let mut found = receipt["logs"]
-        .as_array()
-        .expect("receipt logs")
-        .iter()
-        .filter_map(|log| {
-            if log["address"].as_str()?.parse::<Address>().ok()? != emitter {
-                return None;
-            }
-            let topics = log["topics"]
-                .as_array()?
-                .iter()
-                .map(|t| t.as_str()?.parse::<B256>().ok())
-                .collect::<Option<Vec<_>>>()?;
-            if topics.first() != Some(&E::SIGNATURE_HASH) {
-                return None;
-            }
-            let data = log["data"].as_str()?.parse::<Bytes>().ok()?;
-            Some(E::decode_raw_log(topics, &data).expect("decode matching event"))
-        });
-    let value = found.next().expect("expected event missing");
-    assert!(found.next().is_none(), "duplicate {} event", E::SIGNATURE);
-    value
-}
-
 /// `eth_call` a view function and decode its return while preserving the failure.
 pub(crate) fn read_call_result<C: SolCall>(
     url: &str,
@@ -362,6 +332,50 @@ where
     })
 }
 
+/// A decoded return or canonical EVM Error(string) from one view request.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) enum ViewCallOutcome<T> {
+    Value(T),
+    Reverted(String),
+}
+
+/// Preserve a canonical Error(string) revert from the same pinned request.
+/// Transport, non-revert RPC, and malformed payload errors remain failures.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn read_call_at_with_revert_reason<C: SolCall>(
+    url: &str,
+    to: Address,
+    call: &C,
+    height: u64,
+) -> Result<ViewCallOutcome<C::Return>>
+where
+    C::Return: Send + 'static,
+{
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into());
+        match provider.call(tx).block(BlockId::number(height)).await {
+            Ok(bytes) => Ok(ViewCallOutcome::Value(C::abi_decode_returns(&bytes)?)),
+            Err(error) => {
+                let payload = error
+                    .as_error_resp()
+                    .ok_or_else(|| eyre!("view transport failure: {error}"))?;
+                let data = payload
+                    .try_data_as::<Bytes>()
+                    .ok_or_else(|| eyre!("RPC omitted view revert data: {payload}"))??;
+                Ok(ViewCallOutcome::Reverted(decode_evm_revert_reason(
+                    payload.code,
+                    &data,
+                )?))
+            }
+        }
+    })
+}
+
 /// Execute a typed view against the exact canonical state at `height`, or
 /// return `None` on transport, execution, or decoding failure.
 pub(crate) fn read_call_at<C: SolCall>(
@@ -435,7 +449,16 @@ pub(crate) fn read_call_revert_reason_at<C: SolCall>(
     call: &C,
     height: u64,
 ) -> Result<String> {
-    let data = read_call_revert_data_at(url, to, from, call, U256::ZERO, height)?;
+    let data = read_call_revert_data_at(
+        url,
+        to,
+        from,
+        call,
+        crate::internal::eth::RevertAt {
+            value: U256::ZERO,
+            height,
+        },
+    )?;
     decode_evm_revert_reason(3, &data)
 }
 
@@ -446,17 +469,19 @@ pub(crate) fn read_call_revert_data_at<C: SolCall>(
     to: Address,
     from: Address,
     call: &C,
-    value: U256,
-    height: u64,
+    at: RevertAt,
 ) -> Result<Bytes> {
+    let RevertAt { value, height } = at;
     read_call_revert_data_at_block(
         url,
         to,
         from,
         call,
-        value,
-        BlockId::number(height),
-        REVERT_FRIENDLY_GAS_LIMIT,
+        crate::internal::eth::RevertReplay {
+            value,
+            block: BlockId::number(height),
+            gas_limit: REVERT_FRIENDLY_GAS_LIMIT,
+        },
     )
 }
 
@@ -467,10 +492,13 @@ pub(crate) fn read_call_revert_data_at_block<C: SolCall>(
     to: Address,
     from: Address,
     call: &C,
-    value: U256,
-    block: BlockId,
-    gas_limit: u64,
+    replay: RevertReplay,
 ) -> Result<Bytes> {
+    let RevertReplay {
+        value,
+        block,
+        gas_limit,
+    } = replay;
     let url = url.to_string();
     let data = call.abi_encode();
     block_on(async move {
@@ -817,23 +845,6 @@ pub(crate) fn blocks_with_transactions(
     })
 }
 
-/// Receipt success flag for `tx`, or `None` if not yet mined / unreadable.
-pub(crate) fn receipt_success(url: &str, tx: &str) -> Option<bool> {
-    let url = url.to_string();
-    let hash: TxHash = tx.parse().ok()?;
-    block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-        let receipt = provider.get_transaction_receipt(hash).await.ok()??;
-        Some(receipt.status())
-    })
-}
-
-/// Public JSON-RPC representation of a mined receipt. Lifecycle accounting uses
-/// this to prove the exact gas charge paid by a claimant.
-pub(crate) fn receipt_json(url: &str, tx: &str) -> Option<serde_json::Value> {
-    raw_json_with_params(url, "eth_getTransactionReceipt", serde_json::json!([tx]))
-}
-
 /// Sign and send a contract call from `key`, and wait for its receipt. Returns
 /// the tx hash. `value` funds a payable call (e.g. `stake`).
 pub(crate) fn send_call<C: SolCall>(
@@ -843,7 +854,7 @@ pub(crate) fn send_call<C: SolCall>(
     call: &C,
     value: Option<U256>,
 ) -> Result<String> {
-    send_call_inner(url, to, key, call, value, false)
+    send_call_inner(url, to, key, call, call_gas(value, false))
 }
 
 /// Submit a paid claim with a 50% execution-gas reserve. This changes the
@@ -855,7 +866,7 @@ pub(crate) fn send_call_with_gas_reserve<C: SolCall>(
     call: &C,
     value: Option<U256>,
 ) -> Result<String> {
-    send_call_inner(url, to, key, call, value, true)
+    send_call_inner(url, to, key, call, call_gas(value, true))
 }
 
 fn gas_limit_with_reserve(estimate: u64) -> Result<u64> {
@@ -869,9 +880,9 @@ fn send_call_inner<C: SolCall>(
     to: Address,
     key: &str,
     call: &C,
-    value: Option<U256>,
-    gas_reserve: bool,
+    gas: CallGas,
 ) -> Result<String> {
+    let CallGas { value, gas_reserve } = gas;
     let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let sender = signer.address();
@@ -1184,7 +1195,17 @@ pub(crate) fn send_value_at_nonce(
     nonce: u64,
 ) -> Result<String> {
     let max_fee = canonical_next_block_fee_cap(url, 0)?;
-    send_value_with_gas_at_nonce(url, to, key, value, nonce, 21_000, max_fee)
+    send_value_with_gas_at_nonce(
+        url,
+        to,
+        key,
+        crate::internal::eth::PendingValue {
+            value,
+            nonce,
+            gas_limit: 21_000,
+            max_fee,
+        },
+    )
 }
 
 /// Submit an explicitly gas-budgeted pool fixture without waiting for mining.
@@ -1192,11 +1213,14 @@ pub(crate) fn send_value_with_gas_at_nonce(
     url: &str,
     to: Address,
     key: &str,
-    value: U256,
-    nonce: u64,
-    gas_limit: u64,
-    max_fee: u128,
+    pending: PendingValue,
 ) -> Result<String> {
+    let PendingValue {
+        value,
+        nonce,
+        gas_limit,
+        max_fee,
+    } = pending;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
@@ -1312,140 +1336,10 @@ pub(crate) fn storage(url: &str, address: Address, slot: U256) -> Option<U256> {
     })
 }
 
-/// Install a self-authorization EIP-7702 delegation and return its receipt as
-/// JSON so scenario assertions can inspect the public RPC representation.
-pub(crate) fn install_delegation(
-    url: &str,
-    key: &str,
-    target: Address,
-) -> Result<serde_json::Value> {
-    install_delegation_with_overrides(url, key, target, None, None)
-}
-
-/// Submit an EIP-7702 authorization with optional chain-id and authorization-
-/// nonce overrides. Negative live tests use this to prove that invalid or stale
-/// authorizations cannot mutate an account's delegation.
-pub(crate) fn install_delegation_with_overrides(
-    url: &str,
-    key: &str,
-    target: Address,
-    authorization_chain_id: Option<U256>,
-    authorization_nonce: Option<u64>,
-) -> Result<serde_json::Value> {
-    let max_fee = canonical_next_block_fee_cap(url, 0)?;
-    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
-    let authority = signer.address();
-    let chain_id = raw_json(url, "eth_chainId")
-        .and_then(|v| {
-            v.as_str()
-                .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-        })
-        .ok_or_else(|| eyre!("read chain id"))?;
-    let tx_nonce = nonce(url, authority).ok_or_else(|| eyre!("read authority nonce"))?;
-    let authorization = Authorization {
-        chain_id: authorization_chain_id.unwrap_or_else(|| U256::from(chain_id)),
-        address: target,
-        nonce: authorization_nonce.unwrap_or(tx_nonce + 1),
-    };
-    let signature = signer.sign_hash_sync(&authorization.signature_hash())?;
-    let signed = authorization.into_signed(signature);
-    let wallet = EthereumWallet::from(signer);
-    let url = url.to_string();
-    block_on(async move {
-        let provider = ProviderBuilder::new()
-            .wallet(wallet)
-            .connect_http(url.parse()?);
-        let tx = TransactionRequest::default()
-            .to(authority)
-            .nonce(tx_nonce)
-            .gas_limit(100_000)
-            .max_fee_per_gas(max_fee)
-            .max_priority_fee_per_gas(0)
-            .with_authorization_list(vec![signed]);
-        let pending = provider.send_transaction(tx).await?;
-        let hash = *pending.tx_hash();
-        for _ in 0..20 {
-            if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
-                return Ok(serde_json::to_value(receipt)?);
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
-        Err(eyre!("EIP-7702 transaction was not mined: {hash:#x}"))
-    })
-}
-
-/// Install an EIP-7702 delegation for `authority_key` while a distinct
-/// funded `payer_key` signs the outer transaction and pays its gas.
-///
-/// A distinct authority signs its current account nonce. The `+1` rule in
-/// [`install_delegation_with_overrides`] only applies when both are true:
-///
-/// - the authority is also the transaction sender
-/// - its transaction nonce is incremented before the authorization tuple is
-///   processed.
+mod delegation;
 #[cfg(feature = "ocomp-integration")]
-pub(crate) fn install_delegation_for_authority(
-    url: &str,
-    payer_key: &str,
-    authority_key: &str,
-    target: Address,
-) -> Result<serde_json::Value> {
-    let max_fee = canonical_next_block_fee_cap(url, 0)?;
-    let payer: PrivateKeySigner = payer_key
-        .parse()
-        .map_err(|e| eyre!("invalid payer private key: {e}"))?;
-    let authority: PrivateKeySigner = authority_key
-        .parse()
-        .map_err(|e| eyre!("invalid authority private key: {e}"))?;
-    let payer_address = payer.address();
-    let authority_address = authority.address();
-    if payer_address == authority_address {
-        return Err(eyre!(
-            "sponsor-paid delegation requires distinct payer and authority"
-        ));
-    }
-    let chain_id = raw_json(url, "eth_chainId")
-        .and_then(|v| {
-            v.as_str()
-                .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-        })
-        .ok_or_else(|| eyre!("read chain id"))?;
-    let payer_nonce = nonce(url, payer_address).ok_or_else(|| eyre!("read payer nonce"))?;
-    let authority_nonce =
-        nonce(url, authority_address).ok_or_else(|| eyre!("read authority nonce"))?;
-    let authorization = Authorization {
-        chain_id: U256::from(chain_id),
-        address: target,
-        nonce: authority_nonce,
-    };
-    let signature = authority.sign_hash_sync(&authorization.signature_hash())?;
-    let signed = authorization.into_signed(signature);
-    let wallet = EthereumWallet::from(payer);
-    let url = url.to_string();
-    block_on(async move {
-        let provider = ProviderBuilder::new()
-            .wallet(wallet)
-            .connect_http(url.parse()?);
-        let tx = TransactionRequest::default()
-            .to(payer_address)
-            .nonce(payer_nonce)
-            .gas_limit(100_000)
-            .max_fee_per_gas(max_fee)
-            .max_priority_fee_per_gas(0)
-            .with_authorization_list(vec![signed]);
-        let pending = provider.send_transaction(tx).await?;
-        let hash = *pending.tx_hash();
-        for _ in 0..60 {
-            if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
-                return Ok(serde_json::to_value(receipt)?);
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
-        Err(eyre!(
-            "sponsor-paid EIP-7702 transaction was not mined: {hash:#x}"
-        ))
-    })
-}
+pub(crate) use delegation::install_delegation_for_authority;
+pub(crate) use delegation::{install_delegation, install_delegation_with_overrides};
 
 /// Only this explicit admission rejection proves that the call was not accepted.
 /// Transport failures and other RPC errors must never trigger a fresh-nonce retry.
@@ -1764,4 +1658,33 @@ mod tests {
             selector("submitConflictingNotarizeEvidence(bytes,bytes)")
         );
     }
+}
+
+pub(crate) struct RevertAt {
+    pub value: U256,
+    pub height: u64,
+}
+pub(crate) struct RevertReplay {
+    pub value: U256,
+    pub block: BlockId,
+    pub gas_limit: u64,
+}
+pub(crate) struct PendingValue {
+    pub value: U256,
+    pub nonce: u64,
+    pub gas_limit: u64,
+    pub max_fee: u128,
+}
+struct CallGas {
+    value: Option<U256>,
+    gas_reserve: bool,
+}
+
+mod receipts;
+#[cfg(feature = "ocomp-integration")]
+pub(crate) use receipts::receipt_event;
+pub(crate) use receipts::{receipt_json, receipt_success};
+
+fn call_gas(value: Option<U256>, gas_reserve: bool) -> CallGas {
+    CallGas { value, gas_reserve }
 }

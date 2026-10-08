@@ -677,7 +677,7 @@ fn missed_offering_rolls_back_a_ce_lookup_failure_after_promis_then_retries_once
         parent_root,
         calls: AtomicUsize::new(0),
     });
-    let scope = ExecutionScope::with_parent_tree(
+    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
         tree.clone(),
         outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );

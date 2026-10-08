@@ -1,6 +1,40 @@
 use crate::transport::tests::*;
 
 #[test]
+fn initialized_request_dispatch_rejects_handshake_commands() {
+    let mut enclave = Enclave::new(0x34);
+    for request in [
+        EnclaveRequest::OpenSession,
+        EnclaveRequest::GetInitializationChallenge,
+    ] {
+        assert!(matches!(
+            enclave.call(request),
+            EnclaveResponse::Error { message }
+                if message == "pre-handshake request is not valid inside a Noise session"
+        ));
+        assert!(enclave.offer_key.get().is_none());
+    }
+}
+
+#[test]
+fn account_key_authorization_cannot_cross_ledger_domains() {
+    let mut enclave = resident_enclave(3);
+    let (owner, account) = evm_signer(7);
+    let ephemeral = [0x24; 32];
+    let signature = owner_sig(&owner, account, ephemeral);
+    assert!(matches!(
+        enclave.call(EnclaveRequest::DeriveAccountKeys {
+            ledger: outbe_tee::protocol::Ledger::Promis,
+            account,
+            requester_ephemeral_pubkey: ephemeral,
+            owner_sig: signature,
+        }),
+        EnclaveResponse::Error { message }
+            if message == "DeriveAccountKeys: owner signature does not control account"
+    ));
+}
+
+#[test]
 fn health_reports_counters_uptime_and_offer_key_state() {
     let keys = EnclaveKeys::new([0x51; 32], Some([0x51; 32])).unwrap();
     let mut dkg = DkgSessionStore::new();

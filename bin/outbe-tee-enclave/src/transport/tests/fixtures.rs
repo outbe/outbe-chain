@@ -8,7 +8,7 @@ pub(in crate::transport::tests) fn production_dcap_state(
     boot: Arc<EnclaveBootConfig>,
     keys: &EnclaveKeys,
 ) -> InitializationState {
-    InitializationState::production_with_challenge_and_attestation(
+    crate::initialization::factory::production_with_challenge_and_attestation(
         boot,
         keys,
         keys.attestation_pub(),

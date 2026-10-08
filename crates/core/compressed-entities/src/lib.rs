@@ -6,6 +6,7 @@
 
 mod api;
 mod collection;
+mod collection_proof_archive;
 mod collection_reconstruction;
 mod commitment;
 mod errors;
@@ -31,6 +32,8 @@ pub mod test_support;
 #[doc(hidden)]
 pub mod bench_support;
 
+pub use api::scope_factory as execution_scope;
+
 pub use api::{
     begin_block, delete, end_block, list, mint, preview_end_block, read, retire_partition, update,
     AuthenticatedParentTree, AuthenticatedParentTreeFactory, BodyInput, CeWorkCheckpoint,
@@ -44,6 +47,7 @@ pub use collection::{
     collection_key, collection_root, partition_collection_key, sealed_root,
     tribute_partition_root_from_leaves, CeDomain, CeTopologyV1, CollectionKey, K_PROVISIONAL,
 };
+pub use collection_proof_archive::{open_tribute_proof_archive, TributeProofArchiveV1};
 pub use collection_reconstruction::{
     BoundedTributePartitionVerifier, TributePartitionExpectationV1,
     TributePartitionReconstructionError, TributePartitionRetentionStatsV1,
@@ -71,15 +75,18 @@ pub use persistence::{
     CE_SMT_RELATIVE_PATH, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 pub use proof::{
-    verify_point_read_v1, AbsentEvidenceV1, CkbCompiledProofV1, PointProofCommonV1,
-    PointReadRequestError, PointReadRequestV1, PointReadResultV1, PointReadServiceError,
-    PresentEvidenceV1, SelectedHeaderV1, VerifiedPointReadV1, PROOF_ENCODING_VERSION_V1,
+    verify_body_in_collection, verify_point_read_v1, AbsentEvidenceV1, CkbCompiledProofV1,
+    CollectionBodyProofV1, PointProofCommonV1, PointReadRequestError, PointReadRequestV1,
+    PointReadResultV1, PointReadServiceError, PresentEvidenceV1, SelectedHeaderV1,
+    VerifiedPointReadV1, PROOF_ENCODING_VERSION_V1,
 };
 pub use protobuf::{
-    decode_nod_bucket_v1, decode_nod_item_v1, decode_stored_nod_bucket_v1,
-    decode_stored_nod_item_v1, decode_stored_tribute_v1, decode_tribute_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, encode_tribute_v1, CanonicalBodyError, NodBucketBodyV1, NodItemBodyV1,
-    StoredBody, TributeBodyV1, BODY_SCHEMA_V1,
+    decode_nod_bucket_v1, decode_nod_item_v1, decode_nod_item_v2, decode_stored_body,
+    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, decode_stored_nod_item_v2,
+    decode_stored_tribute_v1, decode_stored_tribute_v2, decode_tribute_v1, decode_tribute_v2,
+    encode_nod_bucket_v1, encode_nod_item_v1, encode_nod_item_v2, encode_tribute_v1,
+    encode_tribute_v2, CanonicalBodyError, NodBucketBodyV1, NodItemBodyV1, NodItemBodyV2,
+    StoredBody, TributeBodyV1, BODY_SCHEMA_V1, NOD_BODY_SCHEMA_V2, TRIBUTE_BODY_SCHEMA_V2,
 };
 pub use readers::ExecutionReaders;
 pub use replay::{

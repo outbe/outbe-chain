@@ -218,6 +218,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().role {
         Role::Worker(args) => {
             install_consensus_domain(args.chain_id)?;
+            install_private_tribute_reader(args.chain_id)?;
             let runtime = RuntimeProfile::resolve(&args.runtime)?;
             let limits = poc_schema_limits();
             let canonical_bundle = std::fs::read(protocol_bundle_path_for_hash(
@@ -261,6 +262,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Role::SnapshotExporter(args) => run_snapshot_exporter(&args),
         Role::SignerAddress(args) => print_signer_address(&args),
+    }
+}
+
+fn install_private_tribute_reader(chain_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+    match (
+        env::var_os("OUTBE_OCOMP_TEE_ENDPOINT"),
+        env::var_os("OUTBE_OCOMP_NODE_DATA_DIR"),
+    ) {
+        (None, None) => Ok(()),
+        (Some(endpoint), Some(directory)) => {
+            let endpoint = endpoint
+                .into_string()
+                .map_err(|_| "OUTBE_OCOMP_TEE_ENDPOINT must be valid UTF-8")?;
+            outbe_ocomp::private_tribute_reader::install_private_tribute_reader(
+                &endpoint,
+                &PathBuf::from(directory),
+                chain_id,
+            )?;
+            Ok(())
+        }
+        _ => Err(
+            "OUTBE_OCOMP_TEE_ENDPOINT and OUTBE_OCOMP_NODE_DATA_DIR must be configured together"
+                .into(),
+        ),
     }
 }
 
@@ -330,6 +355,7 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
     let genesis_hash = required_env("OCOMP_GENESIS_HASH")?.parse()?;
     let bundle_hashes = required_protocol_bundle_hashes()?;
     install_consensus_domain(chain_id)?;
+    install_private_tribute_reader(chain_id)?;
     let rpc_url = required_env("OUTBE_OCOMP_RPC_URL")?;
     let storage = StorageConfig::load(required_env("OUTBE_OCOMP_STORAGE_CONFIG")?)?;
     let mut lanes = BTreeMap::new();
@@ -479,41 +505,9 @@ fn drain_snapshot_exporter_lane(
     observability: &SnapshotExporterObservabilityServerV1,
     completions: &tokio::sync::mpsc::UnboundedSender<SnapshotExporterCompletionV1>,
 ) {
-    let mut cycle_failed = false;
-    match lane.spool.pending_cursor() {
-        Ok(cursor) => {
-            for pending in cursor {
-                let pending = match pending {
-                    Ok(pending) => pending,
-                    Err(error) => {
-                        cycle_failed = true;
-                        let detail = error.to_string();
-                        observability.discovery_error(detail.clone());
-                        let _ = completions.send(SnapshotExporterCompletionV1::Failed {
-                            bundle_hash,
-                            observation_id: None,
-                            detail,
-                        });
-                        continue;
-                    }
-                };
-                match export_pending_discovery(lane, &pending, observability) {
-                    Ok(()) => {}
-                    Err(error) => {
-                        cycle_failed = true;
-                        let detail = error.to_string();
-                        observability.export_error(detail.clone());
-                        let _ = completions.send(SnapshotExporterCompletionV1::Failed {
-                            bundle_hash,
-                            observation_id: Some(pending.reference.observation_id),
-                            detail,
-                        });
-                    }
-                }
-            }
-        }
+    let cursor = match lane.spool.pending_cursor() {
+        Ok(cursor) => cursor,
         Err(error) => {
-            cycle_failed = true;
             let detail = error.to_string();
             observability.discovery_error(detail.clone());
             let _ = completions.send(SnapshotExporterCompletionV1::Failed {
@@ -521,6 +515,41 @@ fn drain_snapshot_exporter_lane(
                 observation_id: None,
                 detail,
             });
+            let _ = completions.send(SnapshotExporterCompletionV1::Cycle {
+                bundle_hash,
+                failed: true,
+            });
+            return;
+        }
+    };
+    let mut cycle_failed = false;
+    for pending in cursor {
+        let pending = match pending {
+            Ok(pending) => pending,
+            Err(error) => {
+                cycle_failed = true;
+                let detail = error.to_string();
+                observability.discovery_error(detail.clone());
+                let _ = completions.send(SnapshotExporterCompletionV1::Failed {
+                    bundle_hash,
+                    observation_id: None,
+                    detail,
+                });
+                continue;
+            }
+        };
+        match export_pending_discovery(lane, &pending, observability) {
+            Ok(()) => {}
+            Err(error) => {
+                cycle_failed = true;
+                let detail = error.to_string();
+                observability.export_error(detail.clone());
+                let _ = completions.send(SnapshotExporterCompletionV1::Failed {
+                    bundle_hash,
+                    observation_id: Some(pending.reference.observation_id),
+                    detail,
+                });
+            }
         }
     }
     let _ = completions.send(SnapshotExporterCompletionV1::Cycle {

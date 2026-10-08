@@ -4,34 +4,16 @@
 //! benchmark exercise the same crate-private processor-injection seam as unit
 //! tests. That seam does not become part of TributeFactory's product API.
 
-use alloy_primitives::{Address, Bytes, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
 };
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult};
 
-use crate::{runtime::OfferTributeInput, schema::TributeFactoryContract};
+use crate::schema::TributeFactoryContract;
 
-/// Complete caller-controlled input needed by the benchmark's successful path.
-#[derive(Clone, Debug)]
-pub struct BenchOfferInput {
-    pub caller: Address,
-    pub cipher_text: Bytes,
-    pub nonce: Bytes,
-    pub ephemeral_pubkey: U256,
-    pub worldwide_day: WorldwideDay,
-    pub tribute_currency: u16,
-    pub reference_currency: u16,
-    pub exclude_from_intex_issuance: bool,
-    pub zk_proof: Bytes,
-    pub l2_chain_id: u32,
-    pub circuit_version: String,
-    pub zk_merkle_root: Bytes,
-    pub signature: Bytes,
-}
+pub use crate::runtime::OfferTributeInput as BenchOfferInput;
 
 /// Execute one successful creation through the canonical TributeFactory
 /// runtime with a caller-supplied benchmark processor. This function keeps the
@@ -46,24 +28,6 @@ pub fn execute_offer_with_processor(
         &[EncryptedTributeOffer],
     ) -> core::result::Result<Vec<TributeOfferResult>, PrecompileError>,
 ) -> Result<WwdEntityId> {
-    TributeFactoryContract::new(storage).offer_tribute_with_processor(
-        scope,
-        parent,
-        OfferTributeInput {
-            caller: input.caller,
-            cipher_text: input.cipher_text,
-            nonce: input.nonce,
-            ephemeral_pubkey: input.ephemeral_pubkey,
-            worldwide_day: input.worldwide_day,
-            tribute_currency: input.tribute_currency,
-            reference_currency: input.reference_currency,
-            exclude_from_intex_issuance: input.exclude_from_intex_issuance,
-            zk_proof: input.zk_proof,
-            l2_chain_id: input.l2_chain_id,
-            circuit_version: input.circuit_version,
-            zk_merkle_root: input.zk_merkle_root,
-            signature: input.signature,
-        },
-        processor,
-    )
+    TributeFactoryContract::new(storage)
+        .offer_tribute_with_processor(scope, parent, input, processor)
 }

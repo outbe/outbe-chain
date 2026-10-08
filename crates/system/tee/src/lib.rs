@@ -10,6 +10,7 @@
 //! lives only in `bin/outbe-tee-enclave`. Here we keep the message contract and
 //! transport.
 
+pub mod balance_client;
 pub mod call_context;
 pub mod canary;
 pub mod client;
@@ -19,11 +20,17 @@ pub mod dcap_protocol;
 #[cfg(feature = "native-dcap")]
 pub mod dcap_v1;
 pub mod errors;
+pub mod fidelity_decrypt;
 pub mod finalized_admission;
+pub mod gratis_decrypt;
 pub mod host_collateral;
 mod metrics;
 #[cfg(feature = "native-dcap")]
 pub mod native_qvl;
+pub mod nod_decrypt;
+pub mod nod_materialization;
+pub mod nod_mine;
+pub mod nod_transport;
 pub mod node_host;
 pub mod offer_encrypt;
 pub mod protocol;
@@ -32,6 +39,11 @@ pub mod release_dcap_artifacts;
 pub mod remote_session;
 pub mod session;
 pub mod tee_dkg;
+pub mod tribute_client;
+pub mod tribute_day;
+pub mod tribute_day_client;
+pub mod tribute_decrypt;
+pub mod tribute_v2;
 pub mod upgrade_transfer;
 
 pub use canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
@@ -47,7 +59,7 @@ pub use client_global::{
     is_enclave_configured, prepare_gramine_direct_dev_onboarding_artifact_v1,
     resident_offer_public_key_state_v1, resident_offer_public_key_v1, try_with_enclave,
     verify_dcap_evidence_v1, verify_dcap_registration_and_seal_v1, InstallError,
-    RuntimeEnclaveClient,
+    RegistrationVerificationRequest, RuntimeEnclaveClient,
 };
 #[cfg(feature = "native-dcap")]
 pub use dcap_v1::{dcap_collateral_validity_window_v1, DcapCollateralValidityWindowV1};

@@ -112,7 +112,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             .modify_block_chained(|block| block.timestamp = U256::from(NOW));
         let mut evm = IssuanceEvm {
             ctx,
-            scope: Arc::new(ExecutionScope::new()),
+            scope: Arc::new(ExecutionScope::default()),
         };
         prepare_issuance_counterparties(&mut evm, failure)
             .expect("prepare issuance counterparties fixture succeeds");
@@ -252,11 +252,13 @@ fn pledge_issuance_note(
     let auth = |op, amount, op_nonce| ModifyAuth {
         mac: modify_mac(
             key,
-            OWNER,
-            op,
-            amount,
-            op_nonce,
-            B256::from(U256::from(CHAIN_ID)),
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account: OWNER,
+                op,
+                amount,
+                op_nonce,
+                chain_id: B256::from(U256::from(CHAIN_ID)),
+            },
         ),
         op_nonce,
     };

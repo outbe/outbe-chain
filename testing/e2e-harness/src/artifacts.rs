@@ -225,90 +225,16 @@ pub fn build_lane(repo: &Path, lane: BuildLane, jobs: usize, output: &Path) -> R
     Ok(())
 }
 
+fn release_build_command(jobs: &str, targets: &[&str]) -> Vec<String> {
+    let mut command = strings(&["build", "--locked", "--release", "-j", jobs]);
+    command.extend(targets.iter().map(|argument| (*argument).to_owned()));
+    command
+}
+
 fn build_commands(lane: BuildLane, jobs: usize) -> Vec<Vec<String>> {
     let jobs = jobs.to_string();
-    let mut commands = vec![strings(&[
-        "build",
-        "--locked",
-        "--release",
-        "-j",
-        &jobs,
-        "-p",
-        "outbe-chain",
-        "--features",
-        "e2e-test,test-protocol-overrides",
-        "--bin",
-        "outbe-chain",
-    ])];
-
-    if !matches!(lane, BuildLane::Dcap) {
-        commands.push(strings(&[
-            "build",
-            "--locked",
-            "--release",
-            "-j",
-            &jobs,
-            "-p",
-            "outbe-ocomp",
-            "--bin",
-            "outbe-ocomp",
-            "-p",
-            "outbe-feeder",
-            "--bin",
-            "outbe-feeder",
-        ]));
-    }
-    // Every validator launches this host sidecar, independently of TEE mode
-    // and whether a scenario exercises repository publication.
-    commands.push(strings(&[
-        "build",
-        "--locked",
-        "--release",
-        "-j",
-        &jobs,
-        "-p",
-        "outbe-radicle-sidecar",
-        "--bin",
-        "outbe-radicle",
-    ]));
-    commands.push(strings(&[
-        "build",
-        "--locked",
-        "--release",
-        "-j",
-        &jobs,
-        "--bin",
-        "outbe-cli",
-        "--bin",
-        "outbe-keygen",
-    ]));
-
-    let mut enclave = strings(&[
-        "build",
-        "--locked",
-        "--release",
-        "-j",
-        &jobs,
-        "-p",
-        "outbe-tee-enclave",
-    ]);
-    match lane {
-        BuildLane::Mock | BuildLane::MockNative => enclave.extend(strings(&[
-            "--features",
-            "mock",
-            "--bin",
-            "outbe-tee-enclave-mock",
-        ])),
-        BuildLane::Dcap => enclave.extend(strings(&[
-            "--features",
-            "production-dcap-release",
-            "--bin",
-            "outbe-tee-enclave",
-        ])),
-        _ => enclave.extend(strings(&["--bin", "outbe-tee-enclave"])),
-    }
-    commands.push(enclave);
-
+    let mut commands = host_role_build_commands(lane, &jobs);
+    commands.push(enclave_build_command(lane, &jobs));
     if matches!(
         lane,
         BuildLane::Mock | BuildLane::SgxNoAttest | BuildLane::RadicleSgx
@@ -331,20 +257,51 @@ fn build_commands(lane: BuildLane, jobs: usize) -> Vec<Vec<String>> {
             "radicle-remote-helper",
         ]));
     }
-    commands.push(strings(&[
+    commands.push(release_build_command(
+        &jobs,
+        &[
+            "-p",
+            "outbe-e2e-harness",
+            "--features",
+            "ocomp-integration",
+            "--bin",
+            "outbe-e2e",
+        ],
+    ));
+    commands
+}
+
+fn enclave_build_command(lane: BuildLane, jobs: &str) -> Vec<String> {
+    let mut enclave = strings(&[
         "build",
         "--locked",
         "--release",
         "-j",
-        &jobs,
+        jobs,
         "-p",
-        "outbe-e2e-harness",
-        "--features",
-        "ocomp-integration",
-        "--bin",
-        "outbe-e2e",
-    ]));
-    commands
+        "outbe-tee-enclave",
+    ]);
+    match lane {
+        BuildLane::Mock | BuildLane::MockNative => enclave.extend(strings(&[
+            "--features",
+            "mock,e2e-test",
+            "--bin",
+            "outbe-tee-enclave-mock",
+        ])),
+        BuildLane::Dcap => enclave.extend(strings(&[
+            "--features",
+            "production-dcap-release,e2e-test",
+            "--bin",
+            "outbe-tee-enclave",
+        ])),
+        _ => enclave.extend(strings(&[
+            "--features",
+            "e2e-test",
+            "--bin",
+            "outbe-tee-enclave",
+        ])),
+    }
+    enclave
 }
 
 fn run_cargo(repo: &Path, arguments: &[String]) -> Result<()> {
@@ -596,6 +553,44 @@ fn publish_manifest(path: &Path, manifest: &BuildManifestV1) -> Result<()> {
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+fn host_role_build_commands(lane: BuildLane, jobs: &str) -> Vec<Vec<String>> {
+    let mut commands = vec![release_build_command(
+        jobs,
+        &[
+            "-p",
+            "outbe-chain",
+            "--features",
+            "e2e-test,test-protocol-overrides",
+            "--bin",
+            "outbe-chain",
+        ],
+    )];
+    if !matches!(lane, BuildLane::Dcap) {
+        commands.push(release_build_command(
+            jobs,
+            &[
+                "-p",
+                "outbe-ocomp",
+                "--bin",
+                "outbe-ocomp",
+                "-p",
+                "outbe-feeder",
+                "--bin",
+                "outbe-feeder",
+            ],
+        ));
+    }
+    commands.push(release_build_command(
+        jobs,
+        &["-p", "outbe-radicle-sidecar", "--bin", "outbe-radicle"],
+    ));
+    commands.push(release_build_command(
+        jobs,
+        &["--bin", "outbe-cli", "--bin", "outbe-keygen"],
+    ));
+    commands
 }
 
 #[cfg(test)]

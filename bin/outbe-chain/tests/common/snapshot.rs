@@ -72,6 +72,13 @@ pub(crate) fn run(command: &mut Command) -> Output {
     };
     stdout.read_to_end(&mut output.stdout).unwrap();
     stderr.read_to_end(&mut output.stderr).unwrap();
+    if !output.status.success() {
+        eprintln!(
+            "offline command failed after {:?}: {command:?}; status: {}",
+            started.elapsed(),
+            output.status
+        );
+    }
     assert!(
         !timed_out,
         "offline command timed out: {command:?}\n{}",
@@ -82,7 +89,8 @@ pub(crate) fn run(command: &mut Command) -> Output {
 
 pub(crate) fn transcript(output: &Output) -> String {
     format!(
-        "{}\n{}",
+        "exit status: {}\n{}\n{}",
+        output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     )

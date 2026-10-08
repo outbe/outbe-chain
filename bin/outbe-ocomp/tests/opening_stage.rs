@@ -397,13 +397,15 @@ fn durable_publication_failure_replays_the_persisted_opening_without_rpc() {
         sealed_tribute_collection_root: B256::repeat_byte(13),
     };
     let mut publisher = DurableInputArtifactPublisher::open(
-        &cas,
+        outbe_ocomp::input_artifacts::InputArtifactContext {
+            cas: &cas,
+            bundle: &bundle,
+            limits,
+            list_limits: poc_input_list_limits(),
+        },
         &reader,
         &catalog_root,
-        &bundle,
         identity.clone(),
-        limits,
-        poc_input_list_limits(),
     )
     .unwrap();
     let mut bodies = inventory.tribute_bodies().unwrap();
@@ -427,13 +429,15 @@ fn durable_publication_failure_replays_the_persisted_opening_without_rpc() {
     drop(publisher);
 
     let mut publisher = DurableInputArtifactPublisher::open(
-        &cas,
+        outbe_ocomp::input_artifacts::InputArtifactContext {
+            cas: &cas,
+            bundle: &bundle,
+            limits,
+            list_limits: poc_input_list_limits(),
+        },
         &reader,
         &catalog_root,
-        &bundle,
         identity,
-        limits,
-        poc_input_list_limits(),
     )
     .unwrap();
     let mut bodies = inventory.tribute_bodies().unwrap();

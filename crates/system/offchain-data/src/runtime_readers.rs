@@ -9,6 +9,7 @@ use outbe_compressed_entities::{
 use outbe_nod::{NodRepositoryError, NodRepositoryReader};
 use std::{
     collections::BTreeMap,
+    error::Error as _,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
@@ -103,17 +104,13 @@ impl Drop for ExecutionReadBudgetGuard {
     }
 }
 
-type BodyReadObservation = (Namespace, Key, Option<StoredValue>);
-
 fn reader_wrap(
     budgets: Arc<ExecutionReadBudgets>,
-    last_body_read: Arc<Mutex<Option<BodyReadObservation>>>,
 ) -> Arc<dyn Fn(StorageReaderHandle) -> StorageReaderHandle + Send + Sync> {
     Arc::new(move |inner| {
         Arc::new(BudgetedStorageReader {
             inner,
             budgets: budgets.clone(),
-            last_body_read: last_body_read.clone(),
         })
     })
 }
@@ -121,55 +118,122 @@ fn reader_wrap(
 struct BudgetedStorageReader {
     inner: StorageReaderHandle,
     budgets: Arc<ExecutionReadBudgets>,
-    last_body_read: Arc<Mutex<Option<BodyReadObservation>>>,
+}
+
+#[derive(Clone, Copy)]
+struct ReadDiagnostic {
+    operation: &'static str,
+    started: Instant,
+}
+
+impl ReadDiagnostic {
+    fn report(self, stage: &'static str, error: &StorageError) {
+        // Backend messages can contain keys or record contents. Inspect only typed causes.
+        let io = std::iter::successors(error.source(), |cause| (*cause).source())
+            .take(8)
+            .find_map(|cause| cause.downcast_ref::<std::io::Error>());
+        tracing::warn!(
+            target: "offchain_read",
+            operation = self.operation,
+            stage,
+            elapsed_ms = self.started.elapsed().as_millis(),
+            error_kind = ?error.kind(),
+            source_io_kind = ?io.map(std::io::Error::kind),
+            source_os_error = ?io.and_then(std::io::Error::raw_os_error),
+            "Runtime body read failed"
+        );
+    }
+
+    fn failure(self, stage: &'static str, error: StorageError) -> StorageError {
+        self.report(stage, &error);
+        error
+    }
 }
 
 impl BudgetedStorageReader {
     fn run<T: Send + 'static>(
         &self,
+        operation_name: &'static str,
         operation: impl FnOnce(StorageReaderHandle) -> Result<T, StorageError> + Send + 'static,
     ) -> Result<T, StorageError> {
+        let diagnostic = ReadDiagnostic {
+            operation: operation_name,
+            started: Instant::now(),
+        };
         if self.budgets.is_cancelled() {
-            return Err(StorageError::RequestDeadline);
+            return Err(diagnostic.failure("request_cancelled", StorageError::RequestDeadline));
         }
-        let permit = ExecutionReadPermit::acquire()?;
+        let permit = ExecutionReadPermit::acquire()
+            .map_err(|error| diagnostic.failure("capacity", error))?;
+        let result_rx = self.spawn_read(diagnostic, permit, operation)?;
+        let started = Instant::now();
+        loop {
+            if self.budgets.is_cancelled() {
+                return Err(diagnostic.failure("request_cancelled", StorageError::RequestDeadline));
+            }
+            let remaining = Duration::from_secs(1).saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(diagnostic.failure(
+                    "operation_timeout",
+                    StorageError::Unavailable {
+                        source: Box::new(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "execution body read exceeded the one-second MongoDB operation limit",
+                        )),
+                    },
+                ));
+            }
+            match result_rx.recv_timeout(remaining.min(Duration::from_millis(10))) {
+                Ok(result) => {
+                    return result.inspect_err(|error| diagnostic.report("backend", error))
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(diagnostic.failure(
+                        "worker_disconnected",
+                        StorageError::Backend {
+                            source: Box::new(std::io::Error::other(
+                                "execution body read worker exited unexpectedly",
+                            )),
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    fn spawn_read<T: Send + 'static>(
+        &self,
+        diagnostic: ReadDiagnostic,
+        permit: ExecutionReadPermit,
+        operation: impl FnOnce(StorageReaderHandle) -> Result<T, StorageError> + Send + 'static,
+    ) -> Result<std::sync::mpsc::Receiver<Result<T, StorageError>>, StorageError> {
         let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
         let inner = self.inner.clone();
         std::thread::Builder::new()
             .name("offchain-read".to_owned())
             .spawn(move || {
                 let _permit = permit;
-                let _ = result_tx.send(operation(inner));
-            })
-            .map_err(|error| StorageError::Unavailable {
-                source: Box::new(error),
-            })?;
-        let started = Instant::now();
-        loop {
-            if self.budgets.is_cancelled() {
-                return Err(StorageError::RequestDeadline);
-            }
-            let remaining = Duration::from_secs(1).saturating_sub(started.elapsed());
-            if remaining.is_zero() {
-                return Err(StorageError::Unavailable {
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "execution body read exceeded the one-second MongoDB operation limit",
-                    )),
-                });
-            }
-            match result_rx.recv_timeout(remaining.min(Duration::from_millis(10))) {
-                Ok(result) => return result,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(StorageError::Backend {
-                        source: Box::new(std::io::Error::other(
-                            "execution body read worker exited unexpectedly",
-                        )),
-                    });
+                if let Err(result) = result_tx.send(operation(inner)) {
+                    tracing::warn!(
+                        target: "offchain_read",
+                        operation = diagnostic.operation,
+                        stage = "completed_after_receiver_dropped",
+                        elapsed_ms = diagnostic.started.elapsed().as_millis(),
+                        error_kind = ?result.0.as_ref().err().map(StorageError::kind),
+                        "Runtime body read worker completed after its caller stopped waiting"
+                    );
                 }
-            }
-        }
+            })
+            .map_err(|error| {
+                diagnostic.failure(
+                    "spawn",
+                    StorageError::Unavailable {
+                        source: Box::new(error),
+                    },
+                )
+            })?;
+        Ok(result_rx)
     }
 }
 
@@ -180,18 +244,7 @@ impl StorageReader for BudgetedStorageReader {
         key: &Key,
     ) -> Result<Option<StoredValue>, StorageError> {
         let key = key.clone();
-        let diagnostic = self.last_body_read.clone();
-        self.run(move |inner| {
-            let result = inner.get_record(namespace.clone(), &key);
-            if matches!(namespace.as_str(), "nods" | "nod_buckets" | "tributes") {
-                if let Ok(value) = &result {
-                    if let Ok(mut last) = diagnostic.lock() {
-                        *last = Some((namespace, key, value.clone()));
-                    }
-                }
-            }
-            result
-        })
+        self.run("get_record", move |inner| inner.get_record(namespace, &key))
     }
 
     fn get_records(
@@ -200,7 +253,9 @@ impl StorageReader for BudgetedStorageReader {
         keys: &[Key],
     ) -> Result<Vec<Option<StoredValue>>, StorageError> {
         let keys = keys.to_vec();
-        self.run(move |inner| inner.get_records(namespace, &keys))
+        self.run("get_records", move |inner| {
+            inner.get_records(namespace, &keys)
+        })
     }
 
     fn scan_prefix(
@@ -211,7 +266,7 @@ impl StorageReader for BudgetedStorageReader {
         let prefix = request.prefix().to_vec();
         let after = request.after().cloned();
         let limit = request.limit();
-        self.run(move |inner| {
+        self.run("scan_prefix", move |inner| {
             let request = ScanRequest::new(&prefix, after.as_ref(), limit)?;
             inner.scan_prefix(namespace, request)
         })
@@ -226,73 +281,80 @@ impl StorageReader for BudgetedStorageReader {
 /// That migration writes the shared database and the day databases.
 #[derive(Clone)]
 pub struct RuntimeBodyReaders {
+    execution: ExecutionBodyReadSession,
+}
+
+#[derive(Clone)]
+struct RuntimeReaderFactory {
     storage: StorageReaderHandle,
-    tribute: TributeRepositoryReader,
-    nod: NodRepositoryReader,
     failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
-    budgets: Arc<ExecutionReadBudgets>,
-    last_body_read: Arc<Mutex<Option<BodyReadObservation>>>,
     days: Option<DayDatabaseRoute>,
 }
 
-impl RuntimeBodyReaders {
-    /// Builds both domain readers over one shared storage adapter.
-    #[must_use]
-    pub fn new(storage: StorageReaderHandle) -> Self {
-        Self::build(storage, None, None)
-    }
+#[derive(Clone)]
+struct ExecutionBodyReadSession {
+    factory: RuntimeReaderFactory,
+    tribute: TributeRepositoryReader,
+    nod: NodRepositoryReader,
+    budgets: Arc<ExecutionReadBudgets>,
+}
 
-    /// Builds supervised readers whose infrastructure failures share the ExEx outage lifecycle.
-    #[must_use]
-    pub fn new_supervised(
-        storage: StorageReaderHandle,
-        failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
-    ) -> Self {
-        Self::build(storage, Some(failure_sender), None)
+/// Builds both domain readers over one shared storage adapter.
+#[must_use]
+pub fn runtime_body_readers(storage: StorageReaderHandle) -> RuntimeBodyReaders {
+    RuntimeReaderFactory {
+        storage,
+        failure_sender: None,
+        days: None,
     }
+    .build()
+}
 
-    /// Supervised readers that load Tribute and Nod bodies from per-day databases.
-    #[must_use]
-    pub fn new_supervised_with_days(
-        storage: StorageReaderHandle,
-        days: DayDatabaseRoute,
-        failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
-    ) -> Self {
-        Self::build(storage, Some(failure_sender), Some(days))
+/// Builds supervised readers that share the ExEx outage lifecycle.
+#[must_use]
+pub fn supervised_runtime_body_readers(
+    storage: StorageReaderHandle,
+    failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
+) -> RuntimeBodyReaders {
+    RuntimeReaderFactory {
+        storage,
+        failure_sender: Some(failure_sender),
+        days: None,
     }
+    .build()
+}
 
-    /// Creates an execution-local budget scope over the same least-authority backend.
-    #[must_use]
-    pub fn fork_execution(&self) -> Self {
-        Self::build(
-            self.storage.clone(),
-            self.failure_sender.clone(),
-            self.days.clone(),
-        )
+/// Builds supervised readers for per-day Tribute and Nod databases.
+#[must_use]
+pub fn supervised_day_runtime_body_readers(
+    storage: StorageReaderHandle,
+    days: DayDatabaseRoute,
+    failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
+) -> RuntimeBodyReaders {
+    RuntimeReaderFactory {
+        storage,
+        failure_sender: Some(failure_sender),
+        days: Some(days),
     }
+    .build()
+}
 
-    fn build(
-        storage: StorageReaderHandle,
-        failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
-        days: Option<DayDatabaseRoute>,
-    ) -> Self {
+impl RuntimeReaderFactory {
+    fn build(self) -> RuntimeBodyReaders {
         let budgets = Arc::new(ExecutionReadBudgets::default());
-        let last_body_read = Arc::new(Mutex::new(None));
-        let raw_storage = storage.clone();
-        let (tribute, nod) = match &days {
+        let (tribute, nod) = match &self.days {
             None => {
                 let budgeted: StorageReaderHandle = Arc::new(BudgetedStorageReader {
-                    inner: storage,
+                    inner: self.storage.clone(),
                     budgets: budgets.clone(),
-                    last_body_read: last_body_read.clone(),
                 });
                 (
                     TributeRepositoryReader::new(budgeted.clone()),
-                    NodRepositoryReader::new(budgeted),
+                    outbe_nod::nod_reader(budgeted),
                 )
             }
             Some(route) => {
-                let wrap = reader_wrap(budgets.clone(), last_body_read.clone());
+                let wrap = reader_wrap(budgets.clone());
                 (
                     TributeRepositoryReader::with_days(
                         route.durable_reader.clone(),
@@ -300,47 +362,63 @@ impl RuntimeBodyReaders {
                         route.databases.clone(),
                     )
                     .with_day_read_wrap(wrap.clone()),
-                    NodRepositoryReader::with_days(
-                        route.durable_reader.clone(),
-                        route.durable_writer.clone(),
-                        route.databases.clone(),
-                    )
-                    .with_day_read_wrap(wrap),
+                    outbe_nod::nod_reader(route.durable_reader.clone())
+                        .with_days(route.durable_writer.clone(), route.databases.clone())
+                        .with_day_read_wrap(wrap),
                 )
             }
         };
-        Self {
-            storage: raw_storage,
-            tribute,
-            nod,
-            failure_sender,
-            budgets,
-            last_body_read,
-            days,
+        RuntimeBodyReaders {
+            execution: ExecutionBodyReadSession {
+                factory: self,
+                tribute,
+                nod,
+                budgets,
+            },
         }
+    }
+}
+
+impl RuntimeBodyReaders {
+    /// Creates a separate execution budget over the same storage backend.
+    #[must_use]
+    pub fn fork_execution(&self) -> Self {
+        self.execution.factory.clone().build()
     }
 
     /// Applies the caller's remaining execution budget to every body read in this executor.
     #[must_use]
     pub fn enter_execution_budget(&self, budget: ExecutionReadBudget) -> ExecutionReadBudgetGuard {
-        self.budgets.enter(budget)
+        self.execution.budgets.enter(budget)
+    }
+
+    /// Identifies the cancelled request in this execution-local reader scope.
+    pub fn cancelled_read_budget(&self) -> Option<ExecutionReadBudget> {
+        self.execution
+            .budgets
+            .active
+            .lock()
+            .ok()?
+            .values()
+            .find(|budget| budget.is_cancelled())
+            .cloned()
     }
 
     /// Returns the typed Tribute body reader.
     #[must_use]
     pub const fn tribute(&self) -> &TributeRepositoryReader {
-        &self.tribute
+        &self.execution.tribute
     }
 
     /// Returns the typed Nod item and bucket reader.
     #[must_use]
     pub const fn nod(&self) -> &NodRepositoryReader {
-        &self.nod
+        &self.execution.nod
     }
 
     /// Reports a technical read failure without exposing readiness write authority to domains.
     pub fn report_unavailable(&self) {
-        if let Some(sender) = &self.failure_sender {
+        if let Some(sender) = &self.execution.factory.failure_sender {
             sender.send_if_modified(|current| match current {
                 Some(RuntimeBodyFailure::Fatal(_)) => false,
                 Some(RuntimeBodyFailure::Unavailable { generation, .. }) => {
@@ -371,7 +449,7 @@ impl RuntimeBodyReaders {
         class: ProjectionFailureClass,
         message: impl Into<std::sync::Arc<str>>,
     ) {
-        if let Some(sender) = &self.failure_sender {
+        if let Some(sender) = &self.execution.factory.failure_sender {
             sender.send_replace(Some(RuntimeBodyFailure::Fatal(ProjectionFailure::new(
                 class, message,
             ))));
@@ -385,45 +463,10 @@ impl RuntimeBodyReaders {
                 self.report_unavailable();
             }
             outbe_primitives::error::PrecompileError::BodyReadCorruption(message) => {
-                let body_observation = self.last_body_read.lock().map(|last| {
-                    last.as_ref().map(|(namespace, key, record)| {
-                        format!(
-                            "namespace={} key=0x{} record={:?}",
-                            namespace.as_str(),
-                            alloy_primitives::hex::encode(key.as_bytes()),
-                            record.as_ref().map(|record| (
-                                alloy_primitives::hex::encode(record.value.as_bytes()),
-                                &record.metadata,
-                            )),
-                        )
-                    })
-                });
-                let body_observation = format!("{body_observation:?}");
-                // This is a post-detection observation, not proof of the checkpoint
-                // at the preceding body read. Keep the original failure even if
-                // collecting this bounded diagnostic fails.
-                let diagnostic = BudgetedStorageReader {
-                    inner: self.storage.clone(),
-                    budgets: self.budgets.clone(),
-                    last_body_read: self.last_body_read.clone(),
-                }
-                .run(|storage| {
-                    let namespace = crate::state_namespace()
-                        .map_err(|error| StorageError::Corruption(error.to_string()))?;
-                    let key = crate::state_key()
-                        .map_err(|error| StorageError::Corruption(error.to_string()))?;
-                    Ok(storage.get_record(namespace, &key)?.map(|record| {
-                        format!(
-                            "state={:?} raw_state=0x{} metadata={:?}",
-                            crate::decode_state(record.value.as_bytes()),
-                            alloy_primitives::hex::encode(record.value.as_bytes()),
-                            record.metadata,
-                        )
-                    }))
-                });
-                self.report_fatal(
-                    ProjectionFailureClass::CorruptBody,
-                    format!("{message}; [CE_BODY_DIAGNOSTIC] last_body_read={body_observation} projection_after_detection={diagnostic:?}"),
+                tracing::warn!(
+                    target: "offchain_read",
+                    reason = %message,
+                    "Body read failed. The precompile returns a revert."
                 );
             }
             _ => {}
@@ -435,14 +478,17 @@ impl ParentBodySource for RuntimeBodyReaders {
     fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
         match entity {
             EntityRef::Tribute(tribute_id) => self
+                .execution
                 .tribute
                 .get_stored_body(tribute_id)
                 .map_err(map_tribute_parent_error),
             EntityRef::NodItem(nod_id) => self
+                .execution
                 .nod
                 .get_stored_item(nod_id)
                 .map_err(map_nod_parent_error),
             EntityRef::NodBucket(bucket_id) => self
+                .execution
                 .nod
                 .get_stored_bucket(bucket_id)
                 .map_err(map_nod_parent_error),
@@ -456,18 +502,25 @@ impl ParentBodySource for RuntimeBodyReaders {
     ) -> Result<IdPage, ParentBodySourceError> {
         match query {
             QueryRef::TributeByOwner(owner) => self
+                .execution
                 .tribute
                 .list_ids_by_owner(owner, request)
                 .map_err(map_tribute_parent_error),
             QueryRef::TributeByDay(worldwide_day) => self
+                .execution
                 .tribute
                 .list_ids_by_day(worldwide_day, request)
                 .map_err(map_tribute_parent_error),
             QueryRef::NodByOwner(owner) => self
+                .execution
                 .nod
                 .list_ids_by_owner(owner, request)
                 .map_err(map_nod_parent_error),
-            QueryRef::NodAll => self.nod.list_ids_all(request).map_err(map_nod_parent_error),
+            QueryRef::NodAll => self
+                .execution
+                .nod
+                .list_ids_all(request)
+                .map_err(map_nod_parent_error),
         }
     }
 }

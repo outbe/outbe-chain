@@ -1,5 +1,6 @@
 //! Creates and finalizes a request through the real block lifecycle.
 use super::*;
+use outbe_offchain_data::runtime_body_readers;
 
 pub(super) fn open_voting() -> VotingOpenScenario {
     open_voting_with_pre_open_state().0
@@ -63,7 +64,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
     );
     assert_provider_activated_ocomp_inputs(&provider, prepared.wwd, prepared.nominal);
     let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-    let runtime_body_readers = RuntimeBodyReaders::new(body_storage);
+    let runtime_body_readers = runtime_body_readers(body_storage);
     let fixture = OcompSuccessorFixture {
         chain_spec: &chain_spec,
         tree_service: &prepared.tree_service,

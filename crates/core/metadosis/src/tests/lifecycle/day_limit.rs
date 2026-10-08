@@ -200,6 +200,7 @@ fn ocomp_day_limit_rejection_and_every_mutation_failure_are_atomic() {
     // A formed day limit cannot be replaced, and the refusal leaves no trace.
     let mut rejected = HashMapStorageProvider::new(CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     seed(&mut rejected, U256::from(1));
     apply_limit(&mut rejected, U256::from(100)).unwrap();
     let before_storage = rejected.storage.clone();
@@ -226,6 +227,7 @@ fn ocomp_day_limit_rejection_and_every_mutation_failure_are_atomic() {
 
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     seed(&mut probe, U256::from(9));
     probe.fail_after_mutation_at(usize::MAX);
     apply_limit(&mut probe, U256::from(100)).unwrap();
@@ -254,6 +256,7 @@ fn ocomp_day_limit_rejection_and_every_mutation_failure_are_atomic() {
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         outbe_fidelity::enclave_client::test_enclave::install();
+        outbe_tribute::enclave_client::test_enclave::install();
         seed(&mut provider, U256::from(9));
         let before_storage = provider.storage.clone();
         let before_events = provider.events.clone();

@@ -1,7 +1,9 @@
-use alloy_primitives::{Address, B256, U256};
+mod forfeiture;
+
+use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{
-    delete, mint, read, retire_partition, BodyInput, EntityRef, ExecutionScope, ParentBodySource,
-    PartitionRef, RetirementOutcome, VerifiedBody, WwdEntityId,
+    delete, read, retire_partition, EntityRef, ExecutionScope, ParentBodySource, PartitionRef,
+    RetirementOutcome, VerifiedBody, WwdEntityId,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
@@ -9,7 +11,7 @@ use outbe_primitives::time::WorldwideDay;
 use crate::errors::TributeError;
 use crate::precompile::ITribute;
 use crate::schema::{TributeContract, TributeData};
-use crate::state::tribute_from_verified;
+use crate::state::{record_from_verified, tribute_from_verified};
 
 /// A semantic Tribute paired with the exact generic mutation capability that verified it.
 pub struct LoadedTribute {
@@ -88,6 +90,7 @@ impl TributeContract<'_> {
                 )
             })?;
         self.total_supply.write(supply)?;
+        self.reset_day_nominal(&totals)?;
         totals.tribute_count = 0;
         totals.tribute_nominal_total_minor = alloy_primitives::U256::ZERO;
         self.store_day_totals(&totals)
@@ -155,107 +158,7 @@ impl TributeContract<'_> {
     ) -> Result<TributeForfeitureReceipt> {
         let ce_checkpoint = scope.ce_work_checkpoint()?;
         let storage = self.storage_handle();
-        let result = storage.with_checkpoint(|| {
-            let mut totals = self.get_day_totals(day)?;
-            if !self.ocomp_profile_ready.read()? || !totals.initialized || !totals.is_sealed {
-                return Err(
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                        "CapacityForfeiture requires a fresh-profile sealed Tribute partition"
-                            .into(),
-                    ),
-                );
-            }
-
-            let partition = PartitionRef::TributeWwd(day);
-            let authenticated_root = scope.authenticated_partition_root(partition)?;
-            if totals.tribute_count != 0 && authenticated_root.is_none() {
-                return Err(
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                        "populated Tribute aggregate has no authenticated parent partition".into(),
-                    ),
-                );
-            }
-            let sealed_root = authenticated_root.unwrap_or(B256::ZERO);
-
-            let mut admission = self
-                .day_pre_admission
-                .get(day)?
-                .unwrap_or_else(|| crate::DayPreAdmission::with_key(day));
-            if admission.source_generation != 0 {
-                return Err(
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                        "CapacityForfeiture requires unretired Tribute generation zero".into(),
-                    ),
-                );
-            }
-            if admission.is_sealed {
-                if admission.sealed_collection_root != sealed_root
-                    || admission.sealed_tribute_count != totals.tribute_count
-                    || admission.sealed_tribute_nominal_total_minor
-                        != totals.tribute_nominal_total_minor
-                {
-                    return Err(
-                        outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                            "sealed Tribute pre-admission differs from authenticated aggregate"
-                                .into(),
-                        ),
-                    );
-                }
-            } else {
-                admission.initialized = true;
-                admission.is_sealed = true;
-                admission.sealed_collection_root = sealed_root;
-                admission.sealed_tribute_count = totals.tribute_count;
-                admission.sealed_tribute_nominal_total_minor = totals.tribute_nominal_total_minor;
-            }
-
-            let forfeited_count = totals.tribute_count;
-            let forfeited_nominal = totals.tribute_nominal_total_minor;
-            let supply = self
-                .total_supply
-                .read()?
-                .checked_sub(u64::from(forfeited_count))
-                .ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                        "Tribute total supply underflow during CapacityForfeiture".into(),
-                    )
-                })?;
-            self.total_supply.write(supply)?;
-            totals.tribute_count = 0;
-            totals.tribute_nominal_total_minor = U256::ZERO;
-            self.store_day_totals(&totals)?;
-
-            let retirement_outcome = self.retire_completed_partition_inner(scope, day)?;
-            let expected_retirement = if authenticated_root.is_some() {
-                RetirementOutcome::Requested
-            } else {
-                RetirementOutcome::NotPresent
-            };
-            if retirement_outcome != expected_retirement {
-                return Err(outbe_primitives::error::PrecompileError::Fatal(
-                    "Tribute retirement outcome contradicts authenticated partition root".into(),
-                ));
-            }
-
-            let source_generation = admission.source_generation;
-            let retired_generation = source_generation.checked_add(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "Tribute source generation overflow during CapacityForfeiture".into(),
-                )
-            })?;
-            admission.source_generation = retired_generation;
-            self.store_day_pre_admission(&admission)?;
-
-            Ok(TributeForfeitureReceipt {
-                worldwide_day: day,
-                sealed_root,
-                forfeited_count,
-                forfeited_nominal,
-                source_generation,
-                retired_generation,
-                retirement_outcome,
-            })
-        });
+        let result = storage.with_checkpoint(|| forfeiture::apply(self, scope, day));
         if result.is_err() {
             scope.restore_ce_work_checkpoint(ce_checkpoint)?;
         }
@@ -287,73 +190,6 @@ impl TributeContract<'_> {
             worldwideDay: day.into(),
         })?;
         Ok(outcome)
-    }
-
-    pub fn get_tributes_by_owner(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        owner: Address,
-    ) -> Result<Vec<TributeData>> {
-        self.read_all_by_owner(scope, parent, owner)
-    }
-
-    pub fn get_all_day_tributes(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        day: WorldwideDay,
-    ) -> Result<Vec<TributeData>> {
-        self.read_all_by_day(scope, parent, day)
-    }
-
-    pub fn issue(
-        &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        tribute: &TributeData,
-    ) -> Result<()> {
-        let storage = self.storage_handle();
-        storage.with_checkpoint(|| self.issue_inner(scope, parent, tribute))
-    }
-
-    fn issue_inner(
-        &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        tribute: &TributeData,
-    ) -> Result<()> {
-        self.validate_tribute_for_issue(tribute)?;
-        self.ensure_day_accepts_tributes(tribute.worldwide_day)?;
-        if self
-            .get_tribute(scope, parent, tribute.tribute_id)?
-            .is_some()
-        {
-            return Err(TributeError::TributeAlreadyExists.into());
-        }
-
-        self.bump_day_bucket(tribute.worldwide_day, 1, tribute.nominal_amount_minor)?;
-        self.update_pre_admission_for_tribute(tribute, true)?;
-
-        let supply = self.total_supply.read()?.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "Tribute total supply overflow during issuance".into(),
-            )
-        })?;
-        self.total_supply.write(supply)?;
-
-        let canonical = crate::repository::canonical_body(tribute);
-        mint(self.storage_handle(), scope, BodyInput::Tribute(&canonical))?;
-        self.emit(ITribute::TributeIssued {
-            owner: tribute.owner,
-            tributeId: tribute.tribute_id.to_u256(),
-            worldwideDay: tribute.worldwide_day.into(),
-            issuanceAmountMinor: tribute.issuance_amount_minor,
-            settlementCurrency: tribute.issuance_currency,
-            nominalAmountMinor: tribute.nominal_amount_minor,
-        })?;
-
-        Ok(())
     }
 
     pub fn burn(
@@ -395,8 +231,9 @@ impl TributeContract<'_> {
         let LoadedTribute { body, current } = loaded;
         let tribute = body;
         self.ensure_day_accepts_tributes(tribute.worldwide_day)?;
-        self.bump_day_bucket(tribute.worldwide_day, -1, tribute.nominal_amount_minor)?;
-        self.update_pre_admission_for_tribute(&tribute, false)?;
+        let record = record_from_verified(&current)?;
+        self.bump_day_bucket_record(&record, false)?;
+        self.update_pre_admission_for_tribute(&record, false)?;
 
         let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
@@ -491,10 +328,7 @@ impl TributeContract<'_> {
             if !totals.initialized || !totals.is_sealed {
                 return Err(TributeError::WorldwideDaySealed.into());
             }
-            let mut admission = self
-                .day_pre_admission
-                .get(day)?
-                .unwrap_or_else(|| crate::DayPreAdmission::with_key(day));
+            let mut admission = self.read_day_pre_admission(day)?;
             if admission.is_sealed {
                 return Err(TributeError::PreAdmissionSealed.into());
             }

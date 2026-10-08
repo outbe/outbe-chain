@@ -1,3 +1,6 @@
+mod commands;
+mod handshake;
+
 use crate::transport::*;
 
 /// Transport carriers supported by the production enclave server. Remote
@@ -27,7 +30,7 @@ pub fn serve_connection<S: EnclaveTransportStream>(
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
 ) -> Result<(), TransportError> {
-    let initialization = InitializationState::development();
+    let initialization = crate::initialization::factory::development();
     serve_connection_with(stream, keys, offer_key, None, &initialization)
 }
 
@@ -40,7 +43,7 @@ pub fn serve_connection_for_network_test<S: EnclaveTransportStream>(
     offer_key: &SharedTributeOfferKey,
     network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
 ) -> Result<(), TransportError> {
-    let initialization = InitializationState::development_for_network(network_binding);
+    let initialization = crate::initialization::factory::development_for_network(network_binding);
     serve_connection_with(stream, keys, offer_key, None, &initialization)
 }
 
@@ -66,12 +69,14 @@ pub fn serve_connection_with<S: EnclaveTransportStream>(
         .unwrap_or(alloy_primitives::B256::ZERO);
     serve_connection_with_resident_chain(
         stream,
-        keys,
-        offer_key,
-        boot,
-        initialization,
-        chain_id,
-        crate::gramine::dcap_quote,
+        ConnectionContext {
+            keys,
+            offer_key,
+            boot,
+            initialization,
+            chain_id,
+            quote_generator: crate::gramine::dcap_quote,
+        },
     )
 }
 
@@ -95,214 +100,62 @@ pub fn serve_connection_with_synthetic_dcap<S: EnclaveTransportStream>(
         .unwrap_or(alloy_primitives::B256::ZERO);
     serve_connection_with_resident_chain(
         stream,
-        keys,
-        offer_key,
-        boot,
-        initialization,
-        chain_id,
-        synthetic_dcap_quote,
+        ConnectionContext {
+            keys,
+            offer_key,
+            boot,
+            initialization,
+            chain_id,
+            quote_generator: synthetic_dcap_quote,
+        },
     )
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::transport) struct ConnectionContext<'a> {
+    pub(in crate::transport) keys: &'a EnclaveKeys,
+    pub(in crate::transport) offer_key: &'a SharedTributeOfferKey,
+    pub(in crate::transport) boot: Option<&'a EnclaveBootConfig>,
+    pub(in crate::transport) initialization: &'a InitializationState,
+    pub(in crate::transport) chain_id: B256,
+    pub(in crate::transport) quote_generator: fn(&[u8; 64]) -> Result<Vec<u8>, String>,
 }
 
 pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
     mut stream: S,
-    keys: &EnclaveKeys,
-    offer_key: &SharedTributeOfferKey,
-    boot: Option<&EnclaveBootConfig>,
-    initialization: &InitializationState,
-    chain_id: alloy_primitives::B256,
-    quote_generator: fn(&[u8; 64]) -> Result<Vec<u8>, String>,
+    context: ConnectionContext<'_>,
 ) -> Result<(), TransportError> {
-    // 1. Minimal cleartext preamble. Production never emits a quote here.
-    let first = decode_request(&read_frame(&mut stream)?)?;
-    let mut remote_session: Option<PendingRemoteSessionV1> = None;
-    let pending: Option<PendingInitialization> = match (initialization.mode(), first) {
-        (InitializationMode::Development, EnclaveRequest::GetQuote { nonce }) => {
-            write_frame(&mut stream, &encode_response(&keys.quote(nonce))?)?;
-            None
-        }
-        (InitializationMode::Production, EnclaveRequest::GetInitializationChallenge) => {
-            let response = initialization
-                .challenge_response(keys)
-                .map_err(TransportError::Handshake)?;
-            write_frame(&mut stream, &encode_response(&response)?)?;
-            return Ok(());
-        }
-        (
-            InitializationMode::Production,
-            EnclaveRequest::Initialize {
-                manifest,
-                node_signature,
-            },
-        ) => Some(
-            initialization
-                .prepare(&manifest, &node_signature, keys)
-                .map_err(TransportError::Handshake)?,
-        ),
-        (InitializationMode::Production, EnclaveRequest::OpenSession) => {
-            initialization
-                .expected_node_host()
-                .map_err(TransportError::Handshake)?;
-            None
-        }
-        (InitializationMode::Production, EnclaveRequest::OpenRemoteSessionV1 { ticket_id }) => {
-            remote_session = Some(
-                initialization
-                    .take_remote_session(ticket_id)
-                    .map_err(TransportError::Handshake)?,
-            );
-            None
-        }
-        (InitializationMode::Development, _) => {
-            return Err(TransportError::Handshake(
-                "development transport expected GetQuote before handshake".to_string(),
-            ));
-        }
-        (InitializationMode::Production, _) => {
-            return Err(TransportError::Handshake(
-                "production transport expected initialization discovery, Initialize, OpenSession, or OpenRemoteSessionV1"
-                    .to_string(),
-            ));
-        }
+    let Some(preamble) = handshake::read_preamble(&mut stream, context)? else {
+        return Ok(());
     };
-    let session_authority = remote_session.map_or(SessionAuthorityV1::LocalNodeHost, |session| {
+    let remote = preamble.remote;
+    let authority = remote.map_or(SessionAuthorityV1::LocalNodeHost, |session| {
         SessionAuthorityV1::RemoteActiveNode {
             deadline: session.deadline(),
         }
     });
-    set_remote_read_deadline(&stream, remote_session)?;
+    set_remote_read_deadline(&stream, remote)?;
+    let noise = handshake::negotiate(&mut stream, context, preamble)?;
+    serve_requests(stream, context, noise, remote, authority)
+}
 
-    // 2. Noise-IK responder handshake.
-    let params = NOISE_PARAMS
-        .parse()
-        .map_err(|e| TransportError::Noise(format!("{e:?}")))?;
-    let mut handshake = snow::Builder::new(params)
-        .local_private_key(keys.noise_private())
-        .build_responder()
-        .map_err(|e| TransportError::Handshake(e.to_string()))?;
-
-    let mut buf = [0u8; 1024];
-    let msg1 = read_frame(&mut stream)?;
-    handshake
-        .read_message(&msg1, &mut buf)
-        .map_err(|e| TransportError::Handshake(e.to_string()))?;
-
-    // Noise IK authenticates the initiator static in message 1. Reject it here,
-    // before message 2, transport mode, encrypted request decoding, or effects.
-    if initialization.mode() == InitializationMode::Production {
-        let expected = match remote_session {
-            Some(session) => session.initiator_static_x25519(),
-            None => pending
-                .as_ref()
-                .map(PendingInitialization::node_host_noise_x25519)
-                .map(Ok)
-                .unwrap_or_else(|| initialization.expected_node_host())
-                .map_err(TransportError::Handshake)?,
-        };
-        let remote = handshake.get_remote_static().ok_or_else(|| {
-            TransportError::Handshake("Noise IK message 1 omitted initiator static key".to_string())
-        })?;
-        if remote != expected {
-            return Err(TransportError::Handshake(
-                "Noise IK initiator is not the authorized NodeHost".to_string(),
-            ));
-        }
-    }
-
-    let initialized_this_connection = pending.is_some();
-    if let Some(pending) = pending {
-        initialization
-            .commit(pending, keys)
-            .map_err(TransportError::Handshake)?;
-    }
-
-    let n = handshake
-        .write_message(&[], &mut buf)
-        .map_err(|e| TransportError::Handshake(e.to_string()))?;
-    write_frame(&mut stream, &buf[..n])?;
-
-    let mut noise = handshake
-        .into_transport_mode()
-        .map_err(|e| TransportError::Handshake(e.to_string()))?;
-
-    // Initialization success is disclosed only inside the newly authenticated
-    // channel. OpenSession and the dev path wait for the first explicit command.
-    if initialized_this_connection {
-        let response = initialization
-            .initialized_response()
-            .map_err(TransportError::Handshake)?;
-        let plain = encode_response(&response)?;
-        let mut ct = vec![0u8; plain.len() + 64];
-        let n = noise
-            .write_message(&plain, &mut ct)
-            .map_err(|e| TransportError::Noise(e.to_string()))?;
-        write_frame(&mut stream, &ct[..n])?;
-    }
-
-    // Telemetry-only peer class for the per-request log line.
-    let peer: &'static str = if initialization.mode() == InitializationMode::Development {
+fn serve_requests<S: EnclaveTransportStream>(
+    mut stream: S,
+    context: ConnectionContext<'_>,
+    mut noise: snow::TransportState,
+    remote: Option<PendingRemoteSessionV1>,
+    authority: SessionAuthorityV1,
+) -> Result<(), TransportError> {
+    let peer = if context.initialization.mode() == InitializationMode::Development {
         "dev"
-    } else if remote_session.is_some() {
+    } else if remote.is_some() {
         "remote"
     } else {
         "local"
     };
-
-    // Resident DKG ceremonies for this connection. A ceremony spans many
-    // request/response round-trips on one connection (PoC: one connection per
-    // enclave for the whole ceremony).
-    let mut dkg = DkgSessionStore::new();
-    let mut dcap_verification = DcapVerificationSessionV1::default();
-    let mut onboarding_upload = OnboardingArtifactUploadSessionV1::default();
+    let mut commands = commands::CommandSession::new();
     let mut call_stream = outbe_tee::call_context::StreamContext::default();
-
-    // 3. Encrypted request/response loop. Exits when the peer closes (read EOF).
-    // Remote traffic is checked both before and after every blocking read, so a
-    // frame arriving at or after the exclusive lease deadline is never decoded.
-    loop {
-        if let Some(session) = remote_session {
-            initialization
-                .ensure_remote_admission_current(session)
-                .map_err(TransportError::Handshake)?;
-        }
-        session_authority
-            .ensure_live()
-            .map_err(|message| TransportError::Handshake(message.to_string()))?;
-        set_remote_read_deadline(&stream, remote_session)?;
-        let frame = match read_frame(&mut stream) {
-            Ok(frame) => frame,
-            Err(TransportError::Io(error))
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::UnexpectedEof
-                        | std::io::ErrorKind::ConnectionReset
-                        | std::io::ErrorKind::BrokenPipe
-                ) =>
-            {
-                break;
-            }
-            Err(TransportError::Io(error))
-                if remote_session.is_some()
-                    && matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-            {
-                session_authority
-                    .ensure_live()
-                    .map_err(|message| TransportError::Handshake(message.to_string()))?;
-                return Err(TransportError::Io(error));
-            }
-            Err(error) => return Err(error),
-        };
-        if let Some(session) = remote_session {
-            initialization
-                .ensure_remote_admission_current(session)
-                .map_err(TransportError::Handshake)?;
-        }
-        session_authority
-            .ensure_live()
-            .map_err(|message| TransportError::Handshake(message.to_string()))?;
+    while let Some(frame) = read_live_frame(&mut stream, context, remote, authority)? {
         let mut pt = vec![0u8; frame.len()];
         let n = noise
             .read_message(&frame, &mut pt)
@@ -310,193 +163,83 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
         let call = outbe_tee::codec::decode_call(&pt[..n])?;
         call_stream.accept(&call.request, call.ctx)?;
         let _call_context = outbe_tee::call_context::ContextScope::enter(call.ctx);
-        let req = call.request;
-        let req_label = req.label();
-        let req_class = crate::initialization::request_class_label(&req);
-        let req_started = std::time::SystemTime::now();
-        let is_onboarding_upload_request = matches!(
-            req,
-            EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
-                | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
-                | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
-                | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
-                | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }
-        );
-        if onboarding_upload.is_active() && !is_onboarding_upload_request {
-            onboarding_upload.abort();
-            let response = EnclaveResponse::Error {
-                message: "onboarding artifact upload cannot be interleaved with another command"
-                    .into(),
-            };
-            let plain = encode_response(&response)?;
-            let mut ct = vec![0u8; plain.len() + 64];
-            let n = noise
-                .write_message(&plain, &mut ct)
-                .map_err(|e| TransportError::Noise(e.to_string()))?;
-            write_frame(&mut stream, &ct[..n])?;
-            continue;
-        }
-        if let Err(message) =
-            initialization.authorize_command(&req, offer_key.get().is_some(), session_authority)
-        {
-            if is_onboarding_upload_request {
-                onboarding_upload.abort();
+        let response = match commands.prepare_response(call.request, context, authority, peer) {
+            commands::Response::Immediate(response) => response,
+            commands::Response::Admitted(response) => {
+                ensure_admission(context, remote, authority)?;
+                response
             }
-            let (ts, dur_ms) = crate::telemetry::now_unix_and_elapsed_ms(req_started);
-            crate::telemetry::record_request(req_class, crate::telemetry::RequestOutcome::Denied);
-            eprintln!(
-                "{}",
-                crate::telemetry::format_request_log(
-                    ts,
-                    req_label,
-                    peer,
-                    crate::telemetry::RequestOutcome::Denied,
-                    dur_ms,
-                )
-            );
-            let response = EnclaveResponse::Error {
-                message: message.to_string(),
-            };
-            let plain = encode_response(&response)?;
-            let mut ct = vec![0u8; plain.len() + 64];
-            let n = noise
-                .write_message(&plain, &mut ct)
-                .map_err(|e| TransportError::Noise(e.to_string()))?;
-            write_frame(&mut stream, &ct[..n])?;
-            continue;
-        }
-
-        let resp = match req {
-            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 {
-                request_hash,
-                context,
-            } => match initialization.manifest() {
-                Ok(manifest) => complete_gramine_direct_dev_onboarding_response(
-                    request_hash,
-                    &context,
-                    offer_key.get(),
-                    manifest.as_ref(),
-                ),
-                Err(message) => EnclaveResponse::Error { message },
-            },
-            request @ (EnclaveRequest::BeginDcapVerificationV1 { .. }
-            | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
-            | EnclaveRequest::DcapVerificationChunkV1 { .. }
-            | EnclaveRequest::FinishDcapVerificationV1 { .. }) => {
-                if initialization.mode() != InitializationMode::Production {
-                    EnclaveResponse::Error {
-                        message: "DCAP verification requires initialized production state"
-                            .to_string(),
-                    }
-                } else {
-                    match dcap_verification.handle(request) {
-                        Ok(DcapVerificationProgressV1::Started { request_hash }) => {
-                            EnclaveResponse::DcapVerificationStartedV1 { request_hash }
-                        }
-                        Ok(DcapVerificationProgressV1::ChunkAccepted {
-                            request_hash,
-                            next_offset,
-                        }) => EnclaveResponse::DcapVerificationChunkAcceptedV1 {
-                            request_hash,
-                            next_offset,
-                        },
-                        Ok(DcapVerificationProgressV1::Complete(request)) => {
-                            match initialization.manifest() {
-                                Ok(manifest) => complete_verification_response(
-                                    *request,
-                                    keys,
-                                    offer_key.get(),
-                                    manifest.as_ref(),
-                                ),
-                                Err(message) => EnclaveResponse::Error { message },
-                            }
-                        }
-                        Err(message) => EnclaveResponse::Error {
-                            message: message.to_string(),
-                        },
-                    }
-                }
-            }
-            request @ (EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
-            | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }
-            | EnclaveRequest::DcapOnboardingArtifactChunkV1 { .. }
-            | EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 { .. }
-            | EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { .. }) => {
-                match onboarding_upload.handle(request, initialization.trusted_network_descriptor())
-                {
-                    Ok(OnboardingArtifactUploadProgressV1::Started { request_hash }) => {
-                        EnclaveResponse::DcapOnboardingArtifactIngestStartedV1 { request_hash }
-                    }
-                    Ok(OnboardingArtifactUploadProgressV1::ChunkAccepted {
-                        request_hash,
-                        next_offset,
-                    }) => EnclaveResponse::DcapOnboardingArtifactChunkAcceptedV1 {
-                        request_hash,
-                        next_offset,
-                    },
-                    Ok(OnboardingArtifactUploadProgressV1::RecordAccepted {
-                        request_hash,
-                        kind,
-                    }) => EnclaveResponse::DcapOnboardingArtifactRecordAcceptedV1 {
-                        request_hash,
-                        kind,
-                    },
-                    Ok(OnboardingArtifactUploadProgressV1::Complete(complete)) => {
-                        complete_onboarding_artifact_ingest_response(
-                            *complete,
-                            keys,
-                            offer_key,
-                            boot,
-                            initialization,
-                        )
-                    }
-                    Err(message) => EnclaveResponse::Error {
-                        message: message.to_string(),
-                    },
-                }
-            }
-            request => dispatch_with_initialization(
-                request,
-                keys,
-                &mut dkg,
-                offer_key,
-                chain_id,
-                DispatchInitializationContext {
-                    boot,
-                    initialization: Some(initialization),
-                    quote_generator,
-                },
-            ),
         };
-
-        let outcome = if matches!(resp, EnclaveResponse::Error { .. }) {
-            crate::telemetry::RequestOutcome::Err
-        } else {
-            crate::telemetry::RequestOutcome::Ok
-        };
-        let (ts, dur_ms) = crate::telemetry::now_unix_and_elapsed_ms(req_started);
-        crate::telemetry::record_request(req_class, outcome);
-        eprintln!(
-            "{}",
-            crate::telemetry::format_request_log(ts, req_label, peer, outcome, dur_ms)
-        );
-
-        if let Some(session) = remote_session {
-            initialization
-                .ensure_remote_admission_current(session)
-                .map_err(TransportError::Handshake)?;
-        }
-        session_authority
-            .ensure_live()
-            .map_err(|message| TransportError::Handshake(message.to_string()))?;
-
-        let plain = encode_response(&resp)?;
-        let mut ct = vec![0u8; plain.len() + 64];
-        let n = noise
-            .write_message(&plain, &mut ct)
-            .map_err(|e| TransportError::Noise(e.to_string()))?;
-        write_frame(&mut stream, &ct[..n])?;
+        write_encrypted_response(&mut stream, &mut noise, &response)?;
     }
+    Ok(())
+}
+
+fn ensure_admission(
+    context: ConnectionContext<'_>,
+    remote: Option<PendingRemoteSessionV1>,
+    authority: SessionAuthorityV1,
+) -> Result<(), TransportError> {
+    if let Some(session) = remote {
+        context
+            .initialization
+            .ensure_remote_admission_current(session)
+            .map_err(TransportError::Handshake)?;
+    }
+    authority
+        .ensure_live()
+        .map_err(|message| TransportError::Handshake(message.to_string()))
+}
+
+fn read_live_frame(
+    stream: &mut impl EnclaveTransportStream,
+    context: ConnectionContext<'_>,
+    remote: Option<PendingRemoteSessionV1>,
+    authority: SessionAuthorityV1,
+) -> Result<Option<Vec<u8>>, TransportError> {
+    ensure_admission(context, remote, authority)?;
+    set_remote_read_deadline(stream, remote)?;
+    let frame = match read_frame(stream) {
+        Ok(frame) => frame,
+        Err(TransportError::Io(error))
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::BrokenPipe
+            ) =>
+        {
+            return Ok(None)
+        }
+        Err(TransportError::Io(error))
+            if remote.is_some()
+                && matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+        {
+            authority
+                .ensure_live()
+                .map_err(|message| TransportError::Handshake(message.to_string()))?;
+            return Err(TransportError::Io(error));
+        }
+        Err(error) => return Err(error),
+    };
+    ensure_admission(context, remote, authority)?;
+    Ok(Some(frame))
+}
+
+fn write_encrypted_response(
+    stream: &mut impl EnclaveTransportStream,
+    noise: &mut snow::TransportState,
+    response: &EnclaveResponse,
+) -> Result<(), TransportError> {
+    let plain = encode_response(response)?;
+    let mut ct = vec![0u8; plain.len() + 64];
+    let n = noise
+        .write_message(&plain, &mut ct)
+        .map_err(|e| TransportError::Noise(e.to_string()))?;
+    write_frame(stream, &ct[..n])?;
     Ok(())
 }
 

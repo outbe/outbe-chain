@@ -123,7 +123,15 @@ fn bodies() -> Vec<Body> {
         ),
     ]
     .into_iter()
-    .map(|(domain, id, payload)| (domain, id, StoredBody::new_v1(payload).unwrap().encode()))
+    .map(|(domain, id, payload)| {
+        (
+            domain,
+            id,
+            StoredBody::new(outbe_compressed_entities::BODY_SCHEMA_V1, payload)
+                .unwrap()
+                .encode(),
+        )
+    })
     .collect()
 }
 
@@ -160,7 +168,7 @@ fn audit_bodies_after_deleting(
     let mutations: Vec<_> = committed
         .iter()
         .map(|(domain, id, bytes)| {
-            let stored = StoredBody::decode(bytes).unwrap();
+            let stored = outbe_compressed_entities::decode_stored_body(bytes).unwrap();
             FinalLeafMutation {
                 entity: match domain {
                     CeDomain::Tribute => EntityRef::Tribute(*id),
@@ -268,9 +276,12 @@ fn body_population_accepts_multiple_days_and_materialized_empty_collections() {
         committed.push((
             CeDomain::Tribute,
             tribute.tribute_id,
-            StoredBody::new_v1(encode_tribute_v1(&tribute).unwrap())
-                .unwrap()
-                .encode(),
+            StoredBody::new(
+                outbe_compressed_entities::BODY_SCHEMA_V1,
+                encode_tribute_v1(&tribute).unwrap(),
+            )
+            .unwrap()
+            .encode(),
         ));
     }
     let supplied: Vec<_> = committed.iter().rev().cloned().collect();
@@ -312,9 +323,12 @@ fn body_population_rejects_missing_extra_changed_and_duplicate_records() {
     let mut changed = committed.clone();
     let mut bucket = outbe_compressed_entities::decode_stored_nod_bucket_v1(&changed[2].2).unwrap();
     bucket.entry_price_minor += U256::from(1);
-    changed[2].2 = StoredBody::new_v1(encode_nod_bucket_v1(&bucket).unwrap())
-        .unwrap()
-        .encode();
+    changed[2].2 = StoredBody::new(
+        outbe_compressed_entities::BODY_SCHEMA_V1,
+        encode_nod_bucket_v1(&bucket).unwrap(),
+    )
+    .unwrap()
+    .encode();
     assert!(
         audit_bodies(&committed, &changed).is_err(),
         "changed canonical payload"
@@ -328,7 +342,7 @@ fn body_population_rejects_wrong_identity_and_unsupported_envelope() {
     changed[0].1 = WwdEntityId::from_day_and_digest(WorldwideDay::new(20_260_717), [0x77; 32]);
     assert!(audit_bodies(&committed, &changed).is_err());
     let mut changed = committed.clone();
-    let stored = StoredBody::decode(&changed[0].2).unwrap();
+    let stored = outbe_compressed_entities::decode_stored_body(&changed[0].2).unwrap();
     changed[0].2 = StoredBody::new(2, stored.payload().to_vec())
         .unwrap()
         .encode();

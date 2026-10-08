@@ -281,7 +281,7 @@ pub(super) fn seed_missed_offering_day(
 pub(super) fn begin_persistent_active_scope(
     provider: &mut HashMapStorageProvider,
 ) -> (ExecutionScope, TestParent) {
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let parent = TestParent::empty();
     begin_scope_with_persisted_parent(
         provider,

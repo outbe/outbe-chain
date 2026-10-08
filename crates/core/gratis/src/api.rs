@@ -15,24 +15,18 @@ use crate::schema::Gratis;
 
 /// Encrypted balance blob for `account`. Decrypt it client-side with the view key.
 pub fn balance_ct(storage: StorageHandle<'_>, account: Address) -> Result<Vec<u8>> {
-    Gratis::new(storage).balance_ct_of(account)
+    crate::state::account(&Gratis::new(storage), account).balance_ct()
 }
 
 /// The account's current modify-auth replay counter (the value the client's next
 /// write authorization must bind).
 pub fn op_nonce(storage: StorageHandle<'_>, account: Address) -> Result<u64> {
-    Gratis::new(storage).op_nonce_of(account)
-}
-
-/// Public total circulating supply. The value is an aggregate. Per-account balances
-/// stay hidden.
-pub fn total_supply(storage: StorageHandle<'_>) -> Result<U256> {
-    Gratis::new(storage).total_supply()
+    crate::state::account(&Gratis::new(storage), account).op_nonce()
 }
 
 /// Public aggregate pledged into the credis escrow (per-account amounts hidden).
 pub fn pledged_total_supply(storage: StorageHandle<'_>) -> Result<U256> {
-    Gratis::new(storage).pledged_total_supply()
+    crate::state::pledged_total_supply(&Gratis::new(storage))
 }
 
 // --- Owner-authorized mutations ---
@@ -60,13 +54,13 @@ pub fn mint_with_fidelity(
     runtime::mint_with_fidelity(storage, caller, amount, auth, fidelity)
 }
 
-/// Burn `amount` gratis from `caller`. Returns the remaining total supply.
+/// Burn `amount` gratis from `caller`.
 pub fn burn(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
-) -> Result<U256> {
+) -> Result<()> {
     runtime::burn(storage, caller, amount, auth)
 }
 
@@ -109,4 +103,14 @@ pub fn return_collateral(
 }
 pub fn forfeit(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
     runtime::forfeit(storage, amount)
+}
+
+/// Consume a canonical, settled encrypted NOD without exporting its amount.
+pub fn mint_encrypted_nod(
+    storage: StorageHandle<'_>,
+    nod: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    auth: ModifyAuth,
+    fidelity: FidelityOpSection,
+) -> Result<FidelityOpOutcome> {
+    runtime::mint_encrypted_nod(storage, nod, auth, fidelity)
 }

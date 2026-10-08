@@ -139,7 +139,7 @@ fn class_address(last: u8) -> Address {
 fn top_level_calls_route_by_actual_stablecoin_callee_and_keep_instances_isolated() {
     let (db, tokens) =
         seed_registered_tokens(&[("Example Dollar", "EXUSD"), ("Second Dollar", "SCD")]);
-    let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+    let mut evm = OutbeEvmFactory::default().create_evm(db, test_env());
 
     for (token, expected) in tokens.into_iter().zip(["EXUSD", "SCD"]) {
         let tx = TxEnv::builder()
@@ -292,7 +292,7 @@ fn unregistered_class_member_reverts_without_executing_installed_bytecode() {
         .gas_limit(GAS_LIMIT)
         .build()
         .unwrap();
-    let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+    let mut evm = OutbeEvmFactory::default().create_evm(db, test_env());
     let result = evm.transact_raw(tx).unwrap();
 
     assert!(matches!(result.result, ExecutionResult::Revert { .. }));
@@ -331,7 +331,7 @@ fn immediate_delegation_to_native_class_executes_empty_code_regardless_of_issuan
                     ..Default::default()
                 },
             );
-            let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+            let mut evm = OutbeEvmFactory::default().create_evm(db, test_env());
             evm.set_inspector_enabled(inspect);
             let outcome = evm
                 .transact_raw(

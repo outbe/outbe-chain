@@ -4,7 +4,7 @@ use super::*;
 fn storage_layout_uses_exact_slots_zero_through_thirteen() {
     let owner = address!("9000000000000000000000000000000000000009");
     let body = tribute(entity(15, 9), owner, 100);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
     let mut locator = B256::ZERO;
 

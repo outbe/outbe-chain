@@ -131,7 +131,11 @@ mod kernel {
     impl ActivationKernel {
         pub(super) fn q_forming_success(current_height: u64, current_time: u64) -> Self {
             Self {
-                inner: ActivationFixture::new(current_height, current_time, true),
+                inner: crate::fixture_kernel::ActivationScenario::build(
+                    current_height,
+                    current_time,
+                    true,
+                ),
             }
         }
 
@@ -202,7 +206,7 @@ mod kernel {
 
     pub(super) fn persisted_open_result_vote() -> super::PersistedOpenResultVote {
         use crate::api::{verify_result_vote_carrier, ResultVoteCarrierAdmission};
-        use crate::fixture_kernel::{ActivationFixture, TEST_REQUEST_HEIGHT};
+        use crate::fixture_kernel::TEST_REQUEST_HEIGHT;
         use crate::schema::MetadosisContract;
         use outbe_ocomp_protocol::{
             abi::encode_submit_lysis_result_calldata, state::RESULT_VOTE_MIN_FINALITY_DEPTH,
@@ -212,7 +216,8 @@ mod kernel {
         const MEMBER_INDEX: u8 = 2;
         let open_height = TEST_REQUEST_HEIGHT + RESULT_VOTE_MIN_FINALITY_DEPTH;
         let signer = Address::repeat_byte(0xB0 + MEMBER_INDEX);
-        let mut fixture = ActivationFixture::new(open_height, 1_700_000_000, true);
+        let mut fixture =
+            crate::fixture_kernel::ActivationScenario::build(open_height, 1_700_000_000, true);
         let vote = fixture.signed_result_vote(MEMBER_INDEX);
         let valid_calldata = Bytes::from(
             encode_submit_lysis_result_calldata(&vote, &fixture.limits)

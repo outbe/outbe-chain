@@ -6,16 +6,16 @@ fn encoded_reward_bearing_tribute_plaintext_preserves_waa_and_sra_beneficiaries(
     let creator = Address::repeat_byte(0x11);
     let waa = Address::repeat_byte(0x22);
     let sra = Address::repeat_byte(0x33);
-    let plaintext = encode_reward_bearing_tribute_plaintext(
-        creator,
-        B256::repeat_byte(0x44),
-        "100",
-        "0",
-        B256::repeat_byte(0x55),
-        &[waa],
-        &[sra],
-    )
-    .expect("encode reward-bearing Tribute plaintext");
+    let plaintext =
+        encode_reward_bearing_tribute_plaintext(crate::world::rpc::RewardBearingTribute {
+            creator,
+            tribute_draft_id: B256::repeat_byte(0x44),
+            amounts: ("100", "0"),
+            su_hash: B256::repeat_byte(0x55),
+            wallet_addresses: &[waa],
+            sra_addresses: &[sra],
+        })
+        .expect("encode reward-bearing Tribute plaintext");
     let payload: serde_json::Value =
         serde_json::from_slice(&plaintext).expect("decode Tribute plaintext");
 

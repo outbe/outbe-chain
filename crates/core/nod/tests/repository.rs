@@ -1,6 +1,8 @@
+#[path = "../../../../testing/fixtures/mongo.rs"]
+mod mongo_fixture;
+use mongo_fixture::run_isolated_mongo;
 use std::{
     io,
-    panic::AssertUnwindSafe,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -8,19 +10,17 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, U256};
-use mongodb::sync::Client;
 use outbe_compressed_entities::{
-    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, IdPageRequest, StoredBody, WwdEntityId,
+    decode_stored_nod_bucket_v1, decode_stored_nod_item_v2, encode_nod_bucket_v1,
+    encode_nod_item_v2, IdPageRequest, StoredBody, WwdEntityId,
 };
 use outbe_nod::{
     canonical_bucket, canonical_item, from_canonical_bucket, from_canonical_item, NodBucketState,
-    NodItemState, NodPageRequest, NodRepositoryError, NodRepositoryReader, NodRepositoryWriter,
+    NodItemState, NodPageRequest, NodRepositoryError,
 };
 use outbe_offchain_storage::{
-    AtomicWriteBatch, Key, MemoryStorage, MongoStorage, MongoStorageConfig, Namespace,
-    StorageError, StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle, Value,
-    MAX_SCAN_ENTRIES,
+    AtomicWriteBatch, Key, MemoryStorage, Namespace, StorageError, StorageReader,
+    StorageReaderHandle, StorageWriter, StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
 };
 use outbe_primitives::time::WorldwideDay;
 
@@ -37,18 +37,21 @@ fn bucket_id(key: B256, worldwide_day: WorldwideDay) -> WwdEntityId {
 }
 
 fn nod(nod_id: WwdEntityId, owner: Address) -> NodItemState {
-    NodItemState {
-        is_settled: false,
-        nod_id,
-        owner,
-        gratis_load_minor: U256::MAX,
-        worldwide_day: nod_id.worldwide_day(),
-        league_id: u16::MAX,
-        bucket_key: B256::repeat_byte(0x33),
-        issuance_currency: 0,
-        reference_currency: u16::MAX,
-        issued_at: u64::MAX,
-    }
+    outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id,
+            owner,
+            gratis_load_minor: U256::MAX,
+            worldwide_day: nod_id.worldwide_day(),
+            league_id: u16::MAX,
+            bucket_key: B256::repeat_byte(0x33),
+            issuance_currency: 0,
+            reference_currency: u16::MAX,
+            issued_at: u64::MAX,
+        },
+        U256::ZERO,
+    )
 }
 
 /// `NodBucketBodyV1::entity_id` derives the identity as `wwd ++ key[4..]`, so
@@ -87,15 +90,21 @@ fn owner_key(owner: Address, id: WwdEntityId) -> Key {
 }
 
 fn stored_nod(body: &NodItemState) -> Vec<u8> {
-    StoredBody::new_v1(encode_nod_item_v1(&canonical_item(body)).unwrap())
-        .unwrap()
-        .encode()
+    StoredBody::new(
+        outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+        encode_nod_item_v2(&canonical_item(body)).unwrap(),
+    )
+    .unwrap()
+    .encode()
 }
 
 fn stored_bucket(body: &NodBucketState) -> Vec<u8> {
-    StoredBody::new_v1(encode_nod_bucket_v1(&canonical_bucket(body)).unwrap())
-        .unwrap()
-        .encode()
+    StoredBody::new(
+        outbe_compressed_entities::BODY_SCHEMA_V1,
+        encode_nod_bucket_v1(&canonical_bucket(body)).unwrap(),
+    )
+    .unwrap()
+    .encode()
 }
 
 #[test]
@@ -106,7 +115,7 @@ fn projection_stores_derive_item_and_bucket_identity_from_canonical_bytes() {
     let item = nod(nod_id(41), Address::repeat_byte(0x41));
     let item_value = Value::new(stored_nod(&item)).unwrap();
 
-    let repository = NodRepositoryReader::new(reader);
+    let repository = outbe_nod::nod_reader(reader);
     let mut session = repository.projection_session(&[item.nod_id], &[]).unwrap();
     let item_batch = session
         .store_item(item.nod_id, item_value.clone(), None)
@@ -176,8 +185,8 @@ fn projection_session_owns_item_prior_state_and_rejects_untracked_identity() {
     let storage = Arc::new(MemoryStorage::new());
     let reader_handle: StorageReaderHandle = storage.clone();
     let writer_handle: StorageWriterHandle = storage;
-    let repository_reader = NodRepositoryReader::new(reader_handle.clone());
-    let repository_writer = NodRepositoryWriter::new(reader_handle, writer_handle.clone());
+    let repository_reader = outbe_nod::nod_reader(reader_handle.clone());
+    let repository_writer = outbe_nod::nod_writer(reader_handle, writer_handle.clone());
     let old = nod(nod_id(43), Address::repeat_byte(0x43));
     repository_writer.put_nod(&old).unwrap();
 
@@ -275,36 +284,45 @@ fn the_bucket_reference_currency_only_appends_to_the_canonical_payload() {
 #[test]
 fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
     for body in [
-        NodItemState {
-            is_settled: false,
-            nod_id: entity(U256::ZERO, WorldwideDay::new(0)),
-            owner: Address::ZERO,
-            gratis_load_minor: U256::ZERO,
-            worldwide_day: WorldwideDay::new(0),
-            league_id: 0,
-            bucket_key: B256::ZERO,
-            issuance_currency: 0,
-            reference_currency: 0,
-            issued_at: 0,
-        },
-        NodItemState {
-            is_settled: false,
-            nod_id: entity(U256::MAX, WorldwideDay::new(u32::MAX)),
-            owner: Address::repeat_byte(u8::MAX),
-            gratis_load_minor: U256::MAX,
-            worldwide_day: WorldwideDay::new(u32::MAX),
-            league_id: u16::MAX,
-            bucket_key: B256::repeat_byte(u8::MAX),
-            issuance_currency: u16::MAX,
-            reference_currency: u16::MAX,
-            issued_at: u64::MAX,
-        },
+        outbe_nod::test_support::item(
+            outbe_nod::test_support::NodItemFixture {
+                is_settled: false,
+                nod_id: entity(U256::ZERO, WorldwideDay::new(0)),
+                owner: Address::ZERO,
+                gratis_load_minor: U256::ZERO,
+                worldwide_day: WorldwideDay::new(0),
+                league_id: 0,
+                bucket_key: B256::ZERO,
+                issuance_currency: 0,
+                reference_currency: 0,
+                issued_at: 0,
+            },
+            U256::ZERO,
+        ),
+        outbe_nod::test_support::item(
+            outbe_nod::test_support::NodItemFixture {
+                is_settled: false,
+                nod_id: entity(U256::MAX, WorldwideDay::new(u32::MAX)),
+                owner: Address::repeat_byte(u8::MAX),
+                gratis_load_minor: U256::MAX,
+                worldwide_day: WorldwideDay::new(u32::MAX),
+                league_id: u16::MAX,
+                bucket_key: B256::repeat_byte(u8::MAX),
+                issuance_currency: u16::MAX,
+                reference_currency: u16::MAX,
+                issued_at: u64::MAX,
+            },
+            U256::ZERO,
+        ),
     ] {
         let stored = stored_nod(&body);
-        let decoded = from_canonical_item(decode_stored_nod_item_v1(&stored).unwrap());
+        let decoded = from_canonical_item(decode_stored_nod_item_v2(&stored).unwrap());
         assert_eq!(decoded.nod_id, body.nod_id);
         assert_eq!(decoded.owner, body.owner);
-        assert_eq!(decoded.gratis_load_minor, body.gratis_load_minor);
+        assert_eq!(
+            outbe_nod::api::calculation_amount(&decoded).unwrap(),
+            outbe_nod::api::calculation_amount(&body).unwrap()
+        );
         assert_eq!(decoded.worldwide_day, body.worldwide_day);
         assert_eq!(decoded.league_id, body.league_id);
         assert_eq!(decoded.bucket_key, body.bucket_key);
@@ -340,8 +358,8 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
 }
 
 fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
-    let repository_reader = NodRepositoryReader::new(reader.clone());
-    let repository_writer = NodRepositoryWriter::new(reader.clone(), writer.clone());
+    let repository_reader = outbe_nod::nod_reader(reader.clone());
+    let repository_writer = outbe_nod::nod_writer(reader.clone(), writer.clone());
     let owner_a = Address::repeat_byte(0x22);
     let owner_b = Address::repeat_byte(0x44);
 
@@ -364,7 +382,10 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
 
     let stored = repository_reader.get(nod_id(1)).unwrap().unwrap();
     assert_eq!(stored.nod_id, nod_id(1));
-    assert_eq!(stored.gratis_load_minor, U256::MAX);
+    assert_eq!(
+        outbe_nod::api::calculation_amount(&stored).unwrap(),
+        U256::MAX
+    );
     assert_eq!(stored.issued_at, u64::MAX);
     assert_eq!(
         repository_reader
@@ -380,8 +401,10 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
         .unwrap()
         .unwrap();
     assert_eq!(
-        decode_stored_nod_item_v1(primary.as_bytes())
+        decode_stored_nod_item_v2(primary.as_bytes())
             .unwrap()
+            .encrypted
+            .terms
             .nod_id,
         nod_id(1)
     );
@@ -469,8 +492,8 @@ fn parent_seam_returns_exact_stored_bodies_and_strict_id_pages() {
     let storage = Arc::new(MemoryStorage::new());
     let reader_handle: StorageReaderHandle = storage.clone();
     let writer_handle: StorageWriterHandle = storage;
-    let reader = NodRepositoryReader::new(reader_handle.clone());
-    let writer = NodRepositoryWriter::new(reader_handle, writer_handle);
+    let reader = outbe_nod::nod_reader(reader_handle.clone());
+    let writer = outbe_nod::nod_writer(reader_handle, writer_handle);
     let owner = Address::repeat_byte(0x29);
     let ids = [nod_id(1), nod_id(2), nod_id(3)];
     for id in [ids[2], ids[0], ids[1]] {
@@ -550,7 +573,7 @@ fn mongo_rejects_corrupt_items_buckets_indexes_and_limits() {
 }
 
 fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: StorageWriterHandle) {
-    let reader = NodRepositoryReader::new(reader_storage);
+    let reader = outbe_nod::nod_reader(reader_storage);
     let owner = Address::repeat_byte(0x61);
     let id = nod_id(9);
 
@@ -787,7 +810,7 @@ fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
             fail_after,
             calls: AtomicUsize::new(0),
         });
-        let repository = NodRepositoryWriter::new(storage.clone(), failing);
+        let repository = outbe_nod::nod_writer(storage.clone(), failing);
         assert!(matches!(
             repository.put_nod(&nod(id, owner)),
             Err(NodRepositoryError::Storage(_))
@@ -804,20 +827,20 @@ fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
 
     for fail_after in 1..=3 {
         let storage = Arc::new(MemoryStorage::new());
-        let seed = NodRepositoryWriter::new(storage.clone(), storage.clone());
+        let seed = outbe_nod::nod_writer(storage.clone(), storage.clone());
         seed.put_nod(&nod(id, owner)).unwrap();
         let failing = Arc::new(FailAfterWriter {
             inner: storage.clone(),
             fail_after,
             calls: AtomicUsize::new(0),
         });
-        let repository = NodRepositoryWriter::new(storage.clone(), failing);
+        let repository = outbe_nod::nod_writer(storage.clone(), failing);
         assert!(matches!(
             repository.put_nod(&nod(id, new_owner)),
             Err(NodRepositoryError::Storage(_))
         ));
         assert_eq!(
-            NodRepositoryReader::new(storage.clone())
+            outbe_nod::nod_reader(storage.clone())
                 .get(id)
                 .unwrap()
                 .unwrap()
@@ -836,14 +859,14 @@ fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
 
     for fail_after in 1..=2 {
         let storage = Arc::new(MemoryStorage::new());
-        let seed = NodRepositoryWriter::new(storage.clone(), storage.clone());
+        let seed = outbe_nod::nod_writer(storage.clone(), storage.clone());
         seed.put_nod(&nod(id, owner)).unwrap();
         let failing = Arc::new(FailAfterWriter {
             inner: storage.clone(),
             fail_after,
             calls: AtomicUsize::new(0),
         });
-        let repository = NodRepositoryWriter::new(storage.clone(), failing);
+        let repository = outbe_nod::nod_writer(storage.clone(), failing);
         assert!(matches!(
             repository.delete_nod(id),
             Err(NodRepositoryError::Storage(_))
@@ -865,7 +888,7 @@ fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
         fail_after: 1,
         calls: AtomicUsize::new(0),
     });
-    let repository = NodRepositoryWriter::new(storage.clone(), failing);
+    let repository = outbe_nod::nod_writer(storage.clone(), failing);
     assert!(matches!(
         repository.put_bucket(&bucket(selected_bucket_id)),
         Err(NodRepositoryError::Storage(_))
@@ -875,14 +898,14 @@ fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
         .unwrap()
         .is_none());
 
-    let seed = NodRepositoryWriter::new(storage.clone(), storage.clone());
+    let seed = outbe_nod::nod_writer(storage.clone(), storage.clone());
     seed.put_bucket(&bucket(selected_bucket_id)).unwrap();
     let failing = Arc::new(FailAfterWriter {
         inner: storage.clone(),
         fail_after: 1,
         calls: AtomicUsize::new(0),
     });
-    let repository = NodRepositoryWriter::new(storage.clone(), failing);
+    let repository = outbe_nod::nod_writer(storage.clone(), failing);
     assert!(matches!(
         repository.delete_bucket(selected_bucket_id),
         Err(NodRepositoryError::Storage(_))
@@ -893,32 +916,10 @@ fn failures_before_each_nod_batch_step_leave_repository_unchanged() {
         .is_some());
 }
 
-fn run_isolated_mongo(test_name: &str, test: fn(StorageReaderHandle, StorageWriterHandle)) {
-    let uri = std::env::var("OUTBE_TEST_MONGODB_URI")
-        .expect("set OUTBE_TEST_MONGODB_URI before running ignored MongoDB tests");
-    let database = format!("outbe_{}_{}_{}", test_name, std::process::id(), 1);
-    let client = Client::with_uri_str(&uri).unwrap();
-    client.database(&database).drop().run().unwrap();
-    let storage = Arc::new(
-        MongoStorage::connect(MongoStorageConfig {
-            uri,
-            database: database.clone(),
-        })
-        .unwrap(),
-    );
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        test(storage.clone(), storage);
-    }));
-    client.database(&database).drop().run().unwrap();
-    if let Err(payload) = result {
-        std::panic::resume_unwind(payload);
-    }
-}
-
 #[test]
 fn paid_entitlement_projects_reopens_and_keeps_owner_membership() {
     let storage = Arc::new(MemoryStorage::new());
-    let repository = NodRepositoryReader::new(storage.clone());
+    let repository = outbe_nod::nod_reader(storage.clone());
     let mut item = nod(nod_id(99), Address::repeat_byte(0x99));
     let id = bucket_id(item.bucket_key, item.worldwide_day);
     let mut bucket = bucket(id);
@@ -956,7 +957,7 @@ fn paid_entitlement_projects_reopens_and_keeps_owner_membership() {
                 .unwrap(),
         )
         .unwrap();
-    let reopened = NodRepositoryReader::new(storage);
+    let reopened = outbe_nod::nod_reader(storage);
     assert!(reopened.get(item.nod_id).unwrap().unwrap().is_settled);
     assert_eq!(reopened.get_bucket(id).unwrap().unwrap().settled_nods, 1);
     let owned = reopened

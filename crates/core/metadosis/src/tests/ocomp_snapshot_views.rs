@@ -294,7 +294,7 @@ fn add_awaiting_job(
 
 #[test]
 fn awaiting_and_voting_jobs_are_canonical_ordered_and_readonly() {
-    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
     let voting = StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
             .ocomp_job_record(fixture.intent_id, &fixture.limits)
@@ -316,7 +316,7 @@ fn awaiting_and_voting_jobs_are_canonical_ordered_and_readonly() {
 
 #[test]
 fn completed_response_window_survives_without_a_live_job() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     fixture.apply().unwrap();
     StorageHandle::enter(&mut fixture.provider, |storage| {
         let contract = MetadosisContract::new(storage);
@@ -334,7 +334,7 @@ fn completed_response_window_survives_without_a_live_job() {
 
 #[test]
 fn pending_day_omitted_from_scheduler_is_rejected() {
-    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
     StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
             .ocomp_scheduler
@@ -346,7 +346,7 @@ fn pending_day_omitted_from_scheduler_is_rejected() {
 
 #[test]
 fn scheduler_foreign_day_is_rejected_before_its_fsm_is_even_inspected() {
-    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
     let fsm_slot = scalar_slot(|contract| contract.ocomp_fsm_states.get_bytes(&TEST_WWD).len());
     StorageHandle::enter(&mut fixture.provider, |storage| {
         let contract = MetadosisContract::new(storage);
@@ -371,7 +371,7 @@ fn scheduler_foreign_day_is_rejected_before_its_fsm_is_even_inspected() {
 #[test]
 fn missing_or_wrong_canonical_job_is_rejected() {
     for wrong_record in [false, true] {
-        let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
         let other = add_awaiting_job(&mut fixture, WorldwideDay::new(TEST_WWD.value() - 1));
         StorageHandle::enter(&mut fixture.provider, |storage| {
             let contract = MetadosisContract::new(storage);
@@ -391,7 +391,7 @@ fn missing_or_wrong_canonical_job_is_rejected() {
 
 #[test]
 fn canonical_terminal_record_cannot_remain_live() {
-    let mut completed = ActivationFixture::new(20, 1_010, true);
+    let mut completed = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     completed.apply().unwrap();
     let terminal_record = StorageHandle::enter(&mut completed.provider, |storage| {
         MetadosisContract::new(storage)
@@ -400,7 +400,7 @@ fn canonical_terminal_record_cannot_remain_live() {
             .unwrap()
     });
     assert_eq!(terminal_record.status, OcompJobStatus::Completed);
-    let mut live = ActivationFixture::new_voting(20, 1_010, true);
+    let mut live = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
     assert_eq!(live.intent_id, completed.intent_id);
     StorageHandle::enter(&mut live.provider, |storage| {
         let mut contract = MetadosisContract::new(storage);
@@ -417,7 +417,7 @@ fn canonical_terminal_record_cannot_remain_live() {
 #[test]
 fn within_bound_malformed_native_indexes_and_fsm_are_rejected() {
     for corruption in ["scheduler", "ready", "response", "fsm"] {
-        let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
         StorageHandle::enter(&mut fixture.provider, |storage| {
             let contract = MetadosisContract::new(storage);
             match corruption {
@@ -438,7 +438,7 @@ fn within_bound_malformed_native_indexes_and_fsm_are_rejected() {
 
 #[test]
 fn response_bytes_above_active_capacity_reach_the_native_decoder() {
-    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
     let slots = NativeSlots::discover();
     let payload_slot = U256::from_be_bytes(keccak256(slots.response.to_be_bytes::<32>()).0);
     StorageHandle::enter(&mut fixture.provider, |storage| {

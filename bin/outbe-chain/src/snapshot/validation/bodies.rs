@@ -6,7 +6,6 @@ use outbe_compressed_entities::{
     CeAuditWork, CeBodyAudit, CeBodyAuditReport, CeDomain, FinalizedMarker, IdPageRequest,
     MAX_ID_PAGE_LIMIT,
 };
-use outbe_nod::NodRepositoryReader;
 use outbe_offchain_data::{read_projection_state, ProjectionCheckpoint, ProjectionConfig};
 use outbe_offchain_storage::partitioned::adapters::RocksPartitionReadView;
 use outbe_offchain_storage::{PartitionedStorage, StorageReaderHandle};
@@ -93,7 +92,7 @@ impl ProjectionBodyView {
         work: &CeAuditWork,
     ) -> eyre::Result<ProjectionBodyReport> {
         let tribute = TributeRepositoryReader::new(self.reader.clone());
-        let nod = NodRepositoryReader::new(self.reader.clone());
+        let nod = outbe_nod::nod_reader(self.reader.clone());
         tribute.audit_indexes(work)?;
         nod.audit_indexes(work)?;
         nod.audit_partition_locations(work)?;

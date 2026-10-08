@@ -236,9 +236,11 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
             TRIBUTE_FACTORY_ADDRESS,
             caller,
             &call,
-            U256::ZERO,
-            BlockId::number(height),
-            gas,
+            crate::internal::eth::RevertReplay {
+                value: U256::ZERO,
+                block: BlockId::number(height),
+                gas_limit: gas,
+            },
         )
         .expect("receipt-pinned guard reason; unavailable historical CE is not a passing negative");
         assert_eq!(
@@ -270,9 +272,11 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
                 TRIBUTE_FACTORY_ADDRESS,
                 caller,
                 &call,
-                U256::ZERO,
-                BlockId::Number(BlockNumberOrTag::Latest),
-                gas,
+                crate::internal::eth::RevertReplay {
+                    value: U256::ZERO,
+                    block: BlockId::Number(BlockNumberOrTag::Latest),
+                    gas_limit: gas,
+                },
             )
             .expect("live EVM guard observation; RPC/TEE/CE failures are not expected reverts");
             let after = latest_header(world, port);

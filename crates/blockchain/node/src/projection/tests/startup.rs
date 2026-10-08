@@ -114,7 +114,8 @@ fn node_runtime_opens_logical_projection_over_pending_overlay() {
         genesis_hash: B256::repeat_byte(0x11),
         start_block: 1,
     };
-    OffchainDataProjection::open(projection_config, durable.clone(), durable.clone()).unwrap();
+    outbe_offchain_data::open_projection(projection_config, durable.clone(), durable.clone())
+        .unwrap();
     let durable_reader: StorageReaderHandle = durable.clone();
     let durable_writer: StorageWriterHandle = durable.clone();
     let (overlay, mut projector) =

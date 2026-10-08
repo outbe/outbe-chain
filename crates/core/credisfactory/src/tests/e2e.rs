@@ -260,7 +260,9 @@ fn forfeit_burns_only_remaining_position_backing_and_leaves_fidelity_untouched()
             pledge_cost()
         );
         assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            view_balance(&storage, alice())
+                + view_balance(&storage, bob())
+                + view_balance(&storage, CREDIS_ADDRESS),
             pledge_cost()
         );
         assert_eq!(
