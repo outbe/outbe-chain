@@ -82,9 +82,8 @@ pub struct IntexFactoryContract {
     #[attribute(order = 23)]
     pub call_bin_groups: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // Lifecycle notices waiting for the `intex_drain_notices` trigger to send them: the
-    // scans run in a block hook, which cannot call contracts. Head and tail reset
-    // to 0 whenever the queue drains empty.
+    // Called notices waiting to be sent after the call slice, in order. Head and tail
+    // reset to 0 whenever the queue drains empty.
     #[attribute(order = 24)]
     pub notify_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 25)]

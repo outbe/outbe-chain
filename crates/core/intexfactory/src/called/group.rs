@@ -58,8 +58,8 @@ pub(crate) fn try_call_group(
         &group.members,
     )?;
 
-    // A slice of this sweep runs in a block hook, which cannot call contracts. So the notices
-    // leave from the `intex_drain_notices` trigger. Each notice carries its own series: the group
+    // The notices leave after the slice, once every group of the block is decided. Each
+    // notice carries its own series: the group
     // has left the index by then.
     for &series_id in &group.members {
         crate::notify::enqueue_notice(

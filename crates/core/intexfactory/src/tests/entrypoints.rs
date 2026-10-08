@@ -300,7 +300,7 @@ fn a_node_local_failure_while_draining_parked_proceeds_fails_the_sweep() {
     });
 }
 
-fn drain_notices_in_trigger(
+fn send_notices_in_block(
     provider: &mut super::router_fault::RouterFaultProvider,
 ) -> outbe_primitives::error::Result<()> {
     StorageHandle::enter(provider, |s| {
@@ -309,7 +309,7 @@ fn drain_notices_in_trigger(
             s.clone(),
         );
         // The cycle runtime runs each trigger inside its own checkpoint.
-        s.with_checkpoint(|| crate::notify::drain_notices(&ctx))
+        s.with_checkpoint(|| crate::notify::send_notices(&ctx))
     })
 }
 
@@ -344,7 +344,7 @@ fn a_node_local_failure_inside_the_called_notice_send_fails_the_drain() {
         })
     };
 
-    let result = drain_notices_in_trigger(&mut provider);
+    let result = send_notices_in_block(&mut provider);
     assert!(matches!(
         result,
         Err(outbe_primitives::error::PrecompileError::SubCall(
@@ -354,6 +354,6 @@ fn a_node_local_failure_inside_the_called_notice_send_fails_the_drain() {
     assert_eq!(queue(&mut provider), (0, 2, queued));
 
     provider.heal();
-    drain_notices_in_trigger(&mut provider).unwrap();
+    send_notices_in_block(&mut provider).unwrap();
     assert_eq!(queue(&mut provider), (0, 0, [U256::ZERO; 2]));
 }

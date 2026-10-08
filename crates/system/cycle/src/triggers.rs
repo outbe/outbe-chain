@@ -24,6 +24,7 @@ pub enum TriggerId {
     AuctionAdvance = 3,
     GemDaily = 4,
     AuctionClearing = 5,
+    /// Reserved historical identifier. Called notices now leave with the call slice.
     IntexDrainNotices = 6,
     CredisCallDaily = 7,
     NodCallDaily = 8,
@@ -76,7 +77,6 @@ pub enum TriggerHandler {
     AuctionAdvance,
     GemDaily,
     AuctionClearing,
-    IntexDrainNotices,
     CredisCallDaily,
     NodDaily,
     GemPositionDaily,
@@ -97,7 +97,6 @@ impl TriggerHandler {
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemDaily => outbe_gem::hooks::run_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
-            Self::IntexDrainNotices => outbe_intexfactory::notify::drain_notices(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
             Self::NodDaily => outbe_nod::hooks::run_daily(ctx),
             Self::GemPositionDaily => outbe_gemfactory::expired::run_daily(ctx),
@@ -152,13 +151,6 @@ const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
 #[cfg(feature = "e2e-test")]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 
-/// The daily sweeps queue their notices in a burst after midnight, so the drain
-/// runs more often than the clearing poll.
-#[cfg(not(feature = "e2e-test"))]
-const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 300;
-#[cfg(feature = "e2e-test")]
-const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 30;
-
 /// A day finalizes once, so an hourly poll catches it soon after. E2e seeds days minutes apart.
 #[cfg(not(feature = "e2e-test"))]
 const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 3_600;
@@ -170,7 +162,7 @@ const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 60;
 /// The first handler error stops the walk.
 /// AuctionAdvance must stay after ProtocolCycle.
 /// Same-slot brief and auction order depends on that sequence.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 11] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 10] {
     [
         TriggerSpec {
             id: TriggerId::ProtocolCycle.as_u32(),
@@ -242,17 +234,6 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::AuctionClearing,
         },
         TriggerSpec {
-            id: TriggerId::IntexDrainNotices.as_u32(),
-            label: "intex_drain_notices",
-            period_seconds: INTEX_NOTIFY_PERIOD_SECONDS,
-            start_offset_seconds: 0,
-            // Drains a queue that the call sweep filled. Reads no accounting state.
-            requires_accounting_window: false,
-            // A poll has nothing to replay: a gap collapses to one drain.
-            coalesces_backlog: true,
-            handler: TriggerHandler::IntexDrainNotices,
-        },
-        TriggerSpec {
             id: TriggerId::CredisCallDaily.as_u32(),
             label: "credis_call_daily",
             period_seconds: CREDIS_DAILY_PERIOD_SECONDS,
@@ -315,7 +296,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 11] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 10] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -360,10 +341,9 @@ mod protocol_parameter_tests {
             (
                 GEM_DAILY_PERIOD_SECONDS,
                 GEM_POSITION_PERIOD_SECONDS,
-                INTEX_NOTIFY_PERIOD_SECONDS,
                 CREDIS_DAILY_PERIOD_SECONDS
             ),
-            (86_400, 86_400, 300, 86_400)
+            (86_400, 86_400, 86_400)
         );
         let configured = active_triggers(10);
         assert_eq!(configured[0].period_seconds, 10);
@@ -378,41 +358,33 @@ mod protocol_parameter_tests {
             configured[4].handler,
             TriggerHandler::AuctionClearing
         ));
-        assert_eq!(configured[5].period_seconds, INTEX_NOTIFY_PERIOD_SECONDS);
+        assert_eq!(configured[5].period_seconds, CREDIS_DAILY_PERIOD_SECONDS);
+        assert_eq!(configured[5].start_offset_seconds, 0);
         assert!(matches!(
             configured[5].handler,
-            TriggerHandler::IntexDrainNotices
-        ));
-        assert_eq!(configured[6].period_seconds, CREDIS_DAILY_PERIOD_SECONDS);
-        assert_eq!(configured[6].start_offset_seconds, 0);
-        assert!(matches!(
-            configured[6].handler,
             TriggerHandler::CredisCallDaily
         ));
-        assert_eq!(configured[7].period_seconds, 86_400);
+        assert_eq!(configured[6].period_seconds, 86_400);
+        assert_eq!(configured[6].start_offset_seconds, 0);
+        assert!(matches!(configured[6].handler, TriggerHandler::NodDaily));
+        assert_eq!(configured[7].period_seconds, GEM_POSITION_PERIOD_SECONDS);
         assert_eq!(configured[7].start_offset_seconds, 0);
-        assert!(matches!(configured[7].handler, TriggerHandler::NodDaily));
-        assert_eq!(configured[8].period_seconds, GEM_POSITION_PERIOD_SECONDS);
-        assert_eq!(configured[8].start_offset_seconds, 0);
         assert!(matches!(
-            configured[8].handler,
+            configured[7].handler,
             TriggerHandler::GemPositionDaily
         ));
 
-        assert_eq!(configured[9].period_seconds, OUTBOUND_POLL_PERIOD_SECONDS);
-        assert_eq!(configured[9].id, TriggerId::IntexDrainParked.as_u32());
+        assert_eq!(configured[8].period_seconds, OUTBOUND_POLL_PERIOD_SECONDS);
+        assert_eq!(configured[8].id, TriggerId::IntexDrainParked.as_u32());
         assert!(matches!(
-            configured[9].handler,
+            configured[8].handler,
             TriggerHandler::IntexDrainParked
         ));
 
-        assert_eq!(
-            configured[10].period_seconds,
-            INTEX_VWAP_PUSH_PERIOD_SECONDS
-        );
-        assert_eq!(configured[10].id, TriggerId::IntexVwapPush.as_u32());
+        assert_eq!(configured[9].period_seconds, INTEX_VWAP_PUSH_PERIOD_SECONDS);
+        assert_eq!(configured[9].id, TriggerId::IntexVwapPush.as_u32());
         assert!(matches!(
-            configured[10].handler,
+            configured[9].handler,
             TriggerHandler::IntexVwapPush
         ));
 

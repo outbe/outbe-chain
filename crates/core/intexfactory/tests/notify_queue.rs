@@ -1,4 +1,4 @@
-//! Queue mechanics of the lifecycle notices the `intex_drain_notices` trigger sends.
+//! Queue mechanics of the Called notices each block sends after the call slice.
 //!
 //! The router accepts every send unless a test says otherwise. So these tests pin
 //! the queue walk itself:
@@ -12,9 +12,12 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::{
-    MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_FIRING, MAX_ROUTER_CALLS_PER_FIRING,
+    MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, MAX_ROUTER_CALLS_PER_BLOCK,
+    NOTICE_RETRY_SECONDS,
 };
-use outbe_intexfactory::notify::{called_notice_attempts, drain_notices, pack_called_notice};
+use outbe_intexfactory::notify::{
+    called_notice_attempts, notice_retry_at, pack_called_notice, send_notices,
+};
 use outbe_intexfactory::precompile::IIntexFactory::CalledNoticeDropped;
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
@@ -59,11 +62,15 @@ fn accept_sends(storage: &mut HashMapStorageProvider) {
 }
 
 fn drain(handle: &StorageHandle<'_>) {
+    drain_at(handle, NOW);
+}
+
+fn drain_at(handle: &StorageHandle<'_>, now: u64) {
     let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(1, NOW, CHAIN_ID),
+        BlockContext::empty_for_tests(1, now, CHAIN_ID),
         handle.clone(),
     );
-    drain_notices(&ctx).expect("a refused notice never fails the drain");
+    send_notices(&ctx).expect("a refused notice never fails the send");
 }
 
 fn queue_bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
@@ -75,17 +82,17 @@ fn queue_bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
 }
 
 #[test]
-fn a_backlog_drains_one_firing_worth_at_a_time() {
+fn a_backlog_drains_one_block_worth_at_a_time() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        let queued = MAX_ROUTER_CALLS_PER_FIRING + 5;
+        let queued = MAX_ROUTER_CALLS_PER_BLOCK + 5;
         seed(&handle, queued);
 
         drain(&handle);
         assert_eq!(
             queue_bounds(&handle),
-            (MAX_ROUTER_CALLS_PER_FIRING, queued),
-            "one firing spends its budget and leaves the rest queued"
+            (MAX_ROUTER_CALLS_PER_BLOCK, queued),
+            "one block spends its budget and leaves the rest queued"
         );
 
         drain(&handle);
@@ -125,10 +132,10 @@ fn an_empty_queue_is_a_noop() {
 }
 
 #[test]
-fn an_exactly_full_firing_rewinds_the_queue() {
+fn an_exactly_full_block_rewinds_the_queue() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        seed(&handle, MAX_ROUTER_CALLS_PER_FIRING);
+        seed(&handle, MAX_ROUTER_CALLS_PER_BLOCK);
         drain(&handle);
         assert_eq!(queue_bounds(&handle), (0, 0));
     });
@@ -160,13 +167,35 @@ fn a_refused_notice_is_requeued_with_one_more_attempt() {
         assert_eq!(
             queue_bounds(&handle),
             (1, 2),
-            "the requeued entry outlives the firing that emptied the window"
+            "the requeued entry outlives the block that emptied the window"
         );
         assert_eq!(queued(&handle, 0), U256::ZERO);
         let entry = queued(&handle, 1);
         assert_eq!(called_notice_attempts(entry), 1);
+        assert_eq!(notice_retry_at(entry), NOW + NOTICE_RETRY_SECONDS);
         assert_eq!(SeriesId::from_word(entry), series(0));
         assert_eq!((entry & U256::from(u32::MAX)).to::<u32>(), CALLED_AT);
+    });
+    assert!(dropped_notices(&storage).is_empty());
+}
+
+#[test]
+fn a_refused_notice_waits_its_pause_before_the_next_attempt() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        seed(&handle, 1);
+        drain(&handle);
+    });
+    accept_sends(&mut storage);
+    StorageHandle::enter(&mut storage, |handle| {
+        drain_at(&handle, NOW + NOTICE_RETRY_SECONDS - 1);
+        assert_eq!(
+            queue_bounds(&handle),
+            (1, 2),
+            "not due yet, so still queued"
+        );
+        drain_at(&handle, NOW + NOTICE_RETRY_SECONDS);
+        assert_eq!(queue_bounds(&handle), (0, 0));
     });
     assert!(dropped_notices(&storage).is_empty());
 }
@@ -176,8 +205,8 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |handle| {
         seed(&handle, 1);
-        for _ in 1..MAX_CALLED_NOTICE_ATTEMPTS {
-            drain(&handle);
+        for attempt in 1..MAX_CALLED_NOTICE_ATTEMPTS {
+            drain_at(&handle, NOW + u64::from(attempt - 1) * NOTICE_RETRY_SECONDS);
         }
         let (head, tail) = queue_bounds(&handle);
         assert_eq!(tail - head, 1, "still queued below the cap");
@@ -189,7 +218,8 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
     assert!(dropped_notices(&storage).is_empty());
 
     StorageHandle::enter(&mut storage, |handle| {
-        drain(&handle);
+        let last = u64::from(MAX_CALLED_NOTICE_ATTEMPTS - 1) * NOTICE_RETRY_SECONDS;
+        drain_at(&handle, NOW + last);
         assert_eq!(queue_bounds(&handle), (0, 0), "the last refusal drops it");
     });
     let dropped = dropped_notices(&storage);
@@ -212,14 +242,14 @@ fn a_refused_notice_does_not_hold_back_the_rest() {
             assert_eq!(
                 called_notice_attempts(entry),
                 1,
-                "every entry got its own call in the firing"
+                "every entry got its own call in the block"
             );
         }
     });
 
     accept_sends(&mut storage);
     StorageHandle::enter(&mut storage, |handle| {
-        drain(&handle);
+        drain_at(&handle, NOW + NOTICE_RETRY_SECONDS);
         assert_eq!(queue_bounds(&handle), (0, 0));
     });
     assert!(dropped_notices(&storage).is_empty());
@@ -261,7 +291,7 @@ fn every_entry_of_a_refused_run_is_requeued() {
 
     accept_sends(&mut storage);
     StorageHandle::enter(&mut storage, |handle| {
-        drain(&handle);
+        drain_at(&handle, NOW + NOTICE_RETRY_SECONDS);
         assert_eq!(
             queue_bounds(&handle),
             (0, 0),
@@ -272,25 +302,25 @@ fn every_entry_of_a_refused_run_is_requeued() {
 }
 
 #[test]
-fn a_router_refusing_every_run_ends_the_firing_early() {
+fn a_router_refusing_every_run_ends_the_block_early() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |handle| {
-        let queued_runs = MAX_REFUSED_RUNS_PER_FIRING + 2;
+        let queued_runs = MAX_REFUSED_RUNS_PER_BLOCK + 2;
         seed(&handle, queued_runs);
         drain(&handle);
 
         assert_eq!(
             queue_bounds(&handle),
             (
-                MAX_REFUSED_RUNS_PER_FIRING,
-                queued_runs + MAX_REFUSED_RUNS_PER_FIRING
+                MAX_REFUSED_RUNS_PER_BLOCK,
+                queued_runs + MAX_REFUSED_RUNS_PER_BLOCK
             ),
-            "the firing stops after the refusals in a row"
+            "the block stops after the refusals in a row"
         );
         assert_eq!(
-            called_notice_attempts(queued(&handle, MAX_REFUSED_RUNS_PER_FIRING)),
+            called_notice_attempts(queued(&handle, MAX_REFUSED_RUNS_PER_BLOCK)),
             0,
-            "an entry the firing never reached keeps its count"
+            "an entry the block never reached keeps its count"
         );
     });
 }

@@ -74,6 +74,7 @@ impl BlockLifecycle for CycleLifecycle {
         outbe_nod::called::run_call_slice(&ctx.runtime)?;
         outbe_gem::hooks::run_call_slice(&ctx.runtime)?;
         outbe_intexfactory::called::run_call_slice(&ctx.runtime)?;
+        outbe_intexfactory::notify::send_notices(&ctx.runtime)?;
         outbe_credisfactory::called::run_call_slice(&ctx.runtime)?;
         Ok(())
     }

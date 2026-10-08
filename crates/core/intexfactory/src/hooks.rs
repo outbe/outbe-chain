@@ -10,9 +10,10 @@ pub fn sweep_forfeits(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// One block of every Intex sweep: what fell due, then a slice of the call sweep.
+/// One block of every Intex sweep: what fell due, a slice of the call sweep, and the
+/// notices it queued.
 pub fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     sweep_forfeits(ctx)?;
     crate::called::run_call_slice(ctx)?;
-    Ok(())
+    crate::notify::send_notices(ctx)
 }
