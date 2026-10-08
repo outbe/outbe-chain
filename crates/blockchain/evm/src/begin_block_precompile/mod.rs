@@ -194,6 +194,7 @@ fn dispatch_inner(
             "system precompile does not accept native token value".into(),
         ));
     }
+    outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
 
     let input = SystemTxInputV2::decode(data)
         .map_err(|error| PrecompileError::Fatal(format!("invalid system tx input: {error}")))?;

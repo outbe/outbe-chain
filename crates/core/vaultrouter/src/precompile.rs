@@ -125,15 +125,15 @@ fn dispatch_local(
             }),
 
             // --- vault management (owner-only) ---
-            addVault(c) => mutate_void(c, caller, |sender, c| {
+            addVault(c) => mutate_void(&storage, c, caller, |sender, c| {
                 runtime::add_vault(storage.clone(), sender, c.vault)
             }),
-            removeVault(c) => mutate_void(c, caller, |sender, c| {
+            removeVault(c) => mutate_void(&storage, c, caller, |sender, c| {
                 runtime::remove_vault(storage.clone(), sender, c.vault)
             }),
 
             // --- liquidity source / target management (owner-only) ---
-            addLiquiditySource(c) => mutate_void(c, caller, |sender, c| {
+            addLiquiditySource(c) => mutate_void(&storage, c, caller, |sender, c| {
                 runtime::add_liquidity_source(
                     storage.clone(),
                     sender,
@@ -141,10 +141,10 @@ fn dispatch_local(
                     c.sourceType as u8,
                 )
             }),
-            removeLiquiditySource(c) => mutate_void(c, caller, |sender, c| {
+            removeLiquiditySource(c) => mutate_void(&storage, c, caller, |sender, c| {
                 runtime::remove_liquidity_source(storage.clone(), sender, c.sourceAddress)
             }),
-            addLiquidityTarget(c) => mutate_void(c, caller, |sender, c| {
+            addLiquidityTarget(c) => mutate_void(&storage, c, caller, |sender, c| {
                 runtime::add_liquidity_target(
                     storage.clone(),
                     sender,
@@ -152,16 +152,16 @@ fn dispatch_local(
                     c.targetType as u8,
                 )
             }),
-            removeLiquidityTarget(c) => mutate_void(c, caller, |sender, c| {
+            removeLiquidityTarget(c) => mutate_void(&storage, c, caller, |sender, c| {
                 runtime::remove_liquidity_target(storage.clone(), sender, c.targetAddress)
             }),
 
             // --- liquidity flow (source/target-gated against the registry) ---
-            deposit(c) => mutate(c, caller, |sender, c| {
+            deposit(c) => mutate(&storage, c, caller, |sender, c| {
                 let source = runtime::registered_liquidity_source(&storage, sender)?;
                 runtime::deposit(storage.clone(), sender, c.asset, c.assetsAmount, source)
             }),
-            withdraw(c) => mutate(c, caller, |sender, c| {
+            withdraw(c) => mutate(&storage, c, caller, |sender, c| {
                 let target = runtime::registered_liquidity_target(&storage, sender)?;
                 runtime::withdraw(storage.clone(), sender, c, target)
             }),
@@ -175,22 +175,22 @@ fn dispatch_local(
             }),
 
             // --- reservations ---
-            reserveStables(c) => mutate(c, caller, |sender, c| {
+            reserveStables(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::reserve_stables(storage.clone(), sender, c)
             }),
-            releaseReservation(c) => mutate(c, caller, |sender, c| {
+            releaseReservation(c) => mutate(&storage, c, caller, |sender, c| {
                 if sender != outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS {
                     return Err(crate::errors::VaultRouterError::Unauthorized.into());
                 }
                 let target = runtime::registered_liquidity_target(&storage, sender)?;
                 runtime::release_reservation(storage.clone(), c.id, c.receiver, c.amount, target)
             }),
-            returnReservation(c) => mutate(c, caller, |sender, c| {
+            returnReservation(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::return_reservation(storage.clone(), sender, c.id)
             }),
 
             // --- rebalance (CCA-gated; caller supplies the destination asset) ---
-            rebalance(c) => mutate(c, caller, |sender, c| {
+            rebalance(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::rebalance(storage.clone(), sender, c)
             }),
             previewRebalance(c) => view(c, |c| {
@@ -236,10 +236,10 @@ pub(crate) fn dispatch_crosschain(
                         .remote_vault_routers
                         .read(&c.chainId)
                 }),
-                setCrosschainBridge(c) => mutate_void(c, caller, |sender, c| {
+                setCrosschainBridge(c) => mutate_void(&storage, c, caller, |sender, c| {
                     runtime::set_crosschain_bridge(storage.clone(), sender, c.bridge)
                 }),
-                setRemoteVaultRouter(c) => mutate_void(c, caller, |sender, c| {
+                setRemoteVaultRouter(c) => mutate_void(&storage, c, caller, |sender, c| {
                     runtime::set_remote_vault_router(storage.clone(), sender, c.chainId, c.router)
                 }),
 
@@ -259,7 +259,7 @@ pub(crate) fn dispatch_crosschain(
                         .crosschain_destination_chain_id
                         .read()
                 }),
-                setCrosschainAsset(c) => mutate_void(c, caller, |sender, c| {
+                setCrosschainAsset(c) => mutate_void(&storage, c, caller, |sender, c| {
                     crosschain::set_asset(
                         storage.clone(),
                         sender,
@@ -314,7 +314,7 @@ pub(crate) fn dispatch_crosschain(
                         operationId: operation_id,
                     })
                 }),
-                crosschainDeposit(c) => mutate(c, caller, |user, c| {
+                crosschainDeposit(c) => mutate(&storage, c, caller, |user, c| {
                     let (operation_id, send_id) = crosschain::deposit(
                         storage.clone(),
                         user,
@@ -341,7 +341,7 @@ pub(crate) fn dispatch_crosschain(
                         operationId: operation_id,
                     })
                 }),
-                crosschainWithdraw(c) => mutate(c, caller, |user, c| {
+                crosschainWithdraw(c) => mutate(&storage, c, caller, |user, c| {
                     let (operation_id, send_id) = crosschain::withdraw(
                         storage.clone(),
                         user,
@@ -355,7 +355,7 @@ pub(crate) fn dispatch_crosschain(
                         sendId: send_id,
                     })
                 }),
-                receiveMessage(c) => mutate(c, caller, |_bridge, c| {
+                receiveMessage(c) => mutate(&storage, c, caller, |_bridge, c| {
                     crosschain::receive_deposit_acknowledgement(
                         storage.clone(),
                         caller,
@@ -367,7 +367,7 @@ pub(crate) fn dispatch_crosschain(
                         &CrosschainExt::receiveMessageCall::SELECTOR,
                     ))
                 }),
-                onCrosschainTokensReceived(c) => mutate(c, caller, |_token_bridge, c| {
+                onCrosschainTokensReceived(c) => mutate(&storage, c, caller, |_token_bridge, c| {
                     crosschain::receive_withdrawal_return(
                         storage.clone(),
                         caller,

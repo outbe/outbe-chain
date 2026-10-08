@@ -71,7 +71,7 @@ pub fn dispatch(
 ) -> Result<Bytes> {
     reject_value(&value)?;
     dispatch_call(data, IGovernance::IGovernanceCalls::abi_decode, |call| {
-        let mut gov = GovernanceContract::new(storage);
+        let mut gov = GovernanceContract::new(storage.clone());
         use IGovernance::IGovernanceCalls::*;
         match call {
             // --- canon / meta-canon reads ---
@@ -83,23 +83,27 @@ pub fn dispatch(
             getCanonRevisionHash(c) => view(c, |c| gov.canon_revision_hash(c.version)),
 
             // --- canon / meta-canon writes ---
-            updateMetaCanon(c) => mutate(c, caller, |sender, c| {
+            updateMetaCanon(c) => mutate(&storage, c, caller, |sender, c| {
                 gov.update_meta_canon(sender, &c.text)
             }),
-            updateCanon(c) => mutate(c, caller, |sender, c| gov.update_canon(sender, &c.text)),
+            updateCanon(c) => mutate(&storage, c, caller, |sender, c| {
+                gov.update_canon(sender, &c.text)
+            }),
 
             // --- OIP ---
-            submitOip(c) => mutate(c, caller, |sender, c| gov.submit_oip(sender, &c.text)),
+            submitOip(c) => mutate(&storage, c, caller, |sender, c| {
+                gov.submit_oip(sender, &c.text)
+            }),
             getOip(c) => view(c, |c| {
                 let o = gov
                     .get_oip(c.id)?
                     .ok_or(GovernanceError::ProposalNotFound)?;
                 Ok(oip_to_sol(o))
             }),
-            updateOipText(c) => mutate_void(c, caller, |sender, c| {
+            updateOipText(c) => mutate_void(&storage, c, caller, |sender, c| {
                 gov.update_oip_text(sender, c.id, &c.text)
             }),
-            setOipStatus(c) => mutate_void(c, caller, |sender, c| {
+            setOipStatus(c) => mutate_void(&storage, c, caller, |sender, c| {
                 gov.set_oip_status(sender, c.id, c.newStatus)
             }),
             oipCount(_) => metadata::<IGovernance::oipCountCall>(|| gov.oip_count()),
@@ -128,17 +132,19 @@ pub fn dispatch(
             oipCountByStatus(c) => view(c, |c| Ok(U256::from(gov.oip_count_by_status(c.status)?))),
 
             // --- GIP ---
-            submitGip(c) => mutate(c, caller, |sender, c| gov.submit_gip(sender, &c.text)),
+            submitGip(c) => mutate(&storage, c, caller, |sender, c| {
+                gov.submit_gip(sender, &c.text)
+            }),
             getGip(c) => view(c, |c| {
                 let g = gov
                     .get_gip(c.id)?
                     .ok_or(GovernanceError::ProposalNotFound)?;
                 Ok(gip_to_sol(g))
             }),
-            updateGipText(c) => mutate_void(c, caller, |sender, c| {
+            updateGipText(c) => mutate_void(&storage, c, caller, |sender, c| {
                 gov.update_gip_text(sender, c.id, &c.text)
             }),
-            setGipStatus(c) => mutate_void(c, caller, |sender, c| {
+            setGipStatus(c) => mutate_void(&storage, c, caller, |sender, c| {
                 gov.set_gip_status(sender, c.id, c.newStatus)
             }),
             gipCount(_) => metadata::<IGovernance::gipCountCall>(|| gov.gip_count()),

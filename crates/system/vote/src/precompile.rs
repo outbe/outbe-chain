@@ -54,7 +54,7 @@ fn dispatch_vote_call(
     let mut governance = Vote::new(storage.clone());
     use IVote::IVoteCalls::*;
     match call {
-        createProposal(c) => mutate(c, caller, |sender, c| {
+        createProposal(c) => mutate(&storage, c, caller, |sender, c| {
             let block_number = storage.block_number()?;
             governance.create_proposal_with_value(
                 sender,
@@ -65,7 +65,7 @@ fn dispatch_vote_call(
                 registry,
             )
         }),
-        createProposalWithVotingWindow(c) => mutate(c, caller, |sender, c| {
+        createProposalWithVotingWindow(c) => mutate(&storage, c, caller, |sender, c| {
             let block_number = storage.block_number()?;
             governance.create_proposal_with_voting_window(
                 sender,
@@ -77,7 +77,7 @@ fn dispatch_vote_call(
                 registry,
             )
         }),
-        castVote(c) => mutate_void(c, caller, |sender, c| {
+        castVote(c) => mutate_void(&storage, c, caller, |sender, c| {
             let block_number = storage.block_number()?;
             governance.cast_vote_approve(c.proposalId, sender, c.approve, block_number)
         }),

@@ -31,9 +31,9 @@ pub fn dispatch(
         IHyperlaneController::IHyperlaneControllerCalls::abi_decode,
         |call| {
             use IHyperlaneController::IHyperlaneControllerCalls::*;
-            let mut controller = HyperlaneControllerContract::new(storage);
+            let mut controller = HyperlaneControllerContract::new(storage.clone());
             match call {
-                initialize(c) => mutate_void(c, caller, |sender, c| {
+                initialize(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.initialize(
                         sender,
                         c.icaRouter,
@@ -43,16 +43,19 @@ pub fn dispatch(
                         &c.hooks,
                     )
                 }),
-                fund(c) => {
-                    mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, _, amount| {
-                        controller.fund(sender, amount)
-                    })
-                }
-                sync(c) => mutate(c, caller, |_, _| controller.sync()),
-                setHyperlaneSigner(c) => mutate_void(c, caller, |sender, c| {
+                fund(c) => mutate_void_payable(
+                    &storage,
+                    c,
+                    PAYABLE_SELECTORS,
+                    caller,
+                    value,
+                    |sender, _, amount| controller.fund(sender, amount),
+                ),
+                sync(c) => mutate(&storage, c, caller, |_, _| controller.sync()),
+                setHyperlaneSigner(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.set_hyperlane_signer(sender, c.signer)
                 }),
-                submitCheckpoint(c) => mutate_void(c, caller, |sender, c| {
+                submitCheckpoint(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.submit_checkpoint(
                         sender,
                         c.domain,

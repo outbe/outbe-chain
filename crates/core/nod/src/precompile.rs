@@ -70,6 +70,7 @@ pub fn dispatch(
     if let Ok(call) =
         <INodTestArming::closeCallNoticeForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
     {
+        outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
         requeue_called_bucket(storage.clone(), call.bucketKey, call.deadline)?;
         return Ok(Bytes::new());
     }

@@ -23,15 +23,18 @@ pub fn dispatch(
     dispatch_call(data, ICcaRegistry::ICcaRegistryCalls::abi_decode, |call| {
         use ICcaRegistry::ICcaRegistryCalls::*;
         match call {
-            bond(c) => {
-                mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, amount| {
-                    runtime::bond(storage.clone(), sender, amount, c.name)
-                })
-            }
-            unbond(c) => mutate_void(c, caller, |sender, _| {
+            bond(c) => mutate_void_payable(
+                &storage,
+                c,
+                PAYABLE_SELECTORS,
+                caller,
+                value,
+                |sender, c, amount| runtime::bond(storage.clone(), sender, amount, c.name),
+            ),
+            unbond(c) => mutate_void(&storage, c, caller, |sender, _| {
                 runtime::unbond(storage.clone(), sender)
             }),
-            claimUnbonded(c) => mutate_void(c, caller, |sender, _| {
+            claimUnbonded(c) => mutate_void(&storage, c, caller, |sender, _| {
                 runtime::claim_unbonded(storage.clone(), sender)
             }),
             getCca(c) => view(c, |c| api::get_cca(&storage, c.cca)),

@@ -28,24 +28,33 @@ pub fn dispatch(
     // address. Every selector the module has not published refuses it here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     dispatch_call(data, IStaking::IStakingCalls::abi_decode, |call| {
-        let mut staking = Staking::new(storage);
+        let mut staking = Staking::new(storage.clone());
         use IStaking::IStakingCalls::*;
         match call {
-            stake(c) => {
-                mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, val| {
+            stake(c) => mutate_void_payable(
+                &storage,
+                c,
+                PAYABLE_SELECTORS,
+                caller,
+                value,
+                |sender, c, val| {
                     if val != c.amount {
                         return Err(outbe_primitives::error::PrecompileError::Revert(
                             "msg.value must equal stake amount".into(),
                         ));
                     }
                     staking.stake(sender, c.validatorAddress, c.amount)
-                })
-            }
-            unstake(c) => mutate_void(c, caller, |sender, c| staking.unstake(sender, c.amount)),
-            claimUnbonded(c) => mutate_void(c, caller, |sender, _c| staking.claim_unbonded(sender)),
-            unjailValidator(c) => {
-                mutate_void(c, caller, |sender, _c| staking.unjail_validator(sender))
-            }
+                },
+            ),
+            unstake(c) => mutate_void(&storage, c, caller, |sender, c| {
+                staking.unstake(sender, c.amount)
+            }),
+            claimUnbonded(c) => mutate_void(&storage, c, caller, |sender, _c| {
+                staking.claim_unbonded(sender)
+            }),
+            unjailValidator(c) => mutate_void(&storage, c, caller, |sender, _c| {
+                staking.unjail_validator(sender)
+            }),
             getStake(c) => view(c, |c| staking.get_stake(c.validator)),
             getTotalStaked(_) => {
                 metadata::<IStaking::getTotalStakedCall>(|| staking.get_total_staked())

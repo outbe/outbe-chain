@@ -34,17 +34,22 @@ pub fn dispatch(
         |call| {
             use ICredisFactory::ICredisFactoryCalls::*;
             match call {
-                issueCredis(c) => {
-                    mutate_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, val| {
+                issueCredis(c) => mutate_payable(
+                    &storage,
+                    c,
+                    PAYABLE_SELECTORS,
+                    caller,
+                    value,
+                    |sender, c, val| {
                         let (position_id, principal_minor) =
                             runtime::issue_credis(storage.clone(), sender, c.reservationId, val)?;
                         Ok(ICredisFactory::issueCredisReturn {
                             positionId: position_id,
                             principalMinor: principal_minor,
                         })
-                    })
-                }
-                settleCredis(c) => mutate(c, caller, |sender, c| {
+                    },
+                ),
+                settleCredis(c) => mutate(&storage, c, caller, |sender, c| {
                     let (principal, interest) =
                         runtime::settle(storage.clone(), sender, c.positionId, c.amountMinor)?;
                     Ok(ICredisFactory::settleCredisReturn {

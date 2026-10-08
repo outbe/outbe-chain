@@ -3,6 +3,8 @@ use alloy_primitives::Bytes;
 use alloy_sol_types::{Revert, SolError};
 use revm::precompile::{PrecompileHalt, PrecompileOutput, PrecompileResult};
 
+alloy_sol_types::sol! { error SubCallHalted(uint8 kind); }
+
 /// ABI-encode a revert reason as the Solidity-standard `Error(string)`
 /// (selector `0x08c379a0` followed by `abi.encode(reason)`).
 pub(super) fn encode_revert_reason(msg: String) -> Bytes {
@@ -21,20 +23,31 @@ pub(super) fn encode_revert_reason(msg: String) -> Bytes {
 /// `revm-handler::precompile_output_to_interpreter_result`.
 ///
 /// Explicit arms cover `OutOfGas`, `Revert`, `RevertBytes`, `WriteProtection`,
-/// `SubCall`, and `Unsupported`. The trailing wildcard arm maps every other
+/// `ChildHalt`, `SubCall`, and `Unsupported`. The trailing wildcard arm maps every other
 /// variant to `Fatal` rather than panicking. This includes `Storage`, the
 /// body-read and tree errors, the CE work-capacity errors, `Fatal`, and any
 /// variant added later. Thus a new variant does not force a mapping decision
-/// here. The `SubCall(_)` arm remains fatal until the adapter has
-/// a protocol mapping that distinguishes child-frame halts from contract
-/// reverts without changing consensus behavior.
+/// here. Settled child VM halts carry stable ABI codes and revert the wrapper;
+/// provider and infrastructure failures remain fatal.
 #[doc(hidden)]
 pub fn map_outbe_precompile_result(
     result: outbe_primitives::error::Result<Bytes>,
     actual_gas: u64,
 ) -> PrecompileResult {
+    map_outbe_precompile_result_with_refund(result, actual_gas, 0)
+}
+
+pub(super) fn map_outbe_precompile_result_with_refund(
+    result: outbe_primitives::error::Result<Bytes>,
+    actual_gas: u64,
+    refund: i64,
+) -> PrecompileResult {
     match result {
-        Ok(bytes) => Ok(PrecompileOutput::new(actual_gas, bytes, 0)),
+        Ok(bytes) => {
+            let mut output = PrecompileOutput::new(actual_gas, bytes, 0);
+            output.gas_refunded = refund;
+            Ok(output)
+        }
         Err(outbe_primitives::error::PrecompileError::OutOfGas) => {
             Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0))
         }
@@ -52,6 +65,13 @@ pub fn map_outbe_precompile_result(
         Err(outbe_primitives::error::PrecompileError::WriteProtection) => Ok(
             PrecompileOutput::halt(PrecompileHalt::other("state change during static call"), 0),
         ),
+        Err(outbe_primitives::error::PrecompileError::ChildHalt(kind)) => {
+            Ok(PrecompileOutput::revert(
+                actual_gas,
+                SubCallHalted { kind: kind as u8 }.abi_encode().into(),
+                0,
+            ))
+        }
         Err(outbe_primitives::error::PrecompileError::SubCall(err)) => Err(
             revm::precompile::PrecompileError::Fatal(format!("sub-call error: {err:?}")),
         ),

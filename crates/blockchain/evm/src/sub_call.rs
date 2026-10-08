@@ -27,13 +27,18 @@ use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
     context::{Evm, LocalContextTr},
-    context_interface::{journaled_state::account::JournaledAccountTr, ContextTr, JournalTr},
-    handler::{instructions::EthInstructions, EthFrame, EvmTr, FrameResult, ItemOrResult},
+    context_interface::{
+        journaled_state::account::JournaledAccountTr, Cfg as _, ContextTr, JournalTr,
+    },
+    handler::{
+        handle_reservoir_remaining_gas, instructions::EthInstructions, EthFrame, EvmTr,
+        FrameResult, ItemOrResult,
+    },
     interpreter::{
         interpreter::EthInterpreter,
         interpreter_action::{CallInputs, FrameInit, FrameInput},
-        CallInput, CallOutcome, CallScheme, CallValue, InstructionResult, InterpreterResult,
-        SharedMemory,
+        CallInput, CallOutcome, CallScheme, CallValue, Gas, InstructionResult, SharedMemory,
+        SuccessOrHalt,
     },
     primitives::hardfork::SpecId,
     state::Bytecode,
@@ -105,6 +110,44 @@ where
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    let limit = input.gas_limit;
+    let outcome = match run_frame(ctx, context, input, None) {
+        Ok(outcome) => outcome,
+        Err(
+            error @ (SubCallError::DepthLimitExceeded | SubCallError::StateChangeDuringStaticCall),
+        ) => {
+            return Ok(SubCallOutput {
+                status: SubCallStatus::Halt(error),
+                returndata: Default::default(),
+                gas_used: 0,
+                gas_refunded: 0,
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    // Direct-driver users supply their own bounded allowance. Production uses
+    // the provider's real parent meter instead of this standalone tracker.
+    let mut parent = Gas::new(limit);
+    if !parent.record_regular_cost(limit) {
+        return Err(SubCallError::Fatal(
+            "cannot reserve standalone child gas".into(),
+        ));
+    }
+    settle_outcome(outcome, &mut parent)
+}
+
+/// Execute one child; its caller owns reservation and canonical settlement.
+/// A supplied target was already loaded and priced by the provider.
+pub(crate) fn run_frame<DB>(
+    ctx: &mut EthEvmContext<DB>,
+    context: SubCallContext,
+    input: SubCallInput,
+    target_code: Option<(B256, Bytecode)>,
+) -> std::result::Result<CallOutcome, SubCallError>
+where
+    DB: Database + Debug,
+    DB::Error: Debug,
+{
     context.runtime.abort_bridge.check_subcall()?;
     let effective_is_static = context.outer_is_static || input.is_static;
 
@@ -114,13 +157,16 @@ where
     }
 
     // Depth check via journal.
-    if ctx.journal().depth() >= 1024 {
+    if ctx.journal().depth() > revm::primitives::constants::CALL_STACK_LIMIT as usize {
         return Err(SubCallError::DepthLimitExceeded);
     }
 
     // Pre-load bytecode (mirror revm-handler-18.1.0/src/execution.rs:22-37).
     // Handles EIP-7702 delegation by re-loading from the delegate's address.
-    let (bytecode_hash, bytecode) = load_target_bytecode(ctx, input.target)?;
+    let (bytecode_hash, bytecode) = match target_code {
+        Some(code) => code,
+        None => load_target_bytecode(ctx, input.target)?,
+    };
 
     let call_inputs = build_call_inputs(
         &input,
@@ -147,6 +193,11 @@ where
     let mut caller_memory = CallerMemory(SharedMemory::new_with_buffer(
         ctx.local().shared_memory_buffer().clone(),
     ));
+    caller_memory.0.set_memory_limit(ctx.cfg().memory_limit());
+    // The enclosing precompile already owns a journal checkpoint. Continue
+    // that depth so native CALL/CREATE inside this child cannot reset the stack
+    // allowance. Domain checkpoints conservatively consume the same budget.
+    let depth = ctx.journal().depth();
     #[allow(clippy::type_complexity)]
     let mut evm: Evm<
         &mut EthEvmContext<DB>,
@@ -157,7 +208,7 @@ where
     > = Evm::new(ctx, instructions, precompiles);
 
     let frame_input = FrameInit {
-        depth: 0,
+        depth,
         memory: caller_memory.0.new_child_context(),
         frame_input: FrameInput::Call(Box::new(call_inputs)),
     };
@@ -178,10 +229,7 @@ where
             ));
         }
     };
-    Ok(call_outcome_to_subcall_output(
-        call_outcome,
-        input.gas_limit,
-    ))
+    Ok(call_outcome)
 }
 
 fn build_call_inputs(
@@ -317,23 +365,23 @@ where
     }
 }
 
-/// Convert revm's [`CallOutcome`] (terminal frame state) into outbe's
-/// [`SubCallOutput`].
-fn call_outcome_to_subcall_output(outcome: CallOutcome, original_gas_limit: u64) -> SubCallOutput {
-    let CallOutcome { result, .. } = outcome;
-    let InterpreterResult {
-        result: instr,
-        output,
-        gas,
-    } = result;
-
-    let gas_used = original_gas_limit.saturating_sub(gas.remaining());
-    let gas_refunded = gas.refunded();
-
+/// Settle against the parent before narrowing the child's full gas state to
+/// the public API. A halt spends its allowance, while a revert-like entry
+/// failure returns unused gas. This is the same helper as native CALL.
+pub(crate) fn settle_outcome(
+    mut outcome: CallOutcome,
+    parent: &mut Gas,
+) -> std::result::Result<SubCallOutput, SubCallError> {
+    let instr = outcome.result.result;
     let status = match instr {
-        InstructionResult::Return | InstructionResult::Stop => SubCallStatus::Success,
-        InstructionResult::Revert => SubCallStatus::Revert(output.clone()),
+        InstructionResult::Stop | InstructionResult::Return | InstructionResult::SelfDestruct => {
+            SubCallStatus::Success
+        }
         InstructionResult::CallTooDeep => SubCallStatus::Halt(SubCallError::DepthLimitExceeded),
+        InstructionResult::OutOfFunds => SubCallStatus::Halt(SubCallError::EvmHalt(
+            revm::context_interface::result::HaltReason::OutOfFunds,
+        )),
+        result if result.is_revert() => SubCallStatus::Revert(outcome.result.output.clone()),
         InstructionResult::OutOfGas
         | InstructionResult::MemoryOOG
         | InstructionResult::MemoryLimitOOG
@@ -344,17 +392,33 @@ fn call_outcome_to_subcall_output(outcome: CallOutcome, original_gas_limit: u64)
         | InstructionResult::StateChangeDuringStaticCall => {
             SubCallStatus::Halt(SubCallError::StateChangeDuringStaticCall)
         }
-        // Anything else: surface as a typed Fatal so the precompile can
-        // decide whether to revert.
-        other => SubCallStatus::Halt(SubCallError::Fatal(format!(
-            "child frame halted: {other:?}"
-        ))),
+        InstructionResult::FatalExternalError | InstructionResult::Suspend => {
+            return Err(SubCallError::Fatal(format!(
+                "non-VM child terminal: {instr:?}"
+            )));
+        }
+        other => match SuccessOrHalt::<revm::context_interface::result::HaltReason>::from(other) {
+            SuccessOrHalt::Halt(reason) => SubCallStatus::Halt(SubCallError::EvmHalt(reason)),
+            _ => {
+                return Err(SubCallError::Fatal(format!(
+                    "unexpected child terminal: {other:?}"
+                )))
+            }
+        },
     };
-
-    SubCallOutput {
+    handle_reservoir_remaining_gas(
+        instr,
+        parent.tracker_mut(),
+        outcome.result.gas.tracker_mut(),
+    );
+    Ok(SubCallOutput {
         status,
-        returndata: output,
-        gas_used,
-        gas_refunded,
-    }
+        returndata: outcome.result.output,
+        gas_used: outcome
+            .result
+            .gas
+            .limit()
+            .saturating_sub(outcome.result.gas.remaining()),
+        gas_refunded: outcome.result.gas.refunded(),
+    })
 }

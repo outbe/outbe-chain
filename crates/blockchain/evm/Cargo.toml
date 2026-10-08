@@ -71,7 +71,7 @@ alloy-evm.workspace = true
 hex.workspace = true
 
 # Revm
-revm.workspace = true
+revm = { workspace = true, features = ["memory_limit"] }
 
 # Reth
 reth-ethereum = { workspace = true, features = [

@@ -33,14 +33,14 @@ pub fn dispatch(
         |call| {
             use IPromisFactory::IPromisFactoryCalls::*;
             match call {
-                mineCoen(c) => mutate(c, caller, |sender, c| {
+                mineCoen(c) => mutate(&storage, c, caller, |sender, c| {
                     let auth = ModifyAuth {
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
                     };
                     runtime::mine_coen(storage.clone(), sender, c.promisMinor, auth)
                 }),
-                mineGratis(c) => mutate(c, caller, |sender, c| {
+                mineGratis(c) => mutate(&storage, c, caller, |sender, c| {
                     let promis_auth = ModifyAuth {
                         mac: c.promisMac.0,
                         op_nonce: c.promisOpNonce,

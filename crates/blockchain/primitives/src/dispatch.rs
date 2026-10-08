@@ -6,6 +6,15 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 
 use crate::error::{PrecompileError, Result};
+use crate::storage::StorageHandle;
+
+/// Check frame authority before any command validation, reads or child calls.
+pub fn ensure_mutation_allowed(storage: &StorageHandle<'_>) -> Result<()> {
+    if storage.is_static()? {
+        return Err(PrecompileError::WriteProtection);
+    }
+    Ok(())
+}
 
 /// Precompile call output (matches revm::precompile::PrecompileOutput shape).
 pub struct PrecompileOutput {
@@ -121,26 +130,30 @@ pub fn metadata<T: SolCall>(f: impl FnOnce() -> Result<T::Return>) -> Result<Byt
 
 /// Mutate helper: calls a state-changing function with caller address, ABI-encodes return value.
 ///
-/// Usage: `mutate(decoded_call, caller, |sender, c| contract.mine_coen(sender, c.amount))`
+/// Usage: `mutate(&storage, decoded_call, caller, |sender, c| contract.mine_coen(sender, c.amount))`
 #[inline]
 pub fn mutate<T: SolCall>(
+    storage: &StorageHandle<'_>,
     call: T,
     sender: Address,
     f: impl FnOnce(Address, T) -> Result<T::Return>,
 ) -> Result<Bytes> {
+    ensure_mutation_allowed(storage)?;
     let ret = f(sender, call)?;
     Ok(Bytes::from(T::abi_encode_returns(&ret)))
 }
 
 /// Mutate-void helper: calls a state-changing function that returns no value.
 ///
-/// Usage: `mutate_void(decoded_call, caller, |sender, c| contract.set_qualified(...))`
+/// Usage: `mutate_void(&storage, decoded_call, caller, |sender, c| contract.set_qualified(...))`
 #[inline]
 pub fn mutate_void<T: SolCall>(
+    storage: &StorageHandle<'_>,
     call: T,
     sender: Address,
     f: impl FnOnce(Address, T) -> Result<()>,
 ) -> Result<Bytes> {
+    ensure_mutation_allowed(storage)?;
     f(sender, call)?;
     Ok(Bytes::new())
 }
@@ -157,12 +170,14 @@ pub fn mutate_void<T: SolCall>(
 /// undeclared selector, but does not disable the selector outright.
 #[inline]
 pub fn mutate_void_payable<T: SolCall>(
+    storage: &StorageHandle<'_>,
     call: T,
     payable_selectors: &[[u8; 4]],
     sender: Address,
     value: U256,
     f: impl FnOnce(Address, T, U256) -> Result<()>,
 ) -> Result<Bytes> {
+    ensure_mutation_allowed(storage)?;
     if !value.is_zero() && !payable_selectors.contains(&T::SELECTOR) {
         return Err(PrecompileError::Revert(
             "payable selector is not declared in PAYABLE_SELECTORS".into(),
@@ -180,12 +195,14 @@ pub fn mutate_void_payable<T: SolCall>(
 /// selector and does not hand the value to it.
 #[inline]
 pub fn mutate_payable<T: SolCall>(
+    storage: &StorageHandle<'_>,
     call: T,
     payable_selectors: &[[u8; 4]],
     sender: Address,
     value: U256,
     f: impl FnOnce(Address, T, U256) -> Result<T::Return>,
 ) -> Result<Bytes> {
+    ensure_mutation_allowed(storage)?;
     if !value.is_zero() && !payable_selectors.contains(&T::SELECTOR) {
         return Err(PrecompileError::Revert(
             "payable selector is not declared in PAYABLE_SELECTORS".into(),
@@ -276,6 +293,7 @@ mod payable_witness_tests {
 
     use super::mutate_void_payable;
     use crate::error::PrecompileError;
+    use crate::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
     sol! {
         interface IWitness {
@@ -290,12 +308,19 @@ mod payable_witness_tests {
     /// for the address. Its own call site therefore refuses it.
     #[test]
     fn undeclared_payable_selector_is_refused() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
         let call = IWitness::fundCall {
             amount: U256::from(1u64),
         };
-        let refused = mutate_void_payable(call, &[], Address::ZERO, U256::from(1u64), |_, _, _| {
-            panic!("handler must not run for an undeclared selector")
-        });
+        let refused = mutate_void_payable(
+            &storage,
+            call,
+            &[],
+            Address::ZERO,
+            U256::from(1u64),
+            |_, _, _| panic!("handler must not run for an undeclared selector"),
+        );
         assert!(matches!(refused, Err(PrecompileError::Revert(_))));
     }
 
@@ -330,11 +355,14 @@ mod payable_witness_tests {
 
     #[test]
     fn declared_payable_selector_reaches_the_handler() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
         let call = IWitness::fundCall {
             amount: U256::from(1u64),
         };
         let mut seen = U256::ZERO;
         mutate_void_payable(
+            &storage,
             call,
             &[IWitness::fundCall::SELECTOR],
             Address::ZERO,
@@ -346,5 +374,42 @@ mod payable_witness_tests {
         )
         .expect("declared selector must dispatch");
         assert_eq!(seen, U256::from(7u64));
+    }
+
+    #[test]
+    fn all_command_helpers_refuse_static_before_entering_the_closure() {
+        use super::{mutate, mutate_payable, mutate_void, view};
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_static(true);
+        let storage = StorageHandle::new(&mut provider);
+        let a = Address::ZERO;
+        let outcomes = [
+            mutate(&storage, IWitness::noteCall {}, a, |_, _| {
+                panic!("static handler entered")
+            }),
+            mutate_void(&storage, IWitness::noteCall {}, a, |_, _| {
+                panic!("static handler entered")
+            }),
+            mutate_payable(
+                &storage,
+                IWitness::fundCall { amount: U256::ZERO },
+                &[],
+                a,
+                U256::ZERO,
+                |_, _, _| panic!("static handler entered"),
+            ),
+            mutate_void_payable(
+                &storage,
+                IWitness::fundCall { amount: U256::ZERO },
+                &[],
+                a,
+                U256::ZERO,
+                |_, _, _| panic!("static handler entered"),
+            ),
+        ];
+        for outcome in outcomes {
+            assert!(matches!(outcome, Err(PrecompileError::WriteProtection)));
+        }
+        assert!(view(IWitness::noteCall {}, |_| Ok(IWitness::noteReturn {})).is_ok());
     }
 }

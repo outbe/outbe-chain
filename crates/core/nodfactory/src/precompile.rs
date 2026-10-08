@@ -91,6 +91,7 @@ pub fn dispatch(
     outbe_primitives::dispatch::reject_value(&value)?;
     #[cfg(feature = "e2e-test")]
     if let Ok(call) = INodFactoryTestArming::issueForTestCall::abi_decode(data) {
+        outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
         issue_for_test(&storage, scope, parent, call)?;
         return Ok(Bytes::new());
     }
@@ -102,7 +103,7 @@ pub fn dispatch(
     dispatch_call(data, INodFactory::INodFactoryCalls::abi_decode, |call| {
         use INodFactory::INodFactoryCalls::*;
         match call {
-            settleNod(c) => mutate(c, caller, |sender, c| {
+            settleNod(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::settle_nod(
                     &storage,
                     scope,
@@ -130,7 +131,7 @@ pub fn dispatch(
                     snapshotId: snapshot_id,
                 })
             }),
-            mineGratis(c) => mutate(c, caller, |sender, c| {
+            mineGratis(c) => mutate(&storage, c, caller, |sender, c| {
                 let auth = outbe_gratisfactory::api::ModifyAuth {
                     mac: c.mac.0,
                     op_nonce: c.opNonce,
@@ -173,6 +174,7 @@ fn dispatch_materialization(
     data: &[u8],
     caller: Address,
 ) -> Result<Bytes> {
+    outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
     crate::materialization::authorize_materializer(storage.clone(), caller)
         .map_err(crate::materialization::typed_materialization_error)?;
     let profile = outbe_chain_constants::NodMaterializationProfileV1 {

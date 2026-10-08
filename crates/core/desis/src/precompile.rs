@@ -38,7 +38,7 @@ pub fn dispatch(
     dispatch_call(data, IDesis::IDesisCalls::abi_decode, |call| {
         use IDesis::IDesisCalls::*;
         match call {
-            processBidsBatch(c) => mutate_void(c, caller, |sender, c| {
+            processBidsBatch(c) => mutate_void(&storage, c, caller, |sender, c| {
                 let bids = bids_from_sol_arrays(&c.bidderAddresses, &c.packedBids)?;
                 runtime::process_bids_batch(
                     storage.clone(),
@@ -52,7 +52,7 @@ pub fn dispatch(
                     bids,
                 )
             }),
-            processBidsDone(c) => mutate_void(c, caller, |sender, c| {
+            processBidsDone(c) => mutate_void(&storage, c, caller, |sender, c| {
                 runtime::process_bids_done(
                     storage.clone(),
                     runtime::Inbound {

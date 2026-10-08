@@ -35,7 +35,7 @@ pub fn dispatch(
         |call| {
             use IStablecoin::IStablecoinCalls::*;
 
-            let mut token = StablecoinContract::new(storage, token_address);
+            let mut token = StablecoinContract::new(storage.clone(), token_address);
             match call {
                 name(call) => view(call, |_| token.name_value()),
                 symbol(call) => view(call, |_| token.symbol_value()),
@@ -43,15 +43,15 @@ pub fn dispatch(
                 totalSupply(call) => view(call, |_| token.total_supply()),
                 balanceOf(call) => view(call, |call| token.balance_of(call.account)),
                 allowance(call) => view(call, |call| token.allowance_of(call.owner, call.spender)),
-                approve(call) => mutate(call, caller, |owner, call| {
+                approve(call) => mutate(&storage, call, caller, |owner, call| {
                     token
                         .approve(owner, call.spender, call.value)
                         .map(|()| true)
                 }),
-                transfer(call) => mutate(call, caller, |from, call| {
+                transfer(call) => mutate(&storage, call, caller, |from, call| {
                     token.transfer(from, call.to, call.value).map(|()| true)
                 }),
-                transferFrom(call) => mutate(call, caller, |spender, call| {
+                transferFrom(call) => mutate(&storage, call, caller, |spender, call| {
                     token
                         .transfer_from(spender, call.from, call.to, call.value)
                         .map(|()| true)
@@ -61,7 +61,7 @@ pub fn dispatch(
                     token.nonces.read(&call.owner)
                 }),
                 DOMAIN_SEPARATOR(call) => view(call, |_| token.domain_separator()),
-                permit(call) => mutate_void(call, caller, |_, call| {
+                permit(call) => mutate_void(&storage, call, caller, |_, call| {
                     token.permit(
                         call.owner,
                         call.spender,
@@ -114,33 +114,33 @@ pub fn dispatch(
                     token.can_transfer(call.from, call.to, call.value)
                 }),
                 getFrozenTokens(call) => view(call, |call| token.frozen_tokens(call.account)),
-                forcedTransfer(call) => mutate(call, caller, |actor, call| {
+                forcedTransfer(call) => mutate(&storage, call, caller, |actor, call| {
                     token
                         .forced_transfer(actor, call.from, call.to, call.value)
                         .map(|()| true)
                 }),
-                setFrozenTokens(call) => mutate(call, caller, |actor, call| {
+                setFrozenTokens(call) => mutate(&storage, call, caller, |actor, call| {
                     token
                         .set_frozen_tokens(actor, call.account, call.amount)
                         .map(|()| true)
                 }),
-                mint(call) => mutate(call, caller, |actor, call| {
+                mint(call) => mutate(&storage, call, caller, |actor, call| {
                     token.mint(actor, call.to, call.amount).map(|()| true)
                 }),
-                burn(call) => mutate(call, caller, |actor, call| {
+                burn(call) => mutate(&storage, call, caller, |actor, call| {
                     token.burn(actor, call.amount).map(|()| true)
                 }),
-                burnFrom(call) => mutate(call, caller, |spender, call| {
+                burnFrom(call) => mutate(&storage, call, caller, |spender, call| {
                     token
                         .burn_from(spender, call.from, call.amount)
                         .map(|()| true)
                 }),
-                transferWithMemo(call) => mutate(call, caller, |from, call| {
+                transferWithMemo(call) => mutate(&storage, call, caller, |from, call| {
                     token
                         .transfer_with_memo(from, call.to, call.amount, call.memo)
                         .map(|()| true)
                 }),
-                transferFromWithMemo(call) => mutate(call, caller, |spender, call| {
+                transferFromWithMemo(call) => mutate(&storage, call, caller, |spender, call| {
                     token
                         .transfer_from_with_memo(
                             spender,
@@ -151,22 +151,22 @@ pub fn dispatch(
                         )
                         .map(|()| true)
                 }),
-                mintWithMemo(call) => mutate(call, caller, |actor, call| {
+                mintWithMemo(call) => mutate(&storage, call, caller, |actor, call| {
                     token
                         .mint_with_memo(actor, call.to, call.amount, call.memo)
                         .map(|()| true)
                 }),
-                burnWithMemo(call) => mutate(call, caller, |actor, call| {
+                burnWithMemo(call) => mutate(&storage, call, caller, |actor, call| {
                     token
                         .burn_with_memo(actor, call.amount, call.memo)
                         .map(|()| true)
                 }),
-                burnFromWithMemo(call) => mutate(call, caller, |spender, call| {
+                burnFromWithMemo(call) => mutate(&storage, call, caller, |spender, call| {
                     token
                         .burn_from_with_memo(spender, call.from, call.amount, call.memo)
                         .map(|()| true)
                 }),
-                forcedTransferWithMemo(call) => mutate(call, caller, |actor, call| {
+                forcedTransferWithMemo(call) => mutate(&storage, call, caller, |actor, call| {
                     token
                         .forced_transfer_with_memo(
                             actor,
@@ -177,29 +177,31 @@ pub fn dispatch(
                         )
                         .map(|()| true)
                 }),
-                grantRole(call) => mutate_void(call, caller, |actor, call| {
+                grantRole(call) => mutate_void(&storage, call, caller, |actor, call| {
                     token.grant_role(actor, call.role, call.account)
                 }),
-                revokeRole(call) => mutate_void(call, caller, |actor, call| {
+                revokeRole(call) => mutate_void(&storage, call, caller, |actor, call| {
                     token.revoke_role(actor, call.role, call.account)
                 }),
-                setSupplyCap(call) => mutate_void(call, caller, |actor, call| {
+                setSupplyCap(call) => mutate_void(&storage, call, caller, |actor, call| {
                     token.set_supply_cap(actor, call.newCap)
                 }),
-                setPolicyId(call) => mutate_void(call, caller, |actor, call| {
+                setPolicyId(call) => mutate_void(&storage, call, caller, |actor, call| {
                     token.set_policy_id(actor, call.newPolicyId)
                 }),
-                pause(call) => mutate_void(call, caller, |actor, _| token.pause(actor)),
-                unpause(call) => mutate_void(call, caller, |actor, _| token.unpause(actor)),
-                beginAdminTransfer(call) => mutate_void(call, caller, |actor, call| {
+                pause(call) => mutate_void(&storage, call, caller, |actor, _| token.pause(actor)),
+                unpause(call) => {
+                    mutate_void(&storage, call, caller, |actor, _| token.unpause(actor))
+                }
+                beginAdminTransfer(call) => mutate_void(&storage, call, caller, |actor, call| {
                     token.begin_admin_transfer(actor, call.candidate)
                 }),
-                cancelAdminTransfer(call) => {
-                    mutate_void(call, caller, |actor, _| token.cancel_admin_transfer(actor))
-                }
-                acceptAdminTransfer(call) => {
-                    mutate_void(call, caller, |actor, _| token.accept_admin_transfer(actor))
-                }
+                cancelAdminTransfer(call) => mutate_void(&storage, call, caller, |actor, _| {
+                    token.cancel_admin_transfer(actor)
+                }),
+                acceptAdminTransfer(call) => mutate_void(&storage, call, caller, |actor, _| {
+                    token.accept_admin_transfer(actor)
+                }),
             }
         },
     )

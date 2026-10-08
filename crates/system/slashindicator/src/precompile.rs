@@ -68,48 +68,66 @@ pub fn dispatch(
         |call| {
             use ISlashIndicator::ISlashIndicatorCalls::*;
             match call {
-                submitDoubleProposalEvidence(c) => mutate_void(c, caller, |sender, c| {
-                    let mut si = SlashIndicator::new(storage);
+                submitDoubleProposalEvidence(c) => mutate_void(&storage, c, caller, |sender, c| {
+                    let mut si = SlashIndicator::new(storage.clone());
                     si.submit_double_proposal_evidence(sender, &c.block1, &c.block2)
                 }),
-                submitConflictingVoteEvidence(c) => mutate_void(c, caller, |sender, c| {
-                    let mut si = SlashIndicator::new(storage);
-                    si.submit_conflicting_vote_evidence(sender, &c.vote1, &c.vote2)
-                }),
-                submitConflictingNotarizeEvidence(c) => mutate_void(c, caller, |sender, c| {
-                    let mut si = SlashIndicator::new(storage);
-                    si.submit_conflicting_notarize_evidence(sender, &c.block1, &c.block2)
-                }),
-                submitConflictingFinalizeEvidence(c) => mutate_void(c, caller, |sender, c| {
-                    let mut si = SlashIndicator::new(storage);
-                    si.submit_conflicting_finalize_evidence(sender, &c.block1, &c.block2)
-                }),
-                submitNullifyFinalizeEvidence(c) => mutate_void(c, caller, |sender, c| {
-                    let mut si = SlashIndicator::new(storage);
-                    si.submit_nullify_finalize_evidence(sender, &c.nullifyBlock, &c.finalizeBlock)
-                }),
-                submitInvalidVrfProofEvidence(c) => mutate_void(c, caller, |sender, c| {
-                    let mut si = SlashIndicator::new(storage);
-                    si.submit_invalid_vrf_evidence(sender, &c.evidence)
-                }),
-                submitSeedPartialEquivocationEvidence(c) => mutate_void(c, caller, |sender, c| {
-                    let mut si = SlashIndicator::new(storage);
-                    si.submit_seed_partial_equivocation_evidence(sender, &c.evidence)
-                }),
-                submitInvalidSeedPartialEvidence(c) => mutate_void(c, caller, |sender, c| {
-                    let mut si = SlashIndicator::new(storage);
-                    si.submit_invalid_seed_partial_evidence(sender, &c.evidence)
-                }),
+                submitConflictingVoteEvidence(c) => {
+                    mutate_void(&storage, c, caller, |sender, c| {
+                        let mut si = SlashIndicator::new(storage.clone());
+                        si.submit_conflicting_vote_evidence(sender, &c.vote1, &c.vote2)
+                    })
+                }
+                submitConflictingNotarizeEvidence(c) => {
+                    mutate_void(&storage, c, caller, |sender, c| {
+                        let mut si = SlashIndicator::new(storage.clone());
+                        si.submit_conflicting_notarize_evidence(sender, &c.block1, &c.block2)
+                    })
+                }
+                submitConflictingFinalizeEvidence(c) => {
+                    mutate_void(&storage, c, caller, |sender, c| {
+                        let mut si = SlashIndicator::new(storage.clone());
+                        si.submit_conflicting_finalize_evidence(sender, &c.block1, &c.block2)
+                    })
+                }
+                submitNullifyFinalizeEvidence(c) => {
+                    mutate_void(&storage, c, caller, |sender, c| {
+                        let mut si = SlashIndicator::new(storage.clone());
+                        si.submit_nullify_finalize_evidence(
+                            sender,
+                            &c.nullifyBlock,
+                            &c.finalizeBlock,
+                        )
+                    })
+                }
+                submitInvalidVrfProofEvidence(c) => {
+                    mutate_void(&storage, c, caller, |sender, c| {
+                        let mut si = SlashIndicator::new(storage.clone());
+                        si.submit_invalid_vrf_evidence(sender, &c.evidence)
+                    })
+                }
+                submitSeedPartialEquivocationEvidence(c) => {
+                    mutate_void(&storage, c, caller, |sender, c| {
+                        let mut si = SlashIndicator::new(storage.clone());
+                        si.submit_seed_partial_equivocation_evidence(sender, &c.evidence)
+                    })
+                }
+                submitInvalidSeedPartialEvidence(c) => {
+                    mutate_void(&storage, c, caller, |sender, c| {
+                        let mut si = SlashIndicator::new(storage.clone());
+                        si.submit_invalid_seed_partial_evidence(sender, &c.evidence)
+                    })
+                }
                 getProposerMissCount(c) => view(c, |c| {
-                    let si = SlashIndicator::new(storage);
+                    let si = SlashIndicator::new(storage.clone());
                     si.get_proposer_miss_count(c.validator)
                 }),
                 getVoterMissCount(c) => view(c, |c| {
-                    let si = SlashIndicator::new(storage);
+                    let si = SlashIndicator::new(storage.clone());
                     si.get_voter_miss_count(c.validator)
                 }),
                 getFelonyCount(c) => view(c, |c| {
-                    let si = SlashIndicator::new(storage);
+                    let si = SlashIndicator::new(storage.clone());
                     si.get_felony_count(c.validator)
                 }),
             }
