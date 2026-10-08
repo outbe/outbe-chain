@@ -33,8 +33,8 @@ pub fn dispatch(
         |call| {
             use IGratisFactory::IGratisFactoryCalls::*;
             match call {
-                createPledgeNote(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::create_pledge_note(
+                pledgeGratis(c) => mutate_void(c, caller, |sender, c| {
+                    runtime::pledge_gratis(
                         storage.clone(),
                         sender,
                         c.reservationId,
@@ -44,8 +44,8 @@ pub fn dispatch(
                         },
                     )
                 }),
-                cancelPledgeNote(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::cancel_pledge_note(storage.clone(), sender, c.reservationId)
+                cancelPledge(c) => mutate_void(c, caller, |sender, c| {
+                    runtime::cancel_pledge(storage.clone(), sender, c.reservationId)
                 }),
                 collateralOf(c) => view(c, |c| {
                     let collateral = runtime::collateral_of(&storage, c.positionId)?;

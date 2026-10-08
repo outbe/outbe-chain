@@ -125,7 +125,7 @@ pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
 
 /// Pledges the reservation's Gratis from `source` through the factory.
 pub fn pledge(storage: &StorageHandle<'_>, source: Address, reservation_id: U256, nonce: u64) {
-    outbe_gratisfactory::runtime::create_pledge_note(
+    outbe_gratisfactory::runtime::pledge_gratis(
         storage.clone(),
         source,
         reservation_id,
@@ -358,7 +358,7 @@ pub fn zero_word() -> Bytes {
     Bytes::from(vec![0u8; 32])
 }
 
-/// Positive Fidelity so `gratisfactory::create_pledge_note` clears the eligibility gate.
+/// Positive Fidelity so `gratisfactory::pledge_gratis` clears the eligibility gate.
 pub fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
     outbe_fidelity::api::cohort_in(

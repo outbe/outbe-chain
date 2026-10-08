@@ -3,7 +3,7 @@ use crate::{precompile::ICredisFactory, runtime, tests::common::*};
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_credis::{CredisContract, CredisState};
-use outbe_gratisfactory::runtime::cancel_pledge_note;
+use outbe_gratisfactory::runtime::cancel_pledge;
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
@@ -106,7 +106,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
                 .reservations
                 .update(&reservation)
                 .unwrap();
-            outbe_gratisfactory::runtime::create_pledge_note(
+            outbe_gratisfactory::runtime::pledge_gratis(
                 storage.clone(),
                 alice(),
                 reservation_id,
@@ -299,7 +299,7 @@ fn one_source_backs_several_positions_and_unused_pledges() {
             view_pledged(&storage, alice()),
             backing(&storage) + pledge_cost()
         );
-        cancel_pledge_note(storage.clone(), alice(), unused).unwrap();
+        cancel_pledge(storage.clone(), alice(), unused).unwrap();
         assert_eq!(view_pledged(&storage, alice()), backing(&storage));
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
@@ -569,7 +569,7 @@ fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source()
         );
         assert_eq!(unallocated(&storage), half);
 
-        cancel_pledge_note(storage.clone(), alice(), unused).unwrap();
+        cancel_pledge(storage.clone(), alice(), unused).unwrap();
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(view_balance(&storage, alice()), pledge_cost() + half);
         assert_eq!(

@@ -51,7 +51,7 @@ fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
     decrypt_balance(&vk, a, &blob).unwrap()
 }
 
-/// Give `account` a positive Fidelity index so `create_pledge_note` clears the
+/// Give `account` a positive Fidelity index so `pledge_gratis` clears the
 /// eligibility gate.
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
@@ -243,15 +243,13 @@ fn rejects_msg_value() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let call = Bytes::from(
-            IGratisFactory::IGratisFactoryCalls::createPledgeNote(
-                IGratisFactory::createPledgeNoteCall {
-                    reservationId: U256::from(1u64),
-                    auth: IGratisFactory::ModifyAuth {
-                        mac: FixedBytes([0u8; 32]),
-                        opNonce: 0,
-                    },
+            IGratisFactory::IGratisFactoryCalls::pledgeGratis(IGratisFactory::pledgeGratisCall {
+                reservationId: U256::from(1u64),
+                auth: IGratisFactory::ModifyAuth {
+                    mac: FixedBytes([0u8; 32]),
+                    opNonce: 0,
                 },
-            )
+            })
             .abi_encode(),
         );
         let err = dispatch(storage, &call, alice(), U256::from(1u64)).unwrap_err();
@@ -307,7 +305,7 @@ fn pledge(
     id: U256,
     nonce: u64,
 ) -> Result<(), String> {
-    runtime::create_pledge_note(
+    runtime::pledge_gratis(
         storage.clone(),
         caller,
         id,
@@ -328,7 +326,7 @@ fn only_the_source_pledges_exactly_the_reserved_gratis_once() {
         let err = pledge(&storage, alice(), U256::from(2u64), 1).unwrap_err();
         assert!(err.contains("reservation not found"), "{err}");
         let wrong_amount = auth(GratisOp::Pledge, alice(), U256::from(RESERVED - 1), 1);
-        assert!(runtime::create_pledge_note(storage.clone(), alice(), id, wrong_amount).is_err());
+        assert!(runtime::pledge_gratis(storage.clone(), alice(), id, wrong_amount).is_err());
         assert_eq!(view_balance(&storage, alice()), U256::from(1_000u64));
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
@@ -393,14 +391,14 @@ fn only_the_source_cancels_an_unused_pledge_even_after_expiry() {
         storage
             .set_block_timestamp(U256::from(CREATED_AT + 901))
             .unwrap();
-        let err = runtime::cancel_pledge_note(storage.clone(), bob(), id).unwrap_err();
+        let err = runtime::cancel_pledge(storage.clone(), bob(), id).unwrap_err();
         assert!(
             err.to_string().contains("not the reservation source"),
             "{err}"
         );
         assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
 
-        runtime::cancel_pledge_note(storage.clone(), alice(), id).unwrap();
+        runtime::cancel_pledge(storage.clone(), alice(), id).unwrap();
         assert_eq!(view_balance(&storage, alice()), U256::from(1_000u64));
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
@@ -408,7 +406,7 @@ fn only_the_source_cancels_an_unused_pledge_even_after_expiry() {
             U256::ZERO
         );
         assert!(runtime::pledge_of(&storage, id).unwrap().source.is_zero());
-        let err = runtime::cancel_pledge_note(storage.clone(), alice(), id).unwrap_err();
+        let err = runtime::cancel_pledge(storage.clone(), alice(), id).unwrap_err();
         assert!(err.to_string().contains("pledge not found"), "{err}");
     });
 }
@@ -439,7 +437,7 @@ fn credis_takes_a_pledge_once_and_cancel_then_fails() {
         let err = runtime::send_to_credis(&storage, id, position, alice(), U256::from(RESERVED))
             .unwrap_err();
         assert!(err.to_string().contains("pledge not found"), "{err}");
-        let err = runtime::cancel_pledge_note(storage.clone(), alice(), id).unwrap_err();
+        let err = runtime::cancel_pledge(storage.clone(), alice(), id).unwrap_err();
         assert!(err.to_string().contains("pledge not found"), "{err}");
         assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
     });
@@ -466,7 +464,7 @@ fn a_pledge_outlives_its_returned_reservation_and_can_be_cancelled() {
             .reservations
             .delete(id)
             .unwrap();
-        runtime::cancel_pledge_note(storage.clone(), alice(), id).unwrap();
+        runtime::cancel_pledge(storage.clone(), alice(), id).unwrap();
         assert_eq!(view_balance(&storage, alice()), U256::from(1_000u64));
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });

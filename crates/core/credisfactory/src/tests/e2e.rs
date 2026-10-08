@@ -3,7 +3,7 @@ use crate::{runtime, tests::common::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_credis::{CredisContract, CredisState};
-use outbe_gratisfactory::runtime::{cancel_pledge_note, pledge_of};
+use outbe_gratisfactory::runtime::{cancel_pledge, pledge_of};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
 use outbe_tee::protocol::GratisOp;
@@ -126,7 +126,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
         );
         fund_stake(&storage, pledge_stake());
         expect_issue_error(&storage, cca(), id, pledge_stake(), "pledge not found");
-        let err = cancel_pledge_note(storage.clone(), alice(), id).unwrap_err();
+        let err = cancel_pledge(storage.clone(), alice(), id).unwrap_err();
         assert!(err.to_string().contains("pledge not found"), "{err}");
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
     });
@@ -140,7 +140,7 @@ fn a_cancelled_pledge_cannot_back_an_issue() {
         bootstrap(&storage, pledge_cost());
         let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), id, 1);
-        cancel_pledge_note(storage.clone(), alice(), id).unwrap();
+        cancel_pledge(storage.clone(), alice(), id).unwrap();
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         fund_stake(&storage, pledge_stake());
@@ -157,7 +157,7 @@ fn a_source_backs_another_smart_account_and_repayments_return_to_the_source() {
         bootstrap(&storage, pledge_cost());
         deploy_smart_account(&storage, bob());
         let id = seed_reservation(&storage, bob(), alice(), pledge_stables());
-        let err = outbe_gratisfactory::runtime::create_pledge_note(
+        let err = outbe_gratisfactory::runtime::pledge_gratis(
             storage.clone(),
             bob(),
             id,

@@ -324,7 +324,7 @@ fn pledge(world: &mut World) {
         &url,
         addresses::GRATIS_FACTORY_ADDR,
         DEPLOYER_KEY,
-        &eth::IGratisFactory::createPledgeNoteCall {
+        &eth::IGratisFactory::pledgeGratisCall {
             reservationId: f.reservation,
             auth: eth::IGratisFactory::ModifyAuth {
                 mac: mac.into(),
@@ -334,7 +334,7 @@ fn pledge(world: &mut World) {
         None,
     );
     let pledged =
-        event::<eth::IGratisFactory::PledgeNoteCreated>(&receipt, addresses::GRATIS_FACTORY_ADDR);
+        event::<eth::IGratisFactory::GratisPledged>(&receipt, addresses::GRATIS_FACTORY_ADDR);
     assert_eq!(
         (pledged.reservationId, pledged.source, pledged.gratisMinor),
         (f.reservation, f.user, reservation.gratisMinor)
@@ -393,7 +393,7 @@ fn issue(world: &mut World) {
     assert_receipt_event(
         &receipt,
         addresses::GRATIS_FACTORY_ADDR,
-        &eth::IGratisFactory::PledgeNoteSentToCredis {
+        &eth::IGratisFactory::PledgeSentToCredis {
             reservationId: f.reservation,
             positionId: id,
         },

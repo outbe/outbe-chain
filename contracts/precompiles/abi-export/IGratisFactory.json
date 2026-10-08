@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "cancelPledgeNote",
+    "name": "cancelPledge",
     "inputs": [
       {
         "name": "reservationId",
@@ -38,36 +38,6 @@
   },
   {
     "type": "function",
-    "name": "createPledgeNote",
-    "inputs": [
-      {
-        "name": "reservationId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "auth",
-        "type": "tuple",
-        "internalType": "struct IGratisFactory.ModifyAuth",
-        "components": [
-          {
-            "name": "mac",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "opNonce",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "mineCoen",
     "inputs": [
       {
@@ -93,6 +63,36 @@
         "internalType": "uint256"
       }
     ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "pledgeGratis",
+    "inputs": [
+      {
+        "name": "reservationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "auth",
+        "type": "tuple",
+        "internalType": "struct IGratisFactory.ModifyAuth",
+        "components": [
+          {
+            "name": "mac",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "opNonce",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -159,7 +159,7 @@
   },
   {
     "type": "event",
-    "name": "PledgeNoteCancelled",
+    "name": "GratisPledged",
     "inputs": [
       {
         "name": "reservationId",
@@ -184,7 +184,7 @@
   },
   {
     "type": "event",
-    "name": "PledgeNoteCreated",
+    "name": "PledgeCancelled",
     "inputs": [
       {
         "name": "reservationId",
@@ -209,7 +209,7 @@
   },
   {
     "type": "event",
-    "name": "PledgeNoteSentToCredis",
+    "name": "PledgeSentToCredis",
     "inputs": [
       {
         "name": "reservationId",

@@ -22,7 +22,7 @@ fn now_secs(storage: &StorageHandle<'_>) -> Result<u64> {
 
 /// Pledge exactly the reservation's Gratis from its source. Only the source may
 /// pledge, once per reservation, before the reservation expires.
-pub fn create_pledge_note(
+pub fn pledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,
     reservation_id: U256,
@@ -62,7 +62,7 @@ pub fn create_pledge_note(
         })?;
         storage.emit_event(
             GRATIS_FACTORY_ADDRESS,
-            IGratisFactory::PledgeNoteCreated {
+            IGratisFactory::GratisPledged {
                 reservationId: reservation_id,
                 source: caller,
                 gratisMinor: r.gratis_minor,
@@ -74,7 +74,7 @@ pub fn create_pledge_note(
 
 /// Return an unused pledge to its source. Only the source may cancel, at any time
 /// before Credis uses the pledge.
-pub fn cancel_pledge_note(
+pub fn cancel_pledge(
     storage: StorageHandle<'_>,
     caller: Address,
     reservation_id: U256,
@@ -90,7 +90,7 @@ pub fn cancel_pledge_note(
         gratis::release_pledged(&storage, pledge.source, pledge.gratis_minor)?;
         storage.emit_event(
             GRATIS_FACTORY_ADDRESS,
-            IGratisFactory::PledgeNoteCancelled {
+            IGratisFactory::PledgeCancelled {
                 reservationId: reservation_id,
                 source: pledge.source,
                 gratisMinor: pledge.gratis_minor,
@@ -125,7 +125,7 @@ pub fn send_to_credis(
     })?;
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
-        IGratisFactory::PledgeNoteSentToCredis {
+        IGratisFactory::PledgeSentToCredis {
             reservationId: reservation_id,
             positionId: position_id,
         }

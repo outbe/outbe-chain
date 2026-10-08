@@ -113,11 +113,11 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   server.tool("gratis_pledge", "Pledge the reservation's Gratis from the caller, its source. The mac binds Pledge and the reservation's gratisMinor.",
     { reservation_id: rawAmount, mac: z.string().regex(HEX32), op_nonce: rawAmount.refine(v => BigInt(v) < (1n << 64n)) },
     handler(async ({ reservation_id, mac, op_nonce }) =>
-      submit(ctx, { contract: "gratisfactory", method: "createPledgeNote", args: [BigInt(reservation_id), { mac, opNonce: BigInt(op_nonce) }] })));
+      submit(ctx, { contract: "gratisfactory", method: "pledgeGratis", args: [BigInt(reservation_id), { mac, opNonce: BigInt(op_nonce) }] })));
   server.tool("gratis_cancel_pledge", "Return an unused reservation pledge to the caller's liquid Gratis.",
     { reservation_id: rawAmount },
     handler(async ({ reservation_id }) =>
-      submit(ctx, { contract: "gratisfactory", method: "cancelPledgeNote", args: [BigInt(reservation_id)] })));
+      submit(ctx, { contract: "gratisfactory", method: "cancelPledge", args: [BigInt(reservation_id)] })));
   server.tool("credis_issue", "Issue Credis against the reservation's pledge and deliver the reserved principal.",
     { reservation_id: rawAmount, stake: coen },
     handler(async ({ reservation_id, stake }) =>

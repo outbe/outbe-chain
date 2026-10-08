@@ -182,7 +182,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             source: ALICE,
         })
         .map_err(|error| error.to_string())?;
-    outbe_gratisfactory::runtime::create_pledge_note(
+    outbe_gratisfactory::runtime::pledge_gratis(
         storage.clone(),
         ALICE,
         reservation_id,

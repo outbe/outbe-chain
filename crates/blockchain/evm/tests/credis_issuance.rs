@@ -261,7 +261,7 @@ fn mint_source_gratis(storage: StorageHandle<'_>, key: &[u8; 32]) -> eyre::Resul
 
 fn pledge_reservation(evm: &mut IssuanceEvm, key: &[u8; 32]) -> eyre::Result<()> {
     let auth = source_auth(key, GratisOp::Pledge, 1);
-    let pledge = IGratisFactory::createPledgeNoteCall {
+    let pledge = IGratisFactory::pledgeGratisCall {
         reservationId: U256::ONE,
         auth: IGratisFactory::ModifyAuth {
             mac: auth.mac.into(),
@@ -474,7 +474,7 @@ fn retry_issuance_and_cancel_expired(
     if failure == 8 {
         assert!(String::from_utf8_lossy(&retry.returndata).contains("expired"));
         assert_eq!(source_gratis(evm)?, (U256::ZERO, U256::from(GRATIS)));
-        let cancel = IGratisFactory::cancelPledgeNoteCall {
+        let cancel = IGratisFactory::cancelPledgeCall {
             reservationId: U256::ONE,
         };
         assert!(!matches!(
@@ -497,7 +497,7 @@ fn retry_issuance_and_cancel_expired(
             .journaled_state
             .logs()
             .iter()
-            .filter_map(|log| IGratisFactory::PledgeNoteCancelled::decode_log_data(&log.data).ok())
+            .filter_map(|log| IGratisFactory::PledgeCancelled::decode_log_data(&log.data).ok())
             .collect();
         assert_eq!(cancelled.len(), 1);
         assert_eq!(
