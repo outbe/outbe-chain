@@ -47,6 +47,13 @@ pub fn dispatch(
                 cancelPledgeNote(c) => mutate_void(c, caller, |sender, c| {
                     runtime::cancel_pledge_note(storage.clone(), sender, c.reservationId)
                 }),
+                collateralOf(c) => view(c, |c| {
+                    let collateral = runtime::collateral_of(&storage, c.positionId)?;
+                    Ok(IGratisFactory::collateralOfReturn {
+                        source: collateral.source,
+                        remainingMinor: collateral.remaining_minor,
+                    })
+                }),
                 pledgeOf(c) => view(c, |c| {
                     let pledge = runtime::pledge_of(&storage, c.reservationId)?;
                     Ok(IGratisFactory::pledgeOfReturn {

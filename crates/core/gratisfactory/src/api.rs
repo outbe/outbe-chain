@@ -20,4 +20,6 @@ pub fn mint(
     crate::runtime::mint(storage, account, amount, auth)
 }
 
-pub use crate::runtime::{burn_from_credis, pledge_of, return_from_credis, send_to_credis};
+pub use crate::runtime::{
+    burn_from_credis, collateral_of, pledge_of, return_from_credis, send_to_credis,
+};

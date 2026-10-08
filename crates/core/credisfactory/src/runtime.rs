@@ -179,7 +179,7 @@ pub fn settle(
             return Err(revert("Credis changed during payment"));
         }
         if !released.is_zero() {
-            pledges::return_from_credis(&storage, before.source, released)?;
+            pledges::return_from_credis(&storage, position_id, released)?;
         }
         Ok((settlement.principal_paid, settlement.interest))
     })
@@ -198,7 +198,7 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
             return Err(revert("forfeiture collateral mismatch"));
         }
         if !void.gratis_burned_minor.is_zero() {
-            pledges::burn_from_credis(&storage, void.source, void.gratis_burned_minor)?;
+            pledges::burn_from_credis(&storage, position_id, void.gratis_burned_minor)?;
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .add_to_total_unallocated(void.gratis_burned_minor)?;
         }

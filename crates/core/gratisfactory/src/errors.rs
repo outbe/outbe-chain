@@ -25,3 +25,20 @@ impl From<GratisFactoryError> for PrecompileError {
         PrecompileError::Revert(err.to_string())
     }
 }
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum CollateralError {
+    #[error("position already has collateral")]
+    Exists,
+    #[error("collateral not found")]
+    NotFound,
+    #[error("amount exceeds the position's collateral")]
+    Exceeded,
+}
+
+impl From<CollateralError> for PrecompileError {
+    fn from(err: CollateralError) -> Self {
+        PrecompileError::Revert(err.to_string())
+    }
+}

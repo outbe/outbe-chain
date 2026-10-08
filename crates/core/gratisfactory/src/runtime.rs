@@ -1,8 +1,8 @@
 //! Gratis pledges for Credis reservations and ordinary mint/burn operations.
 use crate::{
-    errors::GratisFactoryError,
+    errors::{CollateralError, GratisFactoryError},
     precompile::IGratisFactory,
-    schema::{GratisFactoryContract, PledgeRecord},
+    schema::{CollateralAllocation, GratisFactoryContract, PledgeRecord},
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
@@ -100,8 +100,8 @@ pub fn cancel_pledge_note(
     })
 }
 
-/// Hand the reservation's pledge to the Credis position that it now backs. The
-/// Gratis stays in the source's pledged balance.
+/// Turn the reservation's pledge into the collateral of the Credis position it
+/// now backs. The Gratis stays in the source's pledged balance.
 pub fn send_to_credis(
     storage: &StorageHandle<'_>,
     reservation_id: U256,
@@ -113,9 +113,16 @@ pub fn send_to_credis(
     if pledge.source != source || pledge.gratis_minor != gratis_minor {
         return Err(GratisFactoryError::PledgeMismatch.into());
     }
-    GratisFactoryContract::new(storage.clone())
-        .pledges
-        .delete(reservation_id)?;
+    let contract = GratisFactoryContract::new(storage.clone());
+    if contract.collateral.exists(position_id)? {
+        return Err(CollateralError::Exists.into());
+    }
+    contract.pledges.delete(reservation_id)?;
+    contract.collateral.create(&CollateralAllocation {
+        position_id,
+        source,
+        remaining_minor: gratis_minor,
+    })?;
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
         IGratisFactory::PledgeNoteSentToCredis {
@@ -126,18 +133,67 @@ pub fn send_to_credis(
     )
 }
 
-/// Return Credis collateral released by a repayment to the source's liquid balance.
+/// Return collateral released by a repayment of `position_id` to its source's
+/// liquid balance.
 pub fn return_from_credis(
     storage: &StorageHandle<'_>,
-    source: Address,
+    position_id: U256,
     amount: U256,
 ) -> Result<()> {
-    gratis::release_pledged(storage, source, amount)
+    storage.with_checkpoint(|| {
+        let source = draw_collateral(storage, position_id, amount)?;
+        gratis::release_pledged(storage, source, amount)
+    })
 }
 
-/// Burn the collateral of a defaulted Credis position from the source's pledged balance.
-pub fn burn_from_credis(storage: &StorageHandle<'_>, source: Address, amount: U256) -> Result<()> {
-    gratis::burn_pledged(storage, source, amount)
+/// Burn the collateral of a defaulted `position_id` from its source's pledged balance.
+pub fn burn_from_credis(
+    storage: &StorageHandle<'_>,
+    position_id: U256,
+    amount: U256,
+) -> Result<()> {
+    storage.with_checkpoint(|| {
+        let source = draw_collateral(storage, position_id, amount)?;
+        gratis::burn_pledged(storage, source, amount)
+    })
+}
+
+/// Take `amount` from the position's collateral and close it at zero. Returns
+/// the source whose pledged balance backs it.
+fn draw_collateral(
+    storage: &StorageHandle<'_>,
+    position_id: U256,
+    amount: U256,
+) -> Result<Address> {
+    let contract = GratisFactoryContract::new(storage.clone());
+    let mut collateral = contract
+        .collateral
+        .get(position_id)?
+        .ok_or(CollateralError::NotFound)?;
+    collateral.remaining_minor = collateral
+        .remaining_minor
+        .checked_sub(amount)
+        .ok_or(CollateralError::Exceeded)?;
+    if collateral.remaining_minor.is_zero() {
+        contract.collateral.delete(position_id)?;
+    } else {
+        contract.collateral.update(&collateral)?;
+    }
+    Ok(collateral.source)
+}
+
+/// The collateral backing `position_id`, or zeros once it has closed.
+pub fn collateral_of(
+    storage: &StorageHandle<'_>,
+    position_id: U256,
+) -> Result<CollateralAllocation> {
+    Ok(GratisFactoryContract::new(storage.clone())
+        .collateral
+        .get(position_id)?
+        .unwrap_or(CollateralAllocation {
+            position_id,
+            ..Default::default()
+        }))
 }
 
 /// The unused pledge for `reservation_id`, or zeros when there is none.

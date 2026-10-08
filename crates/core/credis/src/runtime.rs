@@ -86,8 +86,6 @@ pub struct Void {
     /// Unpaid share of the original principal, scale `1e6`. Scales the
     /// originating CCA's penalty.
     pub unpaid_share: U256,
-    /// Main account whose pledged Gratis backs the position.
-    pub source: Address,
 }
 
 /// `price x (100 + rate_pct) / 100`.
@@ -442,7 +440,6 @@ impl CredisContract<'_> {
                 smart_account: position.smart_account,
                 cca: position.cca,
                 unpaid_share,
-                source: position.source,
             })
         })
     }

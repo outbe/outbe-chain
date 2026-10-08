@@ -22,6 +22,15 @@ fn position(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::Position {
         .unwrap()
 }
 
+/// The collateral left on `id`, checked against the position's own accounting.
+fn collateral(storage: &StorageHandle<'_>, id: U256) -> U256 {
+    let remaining = outbe_gratisfactory::api::collateral_of(storage, id)
+        .unwrap()
+        .remaining_minor;
+    assert_eq!(remaining, position(storage, id).outstanding_gratis_minor);
+    remaining
+}
+
 #[test]
 fn settle_runs_immediately_after_opening() {
     let mut provider = env();
@@ -273,6 +282,11 @@ fn one_source_backs_several_positions_and_unused_pledges() {
 
         settle_principal(&storage, bob(), first, pledge_stables() / U256::from(2u64));
         assert_eq!(
+            collateral(&storage, first),
+            pledge_cost() / U256::from(2u64)
+        );
+        assert_eq!(collateral(&storage, second), pledge_cost());
+        assert_eq!(
             view_pledged(&storage, alice()),
             backing(&storage) + pledge_cost()
         );
@@ -519,6 +533,7 @@ fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source()
         );
         assert_eq!(view_balance(&storage, alice()), half);
         assert_eq!(view_pledged(&storage, alice()), pledge_cost() + half);
+        assert_eq!(collateral(&storage, position_id), half);
 
         let called_at = now_of(&storage);
         assert!(CredisContract::new(storage.clone())
@@ -543,6 +558,7 @@ fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source()
             position(&storage, position_id).lifecycle_state().unwrap(),
             CredisState::Void
         );
+        assert_eq!(collateral(&storage, position_id), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
         assert_eq!(view_balance(&storage, alice()), half);
         assert_eq!(view_pledged(&storage, bob()), U256::ZERO);

@@ -21,7 +21,7 @@
         "nonzero_byte_gas": 80
       },
       "gas_totals": {
-        "user_transaction": 205104
+        "user_transaction": 215304
       },
       "gas_components": [
         {
@@ -65,15 +65,15 @@
         {
           "ledger": "user_transaction",
           "key": "storage.gratis_factory.read",
-          "gas": 300,
-          "operations": 3,
+          "gas": 500,
+          "operations": 5,
           "module": "gratis_factory"
         },
         {
           "ledger": "user_transaction",
           "key": "storage.gratis_factory.write",
-          "gas": 10000,
-          "operations": 2,
+          "gas": 20000,
+          "operations": 4,
           "module": "gratis_factory"
         },
         {
@@ -559,6 +559,30 @@
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
           "slot": "0xfb5a548746789b013b1c584ffcc1d8215ed0344aa0590e2778683820310159a4",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gratis_factory",
+          "address": "0x0000000000000000000000000000000000002003",
+          "slot": "0x344239c618a369cc332fc0cf3951778456de8b7b8bf15410e6854c6e43cef8d",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "gratis_factory",
+          "address": "0x0000000000000000000000000000000000002003",
+          "slot": "0x69ac21267604c0a444e3b45754f98b08daeec8b53b3aaeba8b49486d31de7d78",
+          "operation": "read",
+          "count": 2,
+          "gas": 200
+        },
+        {
+          "module": "gratis_factory",
+          "address": "0x0000000000000000000000000000000000002003",
+          "slot": "0x69ac21267604c0a444e3b45754f98b08daeec8b53b3aaeba8b49486d31de7d78",
           "operation": "write",
           "count": 1,
           "gas": 5000

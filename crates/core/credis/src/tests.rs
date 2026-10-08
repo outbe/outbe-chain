@@ -301,7 +301,6 @@ fn worked_example_ledger_closes_exactly() {
         // Unpaid fraction 235_397_260 / 1_000_000_000 = 23.5397260%, at scale 1e6.
         assert_eq!(void.unpaid_share, U256::from(235_397u64));
         assert_eq!(void.cca, cca());
-        assert_eq!(void.source, source());
 
         // --- The paper's ledger check. ---------------------------------------
         let released =

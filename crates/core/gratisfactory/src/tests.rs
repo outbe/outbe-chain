@@ -426,14 +426,19 @@ fn credis_takes_a_pledge_once_and_cancel_then_fails() {
         assert!(err.to_string().contains("does not match"), "{err}");
 
         runtime::send_to_credis(&storage, id, position, alice(), U256::from(RESERVED)).unwrap();
+        let collateral = runtime::collateral_of(&storage, position).unwrap();
+        assert_eq!(
+            (collateral.source, collateral.remaining_minor),
+            (alice(), U256::from(RESERVED))
+        );
         assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             U256::from(RESERVED)
         );
-        assert!(
-            runtime::send_to_credis(&storage, id, position, alice(), U256::from(RESERVED)).is_err()
-        );
+        let err = runtime::send_to_credis(&storage, id, position, alice(), U256::from(RESERVED))
+            .unwrap_err();
+        assert!(err.to_string().contains("pledge not found"), "{err}");
         let err = runtime::cancel_pledge_note(storage.clone(), alice(), id).unwrap_err();
         assert!(err.to_string().contains("pledge not found"), "{err}");
         assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
@@ -491,5 +496,82 @@ fn mining_coen_cannot_spend_pledged_gratis() {
         .unwrap();
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
+    });
+}
+
+/// Adds another reservation of `RESERVED` Gratis for `source` and pledges it.
+fn reserve_and_pledge(storage: &StorageHandle<'_>, source: Address, id: u64, nonce: u64) -> U256 {
+    let mut reservation = outbe_vaultrouter::api::reservation_of(storage, U256::ONE).unwrap();
+    reservation.id = U256::from(id);
+    outbe_vaultrouter::schema::VaultRouterContract::new(storage.clone())
+        .reservations
+        .create(&reservation)
+        .unwrap();
+    pledge(storage, source, reservation.id, nonce).unwrap();
+    reservation.id
+}
+
+#[test]
+fn collateral_is_drawn_per_position_and_never_reopens() {
+    with_env(|storage| {
+        let first = fund_and_reserve(&storage, alice());
+        pledge(&storage, alice(), first, 1).unwrap();
+        let second = reserve_and_pledge(&storage, alice(), 2, 2);
+        let (a, b) = (U256::from(7u64), U256::from(8u64));
+        let reserved = U256::from(RESERVED);
+        runtime::send_to_credis(&storage, first, a, alice(), reserved).unwrap();
+        runtime::send_to_credis(&storage, second, b, alice(), reserved).unwrap();
+        assert_eq!(view_pledged(&storage, alice()), reserved * U256::from(2u64));
+
+        // The source's pledged total would cover it, but position A only holds RESERVED.
+        let err = runtime::return_from_credis(&storage, a, reserved + U256::ONE).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("exceeds the position's collateral"),
+            "{err}"
+        );
+        let err = runtime::burn_from_credis(&storage, a, reserved + U256::ONE).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("exceeds the position's collateral"),
+            "{err}"
+        );
+        assert_eq!(view_pledged(&storage, alice()), reserved * U256::from(2u64));
+        assert_eq!(
+            runtime::collateral_of(&storage, a).unwrap().remaining_minor,
+            reserved
+        );
+
+        let returned = U256::from(40u64);
+        runtime::return_from_credis(&storage, a, returned).unwrap();
+        assert_eq!(
+            runtime::collateral_of(&storage, a).unwrap().remaining_minor,
+            reserved - returned
+        );
+        assert_eq!(
+            view_balance(&storage, alice()),
+            U256::from(1_000 - 2 * RESERVED) + returned
+        );
+        runtime::burn_from_credis(&storage, a, reserved - returned).unwrap();
+        assert!(runtime::collateral_of(&storage, a)
+            .unwrap()
+            .source
+            .is_zero());
+        assert_eq!(view_pledged(&storage, alice()), reserved);
+        assert_eq!(
+            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            U256::from(1_000u64) - (reserved - returned)
+        );
+        let err = runtime::return_from_credis(&storage, a, U256::ONE).unwrap_err();
+        assert!(err.to_string().contains("collateral not found"), "{err}");
+        assert_eq!(
+            runtime::collateral_of(&storage, b).unwrap().remaining_minor,
+            reserved
+        );
+
+        let third = reserve_and_pledge(&storage, alice(), 3, 3);
+        let err = runtime::send_to_credis(&storage, third, b, alice(), reserved).unwrap_err();
+        assert!(err.to_string().contains("already has collateral"), "{err}");
+        assert_eq!(runtime::pledge_of(&storage, third).unwrap().source, alice());
     });
 }
