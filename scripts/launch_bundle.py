@@ -926,24 +926,36 @@ UNIT_ROLES = (
 )
 
 
+def tee_renew_script(*, config: dict[str, Any], index: int, base_dir: str, keys_dir: str) -> str:
+    key_dir = f"{keys_dir}/validator-{index}"
+    return f"""
+KEY="$(tr -d '[:space:]' < {quote(key_dir + "/evm-key.hex")})"
+exec {quote(base_dir + "/outbe-cli")} tee renew \\
+  --enclave-socket 127.0.0.1:{port_of(config, "tee_enclave_port")} \\
+  --node-data-dir {quote(base_dir + f"/validator-{index}/data")} \\
+  --reth-p2p-secret-key {quote(key_dir + "/reth-p2p-secret.hex")} \\
+  --private-key "$KEY" \\
+  --rpc-url http://127.0.0.1:{port_of(config, "rpc_port")}
+"""
+
+
 def systemd_unit(*, role: str, description: str, after: str | None, base_dir: str) -> str:
     """One templated unit per role. %i is the validator index."""
-    ordering = ""
-    if after:
-        ordering = f"After={after}\nRequires={after}\n"
-    # The enclave runs under sudo inside the script, so let systemd own it as
-    # root directly and drop the sudo indirection.
+    dependency = after
+    dependency_suffix = f" {dependency}" if dependency else ""
     user = "root" if role == "enclave" else "ubuntu"
     return f"""[Unit]
 Description=Outbe {description} (validator %i)
-After=network-online.target{"" if not after else ""}
-{ordering}
+After=network-online.target{dependency_suffix}
+Wants=network-online.target{dependency_suffix}
+StartLimitIntervalSec=0
+
 [Service]
 Type=simple
 User={user}
 WorkingDirectory={base_dir}/validator-%i
 ExecStart={base_dir}/validator-%i/run-{role}.sh
-Restart=on-failure
+Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
@@ -953,20 +965,56 @@ WantedBy=multi-user.target
 """
 
 
-def write_systemd_units(output_dir: Path, base_dir: str) -> None:
+def write_systemd_units(*, output_dir: Path, base_dir: str, enable_tee_renewal: bool) -> None:
     unit_dir = output_dir / "systemd"
     unit_dir.mkdir(parents=True, exist_ok=True)
     for role, description, after in UNIT_ROLES:
         unit = systemd_unit(
-            role=role, description=description, after=after, base_dir=base_dir
+            role=role,
+            description=description,
+            after=after,
+            base_dir=base_dir,
         )
         (unit_dir / f"outbe-{role}@.service").write_text(unit)
 
+    (unit_dir / "outbe-tee-renew@.service").write_text(
+        f"""[Unit]
+Description=Outbe founder TEE lease renewal (validator %i)
+After=network-online.target outbe-enclave@%i.service outbe-node@%i.service
+Requisite=outbe-enclave@%i.service outbe-node@%i.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory={base_dir}/validator-%i
+ExecStart={base_dir}/validator-%i/run-tee-renew.sh
+TimeoutStartSec=10min
+UMask=0077
+LimitCORE=0
+"""
+    )
+    (unit_dir / "outbe-tee-renew@.timer").write_text(
+        """[Unit]
+Description=Daily Outbe founder TEE lease renewal check (validator %i)
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+    )
+
+    renewal_install = ""
+    if enable_tee_renewal:
+        renewal_install = '\nsudo systemctl enable --now "outbe-tee-renew@$INDEX.timer"\n'
     install = f"""
 # Install and start every Outbe service for validator $1 on this machine.
 INDEX="${{1:?usage: install-systemd.sh <validator-index>}}"
 
 sudo install -m 644 {quote(base_dir)}/systemd/outbe-*@.service /etc/systemd/system/
+sudo install -m 644 {quote(base_dir)}/systemd/outbe-*@.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 
 # Prepare the backend selected in this validator's offchain-storage.toml.
@@ -975,7 +1023,7 @@ sudo systemctl daemon-reload
 for role in enclave radicle node ocomp-exporter ocomp-worker feeder; do
   sudo systemctl enable --now "outbe-$role@$INDEX.service"
 done
-
+{renewal_install}
 echo
 echo "services for validator $INDEX:"
 systemctl list-units 'outbe-*' --no-pager --no-legend | sed 's/^/  /'
@@ -1213,7 +1261,7 @@ metrics `{port_of(config, "metrics_port")}`, Radicle status
 
 - Python 3.11+ - reads the shared storage TOML at launch
 - Docker - the TEE enclave and optional MongoDB run as containers
-- `outbe-cli` on the machine you verify from (step 5)
+- `outbe-cli` on every SGX validator host for automatic TEE renewal
 - the `outbe-chain`, `outbe-ocomp`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to
   absolute paths and regenerate)
@@ -1228,11 +1276,11 @@ cd {base_dir}/validator-N
 sudo {base_dir}/install-systemd.sh N
 ```
 
-`install-systemd.sh` installs one templated unit per role and starts them in
-dependency order, so the processes outlive the shell that launched them and
-come back on failure. `preflight.sh` is read-only: run it first and compare the
-genesis and enclave digests it prints across all four machines - they must be
-identical.
+`install-systemd.sh` installs one templated unit per role, starts them in
+dependency order, and enables the daily TEE renewal timer for a NodeHost SGX
+session. The services recover after clean or failed exits. `preflight.sh` is
+read-only: run it first and compare the genesis and enclave digests it prints
+across all four machines - they must be identical.
 
 `start-all.sh` starts the components in dependency order - configured storage, enclave,
 Radicle sidecar, node, feeder - and writes pids and logs into
@@ -1360,7 +1408,6 @@ def render(
         identity["protocol_bundle_hash"].removeprefix("0x") + ".ocb1"
     )
     shutil.copy2(output_dir / "protocol-bundle-v1.ocb1", initial_catalog_bundle)
-
     for index, validator in enumerate(validators):
         directory = output_dir / f"validator-{index}"
         host, _, consensus_port = validator["p2p_address"].rpartition(":")
@@ -1405,6 +1452,15 @@ def render(
             feeder_script(config=config, index=index, base_dir=base_dir, repo_root=str(repo_root)),
         )
         (directory / "Caddyfile").write_text(caddyfile(config=config, host=host))
+        write_script(
+            directory / "run-tee-renew.sh",
+            tee_renew_script(
+                config=config,
+                index=index,
+                base_dir=base_dir,
+                keys_dir=remote_keys_dir,
+            ),
+        )
         write_script(
             directory / "preflight.sh",
             preflight_script(
@@ -1478,7 +1534,14 @@ def render(
         write_script(directory / "stop-all.sh", stop_all_script(index=index, base_dir=base_dir))
 
     stage_signed_enclave(config=config, output_dir=output_dir)
-    write_systemd_units(output_dir, base_dir)
+    write_systemd_units(
+        output_dir=output_dir,
+        base_dir=base_dir,
+        enable_tee_renewal=(
+            config["tee"]["mode"] == "dcap-required"
+            or bool(config.get("enclave_sgx", True))
+        ),
+    )
 
     build_distribution(
         output_dir=output_dir,
