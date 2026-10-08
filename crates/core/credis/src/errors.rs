@@ -17,6 +17,8 @@ pub enum CredisError {
     PositionClosed,
     #[error("amount must be positive")]
     InvalidAmount,
+    #[error("pledge source is zero")]
+    InvalidSource,
     #[error("invalid position state value: {0}")]
     InvalidStateValue(u8),
     #[error("payment is below the interest accrued since the last settlement")]

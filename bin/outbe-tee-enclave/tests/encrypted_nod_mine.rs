@@ -105,6 +105,7 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         account,
         amount: U256::from(23),
         current_balance: first.new_balance.clone(),
+        current_pledged: Vec::new(),
         modify_auth: auth(GratisOp::Burn, U256::from(23), 1),
         fidelity: None,
     };

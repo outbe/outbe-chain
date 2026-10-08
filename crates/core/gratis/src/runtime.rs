@@ -1,4 +1,4 @@
-//! Stateless balance operations and funded pledge-note transitions.
+//! Stateless balance operations and pledged-collateral transitions.
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::GRATIS_ADDRESS;
@@ -28,7 +28,7 @@ fn chain_id_b256(storage: &StorageHandle<'_>) -> Result<B256> {
     Ok(B256::from(U256::from(storage.chain_id()?)))
 }
 
-/// The runtime authorizes proof-backed and position-backed operations.
+/// The runtime authorizes the collateral operations.
 fn no_auth() -> ModifyAuth {
     ModifyAuth {
         mac: [0u8; 32],
@@ -44,6 +44,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
         account,
         amount,
         current_balance: Vec::new(),
+        current_pledged: Vec::new(),
         modify_auth: no_auth(),
         fidelity: None,
     }
@@ -69,7 +70,7 @@ fn ensure_applied(result: &GratisOpResult) -> Result<()> {
     }
 }
 
-/// Store the updated balance ciphertext returned by the enclave.
+/// Store the updated ciphertexts returned by the enclave.
 fn write_account_blobs(
     gratis: &Gratis<'_>,
     account: Address,
@@ -77,6 +78,9 @@ fn write_account_blobs(
 ) -> Result<()> {
     if !result.new_balance.is_empty() {
         crate::state::account(gratis, account).write_balance_ct(&result.new_balance)?;
+    }
+    if !result.new_pledged.is_empty() {
+        crate::state::account(gratis, account).write_pledged_ct(&result.new_pledged)?;
     }
     Ok(())
 }
@@ -185,121 +189,102 @@ pub(crate) fn burn_with_fidelity(
     require_fidelity_outcome(burn_impl(storage, caller, amount, auth, Some(fidelity))?)
 }
 
-/// Debit an authenticated Gratis amount and append the enclave's owner-bound note.
+/// Move an owner-authorized amount into the pledged balance, with a read-only
+/// Fidelity eligibility probe in the same enclave round-trip.
 pub(crate) fn pledge_with_fidelity(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
-) -> Result<(B256, FidelityOpOutcome)> {
+) -> Result<FidelityOpOutcome> {
     storage.with_checkpoint(|| {
         let gratis = Gratis::new(storage.clone());
         check_op_nonce(&gratis, caller, auth.op_nonce)?;
+        let next_nonce = auth.op_nonce.checked_add(1);
         let mut req = base_request(GratisOp::Pledge, chain_id_b256(&storage)?, caller, amount);
-        req.current_balance = crate::state::account(&gratis, caller).balance_ct()?;
         req.modify_auth = auth;
         req.fidelity = Some(fidelity);
-        let _scope = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
-        let result = apply_gratis_op(req)?;
-        ensure_applied(&result)?;
-        if result.event_amount != amount {
-            return Err(PrecompileError::Fatal("pledge amount mismatch".into()));
+        let result = apply_collateral_op(&storage, req)?;
+        if next_nonce != Some(result.next_op_nonce) {
+            return Err(PrecompileError::Fatal(
+                "enclave returned a wrong op nonce".into(),
+            ));
         }
-        let outcome = require_fidelity_outcome(result.fidelity.clone())?;
-        let commitment = crate::pledge::fund(&storage, result.note_serial, amount, B256::ZERO)?;
-        write_account_blobs(&gratis, caller, &result)?;
         crate::state::account(&gratis, caller).set_op_nonce(result.next_op_nonce)?;
-        crate::state::set_pledged_total_supply(
-            &gratis,
-            crate::state::pledged_total_supply(&gratis)?
-                .checked_add(amount)
-                .ok_or_else(|| PrecompileError::Revert("pledged supply overflow".into()))?,
-        )?;
-        Ok((commitment, outcome))
+        let pledged = crate::state::pledged_total_supply(&gratis)?
+            .checked_add(amount)
+            .ok_or_else(|| PrecompileError::Revert("pledged supply overflow".into()))?;
+        crate::state::set_pledged_total_supply(&gratis, pledged)?;
+        require_fidelity_outcome(result.fidelity)
     })
 }
 
-/// Call this only after runtime proof/position authorization. Never call it through a
-/// public balance-write ABI.
-fn collateral_balance(
+/// Run a collateral op over the blobs it changes and store the results. The
+/// caller authorizes it and owns the aggregate bookkeeping.
+fn apply_collateral_op(
     storage: &StorageHandle<'_>,
-    account: Address,
-    amount: U256,
-    op: GratisOp,
-) -> Result<()> {
+    mut req: GratisOpRequest,
+) -> Result<GratisOpResult> {
     let gratis = Gratis::new(storage.clone());
-    let mut req = base_request(op, chain_id_b256(storage)?, account, amount);
-    req.current_balance = crate::state::account(&gratis, account).balance_ct()?;
+    let (account, amount) = (req.account, req.amount);
+    let moves_balance = !matches!(req.op, GratisOp::BurnPledged);
+    if moves_balance {
+        req.current_balance = crate::state::account(&gratis, account).balance_ct()?;
+    }
+    req.current_pledged = crate::state::account(&gratis, account).pledged_ct()?;
     let _scope = outbe_tee::call_context::ContextScope::from_storage(storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
-    if result.event_amount != amount {
-        return Err(PrecompileError::Fatal("collateral amount mismatch".into()));
+    if result.event_amount != amount
+        || result.new_pledged.is_empty()
+        || result.new_balance.is_empty() == moves_balance
+    {
+        return Err(PrecompileError::Fatal("collateral result mismatch".into()));
     }
-    write_account_blobs(&gratis, account, &result)
+    write_account_blobs(&gratis, account, &result)?;
+    Ok(result)
 }
-pub(crate) fn unpledge(storage: StorageHandle<'_>, proof: &[u8]) -> Result<U256> {
+
+/// Return pledged collateral to the account's liquid balance. Only call this
+/// after the caller has authorized the release.
+pub(crate) fn release_pledged(
+    storage: &StorageHandle<'_>,
+    account: Address,
+    amount: U256,
+) -> Result<()> {
     storage.with_checkpoint(|| {
-        let claim = crate::pledge::consume_unpledge(&storage, proof)?;
-        if claim.context
-            != crate::api::unpledge_context(storage.chain_id()?, claim.owner, claim.spend_amount)?
-        {
-            return Err(PrecompileError::Revert("pledge context mismatch".into()));
-        }
-        collateral_balance(
-            &storage,
-            claim.owner,
-            claim.spend_amount,
-            GratisOp::Unpledge,
-        )?;
+        let req = base_request(
+            GratisOp::ReleasePledged,
+            chain_id_b256(storage)?,
+            account,
+            amount,
+        );
+        apply_collateral_op(storage, req)?;
         let gratis = Gratis::new(storage.clone());
         crate::state::set_pledged_total_supply(
             &gratis,
             crate::state::pledged_total_supply(&gratis)?
-                .checked_sub(claim.spend_amount)
+                .checked_sub(amount)
                 .ok_or_else(|| PrecompileError::Fatal("pledged supply underflow".into()))?,
-        )?;
-        Ok(claim.spend_amount)
+        )
     })
 }
-pub(crate) fn activate(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
-    collateral_balance(
-        storage,
-        outbe_primitives::addresses::CREDIS_ADDRESS,
-        amount,
-        GratisOp::ConsumePledge,
-    )
-}
-pub(crate) fn return_collateral(
+
+/// Burn pledged collateral of a defaulted position. Fidelity is unchanged.
+pub(crate) fn burn_pledged(
     storage: &StorageHandle<'_>,
-    position_id: U256,
-    serial: B256,
+    account: Address,
     amount: U256,
-    released_total: U256,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
-        collateral_balance(
-            storage,
-            outbe_primitives::addresses::CREDIS_ADDRESS,
-            amount,
-            GratisOp::ReleaseCollateral,
-        )?;
-        let receipt = outbe_zk_canonical::pledgenote::receipt_context(position_id, released_total)
-            .and_then(|field| outbe_protocol::codec::field_to_b256(&field))
-            .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
-        crate::pledge::fund(storage, serial, amount, receipt)?;
-        Ok(())
-    })
-}
-pub(crate) fn forfeit(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
-    storage.with_checkpoint(|| {
-        collateral_balance(
-            storage,
-            outbe_primitives::addresses::CREDIS_ADDRESS,
-            amount,
+        let req = base_request(
             GratisOp::BurnPledged,
-        )?;
+            chain_id_b256(storage)?,
+            account,
+            amount,
+        );
+        apply_collateral_op(storage, req)?;
         let gratis = Gratis::new(storage.clone());
         crate::state::set_pledged_total_supply(
             &gratis,
@@ -307,7 +292,10 @@ pub(crate) fn forfeit(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
                 .checked_sub(amount)
                 .ok_or_else(|| PrecompileError::Fatal("pledged supply underflow".into()))?,
         )?;
-        Ok(())
+        storage.emit_event(
+            GRATIS_ADDRESS,
+            SolEvent::encode_log_data(&IGratis::GratisBurned { account, amount }),
+        )
     })
 }
 

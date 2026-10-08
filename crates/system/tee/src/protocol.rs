@@ -205,21 +205,19 @@ pub struct ParticipantAnnounce {
 
 /// A Gratis write operation the enclave applies over encrypted per-account state.
 ///
-/// The op selects the encrypted account balance transition. The runtime checks
-/// note authorization and tracks the aggregate pledged backing.
+/// The op selects the account's liquid and pledged balance transitions.
+/// The runtime tracks the aggregate pledged backing and authorizes collateral operations.
+/// Mint, Burn and Pledge require the owner's modify authorization.
+/// Their discriminants stay fixed because the modify MAC binds the operation tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GratisOp {
     Mint,
     Burn,
-    /// Authenticate the Gratis amount and fund an owner-bound note.
+    /// Move the authorized amount from the liquid to the pledged balance.
     Pledge,
-    /// Credit the destination authenticated by an unpledge proof.
-    Unpledge,
-    /// Credit the aggregate Credis collateral account after an issue proof.
-    ConsumePledge,
-    /// Debit Credis collateral when repayment appends a return note.
-    ReleaseCollateral,
-    /// Debit Credis collateral at forfeiture. Fidelity is unchanged.
+    /// Move collateral from the pledged back to the liquid balance.
+    ReleasePledged,
+    /// Burn collateral from the pledged balance.
     BurnPledged,
 }
 
@@ -236,7 +234,7 @@ pub struct ModifyAuth {
     pub op_nonce: u64,
 }
 
-/// Stateless balance transition. The consuming runtime checks proof authorization.
+/// Stateless transition over an account's liquid and pledged balance blobs.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GratisOpRequest {
     pub op: GratisOp,
@@ -244,21 +242,9 @@ pub struct GratisOpRequest {
     pub account: Address,
     pub amount: U256,
     pub current_balance: Vec<u8>,
+    pub current_pledged: Vec<u8>,
     pub modify_auth: ModifyAuth,
     pub fidelity: Option<FidelityOpSection>,
-}
-
-/// Wallet and enclave derive the same private initial note secret entropy.
-/// The caller reduces this HMAC to a nonzero BN254 field before deriving the serial.
-pub fn initial_pledge_secret(modify_key: &[u8; 32], amount: U256, nonce: u64) -> [u8; 32] {
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, modify_key);
-    let mut preimage = b"outbe/pledge-secret/v1".to_vec();
-    preimage.extend_from_slice(&amount.to_be_bytes::<32>());
-    preimage.extend_from_slice(&nonce.to_be_bytes());
-    ring::hmac::sign(&key, &preimage)
-        .as_ref()
-        .try_into()
-        .expect("SHA256 length")
 }
 
 /// The Fidelity cohort mutation carried inside a Gratis op.
@@ -343,14 +329,13 @@ pub enum GratisOpStatus {
 }
 
 /// Public result of an `ApplyGratisOp`: the new ciphertext blobs to store verbatim
-/// plus the plaintext receipt the host needs (aggregate deltas, event amount,
-/// pledge linkage). Per-account plaintext balances never appear here.
+/// plus the plaintext receipt the host needs (aggregate deltas, event amount).
+/// Per-account plaintext balances never appear here.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GratisOpResult {
     pub status: GratisOpStatus,
     pub new_balance: Vec<u8>,
-    /// Owner-bound serial derived inside the enclave on pledge. Zero otherwise.
-    pub note_serial: B256,
+    pub new_pledged: Vec<u8>,
     pub event_amount: U256,
     pub next_op_nonce: u64,
     pub fidelity: Option<FidelityOpOutcome>,
@@ -1510,6 +1495,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
     buf.extend_from_slice(req.account.as_slice());
     buf.extend_from_slice(&req.amount.to_be_bytes::<32>());
     push_bytes(&mut buf, &req.current_balance);
+    push_bytes(&mut buf, &req.current_pledged);
     buf.extend_from_slice(&req.modify_auth.mac);
     buf.extend_from_slice(&req.modify_auth.op_nonce.to_be_bytes());
     match &req.fidelity {
@@ -1539,9 +1525,9 @@ pub fn gratis_op_attestation_preimage(
     let mut probe = result.clone();
     probe.attestation_tag = Vec::new();
     let result_json = serde_json::to_vec(&probe).unwrap_or_default();
-    // v2: the result JSON now carries the optional Fidelity section outcome.
+    // v3: the result JSON carries the pledged blob.
     let mut buf = Vec::with_capacity(31 + 32 + 4 + result_json.len());
-    buf.extend_from_slice(b"outbe/tee/gratis-attestation/v2");
+    buf.extend_from_slice(b"outbe/tee/gratis-attestation/v3");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);

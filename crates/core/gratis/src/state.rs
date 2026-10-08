@@ -22,6 +22,14 @@ impl GratisAccount<'_, '_> {
         self.ledger.balance_ct.get_bytes(&self.owner).read()
     }
 
+    pub(crate) fn pledged_ct(&self) -> Result<Vec<u8>> {
+        self.ledger.pledged_ct.get_bytes(&self.owner).read()
+    }
+
+    pub(crate) fn write_pledged_ct(&self, blob: &[u8]) -> Result<()> {
+        self.ledger.pledged_ct.get_bytes(&self.owner).write(blob)
+    }
+
     pub(crate) fn op_nonce(&self) -> Result<u64> {
         self.ledger.op_nonce.read(&self.owner)
     }

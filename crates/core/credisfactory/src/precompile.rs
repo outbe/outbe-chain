@@ -1,4 +1,4 @@
-//! Credis factory ABI: consume reservation-bound proofs and issue return notes on repayment.
+//! Credis factory ABI: issue against a reservation's pledge and settle repayments.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
@@ -36,13 +36,8 @@ pub fn dispatch(
             match call {
                 issueCredis(c) => {
                     mutate_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, val| {
-                        let (position_id, principal_minor) = runtime::issue_credis(
-                            storage.clone(),
-                            sender,
-                            c.reservationId,
-                            &c.proof,
-                            val,
-                        )?;
+                        let (position_id, principal_minor) =
+                            runtime::issue_credis(storage.clone(), sender, c.reservationId, val)?;
                         Ok(ICredisFactory::issueCredisReturn {
                             positionId: position_id,
                             principalMinor: principal_minor,

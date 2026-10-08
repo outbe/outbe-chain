@@ -5,7 +5,7 @@
 //! day count. Even that is evaluated lazily at settlement, not accrued per
 //! block.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -34,8 +34,8 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
 pub struct OpenPositionParams {
     pub smart_account: Address,
     pub cca: Address,
-    /// Proof-authenticated return serial, opaque here.
-    pub return_note_serial: B256,
+    /// Main account whose pledged Gratis backs the position.
+    pub source: Address,
     pub asset: Address,
     /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
@@ -86,8 +86,6 @@ pub struct Void {
     /// Unpaid share of the original principal, scale `1e6`. Scales the
     /// originating CCA's penalty.
     pub unpaid_share: U256,
-    /// Return serial used when constructing repayment notes.
-    pub return_note_serial: B256,
 }
 
 /// `price x (100 + rate_pct) / 100`.
@@ -166,14 +164,17 @@ impl CredisContract<'_> {
     pub fn open_position(&mut self, params: OpenPositionParams) -> Result<U256> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            if params.principal_minor.is_zero()
-                || params.gratis_minor.is_zero()
-                || params.entry_price_minor.is_zero()
-                || params.call_anchor_price_minor.is_zero()
-                || params.return_note_serial.is_zero()
-                || outbe_protocol::codec::field_from_b256(&params.return_note_serial).is_err()
-            {
+            let terms = [
+                params.principal_minor,
+                params.gratis_minor,
+                params.entry_price_minor,
+                params.call_anchor_price_minor,
+            ];
+            if terms.iter().any(U256::is_zero) {
                 return Err(CredisError::InvalidAmount.into());
+            }
+            if params.source.is_zero() {
+                return Err(CredisError::InvalidSource.into());
             }
 
             let position_id = CredisContract::position_id(
@@ -194,7 +195,7 @@ impl CredisContract<'_> {
                 asset: params.asset,
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
-                return_note_serial: params.return_note_serial,
+                source: params.source,
                 principal_minor: params.principal_minor,
                 outstanding_principal_minor: params.principal_minor,
                 gratis_minor: params.gratis_minor,
@@ -439,7 +440,6 @@ impl CredisContract<'_> {
                 smart_account: position.smart_account,
                 cca: position.cca,
                 unpaid_share,
-                return_note_serial: position.return_note_serial,
             })
         })
     }

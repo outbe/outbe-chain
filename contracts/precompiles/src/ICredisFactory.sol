@@ -3,13 +3,10 @@ pragma solidity ^0.8.30;
 
 interface ICredisFactory {
     event CredisIssued(address indexed smartAccount, address indexed cca, uint256 principalMinor);
-    /// Consume a note for the complete stored reservation. The caller must be its CCA.
+    /// Use the reservation's pledge for the stored terms. The caller must be its CCA.
     /// msg.value exactly matches reserved Gratis collateral in native COEN units.
-    function issueCredis(uint256 reservationId, bytes calldata proof)
-        external
-        payable
-        returns (uint256 positionId, uint256 principalMinor);
-    /// Any payer may repay. Freed collateral creates a note for the original source.
+    function issueCredis(uint256 reservationId) external payable returns (uint256 positionId, uint256 principalMinor);
+    /// Any payer may repay. Freed collateral returns to the source's liquid Gratis.
     function settleCredis(uint256 positionId, uint256 amountMinor)
         external
         returns (uint256 principalPaidMinor, uint256 interestMinor);

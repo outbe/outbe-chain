@@ -1,9 +1,11 @@
-//! Stateless encrypted Gratis balance transitions. Pledge ownership is committed inside the
-//! enclave.
+//! Stateless encrypted Gratis transitions over an account's liquid and pledged balances.
 use crate::confidential::{FIELD_BALANCE, GRATIS};
 use crate::errors::Result;
 use alloy_primitives::{Address, B256, U256};
 use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus};
+
+/// Pledged-blob field tag; differs from `FIELD_BALANCE` so the two blobs never share a nonce.
+const FIELD_PLEDGED: u8 = 1;
 /// Derive the resident Gratis state key from the DKG group signature. See
 /// [`crate::confidential::Domain::derive_state_key`].
 pub fn derive_gratis_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> Result<[u8; 32]> {
@@ -71,11 +73,16 @@ pub fn decrypt_balance(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Re
     read_amount(view_key, account, FIELD_BALANCE, blob).map(|(_, v)| v)
 }
 
+/// Client-side helper: decrypt an account's pledged blob with its view key.
+pub fn decrypt_pledged(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
+    read_amount(view_key, account, FIELD_PLEDGED, blob).map(|(_, v)| v)
+}
+
 fn base_result() -> GratisOpResult {
     GratisOpResult {
         status: GratisOpStatus::Applied,
         new_balance: Vec::new(),
-        note_serial: B256::ZERO,
+        new_pledged: Vec::new(),
         event_amount: U256::ZERO,
         next_op_nonce: 0,
         fidelity: None,
@@ -117,8 +124,6 @@ fn prepare_owner_result(
     req: &GratisOpRequest,
     r: &mut GratisOpResult,
 ) -> Result<Option<&'static str>> {
-    use outbe_protocol::codec;
-    use outbe_zk_canonical::pledgenote;
     let modify_key = derive_modify_key(state_key, req.account)?;
     if !verify_modify_auth(
         &modify_key,
@@ -137,29 +142,10 @@ fn prepare_owner_result(
         return Ok(Some("modify nonce exhausted"));
     };
     r.next_op_nonce = nonce;
-    if matches!(req.op, GratisOp::Pledge) {
-        let entropy = outbe_tee::protocol::initial_pledge_secret(
-            &modify_key,
-            req.amount,
-            req.modify_auth.op_nonce,
-        );
-        let secret = codec::field_from_be_bytes(&entropy);
-        if secret == pledgenote::Field::from(0) {
-            return Ok(Some("zero note secret"));
-        }
-        let serial = pledgenote::note_sn(req.account, secret)
-            .map_err(|_| crate::errors::TeeError::DecryptFailed)?;
-        if serial == pledgenote::Field::from(0) {
-            return Ok(Some("zero note serial"));
-        }
-        r.note_serial =
-            codec::field_to_b256(&serial).map_err(|_| crate::errors::TeeError::DecryptFailed)?;
-    }
     Ok(None)
 }
 
 fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
-    use outbe_primitives::addresses::CREDIS_ADDRESS;
     if req.amount.is_zero() || req.account.is_zero() {
         return Ok(reject("amount and account must be nonzero"));
     }
@@ -169,40 +155,46 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
         if let Some(reason) = prepare_owner_result(state_key, req, &mut r)? {
             return Ok(reject(reason));
         }
-    } else if matches!(
-        req.op,
-        GratisOp::ConsumePledge | GratisOp::ReleaseCollateral | GratisOp::BurnPledged
-    ) && req.account != CREDIS_ADDRESS
-    {
-        return Ok(reject("collateral operation requires Credis account"));
-    }
-    if req.fidelity.is_some() && !owner_op {
+    } else if req.fidelity.is_some() {
         return Ok(reject("collateral must not change Fidelity"));
     }
     let view = derive_view_key(state_key, req.account)?;
-    let (version, balance) = read_amount(&view, req.account, FIELD_BALANCE, &req.current_balance)?;
-    let credit = matches!(
-        req.op,
-        GratisOp::Mint | GratisOp::Unpledge | GratisOp::ConsumePledge
-    );
-    let next = if credit {
-        balance.checked_add(req.amount)
-    } else {
-        balance.checked_sub(req.amount)
+    // `Some(true)` credits the blob, `Some(false)` debits it, `None` leaves it unread.
+    let (balance, pledged) = match req.op {
+        GratisOp::Mint => (Some(true), None),
+        GratisOp::Burn => (Some(false), None),
+        GratisOp::Pledge => (Some(false), Some(true)),
+        GratisOp::ReleasePledged => (Some(true), Some(false)),
+        GratisOp::BurnPledged => (None, Some(false)),
     };
-    let Some(next) = next else {
-        return Ok(reject("insufficient balance or balance overflow"));
-    };
-    r.new_balance = crate::gratis_cipher::write_amount(
-        &view,
-        crate::gratis_cipher::BalanceTransition {
-            account: req.account,
-            field: FIELD_BALANCE,
-            previous_version: version,
-            amount: next,
-            input_hash: outbe_tee::protocol::gratis_op_canonical_hash(req),
-        },
-    )?;
+    let moves = [
+        (balance, FIELD_BALANCE, &req.current_balance),
+        (pledged, FIELD_PLEDGED, &req.current_pledged),
+    ];
+    let mut written = [Vec::new(), Vec::new()];
+    for ((credit, field, blob), out) in moves.into_iter().zip(&mut written) {
+        let Some(credit) = credit else { continue };
+        let (version, current) = read_amount(&view, req.account, field, blob)?;
+        let next = if credit {
+            current.checked_add(req.amount)
+        } else {
+            current.checked_sub(req.amount)
+        };
+        let Some(next) = next else {
+            return Ok(reject("insufficient balance or balance overflow"));
+        };
+        *out = crate::gratis_cipher::write_amount(
+            &view,
+            crate::gratis_cipher::BalanceTransition {
+                account: req.account,
+                field,
+                previous_version: version,
+                amount: next,
+                input_hash: outbe_tee::protocol::gratis_op_canonical_hash(req),
+            },
+        )?;
+    }
+    [r.new_balance, r.new_pledged] = written;
     r.event_amount = req.amount;
     Ok(r)
 }
@@ -241,6 +233,7 @@ mod tests {
             account,
             amount,
             current_balance: Vec::new(),
+            current_pledged: Vec::new(),
             modify_auth: ModifyAuth {
                 mac: [0; 32],
                 op_nonce: nonce,
@@ -276,6 +269,12 @@ mod tests {
             outbe_tee::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &blob).unwrap(),
             U256::from(1000u64),
         );
+        let pledged = test_amount(&vk, FIELD_PLEDGED, 1000).unwrap();
+        assert_eq!(
+            decrypt_pledged(&vk, alice(), &pledged).unwrap(),
+            U256::from(1000u64)
+        );
+        assert!(decrypt_balance(&vk, alice(), &pledged).is_err());
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let mac = modify_mac(
             &mk,
@@ -325,6 +324,182 @@ mod tests {
             apply_op(&sk, &r).status,
             GratisOpStatus::Rejected { .. }
         ));
+    }
+    fn test_amount(key: &[u8; 32], field: u8, amount: u64) -> Result<Vec<u8>> {
+        crate::gratis_cipher::write_amount(
+            key,
+            crate::gratis_cipher::BalanceTransition {
+                account: alice(),
+                field,
+                previous_version: 0,
+                amount: U256::from(amount),
+                input_hash: B256::ZERO,
+            },
+        )
+    }
+    fn pledged(sk: &[u8; 32], amount: u64) -> Vec<u8> {
+        let vk = derive_view_key(sk, alice()).unwrap();
+        test_amount(&vk, FIELD_PLEDGED, amount).unwrap()
+    }
+    #[test]
+    fn release_pledged_moves_collateral_to_the_balance() {
+        let sk = state_key();
+        let vk = derive_view_key(&sk, alice()).unwrap();
+        let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(40u64), 0);
+        r.current_pledged = pledged(&sk, 100);
+        let res = apply_op(&sk, &r);
+        assert_eq!(res.status, GratisOpStatus::Applied);
+        assert_eq!(
+            decrypt_pledged(&vk, alice(), &res.new_pledged).unwrap(),
+            U256::from(60u64)
+        );
+        assert_eq!(
+            decrypt_balance(&vk, alice(), &res.new_balance).unwrap(),
+            U256::from(40u64)
+        );
+        assert_eq!(res.next_op_nonce, 0);
+    }
+    #[test]
+    fn release_pledged_rejects_more_than_pledged() {
+        let sk = state_key();
+        let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(101u64), 0);
+        r.current_pledged = pledged(&sk, 100);
+        assert!(matches!(
+            apply_op(&sk, &r).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+    #[test]
+    fn pledged_and_balance_blobs_are_not_interchangeable() {
+        let sk = state_key();
+        let vk = derive_view_key(&sk, alice()).unwrap();
+        let blob = pledged(&sk, 100);
+        assert!(decrypt_balance(&vk, alice(), &blob).is_err());
+        let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(1u64), 0);
+        r.current_balance = blob.clone();
+        r.current_pledged = blob;
+        assert!(matches!(
+            apply_op(&sk, &r).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+        let balance = test_amount(&vk, FIELD_BALANCE, 100).unwrap();
+        assert!(decrypt_pledged(&vk, alice(), &balance).is_err());
+        let mut r = req(GratisOp::BurnPledged, alice(), U256::from(1u64), 0);
+        r.current_pledged = balance;
+        assert!(matches!(
+            apply_op(&sk, &r).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+    #[test]
+    fn pledge_moves_the_authorized_amount_into_the_pledged_balance() {
+        let sk = state_key();
+        let vk = derive_view_key(&sk, alice()).unwrap();
+        let mut m = req(GratisOp::Mint, alice(), U256::from(100u64), 0);
+        m.modify_auth = auth(&sk, alice(), GratisOp::Mint, m.amount, 0);
+        let minted = apply_op(&sk, &m);
+        let mut p = req(GratisOp::Pledge, alice(), U256::from(30u64), 1);
+        p.current_balance = minted.new_balance;
+        p.modify_auth = auth(&sk, alice(), GratisOp::Pledge, p.amount, 1);
+        let res = apply_op(&sk, &p);
+        assert_eq!(res.status, GratisOpStatus::Applied);
+        assert_eq!(
+            decrypt_balance(&vk, alice(), &res.new_balance).unwrap(),
+            U256::from(70u64)
+        );
+        assert_eq!(
+            decrypt_pledged(&vk, alice(), &res.new_pledged).unwrap(),
+            U256::from(30u64)
+        );
+        assert_eq!(res.next_op_nonce, 2);
+        p.modify_auth = auth(&sk, alice(), GratisOp::Mint, p.amount, 1);
+        assert!(matches!(
+            apply_op(&sk, &p).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+    #[test]
+    fn pledge_requires_sufficient_liquid_balance() {
+        let sk = state_key();
+        let mut p = req(GratisOp::Pledge, alice(), U256::from(1u64), 0);
+        p.current_pledged = pledged(&sk, 100);
+        p.modify_auth = auth(&sk, alice(), GratisOp::Pledge, p.amount, 0);
+        assert!(matches!(
+            apply_op(&sk, &p).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+    #[test]
+    fn burn_pledged_debits_only_the_pledged_balance() {
+        let sk = state_key();
+        let vk = derive_view_key(&sk, alice()).unwrap();
+        let mut r = req(GratisOp::BurnPledged, alice(), U256::from(40u64), 0);
+        r.current_pledged = pledged(&sk, 100);
+        let res = apply_op(&sk, &r);
+        assert_eq!(res.status, GratisOpStatus::Applied);
+        assert!(res.new_balance.is_empty());
+        assert_eq!(
+            decrypt_pledged(&vk, alice(), &res.new_pledged).unwrap(),
+            U256::from(60u64)
+        );
+        r.current_balance = vec![0xAB; 56];
+        assert_eq!(apply_op(&sk, &r).status, GratisOpStatus::Applied);
+        r.amount = U256::from(101u64);
+        assert!(matches!(
+            apply_op(&sk, &r).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+    #[test]
+    fn pledged_blobs_cross_the_wire_and_bind_the_inputs_hash() {
+        use outbe_tee::codec::{decode_request, decode_response, encode_request, encode_response};
+        use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+        let sk = state_key();
+        let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(1u64), 0);
+        r.current_pledged = pledged(&sk, 100);
+        let result = apply_op(&sk, &r);
+        let mut other = r.clone();
+        other.current_pledged = pledged(&sk, 101);
+        assert_ne!(
+            result.inputs_canonical_hash,
+            outbe_tee::protocol::gratis_op_canonical_hash(&other)
+        );
+        let request = EnclaveRequest::ApplyGratisOp {
+            request: Box::new(r.clone()),
+        };
+        let EnclaveRequest::ApplyGratisOp { request } =
+            decode_request(&encode_request(&request).unwrap()).unwrap()
+        else {
+            panic!("request variant changed");
+        };
+        assert_eq!(*request, r);
+        let response = EnclaveResponse::GratisOpApplied {
+            result: Box::new(result.clone()),
+        };
+        let EnclaveResponse::GratisOpApplied { result: decoded } =
+            decode_response(&encode_response(&response).unwrap()).unwrap()
+        else {
+            panic!("response variant changed");
+        };
+        assert_eq!(*decoded, result);
+    }
+    #[test]
+    fn collateral_ops_reject_a_fidelity_section() {
+        let sk = state_key();
+        for op in [GratisOp::ReleasePledged, GratisOp::BurnPledged] {
+            let mut r = req(op, alice(), U256::from(1u64), 0);
+            r.current_pledged = pledged(&sk, 100);
+            r.fidelity = Some(outbe_tee::protocol::FidelityOpSection {
+                op: outbe_tee::protocol::FidelityCohortOp::Out,
+                timestamp: 1,
+                first_qualified_start: 0,
+                current_blob: Vec::new(),
+            });
+            assert!(matches!(
+                apply_op(&sk, &r).status,
+                GratisOpStatus::Rejected { .. }
+            ));
+        }
     }
     #[test]
     fn burn_requires_sufficient_balance() {

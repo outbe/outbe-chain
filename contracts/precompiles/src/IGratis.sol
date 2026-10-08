@@ -23,6 +23,8 @@ interface IGratis {
     // so it never leaks magnitude; a never-written account returns empty bytes.
     // Decrypt off-chain with the account's view key.
     function balanceOf(address account) external view returns (bytes memory);
+    // Pledged collateral in the same ciphertext format as `balanceOf`.
+    function pledgedOf(address account) external view returns (bytes memory);
 
     // ERC-20 transfer surface. Gratis is non-transferable.
     // `allowance` returns 0. The others revert.

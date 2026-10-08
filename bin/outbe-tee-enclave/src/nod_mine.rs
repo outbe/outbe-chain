@@ -22,6 +22,7 @@ pub fn apply(
         account: request.nod.terms.owner,
         amount,
         current_balance: request.current_balance.clone(),
+        current_pledged: Vec::new(),
         modify_auth: request.modify_auth.clone(),
         fidelity: Some(request.fidelity.clone()),
     };

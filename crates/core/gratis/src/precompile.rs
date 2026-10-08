@@ -48,6 +48,11 @@ pub fn dispatch(
                     .balance_ct()
                     .map(Bytes::from)
             }),
+            pledgedOf(c) => view(c, |c| {
+                crate::state::account(&gratis, c.account)
+                    .pledged_ct()
+                    .map(Bytes::from)
+            }),
             opNonceOf(c) => view(c, |c| crate::state::account(&gratis, c.account).op_nonce()),
 
             // Non-transferable surface.

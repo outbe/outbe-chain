@@ -47,6 +47,12 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     abi: ABI.IGratis,
   },
 
+  gratisfactory: {
+    address: A("0x0000000000000000000000000000000000002003"),
+    note: "Gratis factory (pledge, mine COEN)",
+    abi: ABI.IGratisFactory,
+  },
+
   promis: {
     address: A("0x0000000000000000000000000000000000001337"),
     note: "Promis - confidential (TEE-encrypted) balances; balanceOf returns the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveKeys(Promis, ...)). opNonceOf is the modify-auth replay counter a write's mac/opNonce must bind.",
@@ -75,6 +81,18 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     address: A("0x000000000000000000000000000000000000100A"),
     note: "Credis positions",
     abi: ABI.ICredis,
+  },
+
+  credisfactory: {
+    address: A("0x0000000000000000000000000000000000001009"),
+    note: "Credis factory (issue, settle)",
+    abi: ABI.ICredisFactory,
+  },
+
+  vaultrouter: {
+    address: A("0x0000000000000000000000000000000000001017"),
+    note: "Vault router (reserve vaults, Credis liquidity reservations)",
+    abi: ABI.IVaultRouter,
   },
 
   agentreward: {

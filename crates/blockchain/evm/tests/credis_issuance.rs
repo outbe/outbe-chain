@@ -1,14 +1,16 @@
-//! Real issuance with confidential note consumption and stateful ERC-20/vault calls.
+//! Real issuance against a direct Gratis pledge with stateful ERC-20/vault calls.
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratis::precompile::IGratis;
 use outbe_gratisfactory::precompile::IGratisFactory;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::{
     addresses::{
-        CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
+        CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
+        VAULT_ROUTER_ADDRESS,
     },
     block::BlockContext,
     chain::CHAIN_ID,
@@ -16,7 +18,9 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
+use outbe_tee_enclave::gratis::{
+    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
+};
 use outbe_vaultrouter::{api::IVaultRouter, LiquidityReservation, VaultRouterContract};
 use revm::{
     context_interface::JournalTr,
@@ -71,18 +75,11 @@ struct IssuanceEvm {
     ctx: alloy_evm::eth::EthEvmContext<CacheDB<EmptyDB>>,
     scope: Arc<ExecutionScope>,
 }
-struct RetryIssuance<'a> {
-    stake: U256,
-    issue: ICredisFactory::issueCredisCall,
-    proof: Vec<u8>,
-    withdrawal: Vec<u8>,
-    note: &'a outbe_gratis::client::Note,
-}
 struct PaymentObservation {
     position: U256,
     position_call: outbe_credis::precompile::ICredis::getPositionCall,
     before: Bytes,
-    root: Bytes,
+    pledged: Bytes,
 }
 #[test]
 fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
@@ -95,15 +92,11 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             &mut db,
             BlockContext::new(1, NOW, CHAIN_ID, OWNER, vec![OWNER]),
         );
-        let (note, proof, withdrawal) = StorageHandle::enter(&mut provider, |storage| {
+        StorageHandle::enter(&mut provider, |storage| {
             seed_issuance_liquidity(storage.clone())
                 .expect("seed issuance liquidity fixture succeeds");
             seed_issuance_oracle(storage.clone()).expect("seed issuance oracle fixture succeeds");
-            let (note, commitment) = pledge_issuance_note(storage.clone(), &key)
-                .expect("pledge issuance note fixture succeeds");
-            let (proof, withdrawal) = prove_issuance_and_withdrawal(storage, &note, commitment)
-                .expect("prove issuance and withdrawal fixture succeeds");
-            (note, proof, withdrawal)
+            mint_source_gratis(storage, &key).expect("mint source gratis fixture succeeds");
         });
         provider.flush().unwrap();
         let ctx = Context::mainnet()
@@ -116,22 +109,15 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
         };
         prepare_issuance_counterparties(&mut evm, failure)
             .expect("prepare issuance counterparties fixture succeeds");
-        let (issue, out) = issue_cca_payout(&mut evm, failure, stake, &proof)
-            .expect("issue cca payout fixture succeeds");
+        if failure != 5 {
+            pledge_reservation(&mut evm, &key).expect("pledge reservation fixture succeeds");
+        }
+        let (issue, out) =
+            issue_cca_payout(&mut evm, failure, stake).expect("issue cca payout fixture succeeds");
         assert_issuance_state(&mut evm, failure, stake)
             .expect("assert issuance state fixture succeeds");
-        retry_issuance_and_cancel_expired(
-            &mut evm,
-            failure,
-            RetryIssuance {
-                stake,
-                issue,
-                proof,
-                withdrawal,
-                note: &note,
-            },
-        )
-        .expect("retry issuance and cancel expired fixture succeeds");
+        retry_issuance_and_cancel_expired(&mut evm, failure, stake, issue, &key)
+            .expect("retry issuance and cancel expired fixture succeeds");
         if failure == 0 {
             settle_successful_issuance(&mut evm, &out)
                 .expect("settle successful issuance fixture succeeds");
@@ -217,6 +203,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         asset_decimals: 6,
         reference_currency: 840,
         call_anchor_price_minor: U256::from(2_000_000),
+        source: OWNER,
     })?;
 
     Ok(())
@@ -245,72 +232,89 @@ fn seed_issuance_oracle(storage: StorageHandle<'_>) -> eyre::Result<()> {
     Ok(())
 }
 
-fn pledge_issuance_note(
-    storage: StorageHandle<'_>,
-    key: &[u8; 32],
-) -> eyre::Result<(outbe_gratis::client::Note, B256)> {
-    let auth = |op, amount, op_nonce| ModifyAuth {
+const GRATIS: u64 = 1_000_000;
+
+fn source_auth(key: &[u8; 32], op: GratisOp, op_nonce: u64) -> ModifyAuth {
+    ModifyAuth {
         mac: modify_mac(
             key,
             &outbe_tee_enclave::gratis::ModifyOperation {
                 account: OWNER,
                 op,
-                amount,
+                amount: U256::from(GRATIS),
                 op_nonce,
                 chain_id: B256::from(U256::from(CHAIN_ID)),
             },
         ),
         op_nonce,
-    };
-    let gratis = U256::from(1_000_000);
-    outbe_gratis::api::mint(
-        storage.clone(),
-        OWNER,
-        gratis,
-        auth(GratisOp::Mint, gratis, 0),
-    )?;
-    let section = outbe_fidelity::api::cohort_section(
-        storage.clone(),
-        OWNER,
-        outbe_tee::protocol::FidelityCohortOp::Probe,
-        NOW,
-    )?;
-    let (commitment, _) = outbe_gratis::api::pledge_with_fidelity(
-        storage.clone(),
-        OWNER,
-        gratis,
-        auth(GratisOp::Pledge, gratis, 1),
-        section,
-    )?;
-    let note = outbe_gratis::client::Note::initial(CHAIN_ID, OWNER, key, gratis, 1)?;
-    assert_eq!(note.commitment().unwrap(), commitment);
-
-    Ok((note, commitment))
+    }
 }
 
-fn prove_issuance_and_withdrawal(
-    storage: StorageHandle<'_>,
-    note: &outbe_gratis::client::Note,
-    commitment: B256,
-) -> eyre::Result<(Vec<u8>, Vec<u8>)> {
-    let gratis = U256::from(1_000_000);
-    let mut tree = outbe_gratis::client::new_tree(CHAIN_ID)?;
-    tree.append(outbe_protocol::codec::field_from_b256(&commitment)?)?;
-    let reservation = outbe_vaultrouter::api::reservation_of(&storage, U256::ONE)?;
-    let context = outbe_credisfactory::runtime::reservation_context(
-        CHAIN_ID,
-        U256::ONE,
-        &reservation.into(),
-    )?;
-    let proof = outbe_gratis::client::prove_issue(note, &tree, gratis, context)?;
-    let withdrawal = outbe_gratis::client::prove_unpledge(
-        note,
-        &tree,
-        gratis,
-        outbe_gratis::api::unpledge_context(CHAIN_ID, OWNER, gratis)?,
+fn mint_source_gratis(storage: StorageHandle<'_>, key: &[u8; 32]) -> eyre::Result<()> {
+    outbe_gratis::api::mint(
+        storage,
+        OWNER,
+        U256::from(GRATIS),
+        source_auth(key, GratisOp::Mint, 0),
     )?;
 
-    Ok((proof, withdrawal))
+    Ok(())
+}
+
+fn pledge_reservation(evm: &mut IssuanceEvm, key: &[u8; 32]) -> eyre::Result<()> {
+    let auth = source_auth(key, GratisOp::Pledge, 1);
+    let pledge = IGratisFactory::pledgeGratisCall {
+        reservationId: U256::ONE,
+        auth: IGratisFactory::ModifyAuth {
+            mac: auth.mac.into(),
+            opNonce: auth.op_nonce,
+        },
+    };
+    assert!(!matches!(
+        call!(evm, CCA, GRATIS_FACTORY_ADDRESS, U256::ZERO, pledge.clone()).status,
+        SubCallStatus::Success
+    ));
+    let out = call!(evm, OWNER, GRATIS_FACTORY_ADDRESS, U256::ZERO, pledge);
+    assert!(
+        matches!(out.status, SubCallStatus::Success),
+        "{}",
+        String::from_utf8_lossy(&out.returndata)
+    );
+
+    Ok(())
+}
+
+fn pledged_blob(evm: &mut IssuanceEvm) -> eyre::Result<Bytes> {
+    Ok(call!(
+        evm,
+        OWNER,
+        GRATIS_ADDRESS,
+        U256::ZERO,
+        IGratis::pledgedOfCall { account: OWNER }
+    )
+    .returndata)
+}
+
+/// The source's decrypted liquid and pledged Gratis.
+fn source_gratis(evm: &mut IssuanceEvm) -> eyre::Result<(U256, U256)> {
+    let view_key = derive_view_key(&test_enclave::state_key(), OWNER)?;
+    let liquid = call!(
+        evm,
+        OWNER,
+        GRATIS_ADDRESS,
+        U256::ZERO,
+        IGratis::balanceOfCall { account: OWNER }
+    );
+    let liquid = IGratis::balanceOfCall::abi_decode_returns(&liquid.returndata)?;
+    let pledged = IGratis::pledgedOfCall::abi_decode_returns(&pledged_blob(evm)?)?;
+    Ok((
+        decrypt_balance(&view_key, OWNER, &liquid)?,
+        if pledged.is_empty() {
+            U256::ZERO
+        } else {
+            decrypt_pledged(&view_key, OWNER, &pledged)?
+        },
+    ))
 }
 
 fn prepare_issuance_counterparties(evm: &mut IssuanceEvm, failure: u64) -> eyre::Result<()> {
@@ -368,18 +372,12 @@ fn issue_cca_payout(
     evm: &mut IssuanceEvm,
     failure: u64,
     stake: U256,
-    proof: &[u8],
 ) -> eyre::Result<(
     ICredisFactory::issueCredisCall,
     outbe_primitives::storage::SubCallOutput,
 )> {
     let issue = ICredisFactory::issueCredisCall {
         reservationId: U256::ONE,
-        proof: if failure == 5 {
-            Bytes::new()
-        } else {
-            proof.to_vec().into()
-        },
     };
     let out = call!(
         evm,
@@ -450,9 +448,11 @@ fn assert_issuance_state(evm: &mut IssuanceEvm, failure: u64, stake: U256) -> ey
 fn retry_issuance_and_cancel_expired(
     evm: &mut IssuanceEvm,
     failure: u64,
-    inputs: RetryIssuance<'_>,
+    stake: U256,
+    issue: ICredisFactory::issueCredisCall,
+    key: &[u8; 32],
 ) -> eyre::Result<()> {
-    // Reset counterparties and retry with the original note and exact contribution.
+    // Reset counterparties and retry with the same pledge and exact contribution.
     for target in [ASSET, VAULT] {
         call!(
             evm,
@@ -462,29 +462,27 @@ fn retry_issuance_and_cancel_expired(
             IFixture::configureCall { mode: U256::ZERO }
         );
     }
-    // The restored note stays valid through equality, independently of liquidity expiry.
+    if failure == 5 {
+        pledge_reservation(evm, key)?;
+    }
     evm.ctx.block.timestamp = U256::from(NOW + if failure == 8 { 901 } else { 900 });
-    let retry = call!(
-        evm,
-        CCA,
-        CREDIS_FACTORY_ADDRESS,
-        inputs.stake,
-        ICredisFactory::issueCredisCall {
-            proof: inputs.proof.into(),
-            ..inputs.issue
-        }
-    );
+    let retry = call!(evm, CCA, CREDIS_FACTORY_ADDRESS, stake, issue);
     assert_eq!(
         matches!(retry.status, SubCallStatus::Success),
         failure != 0 && failure != 8,
-        "failed issuance must restore the note and position; success must prevent replay: {:?}",
+        "failed issuance must keep the pledge; success must prevent replay: {:?}",
         retry.status
     );
     if failure == 8 {
         assert!(String::from_utf8_lossy(&retry.returndata).contains("expired"));
-        let cancel = IGratisFactory::unpledgeGratisCall {
-            proof: inputs.withdrawal.into(),
+        assert_eq!(source_gratis(evm)?, (U256::ZERO, U256::from(GRATIS)));
+        let cancel = IGratisFactory::cancelPledgeCall {
+            reservationId: U256::ONE,
         };
+        assert!(!matches!(
+            call!(evm, CCA, GRATIS_FACTORY_ADDRESS, U256::ZERO, cancel.clone()).status,
+            SubCallStatus::Success
+        ));
         assert!(matches!(
             call!(
                 evm,
@@ -496,15 +494,19 @@ fn retry_issuance_and_cancel_expired(
             .status,
             SubCallStatus::Success
         ));
-        let spent: Vec<_> = evm
+        let cancelled: Vec<_> = evm
             .ctx
             .journaled_state
             .logs()
             .iter()
-            .filter_map(|log| IGratisFactory::PledgeSpent::decode_log_data(&log.data).ok())
+            .filter_map(|log| IGratisFactory::PledgeCancelled::decode_log_data(&log.data).ok())
             .collect();
-        assert_eq!(spent.len(), 1);
-        assert_eq!(spent[0].nullifier, inputs.note.nullifier().unwrap());
+        assert_eq!(cancelled.len(), 1);
+        assert_eq!(
+            (cancelled[0].source, cancelled[0].gratisMinor),
+            (OWNER, U256::from(GRATIS))
+        );
+        assert_eq!(source_gratis(evm)?, (U256::from(GRATIS), U256::ZERO));
         assert!(!matches!(
             call!(evm, OWNER, GRATIS_FACTORY_ADDRESS, U256::ZERO, cancel).status,
             SubCallStatus::Success
@@ -601,19 +603,12 @@ fn settle_successful_issuance(
         position_call.clone()
     )
     .returndata;
-    let root = call!(
-        evm,
-        OWNER,
-        GRATIS_FACTORY_ADDRESS,
-        U256::ZERO,
-        IGratisFactory::pledgeRootCall {}
-    )
-    .returndata;
+    let pledged = pledged_blob(evm)?;
     let payment = PaymentObservation {
         position,
         position_call,
         before,
-        root: root.clone(),
+        pledged,
     };
     for mode in [1, 2, 3, 9, 10] {
         assert_payment_rollback(evm, mode, &payment)?;
@@ -633,17 +628,8 @@ fn settle_successful_issuance(
         "{:?}",
         paid.returndata
     );
-    assert_ne!(
-        call!(
-            evm,
-            OWNER,
-            GRATIS_FACTORY_ADDRESS,
-            U256::ZERO,
-            IGratisFactory::pledgeRootCall {}
-        )
-        .returndata,
-        root
-    );
+    let half = U256::from(GRATIS / 2);
+    assert_eq!(source_gratis(evm)?, (half, half));
 
     Ok(())
 }
@@ -712,17 +698,7 @@ fn assert_payment_position_and_pledge_unchanged(
         .returndata,
         observation.before
     );
-    assert_eq!(
-        call!(
-            evm,
-            OWNER,
-            GRATIS_FACTORY_ADDRESS,
-            U256::ZERO,
-            IGratisFactory::pledgeRootCall {}
-        )
-        .returndata,
-        observation.root
-    );
+    assert_eq!(pledged_blob(evm)?, observation.pledged);
 
     Ok(())
 }

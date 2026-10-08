@@ -65,8 +65,8 @@ interface ICredis {
         /// ISO 4217 numeric code of the reference currency elected at origination
         /// and fixed for the position's life.
         uint16 referenceCurrency;
-        /// Proof-authenticated owner serial used to construct repayment notes.
-        bytes32 returnNoteSerial;
+        /// Main account whose pledged Gratis backs the position.
+        address source;
         /// P - the stablecoin amount disbursed. Never changes.
         uint256 principalMinor;
         /// P_out - decreases with each settlement. The position closes at zero.
