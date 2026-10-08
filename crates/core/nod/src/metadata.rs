@@ -85,15 +85,15 @@ fn encrypted_traits(item: &NodItemState) -> [Trait; 4] {
     [
         Trait::text(
             "Encrypted Gratis Load",
-            &alloy_primitives::hex::encode_prefixed(&item.encrypted.encrypted_gratis_amount),
+            alloy_primitives::hex::encode_prefixed(&item.encrypted.encrypted_gratis_amount),
         ),
         Trait::text(
             "Encrypted Creator Public Key",
-            &alloy_primitives::hex::encode_prefixed(&item.encrypted.encrypted_creator_public_key),
+            alloy_primitives::hex::encode_prefixed(&item.encrypted.encrypted_creator_public_key),
         ),
         Trait::text(
             "Encryption Binding",
-            &item.encrypted.encryption_binding.to_string(),
+            item.encrypted.encryption_binding.to_string(),
         ),
         Trait::integer("Chain ID", item.encrypted.terms.chain_id),
     ]

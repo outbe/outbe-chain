@@ -77,7 +77,8 @@ fn private_reads_use_the_common_key_across_enclave_identities_and_bind_the_respo
         assert_eq!(amounts, vec![expected.clone()]);
         assert_eq!(
             inputs_canonical_hash,
-            outbe_tee::tribute_v2::tribute_read_inputs_hash(&[encrypted.clone()]).unwrap()
+            outbe_tee::tribute_v2::tribute_read_inputs_hash(std::slice::from_ref(&encrypted))
+                .unwrap()
         );
         let preimage = outbe_tee::tribute_v2::tribute_read_attestation_preimage(
             inputs_canonical_hash,

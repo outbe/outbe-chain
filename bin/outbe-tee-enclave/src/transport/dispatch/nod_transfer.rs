@@ -28,24 +28,24 @@ fn error(message: &str) -> EnclaveResponse {
         message: message.into(),
     }
 }
-fn check_chunk_bounds(total: usize, offset: usize, bytes: &[u8]) -> Result<(), EnclaveResponse> {
+fn check_chunk_bounds(total: usize, offset: usize, bytes: &[u8]) -> Result<(), &'static str> {
     if total == 0 || total > MAX_TRANSFER_BYTES || bytes.is_empty() {
-        return Err(error("invalid NOD transfer bounds"));
+        return Err("invalid NOD transfer bounds");
     }
     if bytes.len() > TRANSFER_CHUNK_BYTES
         || offset
             .checked_add(bytes.len())
             .is_none_or(|end| end > total)
     {
-        return Err(error("invalid NOD transfer chunk bounds"));
+        return Err("invalid NOD transfer chunk bounds");
     }
     Ok(())
 }
 pub(super) fn append(id: B256, total: u32, offset: u32, bytes: &[u8]) -> EnclaveResponse {
     let total = total as usize;
     let offset = offset as usize;
-    if let Err(error) = check_chunk_bounds(total, offset, bytes) {
-        return error;
+    if let Err(message) = check_chunk_bounds(total, offset, bytes) {
+        return error(message);
     }
     let mut transfers = store();
     transfers.retain(|_, entry| entry.touched.elapsed() < Duration::from_secs(120));
@@ -104,7 +104,7 @@ pub(super) fn execute(
     }
     let response = match dispatch_request(&entry.input, keys, offer, chain) {
         Ok(response) => response,
-        Err(error) => return error,
+        Err(message) => return error(message),
     };
     let output = match serde_json::to_vec(&response) {
         Ok(bytes) if bytes.len() <= MAX_TRANSFER_BYTES => bytes,
@@ -126,10 +126,10 @@ fn dispatch_request(
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,
     chain: B256,
-) -> Result<EnclaveResponse, EnclaveResponse> {
+) -> Result<EnclaveResponse, &'static str> {
     let request: EnclaveRequest = match serde_json::from_slice(input) {
         Ok(request) => request,
-        Err(_) => return Err(error("NOD transfer request encoding")),
+        Err(_) => return Err("NOD transfer request encoding"),
     };
     match request {
         EnclaveRequest::PrepareEncryptedNodsV2 { request } => {
@@ -138,7 +138,7 @@ fn dispatch_request(
         EnclaveRequest::OpenEncryptedNodsV2 { authority, carrier } => {
             Ok(super::nod::open(keys, offer, chain, &authority, &carrier))
         }
-        _ => Err(error("NOD transfer command not permitted")),
+        _ => Err("NOD transfer command not permitted"),
     }
 }
 pub(super) fn read(id: B256, offset: u32) -> EnclaveResponse {
@@ -172,6 +172,30 @@ mod tests {
         NodMaterializationAuthorityV2, PrepareEncryptedNodsRequestV2,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn invalid_transfer_requests_keep_their_error_messages_on_retry() {
+        let keys = EnclaveKeys::new([0x43; 32], None).unwrap();
+        let offer: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let forbidden = serde_json::to_vec(&EnclaveRequest::GetPublicKeys).unwrap();
+        for (bytes, expected) in [
+            (b"{".as_slice(), "NOD transfer request encoding"),
+            (forbidden.as_slice(), "NOD transfer command not permitted"),
+        ] {
+            let id = keccak256(bytes);
+            assert!(matches!(
+                append(id, bytes.len() as u32, 0, bytes),
+                EnclaveResponse::NodTransferAckV2 { .. }
+            ));
+            for _ in 0..2 {
+                assert!(matches!(
+                    execute(id, &keys, &offer, B256::ZERO),
+                    EnclaveResponse::Error { message } if message == expected
+                ));
+            }
+            discard(id);
+        }
+    }
 
     #[test]
     fn multipart_bounds_replay_and_large_request_are_checked() {

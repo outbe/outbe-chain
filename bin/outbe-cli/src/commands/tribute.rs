@@ -71,7 +71,7 @@ pub enum TributeCmd {
     /// Encrypts to the DKG-derived offer key registered in the TeeRegistry and
     /// sends `offerTribute`. Requires `--private-key` and the ZK offer inputs
     /// (`--zk-proof`, `--zk-merkle-root`, `--signature`).
-    Offer(TributeOfferArgs),
+    Offer(Box<TributeOfferArgs>),
 }
 
 #[derive(Args)]
@@ -136,7 +136,7 @@ impl TributeCmd {
             Self::ByDay { worldwide_day } => by_day(client, worldwide_day).await,
             Self::Supply => supply(client).await,
             Self::Owner { token_id } => owner(client, token_id).await,
-            Self::Offer(args) => offer(client, private_key, args).await,
+            Self::Offer(args) => offer(client, private_key, *args).await,
         }
     }
 }
@@ -630,14 +630,14 @@ mod tests {
             ),
         ] {
             let parsed = TributeHarness::try_parse_from(offer_argv(&extra)).unwrap();
-            let TributeCmd::Offer(TributeOfferArgs {
+            let TributeCmd::Offer(args) = parsed.command else {
+                panic!("expected offer command");
+            };
+            let TributeOfferArgs {
                 l2_chain_id,
                 circuit_version,
                 ..
-            }) = parsed.command
-            else {
-                panic!("expected offer command");
-            };
+            } = *args;
             assert_eq!(l2_chain_id, expected_chain);
             assert_eq!(circuit_version, expected_version);
         }

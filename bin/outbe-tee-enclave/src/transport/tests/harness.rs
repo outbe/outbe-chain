@@ -75,8 +75,8 @@ impl Enclave {
             &self.keys,
             &mut self.dkg,
             &self.offer_key,
-            self.chain_id,
             DispatchInitializationContext {
+                chain_id: self.chain_id,
                 boot: Some(&self.boot),
                 initialization: Some(&self.initialization),
                 quote_generator: crate::gramine::dcap_quote,

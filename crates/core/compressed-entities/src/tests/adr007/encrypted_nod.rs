@@ -100,7 +100,7 @@ fn encrypted_nod_preserves_queries_settlement_delete_and_canonical_replay() {
         }
     });
     for log in provider.get_events(NOD_ADDRESS) {
-        let decoded = crate::decode_canonical_body_event(NOD_ADDRESS, &log).unwrap();
+        let decoded = crate::decode_canonical_body_event(NOD_ADDRESS, log).unwrap();
         assert!(decoded.is_some());
     }
 }

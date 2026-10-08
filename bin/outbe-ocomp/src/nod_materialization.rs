@@ -27,6 +27,8 @@ use crate::{
     lysis_result_catalog::{verified_result_chunk_at, LysisResultCatalogError},
 };
 
+mod proof;
+
 const REFERENCE_VERSION: u16 = 1;
 const REFERENCE_SUFFIX: &str = ".materialization-refs-v1.json";
 const TEMP_SUFFIX: &str = ".tmp";
@@ -63,190 +65,17 @@ pub fn build_nod_materialization_batch_with_references(
     head: &NodMaterializationHeadV1,
     configured_subtree_height: u8,
 ) -> Result<BuiltNodMaterializationBatchV1, NodMaterializationBuildErrorV1> {
-    if head.job_id != audit.plan().job_id
-        || head.program_semantics_hash != audit.bundle().bundle().lysis_program_semantics_hash
-        || head.worldwide_day != audit.plan().wwd
-        || head.nod_count != audit.plan().tribute_count
-        || head.next_nod_ordinal >= head.nod_count
-    {
-        return Err(NodMaterializationBuildErrorV1::AuthorityMismatch);
-    }
-    let padded_count =
-        head.nod_count
-            .checked_next_power_of_two()
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "materialization padded NOD count",
-            })?;
-    let tree_height = padded_count.trailing_zeros() as u16;
-    let effective_height = aligned_subtree_height(head.next_nod_ordinal, configured_subtree_height)
-        .min(tree_height as u8);
-    let capacity =
-        1_u32
-            .checked_shl(u32::from(effective_height))
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "materialization batch capacity",
-            })?;
-    if capacity == 0 || capacity > PRIMARY_WORK_SHARD_SIZE {
-        return Err(ProtocolError::InvalidInvariant("materialization batch capacity").into());
-    }
-
-    let chunk_ordinal = head.next_nod_ordinal / PRIMARY_WORK_SHARD_SIZE;
-    let chunk = verified_result_chunk_at(audit, chunk_ordinal)?;
-    let page_start = chunk_ordinal.checked_mul(PRIMARY_WORK_SHARD_SIZE).ok_or(
-        ProtocolError::IntegerOverflow {
-            what: "materialization page start",
-        },
-    )?;
-    let local_start =
-        head.next_nod_ordinal
-            .checked_sub(page_start)
-            .ok_or(ProtocolError::InvalidInvariant(
-                "materialization chunk cursor",
-            ))?;
-    let action_count = head
-        .nod_count
-        .checked_sub(head.next_nod_ordinal)
-        .ok_or(ProtocolError::InvalidInvariant(
-            "materialization remaining NOD count",
-        ))?
-        .min(capacity);
-    let local_end =
-        local_start
-            .checked_add(action_count)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "materialization page end",
-            })?;
-    let actions = chunk
-        .chunk()
-        .ordered_nod_actions
-        .get(local_start as usize..local_end as usize)
-        .ok_or(NodMaterializationBuildErrorV1::MissingActions)?
-        .to_vec();
-    require_action_ordinals(&actions, head.next_nod_ordinal, head.worldwide_day)?;
-
-    let page_height = tree_height.min(PRIMARY_WORK_SHARD_SIZE.trailing_zeros() as u16);
-    let page_capacity =
-        1_u32
-            .checked_shl(u32::from(page_height))
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "materialization page capacity",
-            })?;
-    let mut levels = vec![Vec::<B256>::new(); usize::from(page_height) + 1];
-    levels[0].reserve(page_capacity as usize);
-    for offset in 0..page_capacity {
-        let ordinal = page_start
-            .checked_add(offset)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "materialization page ordinal",
-            })?;
-        let local = offset as usize;
-        if let Some(action) = chunk.chunk().ordered_nod_actions.get(local) {
-            if action.raw_ordinal != ordinal || action.wwd != head.worldwide_day {
-                return Err(NodMaterializationBuildErrorV1::ActionOrder);
-            }
-            levels[0].push(leaf_hash(
-                ListKind::NodActions,
-                ordinal,
-                &action.encode_canonical_record(audit.limits())?,
-            )?);
-        } else {
-            levels[0].push(pad_hash(ListKind::NodActions, ordinal)?);
-        }
-    }
-    for level in 1..=page_height {
-        let previous = levels[usize::from(level - 1)].clone();
-        let mut parents = Vec::with_capacity(previous.len() / 2);
-        let global_start = page_start >> level;
-        for (index, pair) in previous.as_chunks::<2>().0.iter().enumerate() {
-            let global_index = global_start
-                .checked_add(
-                    u32::try_from(index).map_err(|_| ProtocolError::IntegerOverflow {
-                        what: "materialization page node index",
-                    })?,
-                )
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "materialization page node index",
-                })?;
-            parents.push(node_hash(
-                ListKind::NodActions,
-                level,
-                global_index,
-                pair[0],
-                pair[1],
-            )?);
-        }
-        levels[usize::from(level)] = parents;
-    }
-
-    let mut root_path = Vec::with_capacity(usize::from(tree_height - u16::from(effective_height)));
-    for child_level in u16::from(effective_height)..page_height {
-        let local_index = (local_start >> child_level) as usize;
-        root_path.push(
-            *levels[usize::from(child_level)]
-                .get(local_index ^ 1)
-                .ok_or(NodMaterializationBuildErrorV1::MissingSibling)?,
-        );
-    }
-
-    let topology = LysisPlanTopologyV1::new(audit.plan().primary_work_unit_count)?;
-    let mut dependencies = vec![
-        chunk.producer_artifact_ref().clone(),
-        chunk.output_manifest_entry().result_chunk_ref.clone(),
-    ];
-    let upper_path_levels =
-        tree_height
-            .checked_sub(page_height)
-            .ok_or(ProtocolError::InvalidInvariant(
-                "materialization upper path height",
-            ))?;
-    for reducer_level in 0..upper_path_levels {
-        let sibling_index = (chunk_ordinal >> reducer_level) ^ 1;
-        let sibling_root =
-            if reducer_level == 0 && sibling_index >= audit.plan().primary_work_unit_count {
-                LysisListSubtreeCarrierV1::canonical_empty_primary_page(
-                    ListKind::NodActions,
-                    sibling_index,
-                )?
-                .tree_root
-            } else {
-                let position = PlannedUnitPositionV1::TreeNode {
-                    phase: UnitPhase::RootReduce,
-                    level: reducer_level,
-                    index: sibling_index,
-                };
-                let ordinal = topology.plan_ordinal_of(position)?;
-                let artifact = audit.verified_artifact_at(ordinal)?;
-                let output = decode_root_reduce_output(
-                    artifact.artifact().phase_payload(audit.limits())?,
-                    audit.limits(),
-                )?;
-                let summary = match output {
-                    RootReduceOutputV1::Leaf { summary, .. }
-                    | RootReduceOutputV1::Node { summary } => summary,
-                };
-                let expected_height = (PRIMARY_WORK_SHARD_SIZE.trailing_zeros() as u16)
-                    .checked_add(reducer_level)
-                    .ok_or(ProtocolError::IntegerOverflow {
-                        what: "materialization upper sibling height",
-                    })?;
-                if summary.nod_actions.list_kind != ListKind::NodActions
-                    || summary.nod_actions.subtree_height != expected_height
-                    || summary.nod_actions.subtree_index != sibling_index
-                {
-                    return Err(NodMaterializationBuildErrorV1::UpperSiblingMismatch);
-                }
-                dependencies.push(artifact.admission().artifact_ref.clone());
-                summary.nod_actions.tree_root
-            };
-        root_path.push(sibling_root);
-    }
-    normalize_dependencies(&mut dependencies)?;
+    proof::require_head_authority(audit, head)?;
+    let subtree = proof::MaterializationSubtree::new(head, configured_subtree_height)?;
+    let page = proof::ActionPage::load(audit, head, &subtree)?;
+    let tree = proof::PageTree::build(audit, head, &subtree, &page)?;
+    let proof = proof::MaterializationProof::build(audit, &subtree, &page, &tree)?;
 
     let batch = NodMaterializationBatchV1 {
         queue_sequence: head.queue_sequence,
         first_nod_ordinal: head.next_nod_ordinal,
-        actions,
-        root_path,
+        actions: page.actions,
+        root_path: proof.root_path,
     };
     outbe_ocomp_protocol::nod_materialization::verify_nod_materialization_batch(
         &batch,
@@ -256,7 +85,7 @@ pub fn build_nod_materialization_batch_with_references(
     )?;
     Ok(BuiltNodMaterializationBatchV1 {
         batch,
-        dependencies,
+        dependencies: proof.dependencies,
     })
 }
 
@@ -389,59 +218,82 @@ impl MaterializationReferenceReaderV1 {
         inspect_reference_directory(&self.root)?;
         for job in fs::read_dir(&self.root).map_err(|source| io_error(&self.root, source))? {
             let job = job.map_err(|source| io_error(&self.root, source))?;
-            let path = job.path();
-            inspect_reference_directory(&path)?;
-            let name = job.file_name();
-            let name = name
-                .to_str()
-                .ok_or(MaterializationReferenceErrorV1::InvalidRecord)?;
-            let mut bytes = [0; 32];
-            hex::decode_to_slice(name, &mut bytes)
-                .map_err(|_| MaterializationReferenceErrorV1::InvalidRecord)?;
-            let job_id = B256::from(bytes);
-            if job_id.is_zero() || name != hex::encode(job_id) {
-                return Err(MaterializationReferenceErrorV1::InvalidRecord);
-            }
-            for ordinal in fs::read_dir(&path).map_err(|source| io_error(&path, source))? {
-                let ordinal = ordinal.map_err(|source| io_error(&path, source))?;
-                let directory = ordinal.path();
-                inspect_reference_directory(&directory)?;
-                let name = ordinal.file_name();
-                let name = name
-                    .to_str()
-                    .ok_or(MaterializationReferenceErrorV1::InvalidRecord)?;
-                let ordinal: u32 = name
-                    .parse()
-                    .map_err(|_| MaterializationReferenceErrorV1::InvalidRecord)?;
-                if name != ordinal.to_string() {
-                    return Err(MaterializationReferenceErrorV1::InvalidRecord);
-                }
-                let codec = MaterializationReferenceStoreV1 {
-                    root: directory.clone(),
-                };
-                let expected = codec.path(job_id);
-                for entry in
-                    fs::read_dir(&directory).map_err(|source| io_error(&directory, source))?
-                {
-                    let path = entry.map_err(|source| io_error(&directory, source))?.path();
-                    if path != expected {
-                        return Err(
-                            if path.extension().is_some_and(|extension| extension == "tmp") {
-                                MaterializationReferenceErrorV1::AmbiguousTemp(path)
-                            } else {
-                                MaterializationReferenceErrorV1::InvalidRecord
-                            },
-                        );
-                    }
-                    let references = codec
-                        .load_exact(job_id)?
-                        .ok_or(MaterializationReferenceErrorV1::Missing)?;
-                    visitor(job_id, ordinal, references)?;
-                }
-            }
+            visit_job_references(job, visitor)?;
         }
         Ok(())
     }
+}
+
+fn visit_job_references(
+    job: fs::DirEntry,
+    visitor: &mut impl FnMut(
+        B256,
+        u32,
+        Vec<CasObjectRefV1>,
+    ) -> Result<(), MaterializationReferenceErrorV1>,
+) -> Result<(), MaterializationReferenceErrorV1> {
+    let path = job.path();
+    inspect_reference_directory(&path)?;
+    let name = job.file_name();
+    let name = name
+        .to_str()
+        .ok_or(MaterializationReferenceErrorV1::InvalidRecord)?;
+    let mut bytes = [0; 32];
+    hex::decode_to_slice(name, &mut bytes)
+        .map_err(|_| MaterializationReferenceErrorV1::InvalidRecord)?;
+    let job_id = B256::from(bytes);
+    if job_id.is_zero() || name != hex::encode(job_id) {
+        return Err(MaterializationReferenceErrorV1::InvalidRecord);
+    }
+    for ordinal in fs::read_dir(&path).map_err(|source| io_error(&path, source))? {
+        let ordinal = ordinal.map_err(|source| io_error(&path, source))?;
+        visit_ordinal_references(job_id, ordinal, visitor)?;
+    }
+    Ok(())
+}
+
+fn visit_ordinal_references(
+    job_id: B256,
+    ordinal: fs::DirEntry,
+    visitor: &mut impl FnMut(
+        B256,
+        u32,
+        Vec<CasObjectRefV1>,
+    ) -> Result<(), MaterializationReferenceErrorV1>,
+) -> Result<(), MaterializationReferenceErrorV1> {
+    let directory = ordinal.path();
+    inspect_reference_directory(&directory)?;
+    let name = ordinal.file_name();
+    let name = name
+        .to_str()
+        .ok_or(MaterializationReferenceErrorV1::InvalidRecord)?;
+    let ordinal: u32 = name
+        .parse()
+        .map_err(|_| MaterializationReferenceErrorV1::InvalidRecord)?;
+    if name != ordinal.to_string() {
+        return Err(MaterializationReferenceErrorV1::InvalidRecord);
+    }
+    let codec = MaterializationReferenceStoreV1 {
+        root: directory.clone(),
+    };
+    let expected = codec.path(job_id);
+    for entry in fs::read_dir(&directory).map_err(|source| io_error(&directory, source))? {
+        let path = entry.map_err(|source| io_error(&directory, source))?.path();
+        if path != expected {
+            return Err(
+                if path.extension().is_some_and(|extension| extension == "tmp") {
+                    MaterializationReferenceErrorV1::AmbiguousTemp(path)
+                } else {
+                    MaterializationReferenceErrorV1::InvalidRecord
+                },
+            );
+        }
+        let references = codec
+            .load_exact(job_id)?
+            .ok_or(MaterializationReferenceErrorV1::Missing)?;
+        visitor(job_id, ordinal, references)?;
+    }
+    Ok(())
 }
 
 fn inspect_reference_directory(path: &Path) -> Result<(), MaterializationReferenceErrorV1> {

@@ -76,14 +76,14 @@ fn fixture() -> (
     (evm, calldata, owner)
 }
 
-fn supervised_fixture(
-    mismatch: bool,
-) -> (
+type SupervisedFixture = (
     OutbeEvm<CacheDB<EmptyDB>, NoOpInspector, PrecompilesMap>,
     Bytes,
     Address,
     tokio::sync::watch::Receiver<Option<outbe_offchain_data::RuntimeBodyFailure>>,
-) {
+);
+
+fn supervised_fixture(mismatch: bool) -> SupervisedFixture {
     let owner = Address::repeat_byte(0x11);
     let day = WorldwideDay::new(20261007);
     let id = outbe_nod::NodContract::generate_nod_id(owner, day).unwrap();

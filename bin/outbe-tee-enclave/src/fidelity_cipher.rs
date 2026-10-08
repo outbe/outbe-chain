@@ -139,7 +139,7 @@ mod tests {
             altered[offset] ^= 1;
             assert!(read_blob(&key, account, &altered).is_err());
         }
-        assert!(read_blob(&key, account, &vec![0; 56]).is_err());
+        assert!(read_blob(&key, account, &[0; 56]).is_err());
         assert!(write_blob(
             &key,
             CohortTransition {

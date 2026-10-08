@@ -77,8 +77,8 @@ fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
         &keys,
         &mut dkg,
         &offer_key,
-        B256::from(manifest.chain_id),
         DispatchInitializationContext {
+            chain_id: B256::from(manifest.chain_id),
             boot: Some(&boot),
             initialization: Some(&initialization),
             quote_generator: quote,
@@ -101,8 +101,8 @@ fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
         &keys,
         &mut dkg,
         &offer_key,
-        B256::from(manifest.chain_id),
         DispatchInitializationContext {
+            chain_id: B256::from(manifest.chain_id),
             boot: Some(&boot),
             initialization: Some(&initialization),
             quote_generator: quote,
@@ -185,8 +185,8 @@ fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
         &keys,
         &mut dkg,
         &offer_key,
-        B256::from(manifest.chain_id),
         DispatchInitializationContext {
+            chain_id: B256::from(manifest.chain_id),
             boot: Some(&boot),
             initialization: Some(&initialization),
             quote_generator: |_| panic!("SGX-no-attest dev evidence must not request DCAP"),

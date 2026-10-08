@@ -43,3 +43,6 @@ pub mod vote_submitter;
 pub mod worker;
 pub mod worker_observability;
 pub mod worker_transport;
+
+#[cfg(feature = "test-utils")]
+pub mod test_support;

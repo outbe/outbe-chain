@@ -460,8 +460,8 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
                 keys,
                 &mut dkg,
                 offer_key,
-                chain_id,
                 DispatchInitializationContext {
+                    chain_id,
                     boot,
                     initialization: Some(initialization),
                     quote_generator,

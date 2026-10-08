@@ -1039,7 +1039,7 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
 
         let expected: U256 = items
             .iter()
-            .map(|item| crate::api::calculation_amount(&item).unwrap())
+            .map(|item| crate::api::calculation_amount(item).unwrap())
             .sum();
         assert_eq!(reserve(storage), expected);
     });
@@ -1706,7 +1706,7 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
             .iter()
             .zip([(false, 3u64), (true, 7), (false, 11), (false, 20)])
             .filter_map(|(item, (paid, _))| {
-                (!paid).then_some(crate::api::calculation_amount(&item).unwrap())
+                (!paid).then_some(crate::api::calculation_amount(item).unwrap())
             })
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(unpaid, U256::from(34u64));
@@ -1757,7 +1757,7 @@ fn a18_forfeit_slices_credit_the_same_total_as_one_pass() {
         );
         let expected: U256 = items
             .iter()
-            .map(|item| crate::api::calculation_amount(&item).unwrap())
+            .map(|item| crate::api::calculation_amount(item).unwrap())
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(
             try_forfeit(storage, scope, parent, bucket_key, 1).unwrap(),
@@ -1894,7 +1894,7 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
         assert_eq!(nod.total_supply().unwrap(), 0);
         let expected: U256 = items
             .iter()
-            .map(|item| crate::api::calculation_amount(&item).unwrap())
+            .map(|item| crate::api::calculation_amount(item).unwrap())
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(reserve(&storage), expected);
         expected
