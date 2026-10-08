@@ -4,7 +4,7 @@ use alloy_primitives::U256;
 use outbe_credis::{CredisContract, CredisState, ExpiryHours};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{Result, SweepFailure},
+    error::{PrecompileError, Result, SweepFailure},
     expiry_queue::{self, ExpiryHandler, Step},
 };
 
@@ -37,26 +37,39 @@ impl ExpiryHandler<U256> for CredisExpiry<'_, '_> {
             expiry_queue::remove(&ExpiryHours(&self.credis), position_id)?;
             return Ok(Step::Done);
         }
-        // A failed void is not skipped: its TEE round-trip fails on node-local
-        // faults, and swallowing one would fork the chain silently.
         match runtime::void_position(self.ctx.storage.clone(), position_id) {
             Ok(()) => {
                 self.voided = self.voided.saturating_add(1);
                 Ok(Step::Done)
             }
-            Err(error) if error.sweep_failure() == SweepFailure::Stop => Ok(Step::Hold),
-            Err(error) => Err(error),
+            Err(error) => match void_failure(&error) {
+                SweepFailure::Propagate => Err(error),
+                SweepFailure::Stop => Ok(Step::Hold),
+                SweepFailure::Skip => {
+                    tracing::warn!(target: "outbe::credisfactory", %position_id, error = ?error, "expiry sweep: void failed, retrying next hour");
+                    self.defer(position_id)?;
+                    Ok(Step::Done)
+                }
+            },
         }
     }
 
     fn retire_leftover(&mut self, position_id: U256) -> Result<()> {
-        let queue = ExpiryHours(&self.credis);
         if !self.voidable(position_id)? {
-            return expiry_queue::remove(&queue, position_id);
+            return expiry_queue::remove(&ExpiryHours(&self.credis), position_id);
         }
         tracing::warn!(target: "outbe::credisfactory", %position_id, "expiry sweep: hour outlived itself, retrying next hour");
-        let next = expiry_queue::bucket_of(self.ctx.block.timestamp).saturating_add(1);
-        expiry_queue::retarget(&queue, position_id, next)
+        self.defer(position_id)
+    }
+}
+
+/// The Gratis enclave client reports its own outage and a deterministic Gratis failure
+/// alike as `Fatal`. Until they part, a `Fatal` void fails the block: skipping an
+/// outage would fork the chain silently.
+pub(crate) fn void_failure(error: &PrecompileError) -> SweepFailure {
+    match error {
+        PrecompileError::Fatal(_) => SweepFailure::Propagate,
+        other => other.sweep_failure(),
     }
 }
 
@@ -65,6 +78,11 @@ impl CredisExpiry<'_, '_> {
         let queue = CredisContract::new(self.ctx.storage.clone());
         let now = self.ctx.block.timestamp;
         expiry_queue::sweep(&ExpiryHours(&queue), now, &mut budget, self)
+    }
+
+    fn defer(&self, position_id: U256) -> Result<()> {
+        let next = expiry_queue::bucket_of(self.ctx.block.timestamp).saturating_add(1);
+        expiry_queue::retarget(&ExpiryHours(&self.credis), position_id, next)
     }
 
     fn voidable(&self, position_id: U256) -> Result<bool> {

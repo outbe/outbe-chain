@@ -983,3 +983,24 @@ fn a_failed_void_fails_the_block_and_keeps_the_position_queued() {
     });
     teardown();
 }
+
+#[test]
+fn a_void_fails_the_block_only_on_what_may_be_this_nodes_fault() {
+    use crate::expired::void_failure;
+    use outbe_primitives::error::{PrecompileError, SweepFailure};
+    assert_eq!(
+        void_failure(&PrecompileError::Fatal("tee_sidecar_unavailable".into())),
+        SweepFailure::Propagate
+    );
+    assert_eq!(
+        void_failure(&PrecompileError::Storage("x".into())),
+        SweepFailure::Propagate
+    );
+    assert_eq!(
+        void_failure(&PrecompileError::Revert(
+            "forfeiture collateral mismatch".into()
+        )),
+        SweepFailure::Skip
+    );
+    assert_eq!(void_failure(&PrecompileError::OutOfGas), SweepFailure::Stop);
+}
