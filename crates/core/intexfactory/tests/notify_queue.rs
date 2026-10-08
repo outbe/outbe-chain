@@ -133,6 +133,30 @@ fn a_paused_entry_waits_out_its_pause_behind_a_due_one() {
     });
 }
 
+/// A fresh notice behind a paused one waits no longer than the pause.
+#[test]
+fn a_fresh_entry_behind_a_paused_head_waits_one_pause_at_most() {
+    let mut storage = provider();
+    StorageHandle::enter(&mut storage, |handle| {
+        let factory = IntexFactoryContract::new(handle.clone());
+        let paused = with_retry_at(
+            pack_called_notice(series(0), CALLED_AT),
+            NOW + NOTICE_RETRY_SECONDS,
+        );
+        factory.notify_at.write(&0, paused).unwrap();
+        factory
+            .notify_at
+            .write(&1, pack_called_notice(series(1), CALLED_AT))
+            .unwrap();
+        factory.notify_tail.write(2).unwrap();
+
+        drain(&handle);
+        assert_eq!(queue_bounds(&handle), (0, 2));
+        drain_at(&handle, NOW + NOTICE_RETRY_SECONDS);
+        assert_eq!(queue_bounds(&handle), (0, 0));
+    });
+}
+
 #[test]
 fn a_drained_entry_is_gone() {
     let mut storage = provider();

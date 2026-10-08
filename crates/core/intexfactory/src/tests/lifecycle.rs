@@ -557,6 +557,84 @@ mod call_sweep {
             .unwrap()
     }
 
+    /// One series per issuance code, a unit each, all in one group, then called.
+    fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<SeriesId>, u64) {
+        let day = WorldwideDay::new(20260101);
+        let trigger = U256::from(TRIGGER);
+        let mut factory = IntexFactoryContract::new(s.clone());
+        let mut members = Vec::new();
+        for issuance in 1..=width {
+            let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
+            let params = outbe_intex::CreateSeriesParams {
+                series_id,
+                worldwide_day: day,
+                issued_units: 1,
+                promis_load_minor: LOAD,
+                entry_price_minor: trigger,
+                floor_price_minor: trigger,
+                call_price_minor: trigger,
+                call_trigger: outbe_intex::IntexCallTrigger {
+                    call_window_seconds: WINDOW_DAYS * DAY as u32,
+                    call_threshold_seconds: 21 * DAY as u32,
+                    call_notice_period_seconds: 7 * DAY as u32,
+                },
+                issued_at: ISSUED_AT,
+                issuance_currency: issuance,
+                reference_currency: REFERENCE_ISO,
+            };
+            outbe_intex::api::create_series(s, params).unwrap();
+            factory
+                .insert_call_bin(series_id, REFERENCE_ISO, trigger)
+                .unwrap();
+            members.push(series_id);
+        }
+        let deadline = call_and_deadline(s, 20260101, scan_ts);
+        (members, deadline)
+    }
+
+    /// A group is called whole even when it is wider than a block's writes.
+    #[test]
+    fn a_group_wider_than_the_write_budget_is_called_whole() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+            let width = SWEEP_WRITES_PER_BLOCK as u16 + 1;
+            let (members, deadline) = called_wide_group(&s, scan_ts, width);
+            assert_ne!(deadline, 0);
+            for series_id in members {
+                assert_eq!(
+                    outbe_intex::api::read_series(&s, series_id)
+                        .unwrap()
+                        .lifecycle_state()
+                        .unwrap(),
+                    outbe_intex::IntexState::Called
+                );
+            }
+        });
+    }
+
+    /// Its expiry takes a block's writes, and the next block resumes on what is left.
+    #[test]
+    fn a_group_wider_than_the_write_budget_expires_over_two_blocks() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+            let width = SWEEP_WRITES_PER_BLOCK as u16 + 1;
+            let (_, deadline) = called_wide_group(&s, scan_ts, width);
+
+            sweep_at(&s, due(deadline));
+            assert_eq!(group_len(&s), 1);
+            assert_eq!(
+                unallocated(&s),
+                U256::from(SWEEP_WRITES_PER_BLOCK) * U256::from(LOAD)
+            );
+
+            sweep_at(&s, due(deadline) + 1);
+            assert_eq!(group_len(&s), 0);
+            assert_eq!(unallocated(&s), U256::from(width) * U256::from(LOAD));
+        });
+    }
+
     /// Nothing marks a series as done any more, so a group walked again after a failure
     /// must no longer hold the members whose load already went back.
     #[test]
