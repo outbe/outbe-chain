@@ -46,3 +46,7 @@ pub mod worker_transport;
 
 #[cfg(feature = "test-utils")]
 pub mod test_support;
+
+#[cfg(feature = "test-utils")]
+#[path = "test_support/snapshot.rs"]
+pub mod snapshot_test_support;

@@ -656,12 +656,10 @@ fn gratis_at(url: &str, owner: Address, view: &[u8; 32], height: u64) -> U256 {
         height,
     )
     .expect("finalized Gratis ciphertext");
-    if encrypted.is_empty() {
-        U256::ZERO
-    } else {
-        outbe_tee_enclave::gratis::decrypt_balance(view, owner, encrypted.as_ref())
+    decrypted_balance_or_zero(encrypted.as_ref(), |ciphertext| {
+        outbe_tee_enclave::gratis::decrypt_balance(view, owner, ciphertext)
             .expect("decrypt finalized Gratis")
-    }
+    })
 }
 
 fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV2, NodBucketBodyV1) {

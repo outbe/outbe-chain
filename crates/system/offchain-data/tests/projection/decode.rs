@@ -240,162 +240,30 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
 
     let tribute_id = poseidon_entity(Address::repeat_byte(0x92), day);
 
-    let mut noncanonical_nod = nod_payload.clone();
-    noncanonical_nod.extend_from_slice(&[0x60, 0x01]);
-    let mut noncanonical_bucket = bucket_payload.clone();
-    noncanonical_bucket.extend_from_slice(&[0x38, 0x01]);
-
-    let malformed_events = vec![
-        (
-            NOD_ADDRESS,
-            INod::NodBodyStored {
-                nodId: nod_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME + 1,
-                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
-                previousCommitment: B256::ZERO,
-                newCommitment: nod_commitment,
-                canonicalPayload: Bytes::copy_from_slice(&nod_payload),
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBodyStored {
-                nodId: nod_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2 + 1,
-                previousCommitment: B256::ZERO,
-                newCommitment: nod_commitment,
-                canonicalPayload: Bytes::copy_from_slice(&nod_payload),
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBodyStored {
-                nodId: nod_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
-                previousCommitment: B256::ZERO,
-                newCommitment: nod_commitment,
-                canonicalPayload: Bytes::from(noncanonical_nod),
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBodyStored {
-                nodId: entity(0x93, day).to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
-                previousCommitment: B256::ZERO,
-                newCommitment: nod_commitment,
-                canonicalPayload: Bytes::copy_from_slice(&nod_payload),
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBodyStored {
-                nodId: nod_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
-                previousCommitment: B256::ZERO,
-                newCommitment: B256::ZERO,
-                canonicalPayload: Bytes::copy_from_slice(&nod_payload),
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBucketBodyStored {
-                bucketId: bucket_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME + 1,
-                schemaVersion: BODY_SCHEMA_V1,
-                previousCommitment: B256::ZERO,
-                newCommitment: bucket_commitment,
-                canonicalPayload: Bytes::copy_from_slice(&bucket_payload),
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBucketBodyStored {
-                bucketId: bucket_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1 + 1,
-                previousCommitment: B256::ZERO,
-                newCommitment: bucket_commitment,
-                canonicalPayload: Bytes::copy_from_slice(&bucket_payload),
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBucketBodyStored {
-                bucketId: bucket_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
-                previousCommitment: B256::ZERO,
-                newCommitment: bucket_commitment,
-                canonicalPayload: Bytes::from(noncanonical_bucket),
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBucketBodyStored {
-                bucketId: entity(0x94, day).to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
-                previousCommitment: B256::ZERO,
-                newCommitment: bucket_commitment,
-                canonicalPayload: Bytes::copy_from_slice(&bucket_payload),
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBucketBodyStored {
-                bucketId: bucket_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
-                previousCommitment: B256::ZERO,
-                newCommitment: B256::ZERO,
-                canonicalPayload: Bytes::copy_from_slice(&bucket_payload),
-            }
-            .encode_log_data(),
-        ),
-        (
-            TRIBUTE_ADDRESS,
-            ITribute::TributeBodyDeleted {
-                tributeId: tribute_id.to_u256(),
-                previousCommitment: B256::ZERO,
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBodyDeleted {
-                nodId: nod_id.to_u256(),
-                previousCommitment: B256::ZERO,
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBucketBodyDeleted {
-                bucketId: bucket_id.to_u256(),
-                previousCommitment: B256::ZERO,
-            }
-            .encode_log_data(),
-        ),
-    ];
+    let nod_event = INod::NodBodyStored {
+        nodId: nod_id.to_u256(),
+        commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+        schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+        previousCommitment: B256::ZERO,
+        newCommitment: nod_commitment,
+        canonicalPayload: Bytes::copy_from_slice(&nod_payload),
+    };
+    let bucket_event = INod::NodBucketBodyStored {
+        bucketId: bucket_id.to_u256(),
+        commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+        schemaVersion: BODY_SCHEMA_V1,
+        previousCommitment: B256::ZERO,
+        newCommitment: bucket_commitment,
+        canonicalPayload: Bytes::copy_from_slice(&bucket_payload),
+    };
 
     // Three cases that fed a wrong-width `bytes` identity are gone. A uint256
     // identity has no malformed encoding. The ABI type, not this projector,
     // now enforces the rejection that those cases proved.
-    for (case, (emitter, event)) in malformed_events.into_iter().enumerate() {
+    for (case, (emitter, event)) in malformed_events(&nod_event, &bucket_event, tribute_id, day)
+        .into_iter()
+        .enumerate()
+    {
         let storage = Arc::new(RecordingStorage::default());
         let mut projection = open(&storage, 80);
         let batches_before = storage.batches().len();
@@ -410,53 +278,89 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         assert_eq!(projection.state().checkpoint, None, "case {case}");
     }
 
-    for (case, (emitter, first, conflicting)) in [
+    assert_conflicting_events(nod_event, bucket_event);
+}
+
+fn malformed_events(
+    nod: &INod::NodBodyStored,
+    bucket: &INod::NodBucketBodyStored,
+    tribute_id: WwdEntityId,
+    day: u32,
+) -> Vec<(Address, LogData)> {
+    let mut events: Vec<_> = malformed_nod_events(nod, day)
+        .into_iter()
+        .chain(malformed_bucket_events(bucket, day))
+        .map(|event| (NOD_ADDRESS, event))
+        .collect();
+    events.extend([
         (
-            NOD_ADDRESS,
-            INod::NodBodyStored {
-                nodId: nod_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+            TRIBUTE_ADDRESS,
+            ITribute::TributeBodyDeleted {
+                tributeId: tribute_id.to_u256(),
                 previousCommitment: B256::ZERO,
-                newCommitment: nod_commitment,
-                canonicalPayload: Bytes::copy_from_slice(&nod_payload),
-            }
-            .encode_log_data(),
-            INod::NodBodyStored {
-                nodId: nod_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
-                previousCommitment: bucket_commitment,
-                newCommitment: nod_commitment,
-                canonicalPayload: Bytes::copy_from_slice(&nod_payload),
             }
             .encode_log_data(),
         ),
         (
             NOD_ADDRESS,
-            INod::NodBucketBodyStored {
-                bucketId: bucket_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
+            INod::NodBodyDeleted {
+                nodId: nod.nodId,
                 previousCommitment: B256::ZERO,
-                newCommitment: bucket_commitment,
-                canonicalPayload: Bytes::copy_from_slice(&bucket_payload),
             }
             .encode_log_data(),
-            INod::NodBucketBodyStored {
-                bucketId: bucket_id.to_u256(),
-                commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-                schemaVersion: BODY_SCHEMA_V1,
-                previousCommitment: nod_commitment,
-                newCommitment: bucket_commitment,
-                canonicalPayload: Bytes::copy_from_slice(&bucket_payload),
+        ),
+        (
+            NOD_ADDRESS,
+            INod::NodBucketBodyDeleted {
+                bucketId: bucket.bucketId,
+                previousCommitment: B256::ZERO,
             }
             .encode_log_data(),
+        ),
+    ]);
+    events
+}
+
+fn malformed_nod_events(base: &INod::NodBodyStored, day: u32) -> [LogData; 5] {
+    let mut cases: [_; 5] = std::array::from_fn(|_| base.clone());
+    cases[0].commitmentSchemeVersion += 1;
+    cases[1].schemaVersion += 1;
+    let mut noncanonical = base.canonicalPayload.to_vec();
+    noncanonical.extend_from_slice(&[0x60, 0x01]);
+    cases[2].canonicalPayload = Bytes::from(noncanonical);
+    cases[3].nodId = entity(0x93, day).to_u256();
+    cases[4].newCommitment = B256::ZERO;
+    cases.map(|event| event.encode_log_data())
+}
+
+fn malformed_bucket_events(base: &INod::NodBucketBodyStored, day: u32) -> [LogData; 5] {
+    let mut cases: [_; 5] = std::array::from_fn(|_| base.clone());
+    cases[0].commitmentSchemeVersion += 1;
+    cases[1].schemaVersion += 1;
+    let mut noncanonical = base.canonicalPayload.to_vec();
+    noncanonical.extend_from_slice(&[0x38, 0x01]);
+    cases[2].canonicalPayload = Bytes::from(noncanonical);
+    cases[3].bucketId = entity(0x94, day).to_u256();
+    cases[4].newCommitment = B256::ZERO;
+    cases.map(|event| event.encode_log_data())
+}
+
+fn assert_conflicting_events(nod: INod::NodBodyStored, bucket: INod::NodBucketBodyStored) {
+    let mut conflicting_nod = nod.clone();
+    conflicting_nod.previousCommitment = bucket.newCommitment;
+    let mut conflicting_bucket = bucket.clone();
+    conflicting_bucket.previousCommitment = nod.newCommitment;
+    for (case, (first, conflicting)) in [
+        (nod.encode_log_data(), conflicting_nod.encode_log_data()),
+        (
+            bucket.encode_log_data(),
+            conflicting_bucket.encode_log_data(),
         ),
     ]
     .into_iter()
     .enumerate()
     {
+        let emitter = NOD_ADDRESS;
         let storage = Arc::new(RecordingStorage::default());
         let mut projection = open(&storage, 90);
         let batches_before = storage.batches().len();

@@ -502,19 +502,8 @@ impl<'storage> NodContract<'storage> {
                 worldwide_day.value()
             )));
         }
-        let issued_at = (metadata & U256::from(u64::MAX)).to::<u64>();
-        let tribute_count = ((metadata >> 64usize) & U256::from(u32::MAX)).to::<u32>();
-        let nod_count = ((metadata >> 96usize) & U256::from(u32::MAX)).to::<u32>();
-        let bucket_count = ((metadata >> 128usize) & U256::from(u32::MAX)).to::<u32>();
-        let counts_consistent = tribute_count != 0
-            && nod_count == tribute_count
-            && bucket_count <= nod_count
-            && next_nod_ordinal <= nod_count;
-        if issued_at == 0 || last_progress_height == 0 || !counts_consistent {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "installed Nod OCOMP generation metadata is malformed".into(),
-            ));
-        }
+        let (issued_at, tribute_count, nod_count, bucket_count) =
+            decode_generation_metadata(metadata, next_nod_ordinal, last_progress_height)?;
 
         Ok(Some(NodCertifiedGenerationProjection {
             worldwide_day,
@@ -610,4 +599,25 @@ impl<'storage> NodContract<'storage> {
             last_progress_height: projection.last_progress_height,
         }))
     }
+}
+
+fn decode_generation_metadata(
+    metadata: U256,
+    next_nod_ordinal: u32,
+    last_progress_height: u64,
+) -> outbe_primitives::error::Result<(u64, u32, u32, u32)> {
+    let issued_at = (metadata & U256::from(u64::MAX)).to::<u64>();
+    let tribute_count = ((metadata >> 64usize) & U256::from(u32::MAX)).to::<u32>();
+    let nod_count = ((metadata >> 96usize) & U256::from(u32::MAX)).to::<u32>();
+    let bucket_count = ((metadata >> 128usize) & U256::from(u32::MAX)).to::<u32>();
+    let counts_consistent = tribute_count != 0
+        && nod_count == tribute_count
+        && bucket_count <= nod_count
+        && next_nod_ordinal <= nod_count;
+    if issued_at == 0 || last_progress_height == 0 || !counts_consistent {
+        return Err(outbe_primitives::error::PrecompileError::Fatal(
+            "installed Nod OCOMP generation metadata is malformed".into(),
+        ));
+    }
+    Ok((issued_at, tribute_count, nod_count, bucket_count))
 }

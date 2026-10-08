@@ -74,6 +74,10 @@ use crate::{
     worker_transport::SupervisorWorkerServerV1,
 };
 
+mod assembly;
+mod compute;
+mod materialization;
+
 const CAS_MAX_OBJECT_BYTES: u64 = 1_048_576;
 const WORKER_INBOX_MAX_ARTIFACT_BYTES: u64 = 1_048_576;
 const WORKER_INBOX_MAX_TOTAL_BYTES: u64 = 67_108_864;
@@ -250,158 +254,19 @@ impl EmbeddedOcompDomainV1 {
         if config.policy == EmbeddedNodePolicyV1::FullNode && config.validator_rpc_url.is_some() {
             return Err(EmbeddedOcompRuntimeErrorV1::FullNodeVoteAuthority);
         }
-        let submission_gate = Arc::new(ValidatorOcompSubmissionGateV1::default());
+        let assembly = assembly::LaneAssembly {
+            config: &config,
+            layout: &layout,
+            cas_limits,
+            submission_gate: Arc::new(ValidatorOcompSubmissionGateV1::default()),
+        };
         let mut lanes = std::collections::BTreeMap::new();
-        let mut worker_addresses = std::collections::BTreeSet::new();
-        let mut expected_identity = None;
-        let mut expected_key_hash = None;
-        for bundle_config in config.bundles {
-            if !bundle_config.worker_address.ip().is_loopback()
-                || (bundle_config.worker_address.port() != 0
-                    && !worker_addresses.insert(bundle_config.worker_address))
-                || bundle_config.identity.protocol_bundle_hash
-                    != bundle_config.protocol_bundle.hash()
-            {
-                return Err(EmbeddedOcompRuntimeErrorV1::InvalidConfig);
-            }
-            let identity_pair = (
-                bundle_config.identity.chain_id,
-                bundle_config.identity.genesis_hash,
-            );
-            if expected_identity
-                .replace(identity_pair)
-                .is_some_and(|expected| expected != identity_pair)
-            {
-                return Err(EmbeddedOcompRuntimeErrorV1::InvalidConfig);
-            }
+        let mut identities = assembly::LaneIdentities::default();
+        for bundle_config in &config.bundles {
+            identities.check(bundle_config)?;
             let bundle_hash = bundle_config.protocol_bundle.hash();
-            let worker_server = SupervisorWorkerServerV1::start(
-                bundle_config.worker_address,
-                bundle_config.identity,
-                config.registry_generation,
-                config.limits,
-            )
-            .map_err(|error| stage("start Node-owned OCOMP Worker endpoint", error))?;
-            let runner = Arc::new(
-                SupervisorJobRunnerV1::open(
-                    SupervisorJobRunnerConfigV1 {
-                        cas_root: layout.cas_root.clone(),
-                        cas_limits,
-                        input_ref_root: layout.input_ref_root.clone(),
-                        job_root: layout.job_root.clone(),
-                        worker_inbox_root: layout
-                            .worker_inbox_root
-                            .join(hex::encode(bundle_hash.as_slice())),
-                        worker_inbox_limits: WorkerInboxLimits {
-                            max_artifact_bytes: WORKER_INBOX_MAX_ARTIFACT_BYTES,
-                            max_total_bytes: WORKER_INBOX_MAX_TOTAL_BYTES,
-                        },
-                        protocol_bundle: bundle_config.protocol_bundle.clone(),
-                        limits: config.limits,
-                    },
-                    worker_server.dispatcher(),
-                )
-                .map_err(|error| stage("open embedded OCOMP runner", error))?,
-            );
-            let adoption = SupervisorExportAdoptionConfig {
-                cas_root: layout.cas_root.clone(),
-                cas_limits,
-                input_ref_root: layout.input_ref_root.clone(),
-                receipt_root: layout.receipt_root.clone(),
-                binding_root: layout.binding_root.clone(),
-                protocol_bundle: bundle_config.protocol_bundle.clone(),
-                limits: config.limits,
-            };
-            let validator_ocomp = match config.policy {
-                EmbeddedNodePolicyV1::FullNode => None,
-                EmbeddedNodePolicyV1::Validator => {
-                    reconcile_finalized_materialization_references(
-                        &layout.materialization_submission_root,
-                        &layout.materialization_reference_root,
-                    )
-                    .map_err(|error| {
-                        stage("reconcile finalized NOD materialization references", error)
-                    })?;
-                    let rpc_url = config
-                        .validator_rpc_url
-                        .clone()
-                        .ok_or(EmbeddedOcompRuntimeErrorV1::MissingValidatorRpc)?;
-                    let owner_uid = effective_uid()
-                        .map_err(|error| stage("resolve Node effective uid", error))?;
-                    let evm_signer = outbe_primitives::signer::load::from_strict_file(
-                        &layout.evm_key_path,
-                        owner_uid,
-                    )
-                    .map_err(|error| stage("open Validator OCOMP EVM key", error))?;
-                    let result_signer = OcompSigner::from_file(&layout.result_key_path, owner_uid)
-                        .map_err(|error| stage("open Validator OCOMP result key", error))?;
-                    let sign_once = SignOnceStore::open(
-                        layout.sign_once_root.clone(),
-                        owner_uid,
-                        config.limits,
-                    )
-                    .map_err(|error| stage("open Validator OCOMP sign-once store", error))?;
-                    let attester = LocalResultVoteAttesterV1::new(
-                        bundle_config.identity,
-                        bundle_config.protocol_bundle.bundle().fork_id,
-                        result_signer,
-                        sign_once,
-                        config.limits,
-                    )
-                    .map_err(|error| stage("open Validator OCOMP result attester", error))?;
-                    let ocomp_key_hash = attester.ocomp_key_hash();
-                    if expected_key_hash
-                        .replace(ocomp_key_hash)
-                        .is_some_and(|expected| expected != ocomp_key_hash)
-                    {
-                        return Err(EmbeddedOcompRuntimeErrorV1::InvalidConfig);
-                    }
-                    let preparer = Arc::new(
-                        LocalVoteTransactionPreparerV1::new(
-                            evm_signer.clone(),
-                            attester,
-                            bundle_config.identity.chain_id,
-                            config.limits,
-                        )
-                        .map_err(|error| stage("open Validator OCOMP vote preparer", error))?,
-                    );
-                    Some(ValidatorOcompPolicyV1 {
-                        sender_address: preparer.sender_address(),
-                        preparer,
-                        materialization_signer: evm_signer,
-                        submission_gate: Arc::clone(&submission_gate),
-                        ocomp_key_hash,
-                        rpc_url,
-                        journal_root: layout.vote_submission_root.clone(),
-                        payout_journal_root: layout.payout_submission_root.clone(),
-                        materialization_reference_root: layout
-                            .materialization_reference_root
-                            .clone(),
-                        materialization_submission_root: layout
-                            .materialization_submission_root
-                            .clone(),
-                        cas_root: layout.cas_root.clone(),
-                        cas_limits,
-                        input_ref_root: layout.input_ref_root.clone(),
-                        job_root: layout.job_root.clone(),
-                        protocol_bundle: bundle_config.protocol_bundle.clone(),
-                        chain_id: bundle_config.identity.chain_id,
-                        limits: config.limits,
-                    })
-                }
-            };
-            if lanes
-                .insert(
-                    bundle_hash,
-                    EmbeddedOcompBundleLaneV1 {
-                        _worker_server: worker_server,
-                        runner,
-                        adoption,
-                        validator_ocomp,
-                    },
-                )
-                .is_some()
-            {
+            let lane = assembly.open(bundle_config, &mut identities.expected_key_hash)?;
+            if lanes.insert(bundle_hash, lane).is_some() {
                 return Err(EmbeddedOcompRuntimeErrorV1::InvalidConfig);
             }
         }
@@ -489,89 +354,22 @@ impl EmbeddedOcompDomainV1 {
                     name: "select pinned OCOMP bundle lane",
                     detail: format!("bundle {bundle_hash:#x} is not installed"),
                 })?;
-        let runner = Arc::clone(&lane.runner);
-        let adoption_config = lane.adoption.clone();
-        #[cfg(feature = "test-protocol-overrides")]
-        let local_result_mismatch_marker = self.local_result_mismatch_marker.clone();
-        #[cfg(feature = "test-protocol-overrides")]
-        let mismatch_limits = lane.adoption.limits;
         let job_id = record.spec.summary.job_id;
+        let job = compute::ComputeJob {
+            runner: Arc::clone(&lane.runner),
+            adoption_config: lane.adoption.clone(),
+            record,
+            generation,
+            cancelled,
+            sender,
+            #[cfg(feature = "test-protocol-overrides")]
+            local_result_mismatch_marker: self.local_result_mismatch_marker.clone(),
+            #[cfg(feature = "test-protocol-overrides")]
+            mismatch_limits: lane.adoption.limits,
+        };
         thread::Builder::new()
             .name(format!("ocomp-job-{}", short_job(job_id)))
-            .spawn(move || loop {
-                if cancelled.load(Ordering::Acquire) {
-                    return;
-                }
-                let adoption = match SupervisorExportAdoption::open(adoption_config.clone()) {
-                    Ok(adoption) => adoption,
-                    Err(error) => {
-                        let _ = sender.send(EmbeddedComputeOutcomeV1::Unrecoverable {
-                            job_id,
-                            generation,
-                            detail: error.to_string(),
-                        });
-                        return;
-                    }
-                };
-                match adoption.try_adopt(&record) {
-                    Ok(SupervisorExportAdoptionOutcome::Pending) => {
-                        thread::sleep(RETRY_INTERVAL);
-                    }
-                    Ok(SupervisorExportAdoptionOutcome::Adopted(binding)) => {
-                        match runner.run_to_result(&record, &binding, &cancelled) {
-                            Ok(completed) => {
-                                #[cfg(feature = "test-protocol-overrides")]
-                                let completed = match inject_local_result_mismatch_once(
-                                    &local_result_mismatch_marker,
-                                    completed.job_id,
-                                    &completed.canonical_result,
-                                    &mismatch_limits,
-                                ) {
-                                    Ok(canonical_result) => CompletedSupervisorJobV1 {
-                                        canonical_result,
-                                        ..completed
-                                    },
-                                    Err(error) => {
-                                        let _ =
-                                            sender.send(EmbeddedComputeOutcomeV1::Unrecoverable {
-                                                job_id,
-                                                generation,
-                                                detail: error.to_string(),
-                                            });
-                                        return;
-                                    }
-                                };
-                                let _ = sender.send(EmbeddedComputeOutcomeV1::Completed {
-                                    generation,
-                                    completed,
-                                });
-                                return;
-                            }
-                            Err(error)
-                                if error.class() == SupervisorJobFailureClassV1::Retryable =>
-                            {
-                                thread::sleep(RETRY_INTERVAL);
-                            }
-                            Err(error) => {
-                                let _ = sender.send(EmbeddedComputeOutcomeV1::Unrecoverable {
-                                    job_id,
-                                    generation,
-                                    detail: error.to_string(),
-                                });
-                                return;
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        let _ = sender.send(EmbeddedComputeOutcomeV1::Unrecoverable {
-                            job_id,
-                            generation,
-                            detail: error.to_string(),
-                        });
-                        return;
-                    }
-                }
-            })
+            .spawn(move || job.run())
             .map_err(|error| stage("spawn embedded OCOMP compute thread", error))?;
         Ok(())
     }
@@ -792,6 +590,23 @@ impl EmbeddedOcompDomainV1 {
             .materialization_submission_root
             .join(hex::encode(job_id.as_slice()))
             .join(first_nod_ordinal.to_string());
+        let job = materialization::MaterializationJob {
+            submission_gate,
+            rpc_url,
+            signer,
+            sender_address,
+            chain_id,
+            limits,
+            cas_root,
+            cas_limits,
+            input_ref_root,
+            job_root,
+            bundle,
+            reference_root,
+            submission_root,
+            head,
+            batch_subtree_height,
+        };
         #[cfg(any(test, feature = "test-utils"))]
         let enclave_context = outbe_tee::nod_materialization::test_support::capture();
         #[cfg(any(test, feature = "test-utils"))]
@@ -803,104 +618,7 @@ impl EmbeddedOcompDomainV1 {
                 let _enclave_scope = enclave_context.install();
                 #[cfg(any(test, feature = "test-utils"))]
                 let _tribute_scope = tribute_context.install();
-                let run = || -> Result<bool, EmbeddedOcompRuntimeErrorV1> {
-                    let _submission_permit = submission_gate.acquire()?;
-                    let reader = FilesystemCasReader::open(&cas_root, cas_limits)
-                        .map_err(|error| stage("open NOD materialization CAS", error))?;
-                    let job_component = hex::encode(job_id.as_slice());
-                    let input_refs = VerifiedInputChunkRefCatalog::reopen(
-                        input_ref_root.join(&job_component),
-                        &reader,
-                        limits,
-                        poc_input_list_limits(),
-                    )
-                    .map_err(|error| stage("open NOD materialization inputs", error))?;
-                    let admissions = VerifiedAdmissionCatalog::reopen(
-                        job_root.join(&job_component).join("admissions"),
-                        &reader,
-                        limits,
-                    )
-                    .map_err(|error| stage("open NOD materialization admissions", error))?;
-                    let audit = LocalLysisPlanAuditV1::open(
-                        &admissions,
-                        &input_refs,
-                        &reader,
-                        &bundle,
-                        &limits,
-                    )
-                    .map_err(|error| stage("audit NOD materialization plan", error))?;
-                    let mut built = build_nod_materialization_batch_with_references(
-                        &audit,
-                        &head,
-                        batch_subtree_height,
-                    )
-                    .map_err(|error| stage("build NOD materialization batch", error))?;
-                    let inventory_root = input_ref_root
-                        .join(".work")
-                        .join(&job_component)
-                        .join("inventory");
-                    let (sources, source_references) =
-                        materialization_sources(&audit, &input_refs, &built, &inventory_root)
-                            .map_err(|error| stage("authenticate NOD encryption sources", error))?;
-                    built.dependencies.extend(source_references);
-                    crate::nod_materialization::normalize_dependencies(&mut built.dependencies)
-                        .map_err(|error| {
-                            stage("normalize NOD materialization references", error)
-                        })?;
-                    let references = MaterializationReferenceStoreV1::open(&reference_root)
-                        .map_err(|error| stage("open NOD materialization references", error))?;
-                    references
-                        .pin_exact(job_id, &built.dependencies)
-                        .map_err(|error| stage("pin NOD materialization references", error))?;
-                    let preparation =
-                        PreparedNodMaterializationStoreV2::open(&submission_root, limits)
-                            .map_err(|error| stage("open encrypted NOD preparation", error))?;
-                    let protected = prepare_protected_materialization(
-                        outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
-                            chain_id,
-                            head: head
-                                .encode_canonical(&limits)
-                                .map_err(|error| stage("encode NOD generation authority", error))?,
-                            subtree_height: batch_subtree_height,
-                            sealed_tribute_root: audit.manifest().sealed_tribute_collection_root,
-                        },
-                        &head,
-                        &built,
-                        sources,
-                        &preparation,
-                    )
-                    .map_err(|error| stage("prepare encrypted NOD materialization", error))?;
-                    let rpc = PublicVoteRpcClientV1::new(rpc_url, RPC_MAX_RESPONSE_BYTES)
-                        .map_err(|error| stage("open NOD materialization RPC", error))?;
-                    let mut submitter = NodMaterializationSubmitterV1::open(
-                        NodMaterializationSubmissionConfigV1 {
-                            journal_root: submission_root,
-                            expected_chain_id: chain_id,
-                            sender_address,
-                            limits,
-                        },
-                        rpc,
-                        signer,
-                    )
-                    .map_err(|error| stage("open NOD materialization submitter", error))?;
-                    loop {
-                        match submitter.reconcile(job_id, &protected) {
-                            Ok(NodMaterializationSubmissionOutcomeV1::Pending) => {
-                                thread::sleep(RETRY_INTERVAL);
-                            }
-                            Ok(NodMaterializationSubmissionOutcomeV1::Finalized { success }) => {
-                                references.release(job_id).map_err(|error| {
-                                    stage("release NOD materialization references", error)
-                                })?;
-                                return Ok(success);
-                            }
-                            Err(_error) => {
-                                thread::sleep(RETRY_INTERVAL);
-                            }
-                        }
-                    }
-                };
-                let outcome = match run() {
+                let outcome = match job.run() {
                     Ok(success) => EmbeddedMaterializationOutcomeV1::Finalized {
                         job_id,
                         queue_sequence,

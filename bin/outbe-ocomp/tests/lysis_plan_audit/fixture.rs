@@ -26,7 +26,7 @@ impl FixtureSetup {
         let tribute_count = options.tribute_count;
         let result_fault = options.result_fault;
         let limits = poc_schema_limits();
-        let bundle = support::protocol_bundle();
+        let bundle = fixture_support::protocol_bundle_fixture();
         let bundle_hash = bundle.protocol_bundle_hash(&limits).unwrap();
         let pinned_bundle = PinnedProtocolBundle::decode(
             &bundle.encode_canonical(&limits).unwrap(),
@@ -372,27 +372,13 @@ impl ResultFixture<'_> {
             } else {
                 coverage_root
             };
-        let artifact = UnitArtifactV1::from_canonical_output(
+        let artifact = fixture_support::root_leaf_artifact(
             spec,
-            WorkOutputHeaderV1 {
-                source_coverage_root: coverage_root,
-                output_coverage_root,
-                source_coverage_count: 1,
-                output_coverage_count: 1,
-            },
-            BoundedBytes(
-                encode_root_reduce_output(
-                    &RootReduceOutputV1::Leaf {
-                        summary,
-                        output_manifest_entry: entry.clone(),
-                    },
-                    &limits,
-                )
-                .unwrap(),
-            ),
+            summary,
+            &entry,
+            output_coverage_root,
             &limits,
-        )
-        .unwrap();
+        );
         RootLeafFixture {
             artifact,
             entry,

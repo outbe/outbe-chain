@@ -39,30 +39,14 @@ pub fn dispatch(
     _caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    let ExecutionReaders { scope, parent } = readers;
     outbe_primitives::dispatch::reject_value(&value)?;
     dispatch_call(data, INod::INodCalls::abi_decode, |call| {
         let nod = NodContract::new(storage.clone());
         use INod::INodCalls::*;
         match call {
-            supportsInterface(c) => {
-                view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0)))
+            call @ (supportsInterface(_) | name(_) | symbol(_) | totalSupply(_)) => {
+                dispatch_metadata(&nod, call)
             }
-            name(_) => metadata::<INod::nameCall>(|| Ok(NodContract::name().to_string())),
-            symbol(_) => metadata::<INod::symbolCall>(|| Ok(NodContract::symbol().to_string())),
-            totalSupply(_) => {
-                metadata::<INod::totalSupplyCall>(|| nod.total_supply().map(U256::from))
-            }
-            balanceOf(c) => view(c, |c| {
-                let count = api::list_by_owner(&storage, scope, parent, c.owner)?.len();
-                Ok(U256::from(count))
-            }),
-            ownerOf(c) => view(c, |c| {
-                let nod_id = WwdEntityId::from(c.nodId);
-                Ok(api::get_item(&storage, scope, parent, nod_id)?
-                    .ok_or(NodError::NodNotFound)?
-                    .owner)
-            }),
             transferFrom(_)
             | safeTransferFrom_0(_)
             | safeTransferFrom_1(_)
@@ -70,50 +54,89 @@ pub fn dispatch(
             | setApprovalForAll(_) => Err(NodError::NonTransferable.into()),
             getApproved(c) => view(c, |_| Ok(Address::ZERO)),
             isApprovedForAll(c) => view(c, |_| Ok(false)),
-            tokenURI(c) => view(c, |c| {
-                let nod_id = WwdEntityId::from(c.nodId);
-                let item =
-                    api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;
-                let bucket_id =
-                    WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
-                let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
-                    .ok_or(NodError::BucketNotFound)?;
-                let qualified = api::is_qualified(&storage, &bucket)?;
-                crate::metadata::token_uri(&nod, &item, &bucket, qualified, storage.timestamp()?)
-            }),
-            tokenByIndex(c) => view(c, |c| {
-                let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-                api::list_all(&storage, scope, parent)?
-                    .get(idx)
-                    .map(|item| item.nod_id.to_u256())
-                    .ok_or_else(|| NodError::IndexOutOfBounds.into())
-            }),
-            tokenOfOwnerByIndex(c) => view(c, |c| {
-                let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-                api::list_by_owner(&storage, scope, parent, c.owner)?
-                    .get(idx)
-                    .map(|item| item.nod_id.to_u256())
-                    .ok_or_else(|| NodError::IndexOutOfBounds.into())
-            }),
-            nodData(c) => view(c, |c| {
-                let nod_id = WwdEntityId::from(c.nodId);
-                let item =
-                    api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;
-                let bucket_id =
-                    WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
-                let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
-                    .ok_or(NodError::BucketNotFound)?;
-                to_abi_data(&storage, &item, &bucket)
-            }),
-            certifiedGeneration(c) => view(c, |c| {
-                let worldwide_day = WorldwideDay::new(c.worldwideDay);
-                Ok(to_abi_certified_generation(
-                    worldwide_day,
-                    nod.ocomp_certified_generation(worldwide_day)?,
-                ))
-            }),
+            call @ (balanceOf(_)
+            | ownerOf(_)
+            | tokenURI(_)
+            | tokenByIndex(_)
+            | tokenOfOwnerByIndex(_)
+            | nodData(_)
+            | certifiedGeneration(_)) => dispatch_entity(storage, readers, &nod, call),
         }
     })
+}
+
+fn dispatch_metadata(nod: &NodContract<'_>, call: INod::INodCalls) -> Result<Bytes> {
+    use INod::INodCalls::*;
+    match call {
+        supportsInterface(c) => view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0))),
+        name(_) => metadata::<INod::nameCall>(|| Ok(NodContract::name().to_string())),
+        symbol(_) => metadata::<INod::symbolCall>(|| Ok(NodContract::symbol().to_string())),
+        totalSupply(_) => metadata::<INod::totalSupplyCall>(|| nod.total_supply().map(U256::from)),
+        _ => unreachable!("metadata route requires a metadata call"),
+    }
+}
+
+fn dispatch_entity(
+    storage: outbe_primitives::storage::StorageHandle<'_>,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
+    nod: &NodContract<'_>,
+    call: INod::INodCalls,
+) -> Result<Bytes> {
+    let ExecutionReaders { scope, parent } = readers;
+    use INod::INodCalls::*;
+    match call {
+        balanceOf(c) => view(c, |c| {
+            let count = api::list_by_owner(&storage, scope, parent, c.owner)?.len();
+            Ok(U256::from(count))
+        }),
+        ownerOf(c) => view(c, |c| {
+            let nod_id = WwdEntityId::from(c.nodId);
+            Ok(api::get_item(&storage, scope, parent, nod_id)?
+                .ok_or(NodError::NodNotFound)?
+                .owner)
+        }),
+        tokenURI(c) => view(c, |c| {
+            let nod_id = WwdEntityId::from(c.nodId);
+            let item =
+                api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;
+            let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
+            let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
+                .ok_or(NodError::BucketNotFound)?;
+            let qualified = api::is_qualified(&storage, &bucket)?;
+            crate::metadata::token_uri(nod, &item, &bucket, qualified, storage.timestamp()?)
+        }),
+        tokenByIndex(c) => view(c, |c| {
+            let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
+            api::list_all(&storage, scope, parent)?
+                .get(idx)
+                .map(|item| item.nod_id.to_u256())
+                .ok_or_else(|| NodError::IndexOutOfBounds.into())
+        }),
+        tokenOfOwnerByIndex(c) => view(c, |c| {
+            let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
+            api::list_by_owner(&storage, scope, parent, c.owner)?
+                .get(idx)
+                .map(|item| item.nod_id.to_u256())
+                .ok_or_else(|| NodError::IndexOutOfBounds.into())
+        }),
+        nodData(c) => view(c, |c| {
+            let nod_id = WwdEntityId::from(c.nodId);
+            let item =
+                api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;
+            let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
+            let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
+                .ok_or(NodError::BucketNotFound)?;
+            to_abi_data(&storage, &item, &bucket)
+        }),
+        certifiedGeneration(c) => view(c, |c| {
+            let worldwide_day = WorldwideDay::new(c.worldwideDay);
+            Ok(to_abi_certified_generation(
+                worldwide_day,
+                nod.ocomp_certified_generation(worldwide_day)?,
+            ))
+        }),
+        _ => unreachable!("entity route requires an entity call"),
+    }
 }
 
 fn to_abi_data(

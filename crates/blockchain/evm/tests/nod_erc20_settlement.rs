@@ -170,7 +170,15 @@ impl World {
             nod,
             cost,
         };
-        let quote = world.view(
+        world.fund_settlement();
+        world
+    }
+
+    fn fund_settlement(&mut self) {
+        let owner = self.owner;
+        let nod = self.nod;
+        let cost = self.cost;
+        let quote = self.view(
             NOD_FACTORY_ADDRESS,
             INodFactory::quoteSettlementCall {
                 nodId: nod.to_u256(),
@@ -180,7 +188,7 @@ impl World {
         assert_eq!(quote.settlementCurrency, 840);
         assert_eq!(quote.paymentMinor, cost);
         assert_eq!(quote.snapshotId, U256::ZERO);
-        world.ok(
+        self.ok(
             owner,
             ASSET,
             IFixture::mintCall {
@@ -189,7 +197,7 @@ impl World {
             },
         );
         // Existing factory funds must never subsidize a failed or partial payment.
-        world.ok(
+        self.ok(
             owner,
             ASSET,
             IFixture::mintCall {
@@ -197,7 +205,7 @@ impl World {
                 amount: U256::from(17),
             },
         );
-        world.ok(
+        self.ok(
             owner,
             ASSET,
             IFixture::approveCall {
@@ -205,7 +213,7 @@ impl World {
                 amount: cost,
             },
         );
-        world.ok(
+        self.ok(
             VAULT_ROUTER_ADDRESS,
             ASSET,
             IFixture::approveCall {
@@ -213,7 +221,6 @@ impl World {
                 amount: U256::MAX,
             },
         );
-        world
     }
 
     fn call(

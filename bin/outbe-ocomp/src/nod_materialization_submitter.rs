@@ -321,11 +321,19 @@ impl<R: VoteSubmissionRpcV1> NodMaterializationSubmitterV1<R> {
         batch: &ProtectedNodMaterializationV2,
         batch_digest: B256,
     ) -> Result<(), NodMaterializationSubmissionErrorV1> {
+        let same_batch = (
+            record.job_id,
+            record.queue_sequence,
+            record.first_nod_ordinal,
+            record.batch_digest,
+        ) == (
+            job_id,
+            batch.queue_sequence,
+            batch.first_nod_ordinal,
+            batch_digest,
+        );
         if record.version != RECORD_VERSION
-            || record.job_id != job_id
-            || record.queue_sequence != batch.queue_sequence
-            || record.first_nod_ordinal != batch.first_nod_ordinal
-            || record.batch_digest != batch_digest
+            || !same_batch
             || record.sender != self.config.sender_address
         {
             return Err(NodMaterializationSubmissionErrorV1::ConflictingReplay);

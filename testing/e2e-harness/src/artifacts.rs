@@ -283,36 +283,7 @@ fn build_commands(lane: BuildLane, jobs: usize) -> Vec<Vec<String>> {
         "outbe-keygen",
     ]));
 
-    let mut enclave = strings(&[
-        "build",
-        "--locked",
-        "--release",
-        "-j",
-        &jobs,
-        "-p",
-        "outbe-tee-enclave",
-    ]);
-    match lane {
-        BuildLane::Mock | BuildLane::MockNative => enclave.extend(strings(&[
-            "--features",
-            "mock,e2e-test",
-            "--bin",
-            "outbe-tee-enclave-mock",
-        ])),
-        BuildLane::Dcap => enclave.extend(strings(&[
-            "--features",
-            "production-dcap-release,e2e-test",
-            "--bin",
-            "outbe-tee-enclave",
-        ])),
-        _ => enclave.extend(strings(&[
-            "--features",
-            "e2e-test",
-            "--bin",
-            "outbe-tee-enclave",
-        ])),
-    }
-    commands.push(enclave);
+    commands.push(enclave_build_command(lane, &jobs));
 
     if matches!(
         lane,
@@ -350,6 +321,39 @@ fn build_commands(lane: BuildLane, jobs: usize) -> Vec<Vec<String>> {
         "outbe-e2e",
     ]));
     commands
+}
+
+fn enclave_build_command(lane: BuildLane, jobs: &str) -> Vec<String> {
+    let mut enclave = strings(&[
+        "build",
+        "--locked",
+        "--release",
+        "-j",
+        jobs,
+        "-p",
+        "outbe-tee-enclave",
+    ]);
+    match lane {
+        BuildLane::Mock | BuildLane::MockNative => enclave.extend(strings(&[
+            "--features",
+            "mock,e2e-test",
+            "--bin",
+            "outbe-tee-enclave-mock",
+        ])),
+        BuildLane::Dcap => enclave.extend(strings(&[
+            "--features",
+            "production-dcap-release,e2e-test",
+            "--bin",
+            "outbe-tee-enclave",
+        ])),
+        _ => enclave.extend(strings(&[
+            "--features",
+            "e2e-test",
+            "--bin",
+            "outbe-tee-enclave",
+        ])),
+    }
+    enclave
 }
 
 fn run_cargo(repo: &Path, arguments: &[String]) -> Result<()> {

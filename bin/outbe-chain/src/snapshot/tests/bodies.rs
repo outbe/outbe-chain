@@ -59,6 +59,141 @@ struct Fixture {
     bucket_id: WwdEntityId,
 }
 
+fn populate_bodies(projection: &Arc<RocksDbStorage>) -> (Vec<FinalLeafMutation>, WwdEntityId) {
+    let tribute_writer = TributeRepositoryWriter::new(projection.clone(), projection.clone());
+    let nod_writer = NodRepositoryWriter::new(projection.clone(), projection.clone());
+    let mut bodies = Vec::new();
+    for seed in [1, 2] {
+        let body = tribute(seed);
+        tribute_writer.put(&body).unwrap();
+        let stored = StoredBody::new_v1(
+            outbe_compressed_entities::encode_tribute_v1(&outbe_tribute::canonical_body(&body))
+                .unwrap(),
+        )
+        .unwrap();
+        bodies.push((EntityRef::Tribute(body.tribute_id), body.tribute_id, stored));
+    }
+    let day = WorldwideDay::new(20260905);
+    let item = outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: WwdEntityId::from_day_and_digest(day, [3; 32]),
+            owner: Address::repeat_byte(3),
+            gratis_load_minor: U256::from(1),
+            worldwide_day: day,
+            league_id: 7,
+            bucket_key: B256::repeat_byte(4),
+            issuance_currency: 840,
+            reference_currency: 978,
+            issued_at: 123,
+        },
+        U256::from(3),
+    );
+    nod_writer.put_nod(&item).unwrap();
+    bodies.push((
+        EntityRef::NodItem(item.nod_id),
+        item.nod_id,
+        StoredBody::new(
+            outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+            outbe_compressed_entities::encode_nod_item_v2(&outbe_nod::canonical_item(&item))
+                .unwrap(),
+        )
+        .unwrap(),
+    ));
+    let bucket = NodBucketState {
+        settled_nods: 0,
+        bucket_key: item.bucket_key,
+        worldwide_day: day,
+        entry_price_minor: U256::from(3),
+        reference_currency: 978,
+    };
+    nod_writer.put_bucket(&bucket).unwrap();
+    let canonical = outbe_nod::canonical_bucket(&bucket);
+    let bucket_id = canonical.entity_id();
+    bodies.push((
+        EntityRef::NodBucket(bucket_id),
+        bucket_id,
+        StoredBody::new_v1(outbe_compressed_entities::encode_nod_bucket_v1(&canonical).unwrap())
+            .unwrap(),
+    ));
+    retain_historical_body(projection, &tribute_writer);
+    let mutations: Vec<_> = bodies
+        .into_iter()
+        .map(|(entity, id, stored)| FinalLeafMutation {
+            entity,
+            final_leaf: Some(
+                body_commitment(
+                    ACTIVE_COMMITMENT_SCHEME,
+                    stored.schema_version(),
+                    id,
+                    stored.payload(),
+                )
+                .unwrap(),
+            ),
+        })
+        .collect();
+    (mutations, bucket_id)
+}
+
+fn retain_historical_body(
+    projection: &Arc<RocksDbStorage>,
+    tribute_writer: &TributeRepositoryWriter,
+) {
+    // A valid historical retained body is intentionally outside the live CE population.
+    let old = tribute(0);
+    tribute_writer.put(&old).unwrap();
+    let retained = RetainedTributeReader::new(projection.clone());
+    projection
+        .apply_atomic(
+            &retained
+                .plan_retain_current(
+                    RetainedTributePin {
+                        input_lease_id: B256::repeat_byte(9),
+                        worldwide_day: old.worldwide_day,
+                    },
+                    old.tribute_id,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+    tribute_writer.delete(old.tribute_id).unwrap();
+}
+
+fn seal_bodies(
+    ce: &Arc<CeMdbx>,
+    genesis: &FinalizedMarker,
+    mutations: Vec<FinalLeafMutation>,
+) -> OutbeHeader {
+    let genesis_hash = genesis.block_hash;
+    let parent = MdbxAuthenticatedTree::open(
+        ce.clone(),
+        ExactParentIdentity {
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            block_number: 0,
+            block_hash: genesis_hash,
+            root: genesis.new_root,
+        },
+    )
+    .unwrap();
+    let prepared = parent.prepare_seal(1, &mutations, &[]).unwrap();
+    let header = OutbeHeader::new(Header {
+        number: 1,
+        parent_hash: genesis_hash,
+        extra_data: encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+            compressed_entities_root: Some(CompressedEntitiesRootArtifact {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                r_sealed: prepared.new_root(),
+            }),
+            ..Default::default()
+        })
+        .unwrap(),
+        ..Default::default()
+    });
+    ce.apply_finalized(&prepared.freeze(header.hash_slow()))
+        .unwrap();
+    header
+}
+
 impl Fixture {
     fn new(populated: bool) -> Self {
         let source = tempfile::tempdir().unwrap();
@@ -113,128 +248,9 @@ impl Fixture {
         let mut header = layout.chain.genesis_header().clone();
         let mut bucket_id = WwdEntityId::ZERO;
         if populated {
-            let tribute_writer =
-                TributeRepositoryWriter::new(projection.clone(), projection.clone());
-            let nod_writer = NodRepositoryWriter::new(projection.clone(), projection.clone());
-            let mut bodies = Vec::new();
-            for seed in [1, 2] {
-                let body = tribute(seed);
-                tribute_writer.put(&body).unwrap();
-                let stored = StoredBody::new_v1(
-                    outbe_compressed_entities::encode_tribute_v1(&outbe_tribute::canonical_body(
-                        &body,
-                    ))
-                    .unwrap(),
-                )
-                .unwrap();
-                bodies.push((EntityRef::Tribute(body.tribute_id), body.tribute_id, stored));
-            }
-            let day = WorldwideDay::new(20260905);
-            let item = outbe_nod::test_support::item(
-                outbe_nod::test_support::NodItemFixture {
-                    is_settled: false,
-                    nod_id: WwdEntityId::from_day_and_digest(day, [3; 32]),
-                    owner: Address::repeat_byte(3),
-                    gratis_load_minor: U256::from(1),
-                    worldwide_day: day,
-                    league_id: 7,
-                    bucket_key: B256::repeat_byte(4),
-                    issuance_currency: 840,
-                    reference_currency: 978,
-                    issued_at: 123,
-                },
-                U256::from(3),
-            );
-            nod_writer.put_nod(&item).unwrap();
-            bodies.push((
-                EntityRef::NodItem(item.nod_id),
-                item.nod_id,
-                StoredBody::new(
-                    outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
-                    outbe_compressed_entities::encode_nod_item_v2(&outbe_nod::canonical_item(
-                        &item,
-                    ))
-                    .unwrap(),
-                )
-                .unwrap(),
-            ));
-            let bucket = NodBucketState {
-                settled_nods: 0,
-                bucket_key: item.bucket_key,
-                worldwide_day: day,
-                entry_price_minor: U256::from(3),
-                reference_currency: 978,
-            };
-            nod_writer.put_bucket(&bucket).unwrap();
-            let canonical = outbe_nod::canonical_bucket(&bucket);
-            bucket_id = canonical.entity_id();
-            bodies.push((
-                EntityRef::NodBucket(bucket_id),
-                bucket_id,
-                StoredBody::new_v1(
-                    outbe_compressed_entities::encode_nod_bucket_v1(&canonical).unwrap(),
-                )
-                .unwrap(),
-            ));
-            // A valid historical retained body is intentionally outside the live CE population.
-            let old = tribute(0);
-            tribute_writer.put(&old).unwrap();
-            let retained = RetainedTributeReader::new(projection.clone());
-            projection
-                .apply_atomic(
-                    &retained
-                        .plan_retain_current(
-                            RetainedTributePin {
-                                input_lease_id: B256::repeat_byte(9),
-                                worldwide_day: old.worldwide_day,
-                            },
-                            old.tribute_id,
-                        )
-                        .unwrap(),
-                )
-                .unwrap();
-            tribute_writer.delete(old.tribute_id).unwrap();
-            let mutations: Vec<_> = bodies
-                .into_iter()
-                .map(|(entity, id, stored)| FinalLeafMutation {
-                    entity,
-                    final_leaf: Some(
-                        body_commitment(
-                            ACTIVE_COMMITMENT_SCHEME,
-                            stored.schema_version(),
-                            id,
-                            stored.payload(),
-                        )
-                        .unwrap(),
-                    ),
-                })
-                .collect();
-            let parent = MdbxAuthenticatedTree::open(
-                ce.clone(),
-                ExactParentIdentity {
-                    commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                    block_number: 0,
-                    block_hash: genesis_hash,
-                    root: genesis.new_root,
-                },
-            )
-            .unwrap();
-            let prepared = parent.prepare_seal(1, &mutations, &[]).unwrap();
-            header = OutbeHeader::new(Header {
-                number: 1,
-                parent_hash: genesis_hash,
-                extra_data: encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-                    compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                        r_sealed: prepared.new_root(),
-                    }),
-                    ..Default::default()
-                })
-                .unwrap(),
-                ..Default::default()
-            });
-            ce.apply_finalized(&prepared.freeze(header.hash_slow()))
-                .unwrap();
+            let (mutations, populated_bucket) = populate_bodies(&projection);
+            bucket_id = populated_bucket;
+            header = seal_bodies(&ce, &genesis, mutations);
         }
         write_state(
             &projection,

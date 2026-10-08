@@ -51,17 +51,26 @@ const POSEIDON_CALLER: Address = Address::new([0xA7; 20]);
 
 #[derive(Debug)]
 struct StaticAuthenticatedParent {
+    snapshot: StaticParentSnapshot,
+}
+
+#[derive(Debug)]
+struct StaticParentSnapshot {
+    block_hash: B256,
+    root: B256,
+    provisional_base_root: B256,
     entity: EntityRef,
     commitment: Commitment,
+    partition_present: bool,
 }
 
 impl AuthenticatedParentTree for StaticAuthenticatedParent {
     fn parent_block_hash(&self) -> B256 {
-        B256::ZERO
+        self.snapshot.block_hash
     }
 
     fn parent_root(&self) -> B256 {
-        outbe_compressed_entities::sealed_root(B256::ZERO).unwrap()
+        self.snapshot.root
     }
 
     fn read_leaf_verified(
@@ -69,11 +78,8 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
         entity: EntityRef,
         expected_parent_root: B256,
     ) -> outbe_primitives::error::Result<Option<Commitment>> {
-        assert_eq!(
-            expected_parent_root,
-            outbe_compressed_entities::sealed_root(B256::ZERO).unwrap()
-        );
-        Ok((entity == self.entity).then_some(self.commitment))
+        assert_eq!(expected_parent_root, self.snapshot.root);
+        Ok((entity == self.snapshot.entity).then_some(self.snapshot.commitment))
     }
 
     fn partition_present_verified(
@@ -81,7 +87,7 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
         _partition: PartitionRef,
         _expected_parent_root: B256,
     ) -> outbe_primitives::error::Result<bool> {
-        Ok(false)
+        Ok(self.snapshot.partition_present)
     }
 
     fn prepare_seal(
@@ -90,8 +96,12 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
         _mutations: &[FinalLeafMutation],
         _retirements: &[PartitionRef],
     ) -> outbe_primitives::error::Result<ProvisionalTreeBatch> {
-        ProvisionalTreeBatch::new_identity(block_number, B256::ZERO, B256::ZERO)
-            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
+        ProvisionalTreeBatch::new_identity(
+            block_number,
+            self.snapshot.block_hash,
+            self.snapshot.provisional_base_root,
+        )
+        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
     }
 }
 
@@ -295,8 +305,14 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     let mut database = CacheDB::new(EmptyDB::default());
     let scope = Arc::new(ExecutionScope::with_parent_tree(
         Arc::new(StaticAuthenticatedParent {
-            entity: EntityRef::NodItem(nod_id),
-            commitment,
+            snapshot: StaticParentSnapshot {
+                block_hash: B256::ZERO,
+                root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                provisional_base_root: B256::ZERO,
+                entity: EntityRef::NodItem(nod_id),
+                commitment,
+                partition_present: false,
+            },
         }),
         CeWorkConfig::new(0, 0, u64::MAX),
     ));

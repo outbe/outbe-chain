@@ -29,12 +29,14 @@ pub fn serve(
             // PoC: surface to stderr. One bad client must not kill the enclave.
             if let Err(err) = serve_connection_with_resident_chain(
                 stream,
-                &keys,
-                &offer_key,
-                boot.as_deref(),
-                &initialization,
-                chain_id,
-                crate::gramine::dcap_quote,
+                ConnectionContext {
+                    keys: &keys,
+                    offer_key: &offer_key,
+                    boot: boot.as_deref(),
+                    initialization: &initialization,
+                    chain_id,
+                    quote_generator: crate::gramine::dcap_quote,
+                },
             ) {
                 eprintln!("tee enclave: connection error: {err}");
             }
@@ -68,12 +70,14 @@ pub fn serve_tcp(
         std::thread::spawn(move || {
             if let Err(err) = serve_connection_with_resident_chain(
                 stream,
-                &keys,
-                &offer_key,
-                boot.as_deref(),
-                &initialization,
-                chain_id,
-                crate::gramine::dcap_quote,
+                ConnectionContext {
+                    keys: &keys,
+                    offer_key: &offer_key,
+                    boot: boot.as_deref(),
+                    initialization: &initialization,
+                    chain_id,
+                    quote_generator: crate::gramine::dcap_quote,
+                },
             ) {
                 eprintln!("tee enclave: connection error: {err}");
             }

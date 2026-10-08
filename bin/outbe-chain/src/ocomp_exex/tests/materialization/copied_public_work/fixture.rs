@@ -359,27 +359,13 @@ impl FixtureResults {
         let coverage_root = summary.result_chunk_hashes.tree_root;
         let output_coverage_root = coverage_root;
         (
-            UnitArtifactV1::from_canonical_output(
+            fixture_support::root_leaf_artifact(
                 spec,
-                WorkOutputHeaderV1 {
-                    source_coverage_root: coverage_root,
-                    output_coverage_root,
-                    source_coverage_count: 1,
-                    output_coverage_count: 1,
-                },
-                BoundedBytes(
-                    encode_root_reduce_output(
-                        &RootReduceOutputV1::Leaf {
-                            summary,
-                            output_manifest_entry: entry.clone(),
-                        },
-                        &limits,
-                    )
-                    .unwrap(),
-                ),
+                summary,
+                &entry,
+                output_coverage_root,
                 &limits,
-            )
-            .unwrap(),
+            ),
             Some(entry),
         )
     }

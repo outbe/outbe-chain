@@ -87,9 +87,20 @@ pub(super) fn decode_event(
     source: ProjectionSource,
     data: &LogData,
 ) -> Result<Option<ProjectionEvent>, ProjectionError> {
-    let decoded = if source.emitter == TRIBUTE_ADDRESS
-        && source.event_signature == ITribute::TributeBodyStored::SIGNATURE_HASH
-    {
+    if source.emitter == TRIBUTE_ADDRESS {
+        return decode_tribute_event(source, data);
+    }
+    if source.emitter == NOD_ADDRESS {
+        return decode_nod_event(source, data);
+    }
+    Ok(None)
+}
+
+fn decode_tribute_event(
+    source: ProjectionSource,
+    data: &LogData,
+) -> Result<Option<ProjectionEvent>, ProjectionError> {
+    let decoded = if source.event_signature == ITribute::TributeBodyStored::SIGNATURE_HASH {
         let event = ITribute::TributeBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
@@ -125,9 +136,7 @@ pub(super) fn decode_event(
             stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
             previous_commitment: event.previousCommitment,
         })
-    } else if source.emitter == TRIBUTE_ADDRESS
-        && source.event_signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH
-    {
+    } else if source.event_signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH {
         let event = ITribute::TributeBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
@@ -135,17 +144,23 @@ pub(super) fn decode_event(
             tribute_id: WwdEntityId::from(event.tributeId),
             previous_commitment: event.previousCommitment,
         })
-    } else if source.emitter == TRIBUTE_ADDRESS
-        && source.event_signature == ITribute::TributePartitionRetired::SIGNATURE_HASH
-    {
+    } else if source.event_signature == ITribute::TributePartitionRetired::SIGNATURE_HASH {
         let event = ITribute::TributePartitionRetired::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         Some(ProjectionEvent::TributePartitionRetired {
             worldwide_day: event.worldwideDay.into(),
         })
-    } else if source.emitter == NOD_ADDRESS
-        && source.event_signature == INod::NodBodyStored::SIGNATURE_HASH
-    {
+    } else {
+        None
+    };
+    Ok(decoded)
+}
+
+fn decode_nod_event(
+    source: ProjectionSource,
+    data: &LogData,
+) -> Result<Option<ProjectionEvent>, ProjectionError> {
+    let decoded = if source.event_signature == INod::NodBodyStored::SIGNATURE_HASH {
         let event = INod::NodBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
@@ -178,9 +193,7 @@ pub(super) fn decode_event(
             stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
             previous_commitment: event.previousCommitment,
         })
-    } else if source.emitter == NOD_ADDRESS
-        && source.event_signature == INod::NodBodyDeleted::SIGNATURE_HASH
-    {
+    } else if source.event_signature == INod::NodBodyDeleted::SIGNATURE_HASH {
         let event = INod::NodBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
@@ -188,9 +201,7 @@ pub(super) fn decode_event(
             nod_id: WwdEntityId::from(event.nodId),
             previous_commitment: event.previousCommitment,
         })
-    } else if source.emitter == NOD_ADDRESS
-        && source.event_signature == INod::NodBucketBodyStored::SIGNATURE_HASH
-    {
+    } else if source.event_signature == INod::NodBucketBodyStored::SIGNATURE_HASH {
         let event = INod::NodBucketBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
@@ -216,9 +227,7 @@ pub(super) fn decode_event(
             stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
             previous_commitment: event.previousCommitment,
         })
-    } else if source.emitter == NOD_ADDRESS
-        && source.event_signature == INod::NodBucketBodyDeleted::SIGNATURE_HASH
-    {
+    } else if source.event_signature == INod::NodBucketBodyDeleted::SIGNATURE_HASH {
         let event = INod::NodBucketBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;

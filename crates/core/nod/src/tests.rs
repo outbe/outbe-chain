@@ -423,7 +423,6 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
     use crate::precompile::{dispatch, INod};
     use crate::schema::CallTerms;
     use alloy_sol_types::SolCall;
-    use base64::Engine;
 
     // qualified, paid, called_at, notice, now, expected state, expected deadline
     for (qualified, paid, called_at, notice, now, state, deadline) in [
@@ -497,16 +496,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             assert_eq!(data.isSettled, paid);
             assert_eq!(data.calledAt, called_at);
             assert_eq!(data.settlementDeadline, deadline);
-            assert_eq!(data.callPriceMinor, U256::from(937));
-            assert_eq!(
-                (
-                    data.callRate,
-                    data.callWindow,
-                    data.callThreshold,
-                    data.callNoticePeriod
-                ),
-                (23, 432_000, 172_800, notice)
-            );
+            assert_sealed_call_terms(&data, notice);
             let bytes = dispatch(
                 storage.clone(),
                 ExecutionReaders {
@@ -522,30 +512,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             )
             .unwrap();
             let uri = INod::tokenURICall::abi_decode_returns(&bytes).unwrap();
-            let json = String::from_utf8(
-                base64::engine::general_purpose::STANDARD
-                    .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
-                    .unwrap(),
-            )
-            .unwrap();
-            let label =
-                ["Issued", "Qualified", "Called", "Settled", "Forfeited"][usize::from(state)];
-            let mut expected = vec![
-                format!(r#"{{"trait_type":"State","value":"{label}"}}"#),
-                r#"{"trait_type":"Call Price","value":0.000937,"display_type":"number"}"#
-                    .to_string(),
-            ];
-            if called_at != 0 && !paid {
-                expected.push(format!(
-                    r#"{{"trait_type":"Called At","value":{called_at},"display_type":"date"}}"#
-                ));
-                expected.push(format!(
-                    r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
-                ));
-            }
-            for trait_json in expected {
-                assert!(json.contains(&trait_json), "{json}");
-            }
+            assert_lifecycle_metadata(&uri, state, called_at, paid, deadline);
             // Cleanup removes the public entity instead of retaining a tombstone.
             api::remove_nod(
                 &storage,
@@ -569,11 +536,54 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
                 U256::ZERO,
             )
             .unwrap_err();
-            assert!(
-                matches!(error, outbe_primitives::error::PrecompileError::Revert(reason)
-                if reason == crate::errors::NodError::NodNotFound.to_string())
-            );
+            assert_removed_nod(error);
         });
+    }
+}
+
+fn assert_removed_nod(error: outbe_primitives::error::PrecompileError) {
+    assert!(
+        matches!(error, outbe_primitives::error::PrecompileError::Revert(reason)
+                if reason == crate::errors::NodError::NodNotFound.to_string())
+    );
+}
+
+fn assert_sealed_call_terms(data: &crate::precompile::INod::NodData, notice: u32) {
+    assert_eq!(data.callPriceMinor, U256::from(937));
+    assert_eq!(
+        (
+            data.callRate,
+            data.callWindow,
+            data.callThreshold,
+            data.callNoticePeriod
+        ),
+        (23, 432_000, 172_800, notice)
+    );
+}
+
+fn assert_lifecycle_metadata(uri: &str, state: u8, called_at: u64, paid: bool, deadline: u64) {
+    use base64::Engine;
+    let json = String::from_utf8(
+        base64::engine::general_purpose::STANDARD
+            .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    let label = ["Issued", "Qualified", "Called", "Settled", "Forfeited"][usize::from(state)];
+    let mut expected = vec![
+        format!(r#"{{"trait_type":"State","value":"{label}"}}"#),
+        r#"{"trait_type":"Call Price","value":0.000937,"display_type":"number"}"#.to_string(),
+    ];
+    if called_at != 0 && !paid {
+        expected.push(format!(
+            r#"{{"trait_type":"Called At","value":{called_at},"display_type":"date"}}"#
+        ));
+        expected.push(format!(
+            r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
+        ));
+    }
+    for trait_json in expected {
+        assert!(json.contains(&trait_json), "{json}");
     }
 }
 

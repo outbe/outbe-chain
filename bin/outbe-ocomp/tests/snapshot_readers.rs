@@ -1,3 +1,10 @@
+#[path = "../src/test_support.rs"]
+mod test_support;
+
+use outbe_ocomp::{cas, control, input_artifacts, input_ref_catalog};
+#[path = "../src/test_support/snapshot.rs"]
+mod snapshot_test_support;
+
 mod payout {
     use std::{
         collections::BTreeMap,
@@ -551,17 +558,8 @@ mod admission {
     mod support {
         include!("support/mod.rs");
     }
-    use alloy_primitives::{Address, B256, U256};
-    use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
-    use outbe_lysis::program_v1::{
-        planner::{
-            LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedUnitPositionV1,
-        },
-        result::{
-            encode_root_reduce_output, LysisListSubtreeCarrierV1, RootReduceOutputV1,
-            RootReduceSummaryV1,
-        },
-    };
+    use alloy_primitives::B256;
+    use outbe_lysis::program_v1::planner::{LysisPlanTopologyV1, PlannedUnitPositionV1};
     use outbe_ocomp::{
         admission_catalog::{
             AdmissionCatalogError, AdmissionCatalogReader, AdmissionPositionV1,
@@ -570,28 +568,16 @@ mod admission {
         bundle::PinnedProtocolBundle,
         cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
         control::poc_schema_limits,
-        input_artifacts::{
-            poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
-            InputArtifactIdentity,
-        },
+        input_artifacts::poc_input_list_limits,
         input_ref_catalog::{InputRefCatalogError, VerifiedInputChunkRefCatalog},
         lysis_plan_audit::{LocalLysisPlanAuditV1, LysisPlanAuditStepV1},
         lysis_result_catalog::{ExactLysisResultCatalogCursorV1, LysisResultCatalogStepV1},
     };
     use outbe_ocomp_protocol::{
-        common::{BoundedBytes, ProofBytes},
-        input::{
-            materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind,
-            InputManifestV1,
-        },
-        opening::{
-            partition_lysis_opening_subjects, LysisOpeningsProofV1, RawContractOpeningProofV1,
-            RawStorageSlotV1,
-        },
+        common::BoundedBytes,
         registry::ObjectKind,
-        result::{ContributorActionV1, NodActionV1, OutputManifestEntryV1, ResultChunkV1},
+        result::{OutputManifestEntryV1, ResultChunkV1},
         unit::{UnitArtifactV1, UnitPhase, WorkOutputHeaderV1},
-        ListKind,
     };
     use outbe_primitives::time::WorldwideDay;
     use std::{
@@ -621,7 +607,7 @@ mod admission {
     fn fixture(job_seed: u8) -> Fixture {
         let limits = poc_schema_limits();
         let list_limits = poc_input_list_limits();
-        let bundle = support::protocol_bundle();
+        let bundle = crate::test_support::protocol_bundle_fixture();
         let bundle_hash = bundle.protocol_bundle_hash(&limits).unwrap();
         let pinned_bundle = PinnedProtocolBundle::decode(
             &bundle.encode_canonical(&limits).unwrap(),
@@ -633,172 +619,32 @@ mod admission {
         let tribute_count = 1_u32;
         let day = WorldwideDay::new(20_260_725);
 
-        let mut tributes = (0..tribute_count)
-            .map(|index| {
-                let mut owner_bytes = [0_u8; 20];
-                owner_bytes[16..].copy_from_slice(&(index + 1).to_be_bytes());
-                let owner = Address::from(owner_bytes);
-                TributeBodyV1 {
-                    tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
-                    owner,
-                    worldwide_day: day,
-                    issuance_amount_minor: U256::from(1),
-                    issuance_currency: if index % 2 == 0 { 840 } else { 826 },
-                    nominal_amount_minor: U256::from((index % 7) + 1),
-                    reference_currency: if index % 3 == 0 { 978 } else { 392 },
-                    tribute_price_minor: U256::from(1),
-                    exclude_from_intex_issuance: false,
-                }
-            })
-            .collect::<Vec<_>>();
-        tributes.sort_by_key(|tribute| tribute.tribute_id);
-        let mut contributors_by_owner = tributes
-            .iter()
-            .map(|tribute| ContributorActionV1 {
-                owner: tribute.owner,
-                source_tribute_id: *tribute.tribute_id,
-                nominal_amount_minor: tribute.nominal_amount_minor,
-            })
-            .collect::<Vec<_>>();
-        contributors_by_owner
-            .sort_by_key(|contributor| (contributor.owner, contributor.source_tribute_id));
+        let tributes = crate::test_support::tribute_population(day, tribute_count);
+        let contributors_by_owner = crate::test_support::contributor_population(&tributes);
         let nod_action_tributes = tributes.clone();
-        let owners = tributes
-            .iter()
-            .map(|tribute| tribute.owner)
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        let mut reference_isos = tributes
-            .iter()
-            .map(|tribute| tribute.reference_currency)
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        reference_isos.push(840);
-        reference_isos.sort_unstable();
-        reference_isos.dedup();
-        let finalized_state_root = hash(0x32);
-        let raw_opening = |address, slot_byte| RawContractOpeningProofV1 {
-            contract_address: address,
-            state_root: finalized_state_root,
-            ordered_slots: vec![RawStorageSlotV1 {
-                slot: hash(slot_byte),
-                value: U256::from(1),
-            }],
-            account_proof: ProofBytes(vec![0xa1]),
-            storage_proof: ProofBytes(vec![0xb1]),
-        };
-        let mut fidelity_openings = Vec::new();
-        let mut oracle_opening = None;
-        for subjects in partition_lysis_opening_subjects(&owners, &reference_isos, &limits).unwrap()
-        {
-            let openings = materialize_authenticated_openings(
-                &LysisOpeningsProofV1 {
-                    protocol_bundle_hash: bundle_hash,
-                    job_id,
-                    finalized_block_hash: hash(0x31),
-                    finalized_state_root,
-                    wwd: day.value(),
-                    subjects,
-                    fidelity: raw_opening(Address::repeat_byte(0x63), 0x64),
-                    oracle: raw_opening(Address::repeat_byte(0x65), 0x66),
-                },
-                &bundle,
-                &limits,
-            )
-            .unwrap();
-            fidelity_openings.push(openings.fidelity);
-            match &oracle_opening {
-                None => oracle_opening = Some(openings.oracle),
-                Some(existing) => assert_eq!(existing, &openings.oracle),
-            }
-        }
-
+        let openings =
+            crate::test_support::fixture_openings(&bundle, job_id, day, &tributes, &limits);
         let directory = support::tempdir().unwrap();
         let cas_root = directory.path().join("cas");
         let input_ref_root = directory.path().join("input-refs");
         let admission_root = directory.path().join("admissions");
         let cas = FilesystemCas::open(&cas_root, CasWriterRole::Supervisor, CAS_LIMITS).unwrap();
-        let published = publish_input_artifact_set(
+        let crate::snapshot_test_support::PublishedFixturePlan {
+            plan,
+            plan_ref,
+            manifest_ref,
+        } = crate::snapshot_test_support::publish_fixture_plan(
             &cas,
             &input_ref_root,
-            &bundle,
-            InputArtifactContents {
-                identity: InputArtifactIdentity {
-                    job_id,
-                    attempt: 0,
-                    checkpoint: CheckpointIdentityV1 {
-                        finalized_block_number: 90,
-                        finalized_block_hash: hash(0x31),
-                        finalized_state_root,
-                        finalized_ce_root: hash(0x33),
-                        ce_schema_version: 1,
-                    },
-                    wwd: day.value(),
-                    sealed_tribute_collection_key: hash(0x34),
-                    sealed_tribute_collection_root: hash(0x35),
-                },
-                canonical_tributes: tributes
-                    .iter()
-                    .map(|tribute| encode_tribute_v1(tribute).unwrap())
-                    .collect(),
-                fidelity_openings,
-                oracle_opening: oracle_opening.unwrap(),
+            crate::snapshot_test_support::FixturePlanInputs {
+                bundle: &bundle,
+                job_id,
+                day,
+                tributes: &tributes,
+                fidelity_openings: openings.fidelity,
+                oracle_opening: openings.oracle,
             },
-            &limits,
-            list_limits,
-        )
-        .unwrap();
-        let manifest = InputManifestV1::decode_canonical(
-            cas.read_verified(&published.manifest_ref).unwrap().bytes(),
-            &limits,
-        )
-        .unwrap();
-        let input_refs_for_plan = VerifiedInputChunkRefCatalog::open(
-            &input_ref_root,
-            &cas,
-            &published.manifest_ref,
-            limits,
-            list_limits,
-        )
-        .unwrap();
-        let all_input_refs = input_refs_for_plan
-            .exact_cursor()
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        let tribute_refs = all_input_refs
-            .iter()
-            .filter(|reference| reference.kind == InputChunkKind::Tribute)
-            .cloned()
-            .collect::<Vec<_>>();
-        drop(input_refs_for_plan);
-        let manifest_ref = published.manifest_ref;
-
-        let planner = LysisPlannerV1::new(LysisPlannerBindingsV1 {
-            protocol_bundle_hash: bundle_hash,
-            job_id,
-            attempt: 0,
-            input_manifest_hash: manifest.manifest_hash(&limits).unwrap(),
-            input_manifest_encoded_bytes: manifest_ref.encoded_bytes,
-            fidelity_opening_root: manifest.fidelity_opening_root,
-            oracle_opening_root: manifest.oracle_opening_root,
-            wwd: manifest.wwd,
-            lysis_limit_minor: U256::from(200),
-            logical_evaluation_time: 1_784_765_900,
-            tribute_count: manifest.tribute_count,
-            lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
-            planner_spec_version: bundle.planner_spec_version,
-            reducer_spec_version: bundle.reducer_spec_version,
-        })
-        .unwrap();
-        let plan = planner
-            .commit_primary_catalog(tribute_refs.clone(), &limits)
-            .unwrap();
-        let plan_ref = cas
-            .publish_bytes(&plan.encode_canonical_record(&limits).unwrap())
-            .unwrap();
+        );
 
         let reader = FilesystemCasReader::open(&cas_root, CAS_LIMITS).unwrap();
         let input_refs =
@@ -810,6 +656,15 @@ mod admission {
         let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count).unwrap();
         let plan_hash = plan.plan_hash(&limits).unwrap();
 
+        let page_inputs = RootPageInputs {
+            bundle_hash,
+            job_id,
+            plan_hash,
+            tributes: &tributes,
+            nod_action_tributes: &nod_action_tributes,
+            contributors_by_owner: &contributors_by_owner,
+            limits: &limits,
+        };
         for plan_ordinal in 0..topology.total_unit_count() {
             let spec = {
                 let audit = LocalLysisPlanAuditV1::open(
@@ -827,150 +682,7 @@ mod admission {
                     phase: UnitPhase::RootReduce,
                     level: 0,
                     index,
-                } => {
-                    let start = usize::try_from(index * 256).unwrap();
-                    let end = (start + 256).min(tributes.len());
-                    let actions = nod_action_tributes[start..end]
-                        .iter()
-                        .enumerate()
-                        .map(|(local, tribute)| {
-                            let tribute_id = *tribute.tribute_id;
-                            NodActionV1 {
-                                raw_ordinal: u32::try_from(start + local).unwrap(),
-                                tribute_id,
-                                nod_id: tribute_id,
-                                owner: tribute.owner,
-                                wwd: day.value(),
-                                league_id: 1,
-                                gratis_load_minor: U256::from(1),
-                                entry_price_minor: U256::ZERO,
-                                settlement_cost_minor: U256::from(2),
-                                issuance_currency: tribute.issuance_currency,
-                                reference_currency: tribute.reference_currency,
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    let contributors = contributors_by_owner[start..end].to_vec();
-                    let chunk = ResultChunkV1 {
-                        protocol_bundle_hash: bundle_hash,
-                        job_id,
-                        attempt: 0,
-                        chunk_ordinal: index,
-                        first_nod_ordinal: u32::try_from(start).unwrap(),
-                        ordered_nod_actions: actions.clone(),
-                        ordered_eligible_contributors: contributors.clone(),
-                    };
-                    let chunk_hash = chunk.result_chunk_hash(&limits).unwrap();
-                    let mut chunk_ref = cas
-                        .publish_bytes(&chunk.encode_canonical(&limits).unwrap())
-                        .unwrap();
-                    chunk_ref.expected_ocb1_kind = Some(ObjectKind::ResultChunkV1.tag());
-                    let entry = OutputManifestEntryV1 {
-                        chunk_ordinal: index,
-                        result_chunk_hash: chunk_hash,
-                        result_chunk_ref: chunk_ref,
-                    };
-                    let nod_records = actions
-                        .iter()
-                        .map(|action| action.encode_canonical_record(&limits).unwrap())
-                        .collect::<Vec<_>>();
-                    let bucket_records = (start..end)
-                        .map(|ordinal| ordinal.to_be_bytes().to_vec())
-                        .collect::<Vec<_>>();
-                    let contributor_records = contributors
-                        .iter()
-                        .map(|contributor| contributor.encode_canonical_record(&limits).unwrap())
-                        .collect::<Vec<_>>();
-                    let manifest_records = vec![entry.encode_canonical_record(&limits).unwrap()];
-                    let chunk_hash_records = vec![chunk_hash.as_slice().to_vec()];
-                    let count = u32::try_from(end - start).unwrap();
-                    let raw_nominal_total = tributes[start..end]
-                        .iter()
-                        .fold(U256::ZERO, |total, tribute| {
-                            total.checked_add(tribute.nominal_amount_minor).unwrap()
-                        });
-                    let nod_cost_total = actions.iter().fold(U256::ZERO, |total, action| {
-                        total.checked_add(action.settlement_cost_minor).unwrap()
-                    });
-                    let summary = RootReduceSummaryV1 {
-                        protocol_bundle_hash: bundle_hash,
-                        job_id,
-                        attempt: 0,
-                        plan_hash,
-                        covered_primary_start: index,
-                        covered_primary_count: 1,
-                        nod_actions: LysisListSubtreeCarrierV1::from_primary_page(
-                            ListKind::NodActions,
-                            index,
-                            &nod_records,
-                            limits.max_bounded_bytes,
-                        )
-                        .unwrap(),
-                        bucket_records: LysisListSubtreeCarrierV1::from_primary_page(
-                            ListKind::BucketRecords,
-                            index,
-                            &bucket_records,
-                            limits.max_bounded_bytes,
-                        )
-                        .unwrap(),
-                        contributor_actions: LysisListSubtreeCarrierV1::from_primary_page(
-                            ListKind::ContributorActions,
-                            index,
-                            &contributor_records,
-                            limits.max_bounded_bytes,
-                        )
-                        .unwrap(),
-                        output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
-                            ListKind::CompleteOutputManifest,
-                            index,
-                            &manifest_records,
-                            limits.max_bounded_bytes,
-                        )
-                        .unwrap(),
-                        result_chunk_hashes: LysisListSubtreeCarrierV1::from_primary_page(
-                            ListKind::ResultChunkHashes,
-                            index,
-                            &chunk_hash_records,
-                            B256::len_bytes(),
-                        )
-                        .unwrap(),
-                        tribute_count: count,
-                        nod_count: count,
-                        bucket_count: count,
-                        contributor_count: u32::try_from(contributors.len()).unwrap(),
-                        tribute_nominal_total: raw_nominal_total,
-                        eligible_nominal_total: raw_nominal_total,
-                        lysis_allocation_minor: U256::from(count),
-                        nod_cost_total,
-                        first_error_ordinal: None,
-                    };
-                    let coverage_root = summary.result_chunk_hashes.tree_root;
-                    let output_coverage_root = coverage_root;
-                    (
-                        UnitArtifactV1::from_canonical_output(
-                            &spec,
-                            WorkOutputHeaderV1 {
-                                source_coverage_root: coverage_root,
-                                output_coverage_root,
-                                source_coverage_count: 1,
-                                output_coverage_count: 1,
-                            },
-                            BoundedBytes(
-                                encode_root_reduce_output(
-                                    &RootReduceOutputV1::Leaf {
-                                        summary,
-                                        output_manifest_entry: entry.clone(),
-                                    },
-                                    &limits,
-                                )
-                                .unwrap(),
-                            ),
-                            &limits,
-                        )
-                        .unwrap(),
-                        Some(entry),
-                    )
-                }
+                } => root_page_artifact(&spec, index, &page_inputs, &cas),
                 _ => (
                     UnitArtifactV1::from_canonical_output(
                         &spec,
@@ -1014,6 +726,77 @@ mod admission {
             bundle: pinned_bundle,
             expected_count: topology.total_unit_count(),
         }
+    }
+
+    struct RootPageInputs<'a> {
+        bundle_hash: B256,
+        job_id: B256,
+        plan_hash: B256,
+        tributes: &'a [outbe_compressed_entities::TributeBodyV1],
+        nod_action_tributes: &'a [outbe_compressed_entities::TributeBodyV1],
+        contributors_by_owner: &'a [outbe_ocomp_protocol::result::ContributorActionV1],
+        limits: &'a outbe_ocomp_protocol::SchemaLimits,
+    }
+    fn root_page_artifact(
+        spec: &outbe_ocomp_protocol::unit::UnitSpecV1,
+        index: u32,
+        inputs: &RootPageInputs<'_>,
+        cas: &FilesystemCas,
+    ) -> (UnitArtifactV1, Option<OutputManifestEntryV1>) {
+        let RootPageInputs {
+            bundle_hash,
+            job_id,
+            plan_hash,
+            tributes,
+            nod_action_tributes,
+            contributors_by_owner,
+            limits,
+        } = *inputs;
+        let start = usize::try_from(index * 256).unwrap();
+        let end = (start + 256).min(tributes.len());
+        let actions = crate::test_support::nod_actions(
+            &nod_action_tributes[start..end],
+            u32::try_from(start).unwrap(),
+        );
+        let contributors = contributors_by_owner[start..end].to_vec();
+        let chunk = ResultChunkV1 {
+            protocol_bundle_hash: bundle_hash,
+            job_id,
+            attempt: 0,
+            chunk_ordinal: index,
+            first_nod_ordinal: u32::try_from(start).unwrap(),
+            ordered_nod_actions: actions.clone(),
+            ordered_eligible_contributors: contributors.clone(),
+        };
+        let chunk_hash = chunk.result_chunk_hash(limits).unwrap();
+        let mut chunk_ref = cas
+            .publish_bytes(&chunk.encode_canonical(limits).unwrap())
+            .unwrap();
+        chunk_ref.expected_ocb1_kind = Some(ObjectKind::ResultChunkV1.tag());
+        let entry = OutputManifestEntryV1 {
+            chunk_ordinal: index,
+            result_chunk_hash: chunk_hash,
+            result_chunk_ref: chunk_ref,
+        };
+        let summary = crate::test_support::root_summary_fixture(
+            plan_hash,
+            &chunk,
+            &tributes[start..end],
+            &entry,
+            limits,
+        );
+        let coverage_root = summary.result_chunk_hashes.tree_root;
+        let output_coverage_root = coverage_root;
+        (
+            crate::test_support::root_leaf_artifact(
+                spec,
+                summary,
+                &entry,
+                output_coverage_root,
+                limits,
+            ),
+            Some(entry),
+        )
     }
 
     #[derive(Debug, PartialEq, Eq)]
@@ -1490,33 +1273,7 @@ mod export_binding {
             FilesystemCas::open(&cas_root, CasWriterRole::SnapshotExporter, cas_limits).unwrap();
         let reader = FilesystemCasReader::open(&cas_root, cas_limits).unwrap();
         let day = WorldwideDay::new(intent.wwd);
-        let owner = Address::repeat_byte(1);
-        let tribute = TributeBodyV1 {
-            tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
-            owner,
-            worldwide_day: day,
-            issuance_amount_minor: U256::from(1),
-            issuance_currency: 840,
-            nominal_amount_minor: U256::from(1),
-            reference_currency: 978,
-            tribute_price_minor: U256::from(1),
-            exclude_from_intex_issuance: false,
-        };
-        let chunk = AuthenticatedInputChunkV1 {
-            protocol_bundle_hash: spec.summary.protocol_bundle_hash,
-            job_id: spec.summary.job_id,
-            kind: InputChunkKind::Tribute,
-            ordinal: 0,
-            canonical_records_or_openings: vec![BoundedBytes(encode_tribute_v1(&tribute).unwrap())],
-        };
-        let mut chunk_ref = cas
-            .publish_bytes(&chunk.encode_canonical(&limits).unwrap())
-            .unwrap();
-        chunk_ref.expected_ocb1_kind = Some(ObjectKind::AuthenticatedInputChunkV1.tag());
-        let input_ref =
-            derive_input_chunk_ref(&reader.read_verified(&chunk_ref).unwrap(), &bundle, &limits)
-                .unwrap()
-                .reference;
+        let (chunk_ref, input_ref) = publish_tribute_chunk(&cas, &reader, &bundle, &spec, day);
         let manifest = InputManifestV1 {
             protocol_bundle_hash: spec.summary.protocol_bundle_hash,
             job_id: spec.summary.job_id,
@@ -1609,6 +1366,44 @@ mod export_binding {
             chunk_ref,
             committed,
         }
+    }
+
+    fn publish_tribute_chunk(
+        cas: &FilesystemCas,
+        reader: &FilesystemCasReader,
+        bundle: &ProtocolBundleV1,
+        spec: &FinalizedJobSpecV1,
+        day: WorldwideDay,
+    ) -> (CasObjectRefV1, outbe_ocomp_protocol::input::InputChunkRefV1) {
+        let limits = poc_schema_limits();
+        let owner = Address::repeat_byte(1);
+        let tribute = TributeBodyV1 {
+            tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+            owner,
+            worldwide_day: day,
+            issuance_amount_minor: U256::from(1),
+            issuance_currency: 840,
+            nominal_amount_minor: U256::from(1),
+            reference_currency: 978,
+            tribute_price_minor: U256::from(1),
+            exclude_from_intex_issuance: false,
+        };
+        let chunk = AuthenticatedInputChunkV1 {
+            protocol_bundle_hash: spec.summary.protocol_bundle_hash,
+            job_id: spec.summary.job_id,
+            kind: InputChunkKind::Tribute,
+            ordinal: 0,
+            canonical_records_or_openings: vec![BoundedBytes(encode_tribute_v1(&tribute).unwrap())],
+        };
+        let mut chunk_ref = cas
+            .publish_bytes(&chunk.encode_canonical(&limits).unwrap())
+            .unwrap();
+        chunk_ref.expected_ocb1_kind = Some(ObjectKind::AuthenticatedInputChunkV1.tag());
+        let input_ref =
+            derive_input_chunk_ref(&reader.read_verified(&chunk_ref).unwrap(), bundle, &limits)
+                .unwrap()
+                .reference;
+        (chunk_ref, input_ref)
     }
 
     type Fingerprint = BTreeMap<PathBuf, (u32, Option<PathBuf>, Vec<u8>)>;

@@ -99,7 +99,7 @@ use dispatch::requests::{
 
 use offer_key::persist_then_activate_offer_key;
 
-use session::serve_connection_with_resident_chain;
+use session::{serve_connection_with_resident_chain, ConnectionContext};
 
 #[cfg(feature = "mock")]
 use dispatch::attestation::synthetic_dcap_quote;

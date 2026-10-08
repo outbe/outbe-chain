@@ -4,6 +4,180 @@
 use super::*;
 use outbe_primitives::projection::{ExecutionReadBudget, ExecutionReadCancelled};
 
+type NodBlockObservation = (
+    B256,
+    revm::database::BundleState,
+    Vec<Receipt>,
+    U256,
+    U256,
+    u64,
+    Vec<u64>,
+    usize,
+    Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>>,
+);
+
+fn nod_execution_context(
+    proposer: Address,
+    seed_hash: B256,
+    parent_metadata: CertifiedParentAccountingMetadata,
+    expected_system_txs: Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>>,
+    budget: Option<ExecutionReadBudget>,
+) -> OutbeBlockExecutionCtx<'static> {
+    let mut execution = execution_ctx(Some(1), Bytes::new());
+    execution.inner.parent_hash = seed_hash;
+    execution.parent_consensus_metadata = Some(parent_metadata);
+    execution.parent_artifact_hint = Some(AccountedParentArtifact {
+        summary: ExecutionSummaryArtifact {
+            validator_fee_sum: U256::ZERO,
+        },
+        timestamp: 0,
+        state_root: Some(B256::repeat_byte(0x91)),
+    });
+    execution.proposer_evm_address = Some(proposer);
+    execution.execution_read_budget = budget;
+    execution.expected_begin_system_txs = expected_system_txs;
+    execution
+}
+
+fn assert_bucket_mutation_receipts(receipts: &[Receipt], expected_count: usize) {
+    assert_eq!(receipts.len(), expected_count);
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| receipt.logs.iter().any(|log| {
+                log.address == NOD_ADDRESS
+                    && log.data.topics().first()
+                        == Some(&INod::NodBucketBodyDeleted::SIGNATURE_HASH)
+            })),
+        "fixture must mutate a Nod bucket before testing CE cleanup"
+    );
+}
+
+fn execute_nod_block(
+    fixture: &NodBodyFixture,
+    expected_validator_body: bool,
+    readers: RuntimeBodyReaders,
+    budget: Option<ExecutionReadBudget>,
+) -> Result<NodBlockObservation, alloy_evm::block::BlockExecutionError> {
+    outbe_chain_constants::initialize(None).unwrap();
+    let proposer = fixture.proposer;
+
+    let signer = test_evm_signer();
+    let (mut state, _tree_directory, tree_service, seed_hash) =
+        seed_nod_body_state(fixture).expect("seed Nod body fixture");
+    let config = OutbeEvmConfig::new_with_runtime_body_readers(test_chain_spec(), readers)
+        .with_evm_signer(signer)
+        .with_compressed_tree_service(tree_service.clone());
+    let mut parent_metadata = metadata_with(vec![proposer], vec![1], Vec::new());
+    parent_metadata.finalized_block_number = 1;
+    parent_metadata.finalized_block_hash = seed_hash;
+    let system_txs = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 2,
+            parent_hash: seed_hash,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: Some(parent_metadata.clone()),
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    );
+    let visible_envelopes: Vec<u64> = system_txs.iter().map(|tx| tx.tx().gas_limit()).collect();
+    let signed_body = system_txs.clone();
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let execution = nod_execution_context(
+        proposer,
+        seed_hash,
+        parent_metadata,
+        if expected_validator_body {
+            system_txs.clone()
+        } else {
+            Vec::new()
+        },
+        budget,
+    );
+    let mut executor = config.create_executor(evm, execution);
+    super::with_phase1_verify_disabled(|| {
+        executor
+            .apply_pre_execution_changes()
+            .expect("reader-backed pre-execution hook must succeed");
+    });
+    for tx in system_txs {
+        let result = executor.execute_transaction(tx);
+        if result.is_err() {
+            assert!(
+                !executor.receipts().is_empty(),
+                "the cancelled body read must follow earlier block transactions"
+            );
+        }
+        result?;
+    }
+    let receipts = executor.receipts().to_vec();
+    assert_bucket_mutation_receipts(&receipts, signed_body.len());
+    let cleanup_hook_observation = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let cleanup_hook_capture = cleanup_hook_observation.clone();
+    executor
+        .evm_mut()
+        .db_mut()
+        .set_state_hook(Some(Box::new(observe_ce_cleanup(cleanup_hook_capture))));
+    // Match the production payload-builder ordering:
+    // 1. Finalize CE while the parallel-root hook is attached.
+    // 2. Prove that the hook observed the zeroing diff.
+    // 3. Detach the hook and freeze/finalize the root.
+    executor
+        .finalize_compressed_entities()
+        .expect("pre-root compressed-entity cleanup must succeed");
+    executor
+        .prepare_final_header_artifacts(0)
+        .expect("final extra_data should encode");
+    let sealed = executor
+        .compressed_entities_seal_output()
+        .expect("block cleanup must produce a CE tree batch");
+    let block_hash = B256::repeat_byte(0x42);
+    let block_root = sealed.new_root;
+    tree_service
+        .publish_candidate(block_hash, sealed.staged_tree_batch)
+        .expect("publish block CE candidate");
+    tree_service
+        .apply_finalized(2, block_hash, block_root)
+        .expect("finalize block CE candidate");
+    let cleanup_hook_cleared_slots =
+        cleanup_hook_observation.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        cleanup_hook_cleared_slots > 0,
+        "pre-root hook must expose at least one temporary CE slot changing to zero"
+    );
+    executor.evm_mut().db_mut().set_state_hook(None);
+    let (evm, block_result) = executor.finish().expect("block finish must succeed");
+    drop(evm);
+    let bundle = state.bundle_state.clone();
+    let root = post_state_root(&bundle);
+    let proposer_balance = signer_balance(&mut state, proposer);
+    let rewards_balance = signer_balance(&mut state, REWARDS_ADDRESS);
+
+    // A new lifecycle can open only when no pending body/index record and no
+    // touched list from the finished block remains. This checks the same
+    // committed bundle that the state root above uses, not a mock store.
+    assert_clean_ce_lifecycle(
+        &mut state,
+        &tree_service,
+        (block_hash, block_root),
+        proposer,
+    )
+    .expect("assert clean ce lifecycle fixture succeeds");
+    Ok::<_, alloy_evm::block::BlockExecutionError>((
+        root,
+        bundle,
+        receipts,
+        proposer_balance,
+        rewards_balance,
+        block_result.gas_used,
+        visible_envelopes,
+        cleanup_hook_cleared_slots,
+        signed_body,
+    ))
+}
+
 #[test]
 fn independent_body_stores_produce_identical_full_block_state_receipts_and_balances() {
     let proposer = test_evm_signer().address();
@@ -34,140 +208,9 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         bucket_key,
         item: nod_item(),
     };
-    let run = |expected_validator_body: bool,
-               readers: RuntimeBodyReaders,
-               budget: Option<ExecutionReadBudget>| {
-        let signer = test_evm_signer();
-        let (mut state, _tree_directory, tree_service, seed_hash) =
-            seed_nod_body_state(&fixture).expect("seed Nod body fixture");
-        let config = OutbeEvmConfig::new_with_runtime_body_readers(test_chain_spec(), readers)
-            .with_evm_signer(signer)
-            .with_compressed_tree_service(tree_service.clone());
-        let mut parent_metadata = metadata_with(vec![proposer], vec![1], Vec::new());
-        parent_metadata.finalized_block_number = 1;
-        parent_metadata.finalized_block_hash = seed_hash;
-        let system_txs = begin_system_txs_for_test(
-            &config,
-            BeginBlockFixture {
-                block_number: 2,
-                parent_hash: seed_hash,
-                extra_data: &Bytes::new(),
-                parent_consensus_metadata: Some(parent_metadata.clone()),
-                proposer,
-                bootstrap: BootstrapFixture::StandardForBlock,
-            },
-        );
-        let visible_envelopes: Vec<u64> = system_txs.iter().map(|tx| tx.tx().gas_limit()).collect();
-        let signed_body = system_txs.clone();
-        let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
-        let mut execution = execution_ctx(Some(1), Bytes::new());
-        execution.inner.parent_hash = seed_hash;
-        execution.parent_consensus_metadata = Some(parent_metadata);
-        execution.parent_artifact_hint = Some(AccountedParentArtifact {
-            summary: ExecutionSummaryArtifact {
-                validator_fee_sum: U256::ZERO,
-            },
-            timestamp: 0,
-            state_root: Some(B256::repeat_byte(0x91)),
-        });
-        execution.proposer_evm_address = Some(proposer);
-        execution.execution_read_budget = budget;
-        if expected_validator_body {
-            execution.expected_begin_system_txs = system_txs.clone();
-        }
-        let mut executor = config.create_executor(evm, execution);
-        super::with_phase1_verify_disabled(|| {
-            executor
-                .apply_pre_execution_changes()
-                .expect("reader-backed pre-execution hook must succeed");
-        });
-        for tx in system_txs {
-            let result = executor.execute_transaction(tx);
-            if result.is_err() {
-                assert!(
-                    !executor.receipts().is_empty(),
-                    "the cancelled body read must follow earlier block transactions"
-                );
-            }
-            result?;
-        }
-        let receipts = executor.receipts().to_vec();
-        assert_eq!(receipts.len(), signed_body.len());
-        assert!(
-            receipts
-                .iter()
-                .any(|receipt| receipt.logs.iter().any(|log| {
-                    log.address == NOD_ADDRESS
-                        && log.data.topics().first()
-                            == Some(&INod::NodBucketBodyDeleted::SIGNATURE_HASH)
-                })),
-            "fixture must mutate a Nod bucket before testing CE cleanup"
-        );
-        let cleanup_hook_observation = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let cleanup_hook_capture = cleanup_hook_observation.clone();
-        executor
-            .evm_mut()
-            .db_mut()
-            .set_state_hook(Some(Box::new(observe_ce_cleanup(cleanup_hook_capture))));
-        // Match the production payload-builder ordering:
-        // 1. Finalize CE while the parallel-root hook is attached.
-        // 2. Prove that the hook observed the zeroing diff.
-        // 3. Detach the hook and freeze/finalize the root.
-        executor
-            .finalize_compressed_entities()
-            .expect("pre-root compressed-entity cleanup must succeed");
-        executor
-            .prepare_final_header_artifacts(0)
-            .expect("final extra_data should encode");
-        let sealed = executor
-            .compressed_entities_seal_output()
-            .expect("block cleanup must produce a CE tree batch");
-        let block_hash = B256::repeat_byte(0x42);
-        let block_root = sealed.new_root;
-        tree_service
-            .publish_candidate(block_hash, sealed.staged_tree_batch)
-            .expect("publish block CE candidate");
-        tree_service
-            .apply_finalized(2, block_hash, block_root)
-            .expect("finalize block CE candidate");
-        let cleanup_hook_cleared_slots =
-            cleanup_hook_observation.load(std::sync::atomic::Ordering::SeqCst);
-        assert!(
-            cleanup_hook_cleared_slots > 0,
-            "pre-root hook must expose at least one temporary CE slot changing to zero"
-        );
-        executor.evm_mut().db_mut().set_state_hook(None);
-        let (evm, block_result) = executor.finish().expect("block finish must succeed");
-        drop(evm);
-        let bundle = state.bundle_state.clone();
-        let root = post_state_root(&bundle);
-        let proposer_balance = signer_balance(&mut state, proposer);
-        let rewards_balance = signer_balance(&mut state, REWARDS_ADDRESS);
 
-        // A new lifecycle can open only when no pending body/index record and no
-        // touched list from the finished block remains. This checks the same
-        // committed bundle that the state root above uses, not a mock store.
-        assert_clean_ce_lifecycle(
-            &mut state,
-            &tree_service,
-            (block_hash, block_root),
-            proposer,
-        )
-        .expect("assert clean ce lifecycle fixture succeeds");
-        Ok::<_, alloy_evm::block::BlockExecutionError>((
-            root,
-            bundle,
-            receipts,
-            proposer_balance,
-            rewards_balance,
-            block_result.gas_used,
-            visible_envelopes,
-            cleanup_hook_cleared_slots,
-            signed_body,
-        ))
-    };
-
-    let proposer_result = run(
+    let proposer_result = execute_nod_block(
+        &fixture,
         false,
         independent_nod_readers(&fixture).expect("independent nod readers fixture succeeds"),
         None,
@@ -177,7 +220,8 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         independent_nod_readers(&fixture).expect("independent nod readers fixture succeeds");
     let cancelled_budget = ExecutionReadBudget::new();
     cancelled_budget.cancel();
-    let aborted = run(
+    let aborted = execute_nod_block(
+        &fixture,
         true,
         validator_readers.clone(),
         Some(cancelled_budget.clone()),
@@ -193,8 +237,13 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
         .same_request(&cancelled_budget));
     // Reopen the same parent and body backend with a fresh request. Compare the
     // entire signed body, receipts, root and balances; no transaction may be skipped.
-    let validator_result = run(true, validator_readers, Some(ExecutionReadBudget::new()))
-        .expect("fresh canonical replay after cancellation succeeds");
+    let validator_result = execute_nod_block(
+        &fixture,
+        true,
+        validator_readers,
+        Some(ExecutionReadBudget::new()),
+    )
+    .expect("fresh canonical replay after cancellation succeeds");
     assert_eq!(proposer_result, validator_result);
     assert_cycle_tick_receipt_gas(&proposer_result.2, proposer_result.5, &proposer_result.6);
 }

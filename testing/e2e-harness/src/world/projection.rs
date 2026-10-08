@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -229,15 +229,10 @@ impl ProjectionFixture {
                     databases.push(config);
                 }
                 StorageBackend::RocksDb(config) => {
-                    for path in [config.path, config.secondary_path] {
-                        if path.exists() {
-                            let canonical = path.canonicalize()?;
-                            if !canonical.starts_with(self.cfg.dir.canonicalize()?) {
-                                bail!("refusing to reset storage outside this scenario");
-                            }
-                            targets.push(path);
-                        }
-                    }
+                    targets.extend(reset_targets(
+                        &self.cfg,
+                        [config.path, config.secondary_path],
+                    )?);
                 }
             }
         }
@@ -338,6 +333,21 @@ impl ProjectionFixture {
             Ok(())
         })
     }
+}
+
+fn reset_targets(cfg: &Config, paths: [PathBuf; 2]) -> Result<Vec<PathBuf>> {
+    let mut targets = Vec::new();
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+        let canonical = path.canonicalize()?;
+        if !canonical.starts_with(cfg.dir.canonicalize()?) {
+            bail!("refusing to reset storage outside this scenario");
+        }
+        targets.push(path);
+    }
+    Ok(targets)
 }
 
 fn projected_from_readers(

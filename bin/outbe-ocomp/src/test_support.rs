@@ -2,7 +2,7 @@
 //! These builders do not execute the worker pipeline.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, TributeBodyV1};
+use outbe_compressed_entities::TributeBodyV1;
 use outbe_lysis::program_v1::{
     planner::{LysisPlannerBindingsV1, LysisPlannerV1},
     result::{LysisListSubtreeCarrierV1, RootReduceSummaryV1},
@@ -15,50 +15,22 @@ use outbe_ocomp_protocol::{
         RawStorageSlotV1,
     },
     profile::ProtocolBundleV1,
-    result::{ContributorActionV1, NodActionV1, OutputManifestEntryV1, ResultChunkV1},
+    result::{NodActionV1, OutputManifestEntryV1, ResultChunkV1},
     CasObjectRefV1, ListKind, SchemaLimits,
 };
 use outbe_primitives::time::WorldwideDay;
+
+#[path = "test_support/protocol.rs"]
+mod protocol;
+pub use protocol::protocol_bundle_fixture;
 
 fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
 }
 
-pub fn tribute_population(day: WorldwideDay, tribute_count: u32) -> Vec<TributeBodyV1> {
-    let mut tributes = (0..tribute_count)
-        .map(|index| {
-            let mut owner_bytes = [0_u8; 20];
-            owner_bytes[16..].copy_from_slice(&(index + 1).to_be_bytes());
-            let owner = Address::from(owner_bytes);
-            TributeBodyV1 {
-                tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
-                owner,
-                worldwide_day: day,
-                issuance_amount_minor: U256::from(1),
-                issuance_currency: if index % 2 == 0 { 840 } else { 826 },
-                nominal_amount_minor: U256::from((index % 7) + 1),
-                reference_currency: if index % 3 == 0 { 978 } else { 392 },
-                tribute_price_minor: U256::from(1),
-                exclude_from_intex_issuance: false,
-            }
-        })
-        .collect::<Vec<_>>();
-    tributes.sort_by_key(|tribute| tribute.tribute_id);
-    tributes
-}
-pub fn contributor_population(tributes: &[TributeBodyV1]) -> Vec<ContributorActionV1> {
-    let mut contributors_by_owner = tributes
-        .iter()
-        .map(|tribute| ContributorActionV1 {
-            owner: tribute.owner,
-            source_tribute_id: *tribute.tribute_id,
-            nominal_amount_minor: tribute.nominal_amount_minor,
-        })
-        .collect::<Vec<_>>();
-    contributors_by_owner
-        .sort_by_key(|contributor| (contributor.owner, contributor.source_tribute_id));
-    contributors_by_owner
-}
+#[path = "test_support/population.rs"]
+mod population;
+pub use population::{contributor_population, tribute_population};
 pub fn nod_actions(tributes: &[TributeBodyV1], first_ordinal: u32) -> Vec<NodActionV1> {
     tributes
         .iter()
@@ -241,4 +213,39 @@ pub fn root_summary_fixture(
         nod_cost_total,
         first_error_ordinal: None,
     }
+}
+
+pub fn root_leaf_artifact(
+    spec: &outbe_ocomp_protocol::unit::UnitSpecV1,
+    summary: RootReduceSummaryV1,
+    entry: &OutputManifestEntryV1,
+    output_coverage_root: B256,
+    limits: &SchemaLimits,
+) -> outbe_ocomp_protocol::unit::UnitArtifactV1 {
+    use outbe_lysis::program_v1::result::{encode_root_reduce_output, RootReduceOutputV1};
+    use outbe_ocomp_protocol::{
+        common::BoundedBytes,
+        unit::{UnitArtifactV1, WorkOutputHeaderV1},
+    };
+    UnitArtifactV1::from_canonical_output(
+        spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: summary.result_chunk_hashes.tree_root,
+            output_coverage_root,
+            source_coverage_count: 1,
+            output_coverage_count: 1,
+        },
+        BoundedBytes(
+            encode_root_reduce_output(
+                &RootReduceOutputV1::Leaf {
+                    summary,
+                    output_manifest_entry: entry.clone(),
+                },
+                limits,
+            )
+            .unwrap(),
+        ),
+        limits,
+    )
+    .unwrap()
 }

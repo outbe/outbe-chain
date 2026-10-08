@@ -19,6 +19,8 @@ use crate::keys::EnclaveKeys;
 use crate::seal::{EnclaveBootConfig, SealHeader, SEAL_FORMAT};
 
 const MAX_PENDING_REMOTE_SESSIONS_V1: usize = 64;
+#[cfg(test)]
+pub(crate) mod test_support;
 #[cfg(not(feature = "mock"))]
 const TRUSTED_NETWORK_DESCRIPTOR_PATH: &str = "/opt/outbe/sgx/network-descriptor-v1.bin";
 
@@ -919,7 +921,10 @@ fn restore_manifest(
         || keys
             .sealed_network_binding()
             .is_some_and(|binding| binding != manifest.network_binding())
-        || manifest.recipient_x25519 != keys.tribute_offer_public()
+    {
+        return Err("sealed node authorization does not match this enclave identity".to_string());
+    }
+    if manifest.recipient_x25519 != keys.tribute_offer_public()
         || manifest.attestation_ed25519 != keys.attestation_pub()
         || manifest.noise_responder_x25519 != keys.noise_public()
     {
@@ -1506,23 +1511,13 @@ mod tests {
         ));
 
         let intent = RegistrationIntentV1 {
-            chain_id: replacement_manifest.chain_id,
-            genesis_hash: replacement_manifest.genesis_hash,
             operation: AttestationOperationV1::ReplaceEnclaveBinding,
-            attestation_mode: AttestationMode::DcapRequired,
-            policy_hash: B256::repeat_byte(0x21),
-            node_id: replacement_manifest.node_id.clone(),
-            enclave_id: replacement_manifest.enclave_id().unwrap(),
-            binding_id: B256::repeat_byte(0x44),
             binding_version: 2,
             registration_version: 1,
-            renewal_nonce: 0,
-            transition_nonce: 0,
-            requested_valid_until: 7_200,
-            recipient_x25519: replacement_manifest.recipient_x25519,
-            attestation_ed25519: replacement_manifest.attestation_ed25519,
-            noise_responder_x25519: replacement_manifest.noise_responder_x25519,
             node_host_authorization_hash: first_manifest.node_host_authorization_hash().unwrap(),
+            ..crate::initialization::test_support::registration_intent_for_manifest(
+                &replacement_manifest,
+            )
         };
         assert_eq!(
             replacement_state

@@ -45,7 +45,8 @@ impl AuthenticatedParentTree for Parent {
         entity: EntityRef,
         root: B256,
     ) -> outbe_primitives::error::Result<Option<Commitment>> {
-        assert_eq!(root, self.parent_root());
+        let expected_root = self.parent_root();
+        assert_eq!(root, expected_root);
         Ok((entity == EntityRef::NodItem(self.id)).then_some(self.commitment))
     }
     fn partition_present_verified(
@@ -53,7 +54,8 @@ impl AuthenticatedParentTree for Parent {
         _: PartitionRef,
         root: B256,
     ) -> outbe_primitives::error::Result<bool> {
-        assert_eq!(root, self.parent_root());
+        let expected_root = self.parent_root();
+        assert_eq!(root, expected_root);
         Ok(false)
     }
     fn prepare_seal(

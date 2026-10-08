@@ -274,25 +274,12 @@ impl OffchainDataProjection {
                 let shared = day_apply::write_day_operations(&route.databases, block_batch)?;
                 day_lifecycle::finish_retirements(route, &prepared.day_retirements, shared, state)?
             }
-            None => {
-                if self.partition_retirement {
-                    for retirement in &prepared.day_retirements {
-                        let (day, mark) = match retirement {
-                            DayRetirement::Drop(day) => {
-                                (*day, outbe_tribute::TributeDayMark::Retired)
-                            }
-                            DayRetirement::Retain { day, lease } => {
-                                (*day, outbe_tribute::TributeDayMark::Retained(*lease))
-                            }
-                        };
-                        block_batch.push(outbe_tribute::tribute_day_mark_operation(day, mark)?);
-                        block_batch.retire_scope(outbe_tribute::partitioning::day_scope(day)?);
-                    }
-                }
-                block_batch.extend(state.operations().iter().cloned());
-                block_batch.validate()?;
-                block_batch
-            }
+            None => day_lifecycle::finish_shared_retirements(
+                self.partition_retirement,
+                &prepared.day_retirements,
+                block_batch,
+                state,
+            )?,
         };
         let applied = apply(block_batch)?;
         self.state = next_state;

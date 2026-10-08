@@ -255,46 +255,7 @@ fn primary_scans_reject_malformed_keys_bodies_id_mismatches_and_schema() {
     for bucket in [false, true] {
         for corruption in 0..4 {
             let storage = fixture();
-            let namespace = ns(if bucket { "nod_buckets" } else { "nods" });
-            let selected = id(if bucket { 11 } else { 1 });
-            let original = storage
-                .get(namespace.clone(), &key(selected))
-                .unwrap()
-                .unwrap();
-            match corruption {
-                0 => storage
-                    .put(namespace.clone(), &Key::new(vec![1]).unwrap(), &original)
-                    .unwrap(),
-                1 => storage
-                    .put(
-                        namespace.clone(),
-                        &key(selected),
-                        &Value::new([0xff]).unwrap(),
-                    )
-                    .unwrap(),
-                2 => {
-                    let other = storage
-                        .get(namespace.clone(), &key(id(if bucket { 12 } else { 2 })))
-                        .unwrap()
-                        .unwrap();
-                    storage
-                        .put(namespace.clone(), &key(selected), &other)
-                        .unwrap();
-                }
-                3 => {
-                    let stored = StoredBody::decode(original.as_bytes()).unwrap();
-                    let value = Value::new(
-                        StoredBody::new(u32::MAX, stored.payload().to_vec())
-                            .unwrap()
-                            .encode(),
-                    )
-                    .unwrap();
-                    storage
-                        .put(namespace.clone(), &key(selected), &value)
-                        .unwrap();
-                }
-                _ => unreachable!(),
-            }
+            corrupt_primary(&storage, bucket, corruption);
             let before = snapshot(&storage);
             let reader = NodRepositoryReader::new(storage.clone());
             assert!(scan(
@@ -308,6 +269,49 @@ fn primary_scans_reject_malformed_keys_bodies_id_mismatches_and_schema() {
             .is_err());
             assert_eq!(snapshot(&storage), before);
         }
+    }
+}
+
+fn corrupt_primary(storage: &MemoryStorage, bucket: bool, corruption: u8) {
+    let namespace = ns(if bucket { "nod_buckets" } else { "nods" });
+    let selected = id(if bucket { 11 } else { 1 });
+    let original = storage
+        .get(namespace.clone(), &key(selected))
+        .unwrap()
+        .unwrap();
+    match corruption {
+        0 => storage
+            .put(namespace.clone(), &Key::new(vec![1]).unwrap(), &original)
+            .unwrap(),
+        1 => storage
+            .put(
+                namespace.clone(),
+                &key(selected),
+                &Value::new([0xff]).unwrap(),
+            )
+            .unwrap(),
+        2 => {
+            let other = storage
+                .get(namespace.clone(), &key(id(if bucket { 12 } else { 2 })))
+                .unwrap()
+                .unwrap();
+            storage
+                .put(namespace.clone(), &key(selected), &other)
+                .unwrap();
+        }
+        3 => {
+            let stored = StoredBody::decode(original.as_bytes()).unwrap();
+            let value = Value::new(
+                StoredBody::new(u32::MAX, stored.payload().to_vec())
+                    .unwrap()
+                    .encode(),
+            )
+            .unwrap();
+            storage
+                .put(namespace.clone(), &key(selected), &value)
+                .unwrap();
+        }
+        _ => unreachable!(),
     }
 }
 
@@ -354,6 +358,18 @@ impl StorageReader for PageReader {
             namespace.clone(),
             ScanRequest::new(request.prefix(), request.after(), limit)?,
         )?;
+        self.mutate_page(namespace, request, &mut page)?;
+        Ok(page)
+    }
+}
+
+impl PageReader {
+    fn mutate_page(
+        &self,
+        namespace: Namespace,
+        request: ScanRequest<'_>,
+        page: &mut ScanPage,
+    ) -> Result<(), StorageError> {
         match self.mode {
             PageMode::Short | PageMode::LateError => {}
             PageMode::Descending => page.entries.reverse(),
@@ -388,7 +404,7 @@ impl StorageReader for PageReader {
                 }
             }
         }
-        Ok(page)
+        Ok(())
     }
 }
 

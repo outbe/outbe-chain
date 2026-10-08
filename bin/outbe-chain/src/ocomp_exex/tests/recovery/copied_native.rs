@@ -59,15 +59,7 @@ pub(in crate::ocomp_exex::tests) fn chain() -> Arc<reth_chainspec::ChainSpec<Out
         .clone()
 }
 
-// Real MDBX headers/body indices/receipts and static-file transactions.
-// Frames are storage fixtures, not claims that their transactions were executed.
-pub(in crate::ocomp_exex::tests) fn write_frames(
-    root: &Path,
-    first: u64,
-    last: u64,
-) -> Vec<ProjectionCheckpoint> {
-    let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
-    let tx = db.tx_mut().unwrap();
+pub(in crate::ocomp_exex::tests) fn initialize_storage_settings(tx: &(impl DbTx + DbTxMut)) {
     let settings = reth_provider::StorageSettings::v1();
     match tx
         .get::<tables::Metadata>("storage_settings".into())
@@ -85,6 +77,45 @@ pub(in crate::ocomp_exex::tests) fn write_frames(
             )
             .unwrap(),
     }
+}
+
+pub(in crate::ocomp_exex::tests) struct FrameIdentity {
+    pub(in crate::ocomp_exex::tests) height: u64,
+    pub(in crate::ocomp_exex::tests) parent: B256,
+    pub(in crate::ocomp_exex::tests) timestamp: u64,
+}
+
+pub(in crate::ocomp_exex::tests) fn frame_header(
+    identity: FrameIdentity,
+    transaction: &OutbeTxEnvelope,
+    receipt: &OutbeReceipt,
+) -> OutbeHeader {
+    OutbeHeader::new(Header {
+        number: identity.height,
+        parent_hash: identity.parent,
+        timestamp: identity.timestamp,
+        gas_limit: 30_000_000,
+        gas_used: 21_000,
+        transactions_root: alloy_consensus::proofs::calculate_transaction_root(
+            std::slice::from_ref(transaction),
+        ),
+        receipts_root: alloy_consensus::proofs::calculate_receipt_root(&[
+            alloy_consensus::TxReceipt::with_bloom_ref(receipt),
+        ]),
+        ..Default::default()
+    })
+}
+
+// Real MDBX headers/body indices/receipts and static-file transactions.
+// Frames are storage fixtures, not claims that their transactions were executed.
+pub(in crate::ocomp_exex::tests) fn write_frames(
+    root: &Path,
+    first: u64,
+    last: u64,
+) -> Vec<ProjectionCheckpoint> {
+    let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
+    let tx = db.tx_mut().unwrap();
+    initialize_storage_settings(&tx);
     let mut parent = if first == 0 {
         B256::ZERO
     } else {
@@ -117,20 +148,15 @@ pub(in crate::ocomp_exex::tests) fn write_frames(
         let header = if height == 0 {
             chain().genesis_header().clone()
         } else {
-            OutbeHeader::new(Header {
-                number: height,
-                parent_hash: parent,
-                timestamp: height,
-                gas_limit: 30_000_000,
-                gas_used: 21_000,
-                transactions_root: alloy_consensus::proofs::calculate_transaction_root(
-                    std::slice::from_ref(&transaction),
-                ),
-                receipts_root: alloy_consensus::proofs::calculate_receipt_root(&[
-                    alloy_consensus::TxReceipt::with_bloom_ref(&receipt),
-                ]),
-                ..Default::default()
-            })
+            frame_header(
+                FrameIdentity {
+                    height,
+                    parent,
+                    timestamp: height,
+                },
+                &transaction,
+                &receipt,
+            )
         };
         let hash = header.hash_slow();
         headers.append_header(&header, &hash).unwrap();
@@ -630,7 +656,6 @@ fn worker_started_count(client: &reqwest::blocking::Client, address: std::net::S
 
 #[test]
 fn copied_saved_result_is_restored_before_compute_with_a_connected_real_worker() {
-    use outbe_node::ocomp::local_result::LocalLysisResultStore;
     use outbe_ocomp::embedded::EmbeddedJobEventV1;
     for closed_height in [3, 5] {
         let donor = tempfile::tempdir().unwrap();
@@ -638,37 +663,7 @@ fn copied_saved_result_is_restored_before_compute_with_a_connected_real_worker()
         let points = write_frames(&donor.path().join("chain"), 0, 5);
         let bundle = bundle();
         let spec = finalized_job_spec(0x31, 2, chain().chain().id(), chain().genesis_hash());
-        let intent =
-            JobIntentV1::decode_canonical(&spec.canonical_job_intent.0, &poc_schema_limits())
-                .unwrap();
-        let job = OcompJobRecordV1 {
-            intent,
-            intent_height: spec.summary.cursor,
-            status: OcompJobStatus::VotingOpen,
-            finalized: Some(OcompFinalizedJobV1 {
-                job_id: spec.summary.job_id,
-                finalized_request_block_hash: spec.summary.finalized_block_hash,
-                finalized_request_state_root: spec.summary.finalized_state_root,
-                finality_recorded_height: spec.summary.cursor,
-                open_height: spec.summary.open_height,
-                deadline_height: spec.summary.deadline_height,
-                quorum: None,
-            }),
-            terminal: None,
-        };
-        job.validate_semantics(&poc_schema_limits()).unwrap();
-        let result = result_for(&job);
-        let digest = result.result_digest(&poc_schema_limits()).unwrap();
-        let local_path = donor.path().join("ocomp/node-v1/local-results");
-        fs::create_dir_all(local_path.parent().unwrap()).unwrap();
-        let store = LocalLysisResultStore::open(&local_path, poc_schema_limits()).unwrap();
-        store
-            .commit(
-                spec.summary.job_id,
-                &result.encode_canonical(&poc_schema_limits()).unwrap(),
-            )
-            .unwrap();
-        drop(store);
+        let (result, digest) = save_local_result_fixture(donor.path(), &spec);
         let mut initial = runtime(
             provider(&donor.path().join("chain")),
             &donor.path().join("ocomp"),
@@ -703,27 +698,7 @@ fn copied_saved_result_is_restored_before_compute_with_a_connected_real_worker()
             .timeout(Duration::from_secs(2))
             .build()
             .unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            assert!(
-                child.0.try_wait().unwrap().is_none(),
-                "worker subprocess exited before observation"
-            );
-            if let Ok(response) = client.get(format!("http://{metrics}/status")).send() {
-                if let Ok(status) =
-                    response.json::<outbe_ocomp::worker_observability::WorkerStatusV1>()
-                {
-                    if status.phase == outbe_ocomp::worker_observability::WorkerPhaseV1::Idle {
-                        break;
-                    }
-                }
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "worker did not register"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        wait_for_idle_worker(&mut child, &client, metrics);
         let before = worker_started_count(&client, metrics);
         assert_eq!(before, 0);
         let generation = restored
@@ -890,3 +865,65 @@ fn copied_native_fatal_evidence_remains_authoritative_on_reopen() {
 mod copied_retention;
 
 mod replay;
+
+fn wait_for_idle_worker(
+    child: &mut ChildWorker,
+    client: &reqwest::blocking::Client,
+    metrics: std::net::SocketAddr,
+) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "worker subprocess exited before observation"
+        );
+        if let Ok(response) = client.get(format!("http://{metrics}/status")).send() {
+            if let Ok(status) = response.json::<outbe_ocomp::worker_observability::WorkerStatusV1>()
+            {
+                if status.phase == outbe_ocomp::worker_observability::WorkerPhaseV1::Idle {
+                    break;
+                }
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "worker did not register"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn save_local_result_fixture(donor: &Path, spec: &FinalizedJobSpecV1) -> (LysisResultV1, B256) {
+    use outbe_node::ocomp::local_result::LocalLysisResultStore;
+    let intent =
+        JobIntentV1::decode_canonical(&spec.canonical_job_intent.0, &poc_schema_limits()).unwrap();
+    let job = OcompJobRecordV1 {
+        intent,
+        intent_height: spec.summary.cursor,
+        status: OcompJobStatus::VotingOpen,
+        finalized: Some(OcompFinalizedJobV1 {
+            job_id: spec.summary.job_id,
+            finalized_request_block_hash: spec.summary.finalized_block_hash,
+            finalized_request_state_root: spec.summary.finalized_state_root,
+            finality_recorded_height: spec.summary.cursor,
+            open_height: spec.summary.open_height,
+            deadline_height: spec.summary.deadline_height,
+            quorum: None,
+        }),
+        terminal: None,
+    };
+    job.validate_semantics(&poc_schema_limits()).unwrap();
+    let result = result_for(&job);
+    let digest = result.result_digest(&poc_schema_limits()).unwrap();
+    let local_path = donor.join("ocomp/node-v1/local-results");
+    fs::create_dir_all(local_path.parent().unwrap()).unwrap();
+    let store = LocalLysisResultStore::open(&local_path, poc_schema_limits()).unwrap();
+    store
+        .commit(
+            spec.summary.job_id,
+            &result.encode_canonical(&poc_schema_limits()).unwrap(),
+        )
+        .unwrap();
+    drop(store);
+    (result, digest)
+}

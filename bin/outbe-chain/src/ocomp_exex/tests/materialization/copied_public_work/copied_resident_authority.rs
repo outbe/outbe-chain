@@ -117,23 +117,33 @@ struct CompletionRpc {
     sent: Arc<Mutex<Vec<B256>>>,
 }
 
+impl CompletionRpc {
+    #[track_caller]
+    fn require_enabled(&self, reason: Option<&str>) {
+        match reason {
+            Some(reason) => assert!(self.enabled, "{reason}"),
+            None => assert!(self.enabled),
+        }
+    }
+}
+
 impl VoteSubmissionRpcV1 for CompletionRpc {
     type Error = std::io::Error;
     fn chain_id(&self) -> Result<u64, Self::Error> {
-        assert!(self.enabled, "resident finalized journal must not call RPC");
+        self.require_enabled(Some("resident finalized journal must not call RPC"));
         Ok(copied_native::chain().chain().id())
     }
     fn canonical_nonce(&self, sender: Address) -> Result<u64, Self::Error> {
-        assert!(self.enabled);
+        self.require_enabled(None);
         assert_eq!(sender, self.sender);
         Ok(7)
     }
     fn gas_price(&self) -> Result<u128, Self::Error> {
-        assert!(self.enabled);
+        self.require_enabled(None);
         Ok(1)
     }
     fn send_raw_transaction(&self, raw: &[u8], expected: B256) -> Result<B256, Self::Error> {
-        assert!(self.enabled);
+        self.require_enabled(None);
         assert!(!raw.is_empty());
         assert_eq!(keccak256(raw), expected);
         let mut encoded = raw;
@@ -144,7 +154,7 @@ impl VoteSubmissionRpcV1 for CompletionRpc {
         Ok(expected)
     }
     fn transaction_receipt(&self, tx: B256) -> Result<Option<VoteReceiptV1>, Self::Error> {
-        assert!(self.enabled);
+        self.require_enabled(None);
         assert_eq!(*self.sent.lock().unwrap().last().unwrap(), tx);
         Ok(Some(VoteReceiptV1 {
             transaction_hash: tx,
@@ -154,12 +164,12 @@ impl VoteSubmissionRpcV1 for CompletionRpc {
         }))
     }
     fn canonical_block(&self, number: u64) -> Result<Option<VoteBlockV1>, Self::Error> {
-        assert!(self.enabled);
+        self.require_enabled(None);
         assert_eq!(number, self.block.number);
         Ok(Some(self.block))
     }
     fn finalized_block(&self) -> Result<VoteBlockV1, Self::Error> {
-        assert!(self.enabled);
+        self.require_enabled(None);
         Ok(self.block)
     }
 }

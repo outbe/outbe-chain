@@ -6,7 +6,6 @@ mod support;
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{encode_tribute_v1, TributeBodyV1};
 use outbe_lysis::program_v1::planner::{LysisPlanTopologyV1, PlannedUnitPositionV1};
-use outbe_lysis::program_v1::result::{encode_root_reduce_output, RootReduceOutputV1};
 use outbe_ocomp::{
     admission_catalog::{AdmissionPositionV1, VerifiedAdmissionCatalog},
     bundle::PinnedProtocolBundle,

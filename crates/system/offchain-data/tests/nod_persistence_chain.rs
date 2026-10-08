@@ -64,11 +64,18 @@ fn assert_authenticated_nods(
     });
 }
 
-#[test]
-fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
-    let directory = tempfile::tempdir().unwrap();
-    let ce_path = directory.path().join("ce");
-    let rocks_path = directory.path().join("projection");
+struct NativeStores {
+    ce: Arc<CeMdbx>,
+    rocks: Arc<RocksDbStorage>,
+    environment: EnvironmentIdentity,
+    genesis_marker: FinalizedMarker,
+    config: ProjectionConfig,
+    evm: HashMapStorageProvider,
+}
+
+fn prepare_stores(directory: &std::path::Path) -> NativeStores {
+    let ce_path = directory.join("ce");
+    let rocks_path = directory.join("projection");
     let genesis = B256::repeat_byte(0x42);
     let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
     let environment = EnvironmentIdentity {
@@ -95,8 +102,6 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
         genesis_hash: genesis,
         start_block: 1,
     };
-    let mut projector = OffchainDataProjection::open(config, rocks.clone(), rocks.clone()).unwrap();
-    let readers = RuntimeBodyReaders::new(rocks.clone());
     let mut evm = HashMapStorageProvider::new_with_chain_identity(91, genesis);
     // Seed only the empty genesis CE state. All later roots/leaves come from end_block.
     StorageHandle::enter(&mut evm, |storage| {
@@ -111,6 +116,68 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
             )
             .unwrap();
     });
+    NativeStores {
+        ce,
+        rocks,
+        environment,
+        genesis_marker,
+        config,
+        evm,
+    }
+}
+
+fn project_mutation_receipt(
+    projector: &mut OffchainDataProjection,
+    evm: &HashMapStorageProvider,
+    first_event: usize,
+    identity: ExactParentIdentity,
+) {
+    let height = identity.block_number;
+    let hash = identity.block_hash;
+    let logs = evm.get_ordered_events()[first_event..]
+        .iter()
+        .enumerate()
+        .map(|(index, log)| FinalizedLog {
+            log_index: index as u64,
+            emitter: log.address,
+            data: log.data.clone(),
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !logs.is_empty(),
+        "production mutation must emit projection events"
+    );
+    projector
+        .project_block(&FinalizedBlock {
+            number: height,
+            hash,
+            receipts: vec![FinalizedReceipt {
+                tx_hash: B256::repeat_byte(0x70 + height as u8),
+                transaction_index: 0,
+                success: true,
+                logs,
+            }],
+        })
+        .unwrap();
+}
+
+#[test]
+fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let NativeStores {
+        ce,
+        rocks,
+        environment,
+        genesis_marker,
+        config,
+        mut evm,
+    } = prepare_stores(directory.path());
+    let ce_path = directory.path().join("ce");
+    let rocks_path = directory.path().join("projection");
+    let genesis = config.genesis_hash;
+    let empty_root = genesis_marker.new_root;
+    let mut projector = OffchainDataProjection::open(config, rocks.clone(), rocks.clone()).unwrap();
+    let readers = RuntimeBodyReaders::new(rocks.clone());
     let day = WorldwideDay::new(20260906);
     let mut items = Vec::new();
     let mut identity = ExactParentIdentity {
@@ -172,31 +239,7 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
             assert_eq!(projector.state().checkpoint.unwrap().block_number, 1);
             assert_authenticated_nods(&mut evm, &ce, identity, &readers, &items);
         }
-        let logs = evm.get_ordered_events()[first_event..]
-            .iter()
-            .enumerate()
-            .map(|(index, log)| FinalizedLog {
-                log_index: index as u64,
-                emitter: log.address,
-                data: log.data.clone(),
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            !logs.is_empty(),
-            "production mutation must emit projection events"
-        );
-        projector
-            .project_block(&FinalizedBlock {
-                number: height,
-                hash,
-                receipts: vec![FinalizedReceipt {
-                    tx_hash: B256::repeat_byte(0x70 + height as u8),
-                    transaction_index: 0,
-                    success: true,
-                    logs,
-                }],
-            })
-            .unwrap();
+        project_mutation_receipt(&mut projector, &evm, first_event, identity);
         items.push(item);
         assert_authenticated_nods(&mut evm, &ce, identity, &readers, &items);
     }
@@ -241,7 +284,13 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
         )
         .unwrap_err()
     });
-    let outbe_primitives::error::PrecompileError::BodyReadCorruption(message) = &error else {
+    assert_corruption_diagnostics(&error);
+    reopened_readers.report_precompile_error(&error);
+    assert!(failures.borrow().is_none());
+}
+
+fn assert_corruption_diagnostics(error: &outbe_primitives::error::PrecompileError) {
+    let outbe_primitives::error::PrecompileError::BodyReadCorruption(message) = error else {
         panic!("body mismatch must remain corruption, got {error:?}");
     };
     for field in [
@@ -256,6 +305,4 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
     ] {
         assert!(message.contains(field), "missing {field}: {message}");
     }
-    reopened_readers.report_precompile_error(&error);
-    assert!(failures.borrow().is_none());
 }

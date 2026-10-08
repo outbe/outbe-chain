@@ -2,10 +2,7 @@ use super::super::recovery::copied_native;
 use super::*;
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::TributeBodyV1;
-use outbe_lysis::program_v1::{
-    planner::{LysisPlanTopologyV1, PlannedUnitPositionV1},
-    result::{encode_root_reduce_output, RootReduceOutputV1},
-};
+use outbe_lysis::program_v1::planner::{LysisPlanTopologyV1, PlannedUnitPositionV1};
 use outbe_ocomp::nod_materialization::build_nod_materialization_batch_with_references;
 use outbe_ocomp::{
     admission_catalog::{AdmissionCatalogReader, AdmissionPositionV1, VerifiedAdmissionCatalog},
@@ -22,9 +19,7 @@ use outbe_ocomp::{
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
     input::{CheckpointIdentityV1, InputChunkKind, InputManifestV1},
-    registry::{
-        ObjectKind, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
-    },
+    registry::ObjectKind,
     result::{ContributorActionV1, OutputManifestEntryV1, ResultChunkV1},
     unit::{UnitArtifactV1, UnitPhase, WorkOutputHeaderV1},
     ListKind,
@@ -56,50 +51,76 @@ struct Fixture {
     result_chunk_refs: Vec<CasObjectRefV1>,
     protected_sources: outbe_nodfactory::test_support::MaterializationFixture,
 }
+impl Fixture {
+    fn seed_pending_head(&self, storage: &outbe_primitives::storage::StorageHandle<'_>) {
+        self.protected_sources.seed_source_root(storage).unwrap();
+        let nod = outbe_nod::schema::NodContract::new(storage.clone());
+        let p = outbe_nod::schema::NodCertifiedGenerationProjection {
+            worldwide_day: self.day,
+            generation: 1,
+            job_id: self.job_id,
+            program_semantics_hash: self.bundle.bundle().lysis_program_semantics_hash,
+            protocol_bundle_hash: self.bundle.hash(),
+            nod_root: self.nod_root,
+            bucket_root: self.bucket_root,
+            output_manifest_root: self.output_manifest_root,
+            tribute_count: self.nod_count,
+            nod_count: self.nod_count,
+            bucket_count: self.nod_count,
+            nod_amount_total: U256::from(self.nod_count) * U256::from(2),
+            lysis_allocation_minor: U256::from(self.nod_count),
+            issued_at: 1_000,
+            next_nod_ordinal: 256,
+            last_progress_height: 100,
+        };
+        nod.ocomp_materialization_head_sequence.write(1).unwrap();
+        nod.ocomp_materialization_tail_sequence.write(2).unwrap();
+        nod.ocomp_materialization_queue_wwd
+            .write(&1, self.day)
+            .unwrap();
+        nod.ocomp_target_generation.write(&self.day, 1).unwrap();
+        nod.ocomp_namespace_root
+            .write(&self.day, p.nod_root)
+            .unwrap();
+        nod.ocomp_bucket_root
+            .write(&self.day, p.bucket_root)
+            .unwrap();
+        nod.ocomp_output_manifest_root
+            .write(&self.day, p.output_manifest_root)
+            .unwrap();
+        nod.ocomp_generation_metadata
+            .write(&self.day, p.metadata_word())
+            .unwrap();
+        nod.ocomp_nod_amount_total
+            .write(&self.day, p.nod_amount_total)
+            .unwrap();
+        nod.ocomp_lysis_allocation_minor
+            .write(&self.day, p.lysis_allocation_minor)
+            .unwrap();
+        nod.ocomp_materialization_job_id
+            .write(&self.day, p.job_id)
+            .unwrap();
+        nod.ocomp_materialization_protocol_bundle_hash
+            .write(&self.day, p.protocol_bundle_hash)
+            .unwrap();
+        nod.ocomp_materialization_program_semantics_hash
+            .write(&self.day, p.program_semantics_hash)
+            .unwrap();
+        nod.ocomp_materialization_next_nod_ordinal
+            .write(&self.day, p.next_nod_ordinal)
+            .unwrap();
+        nod.ocomp_materialization_last_progress_height
+            .write(&self.day, p.last_progress_height)
+            .unwrap();
+    }
+}
+
 // Protocol-shaped native CAS/planner fixture. Minimal non-root phase payloads
 // support structural/proof tests. This is not real worker-pipeline E2E evidence.
 fn protocol_bundle() -> ProtocolBundleV1 {
-    ProtocolBundleV1 {
-        protocol_version: 1,
-        fork_id: B256::repeat_byte(1),
-        intent_codec_id: B256::repeat_byte(2),
-        finalized_intent_proof_codec_id: B256::repeat_byte(3),
-        tribute_body_codec_id: TRIBUTE_BODY_CODEC_ID,
-        fidelity_opening_codec_id: FIDELITY_OPENING_CODEC_ID,
-        oracle_opening_codec_id: ORACLE_OPENING_CODEC_ID,
-        result_codec_id: B256::repeat_byte(4),
-        action_codec_id: B256::repeat_byte(5),
-        activation_codec_id: B256::repeat_byte(6),
-        evidence_codec_id: B256::repeat_byte(7),
-        request_semantics_version: 1,
-        lysis_program_semantics_hash: B256::repeat_byte(8),
-        planner_spec_version: 1,
-        reducer_spec_version: 1,
-        activation_apply_semantics_hash: B256::repeat_byte(9),
-        effect_contract_registry_hash: B256::repeat_byte(10),
-        object_codec_registry_hash: B256::repeat_byte(11),
-        correctness_profile_id: B256::repeat_byte(12),
-        capacity_profile_id: B256::repeat_byte(13),
-        result_signature_profile_id: B256::repeat_byte(14),
-        finality_verifier_and_vote_domain_id: B256::repeat_byte(15),
-        consensus_committee_history_schema_version: 1,
-        ocomp_committee_schema_version: 1,
-        proof_system_and_verifier_key_id: None,
-        da_codec_and_binding_verifier_id: None,
-        anti_equivocation_journal_schema_hash: B256::repeat_byte(16),
-        mode_pause_revocation_semantics_hash: B256::repeat_byte(17),
-        upgrade_fsm_semantics_hash: B256::repeat_byte(18),
-        release_requirement_catalog_sequence: 1,
-        release_requirement_catalog_hash: B256::repeat_byte(19),
-        release_requirement_catalog_parent_hash: B256::repeat_byte(20),
-        release_gate_authority_envelope_hash: B256::repeat_byte(21),
-        release_approval_policy_hash: B256::repeat_byte(22),
-        release_validator_command_artifact_hash: B256::repeat_byte(23),
-        consensus_state_schema_version: 1,
-        migration_manifest_hash: B256::repeat_byte(24),
-        required_upgrade_handler_set_hash: B256::repeat_byte(25),
-    }
+    outbe_ocomp::test_support::protocol_bundle_fixture()
 }
+
 mod fixture;
 use fixture::fixture;
 
@@ -118,7 +139,6 @@ fn pending_head(f: &Fixture) -> NodMaterializationHeadV1 {
 }
 
 fn write_native_pending_head(root: &Path, f: &Fixture) {
-    use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use reth_ethereum::provider::db::{
         database::Database,
@@ -133,61 +153,7 @@ fn write_native_pending_head(root: &Path, f: &Fixture) {
         copied_native::chain().genesis_hash(),
     );
     StorageHandle::enter(&mut owner, |storage| {
-        f.protected_sources.seed_source_root(&storage).unwrap();
-        let nod = NodContract::new(storage);
-        let p = NodCertifiedGenerationProjection {
-            worldwide_day: f.day,
-            generation: 1,
-            job_id: f.job_id,
-            program_semantics_hash: f.bundle.bundle().lysis_program_semantics_hash,
-            protocol_bundle_hash: f.bundle.hash(),
-            nod_root: f.nod_root,
-            bucket_root: f.bucket_root,
-            output_manifest_root: f.output_manifest_root,
-            tribute_count: f.nod_count,
-            nod_count: f.nod_count,
-            bucket_count: f.nod_count,
-            nod_amount_total: U256::from(f.nod_count) * U256::from(2),
-            lysis_allocation_minor: U256::from(f.nod_count),
-            issued_at: 1_000,
-            next_nod_ordinal: 256,
-            last_progress_height: 100,
-        };
-        nod.ocomp_materialization_head_sequence.write(1).unwrap();
-        nod.ocomp_materialization_tail_sequence.write(2).unwrap();
-        nod.ocomp_materialization_queue_wwd
-            .write(&1, f.day)
-            .unwrap();
-        nod.ocomp_target_generation.write(&f.day, 1).unwrap();
-        nod.ocomp_namespace_root.write(&f.day, p.nod_root).unwrap();
-        nod.ocomp_bucket_root.write(&f.day, p.bucket_root).unwrap();
-        nod.ocomp_output_manifest_root
-            .write(&f.day, p.output_manifest_root)
-            .unwrap();
-        nod.ocomp_generation_metadata
-            .write(&f.day, p.metadata_word())
-            .unwrap();
-        nod.ocomp_nod_amount_total
-            .write(&f.day, p.nod_amount_total)
-            .unwrap();
-        nod.ocomp_lysis_allocation_minor
-            .write(&f.day, p.lysis_allocation_minor)
-            .unwrap();
-        nod.ocomp_materialization_job_id
-            .write(&f.day, p.job_id)
-            .unwrap();
-        nod.ocomp_materialization_protocol_bundle_hash
-            .write(&f.day, p.protocol_bundle_hash)
-            .unwrap();
-        nod.ocomp_materialization_program_semantics_hash
-            .write(&f.day, p.program_semantics_hash)
-            .unwrap();
-        nod.ocomp_materialization_next_nod_ordinal
-            .write(&f.day, p.next_nod_ordinal)
-            .unwrap();
-        nod.ocomp_materialization_last_progress_height
-            .write(&f.day, p.last_progress_height)
-            .unwrap();
+        f.seed_pending_head(&storage);
     });
     let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
     let tx = db.tx_mut().unwrap();
@@ -286,9 +252,33 @@ fn chunk_path(root: &Path, f: &Fixture, ordinal: usize) -> PathBuf {
         .join(&digest[2..])
 }
 
+fn complete_local_job<P>(runtime: &mut EmbeddedOcompExExV1<P>, job_id: B256) {
+    use outbe_ocomp::embedded::EmbeddedJobEventV1;
+    let generation = runtime.state.observe_job(job_id, 90).unwrap();
+    let digest = B256::repeat_byte(0x91);
+    runtime
+        .state
+        .reduce(
+            job_id,
+            EmbeddedJobEventV1::LocalCompleted {
+                generation,
+                result_digest: digest,
+            },
+        )
+        .unwrap();
+    runtime
+        .state
+        .reduce(
+            job_id,
+            EmbeddedJobEventV1::CanonicalCompleted {
+                result_digest: digest,
+            },
+        )
+        .unwrap();
+}
+
 #[test]
 fn copied_pending_nod_remains_buildable_after_terminal_pruning_and_consumed_chunk_removal() {
-    use outbe_ocomp::embedded::EmbeddedJobEventV1;
     use outbe_ocomp::nod_materialization::MaterializationReferenceStoreV1;
     for remove_required in [false, true] {
         let donor = tempfile::tempdir().unwrap();
@@ -302,27 +292,7 @@ fn copied_pending_nod_remains_buildable_after_terminal_pruning_and_consumed_chun
             &public,
             f.bundle.clone(),
         );
-        let generation = runtime.state.observe_job(f.job_id, 90).unwrap();
-        let digest = B256::repeat_byte(0x91);
-        runtime
-            .state
-            .reduce(
-                f.job_id,
-                EmbeddedJobEventV1::LocalCompleted {
-                    generation,
-                    result_digest: digest,
-                },
-            )
-            .unwrap();
-        runtime
-            .state
-            .reduce(
-                f.job_id,
-                EmbeddedJobEventV1::CanonicalCompleted {
-                    result_digest: digest,
-                },
-            )
-            .unwrap();
+        complete_local_job(&mut runtime, f.job_id);
         copied_native::catch_up(&mut runtime, points[100]);
         assert_eq!(runtime.closure_checkpoint.current().unwrap(), points[100]);
         runtime.state.prune_terminal_job(f.job_id).unwrap();

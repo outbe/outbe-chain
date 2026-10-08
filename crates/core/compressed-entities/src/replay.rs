@@ -58,8 +58,20 @@ pub fn decode_canonical_body_event(
     let Some(signature) = data.topics().first().copied() else {
         return Ok(None);
     };
+    if emitter == TRIBUTE_ADDRESS {
+        return decode_tribute_event(signature, data);
+    }
+    if emitter == NOD_ADDRESS {
+        return decode_nod_event(signature, data);
+    }
+    Ok(None)
+}
 
-    if emitter == TRIBUTE_ADDRESS && signature == TributeBodyStored::SIGNATURE_HASH {
+fn decode_tribute_event(
+    signature: B256,
+    data: &LogData,
+) -> Result<Option<CanonicalBodyEvent>, ReplayEventError> {
+    if signature == TributeBodyStored::SIGNATURE_HASH {
         let event = TributeBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         validate_versions(event.commitmentSchemeVersion, event.schemaVersion, true)?;
@@ -82,7 +94,7 @@ pub fn decode_canonical_body_event(
         )
         .map(Some);
     }
-    if emitter == TRIBUTE_ADDRESS && signature == TributeBodyDeleted::SIGNATURE_HASH {
+    if signature == TributeBodyDeleted::SIGNATURE_HASH {
         let event = TributeBodyDeleted::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         return deleted_event(
@@ -91,7 +103,14 @@ pub fn decode_canonical_body_event(
         )
         .map(Some);
     }
-    if emitter == NOD_ADDRESS && signature == NodBodyStored::SIGNATURE_HASH {
+    Ok(None)
+}
+
+fn decode_nod_event(
+    signature: B256,
+    data: &LogData,
+) -> Result<Option<CanonicalBodyEvent>, ReplayEventError> {
+    if signature == NodBodyStored::SIGNATURE_HASH {
         let event = NodBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         validate_versions(event.commitmentSchemeVersion, event.schemaVersion, true)?;
@@ -115,7 +134,7 @@ pub fn decode_canonical_body_event(
         )
         .map(Some);
     }
-    if emitter == NOD_ADDRESS && signature == NodBodyDeleted::SIGNATURE_HASH {
+    if signature == NodBodyDeleted::SIGNATURE_HASH {
         let event = NodBodyDeleted::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         return deleted_event(
@@ -124,7 +143,7 @@ pub fn decode_canonical_body_event(
         )
         .map(Some);
     }
-    if emitter == NOD_ADDRESS && signature == NodBucketBodyStored::SIGNATURE_HASH {
+    if signature == NodBucketBodyStored::SIGNATURE_HASH {
         let event = NodBucketBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         validate_versions(event.commitmentSchemeVersion, event.schemaVersion, false)?;
@@ -143,7 +162,7 @@ pub fn decode_canonical_body_event(
         )
         .map(Some);
     }
-    if emitter == NOD_ADDRESS && signature == NodBucketBodyDeleted::SIGNATURE_HASH {
+    if signature == NodBucketBodyDeleted::SIGNATURE_HASH {
         let event = NodBucketBodyDeleted::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         return deleted_event(
@@ -152,7 +171,6 @@ pub fn decode_canonical_body_event(
         )
         .map(Some);
     }
-
     Ok(None)
 }
 

@@ -1,3 +1,5 @@
+mod pagination;
+
 use std::collections::BTreeSet;
 
 use alloy_primitives::{Bytes, B256};
@@ -188,138 +190,14 @@ pub(crate) fn list(
     query: QueryRef,
     request: IdPageRequest,
 ) -> Result<VerifiedBodyPage> {
-    validate_page_request(query, request)?;
-    let state = State::new(storage.clone());
-    let mut added = BTreeSet::new();
-    let mut removed = BTreeSet::new();
-
-    for (record, status) in state.index_deltas()? {
-        scope.deduct_explicit_gas(&storage, INDEX_RECORD_SCAN_GAS)?;
-        if !record_matches_query(&record, query) {
-            continue;
-        }
-        if request.after.is_some_and(|after| record.entity_id <= after) {
-            continue;
-        }
-        match status {
-            DeltaStatus::Added => {
-                added.insert(record.entity_id);
-            }
-            DeltaStatus::Removed => {
-                removed.insert(record.entity_id);
-            }
-            DeltaStatus::NoChangeTouched => {}
-            DeltaStatus::NeverTouched => {
-                return Err(fatal("zero index delta escaped state validation"));
-            }
-        }
+    pagination::Pagination {
+        storage,
+        scope,
+        parent,
+        query,
+        request,
     }
-
-    let target =
-        usize::try_from(request.limit).map_err(|_| revert("page limit is not representable"))?;
-    let initial_after = request.after;
-    let mut parent_cursor = request.after;
-    let mut parent_seen = BTreeSet::new();
-    let mut observed_removed = BTreeSet::new();
-    let mut parent_exhausted: bool;
-
-    loop {
-        let page = parent
-            .list(
-                query,
-                IdPageRequest {
-                    after: parent_cursor,
-                    limit: request.limit,
-                },
-            )
-            .map_err(PrecompileError::from)?;
-        validate_parent_page(query, parent_cursor, request.limit, &page)?;
-        for id in &page.ids {
-            scope.deduct_explicit_gas(&storage, PARENT_ID_GAS)?;
-            if added.contains(id) {
-                return Err(PrecompileError::BodyReadCorruption(format!(
-                    "Added ID {id} already exists in finalized-parent index"
-                )));
-            }
-            if !parent_seen.insert(*id) {
-                return Err(PrecompileError::BodyReadCorruption(format!(
-                    "duplicate finalized-parent ID {id}"
-                )));
-            }
-            if removed.contains(id) {
-                observed_removed.insert(*id);
-            }
-        }
-        if let Some(last) = page.ids.last() {
-            let skipped_removed = removed.iter().any(|removed_id| {
-                initial_after.is_none_or(|after| *removed_id > after)
-                    && *removed_id <= *last
-                    && !observed_removed.contains(removed_id)
-            });
-            if skipped_removed {
-                return Err(PrecompileError::BodyReadCorruption(
-                    "Removed ID was skipped by the ordered finalized-parent index".into(),
-                ));
-            }
-        }
-
-        parent_exhausted = page.next_after.is_none();
-        if !parent_exhausted {
-            parent_cursor = page.next_after;
-        }
-
-        let candidates = merged_candidates(&parent_seen, &added, &removed);
-        let has_lookahead = candidates.len() > target;
-        let proof_reached = if has_lookahead {
-            let lookahead = candidates[target];
-            page.ids.last().is_some_and(|last| *last >= lookahead)
-        } else {
-            false
-        };
-        if parent_exhausted || proof_reached {
-            break;
-        }
-    }
-
-    if parent_exhausted {
-        let relevant_removed: BTreeSet<_> = removed
-            .iter()
-            .copied()
-            .filter(|id| initial_after.is_none_or(|after| *id > after))
-            .collect();
-        if observed_removed != relevant_removed {
-            return Err(PrecompileError::BodyReadCorruption(
-                "Removed ID is missing from finalized-parent index".into(),
-            ));
-        }
-    }
-
-    let candidates = merged_candidates(&parent_seen, &added, &removed);
-    let has_more = candidates.len() > target || !parent_exhausted;
-    let selected: Vec<_> = candidates.into_iter().take(target).collect();
-    let next_after = if has_more {
-        Some(*selected.last().ok_or_else(|| {
-            fatal("parent continuation or merged lookahead produced an empty result page")
-        })?)
-    } else {
-        None
-    };
-    let mut bodies = Vec::with_capacity(selected.len());
-    for id in selected {
-        let entity = entity_for_query(query, id);
-        let body = read(storage.clone(), scope, parent, entity)?.ok_or_else(|| {
-            PrecompileError::BodyReadCorruption(format!(
-                "listed compressed entity {id} is canonically absent"
-            ))
-        })?;
-        if !verified_matches_query(&body, query) {
-            return Err(PrecompileError::BodyReadCorruption(format!(
-                "listed compressed entity {id} violates query predicate"
-            )));
-        }
-        bodies.push(body);
-    }
-    Ok(VerifiedBodyPage::new(bodies, next_after))
+    .read()
 }
 
 fn prepare_input(input: BodyInput<'_>) -> Result<PreparedBody> {

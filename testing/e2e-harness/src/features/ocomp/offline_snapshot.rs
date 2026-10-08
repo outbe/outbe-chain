@@ -433,247 +433,9 @@ fn sha256(bytes: &[u8]) -> String {
 
 /// Narrow relational assertion for Task09 Tests-first 1, not full acceptance.
 /// A passed assertion cannot replace signature/placement/role/public-action checks.
-pub(crate) fn assert_snapshot_workflow(e: &OfflineSnapshotEvidence) -> eyre::Result<()> {
-    let create = e
-        .create
-        .as_ref()
-        .ok_or_else(|| eyre!("missing create CLI phase"))?;
-    snapshot_command(create, "create")?;
-    successful_command(create)?;
-    let raw_manifest: serde_json::Value = serde_json::from_slice(&e.manifest_bytes)?;
-    let raw_progress = raw_manifest["progress"]
-        .as_object()
-        .ok_or_else(|| eyre!("missing native progress object"))?;
-    for key in [
-        "finalized",
-        "execution",
-        "execution_stage",
-        "finish_stage",
-        "partial_state_trie",
-        "unwind",
-        "storage_version",
-        "ce",
-        "projection",
-        "ocomp_baseline",
-        "ocomp_previous",
-        "ocomp_current",
-    ] {
-        ensure!(
-            raw_progress.contains_key(key),
-            "unobserved native field {key}; retain explicit nulls"
-        );
-    }
-    let manifest: SnapshotManifestObservation = serde_json::from_slice(&e.manifest_bytes)?;
-    ensure!(
-        manifest.version == 1 && manifest.chain_id == 54322345,
-        "unexpected snapshot format/network"
-    );
-    native(&manifest.progress)?;
-    ensure!(
-        manifest.progress.finalized == e.cut_canonical,
-        "wrong stopped H/hash"
-    );
-    let stdout = std::str::from_utf8(&create.stdout)?;
-    // Match actual named stdout fields, including when the output path has spaces.
-    for token in [
-        format!("finalized_height={}", e.cut_canonical.number),
-        format!("finalized_hash={}", e.cut_canonical.hash),
-        "signature=verified".into(),
-    ] {
-        ensure!(
-            stdout.split_whitespace().any(|field| field == token),
-            "create output missing {token}"
-        );
-    }
-    let transfer = e
-        .transfer
-        .as_ref()
-        .ok_or_else(|| eyre!("missing transfer phase"))?;
-    successful_command(transfer)?;
-    ensure!(
-        create.ended <= transfer.started,
-        "transfer predates create completion"
-    );
-    ensure!(
-        is_hash(&e.archive_sha256) && e.archive_sha256 == e.transferred_archive_sha256,
-        "archive changed during transfer"
-    );
-    let placement = e
-        .placement
-        .as_ref()
-        .ok_or_else(|| eyre!("missing native placement phase"))?;
-    ensure!(
-        transfer.ended <= placement.native.observed
-            && placement.native.observed <= placement.completed,
-        "placement/read interval invalid"
-    );
-    ensure!(
-        !placement.native.sources.is_empty() && placement.native.progress == manifest.progress,
-        "placed native state differs from signed cut"
-    );
-    ensure!(
-        !e.identity_before.is_empty(),
-        "missing protected path inventory"
-    );
-    for fingerprint in e.identity_before.values() {
-        ensure!(is_hash(&fingerprint.sha256), "invalid identity fingerprint");
-    }
-    ensure!(
-        e.identity_before == e.identity_placed
-            && e.identity_before == e.identity_at_k
-            && e.identity_before == e.identity_restarted,
-        "protected identity changed"
-    );
-    let first = e
-        .first_start
-        .as_ref()
-        .ok_or_else(|| eyre!("missing first ordinary start"))?;
-    ordinary_launch(first)?;
-    ensure!(
-        placement.completed <= first.before_launch.observed
-            && first.before_launch.progress == placement.native.progress,
-        "first start did not resume placed native state"
-    );
-    if let SnapshotValidationObservation::Run(command) = &e.validation {
-        snapshot_command(command, "validate")?;
-        ensure!(
-            placement.completed <= command.started
-                && command.started <= command.ended
-                && command.ended <= first.before_launch.observed,
-            "validation was not before first native writes"
-        );
-        let report = parse_snapshot_validation_report(&command.stdout)?;
-        for (observed, actual) in [
-            (&report.observed.h, &manifest.progress.finalized),
-            (&report.observed.e, &manifest.progress.execution),
-            (&report.observed.q, &manifest.progress.ce),
-            (&report.observed.p, &manifest.progress.projection),
-            (
-                &report.observed.c_baseline,
-                &manifest.progress.ocomp_baseline,
-            ),
-            (
-                &report.observed.c_previous,
-                &manifest.progress.ocomp_previous,
-            ),
-            (&report.observed.c_current, &manifest.progress.ocomp_current),
-        ] {
-            if let Some(observed) = observed {
-                ensure!(observed == actual, "validation frontier differs from cut");
-            }
-        }
-        ensure!(
-            report.checks.values().any(|check| check.selected),
-            "empty validation selection"
-        );
-        let passed = report
-            .checks
-            .values()
-            .filter(|check| check.selected)
-            .all(|check| check.status == SnapshotCheckStatus::Passed);
-        if passed {
-            successful_command(command)?;
-        } else {
-            ensure!(
-                command.exit_code.is_some_and(|code| code != 0) && command.signal.is_none(),
-                "nonpassing report disguised as CLI success"
-            );
-        }
-        // A nonpassing optional audit remains nonpassing. It is not a startup gate.
-    }
-    let new = e.new_job.as_ref().ok_or_else(|| eyre!("missing new job"))?;
-    ensure!(
-        new.job_id != e.copied_result.job_id && is_hash(&new.job_id),
-        "copied old result mislabeled as new compute"
-    );
-    ensure!(
-        new.request.number > e.cut_canonical.number && new.requested >= first.recovery.observed,
-        "job was not requested after placement/start/H"
-    );
-    actual_worker(new, first.slot)?;
-    let local_bytes = newly_present(
-        &new.local_before,
-        &new.local_after,
-        new.requested,
-        &new.local_result_root,
-    )?;
-    ensure!(
-        new.local_after.path
-            == new
-                .local_result_root
-                .join(format!("{}.lysis-result-v1.ocb1", new.job_id)),
-        "local result filename does not bind the new JobId"
-    );
-    let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-    let decoded =
-        outbe_ocomp_protocol::result::LysisResultV1::decode_canonical(local_bytes, &limits)?;
-    ensure!(
-        decoded.encode_canonical(&limits)? == local_bytes
-            && hex::encode(decoded.job_id) == new.job_id
-            && decoded.protocol_bundle_hash == new.worker.owner.bundle_hash
-            && hex::encode(decoded.result_digest(&limits)?) == new.local_result.digest,
-        "raw local result differs from new job/bundle/digest"
-    );
-    ensure!(
-        new.local_after.observed >= new.worker.artifact_after.observed,
-        "local result predates observed unit artifact"
-    );
-    ensure!(
-        new.local_result.job_id == new.job_id
-            && new.local_result == new.canonical_result
-            && is_hash(&new.local_result.digest),
-        "new local/canonical result binding differs"
-    );
-    // Fresh execution is established by the job, worker and artifact observations.
-    ensure!(
-        new.canonical_result_at.number >= new.request.number,
-        "result predates request block"
-    );
-    let before = e
-        .before_restart
-        .as_ref()
-        .ok_or_else(|| eyre!("missing current K native read"))?;
-    native(&before.progress)?;
-    let k = e
-        .k_canonical
-        .as_ref()
-        .ok_or_else(|| eyre!("missing canonical K"))?;
-    ensure!(
-        !before.sources.is_empty()
-            && before.progress.finalized == *k
-            && k.number > e.cut_canonical.number
-            && k.number >= new.canonical_result_at.number,
-        "no catchup/current K identity"
-    );
-    let exit = e
-        .first_exit
-        .as_ref()
-        .ok_or_else(|| eyre!("missing first incarnation reap"))?;
-    ensure!(
-        exit.pid == first.pid
-            && exit.code == Some(0)
-            && exit.signal.is_none()
-            && exit.reaped >= new.worker.after.observed
-            && exit.reaped >= new.local_after.observed,
-        "first incarnation was not normally reaped"
-    );
-    let second = e
-        .second_start
-        .as_ref()
-        .ok_or_else(|| eyre!("missing second ordinary restart"))?;
-    ordinary_launch(second)?;
-    ensure!(
-        exit.reaped <= before.observed
-            && before.observed <= second.before_launch.observed
-            && second.slot == first.slot,
-        "current K must be read in stopped gap"
-    );
-    ensure!(
-        second.before_launch.progress == before.progress,
-        "second restart did not resume current K"
-    );
-    Ok(())
-}
+mod evidence;
+pub(crate) use evidence::assert_snapshot_workflow;
+
 // Unit fixtures only: these bytes/process records are NOT runtime acceptance evidence.
 #[cfg(test)]
 mod tests {
@@ -1697,6 +1459,85 @@ fn completed_snapshot_workflow(world: &mut crate::world::World) {
 // Task09 harness-only fragment for features/ocomp/offline_snapshot.rs.
 // The scenario establishes stopped writer ownership before calling this reader.
 // All handles and temporary secondary files are dropped before ordinary launch.
+struct NativeOffchainProgress {
+    ce: SnapshotBlock,
+    projection: SnapshotBlock,
+    ocomp_baseline: SnapshotBlock,
+    ocomp_previous: SnapshotBlock,
+    ocomp_current: SnapshotBlock,
+    _secondary: tempfile::TempDir,
+}
+
+fn observe_offchain_progress(
+    node: &std::path::Path,
+    rocks: &outbe_offchain_storage::RocksDbConfig,
+    start_block: u64,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+) -> eyre::Result<NativeOffchainProgress> {
+    use outbe_compressed_entities::{
+        CeMdbxReadOnly, CeTopologyV1, EnvironmentIdentity, ACTIVE_COMMITMENT_SCHEME,
+        LOCAL_STORAGE_SCHEMA_VERSION,
+    };
+    use outbe_offchain_data::{read_projection_state, ProjectionConfig};
+    use outbe_offchain_storage::RocksDbReader;
+    use outbe_primitives::projection::ProjectionCheckpoint;
+    use std::sync::Arc;
+    let chain = node.join("data");
+    let ce = CeMdbxReadOnly::open(
+        &chain,
+        EnvironmentIdentity {
+            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+            chain_id,
+            genesis_hash,
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            topology: CeTopologyV1.encode(),
+            tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".into(),
+            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".into(),
+        },
+    )?
+    .marker()?;
+    // Never share the live exporter's secondary directory or write deployment data.
+    let secondary = tempfile::tempdir()?;
+    let scratch = secondary.path().canonicalize()?;
+    eyre::ensure!(
+        !scratch.starts_with(node) && !node.starts_with(&scratch),
+        "native inspection scratch overlaps the node directory"
+    );
+    let projection_marker = read_projection_state(
+        ProjectionConfig {
+            chain_id,
+            genesis_hash,
+            start_block,
+        },
+        Arc::new(RocksDbReader::open(&rocks.path, secondary.path())?),
+    )?
+    .and_then(|state| state.checkpoint)
+    .ok_or_else(|| eyre::eyre!("missing placed projection checkpoint"))?;
+    let closure = outbe_ocomp::discovery_spool::inspect_closure_checkpoint(
+        node.join("ocomp/domain-v1/exporter-v1/discovery/closure-checkpoint-v1"),
+        ProjectionCheckpoint {
+            block_number: 0,
+            block_hash: genesis_hash,
+        },
+    )?;
+    let block = |value: ProjectionCheckpoint| SnapshotBlock {
+        number: value.block_number,
+        hash: hex::encode(value.block_hash),
+    };
+    Ok(NativeOffchainProgress {
+        ce: SnapshotBlock {
+            number: ce.height,
+            hash: hex::encode(ce.block_hash),
+        },
+        projection: block(projection_marker),
+        ocomp_baseline: block(closure.baseline),
+        ocomp_previous: block(closure.previous),
+        ocomp_current: block(closure.current),
+        _secondary: secondary,
+    })
+}
+
 fn observe_stopped_native(
     node_dir: &std::path::Path,
     projection_config_path: &std::path::Path,
@@ -1707,13 +1548,8 @@ fn observe_stopped_native(
         SnapshotBlock, SnapshotNativeObservation, SnapshotNativeProgress, SnapshotUnwind,
     };
     use alloy_consensus::Sealable;
-    use outbe_compressed_entities::{
-        CeMdbxReadOnly, CeTopologyV1, EnvironmentIdentity, ACTIVE_COMMITMENT_SCHEME,
-        LOCAL_STORAGE_SCHEMA_VERSION,
-    };
-    use outbe_offchain_data::{read_projection_state, ProjectionConfig};
-    use outbe_offchain_storage::{RocksDbReader, StorageBackend};
-    use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader, OutbePrimitives};
+    use outbe_offchain_storage::StorageBackend;
+    use outbe_primitives::{OutbeHeader, OutbePrimitives};
     use reth_ethereum::provider::db::{
         database::Database,
         mdbx::DatabaseArguments,
@@ -1725,7 +1561,6 @@ fn observe_stopped_native(
     use reth_provider::{
         providers::StaticFileProvider, BlockHashReader, HeaderProvider, StorageSettings,
     };
-    use std::sync::Arc;
 
     // These paths come from the harness's ordinary node and projection config,
     // independently of the received manifest's donor paths and expected values.
@@ -1796,47 +1631,8 @@ fn observe_stopped_native(
     drop(files);
     drop(db);
 
-    let ce = CeMdbxReadOnly::open(
-        &chain,
-        EnvironmentIdentity {
-            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-            chain_id,
-            genesis_hash,
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".into(),
-            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".into(),
-        },
-    )?
-    .marker()?;
-    // Never share the live exporter's secondary directory or write deployment data.
-    let secondary = tempfile::tempdir()?;
-    let scratch = secondary.path().canonicalize()?;
-    eyre::ensure!(
-        !scratch.starts_with(&node) && !node.starts_with(&scratch),
-        "native inspection scratch overlaps the node directory"
-    );
-    let projection_marker = read_projection_state(
-        ProjectionConfig {
-            chain_id,
-            genesis_hash,
-            start_block: projection.start_block,
-        },
-        Arc::new(RocksDbReader::open(&rocks.path, secondary.path())?),
-    )?
-    .and_then(|state| state.checkpoint)
-    .ok_or_else(|| eyre::eyre!("missing placed projection checkpoint"))?;
-    let closure = outbe_ocomp::discovery_spool::inspect_closure_checkpoint(
-        &closure_path,
-        ProjectionCheckpoint {
-            block_number: 0,
-            block_hash: genesis_hash,
-        },
-    )?;
-    let block = |value: ProjectionCheckpoint| SnapshotBlock {
-        number: value.block_number,
-        hash: hex::encode(value.block_hash),
-    };
+    let offchain =
+        observe_offchain_progress(&node, rocks, projection.start_block, chain_id, genesis_hash)?;
     let progress = SnapshotNativeProgress {
         finalized,
         execution: execution_identity,
@@ -1848,14 +1644,11 @@ fn observe_stopped_native(
             .and_then(|value| value.partial_state_trie),
         unwind,
         storage_version,
-        ce: SnapshotBlock {
-            number: ce.height,
-            hash: hex::encode(ce.block_hash),
-        },
-        projection: block(projection_marker),
-        ocomp_baseline: block(closure.baseline),
-        ocomp_previous: block(closure.previous),
-        ocomp_current: block(closure.current),
+        ce: offchain.ce.clone(),
+        projection: offchain.projection.clone(),
+        ocomp_baseline: offchain.ocomp_baseline.clone(),
+        ocomp_previous: offchain.ocomp_previous.clone(),
+        ocomp_current: offchain.ocomp_current.clone(),
     };
     Ok(SnapshotNativeObservation {
         progress,
@@ -1925,9 +1718,117 @@ fn create_stopped_snapshot(world: &mut crate::world::World) {
         .expect("create signed snapshot from stopped native files");
 }
 
-fn create_stopped_snapshot_result(world: &mut crate::world::World) -> eyre::Result<()> {
-    use crate::world::state::*;
+fn create_snapshot_archive(
+    world: &crate::world::World,
+    launch: &crate::world::localnet::NodeLaunchObservation,
+    evidence_dir: &std::path::Path,
+    native: &crate::world::state::SnapshotNativeObservation,
+) -> eyre::Result<(
+    SnapshotCommandObservation,
+    SnapshotCommandObservation,
+    String,
+)> {
     use std::process::Command;
+    let index = 3;
+    let archive = evidence_dir.join("created.tar");
+    let mut command = Command::new(&launch.program);
+    command
+        .args(["snapshot", "create", "--output"])
+        .arg(&archive)
+        .arg("--signing-key")
+        .arg(world.validators.get(index).evm_key_path())
+        .args([
+            "--creator",
+            "E2E donor validator 3",
+            "--source",
+            "stopped localnet donor",
+            "--",
+        ])
+        .args(&launch.argv[1..]);
+    let create = run_snapshot_command(
+        command,
+        evidence_dir,
+        "create",
+        std::time::Duration::from_secs(600),
+    )?;
+    successful_command(&create)?;
+    let archive_sha256 = snapshot_file_sha256(&archive)?;
+    let mut command = Command::new("tar");
+    command.arg("-xOf").arg(&archive).arg("manifest.json");
+    let manifest = run_snapshot_command(
+        command,
+        evidence_dir,
+        "read-manifest",
+        std::time::Duration::from_secs(60),
+    )?;
+    successful_command(&manifest)?;
+    let recorded: SnapshotManifestObservation = serde_json::from_slice(&manifest.stdout)?;
+    ensure!(
+        recorded.progress == native.progress,
+        "creation changed or misreported stopped native progress"
+    );
+    Ok((create, manifest, archive_sha256))
+}
+
+fn read_copied_snapshot_result(
+    world: &crate::world::World,
+    index: usize,
+) -> eyre::Result<SnapshotResultObservation> {
+    let copied_job = world
+        .state
+        .ocomp_certified_generation
+        .as_ref()
+        .ok_or_else(|| eyre!("missing actual Lysis generation"))?
+        .job_id;
+    let copied_bytes = std::fs::read(super::local_result_path(world, index, copied_job))?;
+    let copied_result = outbe_ocomp_protocol::result::LysisResultV1::decode_canonical(
+        &copied_bytes,
+        &outbe_ocomp_protocol::profile::poc_schema_limits(),
+    )?;
+    ensure!(
+        copied_result.job_id == copied_job,
+        "copied result belongs to another job"
+    );
+    let copied_result = SnapshotResultObservation {
+        job_id: hex::encode(copied_job),
+        digest: hex::encode(
+            copied_result.result_digest(&outbe_ocomp_protocol::profile::poc_schema_limits())?,
+        ),
+    };
+    Ok(copied_result)
+}
+
+fn initial_snapshot_evidence(
+    create: SnapshotCommandObservation,
+    manifest_bytes: Vec<u8>,
+    archive_sha256: String,
+    cut: SnapshotBlock,
+    copied_result: SnapshotResultObservation,
+) -> OfflineSnapshotEvidence {
+    OfflineSnapshotEvidence {
+        create: Some(create),
+        manifest_bytes,
+        archive_sha256,
+        transferred_archive_sha256: String::new(),
+        transfer: None,
+        placement: None,
+        validation: SnapshotValidationObservation::NotRun,
+        cut_canonical: cut,
+        identity_before: BTreeMap::new(),
+        identity_placed: BTreeMap::new(),
+        identity_at_k: BTreeMap::new(),
+        identity_restarted: BTreeMap::new(),
+        first_start: None,
+        copied_result,
+        new_job: None,
+        before_restart: None,
+        k_canonical: None,
+        first_exit: None,
+        second_start: None,
+    }
+}
+
+fn create_stopped_snapshot_result(world: &mut crate::world::World) -> eyre::Result<()> {
     // Exercise restart after committee rotation, so genesis reconstruction
     // cannot satisfy the snapshot acceptance check below.
     let rotated_height = super::OCOMP_TEST_EPOCH_LENGTH_BLOCKS * 2;
@@ -1995,64 +1896,9 @@ fn create_stopped_snapshot_result(world: &mut crate::world::World) -> eyre::Resu
         native.progress.finalized == cut,
         "stopped donor has noncanonical H"
     );
-    let archive = evidence_dir.join("created.tar");
-    let mut command = Command::new(&launch.program);
-    command
-        .args(["snapshot", "create", "--output"])
-        .arg(&archive)
-        .arg("--signing-key")
-        .arg(world.validators.get(index).evm_key_path())
-        .args([
-            "--creator",
-            "E2E donor validator 3",
-            "--source",
-            "stopped localnet donor",
-            "--",
-        ])
-        .args(&launch.argv[1..]);
-    let create = run_snapshot_command(
-        command,
-        &evidence_dir,
-        "create",
-        std::time::Duration::from_secs(600),
-    )?;
-    successful_command(&create)?;
-    let archive_sha256 = snapshot_file_sha256(&archive)?;
-    let mut command = Command::new("tar");
-    command.arg("-xOf").arg(&archive).arg("manifest.json");
-    let manifest = run_snapshot_command(
-        command,
-        &evidence_dir,
-        "read-manifest",
-        std::time::Duration::from_secs(60),
-    )?;
-    successful_command(&manifest)?;
-    let recorded: SnapshotManifestObservation = serde_json::from_slice(&manifest.stdout)?;
-    ensure!(
-        recorded.progress == native.progress,
-        "creation changed or misreported stopped native progress"
-    );
-    let copied_job = world
-        .state
-        .ocomp_certified_generation
-        .as_ref()
-        .ok_or_else(|| eyre!("missing actual Lysis generation"))?
-        .job_id;
-    let copied_bytes = std::fs::read(super::local_result_path(world, index, copied_job))?;
-    let copied_result = outbe_ocomp_protocol::result::LysisResultV1::decode_canonical(
-        &copied_bytes,
-        &outbe_ocomp_protocol::profile::poc_schema_limits(),
-    )?;
-    ensure!(
-        copied_result.job_id == copied_job,
-        "copied result belongs to another job"
-    );
-    let copied_result = SnapshotResultObservation {
-        job_id: hex::encode(copied_job),
-        digest: hex::encode(
-            copied_result.result_digest(&outbe_ocomp_protocol::profile::poc_schema_limits())?,
-        ),
-    };
+    let (create, manifest, archive_sha256) =
+        create_snapshot_archive(world, &launch, &evidence_dir, &native)?;
+    let copied_result = read_copied_snapshot_result(world, index)?;
     std::fs::write(
         evidence_dir.join("donor-stop.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
@@ -2063,27 +1909,13 @@ fn create_stopped_snapshot_result(world: &mut crate::world::World) -> eyre::Resu
             "clients": client_exits,"native": native.progress,
         }))?,
     )?;
-    world.state.offline_snapshot = Some(OfflineSnapshotEvidence {
-        create: Some(create),
-        manifest_bytes: manifest.stdout,
+    world.state.offline_snapshot = Some(initial_snapshot_evidence(
+        create,
+        manifest.stdout,
         archive_sha256,
-        transferred_archive_sha256: String::new(),
-        transfer: None,
-        placement: None,
-        validation: SnapshotValidationObservation::NotRun,
-        cut_canonical: cut,
-        identity_before: BTreeMap::new(),
-        identity_placed: BTreeMap::new(),
-        identity_at_k: BTreeMap::new(),
-        identity_restarted: BTreeMap::new(),
-        first_start: None,
+        cut,
         copied_result,
-        new_job: None,
-        before_restart: None,
-        k_canonical: None,
-        first_exit: None,
-        second_start: None,
-    });
+    ));
     world.localnet.resume_snapshot_node(stopped)?;
     ensure!(
         world.rpc.wait_finalized_at_least(
@@ -2376,9 +2208,296 @@ fn place_and_start_snapshot_recipient(world: &mut crate::world::World) {
         .expect("ordinary signed-file placement and startup");
 }
 
+struct SnapshotPlacement {
+    slot: usize,
+    node: std::path::PathBuf,
+    data: std::path::PathBuf,
+    root: std::path::PathBuf,
+    archive: std::path::PathBuf,
+    retained_archive: std::path::PathBuf,
+    received: std::path::PathBuf,
+    manifest_path: std::path::PathBuf,
+    signature_path: std::path::PathBuf,
+    donor_launch: crate::world::localnet::NodeLaunchObservation,
+    chain: String,
+    chain_id: u64,
+    genesis: alloy_primitives::B256,
+    identity: BTreeMap<std::path::PathBuf, crate::world::state::SnapshotFingerprint>,
+    initial_data_members: std::collections::BTreeSet<std::ffi::OsString>,
+    tee_root: std::path::PathBuf,
+    tee_before: BTreeMap<std::path::PathBuf, crate::world::state::SnapshotFingerprint>,
+    hidden: [(std::path::PathBuf, std::path::PathBuf); 2],
+}
+
+impl SnapshotPlacement {
+    fn remove_artifact_sources(&self, validate: bool) -> eyre::Result<()> {
+        let Self {
+            received,
+            manifest_path,
+            signature_path,
+            archive,
+            retained_archive,
+            hidden,
+            ..
+        } = self;
+        std::fs::remove_file(received)?;
+        std::fs::remove_file(manifest_path)?;
+        std::fs::remove_file(signature_path)?;
+        if validate {
+            std::fs::rename(archive, retained_archive)?;
+        } else {
+            std::fs::remove_file(retained_archive)?;
+        }
+        ensure!(
+            !archive.exists()
+                && !received.exists()
+                && !manifest_path.exists()
+                && !signature_path.exists(),
+            "startup still has original artifact paths"
+        );
+        ensure!(
+            hidden.iter().all(|(original, _)| !original.exists()),
+            "donor source paths remain available"
+        );
+        Ok(())
+    }
+
+    fn run_phase(&self, world: &mut crate::world::World, validate: bool) -> eyre::Result<()> {
+        use crate::world::state::*;
+        use std::{process::Command, time::Duration};
+        let Self {
+            slot,
+            node,
+            root,
+            archive,
+            retained_archive,
+            received,
+            manifest_path,
+            signature_path,
+            chain_id,
+            genesis,
+            identity,
+            tee_root,
+            tee_before,
+            ..
+        } = self;
+        let (slot, chain_id, genesis) = (*slot, *chain_id, *genesis);
+
+        let phase_dir = root.join(if validate {
+            "validated-placement"
+        } else {
+            "unvalidated-placement"
+        });
+        std::fs::create_dir_all(&phase_dir)?;
+        let source = if validate { archive } else { retained_archive };
+        let mut command = Command::new("cp");
+        command.arg("--").arg(source).arg(received);
+        let transfer =
+            run_snapshot_command(command, &phase_dir, "transfer", Duration::from_secs(600))?;
+        successful_command(&transfer)?;
+        let transferred_archive_sha256 = snapshot_file_sha256(received)?;
+        let (manifest_bytes, signature_bytes) =
+            place_snapshot_payload(world, received, &phase_dir)?;
+        let original = world
+            .state
+            .offline_snapshot
+            .as_ref()
+            .ok_or_else(|| eyre!("missing created artifact"))?;
+        ensure!(
+            manifest_bytes == original.manifest_bytes
+                && transferred_archive_sha256 == original.archive_sha256,
+            "placement used a different artifact"
+        );
+        ensure!(
+            recipient_identity(world)? == *identity,
+            "placement changed own identity"
+        );
+        if validate {
+            ensure!(
+                fingerprint_snapshot_tree(tee_root)? == *tee_before,
+                "placement changed recipient NodeHost records"
+            );
+        }
+        std::fs::write(manifest_path, &manifest_bytes)?;
+        std::fs::write(signature_path, signature_bytes)?;
+        let placed =
+            observe_stopped_native(node, &node.join("offchain-storage.toml"), chain_id, genesis)?;
+        let placement = SnapshotPlacementObservation {
+            completed: snapshot_now_millis()?,
+            native: placed,
+        };
+        let validation = if validate {
+            self.validate(original, &phase_dir)?
+        } else {
+            SnapshotValidationObservation::NotRun
+        };
+        self.remove_artifact_sources(validate)?;
+        if !validate {
+            let bundle = world
+                .ocomp
+                .canonical_fork_install()?
+                .request_profile
+                .protocol_bundle_hash;
+            let port = world.ocomp.snapshot_worker_port(slot);
+            world.state.offline_snapshot_worker_inventory = Some(snapshot_worker_inventory(
+                &world.ocomp,
+                &node.join("ocomp/domain-v1"),
+                port,
+                bundle,
+            )?);
+        }
+        let started = start_snapshot_recipient(world, chain_id, genesis)?;
+        ensure!(
+            started.before_launch.progress == placement.native.progress,
+            "startup did not open placed native state"
+        );
+        if validate {
+            self.finish_validated(world, &phase_dir, started, placement, validation)?;
+        } else {
+            let e = world.state.offline_snapshot.as_mut().unwrap();
+            e.transfer = Some(transfer);
+            e.transferred_archive_sha256 = transferred_archive_sha256;
+            e.placement = Some(placement);
+            e.validation = validation;
+            e.identity_before = identity.clone();
+            e.identity_placed = identity.clone();
+            e.first_start = Some(started);
+        }
+
+        Ok(())
+    }
+
+    fn validate(
+        &self,
+        original: &OfflineSnapshotEvidence,
+        phase_dir: &std::path::Path,
+    ) -> eyre::Result<SnapshotValidationObservation> {
+        use std::{process::Command, time::Duration};
+        let Self {
+            donor_launch,
+            manifest_path,
+            signature_path,
+            chain,
+            data,
+            node,
+            received,
+            ..
+        } = self;
+
+        let creator = std::str::from_utf8(&original.create.as_ref().unwrap().stdout)?
+            .split_whitespace()
+            .find_map(|field| field.strip_prefix("creator_public_key="))
+            .ok_or_else(|| eyre!("create omitted signer public key"))?;
+        let mut command = Command::new(&donor_launch.program);
+        command
+            .args(["snapshot", "validate", "--checks", "all", "--manifest"])
+            .arg(manifest_path)
+            .arg("--signature")
+            .arg(signature_path)
+            .arg("--expected-signer")
+            .arg(creator)
+            .arg("--report")
+            .arg(phase_dir.join("validation.json"))
+            .args(["--", "--chain"])
+            .arg(chain)
+            .arg("--datadir")
+            .arg(data)
+            .arg("--consensus.storage-dir")
+            .arg(data.join("consensus"))
+            .arg("--projection.storage-config")
+            .arg(node.join("offchain-storage.toml"));
+        let observation =
+            run_snapshot_command(command, phase_dir, "validate", Duration::from_secs(900))?;
+        let report = parse_snapshot_validation_report(&observation.stdout)?;
+        ensure!(
+            report.checks["files"].status == SnapshotCheckStatus::Passed
+                && report.checks["provenance"].status == SnapshotCheckStatus::Passed,
+            "original signed file checks did not pass"
+        );
+        ensure!(
+            !report
+                .checks
+                .values()
+                .any(|check| check.status == SnapshotCheckStatus::Failed),
+            "semantic validation failed; inspect retained actual report"
+        );
+        // Incomplete remains a nonzero audit, never relabeled complete.
+        let complete = report
+            .checks
+            .values()
+            .all(|check| check.status == SnapshotCheckStatus::Passed);
+        ensure!(
+            (complete && observation.exit_code == Some(0))
+                || (!complete && observation.exit_code.is_some_and(|code| code != 0)),
+            "validation report/exit disagree"
+        );
+        snapshot_rejects_damaged_artifact(
+            &donor_launch.program,
+            received,
+            manifest_path,
+            signature_path,
+            phase_dir,
+            creator,
+            chain,
+            node,
+        )?;
+        Ok(SnapshotValidationObservation::Run(observation))
+    }
+
+    fn finish_validated(
+        &self,
+        world: &mut crate::world::World,
+        phase_dir: &std::path::Path,
+        started: SnapshotLaunchObservation,
+        placement: crate::world::state::SnapshotPlacementObservation,
+        validation: SnapshotValidationObservation,
+    ) -> eyre::Result<()> {
+        let Self {
+            slot,
+            data,
+            node,
+            initial_data_members,
+            ..
+        } = self;
+        let slot = *slot;
+        let follower_clients = world
+            .ocomp
+            .stop_node_facing_roles_for_snapshot(slot.try_into()?)?;
+        let exited =
+            world
+                .localnet
+                .stop_follower_for_snapshot("snapshot-recipient", slot, started.pid)?;
+        std::fs::write(
+            phase_dir.join("ordinary-start.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "placement":placement, "validation":validation, "launch":started,
+                "stop_pid":exited.observation.launch.pid,"stop_code":exited.observation.code,
+                "stop_signal":exited.observation.signal,"stop_at":exited.observation.reaped_at_millis,
+                "protected_identity":recipient_identity(world)?,
+            }))?,
+        )?;
+        drop(follower_clients);
+        // A separate fresh placement, with the same recipient-owned identity.
+        // Only this stopped, scenario-owned temporary node's copied data is discarded.
+        for entry in std::fs::read_dir(data)? {
+            let entry = entry?;
+            if initial_data_members.contains(&entry.file_name()) {
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                std::fs::remove_dir_all(entry.path())?;
+            } else {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+        std::fs::remove_dir_all(node.join("ocomp/domain-v1"))?;
+        std::fs::create_dir_all(node.join("ocomp/domain-v1"))?;
+
+        Ok(())
+    }
+}
+
 fn place_and_start_snapshot_recipient_result(world: &mut crate::world::World) -> eyre::Result<()> {
-    use crate::world::state::*;
-    use std::{process::Command, time::Duration};
     let slot = world.validators.joiner_index();
     let data = world.validators.data_dir(slot);
     let node = data.parent().unwrap().to_path_buf();
@@ -2417,212 +2536,35 @@ fn place_and_start_snapshot_recipient_result(world: &mut crate::world::World) ->
         ),
     ];
     hide_snapshot_sources(&hidden)?;
+    let placement = SnapshotPlacement {
+        slot,
+        node,
+        data,
+        root,
+        archive,
+        retained_archive,
+        received,
+        manifest_path,
+        signature_path,
+        donor_launch,
+        chain,
+        chain_id,
+        genesis,
+        identity,
+        initial_data_members,
+        tee_root,
+        tee_before,
+        hidden,
+    };
+
     let result = (|| -> eyre::Result<()> {
         for validate in [true, false] {
-            let phase_dir = root.join(if validate {
-                "validated-placement"
-            } else {
-                "unvalidated-placement"
-            });
-            std::fs::create_dir_all(&phase_dir)?;
-            let source = if validate {
-                &archive
-            } else {
-                &retained_archive
-            };
-            let mut command = Command::new("cp");
-            command.arg("--").arg(source).arg(&received);
-            let transfer =
-                run_snapshot_command(command, &phase_dir, "transfer", Duration::from_secs(600))?;
-            successful_command(&transfer)?;
-            let transferred_archive_sha256 = snapshot_file_sha256(&received)?;
-            let (manifest_bytes, signature_bytes) =
-                place_snapshot_payload(world, &received, &phase_dir)?;
-            let original = world
-                .state
-                .offline_snapshot
-                .as_ref()
-                .ok_or_else(|| eyre!("missing created artifact"))?;
-            ensure!(
-                manifest_bytes == original.manifest_bytes
-                    && transferred_archive_sha256 == original.archive_sha256,
-                "placement used a different artifact"
-            );
-            ensure!(
-                recipient_identity(world)? == identity,
-                "placement changed own identity"
-            );
-            if validate {
-                ensure!(
-                    fingerprint_snapshot_tree(&tee_root)? == tee_before,
-                    "placement changed recipient NodeHost records"
-                );
-            }
-            std::fs::write(&manifest_path, &manifest_bytes)?;
-            std::fs::write(&signature_path, signature_bytes)?;
-            let placed = observe_stopped_native(
-                &node,
-                &node.join("offchain-storage.toml"),
-                chain_id,
-                genesis,
-            )?;
-            let placement = SnapshotPlacementObservation {
-                completed: snapshot_now_millis()?,
-                native: placed,
-            };
-            let validation = if validate {
-                let creator = std::str::from_utf8(&original.create.as_ref().unwrap().stdout)?
-                    .split_whitespace()
-                    .find_map(|field| field.strip_prefix("creator_public_key="))
-                    .ok_or_else(|| eyre!("create omitted signer public key"))?;
-                let mut command = Command::new(&donor_launch.program);
-                command
-                    .args(["snapshot", "validate", "--checks", "all", "--manifest"])
-                    .arg(&manifest_path)
-                    .arg("--signature")
-                    .arg(&signature_path)
-                    .arg("--expected-signer")
-                    .arg(creator)
-                    .arg("--report")
-                    .arg(phase_dir.join("validation.json"))
-                    .args(["--", "--chain"])
-                    .arg(&chain)
-                    .arg("--datadir")
-                    .arg(&data)
-                    .arg("--consensus.storage-dir")
-                    .arg(data.join("consensus"))
-                    .arg("--projection.storage-config")
-                    .arg(node.join("offchain-storage.toml"));
-                let observation = run_snapshot_command(
-                    command,
-                    &phase_dir,
-                    "validate",
-                    Duration::from_secs(900),
-                )?;
-                let report = parse_snapshot_validation_report(&observation.stdout)?;
-                ensure!(
-                    report.checks["files"].status == SnapshotCheckStatus::Passed
-                        && report.checks["provenance"].status == SnapshotCheckStatus::Passed,
-                    "original signed file checks did not pass"
-                );
-                ensure!(
-                    !report
-                        .checks
-                        .values()
-                        .any(|check| check.status == SnapshotCheckStatus::Failed),
-                    "semantic validation failed; inspect retained actual report"
-                );
-                // Incomplete remains a nonzero audit, never relabeled complete.
-                let complete = report
-                    .checks
-                    .values()
-                    .all(|check| check.status == SnapshotCheckStatus::Passed);
-                ensure!(
-                    (complete && observation.exit_code == Some(0))
-                        || (!complete && observation.exit_code.is_some_and(|code| code != 0)),
-                    "validation report/exit disagree"
-                );
-                snapshot_rejects_damaged_artifact(
-                    &donor_launch.program,
-                    &received,
-                    &manifest_path,
-                    &signature_path,
-                    &phase_dir,
-                    creator,
-                    &chain,
-                    &node,
-                )?;
-                SnapshotValidationObservation::Run(observation)
-            } else {
-                SnapshotValidationObservation::NotRun
-            };
-            std::fs::remove_file(&received)?;
-            std::fs::remove_file(&manifest_path)?;
-            std::fs::remove_file(&signature_path)?;
-            if validate {
-                std::fs::rename(&archive, &retained_archive)?;
-            } else {
-                std::fs::remove_file(&retained_archive)?;
-            }
-            ensure!(
-                !archive.exists()
-                    && !received.exists()
-                    && !manifest_path.exists()
-                    && !signature_path.exists(),
-                "startup still has original artifact paths"
-            );
-            ensure!(
-                hidden.iter().all(|(original, _)| !original.exists()),
-                "donor source paths remain available"
-            );
-            if !validate {
-                let bundle = world
-                    .ocomp
-                    .canonical_fork_install()?
-                    .request_profile
-                    .protocol_bundle_hash;
-                let port = world.ocomp.snapshot_worker_port(slot);
-                world.state.offline_snapshot_worker_inventory = Some(snapshot_worker_inventory(
-                    &world.ocomp,
-                    &node.join("ocomp/domain-v1"),
-                    port,
-                    bundle,
-                )?);
-            }
-            let started = start_snapshot_recipient(world, chain_id, genesis)?;
-            ensure!(
-                started.before_launch.progress == placement.native.progress,
-                "startup did not open placed native state"
-            );
-            if validate {
-                let follower_clients = world
-                    .ocomp
-                    .stop_node_facing_roles_for_snapshot(slot.try_into()?)?;
-                let exited = world.localnet.stop_follower_for_snapshot(
-                    "snapshot-recipient",
-                    slot,
-                    started.pid,
-                )?;
-                std::fs::write(
-                    phase_dir.join("ordinary-start.json"),
-                    serde_json::to_vec_pretty(&serde_json::json!({
-                        "placement":placement, "validation":validation, "launch":started,
-                        "stop_pid":exited.observation.launch.pid,"stop_code":exited.observation.code,
-                        "stop_signal":exited.observation.signal,"stop_at":exited.observation.reaped_at_millis,
-                        "protected_identity":recipient_identity(world)?,
-                    }))?,
-                )?;
-                drop(follower_clients);
-                // A separate fresh placement, with the same recipient-owned identity.
-                // Only this stopped, scenario-owned temporary node's copied data is discarded.
-                for entry in std::fs::read_dir(&data)? {
-                    let entry = entry?;
-                    if initial_data_members.contains(&entry.file_name()) {
-                        continue;
-                    }
-                    if entry.file_type()?.is_dir() {
-                        std::fs::remove_dir_all(entry.path())?;
-                    } else {
-                        std::fs::remove_file(entry.path())?;
-                    }
-                }
-                std::fs::remove_dir_all(node.join("ocomp/domain-v1"))?;
-                std::fs::create_dir_all(node.join("ocomp/domain-v1"))?;
-            } else {
-                let e = world.state.offline_snapshot.as_mut().unwrap();
-                e.transfer = Some(transfer);
-                e.transferred_archive_sha256 = transferred_archive_sha256;
-                e.placement = Some(placement);
-                e.validation = validation;
-                e.identity_before = identity.clone();
-                e.identity_placed = identity.clone();
-                e.first_start = Some(started);
-            }
+            placement.run_phase(world, validate)?;
         }
         Ok(())
     })();
     // Restore the donor's paths regardless of the recipient assertion result.
-    restore_snapshot_sources(&hidden)?;
+    restore_snapshot_sources(&placement.hidden)?;
     world.localnet.resume_snapshot_node(stopped)?;
     ensure!(
         world
@@ -3011,6 +2953,59 @@ fn snapshot_worker_after(
 
 /// Read immutable job authorities after the writer releases its lock (normally
 /// root's existing ordinary stop before K). All native readers drop on return.
+fn verify_snapshot_admission(
+    live: &SnapshotWorkerLiveResult,
+    admissions: &outbe_ocomp::admission_catalog::AdmissionCatalogReader,
+    audit: &outbe_ocomp::lysis_plan_audit::LocalLysisPlanAuditV1<'_>,
+    reader: &outbe_ocomp::cas::FilesystemCasReader,
+    admission_path: &std::path::Path,
+) -> eyre::Result<(
+    outbe_ocomp_protocol::unit::UnitSpecV1,
+    outbe_ocomp::admission_catalog::VerifiedAdmissionRecordV1,
+    SnapshotFileRead,
+)> {
+    let inventory = &live.running.before_request;
+    let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+    let raw = live
+        .artifact
+        .bytes
+        .as_deref()
+        .ok_or_else(|| eyre!("missing captured artifact"))?;
+    let artifact = outbe_ocomp_protocol::unit::UnitArtifactV1::decode_canonical(raw, &limits)?;
+    let mut matched = None;
+    for entry in admissions.exact_plan_cursor()? {
+        let entry = entry?;
+        if entry.unit_id == artifact.unit_id {
+            ensure!(matched.is_none(), "duplicate unit admission");
+            matched = Some(entry);
+        }
+    }
+    let admitted = matched.ok_or_else(|| eyre!("captured unit has no independent admission"))?;
+    let spec = audit.candidate_spec_at(admitted.plan_ordinal)?;
+    ensure!(
+        admitted.job_id == live.job_id
+            && admitted.protocol_bundle_hash == inventory.bundle.hash()
+            && admitted.plan_hash == audit.plan().plan_hash(&limits)?
+            && admitted.unit_id == spec.unit_id(&limits)?,
+        "admission does not bind the canonical job plan"
+    );
+    artifact.validate_against(&spec, &limits)?;
+    let cas_object = reader.read_verified(&admitted.artifact_ref)?;
+    ensure!(
+        cas_object.bytes() == raw,
+        "inbox bytes differ from independently admitted CAS object"
+    );
+    let admission_record = snapshot_read_file(
+        &admission_path.join(format!("{:010}.admission", admitted.plan_ordinal)),
+        SNAPSHOT_OBJECT_BYTES,
+    )?;
+    ensure!(
+        admission_record.bytes.is_some(),
+        "verified admission file vanished"
+    );
+    Ok((spec, admitted, admission_record))
+}
+
 fn snapshot_worker_bind_admission(
     live: SnapshotWorkerLiveResult,
     requested: u64,
@@ -3062,43 +3057,8 @@ fn snapshot_worker_bind_admission(
             && audit.plan().protocol_bundle_hash == inventory.bundle.hash(),
         "independent plan is not the requested job/bundle"
     );
-    let raw = live
-        .artifact
-        .bytes
-        .as_deref()
-        .ok_or_else(|| eyre!("missing captured artifact"))?;
-    let artifact = outbe_ocomp_protocol::unit::UnitArtifactV1::decode_canonical(raw, &limits)?;
-    let mut matched = None;
-    for entry in admissions.exact_plan_cursor()? {
-        let entry = entry?;
-        if entry.unit_id == artifact.unit_id {
-            ensure!(matched.is_none(), "duplicate unit admission");
-            matched = Some(entry);
-        }
-    }
-    let admitted = matched.ok_or_else(|| eyre!("captured unit has no independent admission"))?;
-    let spec = audit.candidate_spec_at(admitted.plan_ordinal)?;
-    ensure!(
-        admitted.job_id == live.job_id
-            && admitted.protocol_bundle_hash == inventory.bundle.hash()
-            && admitted.plan_hash == audit.plan().plan_hash(&limits)?
-            && admitted.unit_id == spec.unit_id(&limits)?,
-        "admission does not bind the canonical job plan"
-    );
-    artifact.validate_against(&spec, &limits)?;
-    let cas_object = reader.read_verified(&admitted.artifact_ref)?;
-    ensure!(
-        cas_object.bytes() == raw,
-        "inbox bytes differ from independently admitted CAS object"
-    );
-    let admission_record = snapshot_read_file(
-        &admission_path.join(format!("{:010}.admission", admitted.plan_ordinal)),
-        SNAPSHOT_OBJECT_BYTES,
-    )?;
-    ensure!(
-        admission_record.bytes.is_some(),
-        "verified admission file vanished"
-    );
+    let (spec, admitted, admission_record) =
+        verify_snapshot_admission(&live, &admissions, &audit, &reader, &admission_path)?;
     let workers = live
         .history
         .iter()
@@ -3323,35 +3283,15 @@ fn new_snapshot_work_and_restart(world: &mut crate::world::World) {
         .expect("new real OCOMP work and ordinary current-K restart");
 }
 
-fn new_snapshot_work_and_restart_result(world: &mut crate::world::World) -> eyre::Result<()> {
+fn create_snapshot_day(
+    world: &mut crate::world::World,
+    day: u32,
+) -> eyre::Result<Option<crate::world::rpc::MetadosisWorldwideDayStateV1>> {
     use crate::features::ocomp::{
-        first_protocol_cycle_at_or_after, quorum_applies_lysis_and_creates_nod_for_request,
-        restart_committee_at_logical_time, PublicVoteSetExpectation,
+        first_protocol_cycle_at_or_after, restart_committee_at_logical_time,
     };
-    use crate::world::state::*;
     use outbe_primitives::time::WorldwideDay;
-    use std::{
-        process::Command,
-        time::{Duration, Instant},
-    };
-    let inventory = world
-        .state
-        .offline_snapshot_worker_inventory
-        .take()
-        .ok_or_else(|| eyre!("missing stopped pre-request inventories"))?;
-    let running = snapshot_worker_before(&mut world.ocomp, inventory)?;
-    let original = world
-        .state
-        .ocomp_job_request
-        .clone()
-        .ok_or_else(|| eyre!("original completed request"))?;
-    let day = WorldwideDay::from_timestamp(
-        WorldwideDay::new(original.worldwide_day)
-            .start_timestamp()
-            .checked_add(86_400)
-            .ok_or_else(|| eyre!("day overflow"))?,
-    )
-    .value();
+    use std::time::{Duration, Instant};
     let primary = world.validators.primary_port();
     let mut schedule = world.rpc.metadosis_wwd_state_on(primary, day);
     if schedule.is_none() {
@@ -3393,6 +3333,17 @@ fn new_snapshot_work_and_restart_result(world: &mut crate::world::World) -> eyre
             }
         }
     }
+    Ok(schedule)
+}
+
+fn await_snapshot_offering(
+    world: &mut crate::world::World,
+    day: u32,
+) -> eyre::Result<crate::world::rpc::MetadosisWorldwideDayStateV1> {
+    use crate::features::ocomp::restart_committee_at_logical_time;
+    use std::time::{Duration, Instant};
+    let primary = world.validators.primary_port();
+    let schedule = create_snapshot_day(world, day)?;
     let schedule = schedule.ok_or_else(|| eyre!("next WWD schedule unavailable"))?;
     ensure!(schedule.status <= 2, "next-day offering already passed");
     let mut publication = if schedule.status < 2 {
@@ -3422,13 +3373,20 @@ fn new_snapshot_work_and_restart_result(world: &mut crate::world::World) -> eyre
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    let cut = world
-        .state
-        .offline_snapshot
-        .as_ref()
-        .unwrap()
-        .cut_canonical
-        .number;
+    Ok(schedule)
+}
+
+fn request_snapshot_job(
+    world: &mut crate::world::World,
+    day: u32,
+    cut: u64,
+    scheduled_process_time: u64,
+) -> eyre::Result<(u64, crate::world::rpc::OcompPublicJobRequestV1)> {
+    use crate::features::ocomp::{
+        first_protocol_cycle_at_or_after, restart_committee_at_logical_time,
+    };
+    use std::time::{Duration, Instant};
+    let primary = world.validators.primary_port();
     ensure!(
         world
             .rpc
@@ -3447,7 +3405,7 @@ fn new_snapshot_work_and_restart_result(world: &mut crate::world::World) -> eyre
         "new Tribute failed"
     );
     world.projection.wait_for_tribute_projection(&tx, 240)?;
-    let processing = first_protocol_cycle_at_or_after(world, schedule.scheduled_process_time);
+    let processing = first_protocol_cycle_at_or_after(world, scheduled_process_time);
     let mut publication = restart_committee_at_logical_time(world, processing).3;
     let deadline = Instant::now() + Duration::from_secs(300);
     let mut finalized_request = None;
@@ -3474,84 +3432,18 @@ fn new_snapshot_work_and_restart_result(world: &mut crate::world::World) -> eyre
         }
         std::thread::sleep(Duration::from_millis(200));
     };
-    ensure!(
-        request.intent_id != original.intent_id && request.request_height > cut,
-        "new job did not follow snapshot cut"
-    );
-    let request_block = canonical_snapshot_block(world, request.request_height)?;
-    quorum_applies_lysis_and_creates_nod_for_request(
-        world,
-        request,
-        PublicVoteSetExpectation::Exact(&[0, 1, 2, 3]),
-    );
-    let activation = world
-        .state
-        .ocomp_activation
-        .clone()
-        .ok_or_else(|| eyre!("new canonical Lysis result"))?;
-    let canonical_result = SnapshotResultObservation {
-        job_id: hex::encode(activation.job_id),
-        digest: hex::encode(activation.result_digest),
-    };
-    let canonical_result_at = canonical_snapshot_block(world, activation.block_number)?;
+    Ok((requested, request))
+}
+
+fn audit_current_snapshot(
+    world: &crate::world::World,
+    launched: &crate::world::localnet::NodeLaunchObservation,
+) -> eyre::Result<()> {
+    use std::{process::Command, time::Duration};
     let slot = world.validators.joiner_index();
-    ensure!(
-        world.rpc.wait_finalized_at_least(
-            world.validators.http_port(slot),
-            activation.block_number + 2,
-            300
-        ),
-        "recipient did not finalize new result"
-    );
-    let deadline = Instant::now() + Duration::from_secs(180);
-    let live = loop {
-        match snapshot_worker_after(&mut world.ocomp, &running, activation.job_id) {
-            Ok(value) => break value,
-            Err(error) => {
-                ensure!(
-                    Instant::now() < deadline,
-                    "recipient new compute observation failed: {error:#}"
-                );
-                std::thread::sleep(Duration::from_millis(250));
-            }
-        }
-    };
-    let launched = world
-        .localnet
-        .follower_launch_observation("snapshot-recipient", slot)?;
-    let clients = world
-        .ocomp
-        .stop_node_facing_roles_for_snapshot(slot.try_into()?)?;
-    let stopped =
-        world
-            .localnet
-            .stop_follower_for_snapshot("snapshot-recipient", slot, launched.pid)?;
-    let collected = snapshot_worker_bind_admission(
-        live,
-        requested,
-        request_block,
-        canonical_result,
-        canonical_result_at,
-    )?;
-    let root = world.localnet.scenario_dir().join("offline-snapshot");
-    std::fs::write(
-        root.join("worker-native-evidence.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "before_status":collected.before_status,"after_status":collected.after_status,"admission_record":collected.admission_record,
-        }))?,
-    )?;
     let data = world.validators.data_dir(slot);
     let node = data.parent().unwrap();
-    let chain_id = world
-        .rpc
-        .chain_id(primary)
-        .ok_or_else(|| eyre!("chain id"))?;
-    let genesis = canonical_snapshot_block(world, 0)?.hash.parse()?;
-    let at_k =
-        observe_stopped_native(node, &node.join("offchain-storage.toml"), chain_id, genesis)?;
-    let k_canonical = canonical_snapshot_block(world, at_k.progress.finalized.number)?;
-    let identity_at_k = recipient_identity(world)?;
-    // Native-only audit is separate from the subsequent ordinary launch.
+    let root = world.localnet.scenario_dir().join("offline-snapshot");
     let chain = snapshot_option(&launched.argv, "--chain")?;
     let mut command = Command::new(&launched.program);
     command
@@ -3600,6 +3492,159 @@ fn new_snapshot_work_and_restart_result(world: &mut crate::world::World) -> eyre
             || (!complete && audit.exit_code.is_some_and(|code| code != 0)),
         "current K validation report/exit disagree"
     );
+    Ok(())
+}
+
+struct SnapshotFollowupJob {
+    requested: u64,
+    request_block: SnapshotBlock,
+    canonical_result: SnapshotResultObservation,
+    canonical_result_at: SnapshotBlock,
+    live: SnapshotWorkerLiveResult,
+    job_id: alloy_primitives::B256,
+    result_digest: alloy_primitives::B256,
+}
+
+fn perform_snapshot_job(
+    world: &mut crate::world::World,
+    running: &SnapshotWorkerRunning,
+) -> eyre::Result<SnapshotFollowupJob> {
+    use crate::features::ocomp::{
+        quorum_applies_lysis_and_creates_nod_for_request, PublicVoteSetExpectation,
+    };
+    use outbe_primitives::time::WorldwideDay;
+    use std::time::{Duration, Instant};
+    let original = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .ok_or_else(|| eyre!("original completed request"))?;
+    let day = WorldwideDay::from_timestamp(
+        WorldwideDay::new(original.worldwide_day)
+            .start_timestamp()
+            .checked_add(86_400)
+            .ok_or_else(|| eyre!("day overflow"))?,
+    )
+    .value();
+    let schedule = await_snapshot_offering(world, day)?;
+    let cut = world
+        .state
+        .offline_snapshot
+        .as_ref()
+        .unwrap()
+        .cut_canonical
+        .number;
+    let (requested, request) =
+        request_snapshot_job(world, day, cut, schedule.scheduled_process_time)?;
+    ensure!(
+        request.intent_id != original.intent_id && request.request_height > cut,
+        "new job did not follow snapshot cut"
+    );
+    let request_block = canonical_snapshot_block(world, request.request_height)?;
+    quorum_applies_lysis_and_creates_nod_for_request(
+        world,
+        request,
+        PublicVoteSetExpectation::Exact(&[0, 1, 2, 3]),
+    );
+    let activation = world
+        .state
+        .ocomp_activation
+        .clone()
+        .ok_or_else(|| eyre!("new canonical Lysis result"))?;
+    let canonical_result = SnapshotResultObservation {
+        job_id: hex::encode(activation.job_id),
+        digest: hex::encode(activation.result_digest),
+    };
+    let canonical_result_at = canonical_snapshot_block(world, activation.block_number)?;
+    let slot = world.validators.joiner_index();
+    ensure!(
+        world.rpc.wait_finalized_at_least(
+            world.validators.http_port(slot),
+            activation.block_number + 2,
+            300
+        ),
+        "recipient did not finalize new result"
+    );
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let live = loop {
+        match snapshot_worker_after(&mut world.ocomp, running, activation.job_id) {
+            Ok(value) => break value,
+            Err(error) => {
+                ensure!(
+                    Instant::now() < deadline,
+                    "recipient new compute observation failed: {error:#}"
+                );
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        }
+    };
+    Ok(SnapshotFollowupJob {
+        requested,
+        request_block,
+        canonical_result,
+        canonical_result_at,
+        live,
+        job_id: activation.job_id,
+        result_digest: activation.result_digest,
+    })
+}
+
+fn new_snapshot_work_and_restart_result(world: &mut crate::world::World) -> eyre::Result<()> {
+    use crate::world::state::*;
+    let inventory = world
+        .state
+        .offline_snapshot_worker_inventory
+        .take()
+        .ok_or_else(|| eyre!("missing stopped pre-request inventories"))?;
+    let running = snapshot_worker_before(&mut world.ocomp, inventory)?;
+    let SnapshotFollowupJob {
+        requested,
+        request_block,
+        canonical_result,
+        canonical_result_at,
+        live,
+        job_id,
+        result_digest,
+    } = perform_snapshot_job(world, &running)?;
+    let primary = world.validators.primary_port();
+    let slot = world.validators.joiner_index();
+    let launched = world
+        .localnet
+        .follower_launch_observation("snapshot-recipient", slot)?;
+    let clients = world
+        .ocomp
+        .stop_node_facing_roles_for_snapshot(slot.try_into()?)?;
+    let stopped =
+        world
+            .localnet
+            .stop_follower_for_snapshot("snapshot-recipient", slot, launched.pid)?;
+    let collected = snapshot_worker_bind_admission(
+        live,
+        requested,
+        request_block,
+        canonical_result,
+        canonical_result_at,
+    )?;
+    let root = world.localnet.scenario_dir().join("offline-snapshot");
+    std::fs::write(
+        root.join("worker-native-evidence.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "before_status":collected.before_status,"after_status":collected.after_status,"admission_record":collected.admission_record,
+        }))?,
+    )?;
+    let data = world.validators.data_dir(slot);
+    let node = data.parent().unwrap();
+    let chain_id = world
+        .rpc
+        .chain_id(primary)
+        .ok_or_else(|| eyre!("chain id"))?;
+    let genesis = canonical_snapshot_block(world, 0)?.hash.parse()?;
+    let at_k =
+        observe_stopped_native(node, &node.join("offchain-storage.toml"), chain_id, genesis)?;
+    let k_canonical = canonical_snapshot_block(world, at_k.progress.finalized.number)?;
+    let identity_at_k = recipient_identity(world)?;
+    // Native-only audit is separate from the subsequent ordinary launch.
+    audit_current_snapshot(world, &launched)?;
     let before_launch =
         observe_stopped_native(node, &node.join("offchain-storage.toml"), chain_id, genesis)?;
     let first_exit = SnapshotExitObservation {
@@ -3620,14 +3665,13 @@ fn new_snapshot_work_and_restart_result(world: &mut crate::world::World) -> eyre
     );
     world.ocomp.resume_snapshot_node_facing_roles(clients)?;
     let identity_restarted = recipient_identity(world)?;
-    let fresh = std::fs::read(super::local_result_path(world, slot, activation.job_id))?;
+    let fresh = std::fs::read(super::local_result_path(world, slot, job_id))?;
     let result = outbe_ocomp_protocol::result::LysisResultV1::decode_canonical(
         &fresh,
         &outbe_ocomp_protocol::profile::poc_schema_limits(),
     )?;
     ensure!(
-        result.result_digest(&outbe_ocomp_protocol::profile::poc_schema_limits())?
-            == activation.result_digest,
+        result.result_digest(&outbe_ocomp_protocol::profile::poc_schema_limits())? == result_digest,
         "current K restart changed new result"
     );
     let evidence = world.state.offline_snapshot.as_mut().unwrap();
@@ -4124,22 +4168,12 @@ mod snapshot_owner_observation_tests {
     }
 }
 
-fn snapshot_public_effects(
+fn snapshot_public_nod_proofs(
     world: &crate::world::World,
-    cut_height: u64,
-    copied_queue_sequence: u64,
     generation: &crate::world::rpc::OcompCertifiedGenerationV1,
-    payout: &crate::world::state::ContributorPayoutEvidenceV1,
-) -> eyre::Result<serde_json::Value> {
-    use crate::internal::{addresses, eth};
-    use alloy_primitives::{address, Address, U256};
-    use alloy_sol_types::{SolCall, SolValue};
-    use eyre::{ensure, eyre};
+) -> eyre::Result<Vec<serde_json::Value>> {
+    use alloy_sol_types::SolValue;
     use outbe_ocomp_protocol::{
-        abi::{
-            decode_protected_materialize_certified_nods_calldata,
-            MATERIALIZE_CERTIFIED_NODS_SELECTOR,
-        },
         list::streaming_ordered_list_membership_proof,
         profile::poc_schema_limits,
         result::{ActiveNodSetV1, NodMembershipProofV1},
@@ -4148,41 +4182,6 @@ fn snapshot_public_effects(
     let primary = world.validators.primary_port();
     let slot = world.validators.joiner_index();
     let recipient = world.validators.http_port(slot);
-    let url = world.rpc.url(primary);
-    let recipient_url = world.rpc.url(recipient);
-    let after = payout
-        .after
-        .as_ref()
-        .ok_or_else(|| eyre!("contributors_are_paid has not completed"))?;
-    ensure!(
-        payout.worldwide_day == generation.worldwide_day,
-        "wrong copied payout day"
-    );
-    let completed = world
-        .rpc
-        .completed_nod_materialization(primary, generation)
-        .ok_or_else(|| eyre!("copied generation is not fully materialized"))?;
-    let through = after.height.max(completed.completion_block_number);
-    ensure!(
-        world.rpc.wait_finalized_at_least(recipient, through, 180),
-        "FullNode has not reached public completion"
-    );
-    ensure!(
-        world
-            .rpc
-            .completed_nod_materialization(recipient, generation)
-            == Some(completed.clone()),
-        "FullNode materialization completion differs"
-    );
-    ensure!(
-        world.rpc.state_root(recipient, after.height) == Some(format!("{:#x}", after.state_root)),
-        "FullNode payout state root differs"
-    );
-    ensure!(
-        world.rpc.block_hash(recipient, after.height) == Some(format!("{:#x}", after.block_hash)),
-        "FullNode payout checkpoint differs"
-    );
-
     let actions = super::result_nod_actions_on(world, slot, generation.job_id);
     ensure!(
         actions == super::result_nod_actions_on(world, 0, generation.job_id),
@@ -4239,6 +4238,234 @@ fn snapshot_public_effects(
         );
         proofs.push(serde_json::json!({"nod_id":hex::encode(action.nod_id),"proof":hex::encode(proof.encode_canonical_record(&limits)?),"body":hex::encode(local.1.abi_encode())}));
     }
+    Ok(proofs)
+}
+
+fn snapshot_public_kind(
+    tx: &serde_json::Value,
+    copied_queue_sequence: u64,
+    worldwide_day: u32,
+) -> eyre::Result<Option<bool>> {
+    use crate::internal::addresses;
+    use alloy_primitives::{address, Address};
+    use alloy_sol_types::SolCall;
+    use outbe_ocomp_protocol::{
+        abi::{
+            decode_protected_materialize_certified_nods_calldata,
+            MATERIALIZE_CERTIFIED_NODS_SELECTOR,
+        },
+        profile::poc_schema_limits,
+    };
+    let factory = address!("0000000000000000000000000000000000001015");
+    let limits = poc_schema_limits();
+    let Some(to) = tx["to"].as_str().and_then(|s| s.parse::<Address>().ok()) else {
+        return Ok(None);
+    };
+    if to != addresses::NOD_FACTORY_ADDR && to != factory {
+        return Ok(None);
+    }
+    let input = hex::decode(
+        tx["input"]
+            .as_str()
+            .ok_or_else(|| eyre!("missing calldata"))?
+            .trim_start_matches("0x"),
+    )?;
+    let materialization = to == addresses::NOD_FACTORY_ADDR
+        && input.get(..4) == Some(MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice());
+    let paying = to == factory
+        && input.get(..4)
+            == Some(ISnapshotPayoutRead::payContributorBatchCall::SELECTOR.as_slice());
+    if !materialization && !paying {
+        return Ok(None);
+    }
+    if materialization
+        && decode_protected_materialize_certified_nods_calldata(&input, &limits)?.queue_sequence
+            != copied_queue_sequence
+    {
+        return Ok(None);
+    }
+    if paying
+        && ISnapshotPayoutRead::payContributorBatchCall::abi_decode(&input)?.worldwideDay
+            != worldwide_day
+    {
+        return Ok(None);
+    }
+    Ok(Some(materialization))
+}
+
+fn snapshot_public_transactions(
+    world: &crate::world::World,
+    cut_height: u64,
+    through: u64,
+    copied_queue_sequence: u64,
+    worldwide_day: u32,
+) -> eyre::Result<Vec<serde_json::Value>> {
+    use crate::internal::eth;
+    use alloy_primitives::Address;
+    let slot = world.validators.joiner_index();
+    let url = world.rpc.url(world.validators.primary_port());
+    let recipient_signer = eth::address_of(&world.validators.get(slot).evm_key()?)
+        .ok_or_else(|| eyre!("recipient EVM address"))?;
+    let mut delegate_owners = std::collections::BTreeMap::new();
+    for index in 0..world.validators.size() {
+        let validator = eth::address_of(&world.validators.get(index).evm_key()?)
+            .ok_or_else(|| eyre!("validator EVM address"))?;
+        delegate_owners.insert(
+            world.ocomp.ocomp_delegate_address(index.try_into()?)?,
+            validator,
+        );
+    }
+    let mut transactions = Vec::new();
+    let mut materialization_count = 0;
+    let mut payout_count = 0;
+    let mut first = cut_height
+        .checked_add(1)
+        .ok_or_else(|| eyre!("cut overflow"))?;
+    while first <= through {
+        let last = first.saturating_add(63).min(through);
+        let blocks = eth::blocks_with_transactions(&url, first, last, 64)
+            .ok_or_else(|| eyre!("public transaction scan failed"))?;
+        for (height, block) in (first..=last).zip(blocks) {
+            for tx in block["transactions"]
+                .as_array()
+                .ok_or_else(|| eyre!("missing public transactions"))?
+            {
+                let Some(materialization) =
+                    snapshot_public_kind(tx, copied_queue_sequence, worldwide_day)?
+                else {
+                    continue;
+                };
+                let signer: Address = tx["from"]
+                    .as_str()
+                    .ok_or_else(|| eyre!("missing sender"))?
+                    .parse()?;
+                ensure!(
+                    signer != recipient_signer,
+                    "recipient submitted copied public effects"
+                );
+                let hash = tx["hash"]
+                    .as_str()
+                    .ok_or_else(|| eyre!("missing transaction hash"))?;
+                let receipt = eth::receipt_json(&url, hash)
+                    .ok_or_else(|| eyre!("missing public effect receipt"))?;
+                if receipt["status"].as_str() != Some("0x1") {
+                    continue;
+                }
+                ensure!(
+                    receipt["blockHash"] == block["hash"]
+                        && receipt["transactionHash"] == tx["hash"],
+                    "receipt is not this canonical transaction"
+                );
+                let validator = *delegate_owners
+                    .get(&signer)
+                    .ok_or_else(|| eyre!("successful sender is not an existing OCOMP delegate"))?;
+                assert_snapshot_delegate(&url, signer, validator, height)?;
+                if materialization {
+                    materialization_count += 1;
+                } else {
+                    payout_count += 1;
+                }
+                transactions.push(serde_json::json!({"block_number":height,"transaction":tx,"receipt":receipt,"validator":validator,"delegate":signer}));
+            }
+        }
+        first = last.checked_add(1).ok_or_else(|| eyre!("scan overflow"))?;
+    }
+    ensure!(
+        materialization_count > 0 && payout_count > 0,
+        "missing actual post-cut materialization or payout transactions"
+    );
+    Ok(transactions)
+}
+
+fn assert_snapshot_delegate(
+    url: &str,
+    signer: alloy_primitives::Address,
+    validator: alloy_primitives::Address,
+    height: u64,
+) -> eyre::Result<()> {
+    use crate::internal::{addresses, eth};
+    // Same existing OCOMP role value as verify_ocomp_delegate_bindings.
+    let parent = height
+        .checked_sub(1)
+        .ok_or_else(|| eyre!("genesis transaction"))?;
+    let active = eth::read_call_at_result(
+        url,
+        addresses::VS_ADDR,
+        &eth::IValidatorSet::getActiveValidatorsCall {},
+        parent,
+    )
+    .map_err(|e| eyre!(e))?;
+    let declared = eth::read_call_at_result(
+        url,
+        addresses::VS_ADDR,
+        &eth::IValidatorSet::getDelegateCall { validator, role: 2 },
+        parent,
+    )
+    .map_err(|e| eyre!(e))?;
+    let resolved = eth::read_call_at_result(
+        url,
+        addresses::VS_ADDR,
+        &eth::IValidatorSet::resolveValidatorCall { role: 2, signer },
+        parent,
+    )
+    .map_err(|e| eyre!(e))?;
+    ensure!(
+        active.contains(&validator) && declared == signer && resolved == validator,
+        "sender lacks existing active-validator delegate binding at transaction parent"
+    );
+    Ok(())
+}
+
+fn snapshot_public_effects(
+    world: &crate::world::World,
+    cut_height: u64,
+    copied_queue_sequence: u64,
+    generation: &crate::world::rpc::OcompCertifiedGenerationV1,
+    payout: &crate::world::state::ContributorPayoutEvidenceV1,
+) -> eyre::Result<serde_json::Value> {
+    use crate::internal::eth;
+    use alloy_primitives::{address, Address, U256};
+    use alloy_sol_types::SolValue;
+    use eyre::{ensure, eyre};
+    let primary = world.validators.primary_port();
+    let slot = world.validators.joiner_index();
+    let recipient = world.validators.http_port(slot);
+    let url = world.rpc.url(primary);
+    let recipient_url = world.rpc.url(recipient);
+    let after = payout
+        .after
+        .as_ref()
+        .ok_or_else(|| eyre!("contributors_are_paid has not completed"))?;
+    ensure!(
+        payout.worldwide_day == generation.worldwide_day,
+        "wrong copied payout day"
+    );
+    let completed = world
+        .rpc
+        .completed_nod_materialization(primary, generation)
+        .ok_or_else(|| eyre!("copied generation is not fully materialized"))?;
+    let through = after.height.max(completed.completion_block_number);
+    ensure!(
+        world.rpc.wait_finalized_at_least(recipient, through, 180),
+        "FullNode has not reached public completion"
+    );
+    ensure!(
+        world
+            .rpc
+            .completed_nod_materialization(recipient, generation)
+            == Some(completed.clone()),
+        "FullNode materialization completion differs"
+    );
+    ensure!(
+        world.rpc.state_root(recipient, after.height) == Some(format!("{:#x}", after.state_root)),
+        "FullNode payout state root differs"
+    );
+    ensure!(
+        world.rpc.block_hash(recipient, after.height) == Some(format!("{:#x}", after.block_hash)),
+        "FullNode payout checkpoint differs"
+    );
+
+    let proofs = snapshot_public_nod_proofs(world, generation)?;
     let factory = address!("0000000000000000000000000000000000001015");
     let round_call = ISnapshotPayoutRead::contributorPayoutRoundCall {
         worldwideDay: payout.worldwide_day,
@@ -4279,133 +4506,13 @@ fn snapshot_public_effects(
         "FullNode public payout balances differ"
     );
 
-    let recipient_signer = eth::address_of(&world.validators.get(slot).evm_key()?)
-        .ok_or_else(|| eyre!("recipient EVM address"))?;
-    let mut delegate_owners = std::collections::BTreeMap::new();
-    for index in 0..world.validators.size() {
-        let validator = eth::address_of(&world.validators.get(index).evm_key()?)
-            .ok_or_else(|| eyre!("validator EVM address"))?;
-        delegate_owners.insert(
-            world.ocomp.ocomp_delegate_address(index.try_into()?)?,
-            validator,
-        );
-    }
-    let mut transactions = Vec::new();
-    let mut materialization_count = 0;
-    let mut payout_count = 0;
-    let mut first = cut_height
-        .checked_add(1)
-        .ok_or_else(|| eyre!("cut overflow"))?;
-    while first <= through {
-        let last = first.saturating_add(63).min(through);
-        let blocks = eth::blocks_with_transactions(&url, first, last, 64)
-            .ok_or_else(|| eyre!("public transaction scan failed"))?;
-        for (height, block) in (first..=last).zip(blocks) {
-            for tx in block["transactions"]
-                .as_array()
-                .ok_or_else(|| eyre!("missing public transactions"))?
-            {
-                let Some(to) = tx["to"].as_str().and_then(|s| s.parse::<Address>().ok()) else {
-                    continue;
-                };
-                if to != addresses::NOD_FACTORY_ADDR && to != factory {
-                    continue;
-                }
-                let input = hex::decode(
-                    tx["input"]
-                        .as_str()
-                        .ok_or_else(|| eyre!("missing calldata"))?
-                        .trim_start_matches("0x"),
-                )?;
-                let materialization = to == addresses::NOD_FACTORY_ADDR
-                    && input.get(..4) == Some(MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice());
-                let paying = to == factory
-                    && input.get(..4)
-                        == Some(ISnapshotPayoutRead::payContributorBatchCall::SELECTOR.as_slice());
-                if !materialization && !paying {
-                    continue;
-                }
-                if materialization
-                    && decode_protected_materialize_certified_nods_calldata(&input, &limits)?
-                        .queue_sequence
-                        != copied_queue_sequence
-                {
-                    continue;
-                }
-                if paying
-                    && ISnapshotPayoutRead::payContributorBatchCall::abi_decode(&input)?
-                        .worldwideDay
-                        != payout.worldwide_day
-                {
-                    continue;
-                }
-                let signer: Address = tx["from"]
-                    .as_str()
-                    .ok_or_else(|| eyre!("missing sender"))?
-                    .parse()?;
-                ensure!(
-                    signer != recipient_signer,
-                    "recipient submitted copied public effects"
-                );
-                let hash = tx["hash"]
-                    .as_str()
-                    .ok_or_else(|| eyre!("missing transaction hash"))?;
-                let receipt = eth::receipt_json(&url, hash)
-                    .ok_or_else(|| eyre!("missing public effect receipt"))?;
-                if receipt["status"].as_str() != Some("0x1") {
-                    continue;
-                }
-                ensure!(
-                    receipt["blockHash"] == block["hash"]
-                        && receipt["transactionHash"] == tx["hash"],
-                    "receipt is not this canonical transaction"
-                );
-                let validator = *delegate_owners
-                    .get(&signer)
-                    .ok_or_else(|| eyre!("successful sender is not an existing OCOMP delegate"))?;
-                // Same existing OCOMP role value as verify_ocomp_delegate_bindings.
-                let parent = height
-                    .checked_sub(1)
-                    .ok_or_else(|| eyre!("genesis transaction"))?;
-                let active = eth::read_call_at_result(
-                    &url,
-                    addresses::VS_ADDR,
-                    &eth::IValidatorSet::getActiveValidatorsCall {},
-                    parent,
-                )
-                .map_err(|e| eyre!(e))?;
-                let declared = eth::read_call_at_result(
-                    &url,
-                    addresses::VS_ADDR,
-                    &eth::IValidatorSet::getDelegateCall { validator, role: 2 },
-                    parent,
-                )
-                .map_err(|e| eyre!(e))?;
-                let resolved = eth::read_call_at_result(
-                    &url,
-                    addresses::VS_ADDR,
-                    &eth::IValidatorSet::resolveValidatorCall { role: 2, signer },
-                    parent,
-                )
-                .map_err(|e| eyre!(e))?;
-                ensure!(
-                    active.contains(&validator) && declared == signer && resolved == validator,
-                    "sender lacks existing active-validator delegate binding at transaction parent"
-                );
-                if materialization {
-                    materialization_count += 1;
-                } else {
-                    payout_count += 1;
-                }
-                transactions.push(serde_json::json!({"block_number":height,"transaction":tx,"receipt":receipt,"validator":validator,"delegate":signer}));
-            }
-        }
-        first = last.checked_add(1).ok_or_else(|| eyre!("scan overflow"))?;
-    }
-    ensure!(
-        materialization_count > 0 && payout_count > 0,
-        "missing actual post-cut materialization or payout transactions"
-    );
+    let transactions = snapshot_public_transactions(
+        world,
+        cut_height,
+        through,
+        copied_queue_sequence,
+        payout.worldwide_day,
+    )?;
     Ok(
         serde_json::json!({"generation":generation,"completion":completed,"payout_checkpoint":after,
         "payout_round":hex::encode(round.abi_encode()),"recipient_balances":balances,

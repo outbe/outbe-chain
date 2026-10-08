@@ -1,3 +1,5 @@
+mod frozen;
+
 use alloy_primitives::{Bytes, B256};
 use ark_bn254::Fr;
 use ark_ff::PrimeField;
@@ -300,28 +302,7 @@ impl CompressedTreeService {
         };
         let collection = collection_key(domain, request.raw_id)
             .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let catalog_key = TreeKey::from_be_bytes(*collection.as_bytes())
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let catalog_root = TreeRoot::from_be_bytes(view.catalog_root().0)
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let catalog = PoseidonSmt::open_with_store(
-            catalog_root,
-            StagingCkbStore::new(view.clone(), TreeNamespace::Catalog, view.catalog_root()),
-        );
-        let catalog_leaf = catalog
-            .get(catalog_key)
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let catalog_proof = catalog
-            .prove(vec![catalog_key])
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        catalog
-            .verify(
-                catalog_root,
-                &catalog_proof,
-                vec![(catalog_key, catalog_leaf)],
-            )
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let root_catalog_proof = CkbCompiledProofV1::from_tree(&catalog_proof)?;
+        let (catalog_leaf, root_catalog_proof) = frozen::catalog_entry(&view, collection)?;
         if catalog_leaf == TreeLeaf::ZERO {
             if view
                 .collection_has_records(collection)
@@ -339,33 +320,7 @@ impl CompressedTreeService {
                 },
             });
         }
-        let count = view
-            .collection_root_count(collection)
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        if count != domain.shard_count() as usize {
-            return Err(PointReadServiceError::Materialization(
-                "incomplete collection shard-root vector".into(),
-            ));
-        }
-        let mut roots = Vec::with_capacity(count);
-        for shard in 0..domain.shard_count() {
-            roots.push(
-                view.tree_root(TreeNamespace::CollectionShard(collection, shard))
-                    .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?
-                    .ok_or_else(|| {
-                        PointReadServiceError::Materialization("missing shard root".into())
-                    })?,
-            );
-        }
-        let top = aggregate_b256_shard_roots(&roots)
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let expected_collection = collection_root(domain, collection, top)
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        if expected_collection != B256::from(catalog_leaf.as_bytes()) {
-            return Err(PointReadServiceError::Materialization(
-                "catalog leaf does not match shard roots".into(),
-            ));
-        }
+        let roots = frozen::collection_roots(&view, collection, domain, catalog_leaf)?;
         let tree_key = derive_tree_key(collection_for_domain(domain), request.raw_id)
             .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
         let selected = shard_index(tree_key, domain.shard_count())
@@ -546,13 +501,14 @@ fn validate_common(
     header: &SelectedHeaderV1,
     common: &PointProofCommonV1,
 ) -> Result<(), PointReadServiceError> {
+    let request_bound = (common.chain_id, common.domain_id, common.raw_id)
+        == (chain_id, request.domain_id, request.raw_id);
+    let header_bound =
+        (common.block_number, common.block_hash) == (header.block_number, header.block_hash);
     if common.proof_encoding_version != PROOF_ENCODING_VERSION_V1
-        || common.chain_id != chain_id
-        || common.domain_id != request.domain_id
-        || common.raw_id != request.raw_id
+        || !request_bound
         || common.block_number == 0
-        || common.block_number != header.block_number
-        || common.block_hash != header.block_hash
+        || !header_bound
     {
         return Err(PointReadServiceError::InvalidPackage("common binding"));
     }
@@ -798,6 +754,7 @@ mod body_bytes_hex {
 
 #[cfg(test)]
 mod tests {
+    mod adversarial;
     use std::sync::{Arc, Mutex, MutexGuard};
 
     use alloy_primitives::{Address, U256};
@@ -1484,208 +1441,6 @@ mod tests {
             }
         });
         assert!(serde_json::from_value::<PointReadResultV1>(oversized).is_err());
-    }
-
-    #[test]
-    fn adversarial_mutations_and_saved_proof_after_advance_are_rejected_or_remain_historical() {
-        let _guard = proof_test_guard();
-        let (_dir, service, genesis_hash) = service();
-        let (id, body, leaf) = bucket_body(7);
-        let (marker, header) = finalize_one(&service, genesis_hash, EntityRef::NodBucket(id), leaf);
-        let request = PointReadRequestV1 {
-            domain_id: 3,
-            raw_id: id,
-        };
-        let package = service
-            .serve_point_read_v1(7, request, |_, _| Some(header.clone()), |_, _| Some(body))
-            .unwrap();
-
-        let mut wrong_chain = package.clone();
-        if let PointReadResultV1::Present { common, .. } = &mut wrong_chain {
-            common.chain_id = 8;
-        }
-        assert!(verify_point_read_v1(7, request, &header, &wrong_chain).is_err());
-        let mut wrong_identity = package.clone();
-        if let PointReadResultV1::Present { common, .. } = &mut wrong_identity {
-            common.raw_id = WwdEntityId::from_day_and_digest(id.worldwide_day(), [0x77; 32]);
-        }
-        assert!(verify_point_read_v1(7, request, &header, &wrong_identity).is_err());
-        let mut wrong_body = package.clone();
-        if let PointReadResultV1::Present { body_bytes, .. } = &mut wrong_body {
-            let mut mutated = body_bytes.to_vec();
-            mutated[0] ^= 1;
-            *body_bytes = mutated.into();
-        }
-        assert!(verify_point_read_v1(7, request, &header, &wrong_body).is_err());
-        let mut wrong_sibling = package.clone();
-        if let PointReadResultV1::Present { evidence, .. } = &mut wrong_sibling {
-            evidence.shard_top_siblings[0] = B256::repeat_byte(0x66);
-        }
-        assert!(verify_point_read_v1(7, request, &header, &wrong_sibling).is_err());
-        let mut wrong_proof = package.clone();
-        if let PointReadResultV1::Present { evidence, .. } = &mut wrong_proof {
-            let mut mutated = evidence.shard_smt_proof.0.to_vec();
-            mutated[0] ^= 1;
-            evidence.shard_smt_proof.0 = mutated.into();
-        }
-        assert!(verify_point_read_v1(7, request, &header, &wrong_proof).is_err());
-
-        for mutate in [
-            |common: &mut PointProofCommonV1| common.proof_encoding_version += 1,
-            |common: &mut PointProofCommonV1| common.block_number += 1,
-            |common: &mut PointProofCommonV1| common.block_hash = B256::repeat_byte(0x81),
-            |common: &mut PointProofCommonV1| common.domain_id = CeDomain::NodItem.id(),
-        ] {
-            let mut candidate = package.clone();
-            if let PointReadResultV1::Present { common, .. } = &mut candidate {
-                mutate(common);
-            }
-            assert!(verify_point_read_v1(7, request, &header, &candidate).is_err());
-        }
-
-        let (shard_proof, catalog_proof, siblings) = match &package {
-            PointReadResultV1::Present { evidence, .. } => (
-                evidence.shard_smt_proof.clone(),
-                evidence.root_catalog_proof.clone(),
-                evidence.shard_top_siblings,
-            ),
-            _ => unreachable!(),
-        };
-        for (is_catalog, proof) in [(false, shard_proof.clone()), (true, catalog_proof.clone())] {
-            for byte in 0..proof.0.len() {
-                let mut candidate = package.clone();
-                if let PointReadResultV1::Present { evidence, .. } = &mut candidate {
-                    let target = if is_catalog {
-                        &mut evidence.root_catalog_proof
-                    } else {
-                        &mut evidence.shard_smt_proof
-                    };
-                    let mut bytes = target.0.to_vec();
-                    bytes[byte] ^= 1;
-                    target.0 = bytes.into();
-                }
-                assert!(
-                    verify_point_read_v1(7, request, &header, &candidate).is_err(),
-                    "every byte of each compiled proof is authenticated: catalog={is_catalog}, byte={byte}"
-                );
-            }
-            for malformed in [proof.0[..proof.0.len() - 1].to_vec(), {
-                let mut trailing = proof.0.to_vec();
-                trailing.push(0);
-                trailing
-            }] {
-                let mut candidate = package.clone();
-                if let PointReadResultV1::Present { evidence, .. } = &mut candidate {
-                    if is_catalog {
-                        evidence.root_catalog_proof.0 = malformed.into();
-                    } else {
-                        evidence.shard_smt_proof.0 = malformed.into();
-                    }
-                }
-                assert!(verify_point_read_v1(7, request, &header, &candidate).is_err());
-            }
-        }
-        for level in 0..siblings.len() {
-            let mut candidate = package.clone();
-            if let PointReadResultV1::Present { evidence, .. } = &mut candidate {
-                evidence.shard_top_siblings[level] = B256::repeat_byte(0x82 + level as u8);
-            }
-            assert!(verify_point_read_v1(7, request, &header, &candidate).is_err());
-        }
-
-        let common = match &package {
-            PointReadResultV1::Present { common, .. } => common.clone(),
-            _ => unreachable!(),
-        };
-        let wrong_result_variants = [
-            PointReadResultV1::Unavailable,
-            PointReadResultV1::Absent {
-                common: common.clone(),
-                evidence: AbsentEvidenceV1::CollectionAbsent {
-                    root_catalog_proof: catalog_proof.clone(),
-                },
-            },
-            PointReadResultV1::Absent {
-                common,
-                evidence: AbsentEvidenceV1::EntityAbsentInCollection {
-                    shard_smt_proof: shard_proof,
-                    shard_top_siblings: siblings,
-                    root_catalog_proof: catalog_proof,
-                },
-            },
-        ];
-        for candidate in wrong_result_variants {
-            assert!(verify_point_read_v1(7, request, &header, &candidate).is_err());
-        }
-
-        let stored = StoredBody::decode(match &package {
-            PointReadResultV1::Present { body_bytes, .. } => body_bytes,
-            _ => unreachable!(),
-        })
-        .unwrap();
-        let wrong_schema = StoredBody::new(stored.schema_version() + 1, stored.payload().to_vec())
-            .unwrap()
-            .encode();
-        let mut candidate = package.clone();
-        if let PointReadResultV1::Present { body_bytes, .. } = &mut candidate {
-            *body_bytes = wrong_schema.into();
-        }
-        assert!(verify_point_read_v1(7, request, &header, &candidate).is_err());
-
-        let mut bad_headers = Vec::new();
-        let mut wrong_number = header.clone();
-        wrong_number.block_number += 1;
-        bad_headers.push(wrong_number);
-        let mut wrong_hash = header.clone();
-        wrong_hash.block_hash = B256::repeat_byte(0x83);
-        bad_headers.push(wrong_hash);
-        let mut malformed_artifacts = header.clone();
-        malformed_artifacts.extra_data.push(0);
-        bad_headers.push(malformed_artifacts);
-        let mut missing_artifact = header.clone();
-        missing_artifact.extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts::default())
-            .unwrap()
-            .to_vec();
-        bad_headers.push(missing_artifact);
-        for (scheme, root) in [
-            (ACTIVE_COMMITMENT_SCHEME + 1, marker.new_root),
-            (ACTIVE_COMMITMENT_SCHEME, B256::repeat_byte(0x84)),
-        ] {
-            let mut wrong_artifact = header.clone();
-            wrong_artifact.extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-                compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                    commitment_scheme_version: scheme,
-                    r_sealed: root,
-                }),
-                ..Default::default()
-            })
-            .unwrap()
-            .to_vec();
-            bad_headers.push(wrong_artifact);
-        }
-        for candidate_header in bad_headers {
-            assert!(verify_point_read_v1(7, request, &candidate_header, &package).is_err());
-        }
-
-        let next_hash = B256::repeat_byte(0x44);
-        let provisional = service
-            .open_parent(ExactParentIdentity {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                block_number: marker.height,
-                block_hash: marker.block_hash,
-                root: marker.new_root,
-            })
-            .unwrap()
-            .prepare_seal(2, &[], &[])
-            .unwrap();
-        let next_root = provisional.new_root();
-        service.publish_candidate(next_hash, provisional).unwrap();
-        service.apply_finalized(2, next_hash, next_root).unwrap();
-        assert_eq!(
-            verify_point_read_v1(7, request, &header, &package).unwrap(),
-            VerifiedPointReadV1::Present,
-            "issued evidence remains valid for its independently supplied historical header"
-        );
     }
 
     #[test]

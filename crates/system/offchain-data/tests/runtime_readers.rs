@@ -14,6 +14,7 @@ use outbe_offchain_storage::{
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{TributeData, TributeRepositoryWriter};
+use tracing_subscriber::{layer::SubscriberExt, Layer};
 
 fn entity(seed: u64) -> WwdEntityId {
     WwdEntityId::from_day_and_digest(
@@ -440,7 +441,7 @@ fn execution_read_uses_remaining_request_budget_without_reporting_mongo_outage()
 
     let started = std::time::Instant::now();
     let capture = DiagnosticCapture::default();
-    let error = match tracing::subscriber::with_default(capture.clone(), || {
+    let error = match tracing::subscriber::with_default(capture.subscriber(), || {
         readers.tribute().get(entity(1))
     }) {
         Ok(_) => panic!("delayed read must exceed the request budget"),
@@ -490,7 +491,7 @@ fn operation_timeout_is_mongo_unavailability_and_not_a_request_deadline() {
     let _budget = readers.enter_execution_budget(request_budget);
 
     let capture = DiagnosticCapture::default();
-    let error = match tracing::subscriber::with_default(capture.clone(), || {
+    let error = match tracing::subscriber::with_default(capture.subscriber(), || {
         readers.tribute().get(entity(1))
     }) {
         Ok(_) => panic!("read exceeding the MongoDB operation limit must fail"),
@@ -537,33 +538,27 @@ impl tracing::field::Visit for DiagnosticCapture {
     }
 }
 
-impl tracing::Subscriber for DiagnosticCapture {
-    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
-        true
+impl DiagnosticCapture {
+    fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync + 'static {
+        tracing_subscriber::registry().with(self.clone())
     }
+}
 
-    fn new_span(&self, _attributes: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-
-    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
-
-    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-
-    fn event(&self, event: &tracing::Event<'_>) {
+impl<S: tracing::Subscriber> Layer<S> for DiagnosticCapture {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
         event.record(&mut self.clone());
     }
-
-    fn enter(&self, _span: &tracing::span::Id) {}
-
-    fn exit(&self, _span: &tracing::span::Id) {}
 }
 
 #[test]
 fn backend_failure_diagnostic_identifies_operation_without_record_or_error_contents() {
     let capture = DiagnosticCapture::default();
     let readers = RuntimeBodyReaders::new(Arc::new(UnavailableReader));
-    let error = tracing::subscriber::with_default(capture.clone(), || {
+    let error = tracing::subscriber::with_default(capture.subscriber(), || {
         ParentBodySource::get(&readers, EntityRef::Tribute(entity(1))).unwrap_err()
     });
     assert!(matches!(error, ParentBodySourceError::Unavailable(_)));
