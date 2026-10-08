@@ -4,6 +4,7 @@ use crate::errors::Result;
 use alloy_primitives::{Address, B256, U256};
 use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus};
 
+/// Pledged-blob field tag; differs from `FIELD_BALANCE` so the two blobs never share a nonce.
 const FIELD_PLEDGED: u8 = 1;
 /// Derive the resident Gratis state key from the DKG group signature. See
 /// [`crate::confidential::Domain::derive_state_key`].
