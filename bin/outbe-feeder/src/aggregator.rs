@@ -551,6 +551,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
+            redstone: None,
             health: None,
         }
     }

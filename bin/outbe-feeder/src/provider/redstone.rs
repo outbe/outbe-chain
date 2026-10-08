@@ -9,13 +9,13 @@
 
 use alloy_primitives::{address, Address};
 use async_trait::async_trait;
-use eyre::{eyre, Context, Result};
+use eyre::{ensure, eyre, Context, Result};
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
-use crate::config::ProviderEndpointConfig;
+use crate::config::{FeederConfig, RedstoneConfig};
 use crate::fixed::{FixedValue, JsonDecimal};
 
 const DEFAULT_GATEWAY_URL: &str = "https://oracle-gateway.a.redstone.finance";
@@ -61,18 +61,43 @@ pub struct RedstoneProvider {
 }
 
 impl RedstoneProvider {
-    pub fn new(endpoint: &ProviderEndpointConfig) -> Result<Self> {
-        let gateway_url = if endpoint.rest.trim().is_empty() {
+    pub fn new(config: &RedstoneConfig) -> Result<Self> {
+        ensure!(
+            !config.api_key.trim().is_empty(),
+            "[redstone] api_key must not be empty"
+        );
+        let gateway_url = if config.gateway.trim().is_empty() {
             DEFAULT_GATEWAY_URL.to_owned()
         } else {
-            endpoint.rest.trim_end_matches('/').to_owned()
+            config.gateway.trim_end_matches('/').to_owned()
         };
         Ok(Self {
             client: reqwest::Client::new(),
             gateway_url,
-            api_key: endpoint.redstone_api_key.clone(),
+            api_key: config.api_key.clone(),
         })
     }
+}
+
+/// A `redstone` source needs the `[redstone]` section with a key.
+pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
+    let used = config
+        .currency_pairs
+        .iter()
+        .flat_map(|pair| &pair.sources)
+        .any(|source| source.provider == "redstone");
+    if !used {
+        return Ok(());
+    }
+    let section = config
+        .redstone
+        .as_ref()
+        .ok_or_else(|| eyre!("provider redstone requires a [redstone] section"))?;
+    ensure!(
+        !section.api_key.trim().is_empty(),
+        "[redstone] api_key must not be empty"
+    );
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -297,11 +322,9 @@ mod tests {
     #[ignore]
     async fn live_gateway_feeds() {
         let api_key = std::env::var("REDSTONE_API_KEY").expect("REDSTONE_API_KEY");
-        let provider = RedstoneProvider::new(&ProviderEndpointConfig {
-            name: "redstone".into(),
-            rest: String::new(),
-            websocket: String::new(),
-            redstone_api_key: api_key,
+        let provider = RedstoneProvider::new(&RedstoneConfig {
+            api_key,
+            gateway: String::new(),
         })
         .unwrap();
         let pairs = vec![("USDC".into(), "840".into()), ("USDT".into(), "840".into())];

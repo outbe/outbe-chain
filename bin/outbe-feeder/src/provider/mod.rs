@@ -199,12 +199,12 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                 Box::new(mock_http::MockHttpProvider::new(endpoint)?)
             }
             "pyth" => Box::new(pyth::PythProvider::new()?),
-            "redstone" => {
-                let endpoint = endpoints.get("redstone").ok_or_else(|| {
-                    eyre!("provider redstone requires a [[provider_endpoints]] entry with redstone_api_key")
-                })?;
-                Box::new(redstone::RedstoneProvider::new(endpoint)?)
-            }
+            "redstone" => Box::new(redstone::RedstoneProvider::new(
+                config
+                    .redstone
+                    .as_ref()
+                    .ok_or_else(|| eyre!("provider redstone requires a [redstone] section"))?,
+            )?),
             "chainlink" => Box::new(chainlink::ChainlinkProvider::new()?),
             "binance" => Box::new(binance::BinanceProvider::new()?),
             "kraken" => Box::new(kraken::KrakenProvider::new()?),

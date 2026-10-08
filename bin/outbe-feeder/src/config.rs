@@ -23,6 +23,8 @@ pub struct FeederConfig {
     /// Finalized EVM pool readers. They are independent of the destination Outbe RPC.
     #[serde(default)]
     pub dex_providers: Vec<crate::provider::dex::DexProviderConfig>,
+    /// RedStone gateway access; only read when a source names `redstone`.
+    pub redstone: Option<RedstoneConfig>,
     /// Health/status HTTP server configuration.
     pub health: Option<HealthConfig>,
 }
@@ -110,10 +112,17 @@ pub struct ProviderEndpointConfig {
     /// Exchange market-stream endpoint. Empty selects the exchange default.
     #[serde(default)]
     pub websocket: String,
-    /// RedStone authenticated-gateway key; only the `redstone` endpoint
-    /// accepts it and requires it.
+}
+
+/// RedStone authenticated gateway access; required by the `redstone` provider.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RedstoneConfig {
+    /// Gateway key issued by RedStone, one per validator.
+    pub api_key: String,
+    /// Gateway URL override. Empty selects the RedStone default.
     #[serde(default)]
-    pub redstone_api_key: String,
+    pub gateway: String,
 }
 
 /// Deviation threshold for outlier filtering.
@@ -163,6 +172,14 @@ impl FeederConfig {
 
     /// Validates configuration at startup. Returns error for invalid values.
     pub fn validate(&self) -> Result<()> {
+        self.validate_oracle_and_account()?;
+        self.validate_currency_pairs()?;
+        self.validate_provider_endpoints()?;
+        crate::provider::dex::validate_config(self)?;
+        crate::provider::redstone::validate_config(self)
+    }
+
+    fn validate_oracle_and_account(&self) -> Result<()> {
         // vote_period must be > 0
         if self.oracle.vote_period == 0 {
             return Err(eyre::eyre!(
@@ -178,7 +195,12 @@ impl FeederConfig {
                 self.account.validator_address
             ));
         }
+        Ok(())
+    }
 
+    /// Every on-chain pair is distinct, well-formed and has at least one
+    /// known, distinct source market.
+    fn validate_currency_pairs(&self) -> Result<()> {
         let mut oracle_pairs = std::collections::BTreeSet::new();
         for pair in &self.currency_pairs {
             let base = parse_oracle_asset(&pair.base)?;
@@ -211,48 +233,60 @@ impl FeederConfig {
                     pair.quote
                 ));
             }
-            if pair.sources.is_empty() {
+            Self::validate_pair_sources(pair)?;
+        }
+        Ok(())
+    }
+
+    /// A pair names at least one source; each source is well-formed, uses a
+    /// known provider and appears once.
+    fn validate_pair_sources(pair: &CurrencyPairConfig) -> Result<()> {
+        if pair.sources.is_empty() {
+            return Err(eyre::eyre!(
+                "currency pair {}/{} has no sources configured",
+                pair.base,
+                pair.quote
+            ));
+        }
+        let mut sources = std::collections::BTreeSet::new();
+        for source in &pair.sources {
+            if source.base.trim().is_empty() || source.quote.trim().is_empty() {
                 return Err(eyre::eyre!(
-                    "currency pair {}/{} has no sources configured",
+                    "provider source for {}/{} has an empty market asset",
                     pair.base,
                     pair.quote
                 ));
             }
-            let mut sources = std::collections::BTreeSet::new();
-            for source in &pair.sources {
-                if source.base.trim().is_empty() || source.quote.trim().is_empty() {
-                    return Err(eyre::eyre!(
-                        "provider source for {}/{} has an empty market asset",
-                        pair.base,
-                        pair.quote
-                    ));
-                }
-                if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str()) {
-                    return Err(eyre::eyre!(
-                        "unknown provider '{}' for pair {}/{}. Known: {:?}",
-                        source.provider,
-                        pair.base,
-                        pair.quote,
-                        Self::KNOWN_PROVIDERS
-                    ));
-                }
-                if !sources.insert((
-                    source.provider.as_str(),
-                    source.base.as_str(),
-                    source.quote.as_str(),
-                )) {
-                    return Err(eyre::eyre!(
-                        "duplicate provider source '{}' {}/{} for pair {}/{}",
-                        source.provider,
-                        source.base,
-                        source.quote,
-                        pair.base,
-                        pair.quote
-                    ));
-                }
+            if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str()) {
+                return Err(eyre::eyre!(
+                    "unknown provider '{}' for pair {}/{}. Known: {:?}",
+                    source.provider,
+                    pair.base,
+                    pair.quote,
+                    Self::KNOWN_PROVIDERS
+                ));
+            }
+            if !sources.insert((
+                source.provider.as_str(),
+                source.base.as_str(),
+                source.quote.as_str(),
+            )) {
+                return Err(eyre::eyre!(
+                    "duplicate provider source '{}' {}/{} for pair {}/{}",
+                    source.provider,
+                    source.base,
+                    source.quote,
+                    pair.base,
+                    pair.quote
+                ));
             }
         }
+        Ok(())
+    }
 
+    /// Endpoint names are known and unique; websocket overrides are only
+    /// accepted for streaming exchanges and look like a websocket address.
+    fn validate_provider_endpoints(&self) -> Result<()> {
         let mut endpoint_names = std::collections::BTreeSet::new();
         for endpoint in &self.provider_endpoints {
             if !Self::KNOWN_PROVIDERS.contains(&endpoint.name.as_str()) {
@@ -267,15 +301,6 @@ impl FeederConfig {
                     "duplicate provider endpoint '{}'",
                     endpoint.name
                 ));
-            }
-            if !endpoint.redstone_api_key.is_empty() && endpoint.name != "redstone" {
-                return Err(eyre::eyre!(
-                    "provider '{}' does not take redstone_api_key",
-                    endpoint.name
-                ));
-            }
-            if endpoint.name == "redstone" && endpoint.redstone_api_key.trim().is_empty() {
-                return Err(eyre::eyre!("provider 'redstone' requires redstone_api_key"));
             }
             if !endpoint.websocket.is_empty() {
                 if !matches!(
@@ -302,8 +327,6 @@ impl FeederConfig {
                 }
             }
         }
-
-        crate::provider::dex::validate_config(self)?;
         Ok(())
     }
 
@@ -363,6 +386,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
+            redstone: None,
             health: None,
         }
     }
@@ -456,7 +480,6 @@ mod tests {
             name: "mock_http".to_string(),
             rest: "http://localhost:8000".to_string(),
             websocket: String::new(),
-            redstone_api_key: String::new(),
         });
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
@@ -473,7 +496,6 @@ mod tests {
             name: "binance".to_string(),
             rest: String::new(),
             websocket: "wss://stream.binance.com:9443/ws".to_string(),
-            redstone_api_key: String::new(),
         });
         assert!(cfg.validate().is_ok());
     }
@@ -485,7 +507,6 @@ mod tests {
             name: "mock_http".to_string(),
             rest: "http://localhost:8000".to_string(),
             websocket: "ws://localhost:8001".to_string(),
-            redstone_api_key: String::new(),
         });
         assert!(cfg
             .validate()
@@ -502,7 +523,6 @@ mod tests {
                 name: "binance".to_string(),
                 rest: String::new(),
                 websocket: String::new(),
-                redstone_api_key: String::new(),
             });
         }
         assert!(cfg

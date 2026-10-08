@@ -52,9 +52,19 @@ provider = "mock_http"
 base = "COEN"
 quote = "USDC"
 
+# A USD-quoted feed from the RedStone gateway; needs the [redstone] section.
+[[currency_pairs.sources]]
+provider = "redstone"
+base = "USDC"
+quote = "840"
+
 [[provider_endpoints]]
 name = "mock_http"
 rest = "https://prc.testnet.outbe.net"
+
+# RedStone gateway access, one key per validator.
+[redstone]
+api_key = "REPLACE_WITH_REDSTONE_API_KEY"
 
 # Optional exchange WebSocket override. Omit it to use the exchange default.
 [[provider_endpoints]]
@@ -88,7 +98,8 @@ threshold = "2.0"
 | `provider_endpoints[].name` | only endpoint-backed providers | Provider endpoint name |
 | `provider_endpoints[].rest` | only endpoint-backed providers | Provider REST base URL |
 | `provider_endpoints[].websocket` | no | Exchange market-stream endpoint override (`ws://`, `wss://`, or a host); omitted uses the exchange default |
-| `provider_endpoints[].redstone_api_key` | only `redstone` | RedStone authenticated-gateway key, one per validator |
+| `redstone.api_key` | only `redstone` sources | RedStone authenticated-gateway key, one per validator |
+| `redstone.gateway` | no | RedStone gateway URL override |
 | `dex_providers` | only DEX sources | Explicit RPC, network and pool configuration; see [DEX providers](#dex-providers) |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
@@ -144,10 +155,10 @@ used as bootstrap fallback.
 
 `redstone` reads signed data packages from the RedStone authenticated gateway
 (`/v2/data-packages/latest-by-data-feeds/redstone-primary-prod`). It needs a
-`[[provider_endpoints]]` entry named `redstone` with `redstone_api_key`
-(issued by RedStone, one per validator) and optionally `rest` to override the
-gateway URL. Feeds are USD quoted, so a source must use quote `840` or `USD`;
-the base symbol is the RedStone feed id (`USDC`, `USDT`, `ETH`).
+`[redstone]` section with `api_key` (issued by RedStone, one per validator)
+and optionally `gateway` to override the gateway URL. Feeds are USD quoted,
+so a source must use quote `840` or `USD`; the base symbol is the RedStone
+feed id (`USDC`, `USDT`, `ETH`).
 
 Selection follows the RedStone SDK defaults. For each feed the provider keeps
 the packages that share the newest timestamp and come from a signer registered
@@ -156,18 +167,8 @@ for `redstone-primary-prod` (the registry list is compiled in and dated in
 values closest to the median, and publishes their median. Packages older than
 60 seconds or more than 30 seconds in the future reject the feed. Package
 signatures are not verified; the gateway is trusted like Pyth Hermes.
-RedStone lists no COEN feed.
-
-```toml
-[[provider_endpoints]]
-name = "redstone"
-redstone_api_key = "REPLACE_WITH_REDSTONE_API_KEY"
-
-[[currency_pairs.sources]]
-provider = "redstone"
-base = "USDC"
-quote = "840"
-```
+RedStone lists no COEN feed. See the configuration example above for the
+`[redstone]` section and a `redstone` source.
 
 ### DEX providers
 
