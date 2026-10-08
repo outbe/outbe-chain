@@ -948,7 +948,7 @@ class LaunchBundleTests(unittest.TestCase):
     def test_feeder_provider_name_is_one_the_binary_accepts(self):
         """outbe-feeder validates provider names against a fixed list and
         refuses to start on anything else."""
-        known = {"mock", "pyth", "chainlink", "binance", "kraken", "okx",
+        known = {"mock", "pyth", "chainlink", "redstone", "binance", "kraken", "okx",
                  "gate", "huobi", "mexc", "coinbase", "mock_http"}
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
