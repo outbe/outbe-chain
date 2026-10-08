@@ -33,6 +33,7 @@ mod finalization;
 mod preparation;
 mod selection;
 mod size_budget;
+mod transaction_error;
 
 use carrier_admission::CarrierBlock;
 

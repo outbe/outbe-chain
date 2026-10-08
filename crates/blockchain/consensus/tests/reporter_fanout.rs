@@ -10,10 +10,7 @@
 
 use alloy_primitives::{address, Address};
 use commonware_consensus::{
-    simplex::{
-        elector::Config as _,
-        types::{Activity, Notarization, Proposal, Subject},
-    },
+    simplex::types::{Activity, Notarization, Proposal, Subject},
     types::{Epoch, Round, View},
     Reporter as _,
 };
@@ -35,7 +32,7 @@ use outbe_consensus::{
             FinalizedParentCertStore, CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
         },
     },
-    hybrid::{election::HybridRandom, HybridScheme},
+    hybrid::HybridScheme,
     reporter::{OutbeReporter, ReporterCommittee, ReporterContinuity, ReporterDependencies},
 };
 use outbe_primitives::consensus_metadata::ParentParticipationProof;
@@ -72,6 +69,10 @@ type NotarizationFixture = (
 
 /// Build a valid Notarization and the exact verifier/material that produced it.
 fn valid_notarization() -> NotarizationFixture {
+    certificate_fixture(2, false)
+}
+
+fn certificate_fixture(view: u64, finalize: bool) -> NotarizationFixture {
     let (keys, participants) = test_participants(3);
     let dkg = bootstrap_dkg(3).unwrap();
     let schemes: Vec<HybridScheme<MinSig>> = outbe_consensus::test_harness::fixture_signer_schemes(
@@ -90,12 +91,18 @@ fn valid_notarization() -> NotarizationFixture {
         Sha256::hash(&[b"test-payload"]).as_ref(),
     ));
     let proposal = Proposal::new(
-        Round::new(Epoch::new(0), View::new(2)),
-        View::new(1),
+        Round::new(Epoch::new(0), View::new(view)),
+        View::new(view - 1),
         payload,
     );
-    let subject = Subject::Notarize {
-        proposal: &proposal,
+    let subject = if finalize {
+        Subject::Finalize {
+            proposal: &proposal,
+        }
+    } else {
+        Subject::Notarize {
+            proposal: &proposal,
+        }
     };
     let attestations: Vec<_> = schemes
         .iter()
@@ -124,6 +131,20 @@ fn build_reporter(
 ) -> (OutbeReporter, mpsc::UnboundedReceiver<FinalizationMessage>) {
     // The reporter enqueues certified-notarization persistence to the
     // FinalizationActor mailbox. The test keeps the receiver to drain it.
+    build_reporter_with_continuity(
+        witness_sink,
+        verifier,
+        participants,
+        ReporterContinuity::default(),
+    )
+}
+
+fn build_reporter_with_continuity(
+    witness_sink: Arc<dyn CertificationWitnessSink>,
+    verifier: HybridScheme<MinSig>,
+    _participants: &Set<bls12381::PublicKey>,
+    continuity: ReporterContinuity,
+) -> (OutbeReporter, mpsc::UnboundedReceiver<FinalizationMessage>) {
     let (tx, rx) = mpsc::unbounded::<FinalizationMessage>();
     // This test exercises only the certification fan-out, not finalize votes.
     // Thus a verify actor whose receiver is dropped immediately is sufficient.
@@ -136,11 +157,10 @@ fn build_reporter(
             ),
         );
     let reporter = OutbeReporter::new(
-        ReporterContinuity::default(),
+        continuity,
         ReporterCommittee {
             validator_addresses: ordered_addresses(),
             verifier_scheme: verifier,
-            elector: HybridRandom::default().build(participants),
             epoch: Epoch::new(0),
         },
         ReporterDependencies {
@@ -162,9 +182,56 @@ fn drain_certification_writes(
 ) {
     while let Ok(msg) = rx.try_recv() {
         if let FinalizationMessage::CertifiedNotarization(record) = msg {
-            store.put_certified_notarization(record).unwrap();
+            store.put_certified_notarization(record.record).unwrap();
         }
     }
+}
+
+#[test]
+fn finalization_after_large_view_gap_emits_empty_v2_attribution() {
+    let (fixture, verifier, participants) = certificate_fixture(257, true);
+    let continuity = ReporterContinuity::default();
+    continuity.update(1, None, None);
+    let store = FinalizedParentCertStore::new();
+    let (mut reporter, mut rx) = build_reporter_with_continuity(
+        Arc::new(store),
+        verifier,
+        &participants,
+        continuity.clone(),
+    );
+    let feedback = reporter.report(Activity::Finalization(
+        commonware_consensus::simplex::types::Finalization {
+            proposal: fixture.proposal,
+            certificate: fixture.certificate,
+        },
+    ));
+    assert!(matches!(feedback, commonware_actor::Feedback::Ok));
+    let message = rx.try_recv().unwrap();
+    let FinalizationMessage::Finalized(finalized) = message else {
+        panic!("expected finalization");
+    };
+    assert!(
+        finalized.consensus_data.missed_proposers.is_empty(),
+        "V2 has no missed-leader attribution consumer"
+    );
+    assert_eq!(continuity.snapshot().last_finalized_view, 257);
+}
+
+#[test]
+fn certification_retention_uses_round_and_ignores_chain_height() {
+    let store = FinalizedParentCertStore::new();
+    let (notarization, verifier, participants) = valid_notarization();
+    let key = CertifiedParentProofKey::new(0, 2, notarization.proposal.payload.0);
+    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()), verifier, &participants);
+    let _ = reporter.report(Activity::Certification(notarization));
+    drain_certification_writes(&mut rx, &store);
+    store.prune_below_height(10_000).unwrap();
+    assert!(store.get_certified_notarization(key).is_some());
+    store
+        .prune_certified_notarizations_below_round(Round::new(Epoch::new(0), View::new(3)))
+        .unwrap();
+    assert!(store.get_certified_notarization(key).is_none());
+    assert!(!store.has_local_certification_witness(key));
 }
 
 #[tokio::test(flavor = "current_thread")]

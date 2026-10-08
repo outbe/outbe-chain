@@ -140,11 +140,11 @@ impl FinalizationActor {
                 // certified-notarization is a best-effort fallback witness (the
                 // proposer prefers the finalization record and can recover from
                 // marshal). Thus dropping one must not crash the single durable writer.
-                Message::CertifiedNotarization(record) => {
+                Message::CertifiedNotarization(pending) => {
                     match self
                         .deps
                         .parent_cert_store
-                        .put_certified_notarization(record)
+                        .put_certified_notarization(pending.record)
                     {
                         Ok(()) => crate::metrics::record_certification_persisted(),
                         Err(error) => {
@@ -457,7 +457,10 @@ impl FinalizationActor {
         );
 
         // Prune old parent-cert records and record store metrics. No `view` access.
-        self.prune_parent_cert_store(block_number)?;
+        self.prune_parent_cert_store(
+            block_number,
+            view.last_finalized_round.unwrap_or(finalized.round),
+        )?;
 
         view.last_finalized_round = Some(match view.last_finalized_round {
             Some(last_round) => std::cmp::max(last_round, finalized.round),
@@ -570,7 +573,6 @@ impl FinalizationActor {
             committee_set_hash,
             vrf_material_version,
             vrf_group_public_key_hash,
-            stored_at_height: block_number,
         };
         self.deps
             .parent_cert_store
@@ -596,7 +598,11 @@ impl FinalizationActor {
 
     /// Prune parent-cert records below the retention floor and record store
     /// metrics. No `view` access.
-    fn prune_parent_cert_store(&self, block_number: u64) -> eyre::Result<()> {
+    fn prune_parent_cert_store(
+        &self,
+        block_number: u64,
+        processed_round: Round,
+    ) -> eyre::Result<()> {
         let pruned = self
             .deps
             .parent_cert_store
@@ -604,6 +610,21 @@ impl FinalizationActor {
             .map_err(|error| {
                 eyre::eyre!("prune finalization parent certificate records: {error}")
             })?;
+        // Match marshal: retain temporary certificates behind the previously processed round.
+        let keep_views = u64::from(crate::config::ACTIVITY_TIMEOUT)
+            .saturating_mul(crate::config::VIEW_RETENTION_MULTIPLIER);
+        let round_floor = Round::new(
+            processed_round.epoch(),
+            processed_round
+                .view()
+                .saturating_sub(commonware_consensus::types::ViewDelta::new(keep_views)),
+        );
+        let pruned = pruned
+            + self
+                .deps
+                .parent_cert_store
+                .prune_certified_notarizations_below_round(round_floor)
+                .map_err(|error| eyre::eyre!("prune temporary parent certificates: {error}"))?;
         crate::metrics::record_parent_cert_store_size(self.deps.parent_cert_store.len());
         crate::metrics::record_parent_cert_record_pruned(pruned);
         if let Some(oldest) = self.deps.parent_cert_store.oldest_stored_height() {

@@ -28,19 +28,20 @@
 //! chain. It is out of scope for the storage-handle survey.
 //!
 //! Record schema discriminant: every record carries
-//! [`CertifiedParentProofRecord::format_version`] == 3. Reads reject records with
+//! [`CertifiedParentProofRecord::format_version`] == 4. Reads reject records with
 //! any other version (`Err(UnknownFormatVersion)`).
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
     },
 };
 
 use alloy_primitives::{Address, Bytes, B256};
+use commonware_consensus::types::{Epoch, Round, View};
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
@@ -57,7 +58,13 @@ use tokio::sync::watch;
 
 /// On-disk record schema version. Encoded into every persisted
 /// [`CertifiedParentProofRecord`]. Reads reject any other value.
-pub const CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION: u8 = 3;
+pub const CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION: u8 = 4;
+
+/// Node-local availability budgets, independent of epoch views or progress.
+/// Selection returns owned records, so eviction cannot invalidate a proof
+/// already selected for a proposal or held across the bounded finalization wait.
+pub const MAX_PENDING_CERTIFICATION_WITNESSES: usize = 4096;
+pub const MAX_CERTIFIED_NOTARIZATION_RECORDS: usize = 4096;
 
 /// Exact lookup key for a certified-parent proof.
 ///
@@ -343,9 +350,6 @@ pub struct CertifiedParentProofRecord {
     /// Canonical commonware-codec bytes of the source `Notarization` /
     /// `Finalization` (the writer never re-encodes).
     pub encoded_proof: Bytes,
-    /// Age-based pruning key: the finalized block height for `Finalization`, the
-    /// notarization view as a monotone retention proxy for `CertifiedNotarization`.
-    pub stored_at_height: u64,
 }
 
 impl Default for CertifiedParentProofRecord {
@@ -365,7 +369,6 @@ impl Default for CertifiedParentProofRecord {
             ordered_committee: Vec::new(),
             signer_bitmap: Vec::new(),
             encoded_proof: Bytes::new(),
-            stored_at_height: 0,
         }
     }
 }
@@ -511,6 +514,7 @@ pub struct FinalizedParentCertStore {
     inner: Arc<RwLock<ParentProofStoreState>>,
     backend: Option<Arc<MdbxParentProofBackend>>,
     revision: Arc<AtomicU64>,
+    durable_writer: Arc<Mutex<()>>,
     revision_tx: watch::Sender<u64>,
 }
 
@@ -518,7 +522,8 @@ pub struct FinalizedParentCertStore {
 struct ParentProofStoreState {
     finalization: BTreeMap<CertifiedParentProofKey, CertifiedParentProofRecord>,
     certified_notarization: BTreeMap<CertifiedParentProofKey, CertifiedParentProofRecord>,
-    seen_certification_keys: BTreeMap<CertifiedParentProofKey, u64>,
+    seen_certification_keys: BTreeSet<CertifiedParentProofKey>,
+    pending_certification_keys: BTreeSet<CertifiedParentProofKey>,
 }
 
 impl Default for FinalizedParentCertStore {
@@ -528,6 +533,7 @@ impl Default for FinalizedParentCertStore {
             inner: Arc::new(RwLock::new(ParentProofStoreState::default())),
             backend: None,
             revision: Arc::new(AtomicU64::new(0)),
+            durable_writer: Arc::new(Mutex::new(())),
             revision_tx,
         }
     }
@@ -552,9 +558,7 @@ impl FinalizedParentCertStore {
         for rec in backend.load_all::<tables::OutbeCertifiedParentNotarizationRecords>()? {
             let key = rec.proof_key();
             if rec.is_certification_witness() {
-                state
-                    .seen_certification_keys
-                    .insert(key, rec.stored_at_height);
+                state.seen_certification_keys.insert(key);
             }
             state.certified_notarization.insert(key, rec);
         }
@@ -562,6 +566,7 @@ impl FinalizedParentCertStore {
             inner: Arc::new(RwLock::new(state)),
             backend: Some(backend),
             revision: Arc::new(AtomicU64::new(0)),
+            durable_writer: Arc::new(Mutex::new(())),
             revision_tx: watch::channel(0).0,
         })
     }
@@ -571,6 +576,10 @@ impl FinalizedParentCertStore {
         record: CertifiedParentProofRecord,
         slot: ProofSlot,
     ) -> Result<(), ParentProofStoreError> {
+        let _writer = self
+            .durable_writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if record.format_version != CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION {
             return Err(ParentProofStoreError::UnknownFormatVersion {
                 path: self
@@ -581,20 +590,37 @@ impl FinalizedParentCertStore {
                 version: record.format_version,
             });
         }
+        let key = record.proof_key();
+        let evict = if matches!(slot, ProofSlot::CertifiedNotarization) {
+            let state = self.lock_read();
+            if !state.certified_notarization.contains_key(&key)
+                && state.certified_notarization.len() >= MAX_CERTIFIED_NOTARIZATION_RECORDS
+            {
+                state.certified_notarization.keys().next().copied()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         if let Some(backend) = &self.backend {
-            backend.write_record(&record, slot)?;
+            backend.write_record(&record, slot, evict)?;
         }
         let mut state = self.lock_write();
+        if let Some(evicted) = evict {
+            state.certified_notarization.remove(&evicted);
+            state.seen_certification_keys.remove(&evicted);
+            state.pending_certification_keys.remove(&evicted);
+        }
         let key = record.proof_key();
         match slot {
             ProofSlot::Finalization => {
                 state.finalization.insert(key, record);
             }
             ProofSlot::CertifiedNotarization => {
+                state.pending_certification_keys.remove(&key);
                 if record.is_certification_witness() {
-                    state
-                        .seen_certification_keys
-                        .insert(key, record.stored_at_height);
+                    state.seen_certification_keys.insert(key);
                 }
                 state.certified_notarization.insert(key, record);
             }
@@ -717,7 +743,45 @@ impl FinalizedParentCertStore {
 
     /// True only if this node locally observed certification for the exact key.
     pub fn has_local_certification_witness(&self, key: CertifiedParentProofKey) -> bool {
-        self.lock_read().seen_certification_keys.contains_key(&key)
+        self.lock_read().seen_certification_keys.contains(&key)
+    }
+
+    /// Temporary certificates and their local witnesses share a consensus-round floor.
+    /// Height-based pruning must never compare against an epoch-local view.
+    pub fn prune_certified_notarizations_below_round(
+        &self,
+        floor: Round,
+    ) -> Result<usize, ParentProofStoreError> {
+        let _writer = self
+            .durable_writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let stale = |key: &CertifiedParentProofKey| {
+            Round::new(Epoch::new(key.epoch), View::new(key.view)) < floor
+        };
+        let drop_keys: Vec<_> = self
+            .lock_read()
+            .certified_notarization
+            .keys()
+            .filter(|key| stale(key))
+            .copied()
+            .collect();
+        if let Some(backend) = &self.backend {
+            for key in &drop_keys {
+                backend.remove_record::<tables::OutbeCertifiedParentNotarizationRecords>(key)?;
+            }
+        }
+        let mut state = self.lock_write();
+        for key in &drop_keys {
+            state.certified_notarization.remove(key);
+        }
+        state.seen_certification_keys.retain(|key| !stale(key));
+        state.pending_certification_keys.retain(|key| !stale(key));
+        drop(state);
+        if !drop_keys.is_empty() {
+            self.bump_revision();
+        }
+        Ok(drop_keys.len())
     }
 
     pub fn remove(&self, key: CertifiedParentProofKey) -> Result<bool, ParentProofStoreError> {
@@ -730,22 +794,29 @@ impl FinalizedParentCertStore {
     /// advances the finalization view, so a crash in that window can leave an
     /// ahead-of-recovered-view record on disk. The node calls this method once at
     /// startup with the recovered finalized height. The call restores the
-    /// invariant `stored_at_height <= recovered_last_finalized`. Selection already
+    /// invariant `finalized_block_number <= recovered_last_finalized`. Selection already
     /// drains any height-mismatched record at read time (`validate_parent_record`),
     /// so this is defensive on-disk hygiene, not a divergence fix.
     ///
     /// This method touches only the `Finalization` slot, because its
-    /// `stored_at_height` is the real block height. `CertifiedNotarization`
-    /// records key `stored_at_height` to the notarization view (a retention proxy,
-    /// not a height). A block-height ceiling cannot compare to that value, so this
-    /// method leaves those records untouched.
+    /// height is authenticated. `CertifiedNotarization` records carry only a
+    /// consensus round. Recovery of the canonical block does not invalidate an observed
+    /// certification, so this method leaves those records untouched.
     pub fn prune_above_height(&self, ceiling: u64) -> Result<usize, ParentProofStoreError> {
+        let _writer = self
+            .durable_writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let fin_drop: Vec<CertifiedParentProofKey> = {
             let state = self.lock_read();
             state
                 .finalization
                 .iter()
-                .filter_map(|(key, r)| (r.stored_at_height > ceiling).then_some(*key))
+                .filter_map(|(key, r)| {
+                    (r.finalized_block_number()
+                        .is_some_and(|height| height > ceiling))
+                    .then_some(*key)
+                })
                 .collect()
         };
         if fin_drop.is_empty() {
@@ -789,7 +860,16 @@ pub trait CertificationWitnessSink: Send + Sync {
 impl CertificationWitnessSink for FinalizedParentCertStore {
     fn mark_local_certification_witness(&self, key: CertifiedParentProofKey) {
         let mut state = self.lock_write();
-        state.seen_certification_keys.insert(key, key.view);
+        if state.seen_certification_keys.contains(&key) {
+            return;
+        }
+        if state.pending_certification_keys.len() >= MAX_PENDING_CERTIFICATION_WITNESSES {
+            if let Some(oldest) = state.pending_certification_keys.pop_first() {
+                state.seen_certification_keys.remove(&oldest);
+            }
+        }
+        state.pending_certification_keys.insert(key);
+        state.seen_certification_keys.insert(key);
     }
 }
 
@@ -833,6 +913,10 @@ impl CertifiedParentProofStore for FinalizedParentCertStore {
     }
 
     fn remove(&self, key: &CertifiedParentProofKey) -> Result<bool, ParentProofStoreError> {
+        let _writer = self
+            .durable_writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(backend) = &self.backend {
             backend.remove_record::<tables::OutbeCertifiedParentFinalizationRecords>(key)?;
             backend.remove_record::<tables::OutbeCertifiedParentNotarizationRecords>(key)?;
@@ -841,6 +925,7 @@ impl CertifiedParentProofStore for FinalizedParentCertStore {
         let removed_fin = state.finalization.remove(key).is_some();
         let removed_cn = state.certified_notarization.remove(key).is_some();
         state.seen_certification_keys.remove(key);
+        state.pending_certification_keys.remove(key);
         let removed = removed_fin || removed_cn;
         drop(state);
         if removed {
@@ -850,60 +935,35 @@ impl CertifiedParentProofStore for FinalizedParentCertStore {
     }
 
     fn prune_below_height(&self, floor: u64) -> Result<usize, ParentProofStoreError> {
-        let (fin_drop, cn_drop, witness_drop): (
-            Vec<CertifiedParentProofKey>,
-            Vec<CertifiedParentProofKey>,
-            Vec<CertifiedParentProofKey>,
-        ) = {
-            let state = self.lock_read();
-            (
-                state
-                    .finalization
-                    .iter()
-                    .filter_map(|(key, r)| (r.stored_at_height < floor).then_some(*key))
-                    .collect(),
-                state
-                    .certified_notarization
-                    .iter()
-                    .filter_map(|(key, r)| (r.stored_at_height < floor).then_some(*key))
-                    .collect(),
-                state
-                    .seen_certification_keys
-                    .iter()
-                    .filter_map(|(key, stored_at_height)| {
-                        (*stored_at_height < floor).then_some(*key)
-                    })
-                    .collect(),
-            )
-        };
+        let _writer = self
+            .durable_writer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let fin_drop: Vec<_> = self
+            .lock_read()
+            .finalization
+            .iter()
+            .filter_map(|(key, record)| {
+                record
+                    .finalized_block_number()
+                    .is_some_and(|height| height < floor)
+                    .then_some(*key)
+            })
+            .collect();
         if let Some(backend) = &self.backend {
             for key in &fin_drop {
                 backend.remove_record::<tables::OutbeCertifiedParentFinalizationRecords>(key)?;
             }
-            for key in &cn_drop {
-                backend.remove_record::<tables::OutbeCertifiedParentNotarizationRecords>(key)?;
-            }
         }
         let mut state = self.lock_write();
-        let mut dropped = 0usize;
-        for key in fin_drop {
-            if state.finalization.remove(&key).is_some() {
-                dropped += 1;
-            }
-        }
-        for key in cn_drop {
-            if state.certified_notarization.remove(&key).is_some() {
-                dropped += 1;
-            }
-        }
-        for key in witness_drop {
-            state.seen_certification_keys.remove(&key);
+        for key in &fin_drop {
+            state.finalization.remove(key);
         }
         drop(state);
-        if dropped > 0 {
+        if !fin_drop.is_empty() {
             self.bump_revision();
         }
-        Ok(dropped)
+        Ok(fin_drop.len())
     }
 
     fn len(&self) -> usize {
@@ -916,8 +976,7 @@ impl CertifiedParentProofStore for FinalizedParentCertStore {
         state
             .finalization
             .values()
-            .chain(state.certified_notarization.values())
-            .map(|r| r.stored_at_height)
+            .filter_map(|r| r.finalized_block_number())
             .min()
     }
 }
@@ -1061,6 +1120,7 @@ impl MdbxParentProofBackend {
         &self,
         rec: &CertifiedParentProofRecord,
         slot: ProofSlot,
+        evict: Option<CertifiedParentProofKey>,
     ) -> Result<(), ParentProofStoreError> {
         let bytes = self.encode_record(rec)?;
         let tx = self.db.tx_mut().map_err(|s| self.db_error(s))?;
@@ -1072,6 +1132,13 @@ impl MdbxParentProofBackend {
             ProofSlot::CertifiedNotarization => tx
                 .put::<tables::OutbeCertifiedParentNotarizationRecords>(key, bytes)
                 .map_err(|s| self.db_error(s))?,
+        }
+        if let Some(evicted) = evict {
+            tx.delete::<tables::OutbeCertifiedParentNotarizationRecords>(
+                evicted.storage_key(),
+                None,
+            )
+            .map_err(|s| self.db_error(s))?;
         }
         tx.commit().map_err(|s| self.db_error(s))
     }
@@ -1143,12 +1210,11 @@ mod tests {
             ordered_committee: vec![address!("0x1111111111111111111111111111111111111111")],
             signer_bitmap: vec![1],
             encoded_proof: Bytes::from_static(b"cert"),
-            stored_at_height: height,
             ..CertifiedParentProofRecord::default()
         }
     }
 
-    fn notarization_record(hash_byte: u8, height: u64) -> CertifiedParentProofRecord {
+    fn notarization_record(hash_byte: u8, _height: u64) -> CertifiedParentProofRecord {
         CertifiedParentProofRecord {
             kind: ProofKind::CertifiedNotarization,
             finalized_block_hash: B256::with_last_byte(hash_byte),
@@ -1158,7 +1224,6 @@ mod tests {
             ordered_committee: vec![address!("0x2222222222222222222222222222222222222222")],
             signer_bitmap: vec![3],
             encoded_proof: Bytes::from_static(b"notar"),
-            stored_at_height: height,
             ..CertifiedParentProofRecord::default()
         }
     }
@@ -1212,7 +1277,7 @@ mod tests {
         store
             .put_finalization(finalization_record(0xBB, 100))
             .unwrap();
-        // CN witness: stored_at_height is a notarization-view proxy, not a height.
+        // CN witness carries a consensus round, not a height.
         store
             .put_certified_notarization(notarization_record(0xCC, 100))
             .unwrap();
@@ -1307,6 +1372,111 @@ mod tests {
     }
 
     #[test]
+    fn round_retention_survives_epoch_reset_replay_and_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut record = notarization_record(0xAC, 0);
+        record.finalized_epoch = 2;
+        record.finalized_view = 2;
+        let key = record.proof_key();
+        {
+            let store = FinalizedParentCertStore::open(dir.path()).unwrap();
+            store.mark_local_certification_witness(key);
+            store.put_certified_notarization(record.clone()).unwrap();
+            store.mark_local_certification_witness(key);
+            store.put_certified_notarization(record.clone()).unwrap();
+            // A high chain height must never prune a fresh epoch's small view.
+            store.prune_below_height(10_000).unwrap();
+            store
+                .prune_certified_notarizations_below_round(Round::new(
+                    Epoch::new(1),
+                    View::new(1_000_000),
+                ))
+                .unwrap();
+            assert_eq!(store.get_certified_notarization(key), Some(record.clone()));
+        }
+        let store = FinalizedParentCertStore::open(dir.path()).unwrap();
+        assert!(store.has_local_certification_witness(key));
+        // The exact boundary is retained, then both proof and witness expire together.
+        store
+            .prune_certified_notarizations_below_round(Round::new(Epoch::new(2), View::new(2)))
+            .unwrap();
+        assert_eq!(store.get_certified_notarization(key), Some(record));
+        store
+            .prune_certified_notarizations_below_round(Round::new(Epoch::new(2), View::new(3)))
+            .unwrap();
+        assert!(!store.has_local_certification_witness(key));
+        assert!(store.get_certified_notarization(key).is_none());
+        drop(store);
+        assert!(!FinalizedParentCertStore::open(dir.path())
+            .unwrap()
+            .has_local_certification_witness(key));
+    }
+
+    #[test]
+    fn a_large_old_epoch_view_does_not_outlive_the_round_floor() {
+        let store = FinalizedParentCertStore::new();
+        let mut old = notarization_record(0xAE, 0);
+        old.finalized_epoch = 1;
+        old.finalized_view = 1_000_000;
+        let old_key = old.proof_key();
+        store.put_certified_notarization(old).unwrap();
+        let fresh = CertifiedParentProofKey::new(2, 1, B256::ZERO);
+        store.mark_local_certification_witness(fresh);
+        store
+            .prune_certified_notarizations_below_round(Round::new(Epoch::new(2), View::new(0)))
+            .unwrap();
+        assert!(!store.has_local_certification_witness(old_key));
+        assert!(store.get_certified_notarization(old_key).is_none());
+        assert!(store.has_local_certification_witness(fresh));
+    }
+
+    #[test]
+    fn pending_witnesses_are_bounded_without_finalization_progress() {
+        let store = FinalizedParentCertStore::new();
+        let first = CertifiedParentProofKey::new(2, 1, B256::ZERO);
+        for view in 1..=(MAX_PENDING_CERTIFICATION_WITNESSES as u64 + 1) {
+            store.mark_local_certification_witness(CertifiedParentProofKey::new(
+                2,
+                view,
+                B256::ZERO,
+            ));
+        }
+        assert!(!store.has_local_certification_witness(first));
+        let last = CertifiedParentProofKey::new(
+            2,
+            MAX_PENDING_CERTIFICATION_WITNESSES as u64 + 1,
+            B256::ZERO,
+        );
+        assert!(store.has_local_certification_witness(last));
+        store
+            .prune_certified_notarizations_below_round(Round::new(Epoch::new(3), View::new(0)))
+            .unwrap();
+        assert!(!store.has_local_certification_witness(last));
+    }
+
+    #[test]
+    fn durable_cn_cap_preserves_selected_owned_proof() {
+        let store = FinalizedParentCertStore::new();
+        let original = notarization_record(0xAD, 0);
+        let key = original.proof_key();
+        store.put_certified_notarization(original.clone()).unwrap();
+        let selected = store.get_best_for_parent(key, 1).unwrap();
+        for view in 1..=MAX_CERTIFIED_NOTARIZATION_RECORDS as u64 {
+            let mut record = original.clone();
+            record.finalized_view = view + original.finalized_view;
+            store.put_certified_notarization(record).unwrap();
+        }
+        assert_eq!(store.len(), MAX_CERTIFIED_NOTARIZATION_RECORDS);
+        assert!(store.get_certified_notarization(key).is_none());
+        assert!(!store.has_local_certification_witness(key));
+        assert_eq!(
+            selected,
+            ParentProofSelection::CertifiedNotarization(original),
+            "selection owns its proof across eviction/wait"
+        );
+    }
+
+    #[test]
     fn put_with_wrong_format_version_returns_unknown_format_version() {
         // The write-side guard rejects records with the wrong version even
         // before they reach disk.
@@ -1322,7 +1492,7 @@ mod tests {
     }
 
     #[test]
-    fn prune_below_height_drops_only_old_in_both_slots() {
+    fn height_pruning_only_removes_finalization_records() {
         let store = FinalizedParentCertStore::new();
         store
             .put_finalization(finalization_record(0x01, 10))
@@ -1337,12 +1507,12 @@ mod tests {
             .put_certified_notarization(notarization_record(0x04, 100))
             .unwrap();
         let dropped = store.prune_below_height(50).unwrap();
-        // height=10 fin + height=20 cn drop. 50 fin and 100 cn stay.
-        assert_eq!(dropped, 2);
-        assert_eq!(store.len(), 2);
+        // CN has no authenticated height and is pruned by round separately.
+        assert_eq!(dropped, 1);
+        assert_eq!(store.len(), 3);
         assert!(store.get_finalization(key(0x01)).is_none());
-        assert!(store.get_certified_notarization(key(0x03)).is_none());
-        assert!(!store.has_local_certification_witness(key(0x03)));
+        assert!(store.get_certified_notarization(key(0x03)).is_some());
+        assert!(store.has_local_certification_witness(key(0x03)));
         assert!(store.has_local_certification_witness(key(0x04)));
     }
 
@@ -1419,7 +1589,7 @@ mod tests {
     }
 
     #[test]
-    fn oldest_stored_height_spans_both_slots() {
+    fn oldest_stored_height_only_tracks_finalizations() {
         let store = FinalizedParentCertStore::new();
         store
             .put_finalization(finalization_record(0x01, 100))
@@ -1427,7 +1597,7 @@ mod tests {
         store
             .put_certified_notarization(notarization_record(0x02, 20))
             .unwrap();
-        assert_eq!(store.oldest_stored_height(), Some(20));
+        assert_eq!(store.oldest_stored_height(), Some(100));
     }
 }
 
@@ -1483,7 +1653,6 @@ mod proptests {
             vec(any::<[u8; 20]>(), 0..8),
             vec(any::<u8>(), 0..8),
             vec(any::<u8>(), 0..128),
-            0u64..(1 << 40),
         );
         (head, tail).prop_map(
             |(
@@ -1495,13 +1664,7 @@ mod proptests {
                     finalized_block_hash,
                     committee_set_hash,
                 ),
-                (
-                    vrf_material_version,
-                    ordered_committee,
-                    signer_bitmap,
-                    proof_bytes,
-                    stored_at_height,
-                ),
+                (vrf_material_version, ordered_committee, signer_bitmap, proof_bytes),
             )| {
                 let encoded_proof = Bytes::from(proof_bytes);
                 CertifiedParentProofRecord {
@@ -1517,7 +1680,6 @@ mod proptests {
                     ordered_committee: ordered_committee.into_iter().map(Address::from).collect(),
                     signer_bitmap,
                     encoded_proof,
-                    stored_at_height,
                 }
             },
         )
@@ -1555,7 +1717,7 @@ mod proptests {
         #[test]
         fn proptest_unknown_format_version_is_rejected(
             mut rec in arb_record(),
-            bad_version in prop_oneof![Just(0u8), Just(1u8), Just(2u8), 4u8..=255u8],
+            bad_version in (0u8..=255u8).prop_filter("not the current schema", |v| *v != CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION),
         ) {
             rec.format_version = bad_version;
             let bytes = serde_json::to_vec(&rec).expect("encode");
@@ -1585,7 +1747,7 @@ mod proptests {
     #[test]
     fn current_format_payload_decodes_to_record() {
         let payload = r#"{
-            "format_version": 3,
+            "format_version": 4,
             "kind": { "Finalization": { "finalized_block_number": 42 } },
             "finalized_epoch": 7,
             "finalized_view": 100,
@@ -1596,8 +1758,7 @@ mod proptests {
             "vrf_group_public_key_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
             "ordered_committee": ["0x1111111111111111111111111111111111111111"],
             "signer_bitmap": [1, 0, 1],
-            "encoded_proof": "0xdeadbeef",
-            "stored_at_height": 42
+            "encoded_proof": "0xdeadbeef"
         }"#;
         let rec: CertifiedParentProofRecord =
             serde_json::from_str(payload).expect("current-format payload must decode");
@@ -1618,7 +1779,6 @@ mod proptests {
         assert_eq!(rec.ordered_committee.len(), 1);
         assert_eq!(rec.signer_bitmap, vec![1u8, 0, 1]);
         assert_eq!(rec.encoded_proof.as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
-        assert_eq!(rec.stored_at_height, 42);
 
         // Re-encode + re-decode byte-equal: confirms the decoded record's
         // serialized shape is stable under the current schema.
@@ -1629,7 +1789,7 @@ mod proptests {
 
         // A unit-variant `CertifiedNotarization` pins as a bare string tag.
         let cn_payload = r#"{
-            "format_version": 3,
+            "format_version": 4,
             "kind": "CertifiedNotarization",
             "finalized_epoch": 7,
             "finalized_view": 100,

@@ -820,7 +820,6 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
         ordered_committee: ordered_committee.clone(),
         signer_bitmap: bitmap.clone(),
         encoded_proof: Bytes::from(finalization.clone()),
-        stored_at_height: FINALIZED_BLOCK_NUMBER,
         ..CertifiedParentProofRecord::default()
     };
     let parent_accounting = CertifiedParentAccountingMetadataV2 {

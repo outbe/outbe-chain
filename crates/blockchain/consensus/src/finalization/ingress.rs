@@ -1,7 +1,8 @@
 //! `FinalizationActor` mailbox + message types.
 //!
-//! The mailbox is an `UnboundedSender<Message>`, so the voter-side
-//! Reporter callback never blocks. A closed receiver is a fatal
+//! Finalization notifications use a nonblocking `UnboundedSender<Message>`.
+//! Best-effort CN writes reserve bounded capacity before using that channel.
+//! The voter-side reporter never awaits capacity. A closed receiver is a fatal
 //! supervisor event. The mailbox reports it through the
 //! [`FinalizationMailboxClosed`] error.
 
@@ -11,6 +12,8 @@ use alloy_primitives::B256;
 use commonware_consensus::types::Round;
 use futures::channel::mpsc;
 use outbe_primitives::consensus::ConsensusData;
+use std::sync::Arc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Returned by [`Mailbox::notify_finalized`] when the
 /// `FinalizationActor` has exited and its receiver has been dropped.
@@ -37,12 +40,35 @@ impl std::error::Error for FinalizationMailboxClosed {}
 /// (b) It keeps the actor the single durable writer to `FinalizedParentCertStore`
 /// (the reporter previously wrote it inline on the voter thread).
 /// The reporter builds the parity-critical record (including `committee_set_hash`)
-/// before enqueue. The record is byte-identical to before. Only the write moves,
-/// so there is no proposer/validator divergence risk.
+/// before enqueue. The actor persists those verified bytes; it does not rebuild
+/// the certificate or modify its protocol binding.
 pub enum Message {
     Finalized(Finalized),
-    CertifiedNotarization(CertifiedParentProofRecord),
+    CertifiedNotarization(PendingCertification),
 }
+
+/// A queued CN write owns capacity until it is persisted or dropped. Finalized
+/// notifications have their existing mandatory delivery contract; only the
+/// best-effort certification fallback uses this nonblocking bounded admission.
+pub struct PendingCertification {
+    pub record: CertifiedParentProofRecord,
+    _capacity: OwnedSemaphorePermit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CertificationMailboxError {
+    Closed,
+    Full,
+}
+impl core::fmt::Display for CertificationMailboxError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::Closed => "certification mailbox closed",
+            Self::Full => "certification persistence backlog full",
+        })
+    }
+}
+impl std::error::Error for CertificationMailboxError {}
 
 /// Finalization notification routed from the consensus voter (via
 /// `OutbeReporter`) into the FinalizationActor. The actor is the production
@@ -66,11 +92,17 @@ pub struct Finalized {
 #[derive(Clone)]
 pub struct Mailbox {
     inner: mpsc::UnboundedSender<Message>,
+    certification_capacity: Arc<Semaphore>,
 }
 
 impl Mailbox {
     pub fn from_sender(tx: mpsc::UnboundedSender<Message>) -> Self {
-        Self { inner: tx }
+        Self {
+            inner: tx,
+            certification_capacity: Arc::new(Semaphore::new(
+                crate::finalization::parent_cert_store::MAX_PENDING_CERTIFICATION_WITNESSES,
+            )),
+        }
     }
 
     /// Returns `Err(FinalizationMailboxClosed)` if the actor has exited.
@@ -84,16 +116,27 @@ impl Mailbox {
     }
 
     /// Enqueue a pre-built certified-parent witness record for off-thread
-    /// durable persistence. Returns immediately via `unbounded_send`, so the
-    /// Simplex voter task no longer blocks on the synchronous MDBX commit. The
-    /// caller (`OutbeReporter::handle_certification`) logs + meters on `Err`.
+    /// durable persistence. Capacity is reserved without waiting, then the
+    /// message is sent. `Full` drops this best-effort fallback write; `Closed`
+    /// identifies actor shutdown. The reporter logs and meters either outcome.
     pub fn persist_certified_notarization(
         &self,
         record: CertifiedParentProofRecord,
-    ) -> Result<(), FinalizationMailboxClosed> {
+    ) -> Result<(), CertificationMailboxError> {
+        if self.inner.is_closed() {
+            return Err(CertificationMailboxError::Closed);
+        }
+        let capacity = self
+            .certification_capacity
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| CertificationMailboxError::Full)?;
         self.inner
-            .unbounded_send(Message::CertifiedNotarization(record))
-            .map_err(|_| FinalizationMailboxClosed)
+            .unbounded_send(Message::CertifiedNotarization(PendingCertification {
+                record,
+                _capacity: capacity,
+            }))
+            .map_err(|_| CertificationMailboxError::Closed)
     }
 }
 
@@ -155,7 +198,28 @@ mod tests {
         let err = mailbox
             .persist_certified_notarization(CertifiedParentProofRecord::default())
             .unwrap_err();
-        assert_eq!(err, FinalizationMailboxClosed);
+        assert_eq!(err, CertificationMailboxError::Closed);
+    }
+
+    #[test]
+    fn stalled_certification_writer_has_bounded_backlog_and_recovers_capacity() {
+        let (tx, mut rx) = mpsc::unbounded::<Message>();
+        let mailbox = Mailbox::from_sender(tx);
+        for _ in 0..crate::finalization::parent_cert_store::MAX_PENDING_CERTIFICATION_WITNESSES {
+            mailbox
+                .persist_certified_notarization(CertifiedParentProofRecord::default())
+                .unwrap();
+        }
+        assert!(
+            mailbox
+                .persist_certified_notarization(CertifiedParentProofRecord::default())
+                .is_err(),
+            "stalled persistence must not admit an unbounded CN backlog"
+        );
+        drop(rx.try_recv().unwrap());
+        mailbox
+            .persist_certified_notarization(CertifiedParentProofRecord::default())
+            .unwrap();
     }
 
     #[tokio::test]

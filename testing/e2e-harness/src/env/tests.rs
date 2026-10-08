@@ -612,3 +612,16 @@ fn explicit_tee_profiles_are_disjoint_even_under_all() {
         Decision::Skip(_)
     ));
 }
+
+#[test]
+fn consensus_resilience_scenarios_have_registered_steps() {
+    let feature = Feature::parse_path(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("features/consensus_resilience.feature"),
+        cucumber::gherkin::GherkinEnv::default(),
+    )
+    .expect("parse consensus_resilience feature");
+    assert_eq!(feature.scenarios.len(), 5);
+    for scenario in &feature.scenarios {
+        assert_registered_steps(&feature, scenario);
+    }
+}

@@ -255,7 +255,6 @@ mod tests {
         CertifiedParentProofRecord {
             kind,
             finalized_block_hash: parent_hash,
-            stored_at_height: block_number,
             ..CertifiedParentProofRecord::default()
         }
     }
@@ -408,6 +407,51 @@ mod tests {
                     .unwrap();
                 assert!(stored.is_certification_witness());
                 assert_eq!(stored.finalized_block_number(), None);
+            },
+        );
+    }
+
+    #[test]
+    fn bounded_wait_keeps_selected_cn_when_retention_prunes_the_store() {
+        use commonware_runtime::{Clock as _, Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::timed(Duration::from_secs(5)).start(
+            |context| async move {
+                let store = FinalizedParentCertStore::new();
+                let hash = B256::with_last_byte(0xBB);
+                let key = CertifiedParentProofKey::new(0, 0, hash);
+                store
+                    .put_certified_notarization(record(
+                        hash,
+                        0,
+                        ParentParticipationProof::CertifiedNotarization,
+                    ))
+                    .unwrap();
+                let writer = store.clone();
+                let _writer = context.child("pruner").spawn(move |ctx| async move {
+                    ctx.sleep(Duration::from_millis(5)).await;
+                    writer
+                        .prune_certified_notarizations_below_round(
+                            commonware_consensus::types::Round::new(
+                                commonware_consensus::types::Epoch::new(0),
+                                commonware_consensus::types::View::new(1),
+                            ),
+                        )
+                        .unwrap();
+                });
+                let selector = ParentProofSelector::new(store.clone());
+                let selected = selector
+                    .select_direct_parent_proof_by_key_with_wait(
+                        &context,
+                        key,
+                        9,
+                        PHASE1_FINALIZATION_WAIT_DEFAULT,
+                    )
+                    .await
+                    .unwrap();
+                assert!(store.get_certified_notarization(key).is_none());
+                assert!(!store.has_local_certification_witness(key));
+                assert_eq!(selected.proof_key(), key);
+                assert_eq!(selected.to_v2_metadata(9).finalized_block_number, 9);
             },
         );
     }

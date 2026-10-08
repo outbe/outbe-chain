@@ -237,8 +237,16 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
             // The notarization carries no block-number context. Thus the record
             // kind is `ProofKind::CertifiedNotarization`, which has no block
             // number. The Phase 1 selector resolves its height to the known
-            // parent block number. `stored_at_height` holds the view as the
-            // retention key.
+            // parent block number. The proof's round also fixes its retention;
+            // a remote fetch cannot rejuvenate it.
+            let proof_key = CertifiedParentProofKey::new(
+                notarization.epoch().get(),
+                view,
+                notarization.proposal.payload.0,
+            );
+            if !self.proof_store.has_local_certification_witness(proof_key) {
+                return ProofFetchOutcome::NoLocalCertificationWitness;
+            };
             let record = CertifiedParentProofRecord {
                 format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
                 kind: ProofKind::CertifiedNotarization,
@@ -255,7 +263,6 @@ impl<T: ParentProofTransport> ParentProofResolver<T> {
                     self.validator_addresses.len(),
                 ),
                 encoded_proof,
-                stored_at_height: view,
             };
 
             if let Err(error) = self.proof_store.put_certified_notarization(record.clone()) {
@@ -390,7 +397,6 @@ pub fn build_recovered_finalization_record(
         committee_set_hash: prelude.committee_set_hash,
         vrf_material_version: prelude.vrf_material_version,
         vrf_group_public_key_hash: prelude.vrf_group_public_key_hash,
-        stored_at_height: finalized_block_number,
     })
 }
 
@@ -485,7 +491,7 @@ mod tests {
         assert_eq!(record.parent_view, parent_view.get());
         assert_eq!(record.ordered_committee, addresses);
         assert_eq!(record.signer_bitmap, vec![1u8, 1, 1], "all 3 signed");
-        assert_eq!(record.stored_at_height, block_number);
+        assert_eq!(record.finalized_block_number(), Some(block_number));
         assert_eq!(record.encoded_proof, encoded);
 
         // Committee-set-hash parity: rebuild the snapshot exactly as

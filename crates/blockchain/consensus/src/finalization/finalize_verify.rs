@@ -1,143 +1,218 @@
-//! Off-thread finalize-vote verification.
-//!
-//! The Simplex batcher reports `Activity::Finalize` to the reporter **before**
-//! it batch-verifies the vote. In the monorepo batcher, `round.rs::add_network`
-//! calls `reporter.report(Activity::Finalize(..))` and only then
-//! `verifier.add(.., /*verified=*/ false)`. The reporter therefore cannot trust
-//! those votes. It must verify each one before it admits it to the
-//! process-local [`SharedLateFinalizeStore`]. Otherwise a single forged vote would
-//! poison the proposer's late-credit aggregate and get the proposer's own block
-//! rejected pre-exec (validators re-verify the aggregate). Dropping the
-//! verification is **not** an option here (the audit's "batcher already
-//! verified" premise does not hold for the network-vote path).
-//!
-//! Doing that `O(committee)` sequential BLS pairing verification inline on the
-//! Simplex voter task inflated block time and shrank the leader-timeout budget
-//! as the committee grew. This actor moves the verification + admission off the
-//! voter critical path. [`OutbeReporter`](crate::reporter::OutbeReporter)
-//! enqueues raw votes through [`FinalizeVerifyMailbox::verify`] (a non-blocking
-//! `unbounded_send`). This actor verifies them against the epoch's committee
-//! scheme and admits only the verified ones. The store/buffer therefore still
-//! only ever holds signature-verified votes. The only observable change is that
-//! admission happens slightly later (best-effort and process-local, never
-//! consensus state).
+//! Off-thread verification of raw finalize votes. The Simplex reporter observes
+//! these before batch verification, so signatures MUST be verified before late
+//! credit admission. The voter gets bounded, nonblocking, best-effort admission;
+//! a single worker yields between votes and retains bounded verified evidence.
 
-use std::collections::BTreeMap;
-
-use commonware_consensus::{
-    simplex::types::{Attributable as _, Finalize},
-    types::Epoch,
-    Viewable as _,
-};
-use commonware_cryptography::bls12381::primitives::variant::MinSig;
-use commonware_parallel::Sequential;
-use futures::{channel::mpsc, StreamExt};
+mod admission;
+#[cfg(test)]
+mod tests;
 
 use crate::{
     digest::Digest,
     finalization::late_sig_store::SharedLateFinalizeStore,
     hybrid::{bls_batch_verification_rng, HybridScheme, HybridSchemeProvider},
 };
+use admission::{Admission, Queued};
+use alloy_primitives::{keccak256, B256};
+use commonware_codec::{Encode, EncodeSize};
+use commonware_consensus::{
+    simplex::types::{Attributable as _, Finalize},
+    types::Epoch,
+    Viewable as _,
+};
+use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Scheme as _};
+use commonware_parallel::Sequential;
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::mpsc;
 
-/// A finalize vote tagged with the consensus epoch it was cast in, so the actor
-/// can look up the matching committee verifier scheme.
-type Job = (Epoch, Finalize<HybridScheme<MinSig>, Digest>);
+type Vote = Finalize<HybridScheme<MinSig>, Digest>;
+type Job = (Epoch, Vote);
 
-/// Number of recent views whose verified finalize votes stay buffered in
-/// `observed_finalizes` for future byzantine-equivocation detection. Bounds the
-/// buffer. Matches the reporter's former prune window.
+/// Availability budgets, not consensus validity limits. Overload is metered and
+/// oldest backlog is replaced fairly; late credits remain best-effort.
+pub const MAX_QUEUED_VOTES: usize = 256;
+pub const MAX_QUEUED_BYTES: usize = 256 * 1024;
+pub const MAX_VOTE_BYTES: usize = 1024;
+pub const MAX_VOTES_PER_SIGNER: usize = 4;
 const OBSERVED_RETAIN_VIEWS: u64 = 32;
+const MAX_OBSERVED_VOTES: usize = 2048;
+const MAX_OBSERVED_BYTES: usize = 2 * 1024 * 1024;
+const MAX_VERIFIED_CONFLICTS: usize = 2;
 
-/// Non-blocking handle the reporter uses to enqueue finalize votes for
-/// off-thread verification. `Clone` so each per-epoch reporter shares the one
-/// persistent actor.
 #[derive(Clone)]
 pub struct FinalizeVerifyMailbox {
-    tx: mpsc::UnboundedSender<Job>,
+    admission: Arc<Mutex<Admission>>,
+    wake: mpsc::Sender<()>,
+    scheme_provider: HybridSchemeProvider<MinSig>,
 }
 
 impl FinalizeVerifyMailbox {
-    /// Enqueue a raw finalize vote for verification + admission. Best-effort:
-    /// a closed mailbox (graceful shutdown) silently drops the vote, exactly
-    /// like the late-credit store it feeds.
-    pub fn verify(&self, epoch: Epoch, finalize: Finalize<HybridScheme<MinSig>, Digest>) {
-        let _ = self.tx.unbounded_send((epoch, finalize));
+    /// Enqueue a raw vote without awaiting capacity or doing cryptography. Exact
+    /// bytes are deduplicated only while pending. A claimed signer/target is
+    /// never treated as authenticated before verification.
+    pub fn verify(&self, epoch: Epoch, finalize: Vote) {
+        let reject =
+            if self.wake.is_closed() {
+                Some("closed")
+            } else if finalize.proposal.round.epoch() != epoch {
+                Some("epoch_mismatch")
+            } else if self.scheme_provider.scoped(epoch).is_none_or(|scheme| {
+                finalize.signer().get() as usize >= scheme.participants().len()
+            }) {
+                Some("ineligible")
+            } else if finalize.encode_size() > MAX_VOTE_BYTES {
+                Some("oversize")
+            } else {
+                None
+            };
+        if let Some(reason) = reject {
+            metrics::counter!("outbe_finalize_verify_admission_total", "result" => reason)
+                .increment(1);
+            return;
+        }
+        let bytes = finalize.encode();
+        let queued = Queued {
+            id: keccak256(&bytes),
+            bytes: bytes.len(),
+            job: (epoch, finalize),
+        };
+        let key = (epoch.get(), queued.job.1.signer().get());
+        if self
+            .admission
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(key, queued)
+        {
+            metrics::counter!("outbe_finalize_verify_admission_total", "result" => "queued")
+                .increment(1);
+            // Capacity-one wake channel coalesces notifications. No sender waits.
+            let _ = self.wake.try_send(());
+        }
     }
 
-    /// A mailbox whose receiver is already dropped. Every `verify` is a no-op.
-    /// For unit tests that exercise the reporter without a running actor.
     #[cfg(test)]
     pub fn disconnected() -> Self {
-        let (tx, _rx) = mpsc::unbounded();
-        Self { tx }
+        let (wake, _rx) = mpsc::channel(1);
+        Self {
+            admission: Arc::default(),
+            wake,
+            scheme_provider: HybridSchemeProvider::new(),
+        }
     }
 }
 
-/// Persistent actor that verifies finalize votes off the Simplex voter task and
-/// admits the verified ones to the late-finalize store. Spawned once for the
-/// node's lifetime. It resolves each vote's committee scheme by epoch through
-/// the shared [`HybridSchemeProvider`], so it needs no per-epoch restart.
+// Full signed proposal binding (including parent_view), not just payload hash.
+type EvidenceKey = (u64, u64, u32, B256);
+
 pub struct FinalizeVerifyActor {
-    rx: mpsc::UnboundedReceiver<Job>,
+    admission: Arc<Mutex<Admission>>,
+    wake: mpsc::Receiver<()>,
     scheme_provider: HybridSchemeProvider<MinSig>,
     late_sig_store: SharedLateFinalizeStore,
-    /// Verified finalize votes per view (future byzantine-equivocation
-    /// detection). Bounded by [`OBSERVED_RETAIN_VIEWS`].
-    observed_finalizes: BTreeMap<u64, Vec<Finalize<HybridScheme<MinSig>, Digest>>>,
+    observed_finalizes: BTreeMap<EvidenceKey, Vote>,
+    observed_bytes: usize,
+    newest_epoch: u64,
+    highest_views: BTreeMap<u64, u64>,
 }
 
 impl FinalizeVerifyActor {
-    /// Construct the actor and its paired mailbox.
     pub fn new(
         scheme_provider: HybridSchemeProvider<MinSig>,
         late_sig_store: SharedLateFinalizeStore,
     ) -> (Self, FinalizeVerifyMailbox) {
-        let (tx, rx) = mpsc::unbounded::<Job>();
+        let (wake, rx) = mpsc::channel(1);
+        let admission = Arc::new(Mutex::new(Admission::default()));
+        let mailbox = FinalizeVerifyMailbox {
+            admission: admission.clone(),
+            wake,
+            scheme_provider: scheme_provider.clone(),
+        };
         (
             Self {
-                rx,
+                admission,
+                wake: rx,
                 scheme_provider,
                 late_sig_store,
                 observed_finalizes: BTreeMap::new(),
+                observed_bytes: 0,
+                newest_epoch: 0,
+                highest_views: BTreeMap::new(),
             },
-            FinalizeVerifyMailbox { tx },
+            mailbox,
         )
     }
 
-    /// Drain the mailbox, verifying and admitting each vote, until the mailbox
-    /// closes during graceful shutdown.
+    fn pop(&self) -> Option<Job> {
+        self.admission
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop()
+            .map(|q| q.job)
+    }
+
     pub async fn run(mut self) {
-        while let Some((epoch, finalize)) = self.rx.next().await {
-            self.verify_and_admit(epoch, finalize);
+        loop {
+            if let Some((epoch, finalize)) = self.pop() {
+                self.verify_and_admit(epoch, finalize);
+                // At most one vote's crypto work per cooperative scheduling turn.
+                tokio::task::yield_now().await;
+            } else if self.wake.recv().await.is_none() {
+                break;
+            }
         }
     }
 
-    /// Verify one finalize vote against its epoch's committee scheme. On success,
-    /// record it in the late-finalize store (so the proposer can credit it) and
-    /// buffer it for equivocation detection. The actor drops, and never admits, a
-    /// vote whose epoch scheme is no longer registered (epoch already rotated out)
-    /// or whose signature fails to verify.
-    ///
-    /// `pub(crate)` so the reporter's test harness (which can build a real
-    /// committee + verifiable finalize) can drive admission directly.
-    pub(crate) fn verify_and_admit(
-        &mut self,
-        epoch: Epoch,
-        finalize: Finalize<HybridScheme<MinSig>, Digest>,
-    ) {
+    pub(crate) fn verify_and_admit(&mut self, epoch: Epoch, finalize: Vote) {
+        if finalize.proposal.round.epoch() != epoch || finalize.encode_size() > MAX_VOTE_BYTES {
+            return;
+        }
         let Some(scheme) = self.scheme_provider.scoped(epoch) else {
             return;
         };
-        let mut rng = bls_batch_verification_rng();
-        if !finalize.verify(&mut rng, scheme.as_ref(), &Sequential) {
+        if finalize.signer().get() as usize >= scheme.participants().len() {
             return;
         }
-
         let view = finalize.proposal.view().get();
-
-        // Record into the late-credit store, carrying the exact binding the vote
-        // signed so a cross-view vote for the same `fb_hash` is dropped at
-        // resolution instead of poisoning the aggregate.
+        if epoch.get().saturating_add(1) < self.newest_epoch {
+            return;
+        }
+        if self
+            .highest_views
+            .get(&epoch.get())
+            .is_some_and(|highest| view < highest.saturating_sub(OBSERVED_RETAIN_VIEWS))
+        {
+            return;
+        }
+        let mut rng = bls_batch_verification_rng();
+        if !finalize.verify(&mut rng, scheme.as_ref(), &Sequential) {
+            metrics::counter!("outbe_finalize_verify_verification_total", "result" => "invalid")
+                .increment(1);
+            return;
+        }
+        // Only authenticated votes advance retention watermarks.
+        self.newest_epoch = self.newest_epoch.max(epoch.get());
+        let highest = self.highest_views.entry(epoch.get()).or_default();
+        *highest = (*highest).max(view);
+        self.highest_views
+            .retain(|epoch, _| epoch.saturating_add(1) >= self.newest_epoch);
+        self.observed_finalizes.retain(|(epoch, view, _, _), _| {
+            self.highest_views
+                .get(epoch)
+                .is_some_and(|highest| *view >= highest.saturating_sub(OBSERVED_RETAIN_VIEWS))
+        });
+        self.recount_bytes();
+        let key = (
+            epoch.get(),
+            view,
+            finalize.signer().get(),
+            keccak256(finalize.proposal.encode()),
+        );
+        if self.observed_finalizes.contains_key(&key) {
+            return;
+        }
         if let Some(hybrid_sig) = finalize.attestation.signature.get() {
             if let Ok(mut store) = self.late_sig_store.lock() {
                 store.record_bound_individual_vote(
@@ -149,35 +224,56 @@ impl FinalizeVerifyActor {
                 );
             }
         }
-
-        // Buffer the verified vote for future byzantine-equivocation detection,
-        // keeping the buffer bounded to recent views.
-        self.observed_finalizes
-            .entry(view)
-            .or_default()
-            .push(finalize);
-        let min_view = view.saturating_sub(OBSERVED_RETAIN_VIEWS);
-        self.observed_finalizes.retain(|v, _| *v >= min_view);
+        // This evidence is process-local observability. It is not the external
+        // watcher's on-chain slashing transport and cannot guarantee completeness.
+        let conflicts = self
+            .observed_finalizes
+            .keys()
+            .filter(|existing| (existing.0, existing.1, existing.2) == (key.0, key.1, key.2))
+            .count();
+        if conflicts < MAX_VERIFIED_CONFLICTS {
+            let bytes = finalize.encode_size();
+            while self.observed_finalizes.len() >= MAX_OBSERVED_VOTES
+                || self.observed_bytes.saturating_add(bytes) > MAX_OBSERVED_BYTES
+            {
+                if let Some((_, evicted)) = self.observed_finalizes.pop_first() {
+                    self.observed_bytes = self.observed_bytes.saturating_sub(evicted.encode_size());
+                } else {
+                    break;
+                }
+            }
+            self.observed_bytes = self.observed_bytes.saturating_add(bytes);
+            self.observed_finalizes.insert(key, finalize);
+        }
+        metrics::gauge!("outbe_finalize_verify_observed_votes")
+            .set(self.observed_finalizes.len() as f64);
+        metrics::gauge!("outbe_finalize_verify_observed_bytes").set(self.observed_bytes as f64);
+        metrics::counter!("outbe_finalize_verify_verification_total", "result" => "valid")
+            .increment(1);
     }
 
-    /// Number of buffered (verified) votes for `view`. Test-only introspection
-    /// of `observed_finalizes`.
+    fn recount_bytes(&mut self) {
+        self.observed_bytes = self
+            .observed_finalizes
+            .values()
+            .map(EncodeSize::encode_size)
+            .sum();
+    }
+
     #[cfg(test)]
     pub(crate) fn observed_len(&self, view: u64) -> usize {
-        self.observed_finalizes.get(&view).map_or(0, Vec::len)
+        self.observed_finalizes
+            .keys()
+            .filter(|key| key.1 == view)
+            .count()
     }
-
-    /// Synchronously process one queued vote if present (test-only), so a test
-    /// can exercise the full reporter -> mailbox -> actor path without spawning
-    /// the async `run` loop. Returns `true` if a job was processed.
     #[cfg(test)]
     pub(crate) fn try_process_one(&mut self) -> bool {
-        match self.rx.try_recv() {
-            Ok((epoch, finalize)) => {
-                self.verify_and_admit(epoch, finalize);
-                true
-            }
-            Err(_) => false,
+        if let Some((epoch, finalize)) = self.pop() {
+            self.verify_and_admit(epoch, finalize);
+            true
+        } else {
+            false
         }
     }
 }
