@@ -8,14 +8,14 @@ interface INodFactory {
         uint256 worldwideDay,
         uint256 leagueId,
         uint256 floorPriceMinor,
-        uint256 gratisLoadMinor,
+        bytes encryptedGratisAmount,
         uint256 entryPriceMinor,
         uint256 settlementCostMinor
     );
 
-    event NodExercised(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
+    event NodExercised(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
 
-    event NodBurned(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
+    event NodBurned(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
 
     event NodMaterializationProgress(
         uint64 indexed queueSequence,
@@ -81,10 +81,10 @@ interface INodFactory {
     /// with `miningSequence = 0` and the required leading zero bytes. The owner is the Nod owner.
     /// @param mac Gratis mint authorization under the owner's modify key.
     /// @param opNonce The owner's current Gratis operation nonce, bound by `mac`.
-    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256 gratisMinor);
+    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (bytes memory encryptedBalance);
 
     /// @notice Materialize the current certified FIFO head from one canonical
-    /// proof-backed OCOMP batch.
+    /// proof-backed encrypted OCOMP batch.
     function materializeCertifiedNods(bytes calldata canonicalBatch) external;
 
     /// @notice Return the canonical current FIFO head, or `exists=false` when empty.

@@ -221,7 +221,7 @@ pub(super) fn begin_recovery_scope_for_wwds_from_storage(
             U256::from_be_slice(parent_root.as_slice()),
         )
         .unwrap();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     scope
         .configure_parent_tree_factory(
             Arc::new(OneTributePartitionFactory {
@@ -756,7 +756,7 @@ fn emergency_failure_cannot_construct_the_reserved_failed_job_state() {
 
 #[test]
 fn malformed_persisted_request_receipt_remains_fatal_and_atomic() {
-    let mut fixture = crate::fixture_kernel::ActivationFixture::new(91, 5_000, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(91, 5_000, true);
     fixture.corrupt_request_receipt_mismatch();
     let before = fixture.rollback_snapshot();
 

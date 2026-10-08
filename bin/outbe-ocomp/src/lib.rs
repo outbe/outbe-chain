@@ -29,6 +29,8 @@ pub mod nod_proof;
 pub mod opening_stage;
 pub mod payout_artifact;
 pub mod payout_submitter;
+pub mod private_tribute_reader;
+pub mod protected_nod_materialization;
 pub mod public_rpc;
 pub mod result_attestation;
 pub mod result_signer;
@@ -41,3 +43,10 @@ pub mod vote_submitter;
 pub mod worker;
 pub mod worker_observability;
 pub mod worker_transport;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_support;
+
+#[cfg(feature = "test-utils")]
+#[path = "test_support/snapshot.rs"]
+pub mod snapshot_test_support;

@@ -22,19 +22,19 @@ pub fn derive_promis_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> 
 }
 
 /// Per-account view key: read capability AND the AEAD key for the account's
-/// balance blob. See [`crate::confidential::Domain::derive_view_key`].
+/// balance blob. See [`crate::confidential::AccountKeyDerivation::derive_view_key`].
 pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
-    PROMIS.derive_view_key(state_key, account)
+    PROMIS.account_keys.derive_view_key(state_key, account)
 }
 
 /// Per-account modify key: authorizes writes (via HMAC). It never decrypts state.
-/// See [`crate::confidential::Domain::derive_modify_key`].
+/// See [`crate::confidential::AccountKeyDerivation::derive_modify_key`].
 pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
-    PROMIS.derive_modify_key(state_key, account)
+    PROMIS.account_keys.derive_modify_key(state_key, account)
 }
 
 /// `HMAC-SHA256(modify_key, preimage)` - the write authorization the client sends
-/// and the enclave re-checks. See [`crate::confidential::Domain::modify_mac`].
+/// and the enclave re-checks. See [`crate::confidential::ModifyDomain::modify_mac`].
 pub fn modify_mac(
     modify_key: &[u8; 32],
     account: Address,
@@ -43,7 +43,16 @@ pub fn modify_mac(
     op_nonce: u64,
     chain_id: B256,
 ) -> [u8; 32] {
-    PROMIS.modify_mac(modify_key, account, op as u8, amount, op_nonce, chain_id)
+    PROMIS.authorization.modify_mac(
+        modify_key,
+        &crate::confidential::ModifyAuthorization {
+            account,
+            op_tag: op as u8,
+            amount,
+            op_nonce,
+            chain_id,
+        },
+    )
 }
 
 /// Client-side helper: decrypt an account's Promis balance blob with its view key
@@ -51,7 +60,9 @@ pub fn modify_mac(
 /// a client reproduces the plaintext without ever touching the state key.
 pub fn decrypt_balance(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
     PROMIS
-        .read_amount(view_key, account, FIELD_BALANCE, blob)
+        .cipher
+        .slot(view_key, account, FIELD_BALANCE)
+        .read_amount(blob)
         .map(|(_, v)| v)
 }
 
@@ -96,22 +107,30 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
     if req.account.is_zero() {
         return Ok(reject("invalid address"));
     }
-    let modify_key = PROMIS.derive_modify_key(state_key, req.account)?;
-    if !PROMIS.verify_modify_auth(
+    let modify_key = PROMIS
+        .account_keys
+        .derive_modify_key(state_key, req.account)?;
+    if !PROMIS.authorization.verify_modify_auth(
         &modify_key,
-        req.account,
-        req.op as u8,
-        req.amount,
-        req.modify_auth.op_nonce,
-        req.chain_id,
+        &crate::confidential::ModifyAuthorization {
+            account: req.account,
+            op_tag: req.op as u8,
+            amount: req.amount,
+            op_nonce: req.modify_auth.op_nonce,
+            chain_id: req.chain_id,
+        },
         &req.modify_auth.mac,
     ) {
         return Ok(reject("invalid modify authorization"));
     }
 
-    let view_key = PROMIS.derive_view_key(state_key, req.account)?;
-    let (bver, balance) =
-        PROMIS.read_amount(&view_key, req.account, FIELD_BALANCE, &req.current_balance)?;
+    let view_key = PROMIS
+        .account_keys
+        .derive_view_key(state_key, req.account)?;
+    let (bver, balance) = PROMIS
+        .cipher
+        .slot(&view_key, req.account, FIELD_BALANCE)
+        .read_amount(&req.current_balance)?;
 
     let mut r = base_result();
     r.event_amount = req.amount;
@@ -123,20 +142,19 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
                 Some(v) => v,
                 None => return Ok(reject("promis balance overflow")),
             };
-            r.new_balance =
-                PROMIS.write_amount(&view_key, req.account, FIELD_BALANCE, bver, new_balance)?;
+            r.new_balance = PROMIS
+                .cipher
+                .slot(&view_key, req.account, FIELD_BALANCE)
+                .write_amount(bver, new_balance)?;
         }
         PromisOp::Burn => {
             if balance < req.amount {
                 return Ok(reject("insufficient balance"));
             }
-            r.new_balance = PROMIS.write_amount(
-                &view_key,
-                req.account,
-                FIELD_BALANCE,
-                bver,
-                balance - req.amount,
-            )?;
+            r.new_balance = PROMIS
+                .cipher
+                .slot(&view_key, req.account, FIELD_BALANCE)
+                .write_amount(bver, balance - req.amount)?;
         }
     }
     Ok(r)
@@ -156,9 +174,18 @@ mod tests {
         Address::repeat_byte(0x11)
     }
     fn auth(sk: &[u8; 32], acct: Address, op: PromisOp, amount: U256, nonce: u64) -> ModifyAuth {
-        let mk = PROMIS.derive_modify_key(sk, acct).unwrap();
+        let mk = PROMIS.account_keys.derive_modify_key(sk, acct).unwrap();
         ModifyAuth {
-            mac: PROMIS.modify_mac(&mk, acct, op as u8, amount, nonce, CHAIN),
+            mac: PROMIS.authorization.modify_mac(
+                &mk,
+                &crate::confidential::ModifyAuthorization {
+                    account: acct,
+                    op_tag: op as u8,
+                    amount,
+                    op_nonce: nonce,
+                    chain_id: CHAIN,
+                },
+            ),
             op_nonce: nonce,
         }
     }
@@ -193,7 +220,7 @@ mod tests {
         let mut r = req(PromisOp::Mint, alice(), U256::from(4242u64), 0);
         r.modify_auth = auth(&sk, alice(), PromisOp::Mint, r.amount, 0);
         let res = apply_op(&sk, &r);
-        let vk = PROMIS.derive_view_key(&sk, alice()).unwrap();
+        let vk = PROMIS.account_keys.derive_view_key(&sk, alice()).unwrap();
         assert_eq!(
             decrypt_balance(&vk, alice(), &res.new_balance).unwrap(),
             U256::from(4242u64)
@@ -240,7 +267,7 @@ mod tests {
         b.modify_auth = auth(&sk, alice(), PromisOp::Burn, b.amount, 1);
         let burned = apply_op(&sk, &b);
         assert_eq!(burned.status, PromisOpStatus::Applied);
-        let vk = PROMIS.derive_view_key(&sk, alice()).unwrap();
+        let vk = PROMIS.account_keys.derive_view_key(&sk, alice()).unwrap();
         assert_eq!(
             decrypt_balance(&vk, alice(), &burned.new_balance).unwrap(),
             U256::from(700u64)
@@ -251,85 +278,103 @@ mod tests {
     fn modify_mac_binds_every_input_and_is_separated_from_the_gratis_domain() {
         use crate::confidential::GRATIS;
         let sk = state_key();
-        let mk = PROMIS.derive_modify_key(&sk, alice()).unwrap();
-        let base = PROMIS.modify_mac(
+        let mk = PROMIS.account_keys.derive_modify_key(&sk, alice()).unwrap();
+        let base = PROMIS.authorization.modify_mac(
             &mk,
-            alice(),
-            PromisOp::Mint as u8,
-            U256::from(10u64),
-            3,
-            CHAIN,
+            &crate::confidential::ModifyAuthorization {
+                account: alice(),
+                op_tag: PromisOp::Mint as u8,
+                amount: U256::from(10u64),
+                op_nonce: 3,
+                chain_id: CHAIN,
+            },
         );
         let variants = [
-            PROMIS.modify_mac(
+            PROMIS.authorization.modify_mac(
                 &mk,
-                Address::repeat_byte(0x22),
-                PromisOp::Mint as u8,
-                U256::from(10u64),
-                3,
-                CHAIN,
+                &crate::confidential::ModifyAuthorization {
+                    account: Address::repeat_byte(0x22),
+                    op_tag: PromisOp::Mint as u8,
+                    amount: U256::from(10u64),
+                    op_nonce: 3,
+                    chain_id: CHAIN,
+                },
             ),
-            PROMIS.modify_mac(
+            PROMIS.authorization.modify_mac(
                 &mk,
-                alice(),
-                PromisOp::Burn as u8,
-                U256::from(10u64),
-                3,
-                CHAIN,
+                &crate::confidential::ModifyAuthorization {
+                    account: alice(),
+                    op_tag: PromisOp::Burn as u8,
+                    amount: U256::from(10u64),
+                    op_nonce: 3,
+                    chain_id: CHAIN,
+                },
             ),
-            PROMIS.modify_mac(
+            PROMIS.authorization.modify_mac(
                 &mk,
-                alice(),
-                PromisOp::Mint as u8,
-                U256::from(11u64),
-                3,
-                CHAIN,
+                &crate::confidential::ModifyAuthorization {
+                    account: alice(),
+                    op_tag: PromisOp::Mint as u8,
+                    amount: U256::from(11u64),
+                    op_nonce: 3,
+                    chain_id: CHAIN,
+                },
             ),
-            PROMIS.modify_mac(
+            PROMIS.authorization.modify_mac(
                 &mk,
-                alice(),
-                PromisOp::Mint as u8,
-                U256::from(10u64),
-                4,
-                CHAIN,
+                &crate::confidential::ModifyAuthorization {
+                    account: alice(),
+                    op_tag: PromisOp::Mint as u8,
+                    amount: U256::from(10u64),
+                    op_nonce: 4,
+                    chain_id: CHAIN,
+                },
             ),
-            PROMIS.modify_mac(
+            PROMIS.authorization.modify_mac(
                 &mk,
-                alice(),
-                PromisOp::Mint as u8,
-                U256::from(10u64),
-                3,
-                B256::repeat_byte(0xC3),
+                &crate::confidential::ModifyAuthorization {
+                    account: alice(),
+                    op_tag: PromisOp::Mint as u8,
+                    amount: U256::from(10u64),
+                    op_nonce: 3,
+                    chain_id: B256::repeat_byte(0xC3),
+                },
             ),
             // Same key bytes and inputs under the Gratis tag must not authorize a Promis write.
-            GRATIS.modify_mac(
+            GRATIS.authorization.modify_mac(
                 &mk,
-                alice(),
-                PromisOp::Mint as u8,
-                U256::from(10u64),
-                3,
-                CHAIN,
+                &crate::confidential::ModifyAuthorization {
+                    account: alice(),
+                    op_tag: PromisOp::Mint as u8,
+                    amount: U256::from(10u64),
+                    op_nonce: 3,
+                    chain_id: CHAIN,
+                },
             ),
         ];
         for (i, other) in variants.iter().enumerate() {
             assert_ne!(base, *other, "variant {i} must change the authorization");
-            assert!(!PROMIS.verify_modify_auth(
+            assert!(!PROMIS.authorization.verify_modify_auth(
                 &mk,
-                alice(),
-                PromisOp::Mint as u8,
-                U256::from(10u64),
-                3,
-                CHAIN,
+                &crate::confidential::ModifyAuthorization {
+                    account: alice(),
+                    op_tag: PromisOp::Mint as u8,
+                    amount: U256::from(10u64),
+                    op_nonce: 3,
+                    chain_id: CHAIN
+                },
                 other
             ));
         }
-        assert!(PROMIS.verify_modify_auth(
+        assert!(PROMIS.authorization.verify_modify_auth(
             &mk,
-            alice(),
-            PromisOp::Mint as u8,
-            U256::from(10u64),
-            3,
-            CHAIN,
+            &crate::confidential::ModifyAuthorization {
+                account: alice(),
+                op_tag: PromisOp::Mint as u8,
+                amount: U256::from(10u64),
+                op_nonce: 3,
+                chain_id: CHAIN
+            },
             &base
         ));
     }
@@ -382,9 +427,28 @@ mod tests {
             ),
         ];
         for (ledger, account, op, amount, op_nonce, chain_id, expected) in vectors {
-            let mac = ledger.modify_mac(&key, account, op, amount, op_nonce, chain_id);
+            let mac = ledger.authorization.modify_mac(
+                &key,
+                &crate::confidential::ModifyAuthorization {
+                    account,
+                    op_tag: op,
+                    amount,
+                    op_nonce,
+                    chain_id,
+                },
+            );
             assert_eq!(B256::from(mac), expected);
-            assert!(ledger.verify_modify_auth(&key, account, op, amount, op_nonce, chain_id, &mac));
+            assert!(ledger.authorization.verify_modify_auth(
+                &key,
+                &crate::confidential::ModifyAuthorization {
+                    account,
+                    op_tag: op,
+                    amount,
+                    op_nonce,
+                    chain_id
+                },
+                &mac
+            ));
         }
     }
 }

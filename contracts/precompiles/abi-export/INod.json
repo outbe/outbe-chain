@@ -215,9 +215,24 @@
             "internalType": "uint256"
           },
           {
-            "name": "gratisLoadMinor",
-            "type": "uint256",
-            "internalType": "uint256"
+            "name": "encryptedGratisAmount",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "encryptedCreatorPublicKey",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "encryptionBinding",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "chainId",
+            "type": "uint64",
+            "internalType": "uint64"
           },
           {
             "name": "entryPriceMinor",
@@ -803,10 +818,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "gratisLoadMinor",
-        "type": "uint256",
+        "name": "encryptedGratisAmount",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
       }
     ],
     "anonymous": false

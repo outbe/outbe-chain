@@ -1,11 +1,15 @@
 //! Canonical proof-backed batches for materializing certified NOD generations.
 
+mod protected;
+mod verification;
+pub use protected::ProtectedNodMaterializationV2;
+
 use alloy_primitives::B256;
 
 use crate::{
     codec::{CanonicalReader, CanonicalWriter},
     error::ProtocolError,
-    list::{leaf_hash, node_hash, pad_hash, root_hash},
+    list::root_hash,
     registry::ListKind,
     result::NodActionV1,
     schema::{impl_top_level_codec, require, wire_struct, NestedCodec, SchemaLimits},
@@ -115,145 +119,16 @@ pub fn verify_nod_materialization_batch(
 ) -> Result<VerifiedNodMaterializationBatchV1, ProtocolError> {
     <NodMaterializationBatchV1 as NestedCodec>::validate(batch, limits)?;
     <NodMaterializationHeadV1 as NestedCodec>::validate(head, limits)?;
-    require(
-        batch.queue_sequence == head.queue_sequence,
-        "materialization queue binding",
+    let shape = verification::validate_shape(batch, head, configured_subtree_height)?;
+    let subtree = verification::subtree_hash(batch, head, &shape, limits)?;
+    let hash = verification::root_from_path(batch, &shape, subtree)?;
+    let committed = root_hash(
+        ListKind::NodActions,
+        head.nod_count,
+        shape.tree_height,
+        hash,
     )?;
-    require(
-        batch.first_nod_ordinal == head.next_nod_ordinal,
-        "materialization cursor binding",
-    )?;
-
-    let padded_count =
-        head.nod_count
-            .checked_next_power_of_two()
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "materialization padded NOD count",
-            })?;
-    let tree_height = u16::try_from(padded_count.trailing_zeros()).map_err(|_| {
-        ProtocolError::IntegerOverflow {
-            what: "materialization tree height",
-        }
-    })?;
-    let effective_subtree_height = configured_subtree_height.min(tree_height as u8);
-    let capacity = 1_u32
-        .checked_shl(u32::from(effective_subtree_height))
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "materialization batch capacity",
-        })?;
-    require(
-        capacity <= MAX_NOD_MATERIALIZATION_ACTIONS as u32,
-        "materialization configured capacity",
-    )?;
-    require(
-        batch.first_nod_ordinal.is_multiple_of(capacity),
-        "materialization cursor alignment",
-    )?;
-    let remaining = head.nod_count.checked_sub(head.next_nod_ordinal).ok_or(
-        ProtocolError::InvalidInvariant("materialization remaining NOD count"),
-    )?;
-    let expected_actions = remaining.min(capacity);
-    require(
-        batch.actions.len() == expected_actions as usize,
-        "materialization exact batch action count",
-    )?;
-    require(
-        batch.root_path.len()
-            == usize::from(tree_height.saturating_sub(u16::from(effective_subtree_height))),
-        "materialization exact root path length",
-    )?;
-
-    let mut nodes = Vec::with_capacity(capacity as usize);
-    for offset in 0..capacity {
-        let ordinal =
-            batch
-                .first_nod_ordinal
-                .checked_add(offset)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "materialization NOD ordinal",
-                })?;
-        if offset < expected_actions {
-            let action = &batch.actions[offset as usize];
-            require(
-                action.raw_ordinal == ordinal && action.wwd == head.worldwide_day,
-                "materialization ordered action binding",
-            )?;
-            nodes.push(leaf_hash(
-                ListKind::NodActions,
-                ordinal,
-                &action.encode_canonical_record(limits)?,
-            )?);
-        } else {
-            nodes.push(pad_hash(ListKind::NodActions, ordinal)?);
-        }
-    }
-
-    let mut width = capacity as usize;
-    let mut level = 1_u16;
-    while width > 1 {
-        for index in 0..width / 2 {
-            let global_index = (batch.first_nod_ordinal >> level)
-                .checked_add(
-                    u32::try_from(index).map_err(|_| ProtocolError::IntegerOverflow {
-                        what: "materialization subtree index",
-                    })?,
-                )
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "materialization global subtree index",
-                })?;
-            nodes[index] = node_hash(
-                ListKind::NodActions,
-                level,
-                global_index,
-                nodes[index * 2],
-                nodes[index * 2 + 1],
-            )?;
-        }
-        width /= 2;
-        level = level.checked_add(1).ok_or(ProtocolError::IntegerOverflow {
-            what: "materialization subtree level",
-        })?;
-    }
-
-    let mut hash = nodes[0];
-    let mut position = batch.first_nod_ordinal >> effective_subtree_height;
-    for (offset, sibling) in batch.root_path.iter().enumerate() {
-        let child_level = u16::from(effective_subtree_height)
-            .checked_add(
-                u16::try_from(offset).map_err(|_| ProtocolError::IntegerOverflow {
-                    what: "materialization root path level",
-                })?,
-            )
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "materialization root path level",
-            })?;
-        let parent_level = child_level
-            .checked_add(1)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "materialization parent level",
-            })?;
-        hash = if position & 1 == 0 {
-            node_hash(
-                ListKind::NodActions,
-                parent_level,
-                position >> 1,
-                hash,
-                *sibling,
-            )?
-        } else {
-            node_hash(
-                ListKind::NodActions,
-                parent_level,
-                position >> 1,
-                *sibling,
-                hash,
-            )?
-        };
-        position >>= 1;
-    }
-    let committed = root_hash(ListKind::NodActions, head.nod_count, tree_height, hash)?;
     require(committed == head.nod_root, "materialization NOD root")?;
-
     Ok(VerifiedNodMaterializationBatchV1 {
         actions: batch.actions.clone(),
     })
@@ -267,8 +142,11 @@ fn validate_head(
         head.queue_sequence != 0
             && !head.job_id.is_zero()
             && !head.program_semantics_hash.is_zero()
-            && head.worldwide_day != 0
-            && head.generation != 0
+            && head.worldwide_day != 0,
+        "materialization head authority",
+    )?;
+    require(
+        head.generation != 0
             && !head.nod_root.is_zero()
             && head.nod_count != 0
             && head.next_nod_ordinal < head.nod_count,

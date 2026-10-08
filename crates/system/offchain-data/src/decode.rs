@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, LogData, B256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
-    body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
-    derive_poseidon_entity_id, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    body_commitment, decode_nod_bucket_v1, derive_poseidon_entity_id, StoredBody, WwdEntityId,
+    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_nod::precompile::INod;
 use outbe_offchain_storage::Value;
@@ -72,30 +72,50 @@ impl ProjectionEvent {
 }
 
 pub(super) fn is_projection_pair(emitter: Address, signature: B256) -> bool {
-    (emitter == TRIBUTE_ADDRESS
-        && (signature == ITribute::TributeBodyStored::SIGNATURE_HASH
-            || signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH
-            || signature == ITribute::TributePartitionRetired::SIGNATURE_HASH))
-        || (emitter == NOD_ADDRESS
-            && (signature == INod::NodBodyStored::SIGNATURE_HASH
-                || signature == INod::NodBodyDeleted::SIGNATURE_HASH
-                || signature == INod::NodBucketBodyStored::SIGNATURE_HASH
-                || signature == INod::NodBucketBodyDeleted::SIGNATURE_HASH))
+    let signatures: &[B256] = if emitter == TRIBUTE_ADDRESS {
+        &[
+            ITribute::TributeBodyStored::SIGNATURE_HASH,
+            ITribute::TributeBodyDeleted::SIGNATURE_HASH,
+            ITribute::TributePartitionRetired::SIGNATURE_HASH,
+        ]
+    } else if emitter == NOD_ADDRESS {
+        &[
+            INod::NodBodyStored::SIGNATURE_HASH,
+            INod::NodBodyDeleted::SIGNATURE_HASH,
+            INod::NodBucketBodyStored::SIGNATURE_HASH,
+            INod::NodBucketBodyDeleted::SIGNATURE_HASH,
+        ]
+    } else {
+        &[]
+    };
+    signatures.contains(&signature)
 }
 
 pub(super) fn decode_event(
     source: ProjectionSource,
     data: &LogData,
 ) -> Result<Option<ProjectionEvent>, ProjectionError> {
-    let decoded = if source.emitter == TRIBUTE_ADDRESS
-        && source.event_signature == ITribute::TributeBodyStored::SIGNATURE_HASH
-    {
+    if source.emitter == TRIBUTE_ADDRESS {
+        return decode_tribute_event(source, data);
+    }
+    if source.emitter == NOD_ADDRESS {
+        return decode_nod_event(source, data);
+    }
+    Ok(None)
+}
+
+fn decode_tribute_event(
+    source: ProjectionSource,
+    data: &LogData,
+) -> Result<Option<ProjectionEvent>, ProjectionError> {
+    let decoded = if source.event_signature == ITribute::TributeBodyStored::SIGNATURE_HASH {
         let event = ITribute::TributeBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
         let tribute_id = WwdEntityId::from(event.tributeId);
-        let canonical = decode_tribute_v1(&event.canonicalPayload)
-            .map_err(|error| malformed_event(source, error))?;
+        let canonical =
+            outbe_tribute::record::decode_payload(event.schemaVersion, &event.canonicalPayload)
+                .map_err(|error| malformed_event(source, error))?;
         if canonical.tribute_id != tribute_id {
             return Err(malformed_event(
                 source,
@@ -113,8 +133,8 @@ pub(super) fn decode_event(
             source,
             tribute_id,
             &event.canonicalPayload,
-            event.previousCommitment,
-            event.newCommitment,
+            (event.previousCommitment, event.newCommitment),
+            event.schemaVersion,
         )?;
         Some(ProjectionEvent::TributeStored {
             source,
@@ -122,9 +142,7 @@ pub(super) fn decode_event(
             stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
             previous_commitment: event.previousCommitment,
         })
-    } else if source.emitter == TRIBUTE_ADDRESS
-        && source.event_signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH
-    {
+    } else if source.event_signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH {
         let event = ITribute::TributeBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
@@ -132,24 +150,30 @@ pub(super) fn decode_event(
             tribute_id: WwdEntityId::from(event.tributeId),
             previous_commitment: event.previousCommitment,
         })
-    } else if source.emitter == TRIBUTE_ADDRESS
-        && source.event_signature == ITribute::TributePartitionRetired::SIGNATURE_HASH
-    {
+    } else if source.event_signature == ITribute::TributePartitionRetired::SIGNATURE_HASH {
         let event = ITribute::TributePartitionRetired::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         Some(ProjectionEvent::TributePartitionRetired {
             worldwide_day: event.worldwideDay.into(),
         })
-    } else if source.emitter == NOD_ADDRESS
-        && source.event_signature == INod::NodBodyStored::SIGNATURE_HASH
-    {
+    } else {
+        None
+    };
+    Ok(decoded)
+}
+
+fn decode_nod_event(
+    source: ProjectionSource,
+    data: &LogData,
+) -> Result<Option<ProjectionEvent>, ProjectionError> {
+    let decoded = if source.event_signature == INod::NodBodyStored::SIGNATURE_HASH {
         let event = INod::NodBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
         let nod_id = WwdEntityId::from(event.nodId);
-        let canonical = decode_nod_item_v1(&event.canonicalPayload)
+        let canonical = outbe_compressed_entities::decode_nod_item_v2(&event.canonicalPayload)
             .map_err(|error| malformed_event(source, error))?;
-        if canonical.nod_id != nod_id {
+        if canonical.encrypted.terms.nod_id != nod_id {
             return Err(malformed_event(
                 source,
                 "Nod event identity/payload mismatch",
@@ -159,15 +183,15 @@ pub(super) fn decode_event(
             source,
             "Nod item",
             nod_id,
-            canonical.owner,
-            canonical.worldwide_day,
+            canonical.encrypted.terms.owner,
+            canonical.encrypted.terms.worldwide_day,
         )?;
         validate_stored_commitment(
             source,
             nod_id,
             &event.canonicalPayload,
-            event.previousCommitment,
-            event.newCommitment,
+            (event.previousCommitment, event.newCommitment),
+            event.schemaVersion,
         )?;
         Some(ProjectionEvent::NodStored {
             source,
@@ -175,9 +199,7 @@ pub(super) fn decode_event(
             stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
             previous_commitment: event.previousCommitment,
         })
-    } else if source.emitter == NOD_ADDRESS
-        && source.event_signature == INod::NodBodyDeleted::SIGNATURE_HASH
-    {
+    } else if source.event_signature == INod::NodBodyDeleted::SIGNATURE_HASH {
         let event = INod::NodBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
@@ -185,9 +207,7 @@ pub(super) fn decode_event(
             nod_id: WwdEntityId::from(event.nodId),
             previous_commitment: event.previousCommitment,
         })
-    } else if source.emitter == NOD_ADDRESS
-        && source.event_signature == INod::NodBucketBodyStored::SIGNATURE_HASH
-    {
+    } else if source.event_signature == INod::NodBucketBodyStored::SIGNATURE_HASH {
         let event = INod::NodBucketBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
@@ -204,8 +224,8 @@ pub(super) fn decode_event(
             source,
             bucket_id,
             &event.canonicalPayload,
-            event.previousCommitment,
-            event.newCommitment,
+            (event.previousCommitment, event.newCommitment),
+            event.schemaVersion,
         )?;
         Some(ProjectionEvent::BucketStored {
             source,
@@ -213,9 +233,7 @@ pub(super) fn decode_event(
             stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
             previous_commitment: event.previousCommitment,
         })
-    } else if source.emitter == NOD_ADDRESS
-        && source.event_signature == INod::NodBucketBodyDeleted::SIGNATURE_HASH
-    {
+    } else if source.event_signature == INod::NodBucketBodyDeleted::SIGNATURE_HASH {
         let event = INod::NodBucketBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
@@ -268,7 +286,13 @@ pub(super) fn validate_versions(
             format!("unsupported commitment scheme {commitment_scheme_version}"),
         ));
     }
-    if schema_version != BODY_SCHEMA_V1 {
+    let encrypted_tribute = source.emitter == TRIBUTE_ADDRESS
+        && source.event_signature == ITribute::TributeBodyStored::SIGNATURE_HASH
+        && schema_version == outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2;
+    let encrypted_nod = source.emitter == NOD_ADDRESS
+        && source.event_signature == INod::NodBodyStored::SIGNATURE_HASH
+        && schema_version == outbe_compressed_entities::NOD_BODY_SCHEMA_V2;
+    if schema_version != BODY_SCHEMA_V1 && !encrypted_tribute && !encrypted_nod {
         return Err(malformed_event(
             source,
             format!("unsupported body schema {schema_version}"),
@@ -281,14 +305,15 @@ pub(super) fn validate_stored_commitment(
     source: ProjectionSource,
     identity: WwdEntityId,
     payload: &[u8],
-    previous: B256,
-    new: B256,
+    commitments: (B256, B256),
+    schema_version: u32,
 ) -> Result<(), ProjectionError> {
+    let (previous, new) = commitments;
     if !previous.is_zero() {
         outbe_compressed_entities::Commitment::try_from(previous.0)
             .map_err(|error| malformed_event(source, error))?;
     }
-    let expected = body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, payload)
+    let expected = body_commitment(ACTIVE_COMMITMENT_SCHEME, schema_version, identity, payload)
         .map_err(|error| malformed_event(source, error))?;
     if new != B256::from(*expected.as_bytes()) {
         return Err(malformed_event(

@@ -179,7 +179,7 @@ fn create_executor_activates_the_factory_scope_against_the_exact_parent_tree() {
     // the precompile dispatch closure. Seeing the lifecycle activation and the
     // non-empty exact-parent root here proves create_executor configured and
     // activated that same instance, rather than a second executor-only scope.
-    let precompile_scope = executor.evm().execution_scope();
+    let precompile_scope = executor.evm().runtime_scope().execution_scope();
     assert_eq!(precompile_scope.parent_root().unwrap(), parent_root);
     precompile_scope.ce_work_checkpoint().unwrap();
 }

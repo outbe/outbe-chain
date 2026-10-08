@@ -104,7 +104,7 @@ fn abi_position(p: &crate::schema::Position, now: u64) -> Result<ICredis::Positi
         asset: p.asset,
         issuanceCurrency: p.issuance_currency,
         referenceCurrency: p.reference_currency,
-        returnNoteSerial: p.return_note_serial,
+        source: p.source,
         principalMinor: p.principal_minor,
         outstandingPrincipalMinor: p.outstanding_principal_minor,
         gratisMinor: p.gratis_minor,

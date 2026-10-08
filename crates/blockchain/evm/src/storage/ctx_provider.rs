@@ -135,6 +135,7 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub genesis_hash: B256,
     /// Least-authority off-chain body readers propagated to nested precompiles.
     pub runtime_body_readers: Option<RuntimeBodyReaders>,
+    pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
     /// The same block-scoped lifecycle capability used by the outer EVM.
     pub execution_scope: Arc<ExecutionScope>,
     /// Production finalized-Intent authority propagated to nested precompile calls.
@@ -143,10 +144,8 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
     /// Whether the OCOMP measurement/final profile is active in this block.
     pub ocomp_lifecycle_active: bool,
-    /// One-shot runtime lease state for the exact public Lysis activation call.
-    lysis_activation_lease: LysisActivationLease,
-    /// Purpose-bound Metadosis mutation authority for this exact dispatch.
-    metadosis_mutation_frame: MetadosisMutationFrameState,
+    /// One-shot authority for the active mutation and activation frames.
+    dispatch_frames: DispatchFrameAuthority,
 }
 
 pub(crate) struct CtxStorageProviderConfig {
@@ -156,12 +155,18 @@ pub(crate) struct CtxStorageProviderConfig {
     pub(crate) spec: SpecId,
     pub(crate) genesis_hash: B256,
     pub(crate) runtime_body_readers: Option<RuntimeBodyReaders>,
+    pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
     pub(crate) execution_scope: Arc<ExecutionScope>,
     pub(crate) ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
     pub(crate) ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
     pub(crate) ocomp_lifecycle_active: bool,
     pub(crate) lysis_activation_entitled: bool,
     pub(crate) metadosis_mutation_entitlements: MetadosisMutationEntitlements,
+}
+
+struct DispatchFrameAuthority {
+    lysis: LysisActivationLease,
+    metadosis: MetadosisMutationFrameState,
 }
 
 #[derive(Debug)]
@@ -274,14 +279,15 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             spec: config.spec,
             genesis_hash: config.genesis_hash,
             runtime_body_readers: config.runtime_body_readers,
+            abort_bridge: config.abort_bridge,
             execution_scope: config.execution_scope,
             ocomp_finality_authority: config.ocomp_finality_authority,
             ocomp_activation_block_meter: config.ocomp_activation_block_meter,
             ocomp_lifecycle_active: config.ocomp_lifecycle_active,
-            lysis_activation_lease: LysisActivationLease::new(config.lysis_activation_entitled),
-            metadosis_mutation_frame: MetadosisMutationFrameState::new(
-                config.metadosis_mutation_entitlements,
-            ),
+            dispatch_frames: DispatchFrameAuthority {
+                lysis: LysisActivationLease::new(config.lysis_activation_entitled),
+                metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
+            },
         }
     }
 
@@ -293,16 +299,14 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
         &mut self,
         entitlements: MetadosisMutationEntitlements,
     ) {
-        self.metadosis_mutation_frame = MetadosisMutationFrameState::new(entitlements);
+        self.dispatch_frames.metadosis = MetadosisMutationFrameState::new(entitlements);
     }
+}
 
-    /// Constructs a fresh `EvmInternals` view of `self.ctx` for one
-    /// storage operation. Reborrows `self.ctx`. The returned facade is
-    /// valid only within the calling method scope.
-    #[inline]
-    fn internals(&mut self) -> EvmInternals<'_> {
-        EvmInternals::from_context(&mut *self.ctx)
-    }
+/// Reborrow the EVM context for one storage operation.
+#[inline]
+fn internals<DB: Database + Debug>(ctx: &mut EthEvmContext<DB>) -> EvmInternals<'_> {
+    EvmInternals::from_context(ctx)
 }
 
 impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<'a, DB> {
@@ -320,7 +324,8 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                 "Metadosis mutation frame execution scope mismatch".into(),
             ));
         }
-        self.metadosis_mutation_frame
+        self.dispatch_frames
+            .metadosis
             .begin(purpose, binding, chain_id, block_number)
     }
 
@@ -330,14 +335,14 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         binding: B256,
         _completed: bool,
     ) -> outbe_primitives::error::Result<()> {
-        self.metadosis_mutation_frame.finish(purpose, binding)
+        self.dispatch_frames.metadosis.finish(purpose, binding)
     }
 
     fn begin_lysis_activation_frame(
         &mut self,
         activation_call_id: B256,
     ) -> outbe_primitives::error::Result<()> {
-        self.lysis_activation_lease.begin(activation_call_id)
+        self.dispatch_frames.lysis.begin(activation_call_id)
     }
 
     fn finish_lysis_activation_frame(
@@ -345,7 +350,8 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         activation_call_id: B256,
         completed: bool,
     ) -> outbe_primitives::error::Result<()> {
-        self.lysis_activation_lease
+        self.dispatch_frames
+            .lysis
             .finish(activation_call_id, completed)
     }
 
@@ -370,21 +376,21 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn canonical_block_hash(&mut self, number: u64) -> Result<Option<B256>> {
-        let hash =
-            self.internals().db_mut().block_hash(number).map_err(|e| {
-                PrecompileError::Storage(format!("block_hash({number}) failed: {e}"))
-            })?;
+        let hash = internals(self.ctx)
+            .db_mut()
+            .block_hash(number)
+            .map_err(|e| PrecompileError::Storage(format!("block_hash({number}) failed: {e}")))?;
         Ok((!hash.is_zero()).then_some(hash))
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
-        self.internals()
+        internals(self.ctx)
             .set_code(address, code)
             .map_err(|e| PrecompileError::Storage(e.to_string()))
     }
 
     fn account_info(&mut self, address: Address) -> Result<AccountInfo> {
-        let mut internals = self.internals();
+        let mut internals = internals(self.ctx);
         let account = internals
             .load_account_code(address)
             .map_err(|e| PrecompileError::Storage(e.to_string()))?;
@@ -395,14 +401,14 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         if !self.gas.record_regular_cost(WARM_STORAGE_READ_COST) {
             return Err(PrecompileError::OutOfGas);
         }
-        let mut internals = self.internals();
+        let mut internals = internals(self.ctx);
         let value = internals
             .sload(address, key)
             .map_err(|e| PrecompileError::Storage(e.to_string()))?;
         Ok(value.data)
     }
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
-        self.internals()
+        internals(self.ctx)
             .sload(
                 outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
                 U256::from(45),
@@ -412,14 +418,14 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
-        Ok(self.internals().tload(address, key))
+        Ok(internals(self.ctx).tload(address, key))
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         if !self.gas.record_regular_cost(SSTORE_RESET) {
             return Err(PrecompileError::OutOfGas);
         }
-        let mut internals = self.internals();
+        let mut internals = internals(self.ctx);
         internals
             .sstore(address, key, value)
             .map_err(|e| PrecompileError::Storage(e.to_string()))?;
@@ -427,12 +433,12 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-        self.internals().tstore(address, key, value);
+        internals(self.ctx).tstore(address, key, value);
         Ok(())
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
-        self.internals().log(Log {
+        internals(self.ctx).log(Log {
             address,
             data: event,
         });
@@ -464,22 +470,22 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn checkpoint(&mut self) -> JournalCheckpoint {
-        self.internals().checkpoint()
+        internals(self.ctx).checkpoint()
     }
 
     fn checkpoint_commit(&mut self) {
-        self.internals().checkpoint_commit()
+        internals(self.ctx).checkpoint_commit()
     }
 
     fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
-        self.internals().checkpoint_revert(checkpoint)
+        internals(self.ctx).checkpoint_revert(checkpoint)
     }
 
     fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
         if amount.is_zero() {
             return Ok(());
         }
-        match self.internals().transfer(from, to, amount) {
+        match internals(self.ctx).transfer(from, to, amount) {
             Ok(None) => Ok(()),
             Ok(Some(_transfer_error)) => Err(PrecompileError::Fatal(format!(
                 "insufficient balance for transfer from {from}: needs {amount}"
@@ -492,7 +498,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         if amount.is_zero() {
             return Ok(());
         }
-        self.internals()
+        internals(self.ctx)
             .balance_incr(address, amount)
             .map_err(|e| PrecompileError::Storage(format!("balance_incr failed: {e}")))?;
         Ok(())
@@ -503,7 +509,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             return Ok(());
         }
         let balance = {
-            let mut internals = self.internals();
+            let mut internals = internals(self.ctx);
             let account = internals
                 .load_account(address)
                 .map_err(|e| PrecompileError::Storage(format!("burn account load failed: {e}")))?;
@@ -514,7 +520,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                 "insufficient balance for burn from {address}: has {balance} but needs {amount}"
             ))
         })?;
-        let mut internals = self.internals();
+        let mut internals = internals(self.ctx);
         internals
             .set_balance(address, new_balance)
             .map_err(|e| PrecompileError::Storage(format!("burn set_balance failed: {e}")))?;
@@ -539,7 +545,8 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                     self.execution_scope.clone(),
                     self.ocomp_finality_authority.clone(),
                     self.ocomp_lifecycle_active,
-                ),
+                )
+                .with_abort_bridge(self.abort_bridge.clone()),
                 activation_meter: self.ocomp_activation_block_meter.clone(),
             },
             input,

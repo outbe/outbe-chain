@@ -25,12 +25,20 @@ impl VerificationWork {
             Event::Failed(error) => return Err(error),
             Event::Changed => return Ok(None),
         };
-        // Infrastructure failure is fatal even if the requester has already left.
+        // Only a positively identified abort may retire cancelled work. Genuine
+        // engine failures remain fatal even when their requester has left.
+        let status = match delivery.status? {
+            ExecutionStatus::Completed(status) => status.status,
+            ExecutionStatus::Cancelled(cancelled) => {
+                self.retire_cancelled(delivery.request, cancelled)?;
+                return Ok(None);
+            }
+        };
         let reply = ExecutionReply {
-            owner: delivery.owner,
-            id: delivery.id,
-            digest: delivery.digest,
-            status: delivery.status?.status,
+            owner: delivery.request.owner,
+            id: delivery.request.id,
+            digest: delivery.request.digest,
+            status,
         };
         let finalized = self.finalized_boundary(finalized);
         match reply.owner {
@@ -42,6 +50,27 @@ impl VerificationWork {
             }
         }
         Ok(None)
+    }
+
+    fn retire_cancelled(
+        &mut self,
+        request: ExecutionRequest,
+        cancelled: ExecutionReadCancelled,
+    ) -> eyre::Result<()> {
+        if !cancelled.budget.same_request(&request.budget) || !request.budget.is_cancelled() {
+            eyre::bail!("execution cancellation does not match its cancelled request");
+        }
+        let Owner::Verification(round) = request.owner else {
+            eyre::bail!("unexpected cancellation of parent convergence execution");
+        };
+        if self.queued.get(&round).is_some_and(|queued| {
+            queued.walk.id == request.id && queued.walk.cursor.digest() == request.digest
+        }) {
+            self.queued.remove(&round);
+        }
+        tracing::debug!(request_id = request.id, digest = %request.digest,
+            "cancelled verification execution retired without a verdict");
+        Ok(())
     }
 
     fn convergence_delivered(

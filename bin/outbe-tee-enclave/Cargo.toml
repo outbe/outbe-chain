@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
+e2e-test = ["outbe-tee/e2e-test"]
 # `mock` gates the dev/CI-only EGETKEY stub (hard-coded sealing key + fake
 # quote). The production binary is built WITHOUT this feature and therefore
 # physically contains no mock key material. See plan section "Mock build-time isolation".
@@ -66,6 +67,9 @@ required-features = ["sgx-sealing-probe"]
 
 [dependencies]
 outbe-tee.workspace = true
+outbe-ocomp-protocol.workspace = true
+outbe-compressed-entities.workspace = true
+postcard.workspace = true
 # Already in the enclave build graph transitively via `outbe-tee` (so no MRENCLAVE
 # change vs. today); declared directly only to name `tee_bootstrap::recover_signer`,
 # reused so the enclave and host recover EIP-191 signers with one identical impl.
@@ -97,7 +101,6 @@ outbe-fidelity-math.workspace = true
 # FFI inappropriate for the enclave.
 outbe-poseidon.workspace = true
 outbe-protocol.workspace = true
-outbe-zk-canonical.workspace = true
 outbe-protocol-derive.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
@@ -118,6 +121,7 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 
 [dev-dependencies]
+outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 tempfile.workspace = true
 alloy-primitives.workspace = true

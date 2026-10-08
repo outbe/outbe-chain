@@ -75,7 +75,7 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for NodExpiry<'_, '_, P> {
     fn member_at(&self, bucket_key: B256, index: u32) -> Result<WwdEntityId> {
         self.nod
             .bucket_nods
-            .read(&NodContract::bucket_nod_key(bucket_key, index))
+            .read(&crate::index_keys::bucket_nod_key(bucket_key, index))
     }
 
     fn charge(&self, budget: &mut SweepBudget) -> bool {
@@ -135,7 +135,8 @@ pub(crate) fn forfeit_member(
         )));
     }
     let owner = item.body().owner;
-    let gratis_load_minor = item.body().gratis_load_minor;
+    let gratis_load_minor = api::calculation_amount(item.body())?;
+    let encrypted_gratis_amount = item.body().encrypted.encrypted_gratis_amount.clone();
     let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
     let bucket = api::load_bucket(storage, scope, parent, bucket_id)?.ok_or_else(|| {
         PrecompileError::Revert(format!(
@@ -146,7 +147,7 @@ pub(crate) fn forfeit_member(
     nod.emit(INod::NodForfeited {
         owner,
         nodId: nod_id.to_u256(),
-        gratisLoadMinor: gratis_load_minor,
+        encryptedGratisAmount: encrypted_gratis_amount.into(),
     })?;
     outbe_promislimit::PromisLimitContract::new(storage.clone())
         .add_to_total_unallocated(gratis_load_minor)

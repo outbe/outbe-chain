@@ -50,7 +50,6 @@ use outbe_ocomp::embedded::EmbeddedOcompModeV1;
 use outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1;
 use outbe_ocomp::embedded_runtime::EmbeddedOcompBundleConfigV1;
 use outbe_ocomp::embedded_runtime::EmbeddedOcompDomainConfigV1;
-use outbe_ocomp::embedded_runtime::EmbeddedOcompDomainV1;
 
 use outbe_ocomp_protocol::profile::poc_schema_limits;
 
@@ -149,7 +148,7 @@ where
             block_hash: config.genesis_hash,
         },
     )?;
-    let domain = EmbeddedOcompDomainV1::open(EmbeddedOcompDomainConfigV1 {
+    let domain = outbe_ocomp::embedded_runtime::open_embedded_domain(EmbeddedOcompDomainConfigV1 {
         domain_root: config.domain_root,
         registry_generation: 1,
         bundles: config

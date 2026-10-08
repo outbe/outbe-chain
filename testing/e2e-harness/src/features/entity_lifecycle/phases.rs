@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use alloy_primitives::U256;
-use cucumber::{then, when};
+use cucumber::{then, when, Parameter};
 
 use super::chain::poll_until;
 use super::entity::{Currency, Entity, Payer, Phase};
@@ -83,25 +83,21 @@ fn unpaid_unminable(world: &mut World, entity: Entity) {
     guards::assert_unpaid_unminable(world, &first);
 }
 
-#[when(
-    expr = "a {phase} {entity} is paid in {currency} by {payer} and another in {currency} by {payer}"
-)]
+#[when(expr = "a {phase} {entity} is paid in {payment_party} and another in {payment_party}")]
 fn pay_two(
     world: &mut World,
     phase: Phase,
     entity: Entity,
-    first: Currency,
-    first_payer: Payer,
-    second: Currency,
-    second_payer: Payer,
+    first: PaymentParty,
+    second: PaymentParty,
 ) {
     let lifecycle = entity.lifecycle();
     let [first_target, second_target] = lifecycle.targets(world, phase);
     for (target, currency, payer) in [
-        (first_target, first, first_payer),
-        (second_target, second, second_payer),
+        (first_target, first.currency, first.payer),
+        (second_target, second.currency, second.payer),
     ] {
-        let terms = lifecycle.terms(world, &target.item);
+        let terms = lifecycle.settlement_terms(world, &target, phase);
         let paid = payment::pay(world, &target, payer, currency.0, terms);
         world.state.entity_lifecycle.payments.push(paid);
     }
@@ -189,4 +185,28 @@ fn seed_closed_days(world: &World, days: u32, rate: U256) {
     let url = world.rpc.url(world.validators.primary_port());
     test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD_ISO, days, rate)
         .expect("seed the closed days' VWAP");
+}
+
+#[derive(Clone, Copy, Debug, Parameter)]
+#[param(
+    name = "payment_party",
+    regex = "(?:USD|MYR) by (?:its owner|a third party)"
+)]
+struct PaymentParty {
+    currency: Currency,
+    payer: Payer,
+}
+
+impl std::str::FromStr for PaymentParty {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (currency, payer) = value
+            .split_once(" by ")
+            .ok_or_else(|| format!("invalid payment party {value:?}"))?;
+        Ok(Self {
+            currency: currency.parse()?,
+            payer: payer.parse()?,
+        })
+    }
 }

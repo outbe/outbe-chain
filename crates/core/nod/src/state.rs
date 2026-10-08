@@ -1,8 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityRef,
-    ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId,
-    MAX_ID_PAGE_LIMIT,
+    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionScope, IdPageRequest,
+    ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
@@ -108,7 +107,7 @@ impl NodContract<'_> {
         {
             return Err(NodError::InvalidEntryPriceSnapshot.into());
         }
-        self.storage_handle().with_checkpoint(|| {
+        self.storage.clone().with_checkpoint(|| {
             if self.entry_prices_frozen.read(&day)? {
                 return Err(NodError::EntryPricesAlreadyFrozen.into());
             }
@@ -126,16 +125,6 @@ impl NodContract<'_> {
 
     // --- ID helpers ---
 
-    pub fn parse_nod_id(nod_id: &str) -> Result<WwdEntityId> {
-        let trimmed = nod_id.strip_prefix("0x").unwrap_or(nod_id);
-        if trimmed.len() != WwdEntityId::len_bytes() * 2 {
-            return Err(NodError::InvalidNodIdLength.into());
-        }
-        trimmed
-            .parse::<WwdEntityId>()
-            .map_err(|_| NodError::InvalidNodIdHex.into())
-    }
-
     // --- View functions ---
 
     pub fn total_supply(&self) -> Result<u64> {
@@ -149,7 +138,7 @@ impl NodContract<'_> {
         nod_id: WwdEntityId,
     ) -> Result<Option<VerifiedBody>> {
         read(
-            self.storage_handle(),
+            self.storage.clone(),
             scope,
             parent,
             EntityRef::NodItem(nod_id),
@@ -163,7 +152,7 @@ impl NodContract<'_> {
         bucket_id: WwdEntityId,
     ) -> Result<Option<VerifiedBody>> {
         read(
-            self.storage_handle(),
+            self.storage.clone(),
             scope,
             parent,
             EntityRef::NodBucket(bucket_id),
@@ -198,7 +187,7 @@ impl NodContract<'_> {
         after: Option<WwdEntityId>,
     ) -> Result<(Vec<NodItemState>, Option<WwdEntityId>)> {
         let page = list(
-            self.storage_handle(),
+            self.storage.clone(),
             scope,
             parent,
             query,
@@ -224,7 +213,7 @@ impl NodContract<'_> {
         item: &NodItemState,
         entry_price_minor: U256,
     ) -> Result<()> {
-        Self::check_issued_identity(item, entry_price_minor)?;
+        crate::issuance::validate_item(item, entry_price_minor)?;
         if self
             .get_item_verified(scope, parent, item.nod_id)?
             .is_some()
@@ -261,7 +250,7 @@ impl NodContract<'_> {
                     .write(&item.bucket_key, item.worldwide_day)?;
                 self.callable_bucket_issued_at
                     .write(&item.bucket_key, item.issued_at)?;
-                let params = crate::config::read_from(self, self.storage_handle().chain_id()?)?;
+                let params = crate::config::read_from(self, self.storage.clone().chain_id()?)?;
                 if let Some(terms) =
                     derived_call_terms(entry_price_minor, item.reference_currency, params)?
                 {
@@ -281,14 +270,14 @@ impl NodContract<'_> {
         self.insert_bucket_member(item.bucket_key, item.nod_id)?;
         let canonical_item = crate::repository::canonical_item(item);
         mint(
-            self.storage_handle(),
+            self.storage.clone(),
             scope,
-            BodyInput::NodItem(&canonical_item),
+            BodyInput::EncryptedNodItem(&canonical_item),
         )?;
         if let Some(bucket) = new_bucket {
             let canonical_bucket = crate::repository::canonical_bucket(&bucket);
             mint(
-                self.storage_handle(),
+                self.storage.clone(),
                 scope,
                 BodyInput::NodBucket(&canonical_bucket),
             )?;
@@ -298,43 +287,6 @@ impl NodContract<'_> {
             to: item.owner,
             tokenId: item.nod_id.to_u256(),
         })
-    }
-
-    /// Rejects an item whose identity, payment state or bucket does not match a new issuance.
-    fn check_issued_identity(item: &NodItemState, entry_price_minor: U256) -> Result<()> {
-        let canonical_id = derive_poseidon_entity_id(item.owner, item.worldwide_day)
-            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
-        if item.nod_id != canonical_id {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod item canonical identity mismatch: expected {canonical_id}, found {}",
-                item.nod_id
-            )));
-        }
-        if item.is_settled {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
-                "cannot issue a settled Nod".into(),
-            ));
-        }
-        // ISO 0 is not a currency. Its bin namespace aliases the
-        // un-namespaced key. ISO 0 also never appears in the oracle's
-        // reference-currency registry. A bucket parked there would be
-        // invisible to the call scan forever.
-        if item.reference_currency == 0 {
-            return Err(NodError::ZeroReferenceCurrency.into());
-        }
-
-        let canonical_bucket_key = Self::bucket_key(
-            item.worldwide_day,
-            entry_price_minor,
-            item.reference_currency,
-        );
-        if item.bucket_key != canonical_bucket_key {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod bucket identity mismatch: expected {canonical_bucket_key}, found {}",
-                item.bucket_key
-            )));
-        }
-        Ok(())
     }
 
     /// Records compact removal state using capabilities retained by the caller's checks.
@@ -364,16 +316,16 @@ impl NodContract<'_> {
         } else {
             self.remove_bucket_member(item.bucket_key, item.nod_id)?
         };
-        delete(self.storage_handle(), scope, current_item)?;
+        delete(self.storage.clone(), scope, current_item)?;
         if remaining == 0 && bucket.settled_nods == 0 {
             self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
             self.callable_bucket_issued_at.clear(&item.bucket_key)?;
             self.bucket_nod_count.clear(&item.bucket_key)?;
             self.remove_callable_bucket(item.bucket_key)?;
-            delete(self.storage_handle(), scope, current_bucket)?;
+            delete(self.storage.clone(), scope, current_bucket)?;
         } else if item.is_settled {
             update(
-                self.storage_handle(),
+                self.storage.clone(),
                 scope,
                 current_bucket,
                 BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
@@ -407,13 +359,13 @@ impl NodContract<'_> {
         self.remove_bucket_member(item.bucket_key, item.nod_id)?;
         item.is_settled = true;
         update(
-            self.storage_handle(),
+            self.storage.clone(),
             scope,
             current_item,
-            BodyInput::NodItem(&crate::repository::canonical_item(&item)),
+            BodyInput::EncryptedNodItem(&crate::repository::canonical_item(&item)),
         )?;
         update(
-            self.storage_handle(),
+            self.storage.clone(),
             scope,
             current_bucket,
             BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
@@ -425,7 +377,7 @@ impl NodContract<'_> {
 
     /// A called bucket settles until its deadline, an uncalled one once qualified.
     fn settlement_open(&self, bucket: &NodBucketState) -> Result<bool> {
-        let storage = self.storage_handle();
+        let storage = self.storage.clone();
         match crate::api::settlement_deadline(&storage, bucket.bucket_key)? {
             0 => crate::api::is_qualified(&storage, bucket),
             deadline => Ok(storage.timestamp()?.to::<u64>() <= deadline),
@@ -445,18 +397,11 @@ impl NodContract<'_> {
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
 
-    /// Maps a six-decimal call price (or oracle rate) to a 24-bit
-    /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]`.
-    /// See [`outbe_primitives::math::price_helper::get_id_from_price`] for the saturation
-    /// rationale.
-    pub fn price_to_bin(price_minor: U256) -> Result<u32> {
-        call_bins::price_to_bin(price_minor)
-    }
-
     /// Parks a new bucket in the bin of its sealed call price.
     pub(crate) fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
-        let bin = Self::price_to_bin(self.callable_bucket_call_price_minor.read(&bucket_key)?)?;
+        let bin =
+            crate::pricing::price_to_bin(self.callable_bucket_call_price_minor.read(&bucket_key)?)?;
         call_bins::insert(&CallBins(self, iso), bucket_key, bin)
     }
 
@@ -474,14 +419,6 @@ impl NodContract<'_> {
     // shape mirrors the call-price bin index: a count plus a keccak-of-concat
     // positional map, with a reverse map for O(1) swap-remove.
 
-    /// Storage key for the `index`-th Nod parked in `bucket_key`.
-    pub(crate) fn bucket_nod_key(bucket_key: B256, index: u32) -> B256 {
-        let mut buf = [0u8; 36];
-        buf[0..32].copy_from_slice(bucket_key.as_slice());
-        buf[32..36].copy_from_slice(&index.to_be_bytes());
-        alloy_primitives::keccak256(buf)
-    }
-
     /// Appends `nod_id` and increments the bucket's authoritative unpaid count.
     pub(crate) fn insert_bucket_member(
         &mut self,
@@ -494,8 +431,10 @@ impl NodContract<'_> {
                 "Nod bucket {bucket_key} member index overflow"
             ))
         })?;
-        self.bucket_nods
-            .write(&Self::bucket_nod_key(bucket_key, index), nod_id)?;
+        self.bucket_nods.write(
+            &crate::index_keys::bucket_nod_key(bucket_key, index),
+            nod_id,
+        )?;
         self.bucket_nod_index.write(&nod_id, index)?;
         self.bucket_nod_count.write(&bucket_key, next)?;
         Ok(())
@@ -520,14 +459,14 @@ impl NodContract<'_> {
         if index > last
             || self
                 .bucket_nods
-                .read(&Self::bucket_nod_key(bucket_key, index))?
+                .read(&crate::index_keys::bucket_nod_key(bucket_key, index))?
                 != nod_id
         {
             return Err(outbe_primitives::error::PrecompileError::Revert(format!(
                 "Nod {nod_id} is not indexed in bucket {bucket_key}"
             )));
         }
-        let last_key = Self::bucket_nod_key(bucket_key, last);
+        let last_key = crate::index_keys::bucket_nod_key(bucket_key, last);
         if index != last {
             let moved = self.bucket_nods.read(&last_key)?;
             if moved.is_zero() {
@@ -536,7 +475,7 @@ impl NodContract<'_> {
                 )));
             }
             self.bucket_nods
-                .write(&Self::bucket_nod_key(bucket_key, index), moved)?;
+                .write(&crate::index_keys::bucket_nod_key(bucket_key, index), moved)?;
             self.bucket_nod_index.write(&moved, index)?;
         }
         self.bucket_nods.write(&last_key, WwdEntityId::ZERO)?;
@@ -622,7 +561,7 @@ impl NodContract<'_> {
 }
 
 pub(crate) fn nod_item_from_verified(body: &VerifiedBody) -> Result<NodItemState> {
-    let payload = body.payload().as_nod_item().ok_or_else(|| {
+    let payload = body.payload().as_encrypted_nod_item().ok_or_else(|| {
         outbe_primitives::error::PrecompileError::Fatal(
             "compressed-entity read returned a non-Nod-item payload".into(),
         )

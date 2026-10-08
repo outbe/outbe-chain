@@ -5,7 +5,7 @@ use std::{fs, path::Path, sync::Arc};
 
 use alloy_primitives::B256;
 use outbe_node::projection::{prepare_offchain_data_projection, OffchainDataProjectionConfig};
-use outbe_offchain_data::{FinalizedBlock, OffchainDataProjection, ProjectionConfig};
+use outbe_offchain_data::{FinalizedBlock, ProjectionConfig};
 use outbe_offchain_storage::{PartitionedStorage, StorageBackend, StorageConfig};
 use outbe_primitives::projection::{ProjectionCheckpoint, ProjectionStatus};
 
@@ -47,7 +47,7 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
     {
         let storage = partition_fixture(&donor_storage);
         let mut projection =
-            OffchainDataProjection::open(config, storage.clone(), storage).unwrap();
+            outbe_offchain_data::open_projection(config, storage.clone(), storage).unwrap();
         for height in 1..=3 {
             projection
                 .project_block(&FinalizedBlock {
@@ -120,7 +120,7 @@ fn copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_
         if height == 3 {
             let storage = partition_fixture(&recipient_storage);
             let mut projection =
-                OffchainDataProjection::open(config, storage.clone(), storage).unwrap();
+                outbe_offchain_data::open_projection(config, storage.clone(), storage).unwrap();
             projection
                 .project_block(&FinalizedBlock {
                     number: 4,

@@ -1,11 +1,10 @@
 //! Cross-module API for the confidential Gratis token.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use crate::context::unpledge_context;
 pub use outbe_tee::protocol::{FidelityOpOutcome, FidelityOpSection, ModifyAuth};
 
 use crate::runtime;
@@ -15,24 +14,23 @@ use crate::schema::Gratis;
 
 /// Encrypted balance blob for `account`. Decrypt it client-side with the view key.
 pub fn balance_ct(storage: StorageHandle<'_>, account: Address) -> Result<Vec<u8>> {
-    Gratis::new(storage).balance_ct_of(account)
+    crate::state::account(&Gratis::new(storage), account).balance_ct()
+}
+
+/// Encrypted pledged-collateral blob for `account`. Decrypt it client-side with the view key.
+pub fn pledged_ct(storage: StorageHandle<'_>, account: Address) -> Result<Vec<u8>> {
+    crate::state::account(&Gratis::new(storage), account).pledged_ct()
 }
 
 /// The account's current modify-auth replay counter (the value the client's next
 /// write authorization must bind).
 pub fn op_nonce(storage: StorageHandle<'_>, account: Address) -> Result<u64> {
-    Gratis::new(storage).op_nonce_of(account)
+    crate::state::account(&Gratis::new(storage), account).op_nonce()
 }
 
-/// Public total circulating supply. The value is an aggregate. Per-account balances
-/// stay hidden.
-pub fn total_supply(storage: StorageHandle<'_>) -> Result<U256> {
-    Gratis::new(storage).total_supply()
-}
-
-/// Public aggregate pledged into the credis escrow (per-account amounts hidden).
+/// Public sum of every account's pledged balance.
 pub fn pledged_total_supply(storage: StorageHandle<'_>) -> Result<U256> {
-    Gratis::new(storage).pledged_total_supply()
+    crate::state::pledged_total_supply(&Gratis::new(storage))
 }
 
 // --- Owner-authorized mutations ---
@@ -60,13 +58,13 @@ pub fn mint_with_fidelity(
     runtime::mint_with_fidelity(storage, caller, amount, auth, fidelity)
 }
 
-/// Burn `amount` gratis from `caller`. Returns the remaining total supply.
+/// Burn `amount` gratis from `caller`.
 pub fn burn(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
-) -> Result<U256> {
+) -> Result<()> {
     runtime::burn(storage, caller, amount, auth)
 }
 
@@ -82,31 +80,34 @@ pub fn burn_with_fidelity(
     runtime::burn_with_fidelity(storage, caller, amount, auth, fidelity)
 }
 
-/// Debit an owner-authorized amount with a read-only Fidelity eligibility probe.
+/// Move an owner-authorized amount into the pledged balance, with a read-only
+/// Fidelity eligibility probe.
 pub fn pledge_with_fidelity(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
-) -> Result<(B256, FidelityOpOutcome)> {
+) -> Result<FidelityOpOutcome> {
     runtime::pledge_with_fidelity(storage, caller, amount, auth, fidelity)
 }
-pub fn unpledge(storage: StorageHandle<'_>, proof: &[u8]) -> Result<U256> {
-    runtime::unpledge(storage, proof)
+
+/// Return pledged collateral to `account`'s liquid balance. The caller authorizes it.
+pub fn release_pledged(storage: &StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
+    runtime::release_pledged(storage, account, amount)
 }
-pub fn activate(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
-    runtime::activate(storage, amount)
+
+/// Burn `account`'s pledged collateral. The caller authorizes it.
+pub fn burn_pledged(storage: &StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
+    runtime::burn_pledged(storage, account, amount)
 }
-pub fn return_collateral(
-    storage: &StorageHandle<'_>,
-    position: U256,
-    serial: B256,
-    amount: U256,
-    released_total: U256,
-) -> Result<()> {
-    runtime::return_collateral(storage, position, serial, amount, released_total)
-}
-pub fn forfeit(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
-    runtime::forfeit(storage, amount)
+
+/// Consume a canonical, settled encrypted NOD without exporting its amount.
+pub fn mint_encrypted_nod(
+    storage: StorageHandle<'_>,
+    nod: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    auth: ModifyAuth,
+    fidelity: FidelityOpSection,
+) -> Result<FidelityOpOutcome> {
+    runtime::mint_encrypted_nod(storage, nod, auth, fidelity)
 }

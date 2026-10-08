@@ -102,8 +102,8 @@ fn copy_record(
     let day = route.databases.nod(day_number)?;
     let handle: StorageWriterHandle = day.clone();
     let day_reader: StorageReaderHandle = day.clone();
-    let source = NodRepositoryReader::new(day_reader);
-    let shared = NodRepositoryWriter::new(reader.storage.clone(), route.shared_writer.clone());
+    let source = crate::nod_reader(day_reader);
+    let shared = crate::nod_writer(reader.storage.clone(), route.shared_writer.clone());
     if items {
         let owner = super::decode_item(id, record.value.as_bytes())?.owner;
         let mut session = source.projection_session(&[id], &[])?;
@@ -167,7 +167,7 @@ pub(super) fn projection_session(
             None => Ok(None),
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(crate::projection::NodProjectionSession::from_records(
+    Ok(crate::projection::session_from_records(
         nod_ids, items, bucket_ids, buckets,
     ))
 }
@@ -243,7 +243,7 @@ pub(super) fn put_nod(
     let route = route(&writer.reader)?;
     let day_number = nod.worldwide_day.value();
     let day = route.databases.nod(day_number)?;
-    let old_owner = NodRepositoryReader::new(day.clone())
+    let old_owner = crate::nod_reader(day.clone())
         .get(nod.nod_id)?
         .map(|body| body.owner);
     day_writer(day.clone()).put_nod(nod)?;
@@ -264,7 +264,7 @@ pub(super) fn delete_nod(
     let Some(day) = route.databases.nod_if_present(day_number)? else {
         return Ok(());
     };
-    let owner = NodRepositoryReader::new(day.clone())
+    let owner = crate::nod_reader(day.clone())
         .get(nod_id)?
         .map(|body| body.owner);
     day_writer(day.clone()).delete_nod(nod_id)?;
@@ -350,7 +350,7 @@ fn write_owner_day(
     day_number: u32,
 ) -> Result<(), NodRepositoryError> {
     let handle: StorageReaderHandle = day;
-    let operation = NodRepositoryReader::new(handle).owner_day_marker(owner, day_number)?;
+    let operation = crate::nod_reader(handle).owner_day_marker(owner, day_number)?;
     route
         .shared_writer
         .apply_atomic(&AtomicWriteBatch::from_operations(vec![operation]))?;
@@ -363,7 +363,7 @@ fn open_day_reader(route: &DayRoute, storage: Arc<RocksDbStorage>) -> NodReposit
         Some(wrap) => wrap(handle),
         None => handle,
     };
-    NodRepositoryReader::new(handle)
+    crate::nod_reader(handle)
 }
 
 /// Reads the day database of `id` through the route, or `None` when that day has none.
@@ -395,7 +395,7 @@ fn open_day_number(
 fn day_writer(day: Arc<RocksDbStorage>) -> NodRepositoryWriter {
     let reader: StorageReaderHandle = day.clone();
     let writer: StorageWriterHandle = day;
-    NodRepositoryWriter::new(reader, writer)
+    crate::nod_writer(reader, writer)
 }
 
 /// Entries of one day page and the cursor of that day's next page.

@@ -68,10 +68,10 @@ pub struct Position {
     #[attribute(order = 3)]
     pub issuance_currency: u16,
 
-    /// Canonical, nonzero serial authenticated by the issuance proof. Repayment
-    /// notes use this serial without revealing or accessing the source account.
+    /// Main account whose pledged Gratis backs the position. Repayments release
+    /// collateral to it and a default burns it from it.
     #[attribute(order = 4)]
-    pub return_note_serial: B256,
+    pub source: Address,
 
     /// `P` - stablecoin minor units disbursed. Fixed.
     #[attribute(order = 5)]

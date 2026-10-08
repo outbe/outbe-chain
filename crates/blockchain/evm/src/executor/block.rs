@@ -294,10 +294,12 @@ where
                 "reserved system transaction cannot execute without commit",
             ));
         }
-        self.inner.execute_transaction_without_commit(WithTxEnv {
-            tx: Arc::new(recovered),
-            tx_env,
-        })
+        self.inner
+            .execute_transaction_without_commit(WithTxEnv {
+                tx: Arc::new(recovered),
+                tx_env,
+            })
+            .map_err(preserve_cancelled_execution)
     }
 
     fn execute_transaction_with_commit_condition(
@@ -349,7 +351,7 @@ where
         if let Some(error) = ce_failure {
             return Err(BlockExecutionError::other(error));
         }
-        outcome
+        outcome.map_err(preserve_cancelled_execution)
     }
 
     fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
@@ -443,5 +445,46 @@ where
 
     fn evm(&self) -> &Self::Evm {
         self.inner.evm()
+    }
+}
+
+/// The upstream EVM variant stores its boxed cause without exposing it as source.
+/// Unwrap only a proven cancellation so the engine's internal-error path retains it.
+fn preserve_cancelled_execution(error: BlockExecutionError) -> BlockExecutionError {
+    match error {
+        BlockExecutionError::Internal(InternalBlockExecutionError::EVM { hash, error }) => {
+            if outbe_primitives::projection::ExecutionReadCancelled::find(error.as_ref()).is_some()
+            {
+                BlockExecutionError::Internal(InternalBlockExecutionError::Other(error))
+            } else {
+                BlockExecutionError::Internal(InternalBlockExecutionError::EVM { hash, error })
+            }
+        }
+        error => error,
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    use outbe_primitives::projection::{ExecutionReadBudget, ExecutionReadCancelled};
+    use revm::context_interface::result::{AnyError, EVMError};
+
+    #[test]
+    fn raw_execution_abort_is_internal_and_keeps_its_typed_cause() {
+        let budget = ExecutionReadBudget::new();
+        budget.cancel();
+        let evm_error: EVMError<std::convert::Infallible> =
+            EVMError::CustomAny(AnyError::new(ExecutionReadCancelled {
+                budget: budget.clone(),
+            }));
+        let error = BlockExecutionError::Internal(InternalBlockExecutionError::EVM {
+            hash: B256::ZERO,
+            error: Box::new(evm_error),
+        });
+        let error = preserve_cancelled_execution(error);
+        assert!(matches!(error, BlockExecutionError::Internal(_)));
+        let cancelled = ExecutionReadCancelled::find(&error).unwrap();
+        assert!(cancelled.budget.same_request(&budget));
     }
 }

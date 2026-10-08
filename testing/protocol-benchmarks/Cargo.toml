@@ -28,8 +28,8 @@ outbe-l2registry.workspace = true
 outbe-metadosis = { workspace = true, features = ["bench-utils", "test-utils"] }
 outbe-stablecoin.workspace = true
 outbe-stablecoinfactory.workspace = true
-outbe-nod.workspace = true
-outbe-nodfactory.workspace = true
+outbe-nod = { workspace = true, features = ["test-enclave"] }
+outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
 outbe-primitives = { workspace = true, features = ["bench-utils", "test-utils"] }

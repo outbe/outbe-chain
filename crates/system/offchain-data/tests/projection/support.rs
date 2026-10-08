@@ -9,7 +9,7 @@ use std::{
 use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
-    body_commitment, derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1,
+    body_commitment, derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v2,
     encode_tribute_v1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_nod::{canonical_bucket, canonical_item, precompile::INod, NodBucketState, NodItemState};
@@ -62,7 +62,8 @@ pub(crate) fn config(start_block: u64) -> ProjectionConfig {
 }
 
 pub(crate) fn open(storage: &Arc<RecordingStorage>, start_block: u64) -> OffchainDataProjection {
-    OffchainDataProjection::open(config(start_block), storage.clone(), storage.clone()).unwrap()
+    outbe_offchain_data::open_projection(config(start_block), storage.clone(), storage.clone())
+        .unwrap()
 }
 
 #[derive(Clone, Copy)]
@@ -165,25 +166,33 @@ pub(crate) fn tribute_partition_retired(day: u32) -> LogData {
 }
 
 pub(crate) fn nod_body(nod_id: WwdEntityId, owner: Address, bucket_key: B256) -> NodItemState {
-    NodItemState {
-        is_settled: false,
-        nod_id,
-        owner,
-        gratis_load_minor: U256::from(101),
-        worldwide_day: WorldwideDay::new(20260715),
-        league_id: 7,
-        bucket_key,
-        issuance_currency: 840,
-        reference_currency: 978,
-        issued_at: 123_456,
-    }
+    outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id,
+            owner,
+            gratis_load_minor: U256::from(101),
+            worldwide_day: WorldwideDay::new(20260715),
+            league_id: 7,
+            bucket_key,
+            issuance_currency: 840,
+            reference_currency: 978,
+            issued_at: 123_456,
+        },
+        U256::from(5),
+    )
 }
 
 pub(crate) fn nod_deleted(nod_id: WwdEntityId, owner: Address, bucket_key: B256) -> LogData {
     let body = nod_body(nod_id, owner, bucket_key);
-    let payload = encode_nod_item_v1(&canonical_item(&body)).unwrap();
-    let commitment =
-        body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, nod_id, &payload).unwrap();
+    let payload = encode_nod_item_v2(&canonical_item(&body)).unwrap();
+    let commitment = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+        nod_id,
+        &payload,
+    )
+    .unwrap();
     INod::NodBodyDeleted {
         nodId: nod_id.to_u256(),
         previousCommitment: B256::from(*commitment.as_bytes()),
@@ -193,13 +202,18 @@ pub(crate) fn nod_deleted(nod_id: WwdEntityId, owner: Address, bucket_key: B256)
 
 pub(crate) fn nod_stored(nod_id: WwdEntityId, owner: Address, bucket_key: B256) -> LogData {
     let body = nod_body(nod_id, owner, bucket_key);
-    let payload = encode_nod_item_v1(&canonical_item(&body)).unwrap();
-    let commitment =
-        body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, nod_id, &payload).unwrap();
+    let payload = encode_nod_item_v2(&canonical_item(&body)).unwrap();
+    let commitment = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
+        nod_id,
+        &payload,
+    )
+    .unwrap();
     INod::NodBodyStored {
         nodId: nod_id.to_u256(),
         commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-        schemaVersion: BODY_SCHEMA_V1,
+        schemaVersion: outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
         previousCommitment: B256::ZERO,
         newCommitment: B256::from(*commitment.as_bytes()),
         canonicalPayload: Bytes::from(payload),

@@ -33,6 +33,11 @@ pub fn parse_and_validate(plaintext: &[u8]) -> Result<TributeInputPayload, Strin
     let payload: TributeInputPayload = serde_json::from_slice(plaintext)
         .map_err(|e| format!("failed to parse decrypted payload: {e}"))?;
 
+    validate(&payload)?;
+    Ok(payload)
+}
+
+pub(crate) fn validate(payload: &TributeInputPayload) -> Result<(), String> {
     if payload.tribute_draft_id.is_empty() {
         return Err("tribute_draft_id is required".to_string());
     }
@@ -42,5 +47,5 @@ pub fn parse_and_validate(plaintext: &[u8]) -> Result<TributeInputPayload, Strin
     if payload.su_hashes.is_empty() {
         return Err("su_hashes cannot be empty".to_string());
     }
-    Ok(payload)
+    Ok(())
 }

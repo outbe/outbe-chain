@@ -25,7 +25,7 @@ use crate::{
     lysis_phase_replay::{
         admit_reported_core_phase_unit, admit_reported_output_finalize_unit, LysisPhaseReplayError,
     },
-    lysis_plan_audit::{ExactLysisPlanError, LocalLysisPlanAuditV1},
+    lysis_plan_audit::ExactLysisPlanError,
     lysis_result_adoption::{
         admit_reported_lysis_root_reduce_leaf, admit_reported_lysis_root_reduce_node,
         verify_lysis_root_reduce_phase_replay, AdoptedLysisResultChunkV1, LysisResultAdoptionError,
@@ -93,7 +93,9 @@ pub fn admit_reported_lysis_unit_v1(
     limits: &SchemaLimits,
 ) -> Result<AdmittedLysisUnitV1, LysisSchedulerError> {
     let (request, plan, manifest, position) = {
-        let audit = LocalLysisPlanAuditV1::open(catalog, input_refs, reader, bundle, limits)?;
+        let audit = crate::lysis_plan_audit::open_local_plan_audit(
+            catalog, input_refs, reader, bundle, limits,
+        )?;
         let request = audit.worker_request_at(plan_ordinal)?;
         let position = outbe_lysis::program_v1::planner::LysisPlanTopologyV1::new(
             audit.plan().primary_work_unit_count,

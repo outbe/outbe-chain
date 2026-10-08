@@ -205,25 +205,19 @@ pub struct ParticipantAnnounce {
 
 /// A Gratis write operation the enclave applies over encrypted per-account state.
 ///
-/// The op determines two things:
-/// - the sign of the aggregate deltas that the host applies to the public
-///   `total_supply` / `pledged_total_supply` scalars
-/// - which ciphertext account balance the enclave transforms
-///
-/// The runtime checks note authorization.
+/// The op selects the account's liquid and pledged balance transitions.
+/// The runtime tracks the aggregate pledged backing and authorizes collateral operations.
+/// Mint, Burn and Pledge require the owner's modify authorization.
+/// Their discriminants stay fixed because the modify MAC binds the operation tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GratisOp {
     Mint,
     Burn,
-    /// Authenticate the Gratis amount and fund an owner-bound note.
+    /// Move the authorized amount from the liquid to the pledged balance.
     Pledge,
-    /// Credit the destination authenticated by an unpledge proof.
-    Unpledge,
-    /// Credit the aggregate Credis collateral account after an issue proof.
-    ConsumePledge,
-    /// Debit Credis collateral when repayment appends a return note.
-    ReleaseCollateral,
-    /// Debit Credis collateral at forfeiture. Fidelity is unchanged.
+    /// Move collateral from the pledged back to the liquid balance.
+    ReleasePledged,
+    /// Burn collateral from the pledged balance.
     BurnPledged,
 }
 
@@ -240,7 +234,7 @@ pub struct ModifyAuth {
     pub op_nonce: u64,
 }
 
-/// Stateless balance transition. The consuming runtime checks proof authorization.
+/// Stateless transition over an account's liquid and pledged balance blobs.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GratisOpRequest {
     pub op: GratisOp,
@@ -248,21 +242,9 @@ pub struct GratisOpRequest {
     pub account: Address,
     pub amount: U256,
     pub current_balance: Vec<u8>,
+    pub current_pledged: Vec<u8>,
     pub modify_auth: ModifyAuth,
     pub fidelity: Option<FidelityOpSection>,
-}
-
-/// Wallet and enclave derive the same private initial note secret entropy.
-/// The caller reduces this HMAC to a nonzero BN254 field before deriving the serial.
-pub fn initial_pledge_secret(modify_key: &[u8; 32], amount: U256, nonce: u64) -> [u8; 32] {
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, modify_key);
-    let mut preimage = b"outbe/pledge-secret/v1".to_vec();
-    preimage.extend_from_slice(&amount.to_be_bytes::<32>());
-    preimage.extend_from_slice(&nonce.to_be_bytes());
-    ring::hmac::sign(&key, &preimage)
-        .as_ref()
-        .try_into()
-        .expect("SHA256 length")
 }
 
 /// The Fidelity cohort mutation carried inside a Gratis op.
@@ -290,7 +272,7 @@ pub struct FidelityOpSection {
     /// Plaintext global `first_qualified_start` scalar (league ceiling anchor).
     /// `0` before any account qualified.
     pub first_qualified_start: u64,
-    /// Current cohort-ledger blob (`version(8 BE) || ciphertext`). Empty when the
+    /// Current cohort-ledger blob (`version(8) || FID2 || binding(32) || ciphertext`); empty when the
     /// account has no cohort state yet.
     pub current_blob: Vec<u8>,
 }
@@ -299,7 +281,7 @@ pub struct FidelityOpSection {
 /// [`GratisOpResult`]. Cohort contents never appear here.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelityOpOutcome {
-    /// New cohort-ledger blob (`version || ct`) to store verbatim. EMPTY for a
+    /// New cohort-ledger blob (`version || FID2 || binding || ct`) to store verbatim; EMPTY for a
     /// `Probe` (nothing to write).
     pub new_blob: Vec<u8>,
     /// `Some(ts)` when this op set the account's `qualified_start` (first
@@ -347,14 +329,13 @@ pub enum GratisOpStatus {
 }
 
 /// Public result of an `ApplyGratisOp`: the new ciphertext blobs to store verbatim
-/// plus the plaintext receipt the host needs (aggregate deltas, event amount,
-/// pledge linkage). Per-account plaintext balances never appear here.
+/// plus the plaintext receipt the host needs (aggregate deltas, event amount).
+/// Per-account plaintext balances never appear here.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GratisOpResult {
     pub status: GratisOpStatus,
     pub new_balance: Vec<u8>,
-    /// Owner-bound serial derived inside the enclave on pledge. Zero otherwise.
-    pub note_serial: B256,
+    pub new_pledged: Vec<u8>,
     pub event_amount: U256,
     pub next_op_nonce: u64,
     pub fidelity: Option<FidelityOpOutcome>,
@@ -437,7 +418,7 @@ pub struct PromisOpResult {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FidelitySnapshotEntry {
     pub owner: Address,
-    /// Current cohort-ledger blob (`version(8 BE) || ct`). Empty for no state.
+    /// Current cohort-ledger blob (`version(8) || FID2 || binding(32) || ct`); empty for no state.
     pub cohort_blob: Vec<u8>,
 }
 
@@ -488,7 +469,7 @@ pub struct FidelityQueryRequest {
     /// derivation. Key derivation uses the resident id.
     pub chain_id: B256,
     pub account: Address,
-    /// Current cohort-ledger blob (`version(8 BE) || ct`). Empty for no state.
+    /// Current cohort-ledger blob (`version(8) || FID2 || binding(32) || ct`); empty for no state.
     pub cohort_blob: Vec<u8>,
     /// Timestamp to evaluate RCFI/league at (any time, because the curve is pure).
     pub query_timestamp: u64,
@@ -523,7 +504,9 @@ pub struct FidelityQueryResult {
 pub enum EnclaveRequest {
     /// Development-only pre-handshake quote. The production server
     /// rejects this variant and never routes it after initialization.
-    GetQuote { nonce: [u8; 32] },
+    GetQuote {
+        nonce: [u8; 32],
+    },
     /// Production pre-handshake discovery for an uninitialized enclave. Returns
     /// one challenge plus the persistent enclave public keys that the node
     /// identity signs. The enclave rejects it after initialization is committed.
@@ -543,9 +526,13 @@ pub enum EnclaveRequest {
     /// Production pre-handshake marker for one previously authorized remote
     /// source NodeHost. The enclave consumes the ticket before Noise message 1.
     /// That message must prove the exact initiator static stored under this id.
-    OpenRemoteSessionV1 { ticket_id: B256 },
+    OpenRemoteSessionV1 {
+        ticket_id: B256,
+    },
     /// Noise-IK handshake message.
-    SessionHandshake { noise_msg: Vec<u8> },
+    SessionHandshake {
+        noise_msg: Vec<u8>,
+    },
     /// Return the enclave's public keys (recipient X25519, attestation, Noise
     /// static, tribute-BLS).
     GetPublicKeys,
@@ -563,13 +550,17 @@ pub enum EnclaveRequest {
     /// authenticated NodeHost session and only when the intent matches the
     /// sealed identity. A transition additionally returns a purpose-bound
     /// proof that this enclave has the permanent offer key resident.
-    GenerateDcapQuote { intent: Vec<u8> },
+    GenerateDcapQuote {
+        intent: Vec<u8>,
+    },
     /// Sign one exact GramineDirectDev registration intent inside the enclave.
     /// The development transport accepts this command. An authenticated
     /// production NodeHost session also accepts it when the enclave itself
     /// detects SGX with remote attestation disabled. It never returns an SGX
     /// quote or hardware-attestation claim.
-    SignRegistrationIntentDevV1 { intent: Vec<u8> },
+    SignRegistrationIntentDevV1 {
+        intent: Vec<u8>,
+    },
 
     /// Start one bounded, request-committed DCAP verification upload. Evidence
     /// and policy bytes follow in strictly sequential chunks on this same
@@ -602,7 +593,9 @@ pub enum EnclaveRequest {
         bytes: Vec<u8>,
     },
     /// Finish the exact upload and run the full enclave-resident verifier.
-    FinishDcapVerificationV1 { request_hash: B256 },
+    FinishDcapVerificationV1 {
+        request_hash: B256,
+    },
 
     /// Open a TEE DKG ceremony session inside the enclave. Each `participants[i]`
     /// bundles a BLS identity, its announced X25519 share-encryption key, and the
@@ -622,7 +615,9 @@ pub enum EnclaveRequest {
     },
     /// Seam A: deal + seal per-player shares. Returns the public commitment and
     /// one opaque sealed share per participant.
-    DkgStartDealer { ceremony_id: B256 },
+    DkgStartDealer {
+        ceremony_id: B256,
+    },
     /// Seam B: open + verify an incoming sealed dealing inside the enclave. The
     /// host relays the opaque `sealed_share` without decrypting it.
     DkgPlayerIngest {
@@ -638,7 +633,9 @@ pub enum EnclaveRequest {
         ack: Vec<u8>,
     },
     /// Seam D: finalize this enclave's dealing into a signed dealer log.
-    DkgDealerFinalize { ceremony_id: B256 },
+    DkgDealerFinalize {
+        ceremony_id: B256,
+    },
     /// Seam E: verify the collected signed dealer logs and recover this enclave's
     /// local threshold share (committed inside the enclave). Returns the public
     /// group key and the share commitment.
@@ -652,7 +649,9 @@ pub enum EnclaveRequest {
     /// only the opaque ciphertexts. It never sees a plaintext partial, so it
     /// cannot recover the group signature (and hence the offer key) itself.
     /// Requires `DkgPlayerFinalize` first.
-    DkgTributeOfferPartial { ceremony_id: B256 },
+    DkgTributeOfferPartial {
+        ceremony_id: B256,
+    },
     /// Founding Seam F: finalize the initial group threshold signature from the
     /// sealed partials addressed to THIS enclave (decrypted in-SGX). Then install
     /// the one permanent offer X25519 keypair. The capability matrix permits
@@ -675,7 +674,9 @@ pub enum EnclaveRequest {
     /// prepares for multi-offer txs. This is the sole offer-processing
     /// entrypoint. The enclave decrypts, applies the price, computes economics +
     /// Poseidon `token_id`, and returns `TributeOfferResult`.
-    ProcessTributeOfferBatch { offers: Vec<EncryptedTributeOffer> },
+    ProcessTributeOfferBatch {
+        offers: Vec<EncryptedTributeOffer>,
+    },
 
     /// Start one streaming finalized-admission verification rooted in the
     /// measured genesis committee. The enclave retains only the current
@@ -704,7 +705,9 @@ pub enum EnclaveRequest {
     },
     /// After a verified admission record, decrypt,
     /// durably seal, and only finally activate the resident offer key.
-    FinishDcapOnboardingArtifactIngestV1 { request_hash: B256 },
+    FinishDcapOnboardingArtifactIngestV1 {
+        request_hash: B256,
+    },
 
     /// Apply a Gratis write op over encrypted per-account state. The enclave:
     /// 1. derives the resident `gratis_state_key` from the same group signature
@@ -715,12 +718,16 @@ pub enum EnclaveRequest {
     ///
     /// This is a consensus path (called inside precompile `dispatch`, re-executed
     /// by every validator).
-    ApplyGratisOp { request: Box<GratisOpRequest> },
+    ApplyGratisOp {
+        request: Box<GratisOpRequest>,
+    },
 
     /// Like [`EnclaveRequest::ApplyGratisOp`] but for the confidential Promis
     /// ledger (mint/burn over an encrypted balance). Consensus path, re-executed
     /// by every validator.
-    ApplyPromisOp { request: Box<PromisOpRequest> },
+    ApplyPromisOp {
+        request: Box<PromisOpRequest>,
+    },
 
     /// Off-chain key delivery: derive `account`'s view + modify keys for `ledger`
     /// from the matching resident state key. Then seal them to the requester's
@@ -744,7 +751,9 @@ pub enum EnclaveRequest {
     /// Apply a standalone Fidelity cohort mutation (`In`/`Out`) over encrypted
     /// per-account state, on its own round-trip. Consensus path, re-executed by
     /// every validator. See [`FidelityCohortRequest`].
-    ApplyFidelityCohortOp { request: Box<FidelityCohortRequest> },
+    ApplyFidelityCohortOp {
+        request: Box<FidelityCohortRequest>,
+    },
 
     /// Batch-decrypt cohort blobs and return one plaintext league per owner. This
     /// is metadosis's once-per-WWD Fidelity snapshot. Consensus path (OCOMP
@@ -756,7 +765,9 @@ pub enum EnclaveRequest {
     /// Owner-authorized read of one account's RCFI/league over its encrypted
     /// cohorts (signed, expiring authorization, see [`FidelityQueryRequest`]).
     /// NOT a consensus path. Served via `eth_call`.
-    QueryFidelityIndex { request: Box<FidelityQueryRequest> },
+    QueryFidelityIndex {
+        request: Box<FidelityQueryRequest>,
+    },
 
     /// Read-only health/telemetry probe: uptime, request counters, offer-key
     /// readiness and self-observed heap usage. Never touches keys or sealed
@@ -801,9 +812,13 @@ pub enum EnclaveRequest {
         expected_tribute_offer_epoch: u64,
     },
     /// Appended wire variant. Proves resident-key readiness without a DCAP quote.
-    GenerateTransitionEvidenceDevV1 { intent: Vec<u8> },
+    GenerateTransitionEvidenceDevV1 {
+        intent: Vec<u8>,
+    },
     /// Revoke pre-boundary remote tickets and open sessions. Owner-only and monotonic.
-    RetireRemoteSessionsV1 { activation_height: u64 },
+    RetireRemoteSessionsV1 {
+        activation_height: u64,
+    },
     AuthorizeRemoteSessionV2 {
         ticket_id: B256,
         initiator_static_x25519: [u8; 32],
@@ -820,6 +835,54 @@ pub enum EnclaveRequest {
         anchor_outcome: Vec<u8>,
         export: bool,
     },
+    CreateNodForTestV2 {
+        terms: outbe_primitives::nod_encryption::NodTermsV2,
+        creator_public: [u8; 32],
+        amount: U256,
+    },
+    PrepareEncryptedNodsV2 {
+        request: Box<crate::nod_materialization::PrepareEncryptedNodsRequestV2>,
+    },
+    OpenEncryptedNodsV2 {
+        authority: crate::nod_materialization::NodMaterializationAuthorityV2,
+        carrier: Vec<u8>,
+    },
+    MineEncryptedNodV2 {
+        request: Box<crate::nod_mine::MineEncryptedNodRequestV2>,
+    },
+    ReadNodAmountV2 {
+        nod: outbe_primitives::nod_encryption::EncryptedNodV2,
+    },
+    NodTransferChunkV2 {
+        id: B256,
+        total: u32,
+        offset: u32,
+        bytes: Vec<u8>,
+    },
+    ExecuteNodTransferV2 {
+        id: B256,
+    },
+    ReadNodTransferV2 {
+        id: B256,
+        offset: u32,
+    },
+    DiscardNodTransferV2 {
+        id: B256,
+    },
+    /// Creator-owned encrypted Tribute records; requires the installed network key.
+    ProcessEncryptedTributeOfferBatchV2 {
+        offers: Vec<EncryptedTributeOffer>,
+    },
+    /// Private calculation bridge for authenticated NodeHost consumers.
+    ReadTributeAmountsV2 {
+        tributes: Vec<outbe_primitives::tribute_encryption::EncryptedTributeV2>,
+    },
+    ApplyTributeDayOpV2 {
+        request: Box<crate::tribute_day::TributeDayOpRequestV2>,
+    },
+    ReadTributeDayAmountV2 {
+        record: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2,
+    },
 }
 
 impl EnclaveRequest {
@@ -827,6 +890,21 @@ impl EnclaveRequest {
     /// both the node client and the enclave server. Never wire data.
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::CreateNodForTestV2 { .. } => "create_nod_for_test_v2",
+            Self::PrepareEncryptedNodsV2 { .. } => "prepare_encrypted_nods_v2",
+            Self::OpenEncryptedNodsV2 { .. } => "open_encrypted_nods_v2",
+            Self::MineEncryptedNodV2 { .. } => "mine_encrypted_nod_v2",
+            Self::ReadNodAmountV2 { .. } => "read_nod_amount_v2",
+            Self::NodTransferChunkV2 { .. } => "nod_transfer_chunk_v2",
+            Self::ExecuteNodTransferV2 { .. } => "execute_nod_transfer_v2",
+            Self::ReadNodTransferV2 { .. } => "read_nod_transfer_v2",
+            Self::DiscardNodTransferV2 { .. } => "discard_nod_transfer_v2",
+            Self::ApplyTributeDayOpV2 { .. } => "apply_tribute_day_op_v2",
+            Self::ReadTributeDayAmountV2 { .. } => "read_tribute_day_amount_v2",
+            Self::ProcessEncryptedTributeOfferBatchV2 { .. } => {
+                "process_encrypted_tribute_offer_batch_v2"
+            }
+            Self::ReadTributeAmountsV2 { .. } => "read_tribute_amounts_v2",
             Self::BeginUpgradeKeyTransferV1 { .. } => "begin_upgrade_key_transfer_v1",
             Self::GetQuote { .. } => "get_quote",
             Self::GetInitializationChallenge => "get_initialization_challenge",
@@ -892,7 +970,20 @@ impl EnclaveRequest {
     /// choice.
     pub const fn is_idempotent(&self) -> bool {
         match self {
+            Self::CreateNodForTestV2 { .. } => true,
             Self::GetQuote { .. }
+            | Self::PrepareEncryptedNodsV2 { .. }
+            | Self::OpenEncryptedNodsV2 { .. }
+            | Self::MineEncryptedNodV2 { .. }
+            | Self::ReadNodAmountV2 { .. }
+            | Self::NodTransferChunkV2 { .. }
+            | Self::ExecuteNodTransferV2 { .. }
+            | Self::ReadNodTransferV2 { .. }
+            | Self::DiscardNodTransferV2 { .. }
+            | Self::ProcessEncryptedTributeOfferBatchV2 { .. }
+            | Self::ReadTributeAmountsV2 { .. }
+            | Self::ApplyTributeDayOpV2 { .. }
+            | Self::ReadTributeDayAmountV2 { .. }
             | Self::GetPublicKeys
             | Self::GenerateDcapQuote { .. }
             | Self::SignRegistrationIntentDevV1 { .. }
@@ -1312,6 +1403,81 @@ pub enum EnclaveResponse {
         request_hash: B256,
         artifact: Vec<u8>,
     },
+    NodCreatedForTestV2 {
+        nod: outbe_primitives::nod_encryption::EncryptedNodV2,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    EncryptedNodsPreparedV2 {
+        carrier: Vec<u8>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    EncryptedNodsRejectedV2 {
+        reason: String,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    EncryptedNodsCapacityExceededV2 {
+        reason: String,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    EncryptedNodMintRejectedV2 {
+        reason: String,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    EncryptedNodsOpenedV2 {
+        nods: Vec<outbe_primitives::nod_encryption::EncryptedNodV2>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    EncryptedNodMinedV2 {
+        result: Box<crate::nod_mine::MineEncryptedNodResultV2>,
+    },
+    NodAmountReadV2 {
+        amount: U256,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    NodTransferAckV2 {
+        id: B256,
+        next_offset: u32,
+    },
+    NodTransferReadyV2 {
+        id: B256,
+        total: u32,
+        digest: B256,
+    },
+    NodTransferOutputV2 {
+        id: B256,
+        offset: u32,
+        bytes: Vec<u8>,
+    },
+    NodTransferDiscardedV2 {
+        id: B256,
+    },
+    EncryptedTributeOfferBatchV2 {
+        results: Vec<crate::tribute_v2::EncryptedTributeOfferResultV2>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    TributeAmountsReadV2 {
+        amounts: Vec<outbe_primitives::tribute_encryption::TributeAmountsV2>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    TributeDayOpAppliedV2 {
+        record: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    TributeDayAmountReadV2 {
+        amount: U256,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
 }
 
 /// Deterministic hash over the canonical inputs of a single Gratis op. SHARED by
@@ -1329,6 +1495,7 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
     buf.extend_from_slice(req.account.as_slice());
     buf.extend_from_slice(&req.amount.to_be_bytes::<32>());
     push_bytes(&mut buf, &req.current_balance);
+    push_bytes(&mut buf, &req.current_pledged);
     buf.extend_from_slice(&req.modify_auth.mac);
     buf.extend_from_slice(&req.modify_auth.op_nonce.to_be_bytes());
     match &req.fidelity {
@@ -1358,9 +1525,9 @@ pub fn gratis_op_attestation_preimage(
     let mut probe = result.clone();
     probe.attestation_tag = Vec::new();
     let result_json = serde_json::to_vec(&probe).unwrap_or_default();
-    // v2: the result JSON now carries the optional Fidelity section outcome.
+    // v3: the result JSON carries the pledged blob.
     let mut buf = Vec::with_capacity(31 + 32 + 4 + result_json.len());
-    buf.extend_from_slice(b"outbe/tee/gratis-attestation/v2");
+    buf.extend_from_slice(b"outbe/tee/gratis-attestation/v3");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);

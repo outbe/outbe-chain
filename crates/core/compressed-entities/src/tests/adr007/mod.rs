@@ -45,6 +45,8 @@ use fixtures::{
 
 mod cleanup;
 mod encoding;
+mod encrypted_nod;
+mod encrypted_tribute;
 mod gas;
 mod queries;
 mod rollback;

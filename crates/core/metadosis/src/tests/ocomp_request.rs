@@ -66,7 +66,8 @@ fn seed_active_ocomp_snapshot(
 fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
-    let scope = ExecutionScope::new();
+    outbe_tribute::enclave_client::test_enclave::install();
+    let scope = ExecutionScope::default();
     let parent = TestParent::empty();
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0708);
     let block_number = 19;
@@ -436,6 +437,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
 fn ineligible_request_defers_only_the_ready_key_without_effects() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let fixture = prepare_request_fixture(&mut provider, false);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -477,8 +479,9 @@ fn ineligible_request_defers_only_the_ready_key_without_effects() {
 fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
-    // Oracle starts un-armed so the first ready day defers (OracleProfileNotReady).
-    // The test arms it mid-test so the later day becomes eligible.
+    outbe_tribute::enclave_client::test_enclave::install();
+    // Oracle starts un-armed so the first ready day defers (OracleProfileNotReady);
+    // it is armed mid-test so the later day becomes eligible.
     let fixture = prepare_ready_days_fixture(&mut provider, false);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -558,6 +561,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
 fn two_eligible_days_create_independently_progressing_live_jobs() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let fixture = prepare_ready_days_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -671,6 +675,7 @@ fn fresh_job_uses_active_successor_while_pre_activation_job_keeps_predecessor_pi
     let mut provider =
         HashMapStorageProvider::new_with_chain_identity(chain::CHAIN_ID, genesis_hash);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let fixture = prepare_ready_days_fixture(&mut provider, true);
     let limits = poc_schema_limits();
     let successor_activation_height = fixture.block_number + 1;
@@ -788,6 +793,7 @@ fn fresh_job_uses_active_successor_while_pre_activation_job_keeps_predecessor_pi
 fn three_eligible_days_create_independently_progressing_live_jobs() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let fixture = prepare_ready_days_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -843,6 +849,7 @@ fn three_eligible_days_create_independently_progressing_live_jobs() {
 fn awaiting_finality_expires_at_own_deadline_and_releases_live_capacity() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let fixture = prepare_ready_days_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -911,6 +918,7 @@ fn awaiting_finality_expires_at_own_deadline_and_releases_live_capacity() {
 fn terminal_request_rejects_a_missing_current_validator_snapshot() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let fixture = prepare_request_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -940,6 +948,7 @@ fn terminal_request_rejects_a_missing_current_validator_snapshot() {
 fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let fixture = prepare_request_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -1089,6 +1098,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
 fn request_storage_failure_rolls_back_every_observable_effect() {
     let mut calibration = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let calibration_fixture = prepare_request_fixture(&mut calibration, true);
     calibration.set_block_number(calibration_fixture.block_number);
     calibration.set_timestamp(U256::from(calibration_fixture.block_time));
@@ -1117,6 +1127,7 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
 
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let fixture = prepare_request_fixture(&mut provider, true);
     let before = StorageHandle::enter(&mut provider, |storage| {
         request_observables(storage, fixture.wwd)
@@ -1185,7 +1196,7 @@ fn prepare_request_fixture_with_day_type(
     oracle_ready: bool,
     day_type: WwdDayType,
 ) -> PreparedRequestFixture {
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let parent = TestParent::empty();
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0709);
     let block_number = 23;
@@ -1195,6 +1206,7 @@ fn prepare_request_fixture_with_day_type(
     let authority = crate::fixture_kernel::fixture_authority(chain::CHAIN_ID);
 
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
         seed_active_ocomp_snapshot(storage.clone(), 5);
         crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
@@ -1271,7 +1283,7 @@ fn prepare_ready_days_fixture(
     provider: &mut HashMapStorageProvider,
     oracle_ready: bool,
 ) -> ReadyDaysFixture {
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let parent = TestParent::empty();
     let first_wwd = outbe_primitives::time::WorldwideDay::new(2026_0710);
     let later_wwd = outbe_primitives::time::WorldwideDay::new(2026_0711);
@@ -1281,6 +1293,7 @@ fn prepare_ready_days_fixture(
     let authority = crate::fixture_kernel::fixture_authority(chain::CHAIN_ID);
 
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
         seed_active_ocomp_snapshot(storage.clone(), 5);
         crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
@@ -1338,7 +1351,7 @@ fn prepare_ready_days_fixture(
                     &scope,
                     &parent,
                     &TributeData {
-                        tribute_id: NodContract::generate_nod_id(owner, wwd).unwrap(),
+                        tribute_id: outbe_nod::identity::generate_nod_id(owner, wwd).unwrap(),
                         owner,
                         worldwide_day: wwd,
                         issuance_amount_minor: U256::from(1_000),
@@ -1422,7 +1435,8 @@ fn request_observables(
 fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
-    let scope = ExecutionScope::new();
+    outbe_tribute::enclave_client::test_enclave::install();
+    let scope = ExecutionScope::default();
     let parent = TestParent::empty();
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0709);
     let block_number = 19;

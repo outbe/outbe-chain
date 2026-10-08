@@ -8,7 +8,7 @@ fn gas_reserve_is_first_touch_only_and_oog_rolls_back_before_overlay_write() {
 
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_gas_limit(FIRST_TRIBUTE_CLEANUP_GAS + 100_000);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
         let first_touch = scope.explicit_gas_checkpoint();
@@ -39,7 +39,7 @@ fn gas_reserve_is_first_touch_only_and_oog_rolls_back_before_overlay_write() {
 
     let mut body_oog = HashMapStorageProvider::new(1);
     body_oog.set_gas_limit(FIRST_BODY_TOUCH_CLEANUP_GAS - 1);
-    let body_scope = ExecutionScope::new();
+    let body_scope = ExecutionScope::default();
     StorageHandle::enter(&mut body_oog, |storage| {
         begin_block(storage.clone(), &body_scope).unwrap();
         let failed_charge = body_scope.explicit_gas_checkpoint();
@@ -65,7 +65,7 @@ fn gas_reserve_is_first_touch_only_and_oog_rolls_back_before_overlay_write() {
             + INDEX_TOUCHED_LENGTH_CLEANUP_GAS
             - 1,
     );
-    let index_scope = ExecutionScope::new();
+    let index_scope = ExecutionScope::default();
     StorageHandle::enter(&mut index_oog, |storage| {
         begin_block(storage.clone(), &index_scope).unwrap();
         let failed_charge = index_scope.explicit_gas_checkpoint();
@@ -93,7 +93,7 @@ fn gas_reserve_is_first_touch_only_and_oog_rolls_back_before_overlay_write() {
 fn static_context_rejects_mutation_before_overlay_or_event_state() {
     let owner = address!("8210000000000000000000000000000000000008");
     let body = tribute(entity(14, 85), owner, 100);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -121,7 +121,7 @@ fn explicit_gas_window_stops_a_system_transaction_before_it_exceeds_its_envelope
     let owner = address!("8300000000000000000000000000000000000008");
     let first = tribute(entity(14, 83), owner, 100);
     let second = tribute(entity(14, 84), owner, 101);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_gas_limit(FIRST_TRIBUTE_CLEANUP_GAS * 2);
 
@@ -149,7 +149,7 @@ fn ce_work_meter_reserves_unique_keys_and_restores_only_excluded_transactions() 
     let second = tribute(entity(14, 86), owner, 101);
     let third = tribute(entity(14, 87), owner, 102);
     let tree = Arc::new(TestAuthenticatedTree::default());
-    let scope = ExecutionScope::with_parent_tree(tree, CeWorkConfig::new(3, 4, 11));
+    let scope = crate::execution_scope::with_parent_tree(tree, CeWorkConfig::new(3, 4, 11));
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -179,7 +179,7 @@ fn ce_work_meter_reserves_unique_keys_and_restores_only_excluded_transactions() 
         ));
     });
 
-    let too_small = ExecutionScope::with_parent_tree(
+    let too_small = crate::execution_scope::with_parent_tree(
         Arc::new(TestAuthenticatedTree::default()),
         CeWorkConfig::new(3, 4, 6),
     );
@@ -192,7 +192,7 @@ fn ce_work_meter_reserves_unique_keys_and_restores_only_excluded_transactions() 
         ));
     });
 
-    let multi_key = ExecutionScope::with_parent_tree(
+    let multi_key = crate::execution_scope::with_parent_tree(
         Arc::new(TestAuthenticatedTree::default()),
         CeWorkConfig::new(3, 4, 11),
     );
@@ -213,7 +213,7 @@ fn ce_work_meter_reserves_unique_keys_and_restores_only_excluded_transactions() 
         multi_key.end_ce_work_transaction().unwrap();
     });
 
-    let overlapping_transaction = ExecutionScope::with_parent_tree(
+    let overlapping_transaction = crate::execution_scope::with_parent_tree(
         Arc::new(TestAuthenticatedTree::default()),
         CeWorkConfig::new(3, 4, 11),
     );
@@ -260,7 +260,7 @@ fn ce_work_meter_reserves_unique_keys_and_restores_only_excluded_transactions() 
         overlapping_transaction.end_ce_work_transaction().unwrap();
     });
 
-    let remaining_capacity = ExecutionScope::with_parent_tree(
+    let remaining_capacity = crate::execution_scope::with_parent_tree(
         Arc::new(TestAuthenticatedTree::default()),
         CeWorkConfig::new(3, 4, 11),
     );
@@ -400,7 +400,7 @@ fn golden_read_list_and_first_touch_gas_coefficients_are_exact() {
     let mut body_length_oog = HashMapStorageProvider::new(1);
     body_length_oog
         .set_gas_limit(FIRST_BODY_TOUCH_CLEANUP_GAS + BODY_TOUCHED_LENGTH_CLEANUP_GAS - 1);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut body_length_oog, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
         let checkpoint = scope.explicit_gas_checkpoint();
@@ -424,7 +424,7 @@ fn golden_read_list_and_first_touch_gas_coefficients_are_exact() {
             + INDEX_TOUCHED_LENGTH_CLEANUP_GAS
             - 1,
     );
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut index_length_oog, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
         let checkpoint = scope.explicit_gas_checkpoint();

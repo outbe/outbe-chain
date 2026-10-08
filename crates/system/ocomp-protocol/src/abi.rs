@@ -1,6 +1,6 @@
 use alloy_primitives::{address, b256, Address, B256, U256};
 
-use crate::nod_materialization::NodMaterializationBatchV1;
+use crate::nod_materialization::{NodMaterializationBatchV1, ProtectedNodMaterializationV2};
 use crate::{vote::ResultVoteV1, ProtocolError, SchemaLimits};
 
 pub const METADOSIS_ADDRESS: Address = address!("000000000000000000000000000000000000100e");
@@ -86,6 +86,28 @@ pub fn decode_materialize_certified_nods_calldata(
     NodMaterializationBatchV1::decode_canonical(payload, limits)
 }
 
+pub fn encode_protected_materialize_certified_nods_calldata(
+    batch: &ProtectedNodMaterializationV2,
+    limits: &SchemaLimits,
+) -> Result<Vec<u8>, ProtocolError> {
+    encode_dynamic_bytes_call(
+        MATERIALIZE_CERTIFIED_NODS_SELECTOR,
+        &batch.encode_canonical(limits)?,
+    )
+}
+
+pub fn decode_protected_materialize_certified_nods_calldata(
+    calldata: &[u8],
+    limits: &SchemaLimits,
+) -> Result<ProtectedNodMaterializationV2, ProtocolError> {
+    let payload = decode_dynamic_bytes_call(
+        calldata,
+        MATERIALIZE_CERTIFIED_NODS_SELECTOR,
+        limits.codec.max_body_bytes,
+    )?;
+    ProtectedNodMaterializationV2::decode_canonical(payload, limits)
+}
+
 fn encode_dynamic_bytes_call(selector: [u8; 4], payload: &[u8]) -> Result<Vec<u8>, ProtocolError> {
     let padded_len = payload
         .len()
@@ -113,6 +135,39 @@ fn decode_dynamic_bytes_call(
     payload_cap: usize,
 ) -> Result<&[u8], ProtocolError> {
     const ABI_HEAD_LEN: usize = 68;
+    let payload_len = dynamic_bytes_payload_len(calldata, selector, payload_cap)?;
+    let padded_len = payload_len.checked_add(31).map(|value| value & !31).ok_or(
+        ProtocolError::IntegerOverflow {
+            what: "dynamic ABI padding",
+        },
+    )?;
+    let expected_len =
+        ABI_HEAD_LEN
+            .checked_add(padded_len)
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "dynamic ABI calldata length",
+            })?;
+    if calldata.len() != expected_len {
+        return Err(ProtocolError::InvalidInvariant("dynamic ABI length"));
+    }
+    let payload_end =
+        ABI_HEAD_LEN
+            .checked_add(payload_len)
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "dynamic ABI payload end",
+            })?;
+    if !calldata[payload_end..].iter().all(|byte| *byte == 0) {
+        return Err(ProtocolError::InvalidInvariant("dynamic ABI padding"));
+    }
+    Ok(&calldata[ABI_HEAD_LEN..payload_end])
+}
+
+fn dynamic_bytes_payload_len(
+    calldata: &[u8],
+    selector: [u8; 4],
+    payload_cap: usize,
+) -> Result<usize, ProtocolError> {
+    const ABI_HEAD_LEN: usize = 68;
     if calldata.len() < ABI_HEAD_LEN {
         return Err(ProtocolError::UnexpectedEof {
             offset: 0,
@@ -139,28 +194,5 @@ fn decode_dynamic_bytes_call(
             actual: payload_len,
         });
     }
-    let padded_len = payload_len.checked_add(31).map(|value| value & !31).ok_or(
-        ProtocolError::IntegerOverflow {
-            what: "dynamic ABI padding",
-        },
-    )?;
-    let expected_len =
-        ABI_HEAD_LEN
-            .checked_add(padded_len)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "dynamic ABI calldata length",
-            })?;
-    if calldata.len() != expected_len {
-        return Err(ProtocolError::InvalidInvariant("dynamic ABI length"));
-    }
-    let payload_end =
-        ABI_HEAD_LEN
-            .checked_add(payload_len)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "dynamic ABI payload end",
-            })?;
-    if !calldata[payload_end..].iter().all(|byte| *byte == 0) {
-        return Err(ProtocolError::InvalidInvariant("dynamic ABI padding"));
-    }
-    Ok(&calldata[ABI_HEAD_LEN..payload_end])
+    Ok(payload_len)
 }

@@ -2,6 +2,7 @@
 //! including late finalize credit settlement.
 
 use super::*;
+use outbe_offchain_data::runtime_body_readers;
 
 #[test]
 fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifacts() {
@@ -18,7 +19,7 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
         let install = test_ocomp_fork_install(&chain_spec, &[(proposer, dummy_pubkey(0xA2))]);
         let config = OutbeEvmConfig::new_with_runtime_body_readers(
             chain_spec.clone(),
-            RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
+            runtime_body_readers(Arc::new(MemoryStorage::new())),
         )
         .with_evm_signer(signer)
         .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))

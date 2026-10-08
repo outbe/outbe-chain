@@ -1,5 +1,7 @@
 //! Bounded-RAM reconstruction of one sealed Tribute partition.
 
+mod reduce;
+
 use std::{
     cmp::Ordering,
     collections::BinaryHeap,
@@ -69,6 +71,14 @@ pub struct BoundedTributePartitionVerifier {
     peak_buffered_records: usize,
     pushed_count: u32,
     run_count: u64,
+}
+
+struct MergeRunGroup {
+    input_pass: u32,
+    start: u64,
+    end: u64,
+    output_pass: u32,
+    output_index: u64,
 }
 
 impl BoundedTributePartitionVerifier {
@@ -177,16 +187,8 @@ impl BoundedTributePartitionVerifier {
         mut self,
         on_progress: impl Fn(),
     ) -> Result<VerifiedTributePartition, TributePartitionReconstructionError> {
-        if self.pushed_count != self.expectation.exact_leaf_count {
-            return Err(TributePartitionReconstructionError::CountMismatch {
-                expected: self.expectation.exact_leaf_count,
-                actual: self.pushed_count,
-            });
-        }
-        self.flush_run()?;
-        on_progress();
-        let final_run = self.merge_runs(&on_progress)?;
-        let root = self.reduce_sorted_run(final_run.as_deref(), &on_progress)?;
+        let final_run = self.prepare_sorted_run(&on_progress)?;
+        let root = reduce::sorted_run(final_run.as_deref(), self.expectation.day, &on_progress)?;
         if root != self.expectation.expected_collection_root {
             return Err(TributePartitionReconstructionError::RootMismatch {
                 expected: self.expectation.expected_collection_root,
@@ -197,6 +199,75 @@ impl BoundedTributePartitionVerifier {
             collection_root: root,
             exact_leaf_count: self.pushed_count,
         })
+    }
+
+    /// Retains bounded-memory membership evidence from the same authenticated inventory.
+    pub fn finish_with_archive(
+        mut self,
+        on_progress: impl Fn(),
+    ) -> Result<
+        crate::collection_proof_archive::TributeProofArchiveV1,
+        TributePartitionReconstructionError,
+    > {
+        use crate::collection_proof_archive::ArchiveNodeWriter;
+        let final_run = self.prepare_sorted_run(&on_progress)?;
+        let mut reader = final_run.map(RunReader::open).transpose()?;
+        let mut next = next_archive_record(&mut reader)?;
+        let mut roots = [B256::ZERO; 16];
+        let mut ids = [0; 16];
+        for shard in 0..16 {
+            let writer = ArchiveNodeWriter::create(&self.scratch_root, shard)?;
+            let mut reducer = SortedPoseidonRootReducer::with_observer(writer);
+            while next
+                .as_ref()
+                .is_some_and(|record| record.shard == shard as u32)
+            {
+                let record = next
+                    .take()
+                    .ok_or(TributePartitionReconstructionError::IntegerOverflow)?;
+                if shard_index(record.key, 16).map_err(map_tree)? != shard as u32 {
+                    return Err(TributePartitionReconstructionError::CorruptRun(
+                        self.scratch_root.clone(),
+                    ));
+                }
+                reducer.push(record.key, record.leaf).map_err(map_tree)?;
+                next = next_archive_record(&mut reader)?;
+                on_progress();
+            }
+            let (root, writer, id) = reducer.finish_observing().map_err(map_tree)?;
+            writer.finish()?;
+            roots[shard] = B256::from(root.as_bytes());
+            ids[shard] = id.unwrap_or(0);
+        }
+        if next.is_some() {
+            return Err(TributePartitionReconstructionError::CorruptRun(
+                self.scratch_root.clone(),
+            ));
+        }
+        if let Some(reader) = reader {
+            reader.finish()?;
+        }
+        crate::collection_proof_archive::publish_tribute_proof_archive(
+            self.scratch_root,
+            self.expectation,
+            roots,
+            ids,
+        )
+    }
+
+    fn prepare_sorted_run(
+        &mut self,
+        on_progress: &impl Fn(),
+    ) -> Result<Option<PathBuf>, TributePartitionReconstructionError> {
+        if self.pushed_count != self.expectation.exact_leaf_count {
+            return Err(TributePartitionReconstructionError::CountMismatch {
+                expected: self.expectation.exact_leaf_count,
+                actual: self.pushed_count,
+            });
+        }
+        self.flush_run()?;
+        on_progress();
+        self.merge_runs(on_progress)
     }
 
     fn flush_run(&mut self) -> Result<(), TributePartitionReconstructionError> {
@@ -254,7 +325,16 @@ impl BoundedTributePartitionVerifier {
                     .checked_add(fan_in)
                     .ok_or(TributePartitionReconstructionError::IntegerOverflow)?
                     .min(run_count);
-                self.merge_run_group(pass, start, end, output_pass, output_index, on_progress)?;
+                self.merge_run_group(
+                    MergeRunGroup {
+                        input_pass: pass,
+                        start,
+                        end,
+                        output_pass,
+                        output_index,
+                    },
+                    on_progress,
+                )?;
             }
             for input_index in 0..run_count {
                 let path = run_path(&self.scratch_root, pass, input_index);
@@ -271,13 +351,16 @@ impl BoundedTributePartitionVerifier {
 
     fn merge_run_group(
         &self,
-        input_pass: u32,
-        start: u64,
-        end: u64,
-        output_pass: u32,
-        output_index: u64,
+        group: MergeRunGroup,
         on_progress: &impl Fn(),
     ) -> Result<(), TributePartitionReconstructionError> {
+        let MergeRunGroup {
+            input_pass,
+            start,
+            end,
+            output_pass,
+            output_index,
+        } = group;
         let reader_count = usize::try_from(end - start)
             .map_err(|_| TributePartitionReconstructionError::IntegerOverflow)?;
         let mut readers = Vec::with_capacity(reader_count);
@@ -315,60 +398,16 @@ impl BoundedTributePartitionVerifier {
         }
         writer.finish()
     }
+}
 
-    fn reduce_sorted_run(
-        &self,
-        run: Option<&Path>,
-        on_progress: &impl Fn(),
-    ) -> Result<B256, TributePartitionReconstructionError> {
-        let mut roots = vec![B256::ZERO; CeDomain::Tribute.shard_count() as usize];
-        if let Some(path) = run {
-            let mut reader = RunReader::open(path.to_path_buf())?;
-            let mut current_shard = None;
-            let mut reducer = SortedPoseidonRootReducer::new();
-            while let Some(record) = reader.next_record()? {
-                let derived_shard = shard_index(record.key, CeDomain::Tribute.shard_count())
-                    .map_err(|error| {
-                        TributePartitionReconstructionError::Tree(error.to_string())
-                    })?;
-                if record.shard != derived_shard {
-                    return Err(TributePartitionReconstructionError::CorruptRun(
-                        path.to_path_buf(),
-                    ));
-                }
-                if current_shard.is_some_and(|shard| shard != record.shard) {
-                    let shard = current_shard
-                        .take()
-                        .ok_or(TributePartitionReconstructionError::IntegerOverflow)?;
-                    roots[usize::try_from(shard)
-                        .map_err(|_| TributePartitionReconstructionError::IntegerOverflow)?] =
-                        B256::from(reducer.finish().map_err(map_tree)?.as_bytes());
-                    reducer = SortedPoseidonRootReducer::new();
-                }
-                current_shard = Some(record.shard);
-                reducer.push(record.key, record.leaf).map_err(|error| {
-                    if error == crate::smt::TreeError::DuplicateKey {
-                        TributePartitionReconstructionError::Collection(
-                            CollectionError::DuplicateTributeKey,
-                        )
-                    } else {
-                        map_tree(error)
-                    }
-                })?;
-                on_progress();
-            }
-            if let Some(shard) = current_shard {
-                roots[usize::try_from(shard)
-                    .map_err(|_| TributePartitionReconstructionError::IntegerOverflow)?] =
-                    B256::from(reducer.finish().map_err(map_tree)?.as_bytes());
-            }
-            reader.finish()?;
-        }
-        let shard_top_root = aggregate_b256_shard_roots(&roots)
-            .map_err(|error| TributePartitionReconstructionError::Tree(error.to_string()))?;
-        let (_, key) = partition_collection_key(PartitionRef::TributeWwd(self.expectation.day))?;
-        collection_root(CeDomain::Tribute, key, shard_top_root).map_err(Into::into)
-    }
+fn next_archive_record(
+    reader: &mut Option<RunReader>,
+) -> Result<Option<RunRecord>, TributePartitionReconstructionError> {
+    reader
+        .as_mut()
+        .map(RunReader::next_record)
+        .transpose()
+        .map(Option::flatten)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -69,7 +69,7 @@ fn top_level_create_uses_canonical_collision_while_adjacent_create_succeeds() {
 
     let mut reserved_db = CacheDB::new(EmptyDB::default());
     reserved_db.insert_account_info(reserved_caller, funded_account(0));
-    let mut reserved_evm = OutbeEvmFactory::new().create_evm(reserved_db, test_env());
+    let mut reserved_evm = OutbeEvmFactory::default().create_evm(reserved_db, test_env());
     let reserved = reserved_evm
         .transact_raw(create_tx(reserved_caller, 0))
         .expect("reserved create executes as an EVM halt");
@@ -89,7 +89,7 @@ fn top_level_create_uses_canonical_collision_while_adjacent_create_succeeds() {
 
     let mut inspected_db = CacheDB::new(EmptyDB::default());
     inspected_db.insert_account_info(reserved_caller, funded_account(0));
-    let mut inspected_evm = OutbeEvmFactory::new().create_evm_with_inspector(
+    let mut inspected_evm = OutbeEvmFactory::default().create_evm_with_inspector(
         inspected_db,
         test_env(),
         NoOpInspector {},
@@ -119,7 +119,7 @@ fn top_level_create_uses_canonical_collision_while_adjacent_create_succeeds() {
         },
     );
     let mut canonical_collision_evm =
-        OutbeEvmFactory::new().create_evm(canonical_collision_db, test_env());
+        OutbeEvmFactory::default().create_evm(canonical_collision_db, test_env());
     let canonical_collision = canonical_collision_evm
         .transact_raw(create_tx(adjacent_caller, 0))
         .expect("ordinary occupied target produces a collision halt");
@@ -137,7 +137,7 @@ fn top_level_create_uses_canonical_collision_while_adjacent_create_succeeds() {
 
     let mut adjacent_db = CacheDB::new(EmptyDB::default());
     adjacent_db.insert_account_info(adjacent_caller, funded_account(0));
-    let mut adjacent_evm = OutbeEvmFactory::new().create_evm(adjacent_db, test_env());
+    let mut adjacent_evm = OutbeEvmFactory::default().create_evm(adjacent_db, test_env());
     let adjacent = adjacent_evm
         .transact_raw(create_tx(adjacent_caller, 0))
         .expect("adjacent create executes");
@@ -197,7 +197,7 @@ fn execute_parent(parent: Address, nonce: u64, runtime: Bytes) -> (U256, u64) {
         .gas_limit(GAS_LIMIT)
         .build()
         .expect("valid parent call");
-    let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+    let mut evm = OutbeEvmFactory::default().create_evm(db, test_env());
     let result = evm.transact_raw(tx).expect("parent call executes");
     assert!(result.result.is_success());
     (
@@ -246,7 +246,7 @@ fn native_value_transfer_to_reserved_address_remains_valid() {
         .gas_limit(100_000)
         .build()
         .expect("valid transfer");
-    let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+    let mut evm = OutbeEvmFactory::default().create_evm(db, test_env());
     let result = evm.transact_raw(tx).expect("transfer executes");
 
     assert!(result.result.is_success());

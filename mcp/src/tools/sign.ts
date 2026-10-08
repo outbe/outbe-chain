@@ -77,16 +77,17 @@ const amountMicro = z
   }, "amount_micro must be a canonical unsigned u64 below 1000000")
   .describe('six-decimal remainder matching the proof\'s draft (default "0")');
 
+interface Write {
+  contract: string;
+  method: string;
+  args: unknown[];
+  gas?: bigint;
+  wait?: boolean;
+  value?: bigint;
+}
+
 /** Send a curated write and optionally wait for the receipt. */
-async function submit(
-  ctx: Ctx,
-  contract: string,
-  method: string,
-  args: unknown[],
-  gas: bigint,
-  wait: boolean,
-  value = 0n,
-) {
+async function submit(ctx: Ctx, { contract, method, args, gas = GAS_DEFAULT, wait = true, value = 0n }: Write) {
   const entry = resolveContract(contract);
   const hash = await sendTx(ctx, entry, method, args, gas, value);
   if (!wait) return ok({ txHash: hash, contract, method, status: "submitted" });
@@ -105,26 +106,26 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   const rawAmount = z.string().regex(/^(0|[1-9][0-9]*)$/).refine(
     value => BigInt(value) < (1n << 256n), "amount exceeds uint256",
   ).describe("Amount in raw token units");
-  const proof = z.string().regex(HEX).describe("Combined pledge proof generated locally by outbe-cli pledgenote");
-  server.tool("credis_reserve", "Reserve exact stablecoin principal and freeze loan terms for 15 minutes.",
-    { smart_account: addr, asset: addr, amount: rawAmount, reference_currency: z.number().int().min(1).max(65535) },
-    handler(async ({ smart_account, asset, amount, reference_currency }) =>
-      submit(ctx, "vaultrouter", "reserveStables", [smart_account, asset, BigInt(amount), reference_currency], GAS_DEFAULT, true)));
-  server.tool("gratis_pledge", "Fund an owner-bound pledge note. Save the private note locally before submitting.",
-    { amount: rawAmount, mac: z.string().regex(HEX32), op_nonce: rawAmount.refine(v => BigInt(v) < (1n << 64n)) },
-    handler(async ({ amount, mac, op_nonce }) =>
-      submit(ctx, "gratisfactory", "pledgeGratis", [BigInt(amount), { mac, opNonce: BigInt(op_nonce) }], GAS_DEFAULT, true)));
-  server.tool("credis_issue", "Consume a pledge proof bound to the stored reservation and deliver the reserved principal.",
-    { reservation_id: rawAmount, proof, stake: coen },
-    handler(async ({ reservation_id, proof, stake }) =>
-      submit(ctx, "credisfactory", "issueCredis", [BigInt(reservation_id), proof], GAS_DEFAULT, true, parseNativeAmount(ctx.chain, stake))));
-  server.tool("gratis_unpledge", "Redeem a pledge note to the original owner proven by the proof.",
-    { proof }, handler(async ({ proof }) =>
-      submit(ctx, "gratisfactory", "unpledgeGratis", [proof], GAS_DEFAULT, true)));
-  server.tool("credis_settle", "Repay a position after approving its asset to CredisFactory; released collateral becomes a return note.",
+  server.tool("credis_reserve", "Reserve exact stablecoin principal and freeze the Credis terms for 15 minutes.",
+    { smart_account: addr, source: addr.describe("Main account that pledges the Gratis collateral"), asset: addr, amount: rawAmount, reference_currency: z.number().int().min(1).max(65535) },
+    handler(async ({ smart_account, source, asset, amount, reference_currency }) =>
+      submit(ctx, { contract: "vaultrouter", method: "reserveStables", args: [smart_account, source, asset, BigInt(amount), reference_currency] })));
+  server.tool("gratis_pledge", "Pledge the reservation's Gratis from the caller, its source. The mac binds Pledge and the reservation's gratisMinor.",
+    { reservation_id: rawAmount, mac: z.string().regex(HEX32), op_nonce: rawAmount.refine(v => BigInt(v) < (1n << 64n)) },
+    handler(async ({ reservation_id, mac, op_nonce }) =>
+      submit(ctx, { contract: "gratisfactory", method: "pledgeGratis", args: [BigInt(reservation_id), { mac, opNonce: BigInt(op_nonce) }] })));
+  server.tool("gratis_cancel_pledge", "Return an unused reservation pledge to the caller's liquid Gratis.",
+    { reservation_id: rawAmount },
+    handler(async ({ reservation_id }) =>
+      submit(ctx, { contract: "gratisfactory", method: "cancelPledge", args: [BigInt(reservation_id)] })));
+  server.tool("credis_issue", "Issue Credis against the reservation's pledge and deliver the reserved principal.",
+    { reservation_id: rawAmount, stake: coen },
+    handler(async ({ reservation_id, stake }) =>
+      submit(ctx, { contract: "credisfactory", method: "issueCredis", args: [BigInt(reservation_id)], value: parseNativeAmount(ctx.chain, stake) })));
+  server.tool("credis_settle", "Repay a position after approving its asset to CredisFactory; released collateral returns to the source's liquid Gratis.",
     { position_id: rawAmount, amount: rawAmount },
     handler(async ({ position_id, amount }) =>
-      submit(ctx, "credisfactory", "settleCredis", [BigInt(position_id), BigInt(amount)], GAS_DEFAULT, true)));
+      submit(ctx, { contract: "credisfactory", method: "settleCredis", args: [BigInt(position_id), BigInt(amount)] })));
   // --- tribute_offer (encrypts to the live offer key, byte-identical to enclave)
   server.tool(
     "tribute_offer",
@@ -266,15 +267,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     { validator: addr, amount: coen, wait: z.boolean().optional() },
     handler(({ validator, amount, wait }) => {
       const stake = parseNativeAmount(ctx.chain, amount);
-      return submit(
-        ctx,
-        "staking",
-        "stake",
-        [validator, stake],
-        GAS_DEFAULT,
-        wait ?? true,
-        stake,
-      );
+      return submit(ctx, { contract: "staking", method: "stake", args: [validator, stake], wait, value: stake });
     }),
   );
 
@@ -283,14 +276,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "Unstake COEN (starts unbonding). Requires OUTBE_PRIVATE_KEY.",
     { amount: coen, wait: z.boolean().optional() },
     handler(({ amount, wait }) =>
-      submit(
-        ctx,
-        "staking",
-        "unstake",
-        [parseNativeAmount(ctx.chain, amount)],
-        GAS_DEFAULT,
-        wait ?? true,
-      ),
+      submit(ctx, { contract: "staking", method: "unstake", args: [parseNativeAmount(ctx.chain, amount)], wait }),
     ),
   );
 
@@ -299,7 +285,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "Claim unbonded stake after the unbonding period. Requires OUTBE_PRIVATE_KEY.",
     { wait: z.boolean().optional() },
     handler(({ wait }) =>
-      submit(ctx, "staking", "claimUnbonded", [], GAS_DEFAULT, wait ?? true),
+      submit(ctx, { contract: "staking", method: "claimUnbonded", args: [], wait }),
     ),
   );
 
@@ -315,14 +301,12 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
       wait: z.boolean().optional(),
     },
     handler(({ pool, amount, wait }) =>
-      submit(
-        ctx,
-        "agentreward",
-        "claimReward",
-        [pool, amount === undefined ? 0n : parseNativeAmount(ctx.chain, amount)],
-        GAS_DEFAULT,
-        wait ?? true,
-      ),
+      submit(ctx, {
+        contract: "agentreward",
+        method: "claimReward",
+        args: [pool, amount === undefined ? 0n : parseNativeAmount(ctx.chain, amount)],
+        wait,
+      }),
     ),
   );
 
@@ -332,7 +316,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "Delegate oracle feeder consent to an address. Requires OUTBE_PRIVATE_KEY (validator).",
     { feeder: addr, wait: z.boolean().optional() },
     handler(({ feeder, wait }) =>
-      submit(ctx, "oracle", "delegateFeederConsent", [feeder], GAS_DEFAULT, wait ?? true),
+      submit(ctx, { contract: "oracle", method: "delegateFeederConsent", args: [feeder], wait }),
     ),
   );
 
@@ -361,7 +345,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         exchangeRate: BigInt(x.exchangeRate),
         volume: BigInt(x.volume),
       }));
-      return submit(ctx, "oracle", "submitVote", [t], GAS_VOTE, wait ?? true);
+      return submit(ctx, { contract: "oracle", method: "submitVote", args: [t], gas: GAS_VOTE, wait });
     }),
   );
 

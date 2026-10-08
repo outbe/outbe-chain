@@ -1,3 +1,5 @@
+mod empty_parent;
+
 use std::{
     collections::BTreeSet,
     sync::{
@@ -221,154 +223,7 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
         if !retirements.is_empty() {
             return Err(fatal_scope("empty parent cannot retire a collection"));
         }
-        use crate::{
-            schema::Collection,
-            sharding::shard_index,
-            smt::{derive_tree_key, PoseidonSmt, TreeLeaf},
-            CeDomain, CollectionBatch, ProvisionalCatalogBatch, ProvisionalShardBatch,
-            ProvisionalShardSetBatch, TreeChange,
-        };
-        use std::collections::BTreeMap;
-        let mut grouped: BTreeMap<
-            crate::CollectionKey,
-            (CeDomain, Vec<(crate::smt::TreeKey, crate::Commitment)>),
-        > = BTreeMap::new();
-        for mutation in mutations {
-            let (domain, collection, entity_id) = match mutation.entity {
-                EntityRef::Tribute(id) => (CeDomain::Tribute, Collection::Tribute, id),
-                EntityRef::NodItem(id) => (CeDomain::NodItem, Collection::NodItem, id),
-                EntityRef::NodBucket(id) => (CeDomain::NodBucket, Collection::NodBucket, id),
-            };
-            let Some(commitment) = mutation.final_leaf else {
-                continue;
-            };
-            let collection_key = crate::collection_key(domain, entity_id)
-                .map_err(|error| fatal_scope(error.to_string()))?;
-            let key = derive_tree_key(collection, entity_id)
-                .map_err(|error| fatal_scope(error.to_string()))?;
-            grouped
-                .entry(collection_key)
-                .or_insert_with(|| (domain, Vec::new()))
-                .1
-                .push((key, commitment));
-        }
-
-        let mut changed_collections = BTreeMap::new();
-        let mut catalog_updates = Vec::new();
-        let mut catalog_leaf_changes = BTreeMap::new();
-        for (collection_key, (domain, keyed)) in grouped {
-            let mut by_shard: BTreeMap<u32, Vec<(crate::smt::TreeKey, crate::Commitment)>> =
-                BTreeMap::new();
-            for (key, commitment) in keyed {
-                let shard = shard_index(key, domain.shard_count())
-                    .map_err(|error| fatal_scope(error.to_string()))?;
-                by_shard.entry(shard).or_default().push((key, commitment));
-            }
-            let parent_roots = vec![B256::ZERO; domain.shard_count() as usize];
-            let mut new_roots = parent_roots.clone();
-            let mut changed_shards = BTreeMap::new();
-            for (shard, updates) in by_shard {
-                let mut tree = PoseidonSmt::empty();
-                let smt_updates = updates
-                    .iter()
-                    .map(|(key, commitment)| {
-                        TreeLeaf::from_be_bytes(*commitment.as_bytes()).map(|leaf| (*key, leaf))
-                    })
-                    .collect::<core::result::Result<Vec<_>, _>>()
-                    .map_err(|error| fatal_scope(error.to_string()))?;
-                let new_root = B256::from(
-                    tree.update_all(smt_updates)
-                        .map_err(|error| fatal_scope(error.to_string()))?
-                        .as_bytes(),
-                );
-                new_roots[shard as usize] = new_root;
-                let mut leaf_changes = BTreeMap::new();
-                for (key, commitment) in updates {
-                    leaf_changes.insert(
-                        crate::persistence::TreeKey::try_from(B256::from(key.as_bytes()))
-                            .map_err(|error| fatal_scope(error.to_string()))?,
-                        TreeChange::Set(
-                            crate::persistence::LeafValue::try_from(B256::from(
-                                *commitment.as_bytes(),
-                            ))
-                            .map_err(|error| fatal_scope(error.to_string()))?,
-                        ),
-                    );
-                }
-                changed_shards.insert(
-                    shard,
-                    ProvisionalShardBatch::new(B256::ZERO, new_root, BTreeMap::new(), leaf_changes)
-                        .map_err(|error| fatal_scope(error.to_string()))?,
-                );
-            }
-            let parent_top = crate::empty_shard_top_root(domain.shard_count())
-                .map_err(|error| fatal_scope(error.to_string()))?;
-            let new_top = crate::sharding::aggregate_b256_shard_roots(&new_roots)
-                .map_err(|error| fatal_scope(error.to_string()))?;
-            let new_collection_root = crate::collection_root(domain, collection_key, new_top)
-                .map_err(|error| fatal_scope(error.to_string()))?;
-            let shard_set = ProvisionalShardSetBatch::new(
-                domain.shard_count(),
-                parent_top,
-                new_top,
-                parent_roots,
-                new_roots,
-                changed_shards,
-            )
-            .map_err(|error| fatal_scope(error.to_string()))?;
-            changed_collections.insert(
-                collection_key,
-                crate::CollectionOperation::Mutate(
-                    CollectionBatch::new(
-                        domain,
-                        collection_key,
-                        None,
-                        new_collection_root,
-                        shard_set,
-                    )
-                    .map_err(|error| fatal_scope(error.to_string()))?,
-                ),
-            );
-            let catalog_key = crate::smt::TreeKey::from_be_bytes(*collection_key.as_bytes())
-                .map_err(|error| fatal_scope(error.to_string()))?;
-            let catalog_leaf = TreeLeaf::from_be_bytes(new_collection_root.0)
-                .map_err(|error| fatal_scope(error.to_string()))?;
-            catalog_updates.push((catalog_key, catalog_leaf));
-            let persisted_catalog_key =
-                crate::persistence::TreeKey::try_from(B256::from(*collection_key.as_bytes()))
-                    .map_err(|error| fatal_scope(error.to_string()))?;
-            catalog_leaf_changes.insert(
-                persisted_catalog_key,
-                TreeChange::Set(
-                    crate::persistence::LeafValue::try_from(new_collection_root)
-                        .map_err(|error| fatal_scope(error.to_string()))?,
-                ),
-            );
-        }
-        let mut catalog = PoseidonSmt::empty();
-        let new_catalog_root = B256::from(
-            catalog
-                .update_all(catalog_updates)
-                .map_err(|error| fatal_scope(error.to_string()))?
-                .as_bytes(),
-        );
-        let catalog_batch = (!changed_collections.is_empty()).then_some(ProvisionalCatalogBatch {
-            parent_catalog_root: B256::ZERO,
-            new_catalog_root,
-            branch_changes: BTreeMap::new(),
-            leaf_changes: catalog_leaf_changes,
-        });
-        crate::ProvisionalTreeBatch::new(
-            block_number,
-            B256::ZERO,
-            self.parent_root(),
-            crate::sealed_root(new_catalog_root).map_err(|error| fatal_scope(error.to_string()))?,
-            B256::ZERO,
-            new_catalog_root,
-            changed_collections,
-            catalog_batch,
-        )
-        .map_err(|error| fatal_scope(error.to_string()))
+        empty_parent::prepare(block_number, self.parent_root(), mutations)
     }
 }
 
@@ -386,7 +241,9 @@ impl EntityRef {
 #[derive(Clone, Copy, Debug)]
 pub enum BodyInput<'a> {
     Tribute(&'a TributeBodyV1),
+    EncryptedTribute(&'a outbe_primitives::tribute_encryption::EncryptedTributeV2),
     NodItem(&'a NodItemBodyV1),
+    EncryptedNodItem(&'a crate::NodItemBodyV2),
     NodBucket(&'a NodBucketBodyV1),
 }
 
@@ -468,7 +325,9 @@ impl ParentBodySource for ParentBodySourceRef<'_> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PayloadInner {
     Tribute(TributeBodyV1),
+    EncryptedTribute(outbe_primitives::tribute_encryption::EncryptedTributeV2),
     NodItem(NodItemBodyV1),
+    EncryptedNodItem(crate::NodItemBodyV2),
     NodBucket(NodBucketBodyV1),
 }
 
@@ -478,9 +337,27 @@ pub struct VerifiedPayload(PayloadInner);
 
 impl VerifiedPayload {
     #[must_use]
+    pub fn as_encrypted_tribute(
+        &self,
+    ) -> Option<&outbe_primitives::tribute_encryption::EncryptedTributeV2> {
+        match &self.0 {
+            PayloadInner::EncryptedTribute(body) => Some(body),
+            _ => None,
+        }
+    }
+
+    #[must_use]
     pub fn as_tribute(&self) -> Option<&TributeBodyV1> {
         match &self.0 {
             PayloadInner::Tribute(body) => Some(body),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn as_encrypted_nod_item(&self) -> Option<&crate::NodItemBodyV2> {
+        match &self.0 {
+            PayloadInner::EncryptedNodItem(body) => Some(body),
             _ => None,
         }
     }
@@ -620,119 +497,9 @@ impl Drop for ExplicitGasWindow<'_> {
     }
 }
 
+pub mod scope_factory;
+
 impl ExecutionScope {
-    #[must_use]
-    pub fn new() -> Self {
-        // Empty-tree harnesses use this constructor. Production starts with `for_finalized_rpc`.
-        // `configure_parent_tree_factory` binds the parent for lazy access during begin-block.
-        Self {
-            phase: AtomicU8::new(PHASE_BEFORE_BEGIN),
-            explicit_gas_charged: AtomicU64::new(0),
-            explicit_gas_window_active: AtomicBool::new(false),
-            explicit_gas_window_start: AtomicU64::new(0),
-            explicit_gas_window_limit: AtomicU64::new(0),
-            parent_tree: Mutex::new(Some(Arc::new(EmptyAuthenticatedTree))),
-            parent_tree_factory: Mutex::new(None),
-            parent_identity_without_root: Mutex::new(None),
-            parent_binding_configured: AtomicBool::new(false),
-            rpc_read_only: AtomicBool::new(false),
-            provisional_seal: Mutex::new(None),
-            completed_seal: Mutex::new(None),
-            ce_work_config: CeWorkConfig::new(0, 0, u64::MAX),
-            ce_work: Mutex::new(CeWorkState {
-                used: 0,
-                seen_keys: BTreeSet::new(),
-                transaction_start: None,
-            }),
-            ce_work_failure: AtomicU8::new(CE_WORK_FAILURE_NONE),
-        }
-    }
-
-    #[must_use]
-    pub fn with_parent_tree(
-        parent_tree: Arc<dyn AuthenticatedParentTree>,
-        ce_work_config: CeWorkConfig,
-    ) -> Self {
-        Self {
-            phase: AtomicU8::new(PHASE_BEFORE_BEGIN),
-            explicit_gas_charged: AtomicU64::new(0),
-            explicit_gas_window_active: AtomicBool::new(false),
-            explicit_gas_window_start: AtomicU64::new(0),
-            explicit_gas_window_limit: AtomicU64::new(0),
-            parent_tree: Mutex::new(Some(parent_tree)),
-            parent_tree_factory: Mutex::new(None),
-            parent_identity_without_root: Mutex::new(None),
-            parent_binding_configured: AtomicBool::new(true),
-            rpc_read_only: AtomicBool::new(false),
-            provisional_seal: Mutex::new(None),
-            completed_seal: Mutex::new(None),
-            ce_work_config,
-            ce_work: Mutex::new(CeWorkState {
-                used: 0,
-                seen_keys: BTreeSet::new(),
-                transaction_start: None,
-            }),
-            ce_work_failure: AtomicU8::new(CE_WORK_FAILURE_NONE),
-        }
-    }
-
-    #[must_use]
-    pub fn with_parent_tree_factory(
-        factory: Arc<dyn AuthenticatedParentTreeFactory>,
-        commitment_scheme_version: u32,
-        parent_block_number: u64,
-        parent_block_hash: B256,
-        ce_work_config: CeWorkConfig,
-    ) -> Self {
-        Self {
-            phase: AtomicU8::new(PHASE_BEFORE_BEGIN),
-            explicit_gas_charged: AtomicU64::new(0),
-            explicit_gas_window_active: AtomicBool::new(false),
-            explicit_gas_window_start: AtomicU64::new(0),
-            explicit_gas_window_limit: AtomicU64::new(0),
-            parent_tree: Mutex::new(None),
-            parent_tree_factory: Mutex::new(Some(factory)),
-            parent_identity_without_root: Mutex::new(Some((
-                commitment_scheme_version,
-                parent_block_number,
-                parent_block_hash,
-            ))),
-            parent_binding_configured: AtomicBool::new(true),
-            rpc_read_only: AtomicBool::new(false),
-            provisional_seal: Mutex::new(None),
-            completed_seal: Mutex::new(None),
-            ce_work_config,
-            ce_work: Mutex::new(CeWorkState {
-                used: 0,
-                seen_keys: BTreeSet::new(),
-                transaction_start: None,
-            }),
-            ce_work_failure: AtomicU8::new(CE_WORK_FAILURE_NONE),
-        }
-    }
-
-    /// Creates a finalized-state read scope for EVM instances used by RPC
-    /// simulation. A real block executor replaces this fallback binding before
-    /// begin-block and activates the normal mutation lifecycle.
-    #[must_use]
-    pub fn for_finalized_rpc(
-        factory: Arc<dyn AuthenticatedParentTreeFactory>,
-        commitment_scheme_version: u32,
-        block_number: u64,
-        block_hash: B256,
-    ) -> Self {
-        let mut scope = Self::with_parent_tree_factory(
-            factory,
-            commitment_scheme_version,
-            block_number,
-            block_hash,
-            CeWorkConfig::new(0, 0, u64::MAX),
-        );
-        scope.parent_binding_configured = AtomicBool::new(false);
-        scope.rpc_read_only = AtomicBool::new(true);
-        scope
-    }
-
     /// Binds the factory/identity to the scope already captured by this EVM's
     /// precompiles. Live wiring calls this after the block parent is known and
     /// before begin-block. Lifecycle and every nested precompile therefore keep
@@ -855,13 +622,12 @@ impl ExecutionScope {
 
     /// Best-effort context for a failed body check; never selects a different tree.
     pub(crate) fn diagnostic_parent_binding(&self) -> String {
-        format!(
-            "binding={:?} rpc_read_only={}",
-            self.parent_identity_without_root
-                .lock()
-                .map(|binding| *binding),
-            self.rpc_read_only.load(Ordering::Acquire),
-        )
+        let binding = self
+            .parent_identity_without_root
+            .lock()
+            .map(|binding| *binding);
+        let rpc_read_only = self.rpc_read_only.load(Ordering::Acquire);
+        format!("binding={binding:?} rpc_read_only={rpc_read_only}")
     }
 
     /// Returns the exact root prepared from all CE mutations currently staged
@@ -1341,7 +1107,10 @@ fn fatal_scope(message: impl Into<String>) -> outbe_primitives::error::Precompil
 
 impl Default for ExecutionScope {
     fn default() -> Self {
-        Self::new()
+        scope_factory::empty_scope(
+            Some(Arc::new(EmptyAuthenticatedTree)),
+            CeWorkConfig::new(0, 0, u64::MAX),
+        )
     }
 }
 
@@ -1430,10 +1199,20 @@ pub(crate) fn tribute_payload(body: TributeBodyV1) -> VerifiedPayload {
     VerifiedPayload(PayloadInner::Tribute(body))
 }
 
+pub(crate) fn encrypted_tribute_payload(
+    body: outbe_primitives::tribute_encryption::EncryptedTributeV2,
+) -> VerifiedPayload {
+    VerifiedPayload(PayloadInner::EncryptedTribute(body))
+}
+
 pub(crate) fn nod_item_payload(body: NodItemBodyV1) -> VerifiedPayload {
     VerifiedPayload(PayloadInner::NodItem(body))
 }
 
 pub(crate) fn nod_bucket_payload(body: NodBucketBodyV1) -> VerifiedPayload {
     VerifiedPayload(PayloadInner::NodBucket(body))
+}
+
+pub(crate) fn encrypted_nod_item_payload(body: crate::NodItemBodyV2) -> VerifiedPayload {
+    VerifiedPayload(PayloadInner::EncryptedNodItem(body))
 }

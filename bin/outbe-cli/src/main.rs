@@ -28,10 +28,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Pledgenote {
-        #[command(subcommand)]
-        cmd: commands::pledgenote::PledgeNoteCmd,
-    },
     /// Validator management
     Validator {
         #[command(subcommand)]
@@ -115,7 +111,6 @@ async fn main() -> Result<()> {
     let client = rpc::RpcClient::new(&cli.rpc_url);
 
     match cli.command {
-        Commands::Pledgenote { cmd } => cmd.run(&client).await,
         Commands::Validator { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Staking { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Rewards { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,

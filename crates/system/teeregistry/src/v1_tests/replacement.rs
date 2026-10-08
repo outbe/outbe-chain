@@ -17,7 +17,6 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
         NodeHostIdentityV1,
     };
     use outbe_tee_enclave::{
-        initialization::InitializationState,
         keys::EnclaveKeys,
         seal::EnclaveBootConfig,
         transport::{serve_connection_with_synthetic_dcap, SharedTributeOfferKey},
@@ -59,12 +58,18 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
     let keys_a = Arc::new(EnclaveKeys::new([0x76; 32], Some([0x76; 32])).unwrap());
     let keys_b = Arc::new(EnclaveKeys::new([0x77; 32], Some([0x77; 32])).unwrap());
     let initialization_a = Arc::new(
-        InitializationState::production_with_synthetic_dcap_for_test(boot_a.clone(), &keys_a)
-            .unwrap(),
+        outbe_tee_enclave::initialization::factory::production_with_synthetic_dcap_for_test(
+            boot_a.clone(),
+            &keys_a,
+        )
+        .unwrap(),
     );
     let initialization_b = Arc::new(
-        InitializationState::production_with_synthetic_dcap_for_test(boot_b.clone(), &keys_b)
-            .unwrap(),
+        outbe_tee_enclave::initialization::factory::production_with_synthetic_dcap_for_test(
+            boot_b.clone(),
+            &keys_b,
+        )
+        .unwrap(),
     );
 
     let listener_a = UnixListener::bind(&socket_a).unwrap();

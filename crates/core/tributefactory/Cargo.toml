@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-bench-utils = []
+bench-utils = ["outbe-tribute/test-enclave"]
 
 [dependencies]
 outbe-macros.workspace = true
@@ -29,9 +29,11 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-lysis.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-tee-enclave.workspace = true
+ed25519-dalek.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
 rand.workspace = true

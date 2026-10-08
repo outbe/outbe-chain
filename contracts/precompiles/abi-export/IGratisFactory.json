@@ -1,6 +1,43 @@
 [
   {
     "type": "function",
+    "name": "cancelPledge",
+    "inputs": [
+      {
+        "name": "reservationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "collateralOf",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "remainingMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "mineCoen",
     "inputs": [
       {
@@ -33,7 +70,7 @@
     "name": "pledgeGratis",
     "inputs": [
       {
-        "name": "gratisMinor",
+        "name": "reservationId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -55,56 +92,29 @@
         ]
       }
     ],
-    "outputs": [
-      {
-        "name": "commitment",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "pledgeLeafCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pledgeRoot",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pledgeSpent",
+    "name": "pledgeOf",
     "inputs": [
       {
-        "name": "nullifier",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "reservationId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "source",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "gratisMinor",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -129,19 +139,6 @@
     "stateMutability": "view"
   },
   {
-    "type": "function",
-    "name": "unpledgeGratis",
-    "inputs": [
-      {
-        "name": "proof",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
     "name": "CoenMined",
     "inputs": [
@@ -162,25 +159,19 @@
   },
   {
     "type": "event",
-    "name": "PledgeNote",
+    "name": "GratisPledged",
     "inputs": [
       {
-        "name": "commitment",
-        "type": "bytes32",
+        "name": "reservationId",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "uint256"
       },
       {
-        "name": "leafIndex",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "rootAfter",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
+        "name": "source",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "gratisMinor",
@@ -193,13 +184,44 @@
   },
   {
     "type": "event",
-    "name": "PledgeSpent",
+    "name": "PledgeCancelled",
     "inputs": [
       {
-        "name": "nullifier",
-        "type": "bytes32",
+        "name": "reservationId",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "uint256"
+      },
+      {
+        "name": "source",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "gratisMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PledgeSentToCredis",
+    "inputs": [
+      {
+        "name": "reservationId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

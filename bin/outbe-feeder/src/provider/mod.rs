@@ -1,9 +1,9 @@
 //! Price provider trait and implementations.
 
 pub mod binance;
-pub mod chainlink;
 pub mod coinbase;
 pub(crate) mod dex;
+pub(crate) mod evm_rpc;
 pub mod gate;
 pub mod huobi;
 pub mod kraken;
@@ -11,8 +11,11 @@ pub mod mexc;
 pub mod mock;
 pub mod mock_http;
 pub mod okx;
+pub mod onchain_feed;
 pub mod pyth;
 pub mod redstone;
+#[cfg(test)]
+pub(crate) mod test_server;
 mod websocket;
 
 use eyre::{eyre, Result};
@@ -205,7 +208,6 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                     .as_ref()
                     .ok_or_else(|| eyre!("provider redstone requires a [redstone] section"))?,
             )?),
-            "chainlink" => Box::new(chainlink::ChainlinkProvider::new()?),
             "binance" => Box::new(binance::BinanceProvider::new()?),
             "kraken" => Box::new(kraken::KrakenProvider::new()?),
             "okx" => Box::new(okx::OkxProvider::new()?),
@@ -221,8 +223,11 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                     .ok_or_else(|| eyre!("provider {name} requires a [[dex_providers]] entry"))?,
             )?),
             other => {
-                tracing::warn!(provider = other, "unknown provider, skipping");
-                continue;
+                let Some(section) = config.onchain_feeds.get(other) else {
+                    tracing::warn!(provider = other, "unknown provider, skipping");
+                    continue;
+                };
+                Box::new(onchain_feed::OnchainFeedProvider::new(other, section)?)
             }
         };
         let configured_pairs = config

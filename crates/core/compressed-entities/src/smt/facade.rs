@@ -16,8 +16,57 @@ use thiserror::Error;
 use super::codec::{hash_error, is_canonical, PoseidonCkbHasher};
 use crate::{schema::Collection, WwdEntityId};
 
+/// A canonical field encoding retains its tree role in the type system.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct TreeKey([u8; 32]);
+pub(crate) struct CanonicalFieldWord<Role>([u8; 32], std::marker::PhantomData<Role>);
+
+pub(crate) trait FieldRole {
+    const KIND: &'static str;
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct KeyRole;
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct LeafRole;
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct RootRole;
+
+impl FieldRole for KeyRole {
+    const KIND: &'static str = "tree key";
+}
+impl FieldRole for LeafRole {
+    const KIND: &'static str = "tree leaf";
+}
+impl FieldRole for RootRole {
+    const KIND: &'static str = "tree root";
+}
+
+pub(crate) type TreeKey = CanonicalFieldWord<KeyRole>;
+pub(crate) type TreeLeaf = CanonicalFieldWord<LeafRole>;
+pub(crate) type TreeRoot = CanonicalFieldWord<RootRole>;
+
+impl<Role: FieldRole> CanonicalFieldWord<Role> {
+    pub(crate) fn from_be_bytes(bytes: [u8; 32]) -> Result<Self, TreeError> {
+        validate_field_bytes(bytes, Role::KIND)?;
+        Ok(Self(bytes, std::marker::PhantomData))
+    }
+
+    pub(crate) const fn as_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
+    fn ckb(self) -> H256 {
+        H256::from(self.0)
+    }
+}
+
+impl TreeLeaf {
+    pub(crate) const ZERO: Self = Self([0_u8; 32], std::marker::PhantomData);
+}
+
+impl TreeRoot {
+    pub(crate) const EMPTY: Self = Self([0_u8; 32], std::marker::PhantomData);
+}
 
 impl Ord for TreeKey {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -28,61 +77,6 @@ impl Ord for TreeKey {
 impl PartialOrd for TreeKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl TreeKey {
-    pub(crate) fn from_be_bytes(bytes: [u8; 32]) -> Result<Self, TreeError> {
-        validate_field_bytes(bytes, "tree key")?;
-        Ok(Self(bytes))
-    }
-
-    pub(crate) const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-
-    fn ckb(self) -> H256 {
-        H256::from(self.0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TreeLeaf([u8; 32]);
-
-impl TreeLeaf {
-    pub(crate) const ZERO: Self = Self([0_u8; 32]);
-
-    pub(crate) fn from_be_bytes(bytes: [u8; 32]) -> Result<Self, TreeError> {
-        validate_field_bytes(bytes, "tree leaf")?;
-        Ok(Self(bytes))
-    }
-
-    pub(crate) const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-
-    fn ckb(self) -> H256 {
-        H256::from(self.0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TreeRoot([u8; 32]);
-
-impl TreeRoot {
-    pub(crate) const EMPTY: Self = Self([0_u8; 32]);
-
-    pub(crate) fn from_be_bytes(bytes: [u8; 32]) -> Result<Self, TreeError> {
-        validate_field_bytes(bytes, "tree root")?;
-        Ok(Self(bytes))
-    }
-
-    pub(crate) const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-
-    fn ckb(self) -> H256 {
-        H256::from(self.0)
     }
 }
 
@@ -184,7 +178,8 @@ pub(crate) struct PoseidonSmt<S = MemoryStore> {
 
 /// Reduces strictly ordered non-zero leaves to the canonical CKB SMT root
 /// while retaining at most one pending subtree per tree level.
-pub(crate) struct SortedPoseidonRootReducer {
+pub(crate) struct SortedPoseidonRootReducer<O = NoSortedNodeObserver> {
+    observer: O,
     frontier: Vec<Option<PendingSortedNode>>,
     current: Option<PendingSortedNode>,
 }
@@ -192,11 +187,49 @@ pub(crate) struct SortedPoseidonRootReducer {
 struct PendingSortedNode {
     key: TreeKey,
     value: MergeValue,
+    archive_id: u64,
+}
+
+/// Observes only real leaves and nonzero forks; zero chains remain compact.
+pub(crate) trait SortedNodeObserver {
+    fn leaf(&mut self, key: TreeKey, leaf: TreeLeaf) -> Result<u64, TreeError>;
+    fn fork(
+        &mut self,
+        height: u8,
+        left: &MergeValue,
+        right: &MergeValue,
+        left_id: u64,
+        right_id: u64,
+    ) -> Result<u64, TreeError>;
+}
+
+pub(crate) struct NoSortedNodeObserver;
+impl SortedNodeObserver for NoSortedNodeObserver {
+    fn leaf(&mut self, _: TreeKey, _: TreeLeaf) -> Result<u64, TreeError> {
+        Ok(0)
+    }
+    fn fork(
+        &mut self,
+        _: u8,
+        _: &MergeValue,
+        _: &MergeValue,
+        _: u64,
+        _: u64,
+    ) -> Result<u64, TreeError> {
+        Ok(0)
+    }
 }
 
 impl SortedPoseidonRootReducer {
     pub(crate) fn new() -> Self {
+        Self::with_observer(NoSortedNodeObserver)
+    }
+}
+
+impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
+    pub(crate) fn with_observer(observer: O) -> Self {
         Self {
+            observer,
             frontier: std::iter::repeat_with(|| None).take(256).collect(),
             current: None,
         }
@@ -237,18 +270,23 @@ impl SortedPoseidonRootReducer {
         self.current = Some(PendingSortedNode {
             key,
             value: MergeValue::from_h256(leaf.ckb()),
+            archive_id: self.observer.leaf(key, leaf)?,
         });
         Ok(())
     }
 
-    pub(crate) fn finish(mut self) -> Result<TreeRoot, TreeError> {
+    pub(crate) fn finish(self) -> Result<TreeRoot, TreeError> {
+        self.finish_observing().map(|(root, _, _)| root)
+    }
+
+    pub(crate) fn finish_observing(mut self) -> Result<(TreeRoot, O, Option<u64>), TreeError> {
         if self.current.is_none() {
             if self.frontier.iter().any(Option::is_some) {
                 return Err(TreeError::ReducerInvariant(
                     "empty reducer retains a pending subtree",
                 ));
             }
-            return Ok(TreeRoot::EMPTY);
+            return Ok((TreeRoot::EMPTY, self.observer, None));
         }
         self.lift_current(u8::MAX)?;
         self.merge_current_level(u8::MAX)?;
@@ -257,13 +295,12 @@ impl SortedPoseidonRootReducer {
                 "finished reducer retains a pending subtree",
             ));
         }
-        let root = self
+        let current = self
             .current
             .take()
-            .ok_or(TreeError::ReducerInvariant("root subtree disappeared"))?
-            .value
-            .hash::<PoseidonCkbHasher>();
-        checked_root(root)
+            .ok_or(TreeError::ReducerInvariant("root subtree disappeared"))?;
+        let root = checked_root(current.value.hash::<PoseidonCkbHasher>())?;
+        Ok((root, self.observer, Some(current.archive_id)))
     }
 
     fn lift_current(&mut self, target_height: u8) -> Result<(), TreeError> {
@@ -291,6 +328,13 @@ impl SortedPoseidonRootReducer {
                     "pending subtrees are not ordered siblings",
                 ));
             }
+            current.archive_id = self.observer.fork(
+                height,
+                &left.value,
+                &current.value,
+                left.archive_id,
+                current.archive_id,
+            )?;
             merge::<PoseidonCkbHasher>(height, &parent_key, &left.value, &current.value)
         } else if ckb_key.is_right(height) {
             merge::<PoseidonCkbHasher>(height, &parent_key, &MergeValue::zero(), &current.value)

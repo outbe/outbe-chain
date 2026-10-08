@@ -13,6 +13,8 @@ use revm::{primitives::hardfork::SpecId, Database};
 use std::sync::Arc;
 
 mod call_authority;
+mod cancellation;
+pub(crate) use cancellation::ExecutionAbortBridge;
 mod dispatch;
 mod outcome;
 mod sub_call_provider;
@@ -68,6 +70,7 @@ impl OutbePrecompileExecutionContext {
 
 #[derive(Clone)]
 pub struct OutbePrecompileRuntime {
+    pub(crate) abort_bridge: ExecutionAbortBridge,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -82,11 +85,16 @@ impl OutbePrecompileRuntime {
         ocomp_lifecycle_active: bool,
     ) -> Self {
         Self {
+            abort_bridge: ExecutionAbortBridge::default(),
             runtime_body_readers,
             execution_scope,
             ocomp_finality_authority,
             ocomp_lifecycle_active,
         }
+    }
+    pub(crate) fn with_abort_bridge(mut self, bridge: ExecutionAbortBridge) -> Self {
+        self.abort_bridge = bridge;
+        self
     }
 }
 
@@ -118,6 +126,7 @@ pub fn extend_outbe_precompiles<DB>(
         tee_attestation_v1,
     } = execution_context;
     let OutbePrecompileRuntime {
+        abort_bridge,
         runtime_body_readers,
         execution_scope,
         ocomp_finality_authority,
@@ -142,6 +151,7 @@ pub fn extend_outbe_precompiles<DB>(
                 ctx,
                 inputs,
                 OutbeDispatchRuntime {
+                    abort_bridge: &abort_bridge,
                     spec,
                     genesis_hash,
                     tee_attestation_v1: &tee_attestation_v1,

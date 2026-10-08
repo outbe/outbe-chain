@@ -102,18 +102,21 @@ fn nod_item_issued(
     issued_at: u64,
 ) -> NodItemState {
     let worldwide_day = WorldwideDay::new(worldwide_day);
-    NodItemState {
-        is_settled: false,
-        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
-        owner,
-        gratis_load_minor: U256::from(11),
-        worldwide_day,
-        league_id: 4,
-        bucket_key: NodContract::bucket_key(worldwide_day, entry_price_minor, iso),
-        issuance_currency: iso,
-        reference_currency: iso,
-        issued_at,
-    }
+    crate::test_support::item(
+        crate::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: crate::identity::generate_nod_id(owner, worldwide_day).unwrap(),
+            owner,
+            gratis_load_minor: U256::from(11),
+            worldwide_day,
+            league_id: 4,
+            bucket_key: crate::identity::bucket_key(worldwide_day, entry_price_minor, iso),
+            issuance_currency: iso,
+            reference_currency: iso,
+            issued_at,
+        },
+        entry_price_minor,
+    )
 }
 
 /// Registers `COEN/<iso>` and lists `iso` as a reference currency.
@@ -235,9 +238,9 @@ fn called_at(storage: &StorageHandle<'_>, bucket_key: B256) -> u64 {
 /// Runs `body` inside a storage scope with compressed entities open and the
 /// default `COEN/840` pair registered.
 fn harness(body: impl FnOnce(&StorageHandle<'_>, &ExecutionScope, &NodRepositoryReader)) {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
@@ -269,7 +272,7 @@ fn try_forfeit(
             };
             let nod_id = nod
                 .bucket_nods
-                .read(&NodContract::bucket_nod_key(bucket_key, last))?;
+                .read(&crate::index_keys::bucket_nod_key(bucket_key, last))?;
             let burn = storage.with_checkpoint(|| {
                 crate::expired::forfeit_member(&bodies, &mut nod, bucket_key, nod_id)
             });
@@ -295,7 +298,7 @@ fn arm_lapsed(
         .iter()
         .map(|&(owner, load, _)| {
             let mut item = nod_item(Address::repeat_byte(owner), ISO);
-            item.gratis_load_minor = U256::from(load);
+            crate::test_support::set_amount(&mut item, U256::from(load));
             api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
             item
         })
@@ -331,12 +334,29 @@ fn arm_lapsed(
 }
 
 fn forfeited_event_loads(provider: &HashMapStorageProvider) -> U256 {
-    provider
-        .get_events(NOD_ADDRESS)
+    let logs = provider.get_events(NOD_ADDRESS);
+    let bodies: std::collections::HashMap<_, _> = logs
         .iter()
+        .filter_map(|log| INod::NodBodyStored::decode_log_data(log).ok())
+        .map(|event| {
+            let body =
+                outbe_compressed_entities::decode_nod_item_v2(&event.canonicalPayload).unwrap();
+            (event.nodId, body)
+        })
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    logs.iter()
         .filter_map(|log| INod::NodForfeited::decode_log_data(log).ok())
-        .map(|event| event.gratisLoadMinor)
-        .fold(U256::ZERO, |sum, load| sum + load)
+        .map(|event| {
+            assert!(seen.insert(event.nodId));
+            let body = bodies.get(&event.nodId).expect("forfeited NOD was issued");
+            assert_eq!(
+                event.encryptedGratisAmount.as_ref(),
+                body.encrypted.encrypted_gratis_amount
+            );
+            crate::api::calculation_amount(&crate::from_canonical_item(body.clone())).unwrap()
+        })
+        .fold(U256::ZERO, |sum, amount| sum + amount)
 }
 
 // --- Sealed call terms -----------------------------------------------------
@@ -951,7 +971,7 @@ fn the_member_index_tracks_issuance_and_removal_in_a_qualified_bucket() {
         // The survivor is still reachable at slot 0.
         assert_eq!(
             nod.bucket_nods
-                .read(&NodContract::bucket_nod_key(a.bucket_key, 0))
+                .read(&crate::index_keys::bucket_nod_key(a.bucket_key, 0))
                 .unwrap(),
             b_item.nod_id
         );
@@ -1060,7 +1080,10 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 3);
 
-        let expected: U256 = items.iter().map(|item| item.gratis_load_minor).sum();
+        let expected: U256 = items
+            .iter()
+            .map(|item| crate::api::calculation_amount(item).unwrap())
+            .sum();
         assert_eq!(reserve(storage), expected);
     });
 }
@@ -1190,7 +1213,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
         assert_eq!(called_at(storage, items[0].bucket_key), at);
         assert_eq!(called_at(storage, items[1].bucket_key), at);
         assert_eq!(called_at(storage, items[2].bucket_key), 0);
-        let bin = NodContract::price_to_bin(at_call()).unwrap();
+        let bin = crate::pricing::price_to_bin(at_call()).unwrap();
         assert_eq!(
             nod.call_bin_count
                 .read(&outbe_primitives::call_bins::scoped(ISO, bin))
@@ -1275,7 +1298,7 @@ fn failing_members_over_the_forfeit_budget_do_not_hold_the_queue() {
                 B256::repeat_byte(index as u8),
             );
             nod.bucket_nods
-                .write(&NodContract::bucket_nod_key(bucket_key, index), ghost)
+                .write(&crate::index_keys::bucket_nod_key(bucket_key, index), ghost)
                 .unwrap();
         }
 
@@ -1429,7 +1452,8 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
         // The failed bucket retries once the next hour closes.
         let retry = past + 2 * HOUR;
         assert_eq!(scan(storage, scope, parent, retry), 2);
-        let expected = items[0].gratis_load_minor + items[2].gratis_load_minor;
+        let expected = crate::api::calculation_amount(&items[0]).unwrap()
+            + crate::api::calculation_amount(&items[2]).unwrap();
         assert_eq!(reserve(storage), expected);
         assert!(!is_queued(storage, key), "no unpaid member is left to burn");
         assert_eq!(scan(storage, scope, parent, retry), 0);
@@ -1527,7 +1551,7 @@ fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeite
         nod.bucket_nod_count.write(&item.bucket_key, 1).unwrap();
         nod.bucket_nods
             .write(
-                &NodContract::bucket_nod_key(item.bucket_key, 0),
+                &crate::index_keys::bucket_nod_key(item.bucket_key, 0),
                 item.nod_id,
             )
             .unwrap();
@@ -1660,9 +1684,9 @@ fn a_lapsed_bucket_waits_for_its_generation_to_materialize_before_forfeiting() {
 
 #[test]
 fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let at = START + 30 * DAY;
     let bucket_key = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
@@ -1704,8 +1728,8 @@ fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
 #[test]
 fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let scope = ExecutionScope::new();
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
+    let scope = ExecutionScope::default();
     let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
@@ -1762,8 +1786,8 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
 #[test]
 fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let scope = ExecutionScope::new();
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
@@ -1782,7 +1806,9 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
         let unpaid: U256 = items
             .iter()
             .zip([(false, 3u64), (true, 7), (false, 11), (false, 20)])
-            .filter_map(|(item, (paid, _))| (!paid).then_some(item.gratis_load_minor))
+            .filter_map(|(item, (paid, _))| {
+                (!paid).then_some(crate::api::calculation_amount(item).unwrap())
+            })
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(unpaid, U256::from(34u64));
         assert_eq!(
@@ -1832,7 +1858,7 @@ fn a18_forfeit_slices_credit_the_same_total_as_one_pass() {
         );
         let expected: U256 = items
             .iter()
-            .map(|item| item.gratis_load_minor)
+            .map(|item| crate::api::calculation_amount(item).unwrap())
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(
             try_forfeit(storage, scope, parent, bucket_key, 1).unwrap(),
@@ -1857,7 +1883,7 @@ fn a18_forfeit_slices_credit_the_same_total_as_one_pass() {
 
 #[test]
 fn a_forfeit_out_of_gas_keeps_what_it_burned_and_resumes_on_the_bucket() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let specs = [(0x71u8, 3u64, false), (0x72, 5, false), (0x73, 8, false)];
     let past = START + 30 * DAY + NOTICE + HOUR;
     let arm = |provider: &mut HashMapStorageProvider, scope: &ExecutionScope| {
@@ -1870,7 +1896,7 @@ fn a_forfeit_out_of_gas_keeps_what_it_burned_and_resumes_on_the_bucket() {
     };
 
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
-    let probe_scope = ExecutionScope::new();
+    let probe_scope = ExecutionScope::default();
     arm(&mut probe, &probe_scope);
     let full_pass_gas = StorageHandle::enter(&mut probe, |storage| {
         let checkpoint = probe_scope.explicit_gas_checkpoint();
@@ -1879,7 +1905,7 @@ fn a_forfeit_out_of_gas_keeps_what_it_burned_and_resumes_on_the_bucket() {
     });
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let bucket_key = arm(&mut provider, &scope);
     StorageHandle::enter(&mut provider, |storage| {
         let nod = NodContract::new(storage.clone());
@@ -1927,9 +1953,9 @@ fn steady_cycle_tick_ce_gas_limit() -> u64 {
 
 #[test]
 fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let at = START + 30 * DAY;
     let past = at + NOTICE + HOUR;
     let expected = StorageHandle::enter(&mut provider, |storage| {
@@ -1939,7 +1965,7 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
         let items: Vec<NodItemState> = (1..=SWEEP_BODY_WRITES_PER_BLOCK)
             .map(|owner| {
                 let mut item = nod_item(Address::left_padding_from(&owner.to_be_bytes()), ISO);
-                item.gratis_load_minor = U256::from(owner);
+                crate::test_support::set_amount(&mut item, U256::from(owner));
                 api::add_nod(&storage, &scope, &parent, &item, entry_price()).unwrap();
                 item
             })
@@ -1969,7 +1995,7 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
         assert_eq!(nod.total_supply().unwrap(), 0);
         let expected: U256 = items
             .iter()
-            .map(|item| item.gratis_load_minor)
+            .map(|item| crate::api::calculation_amount(item).unwrap())
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(reserve(&storage), expected);
         expected
@@ -1997,9 +2023,9 @@ fn a_body_corruption_in_a_nod_sweep_fails_the_block() {
 
 #[test]
 fn a_node_local_failure_while_forfeiting_fails_the_slice() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let past = START + 30 * DAY + NOTICE + HOUR;
     let bucket_key = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
@@ -2033,12 +2059,12 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
 /// loads once, neither zero nor twice.
 #[test]
 fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let specs = [(0x51u8, 3u64, false), (0x52, 11, false), (0x53, 20, false)];
     let expected = U256::from(34u64);
 
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
-    let probe_scope = ExecutionScope::new();
+    let probe_scope = ExecutionScope::default();
     let probe_key = StorageHandle::enter(&mut probe, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &probe_scope).unwrap();
@@ -2072,7 +2098,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
 
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         let bucket_key = StorageHandle::enter(&mut provider, |storage| {
             seed_production_nod_genesis(&storage);
             begin_block(storage.clone(), &scope).unwrap();
@@ -2145,9 +2171,9 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
 fn a_call_pass_announces_one_batch_metadata_update() {
     use alloy_sol_types::SolEvent;
 
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
@@ -2198,9 +2224,9 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
     use alloy_sol_types::SolCall;
     use base64::Engine;
 
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let at = START + 30 * DAY;
     let item = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);

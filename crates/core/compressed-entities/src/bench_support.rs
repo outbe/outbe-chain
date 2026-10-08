@@ -96,7 +96,7 @@ impl Adr008SmtHarness {
     pub fn root(&self) -> Result<[u8; 32], String> {
         self.tree
             .root()
-            .map(TreeRoot::as_bytes)
+            .map(|root| root.as_bytes())
             .map_err(|error| error.to_string())
     }
 
@@ -112,7 +112,7 @@ impl Adr008SmtHarness {
             .collect::<Result<Vec<_>, _>>()?;
         self.tree
             .update_all(updates)
-            .map(TreeRoot::as_bytes)
+            .map(|root| root.as_bytes())
             .map_err(|error| error.to_string())
     }
 

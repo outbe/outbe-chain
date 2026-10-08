@@ -1,5 +1,6 @@
 //! Issued Intex units change hands on the real `IntexNFT1155` bytecode (`fixtures/*.hex`: forge
 //! `deployedBytecode`, `IntexMetadata` linked at [`METADATA_LIB`]) and settle for their holder.
+use outbe_offchain_data::runtime_body_readers;
 use std::sync::Arc;
 
 use alloy_primitives::{keccak256, Address, Bytes, FixedBytes, U256};
@@ -123,8 +124,8 @@ impl World {
                 },
             );
         }
-        let readers = RuntimeBodyReaders::new(Arc::new(MemoryStorage::new()));
-        let scope = Arc::new(ExecutionScope::new());
+        let readers = runtime_body_readers(Arc::new(MemoryStorage::new()));
+        let scope = Arc::new(ExecutionScope::default());
         let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, ALICE, vec![ALICE]);
         let mut provider = DirectStorageProvider::new(&mut db, block);
         StorageHandle::enter(&mut provider, |storage| {

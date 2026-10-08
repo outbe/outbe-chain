@@ -1,6 +1,5 @@
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
-use outbe_nod::NodContract;
 use outbe_ocomp_protocol::{CanonicalReader, CanonicalWriter, SchemaLimits};
 use outbe_primitives::time::WorldwideDay;
 
@@ -429,7 +428,7 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
                 "amount run record order",
             ));
         }
-        if !NodContract::is_issuable_entry(record.entry_price_minor) {
+        if !outbe_nod::pricing::is_issuable_entry(record.entry_price_minor) {
             return Err(LysisArtifactErrorV1::InvalidEncoding(
                 "amount run Nod entry price bound",
             ));
@@ -479,7 +478,7 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
             || nod.worldwide_day.value() == 0
             || nod.gratis_load_minor.is_zero();
         let has_invalid_price = nod.entry_price_minor.is_zero()
-            || !NodContract::is_issuable_entry(nod.entry_price_minor)
+            || !outbe_nod::pricing::is_issuable_entry(nod.entry_price_minor)
             || nod.reference_currency == 0;
         if out_of_order
             || has_zero_field

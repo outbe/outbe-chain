@@ -108,7 +108,7 @@ pub fn body_commitment(
             actual: commitment_scheme_version,
         });
     }
-    if schema_version != crate::BODY_SCHEMA_V1 {
+    if schema_version != crate::BODY_SCHEMA_V1 && schema_version != crate::TRIBUTE_BODY_SCHEMA_V2 {
         return Err(CommitmentError::UnsupportedSchema {
             actual: schema_version,
         });

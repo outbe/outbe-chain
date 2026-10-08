@@ -258,9 +258,13 @@ fn real_worker_processes_execute_through_output_finalize() {
     )
     .expect("materialize fixture openings");
     let published = publish_input_artifact_set(
-        &cas,
+        outbe_ocomp::input_artifacts::InputArtifactContext {
+            cas: &cas,
+            bundle: &bundle,
+            limits,
+            list_limits: poc_input_list_limits(),
+        },
         directory.path().join("input-refs"),
-        &bundle,
         InputArtifactContents {
             identity: InputArtifactIdentity {
                 job_id,
@@ -282,8 +286,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             fidelity_openings: vec![materialized.fidelity],
             oracle_opening: materialized.oracle,
         },
-        &limits,
-        poc_input_list_limits(),
     )
     .expect("publish worker fixture inputs");
     let tribute_ref = published

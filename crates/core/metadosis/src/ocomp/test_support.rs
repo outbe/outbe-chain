@@ -141,7 +141,7 @@ mod parent_tree;
 #[path = "test_support/wwd.rs"]
 mod wwd;
 
-pub use activation::{ActivationFixture, RollbackSnapshot};
+pub use activation::{ActivationFixture, ActivationScenario, RollbackSnapshot};
 #[cfg(test)]
 pub use activation::{ActivationMetadata, SemanticSnapshot};
 #[cfg(test)]

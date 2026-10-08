@@ -75,11 +75,13 @@ fn gratis_auth() -> ModifyAuth {
     ModifyAuth {
         mac: outbe_tee_enclave::gratis::modify_mac(
             &key,
-            ACCOUNT,
-            GratisOp::Mint,
-            U256::from(AMOUNT),
-            0,
-            chain_identity(),
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account: ACCOUNT,
+                op: GratisOp::Mint,
+                amount: U256::from(AMOUNT),
+                op_nonce: 0,
+                chain_id: chain_identity(),
+            },
         ),
         op_nonce: 0,
     }

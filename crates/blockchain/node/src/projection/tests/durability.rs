@@ -71,13 +71,15 @@ fn frame_sink_returns_only_after_the_exact_durable_write_finishes() {
         genesis_hash: B256::repeat_byte(0x11),
         start_block: 1,
     };
-    OffchainDataProjection::open(projection_config, durable.clone(), durable.clone()).unwrap();
+    outbe_offchain_data::open_projection(projection_config, durable.clone(), durable.clone())
+        .unwrap();
     let overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
     let reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let durable_writer: StorageWriterHandle = durable.clone();
     let projector =
-        OffchainDataProjection::open(projection_config, reader.clone(), logical_writer).unwrap();
+        outbe_offchain_data::open_projection(projection_config, reader.clone(), logical_writer)
+            .unwrap();
     let (readiness_publisher, _readiness) = projection_readiness(
         ProjectionCheckpoint {
             block_number: 0,
@@ -137,13 +139,15 @@ fn frame_sink_accepts_restart_replay_below_durable_p_and_rejects_conflicting_p()
         genesis_hash: B256::repeat_byte(0x11),
         start_block: 1,
     };
-    OffchainDataProjection::open(projection_config, storage.clone(), storage.clone()).unwrap();
+    outbe_offchain_data::open_projection(projection_config, storage.clone(), storage.clone())
+        .unwrap();
     let overlay = Arc::new(PendingOverlayStorage::new(storage.clone(), storage.clone()));
     let reader: StorageReaderHandle = overlay.clone();
     let logical_writer: StorageWriterHandle = overlay.clone();
     let durable_writer: StorageWriterHandle = storage.clone();
     let projector =
-        OffchainDataProjection::open(projection_config, reader.clone(), logical_writer).unwrap();
+        outbe_offchain_data::open_projection(projection_config, reader.clone(), logical_writer)
+            .unwrap();
     let (readiness_publisher, readiness) = projection_readiness(
         ProjectionCheckpoint {
             block_number: 0,
@@ -257,7 +261,8 @@ fn frame_sink_accepts_restart_replay_below_durable_p_and_rejects_conflicting_p()
     let logical_writer: StorageWriterHandle = overlay.clone();
     let durable_writer: StorageWriterHandle = storage;
     let projector =
-        OffchainDataProjection::open(projection_config, reader.clone(), logical_writer).unwrap();
+        outbe_offchain_data::open_projection(projection_config, reader.clone(), logical_writer)
+            .unwrap();
     let (readiness_publisher, _readiness) = projection_readiness(
         ProjectionCheckpoint {
             block_number: 0,

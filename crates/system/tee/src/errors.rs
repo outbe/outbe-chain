@@ -50,6 +50,15 @@ pub enum TransportError {
     #[error("enclave returned error: {0}")]
     EnclaveError(String),
 
+    #[error("NOD materialization rejected: {0}")]
+    NodMaterializationRejected(String),
+
+    #[error("NOD materialization capacity exceeded: {0}")]
+    NodMaterializationCapacityExceeded(String),
+
+    #[error("encrypted NOD mint rejected: {0}")]
+    NodMintRejected(String),
+
     #[error("enclave identity mismatch after reconnect: {0}")]
     IdentityMismatch(String),
 
@@ -96,6 +105,9 @@ impl TransportError {
             Self::FidelityAttestation(_) => "fidelity_attestation",
             Self::UnexpectedResponse => "unexpected_response",
             Self::EnclaveError(_) => "enclave_error",
+            Self::NodMaterializationRejected(_) => "nod_materialization_rejected",
+            Self::NodMaterializationCapacityExceeded(_) => "nod_materialization_capacity",
+            Self::NodMintRejected(_) => "nod_mint_rejected",
             Self::IdentityMismatch(_) => "identity_mismatch",
             Self::SessionRevoked(_) => "session_revoked",
         }

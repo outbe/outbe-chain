@@ -44,6 +44,8 @@ pub struct LiquidityReservation {
     pub reference_currency: u16,
     #[attribute(order = 14)]
     pub call_anchor_price_minor: U256,
+    #[attribute(order = 15)]
+    pub source: Address,
 }
 
 /// EVM storage layout for the vaultrouter precompile.
@@ -194,6 +196,7 @@ impl From<LiquidityReservation> for crate::api::IVaultRouter::LiquidityReservati
             assetDecimals: r.asset_decimals,
             referenceCurrency: r.reference_currency,
             callAnchorPriceMinor: r.call_anchor_price_minor,
+            source: r.source,
         }
     }
 }

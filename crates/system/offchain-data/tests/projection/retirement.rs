@@ -4,8 +4,7 @@ use alloy_primitives::{keccak256, Address, B256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{encode_tribute_v1, StoredBody};
 use outbe_offchain_data::{
-    read_projection_state, FinalizedBlock, OffchainDataProjection, ProjectionOutcome,
-    PROJECTION_STATE_NAMESPACE,
+    read_projection_state, FinalizedBlock, ProjectionOutcome, PROJECTION_STATE_NAMESPACE,
 };
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
@@ -102,7 +101,7 @@ fn pinned_tribute_partition_retirement_atomically_moves_exact_body_to_job_retent
         worldwide_day: WorldwideDay::new(day),
     };
     let selector = Arc::new(FixedRetentionSelector { pin });
-    let mut projection = OffchainDataProjection::open_with_retention_selector(
+    let mut projection = outbe_offchain_data::open_projection_with_retention_selector(
         config(10),
         storage.clone(),
         storage.clone(),
@@ -151,7 +150,9 @@ fn pinned_tribute_partition_retirement_atomically_moves_exact_body_to_job_retent
     let payload = encode_tribute_v1(&canonical_body(&body)).unwrap();
     assert_eq!(
         retained.encode(),
-        StoredBody::new_v1(payload).unwrap().encode()
+        StoredBody::new(outbe_compressed_entities::BODY_SCHEMA_V1, payload)
+            .unwrap()
+            .encode()
     );
 
     let batches = storage.batches();
@@ -179,7 +180,7 @@ fn rocksdb_retirement_and_gc_preserve_open_export_session_and_durable_checkpoint
     let id = poseidon_entity(owner, day);
     let body = tribute_body(id, owner, day);
     let commitment = tribute_commitment(&body);
-    let mut projection = OffchainDataProjection::open_with_retention_selector(
+    let mut projection = outbe_offchain_data::open_projection_with_retention_selector(
         config(10),
         storage.clone(),
         storage.clone(),

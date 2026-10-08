@@ -4,9 +4,9 @@ use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{encode_tribute_v1, StoredBody};
 use outbe_offchain_data::{
-    read_projection_state, FinalizedBlock, OffchainDataProjection, ProjectionConfig,
-    ProjectionError, ProjectionOutcome, ProjectionSource, ProjectionState, PROJECTION_STATE_KEY,
-    PROJECTION_STATE_NAMESPACE,
+    read_projection_state, FinalizedBlock, ProjectionConfig, ProjectionError, ProjectionOutcome,
+    ProjectionSource, ProjectionState, PROJECTION_STATE_KEY, PROJECTION_STATE_NAMESPACE,
+    STORAGE_SCHEMA_VERSION,
 };
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, PendingOverlayStorage,
@@ -34,12 +34,18 @@ fn projection_state_can_be_read_without_a_writer_capability() {
 }
 
 #[test]
-fn pre_ocomp_projection_schema_cannot_open_the_retained_namespace_layout() {
+fn previous_projection_schemas_cannot_open_the_id_sharded_nod_layout() {
+    for version in 1..STORAGE_SCHEMA_VERSION {
+        reject_previous_projection_schema(version);
+    }
+}
+
+fn reject_previous_projection_schema(version: u32) {
     let storage = Arc::new(MemoryStorage::new());
     let legacy = ProjectionState {
         chain_id: 91,
         genesis_hash: B256::repeat_byte(0x91),
-        storage_schema_version: 1,
+        storage_schema_version: version,
         start_block: 7,
         checkpoint: None,
     };
@@ -52,11 +58,18 @@ fn pre_ocomp_projection_schema_cannot_open_the_retained_namespace_layout() {
         .unwrap();
 
     assert!(matches!(
-        OffchainDataProjection::open(config(7), storage.clone(), storage),
+        read_projection_state(config(7), storage.clone()),
         Err(ProjectionError::ProjectionSchemaMismatch {
-            expected: 3,
-            actual: 1
-        })
+            expected: 4,
+            actual
+        }) if actual == version
+    ));
+    assert!(matches!(
+        outbe_offchain_data::open_projection(config(7), storage.clone(), storage),
+        Err(ProjectionError::ProjectionSchemaMismatch {
+            expected: 4,
+            actual
+        }) if actual == version
     ));
 }
 
@@ -115,7 +128,9 @@ fn projects_primary_indexes_provenance_and_writes_checkpoint_last() {
         encode_tribute_v1(&canonical_body(&tribute_body(token_id, owner, 20260715))).unwrap();
     assert_eq!(
         raw_primary.value.as_bytes(),
-        StoredBody::new_v1(emitted_payload).unwrap().encode()
+        StoredBody::new(outbe_compressed_entities::BODY_SCHEMA_V1, emitted_payload)
+            .unwrap()
+            .encode()
     );
     let source = ProjectionSource::from_storage_metadata(&metadata.unwrap()).unwrap();
     assert_eq!(source.block_number, 10);
@@ -155,12 +170,12 @@ fn projects_primary_indexes_provenance_and_writes_checkpoint_last() {
 fn logical_projection_advances_before_the_durable_batch_is_written() {
     let durable = Arc::new(MemoryStorage::new());
     let bootstrap =
-        OffchainDataProjection::open(config(10), durable.clone(), durable.clone()).unwrap();
+        outbe_offchain_data::open_projection(config(10), durable.clone(), durable.clone()).unwrap();
     assert_eq!(bootstrap.state().checkpoint, None);
 
     let overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
     let mut logical =
-        OffchainDataProjection::open(config(10), overlay.clone(), overlay.clone()).unwrap();
+        outbe_offchain_data::open_projection(config(10), overlay.clone(), overlay.clone()).unwrap();
     let owner = Address::repeat_byte(0xa2);
     let tribute_id = poseidon_entity(owner, 20260715);
     let block = FinalizedBlock {
@@ -261,13 +276,16 @@ fn restart_replays_pending_finalized_receipts_from_the_durable_checkpoint() {
         )],
     };
     let mut durable_projection =
-        OffchainDataProjection::open(config(10), durable.clone(), durable.clone()).unwrap();
+        outbe_offchain_data::open_projection(config(10), durable.clone(), durable.clone()).unwrap();
     durable_projection.project_block(&durable_block).unwrap();
 
     let lost_overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
-    let mut before_kill =
-        OffchainDataProjection::open(config(10), lost_overlay.clone(), lost_overlay.clone())
-            .unwrap();
+    let mut before_kill = outbe_offchain_data::open_projection(
+        config(10),
+        lost_overlay.clone(),
+        lost_overlay.clone(),
+    )
+    .unwrap();
     let prepared = before_kill.prepare_block(&pending_block).unwrap();
     drop(
         before_kill
@@ -282,9 +300,12 @@ fn restart_replays_pending_finalized_receipts_from_the_durable_checkpoint() {
     drop(before_kill);
 
     let rebuilt_overlay = Arc::new(PendingOverlayStorage::new(durable.clone(), durable.clone()));
-    let mut after_restart =
-        OffchainDataProjection::open(config(10), rebuilt_overlay.clone(), rebuilt_overlay.clone())
-            .unwrap();
+    let mut after_restart = outbe_offchain_data::open_projection(
+        config(10),
+        rebuilt_overlay.clone(),
+        rebuilt_overlay.clone(),
+    )
+    .unwrap();
     assert_eq!(after_restart.state().checkpoint.unwrap().block_number, 10);
     let prepared = after_restart.prepare_block(&pending_block).unwrap();
     drop(
@@ -384,7 +405,7 @@ fn rejects_unmanaged_data_and_validates_persisted_identity() {
         ]))
         .unwrap();
     assert!(matches!(
-        OffchainDataProjection::open(config(1), storage.clone(), storage.clone()),
+        outbe_offchain_data::open_projection(config(1), storage.clone(), storage.clone()),
         Err(ProjectionError::UnmanagedProjectionData)
     ));
 
@@ -395,7 +416,7 @@ fn rejects_unmanaged_data_and_validates_persisted_identity() {
         ..config(1)
     };
     assert!(matches!(
-        OffchainDataProjection::open(wrong, managed.clone(), managed.clone()),
+        outbe_offchain_data::open_projection(wrong, managed.clone(), managed.clone()),
         Err(ProjectionError::ProjectionIdentityMismatch { .. })
     ));
 }
@@ -482,13 +503,15 @@ fn replay_after_atomic_block_boundary_converges() {
     for fail_on in 1..=1 {
         let storage = Arc::new(FailOnceStorage::default());
         let mut projection =
-            OffchainDataProjection::open(config(60), storage.clone(), storage.clone()).unwrap();
+            outbe_offchain_data::open_projection(config(60), storage.clone(), storage.clone())
+                .unwrap();
         storage.arm(fail_on);
         assert!(projection.project_block(&block).is_err());
         drop(projection);
 
         let mut restarted =
-            OffchainDataProjection::open(config(60), storage.clone(), storage.clone()).unwrap();
+            outbe_offchain_data::open_projection(config(60), storage.clone(), storage.clone())
+                .unwrap();
         restarted.project_block(&block).unwrap();
         let repository = TributeRepositoryReader::new(storage.clone());
         let final_body = repository.get(token_id).unwrap().unwrap();

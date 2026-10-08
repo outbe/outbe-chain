@@ -1,70 +1,52 @@
-//! Low-level storage access for the confidential Gratis token.
-//!
-//! CRUD over the encrypted blob slots, the plaintext aggregates, and the
-//! modify-auth replay counter. This layer reads and writes ciphertext verbatim. It
-//! never decrypts. Business orchestration (building enclave requests, applying
-//! the returned receipt, emitting events) lives in [`crate::runtime`]. The
-//! cross-crate surface is [`crate::api`].
+//! Store account ciphertext and replay counters. Keep pledged supply separate.
 
+use crate::schema::Gratis;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
-use crate::schema::Gratis;
+pub(crate) struct GratisAccount<'ledger, 'storage> {
+    ledger: &'ledger Gratis<'storage>,
+    owner: Address,
+}
 
-impl Gratis<'_> {
-    // --- Metadata ---
+pub(crate) fn account<'ledger, 'storage>(
+    ledger: &'ledger Gratis<'storage>,
+    owner: Address,
+) -> GratisAccount<'ledger, 'storage> {
+    GratisAccount { ledger, owner }
+}
 
-    pub fn name(&self) -> &str {
-        "gratis"
+impl GratisAccount<'_, '_> {
+    /// Return the stored ciphertext. An unused account has an empty blob.
+    pub(crate) fn balance_ct(&self) -> Result<Vec<u8>> {
+        self.ledger.balance_ct.get_bytes(&self.owner).read()
     }
 
-    pub fn symbol(&self) -> &str {
-        "GRATIS"
+    pub(crate) fn pledged_ct(&self) -> Result<Vec<u8>> {
+        self.ledger.pledged_ct.get_bytes(&self.owner).read()
     }
 
-    pub fn decimals(&self) -> u8 {
-        6
+    pub(crate) fn write_pledged_ct(&self, blob: &[u8]) -> Result<()> {
+        self.ledger.pledged_ct.get_bytes(&self.owner).write(blob)
     }
 
-    // --- Plaintext aggregates (non-attributable) ---
-
-    pub fn total_supply(&self) -> Result<U256> {
-        self.total_supply.read()
+    pub(crate) fn op_nonce(&self) -> Result<u64> {
+        self.ledger.op_nonce.read(&self.owner)
     }
 
-    pub fn pledged_total_supply(&self) -> Result<U256> {
-        self.pledged_total_supply.read()
+    pub(crate) fn write_balance_ct(&self, blob: &[u8]) -> Result<()> {
+        self.ledger.balance_ct.get_bytes(&self.owner).write(blob)
     }
 
-    // --- Ciphertext reads (returned verbatim for the view-key holder to decrypt) ---
-
-    /// Encrypted balance blob for `account` (`version(8) || AEAD-ct`). Empty if
-    /// the account never held a balance.
-    pub fn balance_ct_of(&self, account: Address) -> Result<Vec<u8>> {
-        self.balance_ct.get_bytes(&account).read()
+    pub(crate) fn set_op_nonce(&self, nonce: u64) -> Result<()> {
+        self.ledger.op_nonce.write(&self.owner, nonce)
     }
+}
 
-    /// The account's current modify-auth replay counter (the value a client must
-    /// bind into its next write authorization).
-    pub fn op_nonce_of(&self, account: Address) -> Result<u64> {
-        self.op_nonce.read(&account)
-    }
+pub(crate) fn pledged_total_supply(ledger: &Gratis<'_>) -> Result<U256> {
+    ledger.pledged_total_supply.read()
+}
 
-    // --- Writers (all take `&self`. Storage mutates through interior mutability) ---
-
-    pub(crate) fn write_balance_ct(&self, account: Address, blob: &[u8]) -> Result<()> {
-        self.balance_ct.get_bytes(&account).write(blob)
-    }
-
-    pub(crate) fn set_op_nonce(&self, account: Address, nonce: u64) -> Result<()> {
-        self.op_nonce.write(&account, nonce)
-    }
-
-    pub(crate) fn set_total_supply(&self, value: U256) -> Result<()> {
-        self.total_supply.write(value)
-    }
-
-    pub(crate) fn set_pledged_total_supply(&self, value: U256) -> Result<()> {
-        self.pledged_total_supply.write(value)
-    }
+pub(crate) fn set_pledged_total_supply(ledger: &Gratis<'_>, value: U256) -> Result<()> {
+    ledger.pledged_total_supply.write(value)
 }

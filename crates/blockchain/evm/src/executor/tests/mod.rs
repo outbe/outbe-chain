@@ -44,10 +44,7 @@ use outbe_compressed_entities::{
     ExactParentIdentity, ExecutionScope, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
     LOCAL_STORAGE_SCHEMA_VERSION,
 };
-use outbe_nod::{
-    precompile::INod, NodBucketState, NodContract, NodItemState, NodRepositoryReader,
-    NodRepositoryWriter,
-};
+use outbe_nod::{precompile::INod, NodBucketState, NodContract, NodItemState};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::{

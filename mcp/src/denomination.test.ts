@@ -537,3 +537,96 @@ test("external intent amounts retain their existing 18-decimal presentation", ()
   assert.equal(order.amountIn.value1e18, "1");
   assert.equal(order.amountOut.value1e18, "0.5");
 });
+
+test("MCP Credis and pledge tools encode their calls against the registered ABIs", async () => {
+  type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
+  const handlers = new Map<string, ToolHandler>();
+  const server = {
+    tool(name: string, ...args: unknown[]) {
+      handlers.set(name, args.at(-1) as ToolHandler);
+    },
+  } as unknown as McpServer;
+  const account = privateKeyToAccount(
+    "0x0000000000000000000000000000000000000000000000000000000000000001",
+  );
+  const sent: { to: Hex; data: Hex; value: bigint }[] = [];
+  const ctx = {
+    rpcUrl: "http://unused.invalid",
+    chain: { id: 1, nativeCurrency: { name: "COEN", symbol: "COEN", decimals: 18 } } as Chain,
+    publicClient: {
+      waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 1n, gasUsed: 1n }),
+    } as unknown as PublicClient,
+    account,
+    walletClient: {
+      sendTransaction: async (transaction: { to: Hex; data: Hex; value: bigint }) => {
+        sent.push(transaction);
+        return `0x${"11".repeat(32)}` as Hex;
+      },
+    } as WalletClient,
+  } satisfies Ctx;
+  registerSignTools(server, ctx);
+  const smartAccount = "0x00000000000000000000000000000000000000aa";
+  const source = account.address;
+  const asset = "0x0000000000000000000000000000000000000888";
+  const mac = `0x${"22".repeat(32)}`;
+  const cases = [
+    {
+      tool: "credis_reserve",
+      args: { smart_account: smartAccount, source, asset, amount: "300", reference_currency: 840 },
+      contract: "vaultrouter",
+      functionName: "reserveStables",
+      expected: [smartAccount, source, asset, 300n, 840],
+      value: 0n,
+    },
+    {
+      tool: "gratis_pledge",
+      args: { reservation_id: "7", mac, op_nonce: "3" },
+      contract: "gratisfactory",
+      functionName: "pledgeGratis",
+      expected: [7n, { mac, opNonce: 3n }],
+      value: 0n,
+    },
+    {
+      tool: "gratis_cancel_pledge",
+      args: { reservation_id: "7" },
+      contract: "gratisfactory",
+      functionName: "cancelPledge",
+      expected: [7n],
+      value: 0n,
+    },
+    {
+      tool: "credis_issue",
+      args: { reservation_id: "7", stake: "1.5" },
+      contract: "credisfactory",
+      functionName: "issueCredis",
+      expected: [7n],
+      value: 1_500_000_000_000_000_000n,
+    },
+    {
+      tool: "credis_settle",
+      args: { position_id: "9", amount: "100" },
+      contract: "credisfactory",
+      functionName: "settleCredis",
+      expected: [9n, 100n],
+      value: 0n,
+    },
+  ] as const;
+
+  for (const item of cases) {
+    const callback = handlers.get(item.tool);
+    assert(callback, `${item.tool} was registered`);
+    await callback(item.args);
+    const transaction = sent.at(-1);
+    assert(transaction, `${item.tool} submitted a transaction`);
+    const entry = resolveContract(item.contract);
+    assert.equal(transaction.to, entry.address, `${item.tool} target`);
+    const decoded = decodeFunctionData({ abi: entry.abi, data: transaction.data });
+    assert.equal(decoded.functionName, item.functionName, item.tool);
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(decoded.args, (_, v) => (typeof v === "bigint" ? `${v}n` : v)).toLowerCase()),
+      JSON.parse(JSON.stringify(item.expected, (_, v) => (typeof v === "bigint" ? `${v}n` : v)).toLowerCase()),
+      item.tool,
+    );
+    assert.equal(transaction.value, item.value, `${item.tool} msg.value`);
+  }
+});

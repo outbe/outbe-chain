@@ -102,6 +102,7 @@ impl EnclaveSessions {
             EnclaveRequest::Health
                 | EnclaveRequest::GetPublicKeys
                 | EnclaveRequest::ProcessTributeOfferBatch { .. }
+                | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }
         ) {
             return Err(TransportError::EnclaveError(
                 "request is not permitted on the canary connection".into(),
@@ -222,29 +223,32 @@ pub fn generate_dcap_quote_v1(
     result
 }
 
-/// Invoke the dedicated purpose-bound `RegisterEnclave` verifier and obtain
-/// its deterministic one-time onboarding artifact from a production enclave.
-#[allow(clippy::too_many_arguments)]
+/// Evidence and signatures for a purpose-bound registration verification.
+pub struct RegistrationVerificationRequest<'a> {
+    pub evidence: &'a [u8],
+    pub policy: &'a [u8],
+    pub block_timestamp: u64,
+    pub node_signature: &'a [u8; 65],
+    pub enclave_signature: &'a [u8; 64],
+    pub expected_tribute_offer_public: [u8; 32],
+    pub key_epoch: u64,
+    pub tribute_offer_epoch: u64,
+}
+
+/// Verify registration evidence and obtain its one-time onboarding artifact.
 pub fn verify_dcap_registration_and_seal_v1(
-    evidence: &[u8],
-    policy: &[u8],
-    block_timestamp: u64,
-    node_signature: &[u8; 65],
-    enclave_signature: &[u8; 64],
-    expected_tribute_offer_public: [u8; 32],
-    key_epoch: u64,
-    tribute_offer_epoch: u64,
+    request: RegistrationVerificationRequest<'_>,
 ) -> Result<DcapOnboardingVerificationResultV1, TransportError> {
     let Some(result) = try_with_enclave(|session| {
         session.verify_dcap_registration_and_seal_v1(
-            evidence,
-            policy,
-            block_timestamp,
-            node_signature,
-            enclave_signature,
-            expected_tribute_offer_public,
-            key_epoch,
-            tribute_offer_epoch,
+            request.evidence,
+            request.policy,
+            request.block_timestamp,
+            request.node_signature,
+            request.enclave_signature,
+            request.expected_tribute_offer_public,
+            request.key_epoch,
+            request.tribute_offer_epoch,
         )
     }) else {
         return Err(TransportError::DcapVerification(
@@ -276,26 +280,7 @@ pub fn resident_offer_public_key_state_v1() -> Result<Option<B256>, TransportErr
             "mandatory enclave client is not configured".into(),
         ));
     };
-    match result? {
-        EnclaveResponse::PublicKeys {
-            offer_key_ready,
-            recipient_x25519_pub,
-            ..
-        } => {
-            if !offer_key_ready {
-                return Ok(None);
-            }
-            let public = B256::from(recipient_x25519_pub);
-            if public.is_zero() {
-                return Err(TransportError::EnclaveError(
-                    "local enclave reports a ready but zero permanent offer key".into(),
-                ));
-            }
-            Ok(Some(public))
-        }
-        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
-        _ => Err(TransportError::UnexpectedResponse),
-    }
+    decode_resident_offer_key_response(result?)
 }
 
 /// Require the permanent tribute-offer key. A keyless enclave is fatal to an
@@ -306,4 +291,29 @@ pub fn resident_offer_public_key_v1() -> Result<B256, TransportError> {
             "local enclave permanent offer key is not ready; no recovery or fallback exists".into(),
         )
     })
+}
+
+/// Decode a ready-key probe without accepting a zero public key.
+fn decode_resident_offer_key_response(
+    response: EnclaveResponse,
+) -> Result<Option<B256>, TransportError> {
+    let (offer_key_ready, recipient_x25519_pub) = match response {
+        EnclaveResponse::PublicKeys {
+            offer_key_ready,
+            recipient_x25519_pub,
+            ..
+        } => (offer_key_ready, recipient_x25519_pub),
+        EnclaveResponse::Error { message } => return Err(TransportError::EnclaveError(message)),
+        _ => return Err(TransportError::UnexpectedResponse),
+    };
+    if !offer_key_ready {
+        return Ok(None);
+    }
+    let public = B256::from(recipient_x25519_pub);
+    if public.is_zero() {
+        return Err(TransportError::EnclaveError(
+            "local enclave reports a ready but zero permanent offer key".into(),
+        ));
+    }
+    Ok(Some(public))
 }

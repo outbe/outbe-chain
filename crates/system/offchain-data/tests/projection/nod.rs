@@ -3,12 +3,10 @@ use std::sync::Arc;
 use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
-    body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, WwdEntityId,
+    body_commitment, encode_nod_bucket_v1, encode_nod_item_v2, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
-use outbe_nod::{
-    canonical_bucket, canonical_item, precompile::INod, NodPageRequest, NodRepositoryReader,
-};
+use outbe_nod::{canonical_bucket, canonical_item, precompile::INod, NodPageRequest};
 use outbe_offchain_data::FinalizedBlock;
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
@@ -37,7 +35,7 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
         )],
     };
     projection.project_block(&store_block).unwrap();
-    let repository = NodRepositoryReader::new(storage.clone());
+    let repository = outbe_nod::nod_reader(storage.clone());
     assert!(repository.get(nod_id).unwrap().is_some());
     assert!(repository.get_bucket(bucket_id).unwrap().is_some());
     assert_eq!(
@@ -72,11 +70,11 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
                         nodId: nod_id.to_u256(),
                         previousCommitment: {
                             let body = nod_body(nod_id, owner, bucket_key);
-                            let payload = encode_nod_item_v1(&canonical_item(&body)).unwrap();
+                            let payload = encode_nod_item_v2(&canonical_item(&body)).unwrap();
                             B256::from(
                                 *body_commitment(
                                     ACTIVE_COMMITMENT_SCHEME,
-                                    BODY_SCHEMA_V1,
+                                    outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
                                     nod_id,
                                     &payload,
                                 )

@@ -26,7 +26,6 @@ use crate::inbox::{WorkerInbox, WorkerInboxLimits};
 use crate::input_artifacts::poc_input_list_limits;
 use crate::input_ref_catalog::VerifiedInputChunkRefCatalog;
 use crate::lysis_finalization::finalize_verified_lysis_v1;
-use crate::lysis_plan_audit::LocalLysisPlanAuditV1;
 use crate::lysis_scheduler::admit_reported_lysis_unit_v1;
 use crate::payout_artifact::write_contributor_payout_artifact;
 use crate::supervisor::DiscoveryRecord;
@@ -258,7 +257,7 @@ impl SupervisorJobRunnerV1 {
             let requests = {
                 let audit = stage(
                     "open exact Lysis scheduling audit",
-                    LocalLysisPlanAuditV1::open(
+                    crate::lysis_plan_audit::open_local_plan_audit(
                         &admissions,
                         &input_refs,
                         &self.reader,
@@ -309,7 +308,7 @@ impl SupervisorJobRunnerV1 {
         require_not_cancelled(cancelled)?;
         let audit = stage(
             "cold-audit complete Lysis plan",
-            LocalLysisPlanAuditV1::open(
+            crate::lysis_plan_audit::open_local_plan_audit(
                 &admissions,
                 &input_refs,
                 &self.reader,

@@ -1,4 +1,5 @@
 //! Real NOD/router execution with stateful ERC20 and reserve-vault counterparties.
+use outbe_offchain_data::runtime_body_readers;
 #[path = "common/nod_qualification.rs"]
 mod qualify_fixture;
 use qualify_fixture::qualify;
@@ -10,7 +11,7 @@ use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_evm::sub_call;
 use outbe_gratis::enclave_client::test_enclave;
-use outbe_nod::{precompile::INod, NodContract, NodIssueParams, NodRepositoryReader};
+use outbe_nod::{precompile::INod, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
@@ -89,67 +90,22 @@ impl World {
             );
         }
         let adapter = Arc::new(MemoryStorage::new());
-        let readers = RuntimeBodyReaders::new(adapter.clone());
-        let parent = NodRepositoryReader::new(adapter);
-        let scope = Arc::new(ExecutionScope::new());
+        let readers = runtime_body_readers(adapter.clone());
+        let parent = outbe_nod::nod_reader(adapter);
+        let scope = Arc::new(ExecutionScope::default());
         let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, OWNER, vec![OWNER]);
         let mut provider = DirectStorageProvider::new(&mut db, block);
         let nod = StorageHandle::enter(&mut provider, |storage| {
-            storage
-                .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-                .unwrap();
-            storage
-                .sstore(
-                    COMPRESSED_ENTITIES_ADDRESS,
-                    U256::ONE,
-                    U256::from_be_slice(
-                        outbe_compressed_entities::sealed_root(B256::ZERO)
-                            .unwrap()
-                            .as_slice(),
-                    ),
-                )
-                .unwrap();
-            begin_block(storage.clone(), &scope).unwrap();
-            let router = VaultRouterContract::new(storage.clone());
-            router.assets.insert(ASSET).unwrap();
-            router.asset_vault_set(ASSET).insert(VAULT).unwrap();
-            router
-                .reference_currency_vault_set(840)
-                .insert(VAULT)
-                .unwrap();
-            router
-                .vault_reference_currencies
-                .write(&VAULT, 840)
-                .unwrap();
-            if registered {
-                router
-                    .liquidity_sources
-                    .insert(NOD_FACTORY_ADDRESS)
-                    .unwrap();
-                router
-                    .liquidity_source_types
-                    .write(
-                        &NOD_FACTORY_ADDRESS,
-                        IVaultRouter::StablesSource::NodCostAmount as u8,
-                    )
-                    .unwrap();
-            }
-            let params = NodIssueParams {
-                owner,
-                gratis_load_minor: U256::from(GRATIS_LOAD),
-                worldwide_day: WorldwideDay::new(20_241_220),
-                league_id: 1,
-                entry_price_minor: cost * U256::from(1_000),
-                issuance_currency: 840,
-                reference_currency: 840,
-            };
-            let nod = outbe_nodfactory::api::issue_nod(&storage, &scope, &parent, &params).unwrap();
-            let floor_price_minor =
-                NodContract::floor_price_minor(params.entry_price_minor).unwrap();
-            let bucket =
-                NodContract::bucket_key(params.worldwide_day, params.entry_price_minor, 840);
-            qualify(&storage, bucket, floor_price_minor, 840).expect("bucket qualifies");
-            nod
+            seed_settlement_nod(
+                &storage,
+                &scope,
+                &parent,
+                NodSettlementSeed {
+                    owner,
+                    cost,
+                    registered,
+                },
+            )
         });
         provider.flush().unwrap();
         let ctx = Context::mainnet()
@@ -164,7 +120,15 @@ impl World {
             nod,
             cost,
         };
-        let quote = world.view(
+        world.fund_settlement();
+        world
+    }
+
+    fn fund_settlement(&mut self) {
+        let owner = self.owner;
+        let nod = self.nod;
+        let cost = self.cost;
+        let quote = self.view(
             NOD_FACTORY_ADDRESS,
             INodFactory::quoteSettlementCall {
                 nodId: nod.to_u256(),
@@ -174,7 +138,7 @@ impl World {
         assert_eq!(quote.settlementCurrency, 840);
         assert_eq!(quote.paymentMinor, cost);
         assert_eq!(quote.snapshotId, U256::ZERO);
-        world.ok(
+        self.ok(
             owner,
             ASSET,
             IFixture::mintCall {
@@ -183,7 +147,7 @@ impl World {
             },
         );
         // Existing factory funds must never subsidize a failed or partial payment.
-        world.ok(
+        self.ok(
             owner,
             ASSET,
             IFixture::mintCall {
@@ -191,7 +155,7 @@ impl World {
                 amount: U256::from(17),
             },
         );
-        world.ok(
+        self.ok(
             owner,
             ASSET,
             IFixture::approveCall {
@@ -199,7 +163,7 @@ impl World {
                 amount: cost,
             },
         );
-        world.ok(
+        self.ok(
             VAULT_ROUTER_ADDRESS,
             ASSET,
             IFixture::approveCall {
@@ -207,7 +171,6 @@ impl World {
                 amount: U256::MAX,
             },
         );
-        world
     }
 
     fn call(
@@ -345,11 +308,13 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
     let mac = modify_mac(
         &key,
-        OWNER,
-        GratisOp::Mint,
-        U256::from(GRATIS_LOAD),
-        0,
-        B256::from(U256::from(CHAIN_ID)),
+        &outbe_tee_enclave::gratis::ModifyOperation {
+            account: OWNER,
+            op: GratisOp::Mint,
+            amount: U256::from(GRATIS_LOAD),
+            op_nonce: 0,
+            chain_id: B256::from(U256::from(CHAIN_ID)),
+        },
     );
     let minted = world.ok(
         OWNER,
@@ -361,7 +326,12 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
             opNonce: 0,
         },
     );
-    assert_eq!(minted, U256::from(GRATIS_LOAD));
+    let view_key =
+        outbe_tee_enclave::gratis::derive_view_key(&test_enclave::state_key(), OWNER).unwrap();
+    assert_eq!(
+        outbe_tee::gratis_decrypt::decrypt_gratis_balance(&view_key, OWNER, &minted).unwrap(),
+        U256::from(GRATIS_LOAD)
+    );
 }
 
 #[test]
@@ -534,4 +504,86 @@ fn token_owner_cannot_reenter_settlement_during_transfer() {
             world.cost
         ]
     );
+}
+
+struct NodSettlementSeed {
+    owner: Address,
+    cost: U256,
+    registered: bool,
+}
+fn seed_settlement_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl outbe_compressed_entities::ParentBodySource,
+    seed: NodSettlementSeed,
+) -> WwdEntityId {
+    let NodSettlementSeed {
+        owner,
+        cost,
+        registered,
+    } = seed;
+    storage
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
+        .unwrap();
+    storage
+        .sstore(
+            COMPRESSED_ENTITIES_ADDRESS,
+            U256::ONE,
+            U256::from_be_slice(
+                outbe_compressed_entities::sealed_root(B256::ZERO)
+                    .unwrap()
+                    .as_slice(),
+            ),
+        )
+        .unwrap();
+    begin_block(storage.clone(), scope).unwrap();
+    seed_settlement_router(storage, registered);
+    let params = NodIssueParams {
+        owner,
+        gratis_load_minor: U256::from(GRATIS_LOAD),
+        worldwide_day: WorldwideDay::new(20_241_220),
+        league_id: 1,
+        entry_price_minor: cost * U256::from(1_000),
+        issuance_currency: 840,
+        reference_currency: 840,
+    };
+    let nod = outbe_nodfactory::api::issue_nod(
+        storage,
+        scope,
+        parent,
+        &outbe_nod::test_support::encrypted_fixture(&params, CHAIN_ID),
+    )
+    .unwrap();
+    let floor_price_minor =
+        outbe_nod::pricing::floor_price_minor(params.entry_price_minor).unwrap();
+    let bucket =
+        outbe_nod::identity::bucket_key(params.worldwide_day, params.entry_price_minor, 840);
+    qualify(storage, bucket, floor_price_minor, 840).expect("bucket qualifies");
+    nod
+}
+fn seed_settlement_router(storage: &StorageHandle<'_>, registered: bool) {
+    let router = VaultRouterContract::new(storage.clone());
+    router.assets.insert(ASSET).unwrap();
+    router.asset_vault_set(ASSET).insert(VAULT).unwrap();
+    router
+        .reference_currency_vault_set(840)
+        .insert(VAULT)
+        .unwrap();
+    router
+        .vault_reference_currencies
+        .write(&VAULT, 840)
+        .unwrap();
+    if registered {
+        router
+            .liquidity_sources
+            .insert(NOD_FACTORY_ADDRESS)
+            .unwrap();
+        router
+            .liquidity_source_types
+            .write(
+                &NOD_FACTORY_ADDRESS,
+                IVaultRouter::StablesSource::NodCostAmount as u8,
+            )
+            .unwrap();
+    }
 }

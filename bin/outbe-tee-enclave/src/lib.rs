@@ -24,15 +24,21 @@ pub mod confidential;
 pub mod crypto;
 pub mod dcap_verifier;
 pub mod dkg;
+pub mod encrypted_tribute_offer;
 pub mod errors;
 pub mod fidelity;
+pub mod fidelity_cipher;
 pub mod finalized_admission;
 pub mod gramine;
 pub mod gratis;
+pub mod gratis_cipher;
 pub mod initialization;
 pub mod keys;
 #[cfg(feature = "local-e2e")]
 pub mod local_e2e;
+pub mod nod_encryption;
+pub mod nod_materialization;
+pub mod nod_mine;
 mod onboarding_upload;
 pub mod payload;
 pub mod process;
@@ -45,6 +51,8 @@ mod sgx_sealing;
 pub mod sgx_sealing;
 pub mod telemetry;
 pub mod transport;
+pub mod tribute_day;
+pub mod tribute_encryption;
 pub mod zk_claim;
 
 /// Fixed dev identity for the in-process test-enclave stand-ins (NOT production).

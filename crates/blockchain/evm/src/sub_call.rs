@@ -105,6 +105,7 @@ where
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    context.runtime.abort_bridge.check_subcall()?;
     let effective_is_static = context.outer_is_static || input.is_static;
 
     // Static context + non-zero value -> reject early.

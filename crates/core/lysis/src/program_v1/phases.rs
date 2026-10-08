@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
-use outbe_nod::NodContract;
 use outbe_ocomp_protocol::result::NodActionV1 as CertifiedNodActionV1;
 use outbe_primitives::time::WorldwideDay;
 
@@ -118,7 +117,7 @@ pub trait NodBucketKeyV1 {
 
 impl NodBucketKeyV1 for NodActionV1 {
     fn bucket_key(&self) -> B256 {
-        NodContract::bucket_key(
+        outbe_nod::identity::bucket_key(
             self.worldwide_day,
             self.entry_price_minor,
             self.reference_currency,
@@ -128,7 +127,7 @@ impl NodBucketKeyV1 for NodActionV1 {
 
 impl NodBucketKeyV1 for CertifiedNodActionV1 {
     fn bucket_key(&self) -> B256 {
-        NodContract::bucket_key(
+        outbe_nod::identity::bucket_key(
             WorldwideDay::new(self.wwd),
             self.entry_price_minor,
             self.reference_currency,
@@ -497,7 +496,7 @@ fn amount_record(
             ordinal: raw_ordinal as usize,
         });
     }
-    if !NodContract::is_issuable_entry(entry_price_minor) {
+    if !outbe_nod::pricing::is_issuable_entry(entry_price_minor) {
         return Err(ProgramErrorV1::Arithmetic {
             message: format!("Nod entry price out of bounds at {raw_ordinal}"),
         });

@@ -256,8 +256,12 @@ impl Fixture {
                                 WorldwideDay::new(20_260_902),
                             )))
                             .unwrap();
-                            let value =
-                                Value::new(StoredBody::new_v1(bytes).unwrap().encode()).unwrap();
+                            let value = Value::new(
+                                StoredBody::new(outbe_compressed_entities::BODY_SCHEMA_V1, bytes)
+                                    .unwrap()
+                                    .encode(),
+                            )
+                            .unwrap();
                             writer.put(namespace, &key, &value).unwrap();
                         }
                     }

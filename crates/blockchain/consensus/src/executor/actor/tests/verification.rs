@@ -251,6 +251,9 @@ fn syncing_at_the_finalized_floor_retries_after_the_existing_delay() {
     });
 }
 
+#[path = "verification_cancellation.rs"]
+mod cancellation;
+
 #[test]
 fn cancellation_does_not_hide_a_fatal_in_flight_engine_failure() {
     deterministic::Runner::default().start(|clock| async move {
