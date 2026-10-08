@@ -1,6 +1,6 @@
 //! Daily call scan: force-calls Nod buckets off the Oracle's finalized
-//! per-UTC-day VWAPs. The Cycle daily trigger pins the closed UTC day and runs the
-//! first slice. Later CycleTicks continue the same day.
+//! per-UTC-day VWAPs. The Cycle daily trigger schedules the closed UTC day, and every
+//! CycleTick walks a slice of it.
 //!
 //! A bucket is called, walking each currency's call-price trie, when the reference
 //! price exceeded its call price on at least its `call_threshold_seconds` of the

@@ -1,9 +1,8 @@
 //! Daily Called scan: force-calls a series once its COEN VWAP exceeded
 //! the call trigger on `call_threshold_seconds` of the last `call_window_seconds`. Candidates
 //! come from the call-trigger bin index. Each run recomputes the counts from the
-//! Oracle's finalized per-UTC-day VWAPs. The Oracle begin-block hook closes these
-//! VWAPs before the CycleTick that drives this scan. The Cycle daily trigger drives
-//! this scan.
+//! Oracle's finalized per-UTC-day VWAPs. The Cycle daily trigger schedules the closed
+//! day, and every CycleTick walks a slice of it.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;

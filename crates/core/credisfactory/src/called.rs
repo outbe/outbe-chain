@@ -1,7 +1,6 @@
 //! Daily price-path scan: calls positions off the Oracle's finalized per-UTC-day
-//! VWAPs. The Cycle daily trigger pins the closed UTC day and runs the first slice.
-//! Later CycleTicks continue the same day through [`continue_sweeps`], which also
-//! voids the lapsed called positions through [`crate::expired`].
+//! VWAPs. The Cycle daily trigger schedules the closed UTC day, and every CycleTick
+//! walks a slice of it.
 //!
 //! A position moves `Open -> Called` when the COEN price in its REFERENCE currency
 //! sat strictly above the call price on `call_threshold_seconds` of the trailing

@@ -25,11 +25,6 @@ pub fn price_to_bin(price: U256) -> Result<u32> {
     reference_price::coen_iso_price_to_bin_id(price, BIN_STEP_BP)
 }
 
-/// The lower edge of `bin` as a six-decimal COEN/ISO price.
-pub fn bin_to_price_floor(bin: u32) -> Result<U256> {
-    reference_price::bin_id_to_coen_iso_price(bin, BIN_STEP_BP)
-}
-
 /// Namespaces a bin column key by its reference currency.
 ///
 /// Mapping keys are left-padded to 32 bytes before hashing, so a wider integer
@@ -326,7 +321,6 @@ mod tests {
         let low = price_to_bin(U256::from(1_000_000u64)).unwrap();
         let high = price_to_bin(U256::from(2_000_000u64)).unwrap();
         assert!(low < high);
-        assert!(bin_to_price_floor(high).unwrap() <= U256::from(2_000_000u64));
     }
 
     #[test]

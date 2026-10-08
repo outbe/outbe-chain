@@ -91,7 +91,7 @@ pub fn slot_key(bucket: u32, slot: u32) -> B256 {
 }
 
 /// Appends `entry` to `bucket` and records the slot it took.
-pub fn place<'s, Q: ExpiryQueueStore<'s>>(queue: &Q, entry: Q::Entry, bucket: u32) -> Result<()> {
+fn place<'s, Q: ExpiryQueueStore<'s>>(queue: &Q, entry: Q::Entry, bucket: u32) -> Result<()> {
     let slot = queue.bucket_len().read(&bucket)?;
     queue.bucket_at().write(&slot_key(bucket, slot), entry)?;
     queue.bucket_len().write(&bucket, slot.saturating_add(1))?;
@@ -124,11 +124,7 @@ pub fn remove<'s, Q: ExpiryQueueStore<'s>>(queue: &Q, entry: Q::Entry) -> Result
 }
 
 /// Moves `entry` to `bucket`. Its deadline does not change.
-pub fn retarget<'s, Q: ExpiryQueueStore<'s>>(
-    queue: &Q,
-    entry: Q::Entry,
-    bucket: u32,
-) -> Result<()> {
+fn retarget<'s, Q: ExpiryQueueStore<'s>>(queue: &Q, entry: Q::Entry, bucket: u32) -> Result<()> {
     let packed = queue.entry_slot().read(&entry)?;
     if packed != 0 {
         let (old_bucket, old_slot) = unpack_slot(packed);
@@ -138,7 +134,7 @@ pub fn retarget<'s, Q: ExpiryQueueStore<'s>>(
 }
 
 /// Frees one slot, and retires the bucket once nothing waits in it.
-pub fn release<'s, Q: ExpiryQueueStore<'s>>(
+fn release<'s, Q: ExpiryQueueStore<'s>>(
     queue: &Q,
     bucket: u32,
     slot: u32,
@@ -151,18 +147,11 @@ pub fn release<'s, Q: ExpiryQueueStore<'s>>(
     queue.bucket_at().clear(&key)?;
 
     let live = queue.bucket_live().read(&bucket)?.saturating_sub(1);
-    queue.bucket_live().write(&bucket, live)?;
     if live == 0 {
-        queue.bucket_len().clear(&bucket)?;
-        queue.bucket_live().clear(&bucket)?;
-        tree_math::remove(queue, bucket)?;
         // A refill of the bucket must not resume past its new end.
-        if queue.sweep_bucket().read()? == bucket {
-            queue.sweep_bucket().write(0)?;
-            queue.sweep_cursor().write(0)?;
-        }
+        return retire_bucket(queue, bucket);
     }
-    Ok(())
+    queue.bucket_live().write(&bucket, live)
 }
 
 pub fn entry_at<'s, Q: ExpiryQueueStore<'s>>(
@@ -179,7 +168,7 @@ pub fn first_bucket<'s, Q: ExpiryQueueStore<'s>>(queue: &Q) -> Result<Option<u32
 }
 
 /// Clears a bucket the sweep has walked to its end.
-pub fn retire_bucket<'s, Q: ExpiryQueueStore<'s>>(queue: &Q, bucket: u32) -> Result<()> {
+fn retire_bucket<'s, Q: ExpiryQueueStore<'s>>(queue: &Q, bucket: u32) -> Result<()> {
     queue.bucket_len().clear(&bucket)?;
     queue.bucket_live().clear(&bucket)?;
     tree_math::remove(queue, bucket)?;

@@ -146,7 +146,7 @@ impl NoticeSend<'_, '_> {
         self.budget.admit_writes(router_calls(run.len()));
         let refused = crate::called::notify_called(self.storage, worldwide_day, called_at, &run)?;
         let all_refused = refused.len() == run.len();
-        // A refused entry goes behind this block's window, so it never wedges the queue.
+        // A refused entry goes behind this block's window and waits out its pause.
         for entry in entries {
             if refused.contains(&unpack_called_notice(entry).0) {
                 self.requeue_refused(entry)?;

@@ -453,11 +453,6 @@ impl NodContract<'_> {
         call_bins::price_to_bin(price_minor)
     }
 
-    /// Lower edge of `bin_id` in six-decimal minor units. Diagnostic-only.
-    pub fn bin_to_price_floor(bin_id: u32) -> Result<U256> {
-        call_bins::bin_to_price_floor(bin_id)
-    }
-
     /// Parks a new bucket in the bin of its sealed call price.
     pub(crate) fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
