@@ -74,10 +74,11 @@ pub fn dispatch(
 }
 
 /// Read-only body authority for begin-block execution in a particular scope.
-pub struct BeginBlockReaders<'scope, 'readers> {
-    pub scope: &'scope outbe_compressed_entities::ExecutionScope,
-    pub parent: &'readers outbe_offchain_data::RuntimeBodyReaders,
-}
+pub type BeginBlockReaders<'scope, 'readers> = outbe_compressed_entities::ExecutionReaders<
+    'scope,
+    'readers,
+    outbe_offchain_data::RuntimeBodyReaders,
+>;
 
 /// Dispatches begin-block work with explicit read-only body authority.
 pub fn dispatch_with_readers(

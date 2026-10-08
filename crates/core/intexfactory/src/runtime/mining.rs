@@ -1,5 +1,11 @@
 use super::*;
 
+/// What the owner brings to one mining: the PoW nonce and the Promis modify-key authorization.
+pub struct MiningProof {
+    pub nonce: u64,
+    pub auth: outbe_promisfactory::api::ModifyAuth,
+}
+
 /// Burn Settled Intex and mint Promis with PoW and the owner's modify-key authorization.
 /// `owner` comes from calldata. Any sender can submit the authorized request.
 pub fn mine_promis(
@@ -7,9 +13,9 @@ pub fn mine_promis(
     series_id: SeriesId,
     owner: Address,
     units: U256,
-    nonce: u64,
-    auth: outbe_promisfactory::api::ModifyAuth,
+    proof: MiningProof,
 ) -> Result<U256> {
+    let MiningProof { nonce, auth } = proof;
     if owner.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }

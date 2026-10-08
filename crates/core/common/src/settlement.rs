@@ -71,6 +71,30 @@ fn pow10(exponent: u32) -> U256 {
     U256::from(10u64).pow(U256::from(exponent))
 }
 
+/// Which of an obligation's two currencies a payment asset is denominated in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaymentCurrency {
+    Reference,
+    Issuance,
+}
+
+impl PaymentCurrency {
+    /// The cross rate and its snapshot a payment converts at. Only the issuance
+    /// rail converts, so only it calls `cross_rate`.
+    pub fn conversion<R, S, E>(
+        self,
+        cross_rate: impl FnOnce() -> Result<(R, S), E>,
+    ) -> Result<(Option<R>, Option<S>), E> {
+        match self {
+            Self::Reference => Ok((None, None)),
+            Self::Issuance => {
+                let (rate, snapshot) = cross_rate()?;
+                Ok((Some(rate), Some(snapshot)))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +147,23 @@ mod tests {
         assert_eq!(
             floor_to_asset_units(U256::ZERO, U256::ONE, 12, 0),
             Ok(U256::ZERO)
+        );
+    }
+
+    #[test]
+    fn only_the_issuance_rail_converts() {
+        let unavailable = || Err::<(U256, u8), _>("unavailable");
+        assert_eq!(
+            PaymentCurrency::Reference.conversion(unavailable),
+            Ok((None, None))
+        );
+        assert_eq!(
+            PaymentCurrency::Issuance.conversion(unavailable),
+            Err("unavailable")
+        );
+        assert_eq!(
+            PaymentCurrency::Issuance.conversion(|| Ok::<_, &str>((u(2), 7u8))),
+            Ok((Some(u(2)), Some(7u8)))
         );
     }
 

@@ -297,11 +297,13 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
         assert_eq!(
             outbe_desis::api::dispatch_auction_brief(
                 storage.clone(),
-                wwd,
-                U256::from(1_u8),
-                true,
+                outbe_desis::api::AuctionBrief {
+                    worldwide_day: wwd,
+                    desis_limit_minor: U256::from(1_u8),
+                    is_green: true
+                },
                 scheduled,
-                outbe_desis::api::BriefOverflowPolicy::CarryOver,
+                outbe_desis::api::BriefOverflowPolicy::CarryOver
             )
             .unwrap(),
             outbe_desis::api::AuctionBriefReceipt::Accepted

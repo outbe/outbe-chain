@@ -529,6 +529,17 @@ fn validate_root_reduce_summary(summary: &RootReduceSummaryV1) -> Result<(), Lys
             "root reducer summary binding",
         ));
     }
+    validate_root_summary_carriers(summary)?;
+    let action_start = root_summary_action_start(summary)?;
+    if summary.covered_primary_count == 0 {
+        return validate_empty_root_summary(summary);
+    }
+    validate_root_summary_counts(summary, action_start)
+}
+
+fn validate_root_summary_carriers(
+    summary: &RootReduceSummaryV1,
+) -> Result<(), LysisArtifactErrorV1> {
     require_carrier(
         &summary.nod_actions,
         ListKind::NodActions,
@@ -573,14 +584,21 @@ fn validate_root_reduce_summary(summary: &RootReduceSummaryV1) -> Result<(), Lys
             "root reducer summary carrier span",
         ));
     }
+    Ok(())
+}
 
+fn root_summary_action_start(summary: &RootReduceSummaryV1) -> Result<u32, LysisArtifactErrorV1> {
     let action_start = summary
         .covered_primary_start
         .checked_mul(PRIMARY_WORK_SHARD_SIZE)
         .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
-    if summary.nod_actions.start_ordinal != action_start
-        || summary.bucket_records.start_ordinal != action_start
-        || summary.contributor_actions.start_ordinal != action_start
+    if [
+        summary.nod_actions.start_ordinal,
+        summary.bucket_records.start_ordinal,
+        summary.contributor_actions.start_ordinal,
+    ]
+    .into_iter()
+    .any(|start| start != action_start)
         || summary.output_manifest_entries.start_ordinal != summary.covered_primary_start
         || summary.result_chunk_hashes.start_ordinal != summary.covered_primary_start
     {
@@ -588,25 +606,38 @@ fn validate_root_reduce_summary(summary: &RootReduceSummaryV1) -> Result<(), Lys
             "root reducer summary list start",
         ));
     }
+    Ok(action_start)
+}
 
-    if summary.covered_primary_count == 0 {
-        if summary.tribute_count != 0
-            || summary.nod_count != 0
-            || summary.bucket_count != 0
-            || summary.contributor_count != 0
-            || !summary.tribute_nominal_total.is_zero()
-            || !summary.eligible_nominal_total.is_zero()
-            || !summary.lysis_allocation_minor.is_zero()
-            || !summary.nod_cost_total.is_zero()
-            || summary.first_error_ordinal.is_some()
-        {
-            return Err(LysisArtifactErrorV1::InvalidEncoding(
-                "root reducer empty summary",
-            ));
-        }
-        return Ok(());
+fn validate_empty_root_summary(summary: &RootReduceSummaryV1) -> Result<(), LysisArtifactErrorV1> {
+    let has_count = [
+        summary.tribute_count,
+        summary.nod_count,
+        summary.bucket_count,
+        summary.contributor_count,
+    ]
+    .into_iter()
+    .any(|count| count != 0);
+    let has_total = [
+        summary.tribute_nominal_total,
+        summary.eligible_nominal_total,
+        summary.lysis_allocation_minor,
+        summary.nod_cost_total,
+    ]
+    .into_iter()
+    .any(|total| !total.is_zero());
+    if has_count || has_total || summary.first_error_ordinal.is_some() {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "root reducer empty summary",
+        ));
     }
+    Ok(())
+}
 
+fn validate_root_summary_counts(
+    summary: &RootReduceSummaryV1,
+    action_start: u32,
+) -> Result<(), LysisArtifactErrorV1> {
     let covered_capacity = summary
         .covered_primary_count
         .checked_mul(PRIMARY_WORK_SHARD_SIZE)
@@ -614,8 +645,9 @@ fn validate_root_reduce_summary(summary: &RootReduceSummaryV1) -> Result<(), Lys
     let minimum_count = covered_capacity
         .checked_sub(PRIMARY_WORK_SHARD_SIZE - 1)
         .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
-    if summary.tribute_count < minimum_count
-        || summary.tribute_count > covered_capacity
+    let tribute_count_out_of_range =
+        summary.tribute_count < minimum_count || summary.tribute_count > covered_capacity;
+    if tribute_count_out_of_range
         || summary.nod_count != summary.tribute_count
         || summary.bucket_count != summary.nod_count
         || summary.contributor_count > summary.tribute_count

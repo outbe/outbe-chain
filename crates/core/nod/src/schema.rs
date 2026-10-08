@@ -487,19 +487,20 @@ impl<'storage> NodContract<'storage> {
             .ocomp_materialization_last_progress_height
             .read(&worldwide_day)?;
 
+        let roots_and_binding = [
+            nod_root,
+            bucket_root,
+            output_manifest_root,
+            job_id,
+            protocol_bundle_hash,
+            program_semantics_hash,
+        ];
         if generation == 0 {
-            if !nod_root.is_zero()
-                || !bucket_root.is_zero()
-                || !output_manifest_root.is_zero()
-                || !metadata.is_zero()
-                || !nod_amount_total.is_zero()
-                || !lysis_allocation_minor.is_zero()
-                || !job_id.is_zero()
-                || !protocol_bundle_hash.is_zero()
-                || !program_semantics_hash.is_zero()
-                || next_nod_ordinal != 0
-                || last_progress_height != 0
-            {
+            let words_clear = roots_and_binding.iter().all(B256::is_zero)
+                && [metadata, nod_amount_total, lysis_allocation_minor]
+                    .iter()
+                    .all(U256::is_zero);
+            if !words_clear || next_nod_ordinal != 0 || last_progress_height != 0 {
                 return Err(outbe_primitives::error::PrecompileError::Fatal(
                     "absent Nod OCOMP generation has residual state".into(),
                 ));
@@ -507,14 +508,7 @@ impl<'storage> NodContract<'storage> {
             return Ok(None);
         }
 
-        if nod_root.is_zero()
-            || bucket_root.is_zero()
-            || output_manifest_root.is_zero()
-            || !(metadata >> 160usize).is_zero()
-            || job_id.is_zero()
-            || protocol_bundle_hash.is_zero()
-            || program_semantics_hash.is_zero()
-        {
+        if roots_and_binding.iter().any(B256::is_zero) || !(metadata >> 160usize).is_zero() {
             return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
                 "installed Nod OCOMP generation is malformed: day {} generation {generation} \
                  nod_root {nod_root} bucket_root {bucket_root} manifest {output_manifest_root} \
@@ -526,13 +520,11 @@ impl<'storage> NodContract<'storage> {
         let tribute_count = ((metadata >> 64usize) & U256::from(u32::MAX)).to::<u32>();
         let nod_count = ((metadata >> 96usize) & U256::from(u32::MAX)).to::<u32>();
         let bucket_count = ((metadata >> 128usize) & U256::from(u32::MAX)).to::<u32>();
-        if issued_at == 0
-            || tribute_count == 0
-            || nod_count != tribute_count
-            || bucket_count > nod_count
-            || next_nod_ordinal > nod_count
-            || last_progress_height == 0
-        {
+        let counts_consistent = tribute_count != 0
+            && nod_count == tribute_count
+            && bucket_count <= nod_count
+            && next_nod_ordinal <= nod_count;
+        if issued_at == 0 || last_progress_height == 0 || !counts_consistent {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "installed Nod OCOMP generation metadata is malformed".into(),
             ));

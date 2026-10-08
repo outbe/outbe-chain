@@ -218,9 +218,11 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
         let wwd = outbe_primitives::time::WorldwideDay::new(20_260_105);
         outbe_desis::api::dispatch_auction_brief(
             storage.clone(),
-            wwd,
-            U256::from(7),
-            true,
+            outbe_desis::api::AuctionBrief {
+                worldwide_day: wwd,
+                desis_limit_minor: U256::from(7),
+                is_green: true,
+            },
             1_699_920_005,
             outbe_desis::api::BriefOverflowPolicy::CarryOver,
         )

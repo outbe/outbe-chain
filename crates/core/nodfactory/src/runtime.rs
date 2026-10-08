@@ -14,7 +14,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
-use outbe_common::settlement::floor_to_asset_units;
+use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodBucket, LoadedNodItem};
@@ -124,17 +124,28 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
+/// One payment for a qualified or called Nod.
+pub struct SettleNodRequest {
+    pub caller: Address,
+    pub nod_id: WwdEntityId,
+    pub asset: Address,
+    pub snapshot_id: U256,
+}
+
 /// Pays a qualified or called Nod's known cost in ERC20 base units of `asset`. An
 /// issuance-currency payment must name the VWAP snapshot required at this block.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
-    nod_id: WwdEntityId,
-    asset: Address,
-    snapshot_id: U256,
+    request: SettleNodRequest,
 ) -> Result<()> {
+    let SettleNodRequest {
+        caller,
+        nod_id,
+        asset,
+        snapshot_id,
+    } = request;
     let (item, bucket) = load_nod(storage, scope, parent, nod_id)?;
     if item.body().is_settled {
         return Err(NodFactoryError::NodAlreadySettled.into());
@@ -312,13 +323,6 @@ fn load_nod(
     Ok((item, bucket))
 }
 
-/// Which of a Nod's two currencies a payment asset is denominated in.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PaymentCurrency {
-    Reference,
-    Issuance,
-}
-
 /// Vaulted asset whose `isoCode()` is the Nod's reference or issuance currency.
 /// The function checks registration first, so an unregistered asset need not
 /// implement `isoCode()` at all. It matches the reference currency first, so a
@@ -374,22 +378,19 @@ fn cost_in_asset(
     currency: PaymentCurrency,
 ) -> Result<(U256, Option<VwapSnapshotId>)> {
     let asset_decimals = read_decimals(storage, asset)?;
-    let (rate, snapshot) = match currency {
-        PaymentCurrency::Reference => (None, None),
-        PaymentCurrency::Issuance => {
-            let fx = settlement_fx_rates(
-                storage.clone(),
-                terms.issuance_currency,
-                terms.reference_currency,
-            )?
-            .ok_or(NodFactoryError::OracleUnavailable)?;
-            let rate = (
-                fx.issuance_currency_vwap_minor,
-                fx.reference_currency_vwap_minor,
-            );
-            (Some(rate), Some(fx.snapshot))
-        }
-    };
+    let (rate, snapshot) = currency.conversion(|| -> Result<_> {
+        let fx = settlement_fx_rates(
+            storage.clone(),
+            terms.issuance_currency,
+            terms.reference_currency,
+        )?
+        .ok_or(NodFactoryError::OracleUnavailable)?;
+        let rate = (
+            fx.issuance_currency_vwap_minor,
+            fx.reference_currency_vwap_minor,
+        );
+        Ok((rate, fx.snapshot))
+    })?;
     let cost = settlement_units(
         entry_price_minor,
         terms.gratis_load_minor,

@@ -5,6 +5,7 @@ mod request;
 mod voting;
 
 pub(crate) use completion::CompletionInput;
+pub(crate) use finality::FinalityAnchor;
 
 use super::index::{remove_ready_key, ReadyIndexKey};
 use crate::{errors::storage_corruption_message, schema::MetadosisContract};

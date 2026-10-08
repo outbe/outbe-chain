@@ -15,6 +15,12 @@ pub struct CanonicalRunSpanV1 {
     pub end_run: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalRunV1<I> {
+    pub span: CanonicalRunSpanV1,
+    pub records: I,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OwnerMergeSummaryV1 {
     pub span: CanonicalRunSpanV1,
@@ -45,10 +51,8 @@ impl<E> From<ProgramErrorV1> for StreamingMergeErrorV1<E> {
 }
 
 pub fn merge_owner_runs_streaming<L, R, S, E>(
-    left_span: CanonicalRunSpanV1,
-    left: L,
-    right_span: CanonicalRunSpanV1,
-    right: R,
+    left: CanonicalRunV1<L>,
+    right: CanonicalRunV1<R>,
     max_chunk_records: usize,
     mut sink: S,
 ) -> Result<OwnerMergeSummaryV1, StreamingMergeErrorV1<E>>
@@ -57,9 +61,10 @@ where
     R: IntoIterator<Item = FinalizedContributorV1>,
     S: FnMut(u32, &[FinalizedContributorV1]) -> Result<(), E>,
 {
+    let (left_span, right_span) = (left.span, right.span);
     validate_merge_inputs(left_span, right_span, max_chunk_records)?;
-    let mut left = left.into_iter().peekable();
-    let mut right = right.into_iter().peekable();
+    let mut left = left.records.into_iter().peekable();
+    let mut right = right.records.into_iter().peekable();
     let mut previous_left = None;
     let mut previous_right = None;
     let mut previous_output_owner = None;
@@ -127,10 +132,8 @@ where
 }
 
 pub fn merge_bucket_runs_streaming<L, R, S, E>(
-    left_span: CanonicalRunSpanV1,
-    left: L,
-    right_span: CanonicalRunSpanV1,
-    right: R,
+    left: CanonicalRunV1<L>,
+    right: CanonicalRunV1<R>,
     max_chunk_records: usize,
     mut sink: S,
 ) -> Result<BucketMergeSummaryV1, StreamingMergeErrorV1<E>>
@@ -139,9 +142,10 @@ where
     R: IntoIterator<Item = BucketRecordV1>,
     S: FnMut(u32, &[BucketRecordV1]) -> Result<(), E>,
 {
+    let (left_span, right_span) = (left.span, right.span);
     validate_merge_inputs(left_span, right_span, max_chunk_records)?;
-    let mut left = left.into_iter().peekable();
-    let mut right = right.into_iter().peekable();
+    let mut left = left.records.into_iter().peekable();
+    let mut right = right.records.into_iter().peekable();
     let mut previous_left = None;
     let mut previous_right = None;
     let mut previous_output = None;
@@ -210,9 +214,10 @@ fn validate_merge_inputs<E>(
     right: CanonicalRunSpanV1,
     max_chunk_records: usize,
 ) -> Result<(), StreamingMergeErrorV1<E>> {
-    if left.start_run >= left.end_run
+    let invalid_spans = left.start_run >= left.end_run
         || right.start_run >= right.end_run
-        || left.end_run != right.start_run
+        || left.end_run != right.start_run;
+    if invalid_spans
         || max_chunk_records == 0
         || max_chunk_records
             > usize::try_from(PRIMARY_WORK_SHARD_SIZE)

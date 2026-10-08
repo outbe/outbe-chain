@@ -5,10 +5,7 @@ use outbe_compressed_entities::{
     MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
-use outbe_primitives::math::{
-    reference_price,
-    tree_math::{self, BinTreeStorage},
-};
+use outbe_primitives::math::{reference_price, tree_math};
 use outbe_primitives::time::WorldwideDay;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -183,29 +180,40 @@ impl NodContract<'_> {
         let mut records = Vec::new();
         let mut after = None;
         loop {
-            let page = list(
-                self.storage_handle(),
-                scope,
-                parent,
-                query,
-                IdPageRequest {
-                    after,
-                    limit: MAX_ID_PAGE_LIMIT,
-                },
-            )?;
-            let next_after = page.next_after();
-            let bodies = page.into_bodies();
-            records.extend(
-                bodies
-                    .iter()
-                    .map(nod_item_from_verified)
-                    .collect::<Result<Vec<_>>>()?,
-            );
+            let (page, next_after) = self.read_page(scope, parent, query, after)?;
+            records.extend(page);
             let Some(next) = next_after else {
                 return Ok(records);
             };
             after = Some(next);
         }
+    }
+
+    /// One page of `query` after `after`, decoded, with the cursor of the next page.
+    fn read_page(
+        &self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        query: QueryRef,
+        after: Option<WwdEntityId>,
+    ) -> Result<(Vec<NodItemState>, Option<WwdEntityId>)> {
+        let page = list(
+            self.storage_handle(),
+            scope,
+            parent,
+            query,
+            IdPageRequest {
+                after,
+                limit: MAX_ID_PAGE_LIMIT,
+            },
+        )?;
+        let next_after = page.next_after();
+        let records = page
+            .into_bodies()
+            .iter()
+            .map(nod_item_from_verified)
+            .collect::<Result<Vec<_>>>()?;
+        Ok((records, next_after))
     }
 
     /// Records compact issuance state and delegates both bodies to the generic lifecycle.
@@ -216,38 +224,7 @@ impl NodContract<'_> {
         item: &NodItemState,
         entry_price_minor: U256,
     ) -> Result<()> {
-        let canonical_id = derive_poseidon_entity_id(item.owner, item.worldwide_day)
-            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
-        if item.nod_id != canonical_id {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod item canonical identity mismatch: expected {canonical_id}, found {}",
-                item.nod_id
-            )));
-        }
-        if item.is_settled {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
-                "cannot issue a settled Nod".into(),
-            ));
-        }
-        // ISO 0 is not a currency. Its bin namespace aliases the
-        // un-namespaced key. ISO 0 also never appears in the oracle's
-        // reference-currency registry. A bucket parked there would be
-        // invisible to the call scan forever.
-        if item.reference_currency == 0 {
-            return Err(NodError::ZeroReferenceCurrency.into());
-        }
-
-        let canonical_bucket_key = Self::bucket_key(
-            item.worldwide_day,
-            entry_price_minor,
-            item.reference_currency,
-        );
-        if item.bucket_key != canonical_bucket_key {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod bucket identity mismatch: expected {canonical_bucket_key}, found {}",
-                item.bucket_key
-            )));
-        }
+        Self::check_issued_identity(item, entry_price_minor)?;
         if self
             .get_item_verified(scope, parent, item.nod_id)?
             .is_some()
@@ -321,6 +298,43 @@ impl NodContract<'_> {
             to: item.owner,
             tokenId: item.nod_id.to_u256(),
         })
+    }
+
+    /// Rejects an item whose identity, payment state or bucket does not match a new issuance.
+    fn check_issued_identity(item: &NodItemState, entry_price_minor: U256) -> Result<()> {
+        let canonical_id = derive_poseidon_entity_id(item.owner, item.worldwide_day)
+            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+        if item.nod_id != canonical_id {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
+                "Nod item canonical identity mismatch: expected {canonical_id}, found {}",
+                item.nod_id
+            )));
+        }
+        if item.is_settled {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "cannot issue a settled Nod".into(),
+            ));
+        }
+        // ISO 0 is not a currency. Its bin namespace aliases the
+        // un-namespaced key. ISO 0 also never appears in the oracle's
+        // reference-currency registry. A bucket parked there would be
+        // invisible to the call scan forever.
+        if item.reference_currency == 0 {
+            return Err(NodError::ZeroReferenceCurrency.into());
+        }
+
+        let canonical_bucket_key = Self::bucket_key(
+            item.worldwide_day,
+            entry_price_minor,
+            item.reference_currency,
+        );
+        if item.bucket_key != canonical_bucket_key {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
+                "Nod bucket identity mismatch: expected {canonical_bucket_key}, found {}",
+                item.bucket_key
+            )));
+        }
+        Ok(())
     }
 
     /// Records compact removal state using capabilities retained by the caller's checks.
@@ -756,31 +770,8 @@ const fn unpack_bin_slot(packed: u64) -> (u32, u32) {
 /// One currency's call-price trie, like `outbe_gem::state::BucketBins`.
 pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
 
-impl BinTreeStorage for CallBins<'_, '_> {
-    fn read_root(&self) -> Result<U256> {
-        self.0.call_bin_tree_root.read(&self.1)
-    }
-    fn write_root(&self, value: U256) -> Result<()> {
-        self.0.call_bin_tree_root.write(&self.1, value)
-    }
-    fn read_mid(&self, key: u32) -> Result<U256> {
-        self.0
-            .call_bin_tree_mid
-            .read(&NodContract::scoped(self.1, key))
-    }
-    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .call_bin_tree_mid
-            .write(&NodContract::scoped(self.1, key), value)
-    }
-    fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.0
-            .call_bin_tree_leaf
-            .read(&NodContract::scoped(self.1, key))
-    }
-    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.0
-            .call_bin_tree_leaf
-            .write(&NodContract::scoped(self.1, key), value)
-    }
-}
+outbe_primitives::impl_bin_tree_storage!(CallBins scoped by NodContract::scoped {
+    root: call_bin_tree_root,
+    mid: call_bin_tree_mid,
+    leaf: call_bin_tree_leaf,
+});

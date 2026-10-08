@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
+use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
@@ -181,10 +181,12 @@ impl World {
                 &storage,
                 scope,
                 parent,
-                caller,
-                nod_id,
-                PAYMENT_ASSET,
-                U256::ZERO,
+                api::SettleNodRequest {
+                    caller,
+                    nod_id,
+                    asset: PAYMENT_ASSET,
+                    snapshot_id: U256::ZERO,
+                },
             )
         })
     }
@@ -327,8 +329,7 @@ fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
     world.enter(|storage, scope, parent| {
         let bytes = outbe_nod::precompile::dispatch(
             storage,
-            scope,
-            parent,
+            ExecutionReaders { scope, parent },
             &INod::nodDataCall {
                 nodId: nod_id.to_u256(),
             }
@@ -395,7 +396,17 @@ fn settle_erc20(
             .stub_sub_call_at_selector(asset, selector, Bytes::from(ret));
     }
     world.enter(|storage, scope, parent| {
-        api::settle_nod(&storage, scope, parent, owner, nod_id, asset, snapshot)
+        api::settle_nod(
+            &storage,
+            scope,
+            parent,
+            api::SettleNodRequest {
+                caller: owner,
+                nod_id,
+                asset,
+                snapshot_id: snapshot,
+            },
+        )
     })
 }
 

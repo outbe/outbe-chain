@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_compressed_entities::{ExecutionReaders, ParentBodySource, WwdEntityId};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
@@ -24,12 +24,12 @@ pub use abi::ITribute;
 
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     _caller: Address,
     value: U256,
 ) -> Result<Bytes> {
+    let ExecutionReaders { scope, parent } = readers;
     outbe_primitives::dispatch::reject_value(&value)?;
     dispatch_call(data, ITribute::ITributeCalls::abi_decode, |call| {
         let tribute = TributeContract::new(storage);

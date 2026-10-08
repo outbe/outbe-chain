@@ -9,4 +9,4 @@ pub use apply_plan::{
 pub use receipts::{
     verify_receipts, LysisOwnerReceiptsV1, LysisTerminalPermitV1, VerifiedLysisReceiptsV1,
 };
-pub use verify::verify_result;
+pub use verify::{verify_result, LysisResultInputsV1};

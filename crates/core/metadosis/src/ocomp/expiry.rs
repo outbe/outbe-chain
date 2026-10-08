@@ -15,6 +15,7 @@ use super::{
     schema::poc_schema_limits,
     state::{DayPhase, JobFsmProjection},
     vote::{OcompPenaltyMetrics, ResponseWindowCloseV1},
+    FinalityAnchor,
 };
 
 /// Records finality for the exact live OCOMP request whose request block is the
@@ -60,10 +61,12 @@ pub fn record_certified_parent_finality(
 
     metadosis.record_ocomp_finality(
         intent_id,
-        finalized_request_block_hash,
-        finalized_request_state_root,
-        ctx.block.block_number,
-        profile.capacity_profile.result_deadline_blocks,
+        FinalityAnchor {
+            request_block_hash: finalized_request_block_hash,
+            request_state_root: finalized_request_state_root,
+            recorded_height: ctx.block.block_number,
+            response_window_blocks: profile.capacity_profile.result_deadline_blocks,
+        },
         &schema_limits,
     )?;
     Ok(true)
