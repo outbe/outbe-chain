@@ -445,6 +445,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
+            onchain_feeds: Default::default(),
             redstone: None,
             health: None,
         }
@@ -482,11 +483,7 @@ mod tests {
     /// Provider with no candles falls back to ticker VWAP.
     #[tokio::test]
     async fn test_fetch_and_aggregate_fallback_to_ticker_vwap() {
-        // Use a provider that returns tickers but no candles (Chainlink stub).
-        use crate::provider::chainlink::ChainlinkProvider;
-
-        // Chainlink returns nothing, so we also need mock for ticker data.
-        // Instead, build a minimal provider that returns tickers but not candles.
+        // Build a minimal provider that returns tickers but not candles.
         struct TickerOnlyProvider;
 
         #[async_trait::async_trait]
@@ -515,8 +512,6 @@ mod tests {
             }
             // get_candle_prices uses default -> returns empty
         }
-
-        let _ = ChainlinkProvider::new(); // silence unused import
 
         let providers: Vec<Box<dyn Provider>> = vec![Box::new(TickerOnlyProvider)];
         let config = test_config(vec![CurrencyPairConfig {

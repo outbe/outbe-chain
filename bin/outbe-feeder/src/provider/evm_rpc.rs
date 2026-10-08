@@ -1,3 +1,5 @@
+//! Minimal EVM JSON-RPC client shared by on-chain providers (DEX pools,
+//! Chainlink aggregators). Credentials in RPC URLs never reach logs.
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_sol_types::SolCall;
 use eyre::{ensure, eyre, Result};
@@ -12,14 +14,14 @@ use std::{
 };
 
 #[derive(Clone)]
-pub(super) struct Rpc {
+pub(crate) struct Rpc {
     client: reqwest::Client,
     endpoint: String,
     next_id: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Block {
+pub(crate) struct Block {
     pub number: u64,
     pub hash: B256,
     pub timestamp: u64,
@@ -27,7 +29,7 @@ pub(super) struct Block {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct Log {
+pub(crate) struct Log {
     pub address: Address,
     pub topics: Vec<B256>,
     pub data: Bytes,
@@ -135,6 +137,19 @@ impl Rpc {
         Ok(C::abi_decode_returns_validate(&bytes)?)
     }
 
+    /// `eth_call` against the `latest` block: for data that is self-validating
+    /// (signed oracle rounds) and needs no reorg protection.
+    pub async fn call_latest<C: SolCall>(&self, address: Address, call: C) -> Result<C::Return> {
+        let value = self
+            .request(
+                "eth_call",
+                json!([{"to":address, "data":Bytes::from(call.abi_encode())}, "latest"]),
+            )
+            .await?;
+        let bytes: Bytes = serde_json::from_value(value)?;
+        Ok(C::abi_decode_returns_validate(&bytes)?)
+    }
+
     pub async fn logs(
         &self,
         address: Address,
@@ -170,7 +185,7 @@ impl Rpc {
     }
 }
 
-pub(super) fn quantity(text: &str) -> Result<u64> {
+pub(crate) fn quantity(text: &str) -> Result<u64> {
     let digits = text
         .strip_prefix("0x")
         .ok_or_else(|| eyre!("invalid RPC quantity prefix"))?;

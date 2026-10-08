@@ -35,7 +35,8 @@ pub(super) fn rate(
     Ok(FixedValue::from_raw(result.wrapping_to::<U256>()))
 }
 
-pub(super) fn base_volume(raw: U256, decimals: u8) -> Result<FixedValue> {
+/// Raw token units at `decimals` to FP18.
+pub(crate) fn scale_fp18(raw: U256, decimals: u8) -> Result<FixedValue> {
     ensure!(decimals <= 77, "unsupported token decimals (>77)");
     let result = U1024::from(raw) * ten_pow(18) / ten_pow(u32::from(decimals));
     ensure!(
