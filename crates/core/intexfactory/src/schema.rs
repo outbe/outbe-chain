@@ -151,7 +151,7 @@ pub struct IntexFactoryContract {
 impl IntexFactoryContract<'_> {
     /// Namespace a bin-index column by the reference currency its prices are in.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
-        ((reference_currency as u64) << 32) | key as u64
+        outbe_primitives::call_bins::scoped(reference_currency, key)
     }
 
     /// Inverse of [`Self::scoped`] for a key that is a worldwide day.

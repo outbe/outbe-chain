@@ -1,10 +1,11 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_primitives::call_bins;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::expiry_queue;
-use outbe_primitives::math::{reference_price, tree_math};
+use outbe_primitives::math::tree_math;
 
 use crate::{
-    constants::{BIN_STEP_BP, TOKEN_NAME, TOKEN_SYMBOL},
+    constants::{TOKEN_NAME, TOKEN_SYMBOL},
     errors::GemError,
     precompile::IGem,
     schema::{BucketTerms, GemContract, GemData, GemState},
@@ -481,28 +482,15 @@ impl GemContract<'_> {
     // --- Bin keys (PancakeSwap LB-style) ----------------------------------
 
     pub fn price_to_bin(price: U256) -> Result<u32> {
-        if price.is_zero() {
-            return Ok(0);
-        }
-        reference_price::coen_iso_price_to_bin_id(price, BIN_STEP_BP)
+        call_bins::price_to_bin(price)
     }
 
-    /// Namespaces a bin-column key by the gem's reference currency.
-    ///
-    /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
-    /// integer type alone namespaces nothing. The ISO has to occupy real high
-    /// bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit, so the
-    /// low 32 bits always hold `key` unambiguously.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
-        ((reference_currency as u64) << 32) | key as u64
+        call_bins::scoped(reference_currency, key)
     }
 
     pub(crate) fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
-        let mut buf = [0u8; 10];
-        buf[0..2].copy_from_slice(&reference_currency.to_be_bytes());
-        buf[2..6].copy_from_slice(&bin_id.to_be_bytes());
-        buf[6..10].copy_from_slice(&index.to_be_bytes());
-        keccak256(buf)
+        call_bins::bin_index_key(reference_currency, bin_id, index)
     }
 }
 

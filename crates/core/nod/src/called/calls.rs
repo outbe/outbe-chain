@@ -4,6 +4,7 @@ use alloy_primitives::{B256, U256};
 use outbe_oracle::api::get_all_reference_currencies;
 use outbe_primitives::{
     block::BlockRuntimeContext,
+    call_bins::{pack_cursor, unpack_cursor},
     error::{Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     time::first_full_day,
@@ -179,14 +180,6 @@ fn try_call(
 }
 
 pub(crate) use outbe_primitives::daily_sweep::currency_position;
-
-const fn pack_cursor(bin_id: u32, remaining: u32) -> u64 {
-    ((bin_id as u64) << 32) | remaining as u64
-}
-
-const fn unpack_cursor(packed: u64) -> (u32, u32) {
-    ((packed >> 32) as u32, packed as u32)
-}
 
 /// Stamps the call and opens the settlement window the bucket sealed.
 fn mark_called(

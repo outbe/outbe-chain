@@ -8,12 +8,6 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
     "A Nod is never transferable."
 );
 
-/// Per-bin multiplicative step in basis points. PancakeSwap LB default. Each
-/// bin spans a 0.25% price band. The LB-protocol constants used alongside
-/// this value (`SCALE`, `SCALE_OFFSET`, `PRECISION`, `BASIS_POINT_MAX`,
-/// `REAL_ID_SHIFT`, `MAX_BIN_ID`) live in `outbe_primitives::math::constants`.
-pub const BIN_STEP_BP: u16 = 25;
-
 /// The first issuance of a bucket snapshots the four call terms below onto it,
 /// and every later check reads the bucket's copy. Retuning one
 /// of them re-terms buckets issued afterwards. It leaves every already-issued

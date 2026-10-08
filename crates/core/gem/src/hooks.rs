@@ -9,6 +9,8 @@ use outbe_primitives::{
     time::previous_date_key,
 };
 
+use outbe_primitives::call_bins::{pack_cursor, unpack_cursor};
+
 use crate::constants::{CALL_SWEEP, MAX_BUCKET_VISITS_PER_BLOCK};
 use crate::precompile::IGem::{BatchMetadataUpdate, CallScanSkipped, SweepDaySkipped};
 use crate::schema::GemContract;
@@ -341,12 +343,4 @@ impl BucketCallScan<'_, '_> {
             }
         }
     }
-}
-
-const fn pack_cursor(bin: u32, remaining: u32) -> u64 {
-    ((bin as u64) << 32) | remaining as u64
-}
-
-const fn unpack_cursor(packed: u64) -> (u32, u32) {
-    ((packed >> 32) as u32, packed as u32)
 }

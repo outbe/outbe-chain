@@ -7,8 +7,6 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
     "A Gem is never transferable."
 );
 
-pub const BIN_STEP_BP: u16 = 25;
-
 /// The number of buckets one call slice may decide before it stops. The sweep resumes on
 /// the next block.
 pub const MAX_BUCKET_VISITS_PER_BLOCK: u32 = 256;

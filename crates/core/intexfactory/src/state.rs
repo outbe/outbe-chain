@@ -1,19 +1,16 @@
 //! Local storage helpers for the IntexFactory module (settlement bookkeeping
 //! + the call-price bin index). Orchestration lives in `runtime.rs`.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_intex::SeriesId;
+use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
-use outbe_primitives::math::{
-    reference_price,
-    tree_math::{self, BinTreeStorage},
-};
+use outbe_primitives::math::tree_math::{self, BinTreeStorage};
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 
-use crate::constants::BIN_STEP_BP;
 use crate::errors::IntexFactoryError;
 use crate::schema::IntexFactoryContract;
 
@@ -39,18 +36,11 @@ impl IntexFactoryContract<'_> {
 
     /// Map a six-decimal COEN/ISO price to its LB-style bin id (bounded by the codec).
     pub fn price_to_bin(price: U256) -> Result<u32> {
-        if price.is_zero() {
-            return Ok(0);
-        }
-        reference_price::coen_iso_price_to_bin_id(price, BIN_STEP_BP)
+        call_bins::price_to_bin(price)
     }
 
     pub(crate) fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
-        let mut buf = [0u8; 10];
-        buf[0..2].copy_from_slice(&reference_currency.to_be_bytes());
-        buf[2..6].copy_from_slice(&bin_id.to_be_bytes());
-        buf[6..10].copy_from_slice(&index.to_be_bytes());
-        keccak256(buf)
+        call_bins::bin_index_key(reference_currency, bin_id, index)
     }
 
     /// Composite key for a group's member list. It uses the layout of `bin_index_key`,

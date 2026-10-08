@@ -4,16 +4,16 @@ use outbe_compressed_entities::{
     ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId,
     MAX_ID_PAGE_LIMIT,
 };
+use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
-use outbe_primitives::math::{reference_price, tree_math};
+use outbe_primitives::math::tree_math;
 use outbe_primitives::time::WorldwideDay;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     api::{LoadedNodBucket, LoadedNodItem},
     config::NodParams,
-    constants::BIN_STEP_BP,
     errors::NodError,
     precompile::INod,
     schema::{CallTerms, NodBucketState, NodContract, NodItemState},
@@ -451,40 +451,21 @@ impl NodContract<'_> {
     /// See [`outbe_primitives::math::price_helper::get_id_from_price`] for the saturation
     /// rationale.
     pub fn price_to_bin(price_minor: U256) -> Result<u32> {
-        if price_minor.is_zero() {
-            return Ok(0);
-        }
-        reference_price::coen_iso_price_to_bin_id(price_minor, BIN_STEP_BP)
+        call_bins::price_to_bin(price_minor)
     }
 
-    /// Inverse of `price_to_bin`: returns the lower edge of bin `bin_id` in
-    /// six-decimal minor units. Diagnostic-only. `bin_to_price_floor` may
-    /// fail at extreme bin ids whose LB-pow exponent exceeds `2^20`.
+    /// Lower edge of `bin_id` in six-decimal minor units. Diagnostic-only.
     pub fn bin_to_price_floor(bin_id: u32) -> Result<U256> {
-        reference_price::bin_id_to_coen_iso_price(bin_id, BIN_STEP_BP)
+        call_bins::bin_to_price_floor(bin_id)
     }
 
-    /// Namespaces a bin-column key by the bucket's reference currency.
-    ///
-    /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
-    /// integer type alone namespaces nothing. The ISO has to occupy real
-    /// high bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit,
-    /// so the low 32 bits always hold `key` unambiguously. ISO `0` is the one
-    /// value that would alias the un-namespaced key. `record_nod_issued`
-    /// rejects it at the funnel so it can never be written.
+    /// ISO `0` would alias the un-namespaced key; `record_nod_issued` rejects it.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
-        ((reference_currency as u64) << 32) | key as u64
+        call_bins::scoped(reference_currency, key)
     }
 
-    /// Storage key for the `index`-th bucket_key parked in bin `bin_id` of
-    /// `reference_currency`. Mirrors the `owner_index_key` keccak-of-concat
-    /// pattern.
     pub(crate) fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
-        let mut buf = [0u8; 10];
-        buf[0..2].copy_from_slice(&reference_currency.to_be_bytes());
-        buf[2..6].copy_from_slice(&bin_id.to_be_bytes());
-        buf[6..10].copy_from_slice(&index.to_be_bytes());
-        alloy_primitives::keccak256(buf)
+        call_bins::bin_index_key(reference_currency, bin_id, index)
     }
 
     /// Parks a new bucket in the bin of its sealed call price.
@@ -502,7 +483,7 @@ impl NodContract<'_> {
             .write(&Self::bin_index_key(iso, bin_id, count), bucket_key)?;
         self.call_bin_count.write(&scoped, next_count)?;
         self.call_bucket_bin
-            .write(&bucket_key, pack_bin_slot(bin_id, count))?;
+            .write(&bucket_key, call_bins::pack_slot(bin_id, count))?;
         tree_math::add(&CallBins(self, iso), bin_id)?;
         Ok(())
     }
@@ -513,7 +494,7 @@ impl NodContract<'_> {
         if packed == 0 {
             return Ok(());
         }
-        let (bin_id, index) = unpack_bin_slot(packed);
+        let (bin_id, index) = call_bins::unpack_slot(packed);
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
         if self
             .call_bin_buckets
@@ -541,7 +522,7 @@ impl NodContract<'_> {
             self.call_bin_buckets
                 .write(&Self::bin_index_key(iso, bin_id, index), moved)?;
             self.call_bucket_bin
-                .write(&moved, pack_bin_slot(bin_id, index))?;
+                .write(&moved, call_bins::pack_slot(bin_id, index))?;
         }
         self.call_bin_buckets.write(&last_key, B256::ZERO)?;
         self.call_bin_count.write(&scoped, last)?;
@@ -732,14 +713,6 @@ pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketS
         )
     })?;
     Ok(crate::repository::from_canonical_bucket(payload.clone()))
-}
-
-const fn pack_bin_slot(bin_id: u32, index: u32) -> u64 {
-    ((bin_id as u64) << 32) | (index as u64 + 1)
-}
-
-const fn unpack_bin_slot(packed: u64) -> (u32, u32) {
-    ((packed >> 32) as u32, (packed as u32).wrapping_sub(1))
 }
 
 /// One currency's call-price trie, like `outbe_gem::state::BucketBins`.
