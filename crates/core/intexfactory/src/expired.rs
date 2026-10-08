@@ -42,21 +42,21 @@ impl ExpiryHandler<u64> for IntexExpiry<'_, '_> {
     type Member = (u32, SeriesId);
 
     fn due(&mut self, key: u64) -> Result<Due> {
-        Ok(match self.factory.called_group_count.read(&key)? {
+        Ok(match self.factory.call_group_count.read(&key)? {
             0 => Due::Drop,
             _ => Due::Expire,
         })
     }
 
     fn member_count(&self, key: u64) -> Result<u32> {
-        self.factory.called_group_count.read(&key)
+        self.factory.call_group_count.read(&key)
     }
 
     fn member_at(&self, key: u64, index: u32) -> Result<(u32, SeriesId)> {
         let (iso_code, worldwide_day) = IntexFactoryContract::unscoped(key);
         Ok((
             index,
-            self.factory.called_member(iso_code, worldwide_day, index)?,
+            self.factory.group_member(iso_code, worldwide_day, index)?,
         ))
     }
 
@@ -81,7 +81,7 @@ impl ExpiryHandler<u64> for IntexExpiry<'_, '_> {
         }
         let (iso_code, worldwide_day) = IntexFactoryContract::unscoped(key);
         self.factory
-            .remove_called_member(iso_code, worldwide_day, index)
+            .remove_group_member(iso_code, worldwide_day, index)
     }
 
     fn deferred(&mut self, key: u64, retry_at: u64) -> Result<()> {

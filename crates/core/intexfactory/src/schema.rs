@@ -63,7 +63,8 @@ pub struct IntexFactoryContract {
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 
     // Group members, keyed by `scoped(iso, day)`: a decision reads only fields the
-    // whole (reference currency, worldwide day) pair shares.
+    // whole (reference currency, worldwide day) pair shares. A called group keeps them
+    // until each member expires.
     #[attribute(order = 18)]
     pub call_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
@@ -93,8 +94,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
 
-    // Called groups awaiting their settlement window, bucketed by the hour it closes
-    // in. A called group has left the bin index, so these members are its only trace.
+    // Called groups awaiting their settlement window, bucketed by the hour it closes in.
     #[attribute(order = 28)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 29)]
@@ -105,12 +105,6 @@ pub struct IntexFactoryContract {
     /// the head check costs no record load.
     #[attribute(order = 31)]
     pub called_group_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
-    #[attribute(order = 32)]
-    pub called_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
-    #[attribute(order = 33)]
-    pub called_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
-
     // Widest terms ever issued in a currency. Both only move outwards, so the range
     // they define covers series the live profile no longer names.
     #[attribute(order = 34)]

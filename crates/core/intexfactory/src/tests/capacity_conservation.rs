@@ -1,4 +1,5 @@
 //! Realized units remain disjoint and only the unpaid remainder returns.
+use super::SeedCalledGroup;
 use crate::IntexFactoryContract;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
@@ -55,7 +56,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
         api::record_gem_factory_units(&s, id, Address::repeat_byte(1), 2).unwrap();
         api::mark_called(&s, id, ISSUED).unwrap();
         IntexFactoryContract::new(s.clone())
-            .push_called_group(840, WorldwideDay::new(WWD), DEADLINE, &[id])
+            .seed_called_group(840, WorldwideDay::new(WWD), DEADLINE, &[id])
             .unwrap();
         assert_eq!(
             PromisLimitContract::new(s).get_total_unallocated().unwrap(),
@@ -94,7 +95,7 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
         );
         let key = IntexFactoryContract::scoped(840, WWD);
         let factory = IntexFactoryContract::new(s.clone());
-        let pending = factory.called_group_count.read(&key).unwrap();
+        let pending = factory.call_group_count.read(&key).unwrap();
         let returned = PromisLimitContract::new(s).get_total_unallocated().unwrap();
         if terminal {
             assert_eq!((units.active, units.forfeited, pending), (0, 5, 0));

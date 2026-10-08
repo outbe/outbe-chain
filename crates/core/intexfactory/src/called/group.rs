@@ -49,18 +49,11 @@ pub(crate) fn try_call_group(
         outbe_intex::api::mark_called(storage, series_id, called_at)?;
     }
     let settlement_deadline = u64::from(called_at) + u64::from(series.call_notice_period_seconds);
-    // Park it with its members: the expiry sweep has no other way back to them.
     factory.remove_call_bin_group(group.iso_code, group.worldwide_day)?;
-    factory.push_called_group(
-        group.iso_code,
-        group.worldwide_day,
-        settlement_deadline,
-        &group.members,
-    )?;
+    factory.push_called_group(group.iso_code, group.worldwide_day, settlement_deadline)?;
 
     // The notices leave after the slice, once every group of the block is decided. Each
-    // notice carries its own series: the group
-    // has left the index by then.
+    // notice carries its own series: members may have expired by the time it is sent.
     for &series_id in &group.members {
         crate::notify::enqueue_notice(
             factory,

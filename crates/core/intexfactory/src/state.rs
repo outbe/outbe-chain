@@ -149,39 +149,31 @@ impl IntexFactoryContract<'_> {
 
     // --- called groups awaiting their deadline ---
 
-    /// Park a called group with the members and deadline the expiry sweep needs:
-    /// the bin index has just dropped it and nothing else maps (iso, day) -> series.
+    /// Queues a called group on its deadline. It has left the bins, and its members stay
+    /// in the group until each one expires.
     pub(crate) fn push_called_group(
         &mut self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
         deadline: u64,
-        members: &[SeriesId],
     ) -> Result<()> {
-        if members.is_empty() {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        if self.call_group_count.read(&key)? == 0 {
             return Ok(());
         }
-        let key = Self::scoped(reference_currency, worldwide_day.value());
         // A second push would orphan the first slot and credit the members twice.
-        if self.called_group_count.read(&key)? != 0 {
+        if self.called_group_deadline.read(&key)? != 0 {
             return Err(IntexFactoryError::GroupAlreadyIndexed {
                 iso: reference_currency,
                 worldwide_day,
             }
             .into());
         }
-        for (index, series_id) in members.iter().enumerate() {
-            self.called_group_members.write(
-                &Self::group_member_key(reference_currency, worldwide_day, index as u32),
-                series_id.to_word(),
-            )?;
-        }
-        self.called_group_count.write(&key, members.len() as u32)?;
-        self.called_group_deadline.write(&key, deadline)?;
-        expiry_queue::place(&ExpiryHours(self), key, Self::deadline_bucket(deadline))
+        expiry_queue::push(&ExpiryHours(self), key, deadline)
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
+    #[cfg(test)]
     pub(crate) const fn deadline_bucket(deadline: u64) -> u32 {
         expiry_queue::bucket_of(deadline)
     }
@@ -201,7 +193,7 @@ impl IntexFactoryContract<'_> {
         expiry_queue::first_bucket(&ExpiryHours(self))
     }
 
-    /// Drop an expired group and free the bucket slot it says it waits in.
+    /// Takes a called group off the queue. Its members stay.
     #[cfg(feature = "e2e-test")]
     pub(crate) fn remove_called_group(
         &mut self,
@@ -209,33 +201,24 @@ impl IntexFactoryContract<'_> {
         worldwide_day: WorldwideDay,
     ) -> Result<()> {
         let key = Self::scoped(reference_currency, worldwide_day.value());
-        let count = self.called_group_count.read(&key)?;
-        for index in 0..count {
-            self.called_group_members.clear(&Self::group_member_key(
-                reference_currency,
-                worldwide_day,
-                index,
-            ))?;
-        }
-        self.called_group_count.clear(&key)?;
         expiry_queue::remove(&ExpiryHours(self), key)
     }
 
-    /// The `index`-th member of a called group.
-    pub(crate) fn called_member(
+    /// The `index`-th member of a group.
+    pub(crate) fn group_member(
         &self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
         index: u32,
     ) -> Result<SeriesId> {
-        Ok(SeriesId::from_word(self.called_group_members.read(
+        Ok(SeriesId::from_word(self.call_group_members.read(
             &Self::group_member_key(reference_currency, worldwide_day, index),
         )?))
     }
 
     /// Swap-removes the `index`-th member of a called group, so a re-walk never meets a
     /// series whose load already went back to the pool.
-    pub(crate) fn remove_called_member(
+    pub(crate) fn remove_group_member(
         &mut self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
@@ -243,21 +226,21 @@ impl IntexFactoryContract<'_> {
     ) -> Result<()> {
         let key = Self::scoped(reference_currency, worldwide_day.value());
         let last = self
-            .called_group_count
+            .call_group_count
             .read(&key)?
             .checked_sub(1)
             .filter(|last| index <= *last)
             .ok_or_else(|| PrecompileError::Revert("called group member out of range".into()))?;
         let last_key = Self::group_member_key(reference_currency, worldwide_day, last);
         if index != last {
-            let moved = self.called_group_members.read(&last_key)?;
-            self.called_group_members.write(
+            let moved = self.call_group_members.read(&last_key)?;
+            self.call_group_members.write(
                 &Self::group_member_key(reference_currency, worldwide_day, index),
                 moved,
             )?;
         }
-        self.called_group_members.clear(&last_key)?;
-        self.called_group_count.write(&key, last)
+        self.call_group_members.clear(&last_key)?;
+        self.call_group_count.write(&key, last)
     }
 }
 
@@ -334,19 +317,9 @@ impl GroupIndex<'_> {
         Ok(())
     }
 
-    /// Drop a whole group: its members and its place in the bin.
+    /// Takes the group out of its bin. Its members stay for the expiry sweep.
     fn remove_group(&self, bins: &CallBins<'_, '_>, worldwide_day: WorldwideDay) -> Result<()> {
-        let group_key = self.group_key(worldwide_day);
-        let count = self.group_count.read(&group_key)?;
-        if count == 0 {
-            return Ok(());
-        }
-        for index in 0..count {
-            self.group_members
-                .clear(&self.member_key(worldwide_day, index))?;
-        }
-        self.group_count.write(&group_key, 0)?;
-        call_bins::remove(bins, group_key)?;
+        call_bins::remove(bins, self.group_key(worldwide_day))?;
         Ok(())
     }
 }

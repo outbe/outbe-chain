@@ -65,31 +65,18 @@ fn requeue_called_group(
     deadline: u64,
 ) -> Result<()> {
     use crate::schema::IntexFactoryContract;
-    use outbe_primitives::storage::types::Storable;
     use outbe_primitives::time::WorldwideDay;
 
     let mut factory = IntexFactoryContract::new(storage.clone());
     let worldwide_day = WorldwideDay::from(worldwide_day);
     let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
-    let count = factory.called_group_count.read(&key)?;
-    if count == 0 {
+    if factory.called_group_deadline.read(&key)? == 0 {
         return Err(outbe_primitives::error::PrecompileError::Revert(
             "closeCallNoticeForTest: no called group".into(),
         ));
     }
-    let mut members = Vec::with_capacity(count as usize);
-    for index in 0..count {
-        let word = factory
-            .called_group_members
-            .read(&IntexFactoryContract::group_member_key(
-                iso_code,
-                worldwide_day,
-                index,
-            ))?;
-        members.push(SeriesId::from_word(word));
-    }
     factory.remove_called_group(iso_code, worldwide_day)?;
-    factory.push_called_group(iso_code, worldwide_day, deadline, &members)
+    factory.push_called_group(iso_code, worldwide_day, deadline)
 }
 
 /// The e2e-only arming selectors. `None` leaves `data` to the published interface.

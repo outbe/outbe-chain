@@ -170,8 +170,6 @@ fn intex_factory_slot_layout_is_pinned() {
             f.expiry_tree_mid.base_slot(),
             f.expiry_tree_leaf.base_slot(),
             f.called_group_deadline.base_slot(),
-            f.called_group_count.base_slot(),
-            f.called_group_members.base_slot(),
             f.max_call_window_seconds.base_slot(),
             f.min_call_threshold_seconds.base_slot(),
             f.expiry_bucket_len.base_slot(),

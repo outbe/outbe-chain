@@ -127,6 +127,38 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
     }
 }
 
+/// Seeds a group the way a call leaves it: members in the group, the group queued.
+trait SeedCalledGroup {
+    fn seed_called_group(
+        &mut self,
+        iso: u16,
+        day: WorldwideDay,
+        deadline: u64,
+        members: &[SeriesId],
+    ) -> outbe_primitives::error::Result<()>;
+}
+
+impl SeedCalledGroup for IntexFactoryContract<'_> {
+    fn seed_called_group(
+        &mut self,
+        iso: u16,
+        day: WorldwideDay,
+        deadline: u64,
+        members: &[SeriesId],
+    ) -> outbe_primitives::error::Result<()> {
+        use outbe_primitives::storage::types::Storable as _;
+        let key = IntexFactoryContract::scoped(iso, day.value());
+        for (index, series_id) in members.iter().enumerate() {
+            self.call_group_members.write(
+                &IntexFactoryContract::group_member_key(iso, day, index as u32),
+                series_id.to_word(),
+            )?;
+        }
+        self.call_group_count.write(&key, members.len() as u32)?;
+        self.push_called_group(iso, day, deadline)
+    }
+}
+
 mod capacity_conservation;
 mod creator_reward;
 mod direct_fx_admission;

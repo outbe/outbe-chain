@@ -372,12 +372,8 @@ mod call_sweep {
             let day = WorldwideDay::new(20260101);
             let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
 
-            // The price index has dropped the group, and the parked copy is the
-            // only way back to the series it held.
-            assert!(factory
-                .call_bin_group_members(REFERENCE_ISO, day)
-                .unwrap()
-                .is_empty());
+            // The group left its bin and keeps its members for the expiry sweep.
+            assert_eq!(factory.call_group_slot.read(&key).unwrap(), 0);
             let bucket = IntexFactoryContract::deadline_bucket(scan_ts + 7 * DAY);
             assert_eq!(
                 factory
@@ -387,7 +383,7 @@ mod call_sweep {
                 key
             );
             assert_eq!(factory.expiry_bucket_live.read(&bucket).unwrap(), 1);
-            assert_eq!(factory.called_group_count.read(&key).unwrap(), 1);
+            assert_eq!(factory.call_group_count.read(&key).unwrap(), 1);
             assert_eq!(
                 factory.called_group_deadline.read(&key).unwrap(),
                 scan_ts + 7 * DAY
@@ -395,7 +391,7 @@ mod call_sweep {
             assert_eq!(
                 SeriesId::from_word(
                     factory
-                        .called_group_members
+                        .call_group_members
                         .read(&IntexFactoryContract::group_member_key(
                             REFERENCE_ISO,
                             day,
@@ -556,7 +552,7 @@ mod call_sweep {
 
     fn group_len(s: &StorageHandle<'_>) -> u32 {
         IntexFactoryContract::new(s.clone())
-            .called_group_count
+            .call_group_count
             .read(&IntexFactoryContract::scoped(REFERENCE_ISO, 20260101))
             .unwrap()
     }

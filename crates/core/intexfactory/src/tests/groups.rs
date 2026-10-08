@@ -104,7 +104,7 @@ mod group_index {
     }
 
     #[test]
-    fn removing_the_group_clears_its_members_and_its_bin() {
+    fn removing_the_group_frees_its_bin_and_keeps_its_members() {
         with_factory(|s| {
             let mut f = IntexFactoryContract::new(s.clone());
             let price = U256::from(CALL_PRICE);
@@ -124,10 +124,12 @@ mod group_index {
                 f.call_bin_groups(ISO, call_bin()).unwrap(),
                 vec![WorldwideDay::new(20260213)]
             );
-            assert!(f
-                .call_bin_group_members(ISO, WorldwideDay::new(20260212))
-                .unwrap()
-                .is_empty());
+            assert_eq!(
+                f.call_bin_group_members(ISO, WorldwideDay::new(20260212))
+                    .unwrap(),
+                vec![sid(20260212, b"USD"), sid(20260212, b"EUR")],
+                "the members wait for the expiry sweep"
+            );
 
             f.remove_call_bin_group(ISO, WorldwideDay::new(20260213))
                 .unwrap();
