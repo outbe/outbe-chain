@@ -66,10 +66,8 @@ pub(crate) fn enforce_enclave_upgrade_deadline(
 ///    handler. There is no per-block hook here anymore.
 /// 7. Staking matured-unbonding processing.
 /// 8. `OracleLifecycle::begin_block` - tally + daily S-curve only.
-/// 9. `GemLifecycle::begin_block` - continue the daily GEM call sweep. It reads
-///    the Oracle surface, so it runs after Oracle.
-/// 10. `IntexLifecycle::begin_block` - continue the INTEX series call sweep and
-///     the payout and expiry drains. It also runs after Oracle.
+///
+/// The rights' call and forfeit sweeps run in the CycleTick system transaction.
 ///
 /// Oracle slash-window force-exits run later as the receipt-visible
 /// `OracleSlashWindow` begin-zone system phase, after optional `BoundaryOutcome`.
@@ -149,17 +147,7 @@ fn run_outbe_pre_execution_hooks_inner(
     // marks underperformers EXITING.
     <outbe_oracle::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // Nod forfeits mutate compressed bodies, so the Nod sweep runs inside the
-    // CycleTick system transaction.
     let _ = readers;
-
-    // GEM: continue the daily call sweep that the Cycle trigger opened, pinned to
-    // a closed UTC day. It reads the same Oracle surface, so it must run after Oracle.
-    <outbe_gem::GemLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
-
-    // INTEX: continue the call sweep for series, plus the payout and expiry drains.
-    // It reads the same Oracle surface, so it runs after Oracle.
-    <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     Ok(())
 }

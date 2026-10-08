@@ -9,7 +9,9 @@ use outbe_compressed_entities::{
     begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
     ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
 };
-use outbe_nod::{api, hooks, precompile::INod, NodContract, NodItemState, NodRepositoryReader};
+use outbe_nod::{
+    api, called, hooks, precompile::INod, NodContract, NodItemState, NodRepositoryReader,
+};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::{
@@ -290,7 +292,9 @@ fn idle_daily_scans_do_not_write_storage() {
             BlockContext::empty_for_tests(1, midnight, 1),
             storage.clone(),
         );
-        hooks::run_daily(&ctx, &scope, &parent).unwrap();
+        called::run_daily(&ctx).unwrap();
+        hooks::sweep_forfeits(&ctx, &scope, &parent).unwrap();
+        called::run_call_slice(&ctx).unwrap();
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),
             0,
@@ -301,7 +305,8 @@ fn idle_daily_scans_do_not_write_storage() {
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
-        hooks::continue_sweeps(&ctx, &scope, &parent).unwrap();
+        hooks::sweep_forfeits(&ctx, &scope, &parent).unwrap();
+        called::run_call_slice(&ctx).unwrap();
     });
     let (reads, writes) = provider.metered_storage_operations();
     assert!(reads > 0);

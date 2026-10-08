@@ -204,17 +204,6 @@ pub struct CredisContract {
     #[attribute(order = 4)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    /// Dense index of the positions still on the price path, that is, those in
-    /// `Open` or `Called`. Membership invariant: a position is listed iff its
-    /// state is non-terminal. Thus the daily scan visits only the positions that
-    /// can still transition, not the whole book.
-    #[attribute(order = 5)]
-    pub active_positions: outbe_primitives::storage::dsl::List<U256>,
-
-    /// position_id -> its slot in [`Self::active_positions`], for O(1) swap-remove.
-    #[attribute(order = 6)]
-    pub active_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
-
     /// Per-account count of positions currently `Called`, backing the
     /// `hasCalledPosition` view.
     #[attribute(order = 7)]
@@ -225,6 +214,65 @@ pub struct CredisContract {
     /// position whose sealed window outruns the current constant.
     #[attribute(order = 8)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    // Called positions, queued by the hour their settlement deadline falls in.
+    #[attribute(order = 9)]
+    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    #[attribute(order = 10)]
+    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 11)]
+    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 12)]
+    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 13)]
+    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 14)]
+    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 15)]
+    pub called_position_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
+    #[attribute(order = 16)]
+    pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
+    #[attribute(order = 17)]
+    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 18)]
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
+
+    /// Lowest `call_threshold_seconds` of at least a day ever opened in a reference
+    /// currency. With the widest window it bounds the call prices the scan visits.
+    #[attribute(order = 19)]
+    pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    // Open positions by call price, one trie per reference currency. A call takes
+    // the position out, so the daily scan visits only what can still be called.
+    #[attribute(order = 20)]
+    pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
+    #[attribute(order = 21)]
+    pub call_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 22)]
+    pub call_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 23)]
+    pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    #[attribute(order = 24)]
+    pub call_bin_positions: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 25)]
+    pub call_position_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
+    /// `(bin << 32) | positions of that bin still to visit`. 0 = start from the lowest bin.
+    #[attribute(order = 26)]
+    pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
+    /// UTC day the call sweep could not price a reference currency on. The rest of that
+    /// day's pass passes it by.
+    #[attribute(order = 27)]
+    pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    /// ISO 4217 code of the currency the call sweep resumes at.
+    #[attribute(order = 28)]
+    pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    /// UTC day the unfinished call sweep is pinned to. 0 = none in flight.
+    #[attribute(order = 29)]
+    pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    /// UTC day waiting behind it. 0 = none.
+    #[attribute(order = 30)]
+    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl CredisContract<'_> {

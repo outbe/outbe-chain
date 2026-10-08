@@ -132,6 +132,35 @@ fn an_expired_position_returns_its_remainder() {
     });
 }
 
+/// A storage fault is this node's own: it fails the block instead of skipping the position.
+#[test]
+fn a_storage_fault_in_the_position_sweep_fails_the_block() {
+    let mut provider = test_storage(None);
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        seed_and_send(
+            &storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        )
+    });
+
+    provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
+    StorageHandle::enter(&mut provider, |storage| {
+        let ctx = block_ctx(&storage, T_NOW + POSITION_VALIDITY_SECONDS);
+        assert!(matches!(
+            expired::sweep_expired_positions(&ctx).unwrap_err(),
+            outbe_primitives::error::PrecompileError::Storage(_)
+        ));
+        let record = GemFactoryContract::new(storage.clone())
+            .positions
+            .get(id)
+            .unwrap()
+            .unwrap();
+        assert_ne!(record.remaining_capacity_minor, U256::ZERO);
+    });
+}
+
 #[test]
 fn a_drained_position_leaves_the_queue() {
     with_storage(Some(six_decimal_unit()), |storage| {

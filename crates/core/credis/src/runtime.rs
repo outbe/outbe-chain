@@ -221,10 +221,10 @@ impl CredisContract<'_> {
                 params.gratis_minor,
             )?;
             self.create_position_record(&position)?;
-            self.widen_max_call_window(position.reference_currency, position.call_window_seconds)?;
+            self.widen_scan_terms(&position)?;
             self.append_to_address_index(params.smart_account, position_id)?;
             self.append_to_global_index(position_id)?;
-            self.insert_active(position_id)?;
+            self.index_for_call(&position)?;
 
             self.emit(ICredis::Transfer {
                 from: Address::ZERO,
@@ -255,7 +255,9 @@ impl CredisContract<'_> {
         position.state = CredisState::Called as u8;
         position.called_at = now;
         self.update_position_record(&position)?;
+        self.unindex_for_call(&position)?;
         self.bump_called_count(position.smart_account)?;
+        self.queue_called(position_id, settlement_deadline(&position))?;
         self.emit(ICredis::PositionCalled {
             positionId: position_id,
             calledAt: now,
@@ -341,11 +343,12 @@ impl CredisContract<'_> {
         }
         self.update_position_record(&position)?;
         if closed {
-            // Terminal: leave the active index, and release the owner's call
+            // Terminal: leave the call index, and release the owner's call
             // block if this settlement resolved a called position.
-            self.remove_active(position_id)?;
+            self.unindex_for_call(&position)?;
             if state_before == CredisState::Called {
                 self.drop_called_count(position.smart_account)?;
+                self.unqueue_called(position_id)?;
             }
         }
 
@@ -421,8 +424,9 @@ impl CredisContract<'_> {
             position.outstanding_gratis_minor = U256::ZERO;
             position.state = CredisState::Void as u8;
             self.update_position_record(&position)?;
-            self.remove_active(position_id)?;
+            self.unindex_for_call(&position)?;
             self.drop_called_count(position.smart_account)?;
+            self.unqueue_called(position_id)?;
 
             self.emit(ICredis::PositionVoided {
                 positionId: position_id,
@@ -457,16 +461,6 @@ impl CredisContract<'_> {
     /// pending call does not gate origination of further positions.
     pub fn has_called_position(&self, account: Address) -> Result<bool> {
         Ok(self.called_position_counts.read(&account)? > 0)
-    }
-
-    /// Number of positions still on the price path, that is, those the daily scan visits.
-    pub fn active_len(&self) -> Result<u32> {
-        self.read_active_len()
-    }
-
-    /// Position id at active-index `index`, or `None` past the end.
-    pub fn active_at(&self, index: u32) -> Result<Option<U256>> {
-        self.read_active_at(index)
     }
 
     /// Sum of `principal_minor` and of `outstanding_principal_minor` across all positions for

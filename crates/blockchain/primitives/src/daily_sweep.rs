@@ -1,5 +1,8 @@
 //! Scheduling of a sweep that walks one closed UTC day at a time.
 
+use crate::error::Result;
+use crate::storage::dsl::Value;
+
 /// The day a sweep is walking and the one waiting behind it, 0 for none.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SweepDays {
@@ -49,6 +52,54 @@ impl SweepDays {
             pending: 0,
         }
     }
+}
+
+/// The stored current and pending days of one sweep.
+pub struct PinnedDay<'a, 'storage> {
+    pub current: &'a Value<'storage, u32>,
+    pub pending: &'a Value<'storage, u32>,
+}
+
+impl PinnedDay<'_, '_> {
+    /// Schedules `day` and stores the day that waits. An opened day is stored by [`Self::open`].
+    pub fn schedule(&self, day: u32) -> Result<(SweepDays, Scheduled)> {
+        let days = SweepDays {
+            current: self.current.read()?,
+            pending: self.pending.read()?,
+        };
+        let (next, scheduled) = days.schedule(day);
+        if matches!(scheduled, Scheduled::Queued | Scheduled::Replaced { .. }) {
+            self.pending.write(next.pending)?;
+        }
+        Ok((next, scheduled))
+    }
+
+    pub fn open(&self, days: SweepDays) -> Result<()> {
+        self.current.write(days.current)?;
+        self.pending.write(days.pending)
+    }
+
+    /// Ends the walk of `pinned`. Returns the days to open next, or `None` once idle.
+    pub fn finish(&self, pinned: u32) -> Result<Option<SweepDays>> {
+        let next = SweepDays {
+            current: pinned,
+            pending: self.pending.read()?,
+        }
+        .finish();
+        if next.current == 0 {
+            self.current.write(0)?;
+            return Ok(None);
+        }
+        Ok(Some(next))
+    }
+}
+
+/// Index of the currency the cursor names, or the head when the registry dropped it.
+pub fn currency_position(currencies: &[u16], cursor: u32) -> usize {
+    u16::try_from(cursor)
+        .ok()
+        .and_then(|iso| currencies.iter().position(|&code| code == iso))
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -107,5 +158,63 @@ mod tests {
     fn a_finished_day_can_be_walked_again() {
         let finished = days(TODAY, 0).finish();
         assert_eq!(finished.schedule(TODAY).1, Scheduled::Opened);
+    }
+
+    fn with_pinned(test: impl FnOnce(&PinnedDay<'_, '_>)) {
+        use crate::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+        use alloy_primitives::{address, U256};
+        let contract = address!("0x0000000000000000000000000000000000001003");
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let current = Value::new(U256::from(1), contract, storage.clone());
+            let pending = Value::new(U256::from(2), contract, storage);
+            test(&PinnedDay {
+                current: &current,
+                pending: &pending,
+            });
+        });
+    }
+
+    #[test]
+    fn a_pinned_day_stores_the_waiting_day_and_leaves_opening_to_the_caller() {
+        with_pinned(|pinned| {
+            assert_eq!(
+                pinned.schedule(YESTERDAY).unwrap(),
+                (days(YESTERDAY, 0), Scheduled::Opened)
+            );
+            assert_eq!(pinned.current.read().unwrap(), 0);
+            pinned.open(days(YESTERDAY, 0)).unwrap();
+            assert_eq!(
+                pinned.schedule(TODAY).unwrap(),
+                (days(YESTERDAY, TODAY), Scheduled::Queued)
+            );
+            assert_eq!(
+                (
+                    pinned.current.read().unwrap(),
+                    pinned.pending.read().unwrap()
+                ),
+                (YESTERDAY, TODAY)
+            );
+            assert_eq!(pinned.schedule(TODAY).unwrap().1, Scheduled::Ignored);
+        });
+    }
+
+    #[test]
+    fn finishing_a_pinned_day_hands_over_the_waiting_one_or_goes_idle() {
+        with_pinned(|pinned| {
+            pinned.open(days(YESTERDAY, TODAY)).unwrap();
+            assert_eq!(pinned.finish(YESTERDAY).unwrap(), Some(days(TODAY, 0)));
+            pinned.open(days(TODAY, 0)).unwrap();
+            assert_eq!(pinned.finish(TODAY).unwrap(), None);
+            assert_eq!(pinned.current.read().unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn a_cursor_names_its_currency_or_falls_back_to_the_head() {
+        let currencies = [840, 978];
+        assert_eq!(currency_position(&currencies, 978), 1);
+        assert_eq!(currency_position(&currencies, 392), 0);
+        assert_eq!(currency_position(&currencies, u32::MAX), 0);
     }
 }

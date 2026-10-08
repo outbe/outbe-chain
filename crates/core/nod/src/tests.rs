@@ -170,20 +170,20 @@ fn bucket_key_binds_the_reference_currency() {
 /// alongside a 24-bit bin id.
 #[test]
 fn currency_scoped_bin_keys_do_not_alias() {
-    assert!(u32::try_from(crate::index_keys::scoped(u16::MAX, MAX_BIN_ID)).is_err());
+    assert!(u32::try_from(outbe_primitives::call_bins::scoped(u16::MAX, MAX_BIN_ID)).is_err());
     assert_ne!(
-        crate::index_keys::scoped(USD, 7),
-        crate::index_keys::scoped(EUR, 7)
+        outbe_primitives::call_bins::scoped(USD, 7),
+        outbe_primitives::call_bins::scoped(EUR, 7)
     );
     assert_ne!(
-        crate::index_keys::bin_index_key(USD, 7, 0),
-        crate::index_keys::bin_index_key(EUR, 7, 0)
+        outbe_primitives::call_bins::bin_index_key(USD, 7, 0),
+        outbe_primitives::call_bins::bin_index_key(EUR, 7, 0)
     );
 
     // ISO 0 is the one value that aliases the un-namespaced key. Issuance
     // rejects it (`zero_reference_currency_is_rejected_at_issuance`) precisely
     // because this collision cannot be detected downstream.
-    assert_eq!(crate::index_keys::scoped(0, 7), 7u64);
+    assert_eq!(outbe_primitives::call_bins::scoped(0, 7), 7u64);
 }
 
 /// The headline regression: two Nods share a worldwide day and an identical
@@ -216,7 +216,7 @@ fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
         for iso in [USD, EUR] {
             assert_eq!(
                 nod.call_bin_count
-                    .read(&crate::index_keys::scoped(iso, bin))
+                    .read(&outbe_primitives::call_bins::scoped(iso, bin))
                     .unwrap(),
                 1
             );

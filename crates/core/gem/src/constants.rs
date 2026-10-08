@@ -7,18 +7,6 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
     "A Gem is never transferable."
 );
 
-pub const BIN_STEP_BP: u16 = 25;
-
-/// The number of buckets one call slice may decide before it stops. The sweep resumes on
-/// the next block.
-pub const MAX_BUCKET_VISITS_PER_BLOCK: u32 = 256;
-
-/// `SweepDaySkipped.sweep` of the Called sweep.
-pub const CALL_SWEEP: u8 = 1;
-
-/// Slots one block's expiry sweep may step through. A block hook is not gas-metered.
-pub const MAX_EXPIRY_STEPS_PER_BLOCK: u32 = 64;
-
 /// Call-trigger evaluation window in seconds (28 days): span scanned for
 /// breaches of a gem's Call Threshold. The daily scan divides by 86400.
 pub const CALL_WINDOW: u32 = 28 * 24 * 3600;

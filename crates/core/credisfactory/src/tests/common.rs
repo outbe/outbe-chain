@@ -45,6 +45,9 @@ pub const REFERENCE_ISO: u16 = 978;
 
 pub const DAY: u64 = 86_400;
 
+/// Past any deadline by enough that the hour it falls in has closed.
+pub const HOUR: u64 = 3_600;
+
 /// The settlement window a position seals at opening. Derived from the constant
 /// rather than written out as a literal: a hard-coded `14 * DAY` is what these
 /// tests used to carry, and it went stale the day the window was retuned.
@@ -315,12 +318,40 @@ fn bump_watermark(storage: &StorageHandle<'_>, utc_day: u32) {
 
 /// Runs the daily price-path scan at `timestamp`, returning how many positions
 /// it moved.
-pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    let ctx = BlockRuntimeContext::new(
+fn block_at<'storage>(
+    storage: &StorageHandle<'storage>,
+    timestamp: u64,
+) -> BlockRuntimeContext<'storage> {
+    BlockRuntimeContext::new(
         BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
         storage.clone(),
-    );
-    crate::called::scan_and_call(&ctx).unwrap()
+    )
+}
+
+/// The daily trigger alone: it schedules the closed day and walks nothing.
+pub fn schedule(storage: &StorageHandle<'_>, timestamp: u64) {
+    crate::called::run_daily(&block_at(storage, timestamp)).unwrap()
+}
+
+pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
+    crate::called::scan_and_call(&block_at(storage, timestamp)).unwrap()
+}
+
+/// One later block's slice of the call sweep in flight.
+pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
+    crate::called::run_call_slice(&block_at(storage, timestamp)).unwrap()
+}
+
+/// One block's void sweep over the lapsed called positions.
+pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
+    crate::expired::sweep_expired(&block_at(storage, timestamp)).unwrap()
+}
+
+/// What CycleTick runs every block.
+pub fn tick(storage: &StorageHandle<'_>, timestamp: u64) {
+    let ctx = block_at(storage, timestamp);
+    crate::hooks::sweep_forfeits(&ctx).unwrap();
+    crate::called::run_call_slice(&ctx).unwrap();
 }
 
 pub fn now_of(storage: &StorageHandle<'_>) -> u64 {

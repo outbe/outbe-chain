@@ -4,8 +4,7 @@ use alloy_primitives::{Address, Log};
 use alloy_sol_types::SolEvent;
 
 use crate::addresses::{
-    GEM_ADDRESS, GOVERNANCE_ADDRESS, INTEX_FACTORY_ADDRESS, NOD_ADDRESS,
-    STABLECOIN_FACTORY_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS,
+    GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS,
 };
 
 /// Contract addresses whose pre-exec hook events are copied into the mandatory
@@ -14,11 +13,8 @@ use crate::addresses::{
 pub const HOOK_EVENT_RECEIPT_ADDRESSES: &[Address] = &[
     VOTE_ADDRESS,
     UPDATE_ADDRESS,
-    NOD_ADDRESS,
     GOVERNANCE_ADDRESS,
     STABLECOIN_FACTORY_ADDRESS,
-    GEM_ADDRESS,
-    INTEX_FACTORY_ADDRESS,
 ];
 
 /// Returns `true` when `address` is whitelisted for hook-event receipt publication.
@@ -69,13 +65,14 @@ mod tests {
             log_at(GOVERNANCE_ADDRESS),
             log_at(STABLECOIN_FACTORY_ADDRESS),
         ]);
-        assert_eq!(whitelisted.len(), 5);
+        assert_eq!(whitelisted.len(), 4);
         assert_eq!(whitelisted[0].address, VOTE_ADDRESS);
         assert_eq!(whitelisted[1].address, UPDATE_ADDRESS);
-        assert_eq!(whitelisted[2].address, NOD_ADDRESS);
-        assert_eq!(whitelisted[3].address, GOVERNANCE_ADDRESS);
-        assert_eq!(whitelisted[4].address, STABLECOIN_FACTORY_ADDRESS);
-        assert_eq!(tracing_only.len(), 1);
+        assert_eq!(whitelisted[2].address, GOVERNANCE_ADDRESS);
+        assert_eq!(whitelisted[3].address, STABLECOIN_FACTORY_ADDRESS);
+        // The rights' sweeps run in CycleTick, so a hook never emits for them.
+        assert_eq!(tracing_only.len(), 2);
         assert_eq!(tracing_only[0].address, REWARDS_ADDRESS);
+        assert_eq!(tracing_only[1].address, NOD_ADDRESS);
     }
 }

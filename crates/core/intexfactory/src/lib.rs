@@ -21,7 +21,6 @@ pub mod vwap_push;
 pub use api::{issue, read_params};
 pub use config::IntexParams;
 pub use errors::IntexFactoryError;
-pub use hooks::IntexLifecycle;
 pub use outbe_intex::SeriesId;
 pub use runtime::{marked_up, to_wire_price};
 pub use schema::{IntexFactoryContract, IssuanceParams};

@@ -8,6 +8,7 @@ pub(crate) mod state;
 
 pub use runtime::{calc_call_price, settlement_deadline, OpenPositionParams, Settlement, Void};
 pub use schema::{CredisContract, CredisState, Position};
+pub use state::{CallBins, ExpiryHours};
 
 #[cfg(test)]
 mod tests;

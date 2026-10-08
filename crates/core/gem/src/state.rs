@@ -1,9 +1,10 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_primitives::call_bins;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::math::{reference_price, tree_math};
+use outbe_primitives::expiry_queue;
 
 use crate::{
-    constants::{BIN_STEP_BP, TOKEN_NAME, TOKEN_SYMBOL},
+    constants::{TOKEN_NAME, TOKEN_SYMBOL},
     errors::GemError,
     precompile::IGem,
     schema::{BucketTerms, GemContract, GemData, GemState},
@@ -112,14 +113,13 @@ impl GemContract<'_> {
             self.join_bucket(item)?;
         }
 
-        if item.call_window_seconds
-            > self
-                .max_call_window_seconds
-                .read(&item.reference_currency)?
-        {
-            self.max_call_window_seconds
-                .write(&item.reference_currency, item.call_window_seconds)?;
-        }
+        outbe_primitives::call_breach::widen_scan_terms(
+            &self.max_call_window_seconds,
+            &self.min_call_threshold_seconds,
+            item.reference_currency,
+            item.call_window_seconds,
+            item.call_threshold_seconds,
+        )?;
 
         self.emit(IGem::Transfer {
             from: Address::ZERO,
@@ -131,7 +131,6 @@ impl GemContract<'_> {
     pub(crate) fn burn(&mut self, item: &GemData) -> Result<()> {
         self.gem_items.delete(item.gem_id)?;
 
-        self.remove_called(item.gem_id)?;
         self.leave_bucket(item.gem_id)?;
 
         let idx = self.gem_index.read(&item.gem_id)?;
@@ -169,7 +168,6 @@ impl GemContract<'_> {
         }
         // Read through the bucket, so a called member keeps its `called_at` once settled.
         let mut item = self.get_gem(gem_id)?.ok_or(GemError::GemNotFound)?;
-        self.remove_called(gem_id)?;
         self.leave_bucket(gem_id)?;
         item.settled_at = self.storage.timestamp()?.to::<u64>();
         item.state = new_state as u8;
@@ -177,151 +175,33 @@ impl GemContract<'_> {
         self.emit(IGem::MetadataUpdate { _tokenId: gem_id })
     }
 
-    pub(crate) fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
-        self.place_in_expiry_hour(gem_id, Self::deadline_hour(deadline))?;
-        self.called_deadline.write(&gem_id, deadline)
+    pub(crate) fn push_called(&mut self, bucket: B256, deadline: u64) -> Result<()> {
+        expiry_queue::push(&ExpiryHours(self), bucket, deadline)
     }
 
-    /// Put a called bucket or Called gem back in the queue at its own deadline, never
-    /// before the next hour. An entry that is neither leaves the queue instead.
-    pub(crate) fn requeue_or_drop(&mut self, entry: U256, now: u64) -> Result<bool> {
-        let bucket = self.called_bucket(entry)?;
-        let deadline = match bucket {
-            Some(bucket) => Some(self.bucket_deadline(bucket)?),
-            None => self
-                .gem_items
-                .get(entry)?
-                .filter(|item| item.state == GemState::Called as u8)
-                .map(|item| item.called_at + u64::from(item.call_notice_period_seconds)),
-        };
-        self.remove_called(entry)?;
-        let Some(deadline) = deadline else {
-            return Ok(false);
-        };
-        let day = Self::deadline_hour(deadline).max(Self::deadline_hour(now) + 1);
-        self.place_in_expiry_hour(entry, day)?;
-        self.called_deadline.write(&entry, deadline)?;
-        let retry_at = Self::hour_end(day);
-        match bucket {
-            Some(bucket) => self.emit(IGem::GemBucketExpiryDeferred {
-                bucketKey: bucket,
-                retryAt: retry_at,
-            })?,
-            None => self.emit(IGem::GemExpiryDeferred {
-                gemId: entry,
-                retryAt: retry_at,
-            })?,
-        }
-        Ok(true)
-    }
-
-    outbe_common::expiry_queue_placement! {
-        fn place_in_expiry_hour(entry: U256);
-        len: expiry_bucket_len,
-        at: expiry_bucket_at,
-        slot_key: Self::hour_slot_key,
-        slot_of: called_bucket_slot,
-        packed_slot: Self::packed_slot,
-        live: expiry_bucket_live,
-        tree: ExpiryDayTree,
-    }
-
-    pub(crate) fn remove_called(&mut self, gem_id: U256) -> Result<()> {
-        let packed = self.called_bucket_slot.read(&gem_id)?;
-        self.called_bucket_slot.clear(&gem_id)?;
-        self.called_deadline.clear(&gem_id)?;
-        if packed == 0 {
-            return Ok(());
-        }
-        let (day, slot) = Self::unpack_slot(packed);
-        self.release_expiry_slot(day, slot, gem_id)
-    }
-
-    /// Free one bucket slot, retiring the bucket once nothing waits in it.
-    pub(crate) fn release_expiry_slot(&mut self, day: u32, slot: u32, gem_id: U256) -> Result<()> {
-        let slot_key = Self::hour_slot_key(day, slot);
-        if self.expiry_bucket_at.read(&slot_key)? != gem_id {
-            return Ok(());
-        }
-        self.expiry_bucket_at.clear(&slot_key)?;
-
-        let live = self.expiry_bucket_live.read(&day)?.saturating_sub(1);
-        self.expiry_bucket_live.write(&day, live)?;
-        if live == 0 {
-            self.expiry_bucket_len.clear(&day)?;
-            self.expiry_bucket_live.clear(&day)?;
-            tree_math::remove(&ExpiryDayTree(&*self), day)?;
-            // The cursor names a slot in a length that no longer exists. Otherwise, a
-            // refill of this day would resume past its new end.
-            if self.expiry_sweep_day.read()? == day {
-                self.expiry_sweep_day.write(0)?;
-                self.expiry_cursor.write(0)?;
-            }
-        }
-        Ok(())
+    pub(crate) fn remove_called(&mut self, bucket: B256) -> Result<()> {
+        expiry_queue::remove(&ExpiryHours(self), bucket)
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
+    #[cfg(test)]
     pub(crate) const fn deadline_hour(deadline: u64) -> u32 {
-        (deadline / 3_600) as u32
+        expiry_queue::bucket_of(deadline)
     }
 
+    #[cfg(test)]
     pub(crate) const fn hour_end(day: u32) -> u64 {
-        (day as u64 + 1) * 3_600
+        expiry_queue::bucket_end(day)
     }
 
-    const fn packed_slot(day: u32, slot: u32) -> u64 {
-        ((day as u64) << 32) | slot as u64
+    #[cfg(test)]
+    pub(crate) fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<B256>> {
+        expiry_queue::entry_at(&ExpiryHours(self), day, slot)
     }
 
-    const fn unpack_slot(packed: u64) -> (u32, u32) {
-        ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
-    }
-
-    pub(crate) fn hour_slot_key(day: u32, slot: u32) -> B256 {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&day.to_be_bytes());
-        buf[4..8].copy_from_slice(&slot.to_be_bytes());
-        keccak256(buf)
-    }
-
-    pub(crate) fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<U256>> {
-        let id = self
-            .expiry_bucket_at
-            .read(&Self::hour_slot_key(day, slot))?;
-        Ok((!id.is_zero()).then_some(id))
-    }
-
-    /// Retire a bucket the sweep has finished: a Called gem still in it is requeued, and
-    /// a stale entry is dropped. Returns how many were deferred and dropped.
-    pub(crate) fn force_retire_hour(&mut self, day: u32, now: u64) -> Result<(u32, u32)> {
-        let len = self.expiry_bucket_len.read(&day)?;
-        let (mut deferred, mut dropped) = (0u32, 0u32);
-        for slot in 0..len {
-            let gem_id = self
-                .expiry_bucket_at
-                .read(&Self::hour_slot_key(day, slot))?;
-            if gem_id.is_zero() {
-                continue;
-            }
-            if self.requeue_or_drop(gem_id, now)? {
-                deferred += 1;
-            } else {
-                dropped += 1;
-            }
-        }
-        self.expiry_bucket_len.clear(&day)?;
-        self.expiry_bucket_live.clear(&day)?;
-        tree_math::remove(&ExpiryDayTree(&*self), day)?;
-        if self.expiry_sweep_day.read()? == day {
-            self.expiry_sweep_day.write(0)?;
-            self.expiry_cursor.write(0)?;
-        }
-        Ok((deferred, dropped))
-    }
-
+    #[cfg(test)]
     pub(crate) fn first_expiry_day(&self) -> Result<Option<u32>> {
-        tree_math::find_first_left_inclusive(&ExpiryDayTree(self), 0)
+        expiry_queue::first_bucket(&ExpiryHours(self))
     }
 
     fn compact_owner_index(&mut self, owner: Address, gem_id: U256) -> Result<()> {
@@ -462,7 +342,7 @@ impl GemContract<'_> {
         self.remove_bucket_bin(bucket, terms)?;
         self.bucket_called_at.write(&bucket, now)?;
         let deadline = now + u64::from(terms.call_notice_period_seconds);
-        self.push_called(bucket_entry(bucket), deadline)?;
+        self.push_called(bucket, deadline)?;
         self.emit(IGem::GemBucketCalled {
             bucketKey: bucket,
             calledAt: now,
@@ -470,39 +350,10 @@ impl GemContract<'_> {
         })
     }
 
-    /// Take a member out of its called bucket and queue it on its own, as a Called gem,
-    /// no earlier than the next hour. One gem that cannot burn must not block the rest.
-    pub(crate) fn detach_called_member(&mut self, gem_id: U256, now: u64) -> Result<()> {
-        let bucket = self.gem_bucket.read(&gem_id)?;
-        let called_at = self.bucket_called_at.read(&bucket)?;
-        if called_at == 0 {
-            return Err(GemError::InvalidState.into());
-        }
-        let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        self.leave_bucket(gem_id)?;
-        item.state = GemState::Called as u8;
-        item.called_at = called_at;
-        self.gem_items.update(&item)?;
-        self.requeue_or_drop(gem_id, now)?;
-        Ok(())
-    }
-
-    /// The called bucket that an expiry-queue entry stands for. Returns `None` for a gem id.
-    pub(crate) fn called_bucket(&self, entry: U256) -> Result<Option<B256>> {
-        let bucket = B256::from(entry.to_be_bytes::<32>());
-        Ok((self.bucket_called_at.read(&bucket)? != 0).then_some(bucket))
-    }
-
-    /// Settlement deadline of a called bucket.
-    pub(crate) fn bucket_deadline(&self, bucket: B256) -> Result<u64> {
-        Ok(self.bucket_called_at.read(&bucket)?
-            + u64::from(self.bucket_call_notice_period_seconds.read(&bucket)?))
-    }
-
     fn close_bucket(&mut self, bucket: B256) -> Result<()> {
         let terms = self.read_bucket_terms(bucket)?;
         self.remove_bucket_bin(bucket, &terms)?;
-        self.remove_called(bucket_entry(bucket))?;
+        self.remove_called(bucket)?;
         self.bucket_start_day.clear(&bucket)?;
         self.bucket_currency.clear(&bucket)?;
         self.bucket_call_price_minor.clear(&bucket)?;
@@ -522,97 +373,52 @@ impl GemContract<'_> {
     // --- Bucket bins: uncalled buckets by call price ---------------------
 
     fn insert_bucket_bin(&mut self, bucket: B256, terms: &BucketTerms) -> Result<()> {
-        let iso = terms.reference_currency;
         let bin = Self::price_to_bin(terms.call_price_minor)?;
-        let scoped = Self::scoped(iso, bin);
-        let index = self.bucket_bin_count.read(&scoped)?;
-        self.bucket_bin_at
-            .write(&Self::bin_index_key(iso, bin, index), bucket)?;
-        self.bucket_bin_index.write(&bucket, index + 1)?;
-        self.bucket_bin_count.write(&scoped, index + 1)?;
-        tree_math::add(&BucketBins(self, iso), bin)?;
-        Ok(())
+        call_bins::insert(&CallBins(self, terms.reference_currency), bucket, bin)
     }
 
     /// No-op for a bucket the trie no longer holds.
     pub(crate) fn remove_bucket_bin(&mut self, bucket: B256, terms: &BucketTerms) -> Result<()> {
-        let Some(index) = self.bucket_bin_index.read(&bucket)?.checked_sub(1) else {
-            return Ok(());
-        };
-        let iso = terms.reference_currency;
-        let bin = Self::price_to_bin(terms.call_price_minor)?;
-        let scoped = Self::scoped(iso, bin);
-        let last = self
-            .bucket_bin_count
-            .read(&scoped)?
-            .checked_sub(1)
-            .ok_or_else(|| corrupt(format!("call bin {bin} of {iso} is empty")))?;
-        let last_key = Self::bin_index_key(iso, bin, last);
-        if index != last {
-            let moved = self.bucket_bin_at.read(&last_key)?;
-            self.bucket_bin_at
-                .write(&Self::bin_index_key(iso, bin, index), moved)?;
-            self.bucket_bin_index.write(&moved, index + 1)?;
-        }
-        self.bucket_bin_at.clear(&last_key)?;
-        self.bucket_bin_index.clear(&bucket)?;
-        self.bucket_bin_count.write(&scoped, last)?;
-        if last == 0 {
-            tree_math::remove(&BucketBins(self, iso), bin)?;
-        }
+        call_bins::remove(&CallBins(self, terms.reference_currency), bucket)?;
         Ok(())
     }
 
     // --- Bin keys (PancakeSwap LB-style) ----------------------------------
 
     pub fn price_to_bin(price: U256) -> Result<u32> {
-        if price.is_zero() {
-            return Ok(0);
-        }
-        reference_price::coen_iso_price_to_bin_id(price, BIN_STEP_BP)
-    }
-
-    /// Namespaces a bin-column key by the gem's reference currency.
-    ///
-    /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
-    /// integer type alone namespaces nothing. The ISO has to occupy real high
-    /// bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit, so the
-    /// low 32 bits always hold `key` unambiguously.
-    pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
-        ((reference_currency as u64) << 32) | key as u64
-    }
-
-    pub(crate) fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
-        let mut buf = [0u8; 10];
-        buf[0..2].copy_from_slice(&reference_currency.to_be_bytes());
-        buf[2..6].copy_from_slice(&bin_id.to_be_bytes());
-        buf[6..10].copy_from_slice(&index.to_be_bytes());
-        keccak256(buf)
+        call_bins::price_to_bin(price)
     }
 }
 
-/// Buckets holding a called gem whose notice period has not closed yet.
-pub(crate) struct ExpiryDayTree<'a, 'storage>(pub(crate) &'a GemContract<'storage>);
+/// Called buckets, queued by the hour their notice period closes in.
+pub(crate) struct ExpiryHours<'a, 'storage>(pub(crate) &'a GemContract<'storage>);
 
-outbe_primitives::impl_bin_tree_storage!(ExpiryDayTree {
+outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
+    len: expiry_bucket_len,
+    live: expiry_bucket_live,
+    at: expiry_bucket_at,
+    slot: called_bucket_slot,
+    deadline: called_deadline,
+    sweep_bucket: expiry_sweep_hour,
+    cursor: expiry_cursor,
 });
 
 /// The uncalled buckets of one reference currency, by call price.
-pub(crate) struct BucketBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
+pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
 
-outbe_primitives::impl_bin_tree_storage!(BucketBins scoped by GemContract::scoped {
-    root: bucket_bin_tree_root,
-    mid: bucket_bin_tree_mid,
-    leaf: bucket_bin_tree_leaf,
+outbe_primitives::impl_call_bins!(CallBins<B256> {
+    root: call_bin_tree_root,
+    mid: call_bin_tree_mid,
+    leaf: call_bin_tree_leaf,
+    count: call_bin_count,
+    at: call_bin_buckets,
+    slot: call_bucket_slot,
+    cursor: call_bin_cursor,
+    failed: call_scan_failed_day,
 });
-
-/// A called bucket's entry in the expiry queue, which otherwise holds gem ids.
-pub(crate) fn bucket_entry(bucket: B256) -> U256 {
-    U256::from_be_bytes(bucket.0)
-}
 
 /// A broken on-chain index is the same on every node, so it reverts: the sweep then
 /// defers the entry instead of failing every block.

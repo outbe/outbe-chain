@@ -1,27 +1,13 @@
-//! Begin-block carry-on for the Intex sweeps.
+//! Per-block entry points of the Intex sweeps, run from CycleTick.
 
-use outbe_primitives::{
-    block::{BlockLifecycle, BlockRuntimeContext},
-    error::Result,
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
-pub struct IntexLifecycle;
+/// Opens the payout rounds whose proceeds deadline passed.
+pub fn sweep_proceeds(ctx: &BlockRuntimeContext) -> Result<()> {
+    crate::runtime::sweep_proceeds_deadlines(&ctx.storage, ctx.block.timestamp)
+}
 
-impl BlockLifecycle for IntexLifecycle {
-    type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
-    type EndBlockResult = ();
-
-    fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        // A call sweep the daily trigger could not finish in one go carries on
-        // here, block by block, rather than waiting a day for the next trigger.
-        crate::called::run_call_slice(ctx)?;
-        // Open payout rounds for WorldwideDays whose proceeds deadline passes.
-        crate::runtime::sweep_proceeds_deadlines(&ctx.storage, ctx.block.timestamp)?;
-        crate::expired::sweep_expiry_deadlines(ctx)?;
-        Ok(())
-    }
-
-    fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
-        Ok(())
-    }
+/// Expires the called groups whose notice period lapsed.
+pub fn sweep_forfeits(ctx: &BlockRuntimeContext) -> Result<()> {
+    crate::expired::sweep_expired(ctx)
 }

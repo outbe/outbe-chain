@@ -42,7 +42,7 @@ sol! {
     }
 }
 
-/// Move a called gem's queue entry, its bucket's or its own, onto `deadline`.
+/// Move the queue entry of a called gem's bucket onto `deadline`.
 #[cfg(feature = "e2e-test")]
 fn requeue_called_gem(
     storage: outbe_primitives::storage::StorageHandle,
@@ -51,15 +51,11 @@ fn requeue_called_gem(
 ) -> Result<()> {
     let mut gem = GemContract::new(storage);
     let bucket = gem.gem_bucket.read(&gem_id)?;
-    let entry = match bucket.is_zero() {
-        true => gem_id,
-        false => crate::state::bucket_entry(bucket),
-    };
-    if gem.called_deadline.read(&entry)? == 0 {
+    if gem.called_deadline.read(&bucket)? == 0 {
         return Err(GemError::InvalidState.into());
     }
-    gem.remove_called(entry)?;
-    gem.push_called(entry, deadline)
+    gem.remove_called(bucket)?;
+    gem.push_called(bucket, deadline)
 }
 
 pub fn dispatch(

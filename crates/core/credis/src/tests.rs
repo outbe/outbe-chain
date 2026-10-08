@@ -12,6 +12,8 @@ use crate::errors::CredisError;
 use crate::precompile::{dispatch, ICredis};
 use crate::runtime::{calc_call_price, settlement_deadline, OpenPositionParams};
 use crate::schema::{CredisContract, CredisState};
+use crate::state::CallBins;
+use outbe_primitives::call_bins;
 
 const CHAIN_ID: u64 = 1;
 const DAY: u64 = 86_400;
@@ -1001,13 +1003,17 @@ fn called_repayment_and_void_have_complementary_deadline_boundaries() {
                     .to_string()
                     .contains("call window has lapsed"));
                 assert_eq!(credis.get_position(id).unwrap(), before);
-                assert_eq!(credis.active_len().unwrap(), 1);
+                assert_ne!(
+                    credis.called_position_slot.read(&id).unwrap(),
+                    0,
+                    "still queued"
+                );
                 assert!(credis.has_called_position(alice()).unwrap());
                 assert_eq!(
                     credis.void_position(id, now).unwrap().gratis_burned_minor,
                     before.outstanding_gratis_minor
                 );
-                assert_eq!(credis.active_len().unwrap(), 0);
+                assert_eq!(credis.called_position_slot.read(&id).unwrap(), 0);
             }
         });
     }
@@ -1143,68 +1149,76 @@ fn the_called_counter_also_clears_on_a_void() {
     });
 }
 
-/// Reads the active index back as a plain list, so the assertions below are
-/// about membership rather than about a particular slot order.
-fn active_ids(credis: &CredisContract<'_>) -> Vec<U256> {
-    let mut out = Vec::new();
-    for i in 0..credis.active_len().unwrap() {
-        if let Some(id) = credis.active_at(i).unwrap() {
-            out.push(id);
-        }
-    }
-    out
+/// Reads back the call bin `sample` is priced into, as a plain list.
+fn indexed_ids(credis: &CredisContract<'_>, sample: U256) -> Vec<U256> {
+    let position = credis.get_position(sample).unwrap();
+    let bins = CallBins(credis, position.reference_currency);
+    let bin = call_bins::price_to_bin(position.call_price_minor).unwrap();
+    (0..call_bins::len(&bins, bin).unwrap())
+        .map(|index| call_bins::entry_at(&bins, bin, index).unwrap())
+        .collect()
 }
 
 #[test]
-fn the_active_index_holds_exactly_the_non_terminal_positions() {
+fn the_call_index_holds_exactly_the_open_positions() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = credis.open_position(params(alice())).unwrap();
-        assert_eq!(active_ids(&credis), vec![id], "an open position is listed");
+        assert_eq!(
+            indexed_ids(&credis, id),
+            vec![id],
+            "an open position is indexed"
+        );
 
-        // Calling keeps it listed. A called position is non-terminal.
+        // The call takes it out: from here the deadline queue tracks it.
         credis.mark_called(id, at(10)).unwrap();
-        assert_eq!(active_ids(&credis), vec![id]);
+        assert!(indexed_ids(&credis, id).is_empty());
+        assert_ne!(credis.called_position_slot.read(&id).unwrap(), 0);
 
-        // A partial settlement leaves it listed. The settlement that closes it
-        // does not.
+        credis.void_position(id, at(24)).unwrap();
+        assert!(indexed_ids(&credis, id).is_empty());
+        assert_eq!(credis.called_position_slot.read(&id).unwrap(), 0);
+    });
+}
+
+#[test]
+fn settling_an_open_position_in_full_leaves_the_call_index() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = credis.open_position(params(alice())).unwrap();
         credis
             .settle(id, U256::from(400_000_000u64), at(11))
             .unwrap();
-        assert_eq!(active_ids(&credis), vec![id]);
+        assert_eq!(
+            indexed_ids(&credis, id),
+            vec![id],
+            "a partial settlement stays"
+        );
         credis
             .settle(id, U256::from(999_999_999_999u64), at(12))
             .unwrap();
-        assert!(active_ids(&credis).is_empty(), "Settled leaves the index");
+        assert!(
+            indexed_ids(&credis, id).is_empty(),
+            "Settled leaves the index"
+        );
     });
 }
 
 #[test]
-fn a_void_leaves_the_active_index() {
-    with_credis(|storage| {
-        let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis);
-        credis.mark_called(id, at(10)).unwrap();
-        credis.void_position(id, at(24)).unwrap();
-        assert!(active_ids(&credis).is_empty());
-    });
-}
-
-#[test]
-fn removing_from_the_middle_keeps_the_active_index_consistent() {
+fn removing_from_the_middle_keeps_the_call_index_consistent() {
     let mut provider = credis_provider();
     let first = open_at_block(&mut provider, 1, params(alice()));
     let second = open_at_block(&mut provider, 2, params(alice()));
     let third = open_at_block(&mut provider, 3, params(alice()));
     StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage);
-        assert_eq!(active_ids(&credis), vec![first, second, third]);
+        assert_eq!(indexed_ids(&credis, first), vec![first, second, third]);
 
         // Close the middle one: the tail swaps into its slot.
         credis
             .settle(second, U256::from(999_999_999_999u64), at(1))
             .unwrap();
-        let after = active_ids(&credis);
+        let after = indexed_ids(&credis, first);
         assert_eq!(after.len(), 2);
         assert!(after.contains(&first) && after.contains(&third));
 
@@ -1213,12 +1227,12 @@ fn removing_from_the_middle_keeps_the_active_index_consistent() {
         credis
             .settle(third, U256::from(999_999_999_999u64), at(2))
             .unwrap();
-        assert_eq!(active_ids(&credis), vec![first]);
+        assert_eq!(indexed_ids(&credis, first), vec![first]);
 
         credis
             .settle(first, U256::from(999_999_999_999u64), at(3))
             .unwrap();
-        assert!(active_ids(&credis).is_empty());
+        assert!(indexed_ids(&credis, first).is_empty());
     });
 }
 

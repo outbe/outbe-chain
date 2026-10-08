@@ -3,6 +3,14 @@ pragma solidity ^0.8.30;
 
 interface ICredisFactory {
     event CredisIssued(address indexed smartAccount, address indexed cca, uint256 principalMinor);
+    /// A newer closed day replaced `skippedDay` while `inFlightDay` was still being swept.
+    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
+    /// A reference currency was left out of one day's Call scan because its window
+    /// price could not be indexed. The next daily pass tries it again.
+    event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+    /// A void that failed left the position queued until `retryAt`.
+    event ExpiryDeferred(uint256 indexed positionId, uint64 retryAt);
+
     /// Use the reservation's pledge for the stored terms. The caller must be its CCA.
     /// msg.value exactly matches reserved Gratis collateral in native COEN units.
     function issueCredis(uint256 reservationId) external payable returns (uint256 positionId, uint256 principalMinor);

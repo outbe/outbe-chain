@@ -1,16 +1,17 @@
-//! Coalescing of Called notices in the `intex_drain_notices` drain.
+//! Coalescing of Called notices when a block sends the queue.
 //!
 //! The harness cannot observe outbound calls, so these tests pin the grouping rule as a predicate.
 //! The rest covers the queue walk: what each firing consumes and where it resumes.
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::{MAX_ROUTER_CALLS_PER_FIRING, MAX_SERIES_PER_MARK};
-use outbe_intexfactory::notify::{drain_notices, joins_run, pack_called_notice};
+use outbe_intexfactory::constants::MAX_SERIES_PER_MARK;
+use outbe_intexfactory::notify::{joins_run, pack_called_notice, send_notices};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
 use outbe_primitives::time::WorldwideDay;
 
 const CHAIN_ID: u64 = 1;
@@ -44,7 +45,7 @@ fn drain(handle: &StorageHandle<'_>) {
         BlockContext::empty_for_tests(1, NOW, CHAIN_ID),
         handle.clone(),
     );
-    drain_notices(&ctx).expect("a dropped notice never fails the drain");
+    send_notices(&ctx).expect("a dropped notice never fails the drain");
 }
 
 /// A provider whose OriginRouter accepts sends, so the drain exercises the path a live chain takes
@@ -77,7 +78,7 @@ fn a_run_longer_than_the_wire_cap_still_empties() {
         assert_eq!(
             bounds(&handle),
             (0, 0),
-            "the whole run fits one firing and rewinds the queue"
+            "the whole run fits one block and rewinds the queue"
         );
     });
 }
@@ -87,7 +88,7 @@ fn a_run_never_reaches_past_the_chunk_limit() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         // One coalesced run: the wire cap turns every eight entries into one call.
-        let run_cap = MAX_ROUTER_CALLS_PER_FIRING * MAX_SERIES_PER_MARK as u32;
+        let run_cap = SWEEP_WRITES_PER_BLOCK * MAX_SERIES_PER_MARK as u32;
         let queued = run_cap + 5;
         for index in 0..queued {
             push_called(&handle, index, CALLED_AT);
@@ -100,7 +101,7 @@ fn a_run_never_reaches_past_the_chunk_limit() {
         );
 
         drain(&handle);
-        assert_eq!(bounds(&handle), (0, 0), "the remainder goes next firing");
+        assert_eq!(bounds(&handle), (0, 0), "the remainder goes next block");
     });
 }
 
@@ -149,7 +150,7 @@ fn a_different_call_time_ends_the_run() {
 fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        let queued = MAX_ROUTER_CALLS_PER_FIRING + 5;
+        let queued = SWEEP_WRITES_PER_BLOCK + 5;
         for index in 0..queued {
             push_called(&handle, index, CALLED_AT + index);
         }
@@ -157,12 +158,12 @@ fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
         drain(&handle);
         assert_eq!(
             bounds(&handle),
-            (MAX_ROUTER_CALLS_PER_FIRING, queued),
+            (SWEEP_WRITES_PER_BLOCK, queued),
             "the firing stops on its router-call budget"
         );
 
         let factory = IntexFactoryContract::new(handle.clone());
-        for index in MAX_ROUTER_CALLS_PER_FIRING..queued {
+        for index in SWEEP_WRITES_PER_BLOCK..queued {
             assert_ne!(
                 factory.notify_at.read(&index).unwrap(),
                 U256::ZERO,

@@ -50,6 +50,14 @@ interface INod {
     ///         gave its place to a newer day, and the sweep will not walk it.
     event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
 
+    /// @notice A reference currency was left out of one day's Call scan because its
+    ///         window price could not be indexed. The next daily pass tries it again.
+    event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+
+    /// @notice A lapsed bucket kept a Nod that could not burn, or its Nods were still
+    ///         landing. The forfeit sweep comes back to it at `retryAt`.
+    event ExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
+
     struct NodData {
         uint256 nodId;
         address owner;

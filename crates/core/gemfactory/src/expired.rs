@@ -1,7 +1,10 @@
 //! Daily sweep returning the capacity an expired merchant position never issued.
 
 use alloy_primitives::U256;
-use outbe_primitives::{block::BlockRuntimeContext, error::Result};
+use outbe_primitives::{
+    block::BlockRuntimeContext,
+    error::{decide, Decided, PrecompileError, Result},
+};
 
 use crate::constants::MAX_POSITION_EXPIRIES_PER_RUN;
 use crate::runtime::emit_event;
@@ -13,6 +16,7 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 /// Positions queue in the order they opened, so a head still inside its year ends the pass.
+/// A deterministic failure skips its position. A node-local one fails the block.
 pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
     let storage = &ctx.storage;
     let mut factory = GemFactoryContract::new(storage.clone());
@@ -45,9 +49,11 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
         }
         budget -= 1;
 
-        match storage.with_checkpoint(|| expire_position(ctx, &record)) {
-            Ok(()) => expired = expired.saturating_add(1),
-            Err(error) => {
+        let outcome = storage.with_checkpoint(|| expire_position(ctx, &record));
+        match decide(outcome, PrecompileError::sweep_failure)? {
+            Decided::Done(()) => expired = expired.saturating_add(1),
+            Decided::Stopped => break,
+            Decided::Skipped(error) => {
                 tracing::warn!(
                     target: "outbe::gemfactory",
                     %position_id,

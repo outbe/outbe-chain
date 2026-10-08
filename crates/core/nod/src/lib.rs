@@ -4,6 +4,7 @@ pub mod config;
 pub mod constants;
 mod enclave_client;
 pub mod errors;
+pub(crate) mod expired;
 pub mod hooks;
 pub mod identity;
 mod index_keys;

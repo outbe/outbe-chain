@@ -157,28 +157,26 @@ fn intex_factory_slot_layout_is_pinned() {
             f.call_bin_count.base_slot(),
             f.config_profile.slot(),
             f.call_currency_cursor.slot(),
-            f.call_scan_cursor.base_slot(),
+            f.call_bin_cursor.base_slot(),
             f.call_group_count.base_slot(),
             f.call_group_members.base_slot(),
-            f.call_group_bin.base_slot(),
+            f.call_group_slot.base_slot(),
             f.call_sweep_day.slot(),
-            f.call_bin_group_days.base_slot(),
+            f.call_bin_groups.base_slot(),
             f.notify_head.slot(),
             f.notify_tail.slot(),
             f.notify_at.base_slot(),
             f.expiry_tree_root.slot(),
             f.expiry_tree_mid.base_slot(),
             f.expiry_tree_leaf.base_slot(),
-            f.called_group_deadline.base_slot(),
-            f.called_group_count.base_slot(),
-            f.called_group_members.base_slot(),
+            f.called_deadline.base_slot(),
             f.max_call_window_seconds.base_slot(),
             f.min_call_threshold_seconds.base_slot(),
             f.expiry_bucket_len.base_slot(),
             f.expiry_bucket_live.base_slot(),
             f.expiry_bucket_at.base_slot(),
             f.called_group_slot.base_slot(),
-            f.expiry_sweep_day.slot(),
+            f.expiry_sweep_hour.slot(),
             f.expiry_cursor.slot(),
             f.call_pending_day.slot(),
             f.parked_message_cursor.slot(),
@@ -300,7 +298,7 @@ fn a_node_local_failure_while_draining_parked_proceeds_fails_the_sweep() {
     });
 }
 
-fn drain_notices_in_trigger(
+fn send_notices_in_block(
     provider: &mut super::router_fault::RouterFaultProvider,
 ) -> outbe_primitives::error::Result<()> {
     StorageHandle::enter(provider, |s| {
@@ -309,7 +307,7 @@ fn drain_notices_in_trigger(
             s.clone(),
         );
         // The cycle runtime runs each trigger inside its own checkpoint.
-        s.with_checkpoint(|| crate::notify::drain_notices(&ctx))
+        s.with_checkpoint(|| crate::notify::send_notices(&ctx))
     })
 }
 
@@ -344,7 +342,7 @@ fn a_node_local_failure_inside_the_called_notice_send_fails_the_drain() {
         })
     };
 
-    let result = drain_notices_in_trigger(&mut provider);
+    let result = send_notices_in_block(&mut provider);
     assert!(matches!(
         result,
         Err(outbe_primitives::error::PrecompileError::SubCall(
@@ -354,6 +352,6 @@ fn a_node_local_failure_inside_the_called_notice_send_fails_the_drain() {
     assert_eq!(queue(&mut provider), (0, 2, queued));
 
     provider.heal();
-    drain_notices_in_trigger(&mut provider).unwrap();
+    send_notices_in_block(&mut provider).unwrap();
     assert_eq!(queue(&mut provider), (0, 0, [U256::ZERO; 2]));
 }

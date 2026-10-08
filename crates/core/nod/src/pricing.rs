@@ -1,6 +1,6 @@
 //! Pure NOD price bounds and call-price bins.
-use crate::constants::BIN_STEP_BP;
 use alloy_primitives::U256;
+use outbe_primitives::call_bins::BIN_STEP_BP;
 use outbe_primitives::{error::Result, math::reference_price};
 
 /// Calculates the floor from the entry price. Returns `None` on overflow.

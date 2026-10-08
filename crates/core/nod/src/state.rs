@@ -3,8 +3,9 @@ use outbe_compressed_entities::{
     delete, list, mint, read, update, BodyInput, EntityRef, ExecutionScope, IdPageRequest,
     ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
+use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
-use outbe_primitives::math::tree_math;
+use outbe_primitives::expiry_queue;
 use outbe_primitives::time::WorldwideDay;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -399,68 +400,15 @@ impl NodContract<'_> {
     /// Parks a new bucket in the bin of its sealed call price.
     pub(crate) fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
-        let bin_id =
+        let bin =
             crate::pricing::price_to_bin(self.callable_bucket_call_price_minor.read(&bucket_key)?)?;
-        let scoped = crate::index_keys::scoped(iso, bin_id);
-        let count = self.call_bin_count.read(&scoped)?;
-        let next_count = count.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod call bin {iso}:{bin_id} member count overflow"
-            ))
-        })?;
-        self.call_bin_buckets.write(
-            &crate::index_keys::bin_index_key(iso, bin_id, count),
-            bucket_key,
-        )?;
-        self.call_bin_count.write(&scoped, next_count)?;
-        self.call_bucket_bin
-            .write(&bucket_key, pack_bin_slot(bin_id, count))?;
-        tree_math::add(&CallBins(self, iso), bin_id)?;
-        Ok(())
+        call_bins::insert(&CallBins(self, iso), bucket_key, bin)
     }
 
     /// No-op for a bucket the trie does not hold.
     pub(crate) fn remove_call_bin(&mut self, bucket_key: B256) -> Result<()> {
-        let packed = self.call_bucket_bin.read(&bucket_key)?;
-        if packed == 0 {
-            return Ok(());
-        }
-        let (bin_id, index) = unpack_bin_slot(packed);
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
-        if self
-            .call_bin_buckets
-            .read(&crate::index_keys::bin_index_key(iso, bin_id, index))?
-            != bucket_key
-        {
-            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
-                "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
-            )));
-        }
-        let scoped = crate::index_keys::scoped(iso, bin_id);
-        let last = self
-            .call_bin_count
-            .read(&scoped)?
-            .checked_sub(1)
-            .filter(|last| index <= *last)
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Revert(format!(
-                    "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
-                ))
-            })?;
-        let last_key = crate::index_keys::bin_index_key(iso, bin_id, last);
-        if index != last {
-            let moved = self.call_bin_buckets.read(&last_key)?;
-            self.call_bin_buckets
-                .write(&crate::index_keys::bin_index_key(iso, bin_id, index), moved)?;
-            self.call_bucket_bin
-                .write(&moved, pack_bin_slot(bin_id, index))?;
-        }
-        self.call_bin_buckets.write(&last_key, B256::ZERO)?;
-        self.call_bin_count.write(&scoped, last)?;
-        self.call_bucket_bin.clear(&bucket_key)?;
-        if last == 0 {
-            tree_math::remove(&CallBins(self, iso), bin_id)?;
-        }
+        call_bins::remove(&CallBins(self, iso), bucket_key)?;
         Ok(())
     }
 
@@ -557,14 +505,18 @@ impl NodContract<'_> {
             .write(&bucket_key, terms.call_threshold_seconds)?;
         self.callable_bucket_call_notice_period_seconds
             .write(&bucket_key, terms.call_notice_period_seconds)?;
-        self.widen_max_call_window(terms.reference_currency, terms.call_window_seconds)
+        outbe_primitives::call_breach::widen_scan_terms(
+            &self.max_call_window_seconds,
+            &self.min_call_threshold_seconds,
+            terms.reference_currency,
+            terms.call_window_seconds,
+            terms.call_threshold_seconds,
+        )
     }
 
-    /// Puts a called bucket on the list the forfeit arm walks.
-    pub(crate) fn push_called_bucket(&mut self, bucket_key: B256) -> Result<()> {
-        let index = self.called_buckets.len()?;
-        self.called_buckets.push(bucket_key)?;
-        self.called_bucket_index.write(&bucket_key, index)
+    /// Queues a called bucket on the deadline its notice period closes at.
+    pub(crate) fn push_called_bucket(&mut self, bucket_key: B256, deadline: u64) -> Result<()> {
+        expiry_queue::push(&ExpiryHours(self), bucket_key, deadline)
     }
 
     /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.
@@ -583,49 +535,9 @@ impl NodContract<'_> {
         })
     }
 
-    /// Raises the currency's widest-window high-water mark if this bucket
-    /// outruns it. Monotonic, so the daily scan can size one shared VWAP window
-    /// per currency and still cover every bucket denominated in it. Mirrors
-    /// `outbe_gem`'s `max_call_window_seconds`.
-    fn widen_max_call_window(
-        &mut self,
-        reference_currency: u16,
-        call_window_seconds: u32,
-    ) -> Result<()> {
-        if call_window_seconds > self.max_call_window_seconds.read(&reference_currency)? {
-            self.max_call_window_seconds
-                .write(&reference_currency, call_window_seconds)?;
-        }
-        Ok(())
-    }
-
-    /// Swap-removes a bucket from the called list. No-op for a bucket it does not hold.
-    fn remove_called_bucket(&mut self, bucket_key: B256) -> Result<()> {
-        let len = self.called_buckets.len()?;
-        let index = self.called_bucket_index.read(&bucket_key)?;
-        let listed = index < len
-            && self
-                .called_buckets
-                .get(index)?
-                .is_some_and(|listed| listed == bucket_key);
-        if listed {
-            let last = len.checked_sub(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Revert(format!(
-                    "Nod called list underflow removing bucket {bucket_key}"
-                ))
-            })?;
-            if index != last {
-                let moved = self.called_buckets.get(last)?.ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::Revert(format!(
-                        "Nod called list slot {last} is empty during removal"
-                    ))
-                })?;
-                self.called_buckets.set(index, moved)?;
-                self.called_bucket_index.write(&moved, index)?;
-            }
-            self.called_buckets.pop()?;
-        }
-        self.called_bucket_index.clear(&bucket_key)
+    /// No-op for a bucket the queue does not hold.
+    pub(crate) fn remove_called_bucket(&mut self, bucket_key: B256) -> Result<()> {
+        expiry_queue::remove(&ExpiryHours(self), bucket_key)
     }
 
     /// No-op for a bucket the call index never held, so the removal funnel can call it
@@ -666,19 +578,32 @@ pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketS
     Ok(crate::repository::from_canonical_bucket(payload.clone()))
 }
 
-const fn pack_bin_slot(bin_id: u32, index: u32) -> u64 {
-    ((bin_id as u64) << 32) | (index as u64 + 1)
-}
-
-const fn unpack_bin_slot(packed: u64) -> (u32, u32) {
-    ((packed >> 32) as u32, (packed as u32).wrapping_sub(1))
-}
-
-/// One currency's call-price trie, like `outbe_gem::state::BucketBins`.
+/// One currency's call-price trie, like `outbe_gem::state::CallBins`.
 pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
 
-outbe_primitives::impl_bin_tree_storage!(CallBins scoped by crate::index_keys::scoped {
+outbe_primitives::impl_call_bins!(CallBins<B256> {
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,
+    count: call_bin_count,
+    at: call_bin_buckets,
+    slot: call_bucket_slot,
+    cursor: call_bin_cursor,
+    failed: call_scan_failed_day,
+});
+
+/// Called buckets, queued by the hour their notice period closes in.
+pub struct ExpiryHours<'a, 'storage>(pub &'a NodContract<'storage>);
+
+outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
+    root: expiry_tree_root,
+    mid: expiry_tree_mid,
+    leaf: expiry_tree_leaf,
+    len: expiry_bucket_len,
+    live: expiry_bucket_live,
+    at: expiry_bucket_at,
+    slot: called_bucket_slot,
+    deadline: called_deadline,
+    sweep_bucket: expiry_sweep_hour,
+    cursor: expiry_cursor,
 });

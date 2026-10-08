@@ -19,29 +19,19 @@ pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB882
 /// cases, creators receive a single payment.
 pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
-/// Bin step in basis points for the call-price index.
-pub const BIN_STEP_BP: u16 = 25;
-
-/// Work one lifecycle scan may do: a decision reads a group, an action writes one
-/// series with its index move and notice. The two budgets are separate because they differ
-/// in cost.
-pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
-pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
-
-/// `SweepDaySkipped.sweep` of the Called sweep.
-pub const CALL_SWEEP: u8 = 1;
-
-/// Router calls one `intex_drain_notices` firing may make; an entry costing none still
-/// spends one. Sized to clear a day of calls inside [`CALL_NOTICE_PERIOD`] while
-/// leaving CycleTick its block headroom.
-pub const MAX_ROUTER_CALLS_PER_FIRING: u32 = 64;
-
-/// Router calls a Called notice gets before it is dropped, one per drain firing that reaches it.
+/// Router calls a Called notice gets before it is dropped.
 pub const MAX_CALLED_NOTICE_ATTEMPTS: u8 = 12;
 
-/// Consecutive wholly refused runs that end a drain firing: a router that refuses every send
-/// would otherwise spend the whole budget on calls that cannot land.
-pub const MAX_REFUSED_RUNS_PER_FIRING: u32 = 3;
+/// Pause before a refused notice is sent again, so its attempts span about an hour
+/// of the router's outage rather than a dozen blocks.
+#[cfg(not(feature = "e2e-test"))]
+pub const NOTICE_RETRY_SECONDS: u64 = 300;
+#[cfg(feature = "e2e-test")]
+pub const NOTICE_RETRY_SECONDS: u64 = 30;
+
+/// Consecutive wholly refused runs that end a block's send: a router that refuses every
+/// send would otherwise spend the whole budget on calls that cannot land.
+pub const MAX_REFUSED_RUNS_PER_BLOCK: u32 = 3;
 
 /// Router calls one `intex_drain_parked` firing may make; each is a view read plus a cross-chain send.
 pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;

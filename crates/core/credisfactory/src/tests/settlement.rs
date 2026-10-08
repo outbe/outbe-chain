@@ -147,11 +147,11 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
                 CredisContract::new(storage.clone())
                     .mark_called(id, called_at)
                     .unwrap();
-                let expired_at = called_at + NOTICE + 1;
+                let expired_at = called_at + NOTICE + HOUR;
                 advance_to(&storage, expired_at);
                 finalize_through(&storage, expired_at);
-                assert_eq!(scan(&storage, expired_at), 1);
-                assert_eq!(scan(&storage, expired_at), 0);
+                assert_eq!(expire(&storage, expired_at), 1);
+                assert_eq!(expire(&storage, expired_at), 0);
                 CredisState::Void
             } else {
                 runtime::settle(storage.clone(), bob(), id, U256::from(3u64)).unwrap();
@@ -171,7 +171,13 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
                 U256::ZERO
             );
             assert_eq!(unallocated(&storage), U256::ZERO);
-            assert_eq!(CredisContract::new(storage).active_len().unwrap(), 0);
+            assert_eq!(
+                CredisContract::new(storage)
+                    .call_bin_tree_root
+                    .read(&REFERENCE_ISO)
+                    .unwrap(),
+                U256::ZERO
+            );
         });
         teardown();
     }
@@ -332,10 +338,15 @@ fn a_position_settled_at_the_deadline_is_never_voided() {
         let after = called_at + NOTICE + DAY;
         advance_to(&storage, after);
         finalize_through(&storage, after);
-        assert_eq!(scan(&storage, after), 0);
+        assert_eq!(expire(&storage, after), 0);
+        let credis = CredisContract::new(storage.clone());
+        let open = position(&storage, bystander);
+        let bins = outbe_credis::CallBins(&credis, open.reference_currency);
+        let bin = outbe_primitives::call_bins::price_to_bin(open.call_price_minor).unwrap();
+        assert_eq!(outbe_primitives::call_bins::len(&bins, bin).unwrap(), 1);
         assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            1
+            outbe_primitives::call_bins::entry_at(&bins, bin, 0).unwrap(),
+            bystander
         );
         assert_eq!(
             position(&storage, bystander).lifecycle_state().unwrap(),
@@ -384,7 +395,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         let balance = view_balance(&storage, alice());
         let pledged = view_pledged(&storage, alice());
         assert_eq!(pledged, pledge_cost() / U256::from(2));
-        advance_to(&storage, deadline + 1);
+        advance_to(&storage, deadline + HOUR);
         let data = ICredisFactory::settleCredisCall {
             positionId: id,
             amountMinor: U256::MAX,
@@ -440,10 +451,10 @@ fn the_stake_stays_with_the_smart_account_through_settlement_and_void() {
                 CredisContract::new(storage.clone())
                     .mark_called(id, called_at)
                     .unwrap();
-                let deadline = called_at + NOTICE + 1;
+                let deadline = called_at + NOTICE + HOUR;
                 advance_to(&storage, deadline);
                 finalize_through(&storage, deadline);
-                assert_eq!(scan(&storage, deadline), 1);
+                assert_eq!(expire(&storage, deadline), 1);
             } else {
                 settle_principal(&storage, alice(), id, pledge_stables());
             }
@@ -472,8 +483,11 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_posit
             alice()
         );
         assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            0
+            CredisContract::new(storage.clone())
+                .call_bin_tree_root
+                .read(&REFERENCE_ISO)
+                .unwrap(),
+            U256::ZERO
         );
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
@@ -543,17 +557,17 @@ fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source()
         for at in [deadline - 1, deadline] {
             advance_to(&storage, at);
             finalize_through(&storage, at);
-            assert_eq!(scan(&storage, at), 0);
+            assert_eq!(expire(&storage, at), 0);
             assert_eq!(
                 position(&storage, position_id).lifecycle_state().unwrap(),
                 CredisState::Called
             );
         }
         let supply = view_balance(&storage, alice()) + view_pledged(&storage, alice());
-        advance_to(&storage, deadline + 1);
-        finalize_through(&storage, deadline + 1);
-        assert_eq!(scan(&storage, deadline + 1), 1);
-        assert_eq!(scan(&storage, deadline + 1), 0);
+        advance_to(&storage, deadline + HOUR);
+        finalize_through(&storage, deadline + HOUR);
+        assert_eq!(expire(&storage, deadline + HOUR), 1);
+        assert_eq!(expire(&storage, deadline + HOUR), 0);
         assert_eq!(
             position(&storage, position_id).lifecycle_state().unwrap(),
             CredisState::Void

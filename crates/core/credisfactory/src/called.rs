@@ -1,320 +1,181 @@
-//! Daily price-path scan: calls and voids positions off the Oracle's
-//! finalized per-UTC-day VWAPs. The Cycle daily trigger drives this scan.
+//! Daily price-path scan: calls positions off the Oracle's finalized per-UTC-day
+//! VWAPs. The Cycle daily trigger schedules the closed UTC day, and every CycleTick
+//! walks a slice of it.
 //!
-//! One pass over the dense active-position index applies up to two transitions
-//! per position, in lifecycle order:
-//!
-//! - `Open -> Called` when the COEN price in the position's REFERENCE currency sat
-//!   strictly above the call price on `call_threshold_seconds` of the trailing
-//!   `call_window_seconds`. Both terms are sealed onto the position at opening. The
-//!   issuance currency the position is denominated in never enters the threshold.
-//! - `Called -> Void` when the settlement window has lapsed with principal still
-//!   outstanding.
+//! A position moves `Open -> Called` when the COEN price in its REFERENCE currency
+//! sat strictly above the call price on `call_threshold_seconds` of the trailing
+//! `call_window_seconds`. Both terms are sealed onto the position at opening. The
+//! issuance currency the position is denominated in never enters the threshold.
 //!
 //! The breach rule needs no per-position streak state. The daily series is
 //! global per currency, so one trailing window per reference currency decides
 //! every position anchored to it. Every run recomputes the count from oracle
-//! history and does not carry it. Mirrors `outbe_gem::hooks::scan_and_call`,
-//! which evaluates the same `CALL_WINDOW`/`CALL_THRESHOLD` shape.
+//! history and does not carry it. Mirrors the Gem, Intex and Nod call sweeps.
 
-use alloy_primitives::U256;
+use alloy_sol_types::SolEvent;
 
-use outbe_credis::constants::{CALL_WINDOW, SECS_PER_DAY};
-use outbe_credis::{CredisContract, CredisState, Position};
-use outbe_oracle::schema::OracleContract;
+use outbe_credis::constants::{CALL_THRESHOLD, CALL_WINDOW};
+use outbe_credis::{CallBins, CredisContract, CredisState, Position};
+use outbe_oracle::api::get_all_reference_currencies;
+use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
+use outbe_oracle::call_window::{CallWindow, CallWindows};
 use outbe_primitives::{
+    addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, SweepFailure},
-    storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
+    call_bins,
+    call_breach::{BreachTerms, ScanTerms},
+    daily_sweep::PinnedDay,
+    error::Result,
+    storage::{dsl::Value, StorageHandle},
+    sweep_budget::SweepBudget,
+    time::first_full_day,
 };
 
-use crate::runtime;
-use crate::schema::CredisFactoryContract;
+use crate::precompile::ICredisFactory::{CallScanSkipped, SweepDaySkipped};
 
-/// Max positions visited per daily run. The cursor resumes the rest on the next
-/// run, so one scan can never outgrow a block. The scan picks up an entry displaced
-/// past the cursor a day later. This delay cannot change an outcome: the call needs
-/// a multi-week breach count, and the void follows the position's sealed notice
-/// period.
-pub(crate) const MAX_CREDIS_DAILY_VISITS: u32 = 4096;
-
-/// Max positions voided per daily run. This cap is far below
-/// [`MAX_CREDIS_DAILY_VISITS`] because a void is orders of magnitude more
-/// expensive than a call. A void makes a blocking TEE round-trip to burn
-/// aggregate Credis collateral on a process-global connection.
-///
-/// A correlated mass-void is the *expected* shape of a call event, not a tail
-/// case. A sustained breach calls every position in a currency at once.
-/// Their seven-day notice periods end together. Without a separate cap, one run would
-/// carry the whole burst.
-///
-/// When a run spends this budget, it only declines further voids. The pass
-/// continues, so the call arm keeps its full [`MAX_CREDIS_DAILY_VISITS`] reach.
-// TODO: a backlog larger than this drains at one budget per day.
-pub(crate) const MAX_CREDIS_VOIDS_PER_RUN: u32 = 64;
-
-/// Trailing finalized daily VWAPs of one `COEN/<iso>` pair, newest first.
-/// `None` marks a day the pair published no reference price.
-type VwapWindow = Vec<(u32, Option<U256>)>;
-
-/// Cycle daily-trigger entry: runs the scan, discarding the count.
+/// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    scan_and_call(ctx)?;
-    Ok(())
+    call_sweep::schedule(ctx, &mut CredisCallSweep::new(ctx))
 }
 
-/// Runs the daily price-path scan. Returns the number of positions mutated.
-///
-/// Never returns `Err` for missing market data. The Cycle dispatcher propagates
-/// a handler error out of the `CycleTick` system transaction, and that error fails
-/// the block. So each of these cases degrades to "no transition" instead:
-///
-/// - an unregistered pair
-/// - an unpriced currency
-/// - an unfinalized day
+/// Schedules the closed day and walks a slice of the day in flight. Returns the
+/// positions called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let oracle = OracleContract::new(ctx.storage.clone());
-
-    // Most recent fully-closed UTC day. The paper counts plain UTC days, so this
-    // is `timestamp_to_date_key`, NOT the UTC+14 `WorldwideDay` key.
-    let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
-
-    // The Oracle begin-block hook finalizes that day earlier in this same block.
-    // A lagging watermark means the ordering broke. Skip loudly instead of
-    // misreading an unfinalized day as one with no published price.
-    let finalized = oracle.utc_day_vwap_last_finalized.read()?;
-    if finalized < last_closed_day {
-        tracing::warn!(
-            target: "outbe::credisfactory",
-            last_closed_day,
-            finalized,
-            "credis scan: utc-day VWAP not finalized yet, skipping run"
-        );
-        return Ok(0);
-    }
-
-    let mut credis = CredisContract::new(ctx.storage.clone());
-    let len = credis.active_len()?;
-    if len == 0 {
-        return Ok(0);
-    }
-
-    let factory = CredisFactoryContract::new(ctx.storage.clone());
-    // Stored as `index + 1`. 0 means "start a fresh pass from the top".
-    let mut cursor = match factory.call_scan_cursor.read()? {
-        0 => len - 1,
-        resume => resume.saturating_sub(1).min(len - 1),
-    };
-
-    // A VWAP window belongs to one `COEN/<reference iso>` pair, but the active index
-    // mixes anchors. Cache the windows and keep the single pass. The registry holds
-    // a handful of codes, so a linear probe beats a map.
-    let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
-
-    let now = ctx.block.timestamp;
-    let mut mutated: u32 = 0;
-    let mut visited: u32 = 0;
-    let mut voided: u32 = 0;
-
-    // Descending walk: `remove_active` swap-pops the tail into the hole, and the
-    // tail is already behind a descending cursor, so the walk skips no live entry.
-    let completed = loop {
-        if visited >= MAX_CREDIS_DAILY_VISITS {
-            break false;
-        }
-        if let Some(position_id) = credis.active_at(cursor)? {
-            // Structural reads stay on `?` so infra errors still propagate.
-            let position = credis.get_position(position_id)?;
-            let index = window_for(
-                &credis,
-                &ctx.storage,
-                &oracle,
-                &mut windows,
-                position.reference_currency,
-                last_closed_day,
-            )?;
-            // `window_for` only ever returns an index it just validated or
-            // appended, so this lookup cannot miss. Resolving it fallibly rather
-            // than by bare indexing keeps the hook path panic-free.
-            let window = windows
-                .get(index)
-                .map(|(_, days)| days.as_slice())
-                .ok_or_else(|| {
-                    PrecompileError::Fatal("credis scan: window cache index out of range".into())
-                })?;
-
-            // The price-path arms are pure storage and arithmetic. So the scan
-            // isolates a deterministic error to this position and skips it. One
-            // bad position never halts the daily run, while a node-local error
-            // fails the block. Same shape as gem's and intexfactory's scans.
-            let outcome = ctx
-                .storage
-                .with_checkpoint(|| visit_price_path(&mut credis, window, &position, now));
-            match outcome {
-                Ok(visit) => {
-                    // The void arm is NOT isolated: it makes TEE enclave
-                    // round-trips whose faults (sidecar down, socket timeout)
-                    // are node-local rather than a function of committed state.
-                    // Swallowing one would fork the chain silently, so it
-                    // propagates and fails the block instead. `void_due`
-                    // pre-filters all three domain errors that `void_position`
-                    // can raise, so nothing deterministic reaches here.
-                    //
-                    // A spent void budget declines further voids but must NOT
-                    // end the pass. Both arms share one cursor. A break here
-                    // would let a void backlog throttle the call arm down to the
-                    // void rate. It would also leave the rest of the book
-                    // unvisited for as many days as the backlog takes to drain.
-                    // A declined position keeps its place in the active index,
-                    // and a later run voids it.
-                    let did_void = visit.void_due && voided < MAX_CREDIS_VOIDS_PER_RUN;
-                    if did_void {
-                        runtime::void_position(ctx.storage.clone(), position_id)?;
-                        voided = voided.saturating_add(1);
-                    }
-                    // Mutually exclusive: the void needs `Called` at entry,
-                    // which is not a state the call arm acts on.
-                    if visit.moved || did_void {
-                        mutated = mutated.saturating_add(1);
-                    }
-                }
-                Err(e) if e.sweep_failure() == SweepFailure::Propagate => return Err(e),
-                Err(e) => {
-                    tracing::warn!(
-                        target: "outbe::credisfactory",
-                        %position_id,
-                        error = ?e,
-                        "credis scan: skipping position"
-                    );
-                }
-            }
-        }
-        visited = visited.saturating_add(1);
-        if cursor == 0 {
-            break true;
-        }
-        cursor -= 1;
-    };
-
-    // `cursor` is the next index to visit when a budget cut the pass short.
-    factory.call_scan_cursor.write(if completed {
-        0
-    } else {
-        cursor.saturating_add(1)
-    })?;
-    Ok(mutated)
+    let mut sweep = CredisCallSweep::new(ctx);
+    call_sweep::schedule(ctx, &mut sweep)?;
+    call_sweep::continue_day(ctx, &mut sweep)
 }
 
-/// What one position's price-path arms decided.
-struct Visit {
-    /// Whether the call actually transitioned it.
-    moved: bool,
-    /// Whether the caller must now void the remainder.
-    void_due: bool,
+/// Walks the next slice of the day in flight, pinned to the day it opened on so
+/// later blocks decide against the same prices. Returns the positions called.
+pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+    call_sweep::continue_day(ctx, &mut CredisCallSweep::new(ctx))
 }
 
-/// Applies the call, and reports whether the void is due.
-///
-/// A reference currency this chain cannot price yields an empty window: no call, but
-/// the void arm still runs, so such a position is never stranded.
-fn visit_price_path(
+struct CredisCallSweep<'storage> {
+    credis: CredisContract<'storage>,
+}
+
+impl<'storage> CredisCallSweep<'storage> {
+    fn new(ctx: &BlockRuntimeContext<'storage>) -> Self {
+        Self {
+            credis: CredisContract::new(ctx.storage.clone()),
+        }
+    }
+}
+
+impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
+    const CONSUMER: &'static str = "credis";
+
+    type Bins<'a>
+        = CallBins<'a, 'storage>
+    where
+        Self: 'a;
+
+    fn days(&self) -> PinnedDay<'_, 'storage> {
+        PinnedDay {
+            current: &self.credis.call_sweep_day,
+            pending: &self.credis.call_pending_day,
+        }
+    }
+
+    fn bins(&self, reference_currency: u16) -> CallBins<'_, 'storage> {
+        CallBins(&self.credis, reference_currency)
+    }
+
+    fn currency_cursor(&self) -> &Value<'storage, u32> {
+        &self.credis.call_currency_cursor
+    }
+
+    fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
+        emit(
+            &self.credis.storage,
+            &SweepDaySkipped {
+                sweep: CALL_SWEEP,
+                skippedDay: skipped,
+                inFlightDay: in_flight,
+            },
+        )
+    }
+
+    fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
+        let currencies = get_all_reference_currencies(ctx)?;
+        let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
+        let mut budget = SweepBudget::per_block();
+        let mut caller = CredisContract::new(ctx.storage.clone());
+        let mut called: u32 = 0;
+        let index = &self.credis;
+        let finished = call_bins::walk_currencies(
+            &currencies,
+            &self.credis.call_currency_cursor,
+            &mut budget,
+            |iso_code, budget| {
+                let bins = CallBins(index, iso_code);
+                let skipped = || {
+                    emit(
+                        &ctx.storage,
+                        &CallScanSkipped {
+                            referenceCurrency: iso_code,
+                            utcDay: pinned_day,
+                        },
+                    )
+                };
+                let Some((window, ceiling)) = call_sweep::currency_ceiling(
+                    &bins,
+                    &mut windows,
+                    || scan_terms(index, iso_code),
+                    skipped,
+                )?
+                else {
+                    return Ok(true);
+                };
+                call_bins::walk(&bins, ceiling, budget, |position_id, budget| {
+                    call_sweep::call_entry::<Self>(&ctx.storage, budget, position_id, || {
+                        let position = caller.get_position(position_id)?;
+                        let calls = u32::from(call_if_breached(
+                            &mut caller,
+                            window,
+                            &position,
+                            ctx.block.timestamp,
+                        )?);
+                        called += calls;
+                        Ok(calls)
+                    })
+                })
+            },
+        )?;
+        Ok((called, finished))
+    }
+}
+
+fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result<()> {
+    storage.emit_event(CREDIS_FACTORY_ADDRESS, SolEvent::encode_log_data(event))
+}
+
+/// Calls an Open position whose breach window filled. Returns whether it moved.
+fn call_if_breached(
     credis: &mut CredisContract<'_>,
-    window: &[(u32, Option<U256>)],
+    window: &CallWindow,
     position: &Position,
     now: u64,
-) -> Result<Visit> {
-    let entry_state = position.lifecycle_state()?;
-    let moved = entry_state == CredisState::Open
-        && breached_enough(window, position)
-        && credis.mark_called(position.position_id, now)?;
-
-    Ok(Visit {
-        moved,
-        // Gated on the state at entry, not the running one. A call stamped in
-        // this same visit sets `called_at = now`, so its window cannot have
-        // lapsed. Also, a read of the deadline off the record loaded before that
-        // call would compare `now` against `0 + call_notice_period_seconds`.
-        void_due: entry_state == CredisState::Called
-            && !position.outstanding_principal_minor.is_zero()
-            && now > outbe_credis::settlement_deadline(position),
-    })
+) -> Result<bool> {
+    Ok(position.lifecycle_state()? == CredisState::Open
+        && window.breached(&BreachTerms {
+            call_price: position.call_price_minor,
+            window_seconds: position.call_window_seconds,
+            threshold_seconds: position.call_threshold_seconds,
+            start_day: first_full_day(position.issued_at),
+        })
+        && credis.mark_called(position.position_id, now)?)
 }
 
-/// True when the daily COEN price in the position's reference currency sat
-/// strictly above its call price on at least `call_threshold_seconds` days of its
-/// trailing `call_window_seconds`.
-///
-/// This function reads both terms off the position, not from the constants, so
-/// retuning them cannot re-term a position that is already live. `window` is
-/// sized for the widest window in the currency, so this takes only its own prefix.
-///
-/// Days at or below the call price and days with no published price both simply
-/// fail to count, so the window absorbs up to `window - threshold` of either.
-/// Section 11.3 leaves missing-data days undecided. Treating them as
-/// non-breaches is conservative: it can only delay a call, never trigger one.
-///
-/// A day that predates the position ends the count. The window is newest-first,
-/// so every remaining entry is older still. A position must never inherit a
-/// breach run from before it existed. Mirrors the issuance guard in
-/// `outbe_gem::runtime::breached_enough`.
-fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool {
-    let window_days = position.call_window_seconds / SECS_PER_DAY;
-    let threshold_days = position.call_threshold_seconds / SECS_PER_DAY;
-    // A position sealed before the terms existed carries zeroes. Zero days is
-    // "no terms", not "every day breaches". Leave it uncallable. Same guard as
-    // `outbe_gem::runtime::breached_enough`.
-    if window_days == 0 || threshold_days == 0 {
-        return false;
-    }
-    let issued_day = timestamp_to_date_key(position.issued_at);
-    let mut breaches: u32 = 0;
-    for (day, vwap) in window.iter().take(window_days as usize) {
-        if *day < issued_day {
-            break;
-        }
-        if vwap.is_some_and(|value| value > position.call_price_minor) {
-            breaches = breaches.saturating_add(1);
-        }
-    }
-    breaches >= threshold_days
-}
-
-/// Index into `cache` of the trailing finalized-VWAP window for `COEN/<iso>`,
-/// newest first. Fills the window on first use. This function reads only the
-/// currencies actually present in the active book. There is no registry walk.
-///
-/// An unregistered pair caches an empty window: such a position can never
-/// register a breach, but it must still reach the void arm, so this skips the
-/// price checks rather than the position.
-fn window_for(
-    credis: &CredisContract<'_>,
-    storage: &StorageHandle<'_>,
-    oracle: &OracleContract<'_>,
-    cache: &mut Vec<(u16, VwapWindow)>,
-    iso_code: u16,
-    last_closed_day: u32,
-) -> Result<usize> {
-    if let Some(index) = cache.iter().position(|(code, _)| *code == iso_code) {
-        return Ok(index);
-    }
-    let mut window = Vec::new();
-    if let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)? {
-        // Widest of the current constant and anything ever opened: a position
-        // keeps the window it was opened with, so a narrowed constant must not
-        // shorten the span the scan collects for it.
-        let window_days = credis
-            .max_call_window_seconds
-            .read(&iso_code)?
-            .max(CALL_WINDOW)
-            / SECS_PER_DAY;
-        window.reserve(window_days as usize);
-        let mut day = last_closed_day;
-        for _ in 0..window_days {
-            window.push((day, oracle.get_utc_day_vwap_for_pair(day, pair_index)?));
-            day = previous_date_key(day);
-        }
-    }
-    cache.push((iso_code, window));
-    Ok(cache.len() - 1)
+/// The constants are the live terms: the next position is opened with them.
+fn scan_terms(credis: &CredisContract<'_>, reference_currency: u16) -> Result<ScanTerms> {
+    outbe_primitives::call_breach::scan_terms(
+        &credis.max_call_window_seconds,
+        &credis.min_call_threshold_seconds,
+        reference_currency,
+        CALL_WINDOW,
+        CALL_THRESHOLD,
+    )
 }

@@ -1,18 +1,12 @@
 //! Daily call scan: force-calls Nod buckets off the Oracle's finalized
-//! per-UTC-day VWAPs, then forfeit-burns the Nods of a bucket whose notice
-//! period lapsed. The Cycle daily trigger pins the closed UTC day and runs the
-//! first slice. Later CycleTicks continue the same day.
+//! per-UTC-day VWAPs. The Cycle daily trigger schedules the closed UTC day, and every
+//! CycleTick walks a slice of it.
 //!
-//! One pass applies at most one transition per bucket, in lifecycle order, over
-//! two arms sharing one visit budget:
-//!
-//! - *not called* -> *called*, walking each currency's call-price trie, when
-//!   the reference price exceeded the bucket's call price on at least its
-//!   `call_threshold_seconds` of the trailing `call_window_seconds`.
-//! - *called* -> *forfeited*, walking the called-bucket list, when the bucket's
-//!   `call_notice_period_seconds` has lapsed with Nods still unpaid. The two can never
-//!   fire in one pass, since a bucket called now cannot also be a notice period
-//!   past its call.
+//! A bucket is called, walking each currency's call-price trie, when the reference
+//! price exceeded its call price on at least its `call_threshold_seconds` of the
+//! trailing `call_window_seconds`. The call queues it on its deadline, and every
+//! CycleTick forfeit-burns the unpaid Nods of the buckets whose
+//! `call_notice_period_seconds` lapsed ([`crate::expired::sweep_expired`]).
 //!
 //! Issuance seals all four terms onto the bucket, and this scan reads them back
 //! from it. Retuning a constant therefore leaves every issued bucket on the
@@ -21,171 +15,107 @@
 //! The breach rule needs no per-bucket streak state. The daily series is global
 //! per currency, so one trailing window per currency decides every bucket
 //! denominated in it. Every run recomputes the count from oracle history rather
-//! than carrying it. Mirrors `outbe_gem::hooks::scan_and_call` and
+//! than carrying it. Mirrors `outbe_gem::called::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
 //! Calls count only days from `first_full_day` of the bucket's sealed `issued_at`.
 
-mod calls;
-mod forfeits;
-mod window;
-
 use std::collections::BTreeSet;
 
-use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
-use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
+use alloy_primitives::B256;
+use outbe_oracle::api::get_all_reference_currencies;
+use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
+use outbe_oracle::call_window::{CallWindow, CallWindows};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    daily_sweep::{Scheduled, SweepDays},
+    call_bins,
+    call_breach::{BreachTerms, ScanTerms},
+    daily_sweep::PinnedDay,
     error::{PrecompileError, Result, SweepFailure},
+    storage::dsl::Value,
+    sweep_budget::SweepBudget,
+    time::first_full_day,
 };
 
-use crate::{constants::CALL_SWEEP, precompile::INod, schema::NodContract};
+use crate::{api, precompile::INod, schema::NodContract, state::CallBins};
 
-#[cfg(test)]
-pub(crate) use calls::{call_currency, CurrencyScan};
-#[cfg(test)]
-pub(crate) use forfeits::{forfeit_members, Bodies};
-
-pub(crate) const CALL_ARM_DONE: u32 = u32::MAX;
-
-/// Trailing finalized daily VWAPs of one `COEN/<iso>` pair, newest first.
-/// `None` marks a day the pair published no reference price.
-type VwapWindow = Vec<(u32, Option<U256>)>;
-
-/// Schedule the day the Oracle has just finalized. Open a Called sweep over it
-/// and run its first slice, or queue it behind the sweep still in flight.
+/// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 ///
 /// Never returns `Err` for missing market data. The Cycle dispatcher propagates
 /// a handler error out of the `CycleTick` system transaction, which fails the
 /// block. An unregistered pair, an unpriced currency or an unfinalized day
 /// therefore each degrade to "no transition" instead.
-pub fn scan_and_call(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<u32> {
-    let Some(last_closed_day) = closed_day(ctx)? else {
-        return Ok(0);
-    };
-    let mut nod = NodContract::new(ctx.storage.clone());
-    if nod.call_sweep_day.read()? == 0 && !has_call_work(ctx, &nod)? {
-        return Ok(0);
-    }
-    let days = SweepDays {
-        current: nod.call_sweep_day.read()?,
-        pending: nod.call_pending_day.read()?,
-    };
-    match days.schedule(last_closed_day) {
-        (next, Scheduled::Opened) => {
-            start_call_sweep(ctx, &nod, next)?;
-            run_call_slice(ctx, scope, parent)
-        }
-        (next, Scheduled::Queued) => {
-            nod.call_pending_day.write(next.pending)?;
-            Ok(0)
-        }
-        (next, Scheduled::Replaced { skipped }) => {
-            nod.call_pending_day.write(next.pending)?;
-            nod.emit(INod::SweepDaySkipped {
-                sweep: CALL_SWEEP,
-                skippedDay: skipped,
-                inFlightDay: next.current,
-            })?;
-            Ok(0)
-        }
-        (_, Scheduled::Ignored) => Ok(0),
-    }
+pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+    call_sweep::schedule(ctx, &mut NodCallSweep::new(ctx))
 }
 
-fn has_call_work(ctx: &BlockRuntimeContext, nod: &NodContract) -> Result<bool> {
-    if nod.called_buckets.len()? != 0 {
-        return Ok(true);
-    }
-    for iso_code in get_all_reference_currencies(ctx)? {
-        if !nod.call_bin_tree_root.read(&iso_code)?.is_zero() {
-            return Ok(true);
+/// Schedules the closed day and walks a slice of the day in flight. Returns the
+/// buckets called.
+pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let mut sweep = NodCallSweep::new(ctx);
+    call_sweep::schedule(ctx, &mut sweep)?;
+    call_sweep::continue_day(ctx, &mut sweep)
+}
+
+/// Walks the next slice of the day in flight, pinned to the day it opened on so
+/// later blocks decide against the same prices. Returns how many buckets were called.
+pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+    call_sweep::continue_day(ctx, &mut NodCallSweep::new(ctx))
+}
+
+struct NodCallSweep<'storage> {
+    nod: NodContract<'storage>,
+}
+
+impl<'storage> NodCallSweep<'storage> {
+    fn new(ctx: &BlockRuntimeContext<'storage>) -> Self {
+        Self {
+            nod: NodContract::new(ctx.storage.clone()),
         }
     }
-    Ok(false)
 }
 
-/// The most recent fully-closed UTC day, or `None` while its VWAPs are not final.
-pub(crate) fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
-    outbe_oracle::closed_day::finalized_closed_day(ctx.storage.clone(), ctx.block.timestamp, "nod")
-}
+impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
+    const CONSUMER: &'static str = "nod";
 
-/// Pin the sweep's current day and walk it from the first currency's lowest bin.
-fn start_call_sweep(ctx: &BlockRuntimeContext, nod: &NodContract, days: SweepDays) -> Result<()> {
-    nod.call_sweep_day.write(days.current)?;
-    nod.call_pending_day.write(days.pending)?;
-    nod.call_currency_cursor.write(0)?;
-    nod.forfeit_cursor.write(0)?;
-    for iso_code in get_all_reference_currencies(ctx)? {
-        nod.call_bin_cursor.write(&iso_code, 0)?;
-    }
-    Ok(())
-}
+    type Bins<'a>
+        = CallBins<'a, 'storage>
+    where
+        Self: 'a;
 
-fn finish_call_sweep(ctx: &BlockRuntimeContext, nod: &NodContract, pinned_day: u32) -> Result<()> {
-    let next = SweepDays {
-        current: pinned_day,
-        pending: nod.call_pending_day.read()?,
-    }
-    .finish();
-    if next.current == 0 {
-        nod.call_sweep_day.write(0)
-    } else {
-        start_call_sweep(ctx, nod, next)
-    }
-}
-
-/// Advance an open sweep by one slice, pinned to the day it opened on so
-/// later blocks decide against the same prices. Returns how many buckets
-/// were called plus Nods forfeited.
-pub fn run_call_slice(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<u32> {
-    let mut nod = NodContract::new(ctx.storage.clone());
-    let pinned_day = nod.call_sweep_day.read()?;
-    if pinned_day == 0 {
-        return Ok(0);
-    }
-    let oracle = OracleContract::new(ctx.storage.clone());
-    let finalized = oracle.utc_day_vwap_last_finalized.read()?;
-    if finalized < pinned_day {
-        tracing::warn!(
-            target: "outbe::nod",
-            pinned_day,
-            finalized,
-            "nod call scan: pinned utc-day VWAP not finalized, holding the sweep"
-        );
-        return Ok(0);
+    fn days(&self) -> PinnedDay<'_, 'storage> {
+        PinnedDay {
+            current: &self.nod.call_sweep_day,
+            pending: &self.nod.call_pending_day,
+        }
     }
 
-    let mut visits: u32 = 0;
-    let mut mutated: u32 = 0;
-    if nod.call_currency_cursor.read()? != CALL_ARM_DONE {
+    fn bins(&self, reference_currency: u16) -> CallBins<'_, 'storage> {
+        CallBins(&self.nod, reference_currency)
+    }
+
+    fn currency_cursor(&self) -> &Value<'storage, u32> {
+        &self.nod.call_currency_cursor
+    }
+
+    fn classify(error: &PrecompileError) -> SweepFailure {
+        sweep_failure(error)
+    }
+
+    fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
+        self.nod.emit(INod::SweepDaySkipped {
+            sweep: CALL_SWEEP,
+            skippedDay: skipped,
+            inFlightDay: in_flight,
+        })
+    }
+
+    fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
         let mut called_days = BTreeSet::new();
-        let mut windows = window::VwapWindows::new(&oracle, pinned_day);
-        let (called, finished) =
-            calls::call_arm(ctx, &mut nod, &mut windows, &mut visits, &mut called_days)?;
-        nod.emit_days_metadata_update(&called_days)?;
-        mutated = mutated.saturating_add(called);
-        if !finished {
-            return Ok(mutated);
-        }
-        nod.call_currency_cursor.write(CALL_ARM_DONE)?;
+        let (called, finished) = call_slice(ctx, &self.nod, pinned_day, &mut called_days)?;
+        self.nod.emit_days_metadata_update(&called_days)?;
+        Ok((called, finished))
     }
-    let (forfeited, finished) = forfeits::forfeit_arm(ctx, scope, parent, &mut nod, &mut visits)?;
-    mutated = mutated.saturating_add(forfeited);
-    if finished {
-        finish_call_sweep(ctx, &nod, pinned_day)?;
-    }
-    Ok(mutated)
 }
 
 /// Nod's own index checks revert, so a body corruption reaching a sweep is this
@@ -198,7 +128,154 @@ pub(crate) fn sweep_failure(error: &PrecompileError) -> SweepFailure {
 }
 
 /// Whether the certified generation of the bucket's Worldwide Day still has Nods to land.
-fn materializing(nod: &NodContract<'_>, bucket_key: B256) -> Result<bool> {
+pub(crate) fn materializing(nod: &NodContract<'_>, bucket_key: B256) -> Result<bool> {
     let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
     Ok(nod.ocomp_target_generation.read(&worldwide_day)? != 0)
+}
+
+/// One currency's call walk: its trailing VWAP window, and the highest bin a
+/// bucket that window breached can sit in.
+pub(crate) struct CurrencyScan<'w> {
+    pub(crate) iso_code: u16,
+    pub(crate) window: &'w CallWindow,
+    pub(crate) ceiling: u32,
+}
+
+/// Walks every currency's bins up to its window's ceiling. Returns the buckets
+/// called and whether every currency was walked.
+fn call_slice(
+    ctx: &BlockRuntimeContext,
+    nod: &NodContract<'_>,
+    pinned_day: u32,
+    called_days: &mut BTreeSet<u32>,
+) -> Result<(u32, bool)> {
+    let currencies = get_all_reference_currencies(ctx)?;
+    let params = crate::config::read_from(nod, ctx.block.chain_id)?;
+    let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
+    let mut budget = SweepBudget::per_block();
+    let mut caller = NodContract::new(ctx.storage.clone());
+    let mut called: u32 = 0;
+    let finished = call_bins::walk_currencies(
+        &currencies,
+        &nod.call_currency_cursor,
+        &mut budget,
+        |iso_code, budget| {
+            let skipped = || {
+                NodContract::new(ctx.storage.clone()).emit(INod::CallScanSkipped {
+                    referenceCurrency: iso_code,
+                    utcDay: pinned_day,
+                })
+            };
+            let Some((window, ceiling)) = call_sweep::currency_ceiling(
+                &CallBins(nod, iso_code),
+                &mut windows,
+                || scan_terms(nod, iso_code, &params),
+                skipped,
+            )?
+            else {
+                return Ok(true);
+            };
+            let scan = CurrencyScan {
+                iso_code,
+                window,
+                ceiling,
+            };
+            let (calls, finished) = call_currency(ctx, &mut caller, scan, budget, called_days)?;
+            called = called.saturating_add(calls);
+            Ok(finished)
+        },
+    )?;
+    Ok((called, finished))
+}
+
+/// The live profile is the terms the next bucket is sealed with.
+fn scan_terms(
+    nod: &NodContract<'_>,
+    iso_code: u16,
+    params: &crate::config::NodParams,
+) -> Result<ScanTerms> {
+    outbe_primitives::call_breach::scan_terms(
+        &nod.max_call_window_seconds,
+        &nod.min_call_threshold_seconds,
+        iso_code,
+        params.call_window_seconds,
+        params.call_threshold_seconds,
+    )
+}
+
+/// Walks the currency's bins up to the window's ceiling, resuming where it stopped.
+pub(crate) fn call_currency(
+    ctx: &BlockRuntimeContext,
+    nod: &mut NodContract<'_>,
+    scan: CurrencyScan<'_>,
+    budget: &mut SweepBudget,
+    called_days: &mut BTreeSet<u32>,
+) -> Result<(u32, bool)> {
+    let CurrencyScan {
+        iso_code,
+        window,
+        ceiling,
+    } = scan;
+    let index = NodContract::new(ctx.storage.clone());
+    let mut called: u32 = 0;
+    let finished = call_bins::walk(
+        &CallBins(&index, iso_code),
+        ceiling,
+        budget,
+        |bucket_key, budget| {
+            call_sweep::call_entry::<NodCallSweep>(&ctx.storage, budget, bucket_key, || {
+                if !call_bucket(nod, window, bucket_key, ctx.block.timestamp)? {
+                    return Ok(0);
+                }
+                called += 1;
+                called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
+                Ok(1)
+            })
+        },
+    )?;
+    Ok((called, finished))
+}
+
+/// Calls the bucket if the window breached its sealed terms. Returns whether it did.
+fn call_bucket(
+    nod: &mut NodContract<'_>,
+    window: &CallWindow,
+    bucket_key: B256,
+    now: u64,
+) -> Result<bool> {
+    if nod.bucket_nod_count.read(&bucket_key)? == 0 || nod.bucket_called_at.read(&bucket_key)? != 0
+    {
+        return Ok(false);
+    }
+    let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
+    let terms = nod.read_call_terms(bucket_key)?;
+    let breached = window.breached(&BreachTerms {
+        call_price: terms.call_price_minor,
+        window_seconds: terms.call_window_seconds,
+        threshold_seconds: terms.call_threshold_seconds,
+        start_day: first_full_day(issued_at),
+    });
+    if !breached || materializing(nod, bucket_key)? {
+        return Ok(false);
+    }
+    mark_called(nod, bucket_key, now, terms.call_notice_period_seconds)?;
+    Ok(true)
+}
+
+/// Stamps the call and opens the settlement window the bucket sealed.
+fn mark_called(
+    nod: &mut NodContract<'_>,
+    bucket_key: B256,
+    now: u64,
+    notice_period: u32,
+) -> Result<()> {
+    let deadline = api::settlement_deadline_of(now, notice_period);
+    nod.remove_call_bin(bucket_key)?;
+    nod.push_called_bucket(bucket_key, deadline)?;
+    nod.bucket_called_at.write(&bucket_key, now)?;
+    nod.emit(INod::NodBucketCalled {
+        bucketKey: bucket_key,
+        calledAt: now,
+        settlementDeadline: deadline,
+    })
 }

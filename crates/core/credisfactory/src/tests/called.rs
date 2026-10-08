@@ -1,14 +1,14 @@
-//! Daily price-path scan: the multi-week breach-count call and the void of a
-//! lapsed settlement window.
+//! Daily price-path scan: the multi-week breach-count call, and the void of a
+//! lapsed settlement window from the deadline queue.
 //!
-//! Every test drives [`crate::called::scan_and_call`] through the `scan` harness
-//! helper against a seeded finalized daily series. This series is the only price
-//! source the production trigger reads.
+//! Tests drive [`crate::called::scan_and_call`] through the `scan` harness helper,
+//! and later blocks' slices through `slice`, against a seeded finalized daily
+//! series. This series is the only price source the production trigger reads.
 
 use alloy_primitives::{Address, U256};
 
 use outbe_credis::constants::{CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS, SECS_PER_DAY};
-use outbe_credis::{CredisContract, CredisState};
+use outbe_credis::{CallBins, CredisContract, CredisState};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::previous_date_key;
 
@@ -63,12 +63,14 @@ fn reterm(
     position.call_threshold_seconds = threshold_days * SECS_PER_DAY;
     position.call_notice_period_seconds = notice_days * SECS_PER_DAY;
     credis.positions.update(&position).unwrap();
-    if position.call_window_seconds > credis.max_call_window_seconds.read(&REFERENCE_ISO).unwrap() {
-        credis
-            .max_call_window_seconds
-            .write(&REFERENCE_ISO, position.call_window_seconds)
-            .unwrap();
-    }
+    outbe_primitives::call_breach::widen_scan_terms(
+        &credis.max_call_window_seconds,
+        &credis.min_call_threshold_seconds,
+        REFERENCE_ISO,
+        position.call_window_seconds,
+        position.call_threshold_seconds,
+    )
+    .unwrap();
 }
 
 /// The terms a position is called and voided under are the ones sealed at
@@ -107,10 +109,9 @@ fn the_scan_follows_the_terms_sealed_on_the_position_not_the_constants() {
             at + DAY,
             "the deadline follows the sealed notice period"
         );
-        let lapsed = at + DAY + 1;
+        let lapsed = at + DAY + HOUR;
         advance_to(&storage, lapsed);
-        finalize_through(&storage, lapsed);
-        assert_eq!(scan(&storage, lapsed), 1);
+        assert_eq!(expire(&storage, lapsed), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Void);
     });
     teardown();
@@ -379,6 +380,43 @@ fn a_breach_run_that_predates_the_position_does_not_call_it() {
     teardown();
 }
 
+/// A position opened at 00:00 counts its issuance day. One opened at 00:00:01 starts
+/// counting the next day, so the same threshold run falls one day short.
+#[test]
+fn the_issuance_day_counts_only_for_a_position_opened_at_midnight() {
+    for (offset, called_at_threshold) in [(0, true), (1, false)] {
+        let mut storage = env();
+        StorageHandle::enter(&mut storage, |storage| {
+            bootstrap(&storage, pledge_cost());
+            let midnight = (CREATED_AT / DAY + 1) * DAY;
+            advance_to(&storage, midnight + offset);
+            let position_id = open(&storage, 1);
+
+            let at = midnight + u64::from(CALL_THRESHOLD_DAYS) * DAY;
+            advance_to(&storage, at);
+            fill_days(
+                &storage,
+                last_closed_day(at),
+                CALL_THRESHOLD_DAYS,
+                above_call(),
+            );
+            assert_eq!(scan(&storage, at), u32::from(called_at_threshold));
+            if called_at_threshold {
+                assert_eq!(state_of(&storage, position_id), CredisState::Called);
+                return;
+            }
+            assert_eq!(state_of(&storage, position_id), CredisState::Open);
+
+            let next = at + DAY;
+            advance_to(&storage, next);
+            set_vwap(&storage, last_closed_day(next), above_call());
+            assert_eq!(scan(&storage, next), 1);
+            assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        });
+        teardown();
+    }
+}
+
 #[test]
 fn an_unfinalized_day_skips_the_run_without_touching_state() {
     let mut storage = env();
@@ -412,23 +450,21 @@ fn the_call_and_the_void_compose_across_runs() {
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
 
-        // This same run can never void a position that it called: the
+        // The same block can never void a position that it called: the
         // window opens at `called_at = now`.
-        assert_eq!(scan(&storage, at), 0);
+        assert_eq!(expire(&storage, at), 0);
 
         // Inside the window, nothing happens.
         let inside = at + NOTICE - DAY;
         advance_to(&storage, inside);
-        finalize_through(&storage, inside);
-        assert_eq!(scan(&storage, inside), 0);
+        assert_eq!(expire(&storage, inside), 0);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
 
         // The window lapses with the whole principal outstanding: the void burns
         // the entire collateral and credits it to the Promis Reserve.
-        let lapsed = at + NOTICE + 1;
+        let lapsed = at + NOTICE + HOUR;
         advance_to(&storage, lapsed);
-        finalize_through(&storage, lapsed);
-        assert_eq!(scan(&storage, lapsed), 1);
+        assert_eq!(expire(&storage, lapsed), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Void);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
@@ -438,14 +474,11 @@ fn the_call_and_the_void_compose_across_runs() {
             pledge_cost()
         );
 
-        // The void cleared the owner's called count and left the active index.
+        // The void cleared the owner's called count and left the deadline queue.
         assert!(!CredisContract::new(storage.clone())
             .has_called_position(alice())
             .unwrap());
-        assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            0
-        );
+        assert_eq!(queued_at(&storage, position_id), 0);
     });
     teardown();
 }
@@ -459,10 +492,14 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
         let position_id = open(&storage, 1);
 
         // Re-point the stored position's ANCHOR at an unregistered currency, so it
-        // prices off a series that does not exist.
+        // prices off a series that does not exist, and index it there.
         {
+            use outbe_primitives::call_bins;
             let credis = CredisContract::new(storage.clone());
             let mut position = credis.get_position(position_id).unwrap();
+            let bin = call_bins::price_to_bin(position.call_price_minor).unwrap();
+            call_bins::remove(&CallBins(&credis, REFERENCE_ISO), position_id).unwrap();
+            call_bins::insert(&CallBins(&credis, UNPRICED_ISO), position_id, bin).unwrap();
             position.reference_currency = UNPRICED_ISO;
             credis.positions.update(&position).unwrap();
         }
@@ -543,7 +580,7 @@ fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
 }
 
 /// Opens one position for each of three distinct owners, so none of them trips
-/// the called-position gate. Returns the ids in active-index order.
+/// the called-position gate. Returns the ids in call-index order.
 fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
     let owners: [Address; 3] = [alice(), bob(), cca()];
     for owner in owners {
@@ -555,11 +592,21 @@ fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
         .collect()
 }
 
+/// Positions of the reference currency's walk in flight still to visit in its bin.
 fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
-    crate::schema::CredisFactoryContract::new(storage.clone())
-        .call_scan_cursor
-        .read()
+    let packed = CredisContract::new(storage.clone())
+        .call_bin_cursor
+        .read(&REFERENCE_ISO)
+        .unwrap();
+    outbe_primitives::call_bins::unpack_cursor(packed).1
+}
+
+fn is_indexed(storage: &StorageHandle<'_>, position_id: U256) -> bool {
+    CredisContract::new(storage.clone())
+        .call_position_slot
+        .read(&position_id)
         .unwrap()
+        != 0
 }
 
 #[test]
@@ -567,10 +614,12 @@ fn a_completed_pass_resets_the_cursor() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
-        assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            3
-        );
+        for id in &ids {
+            assert!(
+                is_indexed(&storage, *id),
+                "an open position waits for its call"
+            );
+        }
 
         let at = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, at);
@@ -590,19 +639,39 @@ fn a_completed_pass_resets_the_cursor() {
     teardown();
 }
 
+fn sweep_state<'storage>(storage: &StorageHandle<'storage>) -> CredisContract<'storage> {
+    CredisContract::new(storage.clone())
+}
+
+/// Pins `day` as the sweep in flight, stopped with `remaining` positions of the
+/// bin `sample` sits in still to visit.
+fn pin_sweep(storage: &StorageHandle<'_>, day: u32, sample: U256, remaining: u32) {
+    sweep_state(storage).call_sweep_day.write(day).unwrap();
+    let credis = CredisContract::new(storage.clone());
+    let price = credis.get_position(sample).unwrap().call_price_minor;
+    let bin = outbe_primitives::call_bins::price_to_bin(price).unwrap();
+    credis
+        .call_bin_cursor
+        .write(
+            &REFERENCE_ISO,
+            outbe_primitives::call_bins::pack_cursor(bin, remaining),
+        )
+        .unwrap();
+}
+
+fn sweep_days(storage: &StorageHandle<'_>) -> (u32, u32) {
+    let state = sweep_state(storage);
+    (
+        state.call_sweep_day.read().unwrap(),
+        state.call_pending_day.read().unwrap(),
+    )
+}
+
 #[test]
 fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
-
-        // Pretend the previous run stopped after index 2: the stored cursor is
-        // `index + 1`, so 2 means "resume at index 1".
-        crate::schema::CredisFactoryContract::new(storage.clone())
-            .call_scan_cursor
-            .write(2)
-            .unwrap();
-
         let at = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, at);
         fill_days(
@@ -611,9 +680,10 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             CALL_LOOKBACK_DAYS,
             above_call(),
         );
+        // Two positions of the bin are left to visit: indices 1 and 0.
+        pin_sweep(&storage, last_closed_day(at), ids[0], 2);
 
-        // The run visits only indices 1 and 0. The position at index 2 is untouched.
-        assert_eq!(scan(&storage, at), 2);
+        assert_eq!(slice(&storage, at), 2);
         assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
         assert_eq!(state_of(&storage, ids[1]), CredisState::Called);
         assert_eq!(
@@ -622,6 +692,7 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             "the entry above the resume point waits for the next pass"
         );
         assert_eq!(cursor_of(&storage), 0);
+        assert_eq!(sweep_days(&storage), (0, 0), "the pass ended");
 
         // The next pass starts fresh from the top and picks it up.
         assert_eq!(scan(&storage, at), 1);
@@ -631,45 +702,232 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
 }
 
 #[test]
-fn voiding_several_positions_in_one_pass_skips_none() {
+fn a_newer_closed_day_waits_for_the_pass_in_flight() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
+        let at = CREATED_AT + AFTER_WINDOW;
+        let next = at + DAY;
+        advance_to(&storage, next);
+        fill_days(
+            &storage,
+            last_closed_day(next),
+            CALL_LOOKBACK_DAYS + 1,
+            above_call(),
+        );
+        pin_sweep(&storage, last_closed_day(at), ids[0], 2);
 
-        // Call all three by hand, then let the window lapse. The point
-        // of the test is the traversal: each void swap-pops the active list, and
-        // the descending walk must still visit every entry exactly once.
-        let called_at = CREATED_AT;
-        {
-            let mut credis = CredisContract::new(storage.clone());
-            for id in &ids {
-                assert!(credis.mark_called(*id, called_at).unwrap());
-            }
-        }
+        schedule(&storage, next);
+        assert_eq!(
+            sweep_days(&storage),
+            (last_closed_day(at), last_closed_day(next))
+        );
+        assert_eq!(state_of(&storage, ids[2]), CredisState::Open);
 
-        let lapsed = called_at + NOTICE + 1;
+        assert_eq!(slice(&storage, next), 2, "the pinned day finishes first");
+        assert_eq!(state_of(&storage, ids[2]), CredisState::Open);
+        assert_eq!(sweep_days(&storage), (last_closed_day(next), 0));
+        assert_eq!(cursor_of(&storage), 0);
+
+        assert_eq!(slice(&storage, next), 1);
+        assert_eq!(state_of(&storage, ids[2]), CredisState::Called);
+        assert_eq!(sweep_days(&storage), (0, 0));
+    });
+    teardown();
+}
+
+#[test]
+fn a_third_closed_day_replaces_the_waiting_one_and_names_it() {
+    use alloy_sol_types::SolEvent;
+
+    let mut provider = env();
+    let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
+        let ids = open_three(&storage);
+        let at = CREATED_AT + AFTER_WINDOW;
+        let later = at + 2 * DAY;
+        advance_to(&storage, later);
+        fill_days(
+            &storage,
+            last_closed_day(later),
+            CALL_LOOKBACK_DAYS + 2,
+            above_call(),
+        );
+        pin_sweep(&storage, last_closed_day(at), ids[0], 2);
+        sweep_state(&storage)
+            .call_pending_day
+            .write(last_closed_day(at + DAY))
+            .unwrap();
+
+        schedule(&storage, later);
+        assert_eq!(
+            sweep_days(&storage),
+            (last_closed_day(at), last_closed_day(later))
+        );
+        assert_eq!(cursor_of(&storage), 2, "the pass in flight keeps its place");
+        (last_closed_day(at), last_closed_day(at + DAY))
+    });
+    teardown();
+
+    let events: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| {
+            crate::precompile::ICredisFactory::SweepDaySkipped::decode_log_data(log).ok()
+        })
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].sweep, 1);
+    assert_eq!(events[0].skippedDay, skipped);
+    assert_eq!(events[0].inFlightDay, in_flight);
+}
+
+#[test]
+fn an_empty_book_opens_no_sweep() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let at = CREATED_AT + AFTER_WINDOW;
+        advance_to(&storage, at);
+        finalize_through(&storage, at);
+
+        assert_eq!(scan(&storage, at), 0);
+        assert_eq!(sweep_days(&storage), (0, 0));
+    });
+    teardown();
+}
+
+#[test]
+fn a_pinned_day_the_oracle_has_not_finalized_holds_the_sweep() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        let at = CREATED_AT + AFTER_WINDOW;
+        advance_to(&storage, at);
+        fill_days(&storage, day_back(at, 1), CALL_LOOKBACK_DAYS, above_call());
+        pin_sweep(&storage, last_closed_day(at), ids[0], 2);
+
+        assert_eq!(slice(&storage, at), 0);
+        assert_eq!(state_of(&storage, ids[1]), CredisState::Open);
+        assert_eq!(sweep_days(&storage), (last_closed_day(at), 0));
+        assert_eq!(cursor_of(&storage), 2);
+    });
+    teardown();
+}
+
+/// Calls `ids` by hand at `called_at`, which queues them on their deadline.
+fn call_by_hand(storage: &StorageHandle<'_>, ids: &[U256], called_at: u64) {
+    let mut credis = CredisContract::new(storage.clone());
+    for id in ids {
+        assert!(credis.mark_called(*id, called_at).unwrap());
+    }
+}
+
+fn queued_at(storage: &StorageHandle<'_>, position_id: U256) -> u64 {
+    CredisContract::new(storage.clone())
+        .called_position_slot
+        .read(&position_id)
+        .unwrap()
+}
+
+#[test]
+fn voiding_several_positions_in_one_block_skips_none() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        call_by_hand(&storage, &ids, CREATED_AT);
+
+        let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
-        finalize_through(&storage, lapsed);
-        assert_eq!(scan(&storage, lapsed), 3, "all three voided in one pass");
+        assert_eq!(expire(&storage, lapsed), 3, "all three voided in one block");
 
         for id in &ids {
             assert_eq!(state_of(&storage, *id), CredisState::Void);
+            assert_eq!(queued_at(&storage, *id), 0);
         }
+    });
+    teardown();
+}
+
+#[test]
+fn a_void_waits_for_the_hour_its_deadline_falls_in_to_close() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        call_by_hand(&storage, &ids[..1], CREATED_AT);
+        let deadline = CREATED_AT + NOTICE;
+        let hour_end = (deadline / HOUR + 1) * HOUR;
+        assert!(
+            hour_end > deadline + 1,
+            "the fixture deadline sits inside its hour"
+        );
+
+        advance_to(&storage, deadline + 1);
+        assert_eq!(expire(&storage, deadline + 1), 0);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
+
+        advance_to(&storage, hour_end);
+        assert_eq!(expire(&storage, hour_end), 1);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Void);
+    });
+    teardown();
+}
+
+#[test]
+fn every_cycle_tick_voids_without_the_daily_trigger() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        call_by_hand(&storage, &ids[..1], CREATED_AT);
+
+        let lapsed = CREATED_AT + NOTICE + HOUR;
+        advance_to(&storage, lapsed);
+        tick(&storage, lapsed);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Void);
+        assert_eq!(state_of(&storage, ids[1]), CredisState::Open);
+    });
+    teardown();
+}
+
+#[test]
+fn settling_a_called_position_in_full_leaves_the_queue() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        call_by_hand(&storage, &[position_id], CREATED_AT);
+        assert_ne!(
+            queued_at(&storage, position_id),
+            0,
+            "a call queues the position"
+        );
+
+        let outstanding = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap()
+            .outstanding_principal_minor;
+        settle_principal(&storage, alice(), position_id, outstanding);
+        assert_eq!(state_of(&storage, position_id), CredisState::Settled);
+        assert_eq!(queued_at(&storage, position_id), 0);
+
+        let lapsed = CREATED_AT + NOTICE + HOUR;
+        advance_to(&storage, lapsed);
+        assert_eq!(expire(&storage, lapsed), 0);
         assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            0
+            CredisContract::new(storage.clone())
+                .expiry_tree_root
+                .read()
+                .unwrap(),
+            U256::ZERO,
+            "no hour is left waiting"
         );
     });
     teardown();
 }
 
 #[test]
-fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
+fn the_void_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
-    let budget = crate::called::MAX_CREDIS_VOIDS_PER_RUN;
-    // One Open position plus one more voidable position than the budget, so
-    // a void is genuinely declined and the run still has to walk past it.
-    let total = budget + 2;
+    let budget = outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
+    let total = budget + 1;
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap_for(&storage, alice(), pledge_cost() * U256::from(total));
     });
@@ -681,49 +939,63 @@ fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
         })
         .collect();
     StorageHandle::enter(&mut provider, |storage| {
-        // `ids[0]` sits at active index 0, so the descending walk reaches it
-        // LAST, after the void budget is already spent. Leave it Open. The rest
-        // become called-and-lapsed.
-        let called_at = CREATED_AT;
-        {
-            let mut credis = CredisContract::new(storage.clone());
-            for id in &ids[1..] {
-                assert!(credis.mark_called(*id, called_at).unwrap());
-            }
-        }
-
-        // Far enough past the call that the window has lapsed AND a full breach
-        // window sits entirely after the positions' origination day.
-        let lapsed = called_at + AFTER_WINDOW;
+        call_by_hand(&storage, &ids, CREATED_AT);
+        let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
-        fill_days(
-            &storage,
-            last_closed_day(lapsed),
-            CALL_LOOKBACK_DAYS,
-            above_call(),
-        );
 
-        // A void costs two enclave round-trips, so the run stops voiding at the
-        // budget. But it must keep walking. This same run still calls the Open
-        // position behind the exhausted budget.
-        assert_eq!(scan(&storage, lapsed), budget + 1, "64 voids plus the call");
+        assert_eq!(expire(&storage, lapsed), budget);
         assert_eq!(
-            state_of(&storage, ids[0]),
-            CredisState::Called,
-            "a void backlog must not throttle the call arm"
+            ids.iter()
+                .filter(|id| queued_at(&storage, **id) != 0)
+                .count(),
+            1
         );
-        assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            2,
-            "the newly called position plus the one void the budget declined"
-        );
-        assert_eq!(cursor_of(&storage), 0, "the pass completed despite the cap");
-
-        // The next run drains the remainder.
-        assert_eq!(scan(&storage, lapsed), 1);
-        for id in &ids[1..] {
+        assert_eq!(expire(&storage, lapsed), 1);
+        for id in &ids {
             assert_eq!(state_of(&storage, *id), CredisState::Void);
         }
     });
     teardown();
+}
+
+#[test]
+fn a_failed_void_fails_the_block_and_keeps_the_position_queued() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        call_by_hand(&storage, &ids[..1], CREATED_AT);
+        let lapsed = CREATED_AT + NOTICE + HOUR;
+        advance_to(&storage, lapsed);
+
+        outbe_gratis::enclave_client::test_enclave::uninstall();
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, lapsed, CHAIN_ID),
+            storage.clone(),
+        );
+        assert!(crate::expired::sweep_expired(&ctx).is_err());
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
+        assert_ne!(queued_at(&storage, ids[0]), 0);
+    });
+    teardown();
+}
+
+#[test]
+fn a_void_fails_the_block_only_on_what_may_be_this_nodes_fault() {
+    use crate::expired::void_failure;
+    use outbe_primitives::error::{PrecompileError, SweepFailure};
+    assert_eq!(
+        void_failure(&PrecompileError::Fatal("tee_sidecar_unavailable".into())),
+        SweepFailure::Propagate
+    );
+    assert_eq!(
+        void_failure(&PrecompileError::Storage("x".into())),
+        SweepFailure::Propagate
+    );
+    assert_eq!(
+        void_failure(&PrecompileError::Revert(
+            "forfeiture collateral mismatch".into()
+        )),
+        SweepFailure::Skip
+    );
+    assert_eq!(void_failure(&PrecompileError::OutOfGas), SweepFailure::Stop);
 }

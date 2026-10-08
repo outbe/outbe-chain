@@ -85,29 +85,27 @@ fn sid(worldwide_day: u32) -> SeriesId {
 fn call_group<'s>(
     s: &StorageHandle<'s>,
     f: &mut IntexFactoryContract<'s>,
-    oracle: &OracleContract<'s>,
-    pair: AddressPair,
     group: &Group,
     last_closed_day: u32,
     now_ts: u64,
 ) -> u32 {
-    let mut vwaps = called::DayVwaps::new(oracle.pair_index_of(pair).unwrap());
     let secs_per_day = DAY as u32;
-    let Some(window) = called::call_window(
-        oracle,
-        &mut vwaps,
+    let window = outbe_oracle::call_window::CallWindow::load(
+        s,
+        group.iso_code,
         last_closed_day,
-        CALL_WINDOW / secs_per_day,
-        CALL_THRESHOLD / secs_per_day,
+        outbe_primitives::call_breach::ScanTerms {
+            window_days: CALL_WINDOW / secs_per_day,
+            threshold_days: CALL_THRESHOLD / secs_per_day,
+        },
     )
-    .unwrap() else {
+    .unwrap();
+    if window.ceiling().is_none() {
         return 0;
-    };
+    }
     let call = called::GroupCall {
         storage: s,
         factory: f,
-        oracle,
-        vwaps: &mut vwaps,
     };
     called::try_call_group(call, group, &window, now_ts).unwrap()
 }
@@ -126,6 +124,38 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
         recipient_chains: vec![],
         // One target in the snapshot exercises the per-chain ISSUANCE loop (empty recipients).
         snapshot_chains: vec![1],
+    }
+}
+
+/// Seeds a group the way a call leaves it: members in the group, the group queued.
+trait SeedCalledGroup {
+    fn seed_called_group(
+        &mut self,
+        iso: u16,
+        day: WorldwideDay,
+        deadline: u64,
+        members: &[SeriesId],
+    ) -> outbe_primitives::error::Result<()>;
+}
+
+impl SeedCalledGroup for IntexFactoryContract<'_> {
+    fn seed_called_group(
+        &mut self,
+        iso: u16,
+        day: WorldwideDay,
+        deadline: u64,
+        members: &[SeriesId],
+    ) -> outbe_primitives::error::Result<()> {
+        use outbe_primitives::storage::types::Storable as _;
+        let key = IntexFactoryContract::scoped(iso, day.value());
+        for (index, series_id) in members.iter().enumerate() {
+            self.call_group_members.write(
+                &IntexFactoryContract::group_member_key(iso, day, index as u32),
+                series_id.to_word(),
+            )?;
+        }
+        self.call_group_count.write(&key, members.len() as u32)?;
+        self.push_called_group(iso, day, deadline)
     }
 }
 

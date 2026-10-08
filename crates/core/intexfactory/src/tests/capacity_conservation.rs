@@ -1,5 +1,6 @@
 //! Realized units remain disjoint and only the unpaid remainder returns.
-use crate::{IntexFactoryContract, IntexLifecycle};
+use super::SeedCalledGroup;
+use crate::IntexFactoryContract;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_intex::{
@@ -9,7 +10,7 @@ use outbe_intex::{
 };
 use outbe_primitives::{
     addresses::INTEX_FACTORY_ADDRESS,
-    block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
+    block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
@@ -55,7 +56,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
         api::record_gem_factory_units(&s, id, Address::repeat_byte(1), 2).unwrap();
         api::mark_called(&s, id, ISSUED).unwrap();
         IntexFactoryContract::new(s.clone())
-            .push_called_group(840, WorldwideDay::new(WWD), DEADLINE, &[id])
+            .seed_called_group(840, WorldwideDay::new(WWD), DEADLINE, &[id])
             .unwrap();
         assert_eq!(
             PromisLimitContract::new(s).get_total_unallocated().unwrap(),
@@ -69,10 +70,11 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
 fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
-        IntexLifecycle::begin_block(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, at, 1),
-            s,
-        ))
+        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
+        crate::hooks::sweep_proceeds(&ctx)?;
+        crate::hooks::sweep_forfeits(&ctx)?;
+        crate::called::run_call_slice(&ctx)?;
+        crate::notify::send_notices(&ctx)
     })
 }
 
@@ -94,7 +96,7 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
         );
         let key = IntexFactoryContract::scoped(840, WWD);
         let factory = IntexFactoryContract::new(s.clone());
-        let pending = factory.called_group_count.read(&key).unwrap();
+        let pending = factory.call_group_count.read(&key).unwrap();
         let returned = PromisLimitContract::new(s).get_total_unallocated().unwrap();
         if terminal {
             assert_eq!((units.active, units.forfeited, pending), (0, 5, 0));

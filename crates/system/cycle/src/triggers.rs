@@ -24,6 +24,7 @@ pub enum TriggerId {
     AuctionAdvance = 3,
     GemDaily = 4,
     AuctionClearing = 5,
+    /// Reserved historical identifier. Called notices now leave with the call slice.
     IntexDrainNotices = 6,
     CredisCallDaily = 7,
     NodCallDaily = 8,
@@ -76,9 +77,8 @@ pub enum TriggerHandler {
     AuctionAdvance,
     GemDaily,
     AuctionClearing,
-    IntexDrainNotices,
     CredisCallDaily,
-    NodDaily,
+    NodCallDaily,
     GemPositionDaily,
     IntexDrainParked,
     IntexVwapPush,
@@ -95,11 +95,10 @@ impl TriggerHandler {
             Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx, scope, parent),
             Self::IntexDaily => outbe_intexfactory::called::run_daily(ctx),
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
-            Self::GemDaily => outbe_gem::hooks::run_daily(ctx),
+            Self::GemDaily => outbe_gem::called::run_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
-            Self::IntexDrainNotices => outbe_intexfactory::notify::drain_notices(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
-            Self::NodDaily => outbe_nod::hooks::run_daily(ctx, scope, parent),
+            Self::NodCallDaily => outbe_nod::called::run_daily(ctx),
             Self::GemPositionDaily => outbe_gemfactory::expired::run_daily(ctx),
             Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
             Self::IntexVwapPush => outbe_intexfactory::vwap_push::run(ctx),
@@ -116,42 +115,24 @@ const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 
-/// The Called sweep is daily in production. An e2e run seeds the days
-/// they read instead of living through them, so they need to recur sooner.
+/// Every right's call sweep schedules a closed day, daily in production. An e2e run
+/// seeds the days it reads instead of living through them, so it recurs sooner.
 #[cfg(not(feature = "e2e-test"))]
-const INTEX_DAILY_PERIOD_SECONDS: u64 = 86_400;
+const CALL_SWEEP_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
-const INTEX_DAILY_PERIOD_SECONDS: u64 = 60;
+const CALL_SWEEP_PERIOD_SECONDS: u64 = 60;
 
-/// The gem sweeps are daily in production for the same reason. An e2e run seeds
-/// the days they read instead of living through them.
-#[cfg(not(feature = "e2e-test"))]
-const GEM_DAILY_PERIOD_SECONDS: u64 = 86_400;
-#[cfg(feature = "e2e-test")]
-const GEM_DAILY_PERIOD_SECONDS: u64 = 60;
+/// The gem position sweep is daily in production for the same reason.
 #[cfg(not(feature = "e2e-test"))]
 const GEM_POSITION_PERIOD_SECONDS: u64 = 86_400;
 #[cfg(feature = "e2e-test")]
 const GEM_POSITION_PERIOD_SECONDS: u64 = 60;
-
-/// The Nod call sweep is daily in production. An e2e run seeds the days it reads.
-#[cfg(not(feature = "e2e-test"))]
-const NOD_DAILY_PERIOD_SECONDS: u64 = 86_400;
-#[cfg(feature = "e2e-test")]
-const NOD_DAILY_PERIOD_SECONDS: u64 = 60;
 
 /// Cadence of the auction clearing poll, shortened for the same reason.
 #[cfg(not(feature = "e2e-test"))]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
 #[cfg(feature = "e2e-test")]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
-
-/// The daily sweeps queue their notices in a burst after midnight, so the drain
-/// runs more often than the clearing poll.
-#[cfg(not(feature = "e2e-test"))]
-const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 300;
-#[cfg(feature = "e2e-test")]
-const INTEX_NOTIFY_PERIOD_SECONDS: u64 = 30;
 
 /// A day finalizes once, so an hourly poll catches it soon after. E2e seeds days minutes apart.
 #[cfg(not(feature = "e2e-test"))]
@@ -164,7 +145,7 @@ const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 60;
 /// The first handler error stops the walk.
 /// AuctionAdvance must stay after ProtocolCycle.
 /// Same-slot brief and auction order depends on that sequence.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 11] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 10] {
     [
         TriggerSpec {
             id: TriggerId::ProtocolCycle.as_u32(),
@@ -184,7 +165,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::IntexDaily.as_u32(),
             label: "intex_daily",
-            period_seconds: INTEX_DAILY_PERIOD_SECONDS,
+            period_seconds: CALL_SWEEP_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Reads finalized oracle VWAP history to call series. It has no
             // dependency on the parent block's settlement accounting.
@@ -211,7 +192,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::GemDaily.as_u32(),
             label: "gem_daily",
-            period_seconds: GEM_DAILY_PERIOD_SECONDS,
+            period_seconds: CALL_SWEEP_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Reads finalized oracle VWAP history to force-call gems. It has
             // no dependency on the parent block's settlement accounting.
@@ -236,38 +217,29 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::AuctionClearing,
         },
         TriggerSpec {
-            id: TriggerId::IntexDrainNotices.as_u32(),
-            label: "intex_drain_notices",
-            period_seconds: INTEX_NOTIFY_PERIOD_SECONDS,
-            start_offset_seconds: 0,
-            // Drains a queue that the call sweep filled. Reads no accounting state.
-            requires_accounting_window: false,
-            // A poll has nothing to replay: a gap collapses to one drain.
-            coalesces_backlog: true,
-            handler: TriggerHandler::IntexDrainNotices,
-        },
-        TriggerSpec {
             id: TriggerId::CredisCallDaily.as_u32(),
             label: "credis_call_daily",
-            period_seconds: 86_400,
+            period_seconds: CALL_SWEEP_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Reads finalized oracle VWAP history to latch, call and void credis
+            // Reads finalized oracle VWAP history to call credis
             // positions. It has no dependency on the parent block's settlement
             // accounting.
             requires_accounting_window: false,
-            coalesces_backlog: false,
+            // The sweep takes its day from the block clock, so a missed slot
+            // would only schedule the same day again.
+            coalesces_backlog: true,
             handler: TriggerHandler::CredisCallDaily,
         },
         TriggerSpec {
             id: TriggerId::NodCallDaily.as_u32(),
             label: "nod_daily",
-            period_seconds: NOD_DAILY_PERIOD_SECONDS,
+            period_seconds: CALL_SWEEP_PERIOD_SECONDS,
             start_offset_seconds: 0,
-            // Calls and forfeits using the latest completed UTC day.
-            // Missed slots would repeat the same scan against the current clock.
+            // Schedules the latest completed UTC day for the call sweep.
+            // Missed slots would schedule the same day against the current clock.
             requires_accounting_window: false,
             coalesces_backlog: true,
-            handler: TriggerHandler::NodDaily,
+            handler: TriggerHandler::NodCallDaily,
         },
         TriggerSpec {
             id: TriggerId::GemPositionDaily.as_u32(),
@@ -307,7 +279,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 11] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 10] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -346,15 +318,11 @@ mod protocol_parameter_tests {
 
     #[test]
     fn protocol_cycle_uses_the_genesis_interval() {
-        // The gem sweeps are daily in a release build; e2e shortens them.
+        // The call and gem position sweeps are daily in a release build; e2e shortens them.
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(
-            (
-                GEM_DAILY_PERIOD_SECONDS,
-                GEM_POSITION_PERIOD_SECONDS,
-                INTEX_NOTIFY_PERIOD_SECONDS
-            ),
-            (86_400, 86_400, 300)
+            (CALL_SWEEP_PERIOD_SECONDS, GEM_POSITION_PERIOD_SECONDS),
+            (86_400, 86_400)
         );
         let configured = active_triggers(10);
         assert_eq!(configured[0].period_seconds, 10);
@@ -362,48 +330,43 @@ mod protocol_parameter_tests {
         assert_eq!(configured[1].period_seconds, 86_400);
         assert_eq!(configured[2].period_seconds, 3_600);
         assert_eq!(configured[2].start_offset_seconds, 0);
-        assert_eq!(configured[3].period_seconds, GEM_DAILY_PERIOD_SECONDS);
+        assert_eq!(configured[3].period_seconds, CALL_SWEEP_PERIOD_SECONDS);
         assert!(matches!(configured[3].handler, TriggerHandler::GemDaily));
         assert_eq!(configured[4].period_seconds, 600);
         assert!(matches!(
             configured[4].handler,
             TriggerHandler::AuctionClearing
         ));
-        assert_eq!(configured[5].period_seconds, INTEX_NOTIFY_PERIOD_SECONDS);
+        assert_eq!(configured[5].period_seconds, CALL_SWEEP_PERIOD_SECONDS);
+        assert_eq!(configured[5].start_offset_seconds, 0);
         assert!(matches!(
             configured[5].handler,
-            TriggerHandler::IntexDrainNotices
+            TriggerHandler::CredisCallDaily
         ));
         assert_eq!(configured[6].period_seconds, 86_400);
         assert_eq!(configured[6].start_offset_seconds, 0);
         assert!(matches!(
             configured[6].handler,
-            TriggerHandler::CredisCallDaily
+            TriggerHandler::NodCallDaily
         ));
-        assert_eq!(configured[7].period_seconds, 86_400);
+        assert_eq!(configured[7].period_seconds, GEM_POSITION_PERIOD_SECONDS);
         assert_eq!(configured[7].start_offset_seconds, 0);
-        assert!(matches!(configured[7].handler, TriggerHandler::NodDaily));
-        assert_eq!(configured[8].period_seconds, GEM_POSITION_PERIOD_SECONDS);
-        assert_eq!(configured[8].start_offset_seconds, 0);
         assert!(matches!(
-            configured[8].handler,
+            configured[7].handler,
             TriggerHandler::GemPositionDaily
         ));
 
-        assert_eq!(configured[9].period_seconds, OUTBOUND_POLL_PERIOD_SECONDS);
-        assert_eq!(configured[9].id, TriggerId::IntexDrainParked.as_u32());
+        assert_eq!(configured[8].period_seconds, OUTBOUND_POLL_PERIOD_SECONDS);
+        assert_eq!(configured[8].id, TriggerId::IntexDrainParked.as_u32());
         assert!(matches!(
-            configured[9].handler,
+            configured[8].handler,
             TriggerHandler::IntexDrainParked
         ));
 
-        assert_eq!(
-            configured[10].period_seconds,
-            INTEX_VWAP_PUSH_PERIOD_SECONDS
-        );
-        assert_eq!(configured[10].id, TriggerId::IntexVwapPush.as_u32());
+        assert_eq!(configured[9].period_seconds, INTEX_VWAP_PUSH_PERIOD_SECONDS);
+        assert_eq!(configured[9].id, TriggerId::IntexVwapPush.as_u32());
         assert!(matches!(
-            configured[10].handler,
+            configured[9].handler,
             TriggerHandler::IntexVwapPush
         ));
 
