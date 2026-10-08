@@ -222,7 +222,7 @@ impl CredisContract<'_> {
                 params.gratis_minor,
             )?;
             self.create_position_record(&position)?;
-            self.widen_max_call_window(position.reference_currency, position.call_window_seconds)?;
+            self.widen_scan_terms(&position)?;
             self.append_to_address_index(params.smart_account, position_id)?;
             self.append_to_global_index(position_id)?;
             self.insert_active(position_id)?;

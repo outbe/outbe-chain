@@ -115,10 +115,7 @@ fn try_call_marks_called_when_threshold_met() {
         let group = f
             .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
             .unwrap();
-        assert_eq!(
-            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
-            1
-        );
+        assert_eq!(call_group(&s, &mut f, &group, last_closed_day, scan_ts), 1);
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -161,10 +158,7 @@ fn try_call_skips_when_below_threshold() {
         let group = f
             .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
             .unwrap();
-        assert_eq!(
-            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
-            0
-        );
+        assert_eq!(call_group(&s, &mut f, &group, last_closed_day, scan_ts), 0);
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -215,10 +209,7 @@ fn try_call_excludes_pre_issuance_days() {
             worldwide_day: WorldwideDay::new(8),
             members: vec![sid(8)],
         };
-        assert_eq!(
-            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
-            0
-        );
+        assert_eq!(call_group(&s, &mut f, &group, last_closed_day, scan_ts), 0);
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(8))
                 .unwrap()
@@ -1265,9 +1256,11 @@ mod called_pstar {
     use outbe_primitives::time::previous_date_key;
     use outbe_primitives::time::WorldwideDay;
 
-    use crate::called::{self, DayVwaps};
+    use crate::called;
     use crate::schema::IntexFactoryContract;
     use crate::state::Group;
+    use outbe_oracle::call_window::CallWindow;
+    use outbe_primitives::call_breach::ScanTerms;
 
     const CHAIN_ID: u64 = 1;
     const REFERENCE_ISO: u16 = 840;
@@ -1334,13 +1327,19 @@ mod called_pstar {
     }
 
     /// The decision as the scan takes it: one comparison against the window price.
-    fn called_by_p_star(oracle: &OracleContract, pair: AddressPair, trigger: u64) -> bool {
-        let mut vwaps = DayVwaps::new(oracle.pair_index_of(pair).unwrap());
-        match called::call_window(oracle, &mut vwaps, LAST_DAY, WINDOW, THRESHOLD).unwrap() {
-            Some(window) => U256::from(trigger) < window.p_star,
-            // Too few priced days for any trigger to reach the threshold.
-            None => false,
-        }
+    fn called_by_p_star(s: &StorageHandle<'_>, trigger: u64) -> bool {
+        // No ceiling: too few priced days for any trigger to reach the threshold.
+        window(s)
+            .ceiling()
+            .is_some_and(|p_star| U256::from(trigger) < p_star)
+    }
+
+    fn window(s: &StorageHandle<'_>) -> CallWindow {
+        let terms = ScanTerms {
+            window_days: WINDOW,
+            threshold_days: THRESHOLD,
+        };
+        CallWindow::load(s, REFERENCE_ISO, LAST_DAY, terms).unwrap()
     }
 
     /// Window shapes worth disagreeing on: unpriced days, zeros, ties, all-quiet,
@@ -1377,7 +1376,7 @@ mod called_pstar {
 
                 for trigger in [0u64, 99, 100, 101, 150, 199, 200, 299, 300, 301, 400] {
                     assert_eq!(
-                        called_by_p_star(&oracle, pair, trigger),
+                        called_by_p_star(&s, trigger),
                         breaches_at_least(&days, trigger, THRESHOLD),
                         "case {case}, trigger {trigger}, days {days:?}"
                     );
@@ -1398,12 +1397,7 @@ mod called_pstar {
                 &[vec![Some(300u64); 20], vec![None; 8]].concat(),
             );
 
-            let mut vwaps = DayVwaps::new(oracle.pair_index_of(pair).unwrap());
-            assert!(
-                called::call_window(&oracle, &mut vwaps, LAST_DAY, WINDOW, THRESHOLD)
-                    .unwrap()
-                    .is_none()
-            );
+            assert!(window(&s).ceiling().is_none());
         });
     }
 
@@ -1415,8 +1409,8 @@ mod called_pstar {
             seed_window(&oracle, pair, &vec![Some(300u64); 28]);
 
             // Strictly below calls. Equal does not.
-            assert!(called_by_p_star(&oracle, pair, 299));
-            assert!(!called_by_p_star(&oracle, pair, 300));
+            assert!(called_by_p_star(&s, 299));
+            assert!(!called_by_p_star(&s, 300));
         });
     }
 
@@ -1434,7 +1428,7 @@ mod called_pstar {
                 &[vec![Some(100u64); 3], vec![Some(300u64); 25]].concat(),
             );
 
-            assert!(called_by_p_star(&oracle, pair, 200));
+            assert!(called_by_p_star(&s, 200));
         });
     }
 
@@ -1451,10 +1445,7 @@ mod called_pstar {
             let series = seed_series(&s, issued_at as u32, U256::from(200u64));
 
             let mut f = IntexFactoryContract::new(s.clone());
-            let mut vwaps = DayVwaps::new(oracle.pair_index_of(pair).unwrap());
-            let window = called::call_window(&oracle, &mut vwaps, LAST_DAY, WINDOW, THRESHOLD)
-                .unwrap()
-                .unwrap();
+            let window = window(&s);
             let group = Group {
                 iso_code: REFERENCE_ISO,
                 worldwide_day: series.worldwide_day(),
@@ -1465,8 +1456,6 @@ mod called_pstar {
                     called::GroupCall {
                         storage: &s,
                         factory: &mut f,
-                        oracle: &oracle,
-                        vwaps: &mut vwaps,
                     },
                     &group,
                     &window,

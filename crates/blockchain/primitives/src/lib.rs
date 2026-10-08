@@ -6,6 +6,7 @@ pub mod addresses;
 pub mod asset_type;
 pub mod block;
 pub mod call_bins;
+pub mod call_breach;
 pub mod chain;
 pub mod consensus;
 pub mod consensus_metadata;

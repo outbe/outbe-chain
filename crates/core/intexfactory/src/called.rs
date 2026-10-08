@@ -8,7 +8,7 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
-use outbe_oracle::schema::OracleContract;
+use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::daily_sweep::{PinnedDay, Scheduled, SweepDays};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
@@ -28,7 +28,7 @@ use crate::state::CallBins;
 
 mod group;
 
-pub(crate) use group::{call_window, try_call_group, CallWindow, DayVwaps, GroupCall};
+pub(crate) use group::{try_call_group, GroupCall};
 
 /// Schedule the day the Oracle just finalized: open a Called sweep over it and
 /// run its first slice, or queue it behind the sweep still in flight.
@@ -99,7 +99,6 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let currencies = outbe_oracle::api::get_all_reference_currencies(ctx)?;
-    let oracle = OracleContract::new(ctx.storage.clone());
     let start = currency_position(&currencies, factory.call_currency_cursor.read()?);
 
     let mut budget = ScanBudget::for_call();
@@ -110,7 +109,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         let finished = if budget.is_spent() {
             false
         } else {
-            let (calls, finished) = call_currency(ctx, &oracle, iso_code, pinned_day, &mut budget)?;
+            let (calls, finished) = call_currency(ctx, iso_code, pinned_day, &mut budget)?;
             called = called.saturating_add(calls);
             finished
         };
@@ -131,42 +130,28 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
 /// made and whether its eligible range was walked to the end.
 fn call_currency<'storage>(
     ctx: &BlockRuntimeContext<'storage>,
-    oracle: &OracleContract<'storage>,
     iso_code: u16,
     last_closed_day: u32,
     budget: &mut ScanBudget,
 ) -> Result<(u32, bool)> {
-    // No registered pair is an answer. A failed read is not.
-    let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), iso_code)?
-    else {
-        return Ok((0, true));
-    };
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let params = crate::config::read_from(&factory, ctx.block.chain_id)?;
     // Use the widest terms ever issued here, not the live profile. A series keeps the
     // terms it was issued with, and a narrowed profile must not hide it from the search.
-    let (window_days, threshold_days) = factory.scan_call_terms(
+    let terms = factory.scan_call_terms(
         iso_code,
         params.call_window_seconds,
         params.call_threshold_seconds,
     )?;
-
-    let mut vwaps = DayVwaps::new(pair_index);
-    let Some(window) = call_window(
-        oracle,
-        &mut vwaps,
-        last_closed_day,
-        window_days,
-        threshold_days,
-    )?
-    else {
+    let window = CallWindow::load(&ctx.storage, iso_code, last_closed_day, terms)?;
+    let Some(p_star) = window.ceiling() else {
         // Too few priced days for any trigger to be breached often enough.
         return Ok((0, true));
     };
 
     // Every trigger below `p_star` is breached often enough, so the range ends at
     // its bin. An out-of-range price skips the currency rather than halting.
-    let p_bin = match IntexFactoryContract::price_to_bin(window.p_star) {
+    let p_bin = match IntexFactoryContract::price_to_bin(p_star) {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "call scan: window price out of range, skipping currency for the day");
@@ -184,8 +169,6 @@ fn call_currency<'storage>(
     BinScan {
         ctx,
         factory,
-        oracle,
-        vwaps,
         window,
         iso_code,
         budget,
@@ -197,8 +180,6 @@ fn call_currency<'storage>(
 struct BinScan<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     factory: IntexFactoryContract<'storage>,
-    oracle: &'a OracleContract<'storage>,
-    vwaps: DayVwaps,
     window: CallWindow,
     iso_code: u16,
     budget: &'a mut ScanBudget,
@@ -268,8 +249,6 @@ impl BinScan<'_, '_> {
                     GroupCall {
                         storage: &self.ctx.storage,
                         factory: &mut self.factory,
-                        oracle: self.oracle,
-                        vwaps: &mut self.vwaps,
                     },
                     &group,
                     &self.window,

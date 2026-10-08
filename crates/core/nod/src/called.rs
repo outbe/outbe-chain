@@ -22,11 +22,10 @@
 
 mod calls;
 mod forfeits;
-mod window;
 
 use std::collections::BTreeSet;
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -42,10 +41,6 @@ pub(crate) use forfeits::sweep_expired;
 pub(crate) use calls::{call_currency, CurrencyScan};
 #[cfg(test)]
 pub(crate) use forfeits::{forfeit_members, Bodies};
-
-/// Trailing finalized daily VWAPs of one `COEN/<iso>` pair, newest first.
-/// `None` marks a day the pair published no reference price.
-type VwapWindow = Vec<(u32, Option<U256>)>;
 
 /// Schedule the day the Oracle has just finalized. Open a Called sweep over it
 /// and run its first slice, or queue it behind the sweep still in flight.
@@ -141,7 +136,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
 
     let mut visits: u32 = 0;
     let mut called_days = BTreeSet::new();
-    let mut windows = window::VwapWindows::new(&oracle, pinned_day);
+    let mut windows = outbe_oracle::call_window::CallWindows::new(pinned_day);
     let (called, finished) =
         calls::call_arm(ctx, &mut nod, &mut windows, &mut visits, &mut called_days)?;
     nod.emit_days_metadata_update(&called_days)?;

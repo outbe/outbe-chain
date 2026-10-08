@@ -114,14 +114,13 @@ impl GemContract<'_> {
             self.join_bucket(item)?;
         }
 
-        if item.call_window_seconds
-            > self
-                .max_call_window_seconds
-                .read(&item.reference_currency)?
-        {
-            self.max_call_window_seconds
-                .write(&item.reference_currency, item.call_window_seconds)?;
-        }
+        outbe_primitives::call_breach::widen_scan_terms(
+            &self.max_call_window_seconds,
+            &self.min_call_threshold_seconds,
+            item.reference_currency,
+            item.call_window_seconds,
+            item.call_threshold_seconds,
+        )?;
 
         self.emit(IGem::Transfer {
             from: Address::ZERO,

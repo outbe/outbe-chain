@@ -339,9 +339,14 @@ fn reterm(storage: &StorageHandle<'_>, bucket_key: B256, iso: u16, terms: Sealed
     nod.callable_bucket_call_notice_period_seconds
         .write(&bucket_key, terms.notice_days * SECS_PER_DAY)
         .unwrap();
-    if window > nod.max_call_window_seconds.read(&iso).unwrap() {
-        nod.max_call_window_seconds.write(&iso, window).unwrap();
-    }
+    outbe_primitives::call_breach::widen_scan_terms(
+        &nod.max_call_window_seconds,
+        &nod.min_call_threshold_seconds,
+        iso,
+        window,
+        terms.threshold_days * SECS_PER_DAY,
+    )
+    .unwrap();
 }
 
 /// Issuance seals the terms, reads the constants exactly once, and enrolls the
@@ -1107,13 +1112,16 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
         let latest = last_closed_day(at);
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, above_call());
         let mut day = latest;
-        let window: Vec<(u32, Option<U256>)> = (0..CALL_LOOKBACK_DAYS)
-            .map(|_| {
-                let entry = (day, Some(above_call()));
-                day = previous_date_key(day);
-                entry
-            })
-            .collect();
+        let window = outbe_oracle::call_window::CallWindow::from_vwaps(
+            (0..CALL_LOOKBACK_DAYS)
+                .map(|_| {
+                    let entry = (day, Some(above_call()));
+                    day = previous_date_key(day);
+                    entry
+                })
+                .collect(),
+            CALL_THRESHOLD_DAYS,
+        );
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
             storage.clone(),

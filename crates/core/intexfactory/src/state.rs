@@ -4,12 +4,13 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_intex::SeriesId;
 use outbe_primitives::call_bins;
+use outbe_primitives::call_breach::{self, ScanTerms};
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
 use outbe_primitives::math::tree_math::{self, BinTreeStorage};
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
-use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
+use outbe_primitives::time::WorldwideDay;
 
 use crate::errors::IntexFactoryError;
 use crate::schema::IntexFactoryContract;
@@ -75,42 +76,29 @@ impl IntexFactoryContract<'_> {
         call_window_seconds: u32,
         call_threshold_seconds: u32,
     ) -> Result<()> {
-        let secs_per_day = SECONDS_PER_DAY as u32;
-        if call_window_seconds > self.max_call_window_seconds.read(&reference_currency)? {
-            self.max_call_window_seconds
-                .write(&reference_currency, call_window_seconds)?;
-        }
-        // A threshold under a day can never be met, and would latch the range shut.
-        if call_threshold_seconds < secs_per_day {
-            return Ok(());
-        }
-        let min = self.min_call_threshold_seconds.read(&reference_currency)?;
-        if min == 0 || call_threshold_seconds < min {
-            self.min_call_threshold_seconds
-                .write(&reference_currency, call_threshold_seconds)?;
-        }
-        Ok(())
+        call_breach::widen_scan_terms(
+            &self.max_call_window_seconds,
+            &self.min_call_threshold_seconds,
+            reference_currency,
+            call_window_seconds,
+            call_threshold_seconds,
+        )
     }
 
-    /// Window and threshold, in days, the call scan must search to cover every live
-    /// series: the widest of the stored pair and the live profile.
+    /// The terms the call scan must search to cover every live series.
     pub(crate) fn scan_call_terms(
         &self,
         reference_currency: u16,
         live_window: u32,
         live_threshold: u32,
-    ) -> Result<(u32, u32)> {
-        let secs_per_day = SECONDS_PER_DAY as u32;
-        let stored_window = self.max_call_window_seconds.read(&reference_currency)?;
-        let days = stored_window.max(live_window) / secs_per_day;
-
-        let stored_threshold = self.min_call_threshold_seconds.read(&reference_currency)?;
-        let threshold = if stored_threshold == 0 {
-            live_threshold
-        } else {
-            stored_threshold.min(live_threshold)
-        };
-        Ok((days, threshold / secs_per_day))
+    ) -> Result<ScanTerms> {
+        call_breach::scan_terms(
+            &self.max_call_window_seconds,
+            &self.min_call_threshold_seconds,
+            reference_currency,
+            live_window,
+            live_threshold,
+        )
     }
 
     // --- call-price bin index the Called scan walks ---

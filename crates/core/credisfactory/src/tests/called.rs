@@ -63,12 +63,14 @@ fn reterm(
     position.call_threshold_seconds = threshold_days * SECS_PER_DAY;
     position.call_notice_period_seconds = notice_days * SECS_PER_DAY;
     credis.positions.update(&position).unwrap();
-    if position.call_window_seconds > credis.max_call_window_seconds.read(&REFERENCE_ISO).unwrap() {
-        credis
-            .max_call_window_seconds
-            .write(&REFERENCE_ISO, position.call_window_seconds)
-            .unwrap();
-    }
+    outbe_primitives::call_breach::widen_scan_terms(
+        &credis.max_call_window_seconds,
+        &credis.min_call_threshold_seconds,
+        REFERENCE_ISO,
+        position.call_window_seconds,
+        position.call_threshold_seconds,
+    )
+    .unwrap();
 }
 
 /// The terms a position is called and voided under are the ones sealed at

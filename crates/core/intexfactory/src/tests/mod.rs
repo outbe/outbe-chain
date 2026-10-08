@@ -85,29 +85,27 @@ fn sid(worldwide_day: u32) -> SeriesId {
 fn call_group<'s>(
     s: &StorageHandle<'s>,
     f: &mut IntexFactoryContract<'s>,
-    oracle: &OracleContract<'s>,
-    pair: AddressPair,
     group: &Group,
     last_closed_day: u32,
     now_ts: u64,
 ) -> u32 {
-    let mut vwaps = called::DayVwaps::new(oracle.pair_index_of(pair).unwrap());
     let secs_per_day = DAY as u32;
-    let Some(window) = called::call_window(
-        oracle,
-        &mut vwaps,
+    let window = outbe_oracle::call_window::CallWindow::load(
+        s,
+        group.iso_code,
         last_closed_day,
-        CALL_WINDOW / secs_per_day,
-        CALL_THRESHOLD / secs_per_day,
+        outbe_primitives::call_breach::ScanTerms {
+            window_days: CALL_WINDOW / secs_per_day,
+            threshold_days: CALL_THRESHOLD / secs_per_day,
+        },
     )
-    .unwrap() else {
+    .unwrap();
+    if window.ceiling().is_none() {
         return 0;
-    };
+    }
     let call = called::GroupCall {
         storage: s,
         factory: f,
-        oracle,
-        vwaps: &mut vwaps,
     };
     called::try_call_group(call, group, &window, now_ts).unwrap()
 }

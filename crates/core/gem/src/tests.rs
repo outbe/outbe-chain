@@ -661,7 +661,11 @@ fn gem_storage_layout_matches_genesis_seeder() {
 }
 /// Build a full-window (newest-first) list with `breach_days` entries above the
 /// gem's call threshold, the rest at zero.
-fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(u32, Option<U256>)> {
+fn breach_window(
+    now: u64,
+    breach: U256,
+    breach_days: usize,
+) -> outbe_oracle::call_window::CallWindow {
     let window_days = (crate::constants::CALL_WINDOW / 86_400) as usize;
     let mut window = Vec::with_capacity(window_days);
     let mut day = timestamp_to_date_key(now);
@@ -670,7 +674,10 @@ fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(u32, Option
         window.push((day, Some(v)));
         day = previous_date_key(day);
     }
-    window
+    outbe_oracle::call_window::CallWindow::from_vwaps(
+        window,
+        crate::constants::CALL_THRESHOLD / 86_400,
+    )
 }
 
 fn mature_gem(storage: &StorageHandle) -> U256 {
@@ -716,10 +723,13 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
         // A budget of one takes the lower bin and persists the cursor above it.
         let ctx = block_ctx(storage);
         let mut budget = 1u32;
-        let window = vec![
-            (last_closed_day, Some(U256::from(300_000u64)));
-            (crate::constants::CALL_WINDOW / 86_400) as usize
-        ];
+        let window = outbe_oracle::call_window::CallWindow::from_vwaps(
+            vec![
+                (last_closed_day, Some(U256::from(300_000u64)));
+                (crate::constants::CALL_WINDOW / 86_400) as usize
+            ],
+            crate::constants::CALL_THRESHOLD / 86_400,
+        );
         assert_eq!(
             crate::hooks::call_currency(
                 &ctx,
@@ -825,10 +835,13 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
 
         let ctx = block_ctx(storage);
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
-        let window = vec![
-            (last_closed_day, Some(U256::from(300_000u64)));
-            (crate::constants::CALL_WINDOW / 86_400) as usize
-        ];
+        let window = outbe_oracle::call_window::CallWindow::from_vwaps(
+            vec![
+                (last_closed_day, Some(U256::from(300_000u64)));
+                (crate::constants::CALL_WINDOW / 86_400) as usize
+            ],
+            crate::constants::CALL_THRESHOLD / 86_400,
+        );
         let walk = |budget: u32| {
             let mut budget = budget;
             crate::hooks::call_currency(
@@ -1022,13 +1035,16 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
     provider.set_timestamp(U256::from(T_NOW));
     let pinned_day = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = mature_gem(&storage);
-        // A price no bin can hold. A begin-block error would fail the whole block.
+        // A price no bin can hold, on enough days to be the window's ceiling. A
+        // begin-block error would fail the whole block.
         let pair = seed_currency(&storage, 840, Some(U256::from(600_000u64)));
         let oracle = OracleContract::new(storage.clone());
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
-        oracle
-            .record_utc_day_vwap(last_closed_day, pair, U256::MAX)
-            .unwrap();
+        let mut day = last_closed_day;
+        for _ in 0..crate::constants::CALL_THRESHOLD / 86_400 {
+            oracle.record_utc_day_vwap(day, pair, U256::MAX).unwrap();
+            day = previous_date_key(day);
+        }
         oracle
             .utc_day_vwap_last_finalized
             .write(last_closed_day)

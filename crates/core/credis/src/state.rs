@@ -35,20 +35,15 @@ impl CredisContract<'_> {
         self.positions.update(position)
     }
 
-    /// Raises the currency's widest-window high-water mark to `call_window_seconds` if
-    /// the new position outruns it. Monotonic, so the daily scan can size one
-    /// shared VWAP window per currency and still cover every position
-    /// denominated in it. Mirrors `outbe_gem`'s `max_call_window_seconds`.
-    pub(crate) fn widen_max_call_window(
-        &mut self,
-        reference_currency: u16,
-        call_window_seconds: u32,
-    ) -> Result<()> {
-        if call_window_seconds > self.max_call_window_seconds.read(&reference_currency)? {
-            self.max_call_window_seconds
-                .write(&reference_currency, call_window_seconds)?;
-        }
-        Ok(())
+    /// Widens the currency's scan terms to cover a newly opened position.
+    pub(crate) fn widen_scan_terms(&mut self, position: &Position) -> Result<()> {
+        outbe_primitives::call_breach::widen_scan_terms(
+            &self.max_call_window_seconds,
+            &self.min_call_threshold_seconds,
+            position.reference_currency,
+            position.call_window_seconds,
+            position.call_threshold_seconds,
+        )
     }
 
     // ---------------------------------------------------------------------

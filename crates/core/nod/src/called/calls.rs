@@ -1,19 +1,18 @@
 use std::collections::BTreeSet;
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use outbe_oracle::api::get_all_reference_currencies;
+use outbe_oracle::call_window::{CallWindow, CallWindows};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins::{pack_cursor, unpack_cursor},
+    call_breach::{BreachTerms, ScanTerms},
     error::{Result, SweepFailure},
     math::{constants::MAX_BIN_ID, tree_math},
     time::first_full_day,
 };
 
-use super::{
-    materializing, sweep_failure,
-    window::{breached_enough, VwapWindows},
-};
+use super::{materializing, sweep_failure};
 use crate::{
     api, constants::MAX_NOD_CALL_VISITS_PER_BLOCK, precompile::INod, schema::NodContract,
     state::CallBins,
@@ -23,7 +22,7 @@ use crate::{
 /// bucket that window breached can sit in.
 pub(crate) struct CurrencyScan<'w> {
     pub(crate) iso_code: u16,
-    pub(crate) window: &'w [(u32, Option<U256>)],
+    pub(crate) window: &'w CallWindow,
     pub(crate) ceiling: u32,
 }
 
@@ -31,18 +30,21 @@ pub(crate) struct CurrencyScan<'w> {
 pub(super) fn call_arm(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
-    windows: &mut VwapWindows<'_, '_>,
+    windows: &mut CallWindows,
     visits: &mut u32,
     called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
     let currencies = get_all_reference_currencies(ctx)?;
     let start = currency_position(&currencies, nod.call_currency_cursor.read()?);
+    let params = crate::config::read_from(nod, ctx.block.chain_id)?;
     let mut called: u32 = 0;
     for &iso_code in currencies.iter().skip(start) {
         if nod.call_bin_tree_root.read(&iso_code)?.is_zero() {
             continue;
         }
-        let window = windows.window(nod, &ctx.storage, iso_code)?;
+        let window = windows.window(&ctx.storage, iso_code, || {
+            scan_terms(nod, iso_code, &params)
+        })?;
         let Some(ceiling) = window_ceiling(window, iso_code) else {
             continue;
         };
@@ -61,11 +63,24 @@ pub(super) fn call_arm(
     Ok((called, true))
 }
 
-/// The bin of the window's highest price, or `None` when nothing in it can have breached.
-fn window_ceiling(window: &[(u32, Option<U256>)], iso_code: u16) -> Option<u32> {
-    // Nothing priced above the window's high can have breached.
-    let high = window.iter().filter_map(|(_, vwap)| *vwap).max()?;
-    match NodContract::price_to_bin(high) {
+/// The live profile is the terms the next bucket is sealed with.
+fn scan_terms(
+    nod: &NodContract<'_>,
+    iso_code: u16,
+    params: &crate::config::NodParams,
+) -> Result<ScanTerms> {
+    outbe_primitives::call_breach::scan_terms(
+        &nod.max_call_window_seconds,
+        &nod.min_call_threshold_seconds,
+        iso_code,
+        params.call_window_seconds,
+        params.call_threshold_seconds,
+    )
+}
+
+/// The bin of the window's ceiling, or `None` when nothing in it can have breached.
+fn window_ceiling(window: &CallWindow, iso_code: u16) -> Option<u32> {
+    match NodContract::price_to_bin(window.ceiling()?) {
         Ok(bin) => Some(bin),
         Err(error) => {
             tracing::warn!(
@@ -150,7 +165,7 @@ pub(crate) fn call_currency(
 fn try_call(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
-    window: &[(u32, Option<U256>)],
+    window: &CallWindow,
     bucket_key: B256,
     now: u64,
 ) -> Result<Option<bool>> {
@@ -160,7 +175,13 @@ fn try_call(
     }
     let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
     let terms = nod.read_call_terms(bucket_key)?;
-    if !breached_enough(window, &terms, first_full_day(issued_at)) {
+    let breached = window.breached(&BreachTerms {
+        call_price: terms.call_price_minor,
+        window_seconds: terms.call_window_seconds,
+        threshold_seconds: terms.call_threshold_seconds,
+        start_day: first_full_day(issued_at),
+    });
+    if !breached {
         return Ok(Some(false));
     }
     if materializing(nod, bucket_key)? {

@@ -1,9 +1,10 @@
 use alloy_primitives::{B256, U256};
+use outbe_oracle::call_window::CallWindow;
+use outbe_primitives::call_breach::BreachTerms;
 use outbe_primitives::error::Result;
 
 use crate::errors::GemError;
 use crate::precompile::IGem::GemExpired;
-use crate::schema::BucketTerms;
 use crate::schema::{GemContract, GemState};
 
 impl GemContract<'_> {
@@ -16,7 +17,7 @@ impl GemContract<'_> {
     /// `CALL_WINDOW`/`CALL_THRESHOLD` cannot re-term it.
     pub(crate) fn trigger_bucket_call(
         &mut self,
-        window: &[(u32, Option<U256>)],
+        window: &CallWindow,
         bucket: B256,
         now_ts: u64,
     ) -> Result<bool> {
@@ -24,7 +25,13 @@ impl GemContract<'_> {
             return Ok(false);
         }
         let terms = self.read_bucket_terms(bucket)?;
-        if !breached_enough(window, &terms) {
+        let breached = window.breached(&BreachTerms {
+            call_price: terms.call_price_minor,
+            window_seconds: terms.call_window_seconds,
+            threshold_seconds: terms.call_threshold_seconds,
+            start_day: terms.start_day,
+        });
+        if !breached {
             return Ok(false);
         }
         self.mark_bucket_called(bucket, &terms, now_ts)?;
@@ -56,25 +63,4 @@ impl GemContract<'_> {
         })?;
         Ok(true)
     }
-}
-
-/// Days before the bucket's start day never count: its gems did not exist yet.
-fn breached_enough(window: &[(u32, Option<U256>)], terms: &BucketTerms) -> bool {
-    // Both terms are stored in seconds. The daily scan needs day counts.
-    let window_days = terms.call_window_seconds / 86_400;
-    let threshold_days = terms.call_threshold_seconds / 86_400;
-    // Zero days means no terms, not a breach on every day.
-    if threshold_days == 0 || threshold_days > window_days {
-        return false;
-    }
-    let mut breaches: u32 = 0;
-    for (day, vwap) in window.iter().take(window_days as usize) {
-        if *day < terms.start_day {
-            break;
-        }
-        if vwap.is_some_and(|value| value > terms.call_price_minor) {
-            breaches += 1;
-        }
-    }
-    breaches >= threshold_days
 }

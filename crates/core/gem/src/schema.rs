@@ -296,6 +296,11 @@ pub struct GemContract {
     /// `(bin << 32) | buckets of that bin still to visit`. 0 = start from the lowest bin.
     #[attribute(order = 53)]
     pub bucket_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
+
+    /// Lowest sealed `call_threshold_seconds` of at least a day per reference currency.
+    /// With the widest window it bounds the call prices the scan visits.
+    #[attribute(order = 54)]
+    pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl GemContract<'_> {

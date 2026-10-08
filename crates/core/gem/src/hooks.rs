@@ -1,16 +1,19 @@
 use alloy_primitives::{B256, U256};
-use outbe_oracle::{api::get_all_reference_currencies, schema::OracleContract};
+use outbe_oracle::{
+    api::get_all_reference_currencies,
+    call_window::{CallWindow, CallWindows},
+};
 use outbe_primitives::{
-    address_pair::AddressPair,
     block::{BlockLifecycle, BlockRuntimeContext},
+    call_breach::ScanTerms,
     daily_sweep::{PinnedDay, Scheduled, SweepDays},
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
-    time::previous_date_key,
 };
 
 use outbe_primitives::call_bins::{pack_cursor, unpack_cursor};
 
+use crate::config::GemParams;
 use crate::constants::{CALL_SWEEP, MAX_BUCKET_VISITS_PER_BLOCK};
 use crate::precompile::IGem::{BatchMetadataUpdate, CallScanSkipped, SweepDaySkipped};
 use crate::schema::GemContract;
@@ -50,10 +53,6 @@ fn pinned_call_day<'a, 'storage>(gem: &'a GemContract<'storage>) -> PinnedDay<'a
         pending: &gem.call_pending_day,
     }
 }
-
-/// Trailing finalized daily VWAPs of one pair, newest first. `None` marks a day
-/// the pair had no data for.
-type VwapWindow = Vec<(u32, Option<U256>)>;
 
 /// Cycle daily-trigger entry: open the day's Called sweep, discarding the count.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -119,16 +118,14 @@ fn call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let currencies = get_all_reference_currencies(ctx)?;
-    let oracle = OracleContract::new(ctx.storage.clone());
     let start = currency_position(&currencies, gem.call_currency_cursor.read()?);
-    let live_window = crate::config::read_from(&gem, ctx.block.chain_id)?.call_window_seconds;
+    let params = crate::config::read_from(&gem, ctx.block.chain_id)?;
     let mut sweep = CallSweep {
         ctx,
         gem,
-        oracle,
         pinned_day,
-        live_window,
-        windows: Vec::new(),
+        params,
+        windows: CallWindows::new(pinned_day),
         budget: MAX_BUCKET_VISITS_PER_BLOCK,
     };
     let mut called: u32 = 0;
@@ -154,10 +151,9 @@ fn call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
 struct CallSweep<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     gem: GemContract<'storage>,
-    oracle: OracleContract<'storage>,
     pinned_day: u32,
-    live_window: u32,
-    windows: Vec<(u16, VwapWindow)>,
+    params: GemParams,
+    windows: CallWindows,
     budget: u32,
 }
 
@@ -176,10 +172,12 @@ impl CallSweep<'_, '_> {
             self.gem.bucket_scan_cursor.write(&iso_code, 0)?;
             return Ok((0, true));
         }
-        let index = self.window_for(iso_code)?;
-        let window = self.windows[index].1.as_slice();
-        // Nothing priced above the window's high can have breached.
-        let Some(high) = window.iter().filter_map(|(_, vwap)| *vwap).max() else {
+        let gem = &self.gem;
+        let params = &self.params;
+        let window = self.windows.window(&self.ctx.storage, iso_code, || {
+            scan_terms(gem, iso_code, params)
+        })?;
+        let Some(high) = window.ceiling() else {
             return Ok((0, true));
         };
         let ceiling = match GemContract::price_to_bin(high) {
@@ -207,36 +205,17 @@ impl CallSweep<'_, '_> {
             None => Ok(()),
         }
     }
+}
 
-    /// Index of the trailing finalized-VWAP window for `COEN/<iso>`, newest first,
-    /// filling it on first use. An unregistered pair caches an empty window.
-    fn window_for(&mut self, iso_code: u16) -> Result<usize> {
-        if let Some(index) = self.windows.iter().position(|(code, _)| *code == iso_code) {
-            return Ok(index);
-        }
-        let pair_index = self
-            .oracle
-            .pair_index_of(AddressPair::new_coen_to(iso_code))?;
-        let mut window = Vec::new();
-        if pair_index != 0 {
-            // Use the widest of the live profile and anything ever issued. A gem keeps the
-            // window it was issued with, so a narrowed profile must not shorten the span.
-            let window_days = self
-                .gem
-                .max_call_window_seconds
-                .read(&iso_code)?
-                .max(self.live_window)
-                / 86_400;
-            window.reserve(window_days as usize);
-            let mut day = self.pinned_day;
-            for _ in 0..window_days {
-                window.push((day, self.oracle.get_utc_day_vwap_for_pair(day, pair_index)?));
-                day = previous_date_key(day);
-            }
-        }
-        self.windows.push((iso_code, window));
-        Ok(self.windows.len() - 1)
-    }
+/// The live profile is the terms the next gem is sealed with.
+fn scan_terms(gem: &GemContract<'_>, iso_code: u16, params: &GemParams) -> Result<ScanTerms> {
+    outbe_primitives::call_breach::scan_terms(
+        &gem.max_call_window_seconds,
+        &gem.min_call_threshold_seconds,
+        iso_code,
+        params.call_window_seconds,
+        params.call_threshold_seconds,
+    )
 }
 
 /// Walk one currency's bucket bins up to `ceiling`, resuming where it stopped.
@@ -247,7 +226,7 @@ impl CallSweep<'_, '_> {
 pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
     iso_code: u16,
-    window: &[(u32, Option<U256>)],
+    window: &CallWindow,
     ceiling: u32,
     budget: &mut u32,
 ) -> Result<(u32, bool)> {
@@ -292,7 +271,7 @@ struct BucketCallScan<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     gem: GemContract<'storage>,
     iso_code: u16,
-    window: &'a [(u32, Option<U256>)],
+    window: &'a CallWindow,
     budget: &'a mut u32,
 }
 

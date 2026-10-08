@@ -632,7 +632,13 @@ impl NodContract<'_> {
             .write(&bucket_key, terms.call_threshold_seconds)?;
         self.callable_bucket_call_notice_period_seconds
             .write(&bucket_key, terms.call_notice_period_seconds)?;
-        self.widen_max_call_window(terms.reference_currency, terms.call_window_seconds)
+        outbe_primitives::call_breach::widen_scan_terms(
+            &self.max_call_window_seconds,
+            &self.min_call_threshold_seconds,
+            terms.reference_currency,
+            terms.call_window_seconds,
+            terms.call_threshold_seconds,
+        )
     }
 
     /// Queues a called bucket on the deadline its notice period closes at.
@@ -654,22 +660,6 @@ impl NodContract<'_> {
                 .callable_bucket_call_notice_period_seconds
                 .read(&bucket_key)?,
         })
-    }
-
-    /// Raises the currency's widest-window high-water mark if this bucket
-    /// outruns it. Monotonic, so the daily scan can size one shared VWAP window
-    /// per currency and still cover every bucket denominated in it. Mirrors
-    /// `outbe_gem`'s `max_call_window_seconds`.
-    fn widen_max_call_window(
-        &mut self,
-        reference_currency: u16,
-        call_window_seconds: u32,
-    ) -> Result<()> {
-        if call_window_seconds > self.max_call_window_seconds.read(&reference_currency)? {
-            self.max_call_window_seconds
-                .write(&reference_currency, call_window_seconds)?;
-        }
-        Ok(())
     }
 
     /// No-op for a bucket the queue does not hold.

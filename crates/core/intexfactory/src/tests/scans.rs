@@ -284,7 +284,7 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
                 .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
                 .unwrap();
             assert_eq!(
-                call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
+                call_group(&s, &mut f, &group, last_closed_day, scan_ts),
                 expected,
                 "issued at {issued_at}"
             );
@@ -321,10 +321,7 @@ fn call_survives_router_failure() {
         let group = f
             .call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
             .unwrap();
-        assert_eq!(
-            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
-            1
-        );
+        assert_eq!(call_group(&s, &mut f, &group, last_closed_day, scan_ts), 1);
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -387,6 +384,13 @@ fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
     );
 }
 
+fn terms(window_days: u32, threshold_days: u32) -> outbe_primitives::call_breach::ScanTerms {
+    outbe_primitives::call_breach::ScanTerms {
+        window_days,
+        threshold_days,
+    }
+}
+
 #[test]
 fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
     with_factory(|s| {
@@ -397,7 +401,7 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
         assert_eq!(
             f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
                 .unwrap(),
-            (28, 21),
+            terms(28, 21),
             "nothing issued yet, so the live profile is the whole range"
         );
 
@@ -406,7 +410,7 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
         assert_eq!(
             f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
                 .unwrap(),
-            (40, 10),
+            terms(40, 10),
             "a series issued on wider terms widens the range in both directions"
         );
 
@@ -415,7 +419,7 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
         assert_eq!(
             f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
                 .unwrap(),
-            (40, 10),
+            terms(40, 10),
             "issuing on the narrow profile again does not shrink the range"
         );
 
@@ -423,7 +427,7 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
         assert_eq!(
             f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
                 .unwrap(),
-            (40, 10),
+            terms(40, 10),
             "a threshold under a day cannot be met, so it does not narrow the range"
         );
     });
