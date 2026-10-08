@@ -138,9 +138,25 @@ pub fn mutate<T: SolCall>(
     sender: Address,
     f: impl FnOnce(Address, T) -> Result<T::Return>,
 ) -> Result<Bytes> {
-    ensure_mutation_allowed(storage)?;
-    let ret = f(sender, call)?;
-    Ok(Bytes::from(T::abi_encode_returns(&ret)))
+    typed::mutate(storage, call, sender, f)
+}
+
+/// Shared typed dispatch, adapted from Tempo's `dispatch::typed::mutate`.
+pub mod typed {
+    use super::*;
+
+    /// Reject STATICCALL before entering the command, then encode its typed return.
+    #[inline]
+    pub fn mutate<T: SolCall, R: Into<T::Return>>(
+        storage: &StorageHandle<'_>,
+        call: T,
+        sender: Address,
+        f: impl FnOnce(Address, T) -> Result<R>,
+    ) -> Result<Bytes> {
+        ensure_mutation_allowed(storage)?;
+        let ret = f(sender, call)?;
+        Ok(T::abi_encode_returns(&ret.into()).into())
+    }
 }
 
 /// Mutate-void helper: calls a state-changing function that returns no value.
@@ -152,10 +168,11 @@ pub fn mutate_void<T: SolCall>(
     call: T,
     sender: Address,
     f: impl FnOnce(Address, T) -> Result<()>,
-) -> Result<Bytes> {
-    ensure_mutation_allowed(storage)?;
-    f(sender, call)?;
-    Ok(Bytes::new())
+) -> Result<Bytes>
+where
+    T::Return: From<()>,
+{
+    typed::mutate(storage, call, sender, f)
 }
 
 /// Mutate-void payable helper: calls a state-changing function that accepts msg.value.
@@ -176,15 +193,18 @@ pub fn mutate_void_payable<T: SolCall>(
     sender: Address,
     value: U256,
     f: impl FnOnce(Address, T, U256) -> Result<()>,
-) -> Result<Bytes> {
-    ensure_mutation_allowed(storage)?;
-    if !value.is_zero() && !payable_selectors.contains(&T::SELECTOR) {
-        return Err(PrecompileError::Revert(
-            "payable selector is not declared in PAYABLE_SELECTORS".into(),
-        ));
-    }
-    f(sender, call, value)?;
-    Ok(Bytes::new())
+) -> Result<Bytes>
+where
+    T::Return: From<()>,
+{
+    typed::mutate(storage, call, sender, |sender, call| {
+        if !value.is_zero() && !payable_selectors.contains(&T::SELECTOR) {
+            return Err(PrecompileError::Revert(
+                "payable selector is not declared in PAYABLE_SELECTORS".into(),
+            ));
+        }
+        f(sender, call, value)
+    })
 }
 
 /// Mutate payable helper: a state-changing function that accepts msg.value and
@@ -202,14 +222,14 @@ pub fn mutate_payable<T: SolCall>(
     value: U256,
     f: impl FnOnce(Address, T, U256) -> Result<T::Return>,
 ) -> Result<Bytes> {
-    ensure_mutation_allowed(storage)?;
-    if !value.is_zero() && !payable_selectors.contains(&T::SELECTOR) {
-        return Err(PrecompileError::Revert(
-            "payable selector is not declared in PAYABLE_SELECTORS".into(),
-        ));
-    }
-    let ret = f(sender, call, value)?;
-    Ok(Bytes::from(T::abi_encode_returns(&ret)))
+    typed::mutate(storage, call, sender, |sender, call| {
+        if !value.is_zero() && !payable_selectors.contains(&T::SELECTOR) {
+            return Err(PrecompileError::Revert(
+                "payable selector is not declared in PAYABLE_SELECTORS".into(),
+            ));
+        }
+        f(sender, call, value)
+    })
 }
 
 /// Refuses native value for any selector the module has not published as

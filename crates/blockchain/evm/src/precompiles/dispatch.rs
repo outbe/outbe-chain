@@ -256,7 +256,7 @@ impl DispatchCall<'_> {
                         PrecompileError::OutOfGas
                         | PrecompileError::Revert(_)
                         | PrecompileError::RevertBytes(_)
-                        | PrecompileError::ChildHalt(_)
+                        | PrecompileError::Halt(_)
                         | PrecompileError::WriteProtection
                         | PrecompileError::BodyReadCorruption(_),
                     ) => Err(PrecompileError::OutOfGas),

@@ -101,28 +101,21 @@ fn dispatcher_caps_unbounded_child_budget_to_parent_gas() {
 }
 
 #[test]
-fn dispatcher_returns_an_ordinary_revert_for_child_invalid_or_out_of_gas() {
+fn dispatcher_propagates_child_invalid_and_out_of_gas_as_execution_halts() {
     for code in [&[0xfe][..], &[0x5b, 0x60, 0, 0x56][..]] {
         let result = vault_read(code);
         assert!(
-            matches!(
-                result,
-                revm::context::result::ExecutionResult::Revert { .. }
-            ),
+            matches!(result, revm::context::result::ExecutionResult::Halt { .. }),
             "{result:?}"
         );
-        assert!(
-            result.tx_gas_used() > 190_000,
-            "executed exceptional halt must spend its allowance"
-        );
-        assert!(
-            result.tx_gas_used() < 200_000,
-            "the wrapper retains the parent's EIP-150 remainder"
-        );
         assert_eq!(
-            result.output().unwrap().len(),
-            36,
-            "stable typed child-halt ABI"
+            result.tx_gas_used(),
+            200_000,
+            "revm spends the halted frame's gas"
+        );
+        assert!(
+            result.output().is_none(),
+            "halts have no synthetic revert ABI"
         );
     }
 }
@@ -354,14 +347,9 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
         } else if nested {
             assert_eq!(
                 output.len(),
-                68,
-                "nested INVALID bubbles the typed VM error"
+                32,
+                "nested halt has no synthetic revert payload"
             );
-            assert_eq!(
-                &output[32..36],
-                &alloy_primitives::keccak256("SubCallHalted(uint8)")[..4]
-            );
-            assert_eq!(U256::from_be_slice(&output[36..]), U256::from(7));
         } else {
             assert_eq!(
                 &output[32..],

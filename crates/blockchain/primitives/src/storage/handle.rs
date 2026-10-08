@@ -335,7 +335,7 @@ impl<'storage> StorageHandle<'storage> {
     ///
     /// Maps `SubCallStatus::Success -> Ok(bytes)`,
     /// `Revert(bytes) -> Err(RevertBytes(bytes))`,
-    /// `Halt(err) -> Err(ChildHalt(kind))` for VM failures; provider errors stay fatal.
+    /// `Halt(err) -> Err(OutOfGas/WriteProtection/Halt)` for VM failures; provider errors stay fatal.
     pub fn call(
         &self,
         target: Address,

@@ -1,6 +1,8 @@
 use alloy_primitives::Bytes;
+use alloy_sol_types::{Revert, SolError};
+use revm::precompile::{PrecompileHalt, PrecompileOutput, PrecompileResult};
 
-use crate::storage::{ChildHaltKind, SubCallError};
+use crate::storage::SubCallError;
 
 /// Precompile error types.
 ///
@@ -59,9 +61,9 @@ pub enum PrecompileError {
     /// Provider-level sub-call error, such as `NotAvailable` or database failure.
     #[error("sub-call error: {0}")]
     SubCall(SubCallError),
-    /// Settled, deterministic child VM halt. The enclosing wrapper reverts.
-    #[error("child VM halted: {0:?}")]
-    ChildHalt(ChildHaltKind),
+    /// Deterministic execution halt, propagated through revm's precompile result.
+    #[error("execution halted: {0:?}")]
+    Halt(PrecompileHalt),
 
     /// Operation is not supported by this provider.
     #[error("unsupported operation")]
@@ -78,12 +80,68 @@ pub type Result<T> = std::result::Result<T, PrecompileError>;
 impl From<SubCallError> for PrecompileError {
     fn from(value: SubCallError) -> Self {
         match value {
-            SubCallError::ParentOutOfGas => Self::OutOfGas,
-            other => match other.child_halt_kind() {
-                Some(kind) => Self::ChildHalt(kind),
-                None => Self::SubCall(other),
-            },
+            SubCallError::ParentOutOfGas | SubCallError::OutOfGas => Self::OutOfGas,
+            SubCallError::StaticContextViolation | SubCallError::StateChangeDuringStaticCall => {
+                Self::WriteProtection
+            }
+            SubCallError::EvmHalt(revm::context::result::HaltReason::OutOfGas(_)) => Self::OutOfGas,
+            SubCallError::EvmHalt(
+                revm::context::result::HaltReason::StateChangeDuringStaticCall
+                | revm::context::result::HaltReason::CallNotAllowedInsideStatic,
+            ) => Self::WriteProtection,
+            error @ (SubCallError::DepthLimitExceeded
+            | SubCallError::InvalidTarget
+            | SubCallError::NotActivated
+            | SubCallError::EvmHalt(_)) => Self::Halt(PrecompileHalt::other(error.to_string())),
+            error @ (SubCallError::NotAvailable
+            | SubCallError::ProviderBorrowed
+            | SubCallError::DatabaseError(_)
+            | SubCallError::Fatal(_)) => Self::SubCall(error),
         }
+    }
+}
+
+impl PrecompileError {
+    /// Convert domain errors at one boundary, following Tempo's precompile error model.
+    /// Execution failures return Revert/Halt; infrastructure failures return Fatal.
+    pub fn into_precompile_result(self, gas: u64) -> PrecompileResult {
+        let bytes = match self {
+            Self::OutOfGas => {
+                return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0));
+            }
+            Self::WriteProtection => {
+                return Ok(PrecompileOutput::halt(
+                    PrecompileHalt::other_static("state change during static call"),
+                    0,
+                ));
+            }
+            Self::Halt(reason) => return Ok(PrecompileOutput::halt(reason, 0)),
+            Self::Revert(message) => Revert::from(message).abi_encode().into(),
+            error @ Self::BodyReadCorruption(_) => {
+                Revert::from(error.to_string()).abi_encode().into()
+            }
+            Self::RevertBytes(bytes) => bytes,
+            Self::SubCall(error) => {
+                return Err(revm::precompile::PrecompileError::Fatal(format!(
+                    "sub-call error: {error:?}"
+                )));
+            }
+            Self::Unsupported => {
+                return Err(revm::precompile::PrecompileError::Fatal(
+                    "precompile reported Unsupported".into(),
+                ));
+            }
+            error @ (Self::Storage(_)
+            | Self::BodyReadUnavailable(_)
+            | Self::BodyReadRequestDeadline
+            | Self::TreeUnavailable(_)
+            | Self::TransactionCeWorkLimitExceeded
+            | Self::BlockCeWorkCapacityExhausted
+            | Self::Fatal(_)) => {
+                return Err(revm::precompile::PrecompileError::Fatal(error.to_string()));
+            }
+        };
+        Ok(PrecompileOutput::revert(gas, bytes, 0))
     }
 }
 
@@ -114,7 +172,7 @@ impl PrecompileError {
             | Self::WriteProtection
             | Self::Revert(_)
             | Self::RevertBytes(_)
-            | Self::ChildHalt(_)
+            | Self::Halt(_)
             | Self::SubCall(_)
             | Self::Unsupported
             | Self::Fatal(_) => false,
