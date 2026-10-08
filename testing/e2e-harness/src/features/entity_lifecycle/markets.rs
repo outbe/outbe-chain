@@ -191,9 +191,9 @@ pub(crate) fn assert_currency_routes(world: &World, currency: SettlementCurrency
     );
 }
 
-/// Move the committee past the next whole hour, so every quote published so far lies in
-/// a closed pricing window, and wait until that window prices each of `currencies`.
+/// Close a feeder-covered window and verify each currency on all validators.
 pub(crate) fn close_price_window(world: &mut World, currencies: &[u16]) {
+    pricing_window::prepare_fresh_hour(world).expect("fresh feeder pricing hour");
     for attempt in 0..3 {
         let cutoff = pricing_window::wait_for_coverage(world, currencies)
             .expect("pinned public pricing coverage observations");

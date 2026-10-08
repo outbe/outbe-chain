@@ -37,6 +37,33 @@ mod tests {
     use super::pricing_coverage_ready;
 
     #[test]
+    fn a_skipped_stretch_holds_the_hour_until_the_feeders_recover() {
+        let (first, period) = (100, 4);
+        let mut snapshots = 0;
+        let mut head = first;
+        let mut decisions = Vec::new();
+        for voted in [true; 10].into_iter().chain([false; 10]).chain([true; 30]) {
+            head += period;
+            snapshots += u64::from(voted);
+            decisions.push(pricing_coverage_ready(&[first, head], &[snapshots], period));
+        }
+        assert!(decisions[..10].iter().all(|covered| *covered));
+        assert!(!decisions[19]);
+        assert!(decisions[49]);
+        let first_recovered = decisions[20..].iter().position(|covered| *covered).unwrap();
+        assert!(
+            first_recovered > 0,
+            "one recovered round cannot repay the skipped stretch"
+        );
+    }
+
+    #[test]
+    fn the_rule_matches_the_oracle_threshold() {
+        assert!(pricing_coverage_ready(&[1, 13], &[2], 4));
+        assert!(!pricing_coverage_ready(&[1, 13], &[1], 4));
+    }
+
+    #[test]
     fn rejects_the_observed_late_feeder_window_even_with_one_valid_quote() {
         assert!(!pricing_coverage_ready(&[0, 1, 41], &[0, 1], 8));
         assert!(!pricing_coverage_ready(&[1, 57], &[4], 8));

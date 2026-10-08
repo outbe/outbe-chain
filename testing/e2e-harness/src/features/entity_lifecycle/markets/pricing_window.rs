@@ -7,16 +7,52 @@ use alloy_primitives::{Address, U256};
 use eyre::{ensure, eyre, Result};
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 
-use super::super::chain::{finalized_checkpoint, verify_checkpoint};
+use super::super::chain::{finalized_checkpoint, poll_until, verify_checkpoint};
+use super::WINDOW_CLOSE_MARGIN_SECS;
 use crate::internal::{eth, pricing_coverage::pricing_coverage_ready};
 use crate::world::World;
 
 const HOUR: u64 = 3_600;
 const HISTORY_LIMIT: u32 = 4_096;
-const WARM_TIMEOUT: Duration = Duration::from_secs(300);
+const WARM_TIMEOUT: Duration = Duration::from_secs(900);
+const MIN_HOUR_SNAPSHOTS: u64 = 10;
 /// Conservative stop/import margin; the actual closed Oracle call still decides.
 const RESTART_ROUNDS: u64 = 2;
 const NO_VWAP_DATA: &str = "no VWAP data in the requested time range";
+
+/// Start a fresh hour after the window that contains blocks without feeder votes.
+pub(super) fn prepare_fresh_hour(world: &mut World) -> Result<()> {
+    let checkpoint = finalized_checkpoint(world);
+    let port = world.validators.primary_port();
+    let time = world
+        .rpc
+        .block_timestamp(port, checkpoint.height)
+        .ok_or_else(|| eyre!("pricing checkpoint timestamp unavailable"))?;
+    let (lookback, _) = window_policy(&world.rpc.url(port), checkpoint.height)?;
+    let hour = time - time % HOUR + HOUR + lookback;
+    verify_checkpoint(world, checkpoint);
+    let (_, _, _, pending) = crate::features::ocomp::restart_committee_at_logical_time(
+        world,
+        hour + WINDOW_CLOSE_MARGIN_SECS,
+    );
+    let mut publication_ready = pending.is_none();
+    poll_until(
+        WARM_TIMEOUT,
+        || format!("committee or feeders did not reach the covered hour {hour}"),
+        || {
+            publication_ready = publication_ready
+                || pending.as_ref().is_some_and(|pending| {
+                    crate::features::price_oracle::observe_pending_publication(world, pending)
+                });
+            publication_ready
+                && world
+                    .rpc
+                    .latest_block_timestamp(port)
+                    .is_some_and(|now| now >= hour)
+        },
+    );
+    Ok(())
+}
 
 pub(super) fn wait_for_coverage(world: &mut World, currencies: &[u16]) -> Result<u64> {
     let deadline = Instant::now() + WARM_TIMEOUT;
@@ -40,7 +76,10 @@ fn prospective_coverage(world: &World, currencies: &[u16]) -> Result<Option<u64>
     let mut ready = true;
     for &currency in currencies {
         let counts = window.observations(&url, currency, checkpoint.height)?;
-        ready &= pricing_coverage_ready(&window.bounds, &counts, window.period);
+        ready &= counts
+            .last()
+            .is_some_and(|count| *count >= MIN_HOUR_SNAPSHOTS)
+            && pricing_coverage_ready(&window.bounds, &counts, window.period);
         eprintln!("pricing_window evidence=public_coverage height={} currency={currency} bounds={:?} observations={counts:?} ready={ready}", checkpoint.height, window.bounds);
     }
     verify_checkpoint(world, checkpoint);

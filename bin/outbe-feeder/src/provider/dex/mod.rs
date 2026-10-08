@@ -1,4 +1,4 @@
-//! Finalized pool spot prices and independent rolling base-token swap volumes.
+//! Pool spot prices read a few blocks behind the head and independent rolling base-token swap volumes.
 mod abi;
 mod config;
 mod math;
