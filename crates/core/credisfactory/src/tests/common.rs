@@ -432,7 +432,9 @@ pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 
 /// What CycleTick runs every block.
 pub fn tick(storage: &StorageHandle<'_>, timestamp: u64) {
-    crate::hooks::continue_sweeps(&block_at(storage, timestamp)).unwrap()
+    let ctx = block_at(storage, timestamp);
+    crate::hooks::sweep_forfeits(&ctx).unwrap();
+    crate::called::run_call_slice(&ctx).unwrap();
 }
 
 pub fn now_of(storage: &StorageHandle<'_>) -> u64 {

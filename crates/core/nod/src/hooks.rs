@@ -14,14 +14,3 @@ pub fn sweep_forfeits(
     crate::expired::sweep_expired(ctx, scope, parent)?;
     Ok(())
 }
-
-/// One block of every Nod sweep: what fell due, then a slice of the call sweep.
-pub fn continue_sweeps(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<()> {
-    sweep_forfeits(ctx, scope, parent)?;
-    crate::called::run_call_slice(ctx)?;
-    Ok(())
-}

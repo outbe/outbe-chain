@@ -1618,7 +1618,9 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
         );
 
         let past = START + 30 * DAY + NOTICE + HOUR;
-        crate::hooks::continue_sweeps(&block_at(storage, past), scope, parent).unwrap();
+        let ctx = block_at(storage, past);
+        crate::hooks::sweep_forfeits(&ctx, scope, parent).unwrap();
+        crate::called::run_call_slice(&ctx).unwrap();
         assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
         assert!(!is_queued(storage, bucket_key));
         assert_eq!(reserve(storage), U256::from(3u64));

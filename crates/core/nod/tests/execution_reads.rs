@@ -287,7 +287,8 @@ fn idle_daily_scans_do_not_write_storage() {
             storage.clone(),
         );
         called::run_daily(&ctx).unwrap();
-        hooks::continue_sweeps(&ctx, &scope, &parent).unwrap();
+        hooks::sweep_forfeits(&ctx, &scope, &parent).unwrap();
+        called::run_call_slice(&ctx).unwrap();
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),
             0,
@@ -298,7 +299,8 @@ fn idle_daily_scans_do_not_write_storage() {
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
-        hooks::continue_sweeps(&ctx, &scope, &parent).unwrap();
+        hooks::sweep_forfeits(&ctx, &scope, &parent).unwrap();
+        called::run_call_slice(&ctx).unwrap();
     });
     let (reads, writes) = provider.metered_storage_operations();
     assert!(reads > 0);

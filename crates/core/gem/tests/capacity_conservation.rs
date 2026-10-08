@@ -92,10 +92,9 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
 fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
-        hooks::continue_sweeps(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, at, 1),
-            s,
-        ))
+        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
+        hooks::sweep_forfeits(&ctx)?;
+        called::run_call_slice(&ctx).map(drop)
     })
 }
 
