@@ -35,7 +35,8 @@ chain_id = 1
 rpc_endpoint = "https://ethereum-rpc.example.invalid"
 poll_interval_secs = 2
 log_chunk_blocks = 2000
-max_finalized_age_secs = 1800
+confirmations = 3
+max_block_age_secs = 1800
 
 [[dex_providers.markets]]
 base = "COEN"
