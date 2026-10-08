@@ -106,7 +106,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   const rawAmount = z.string().regex(/^(0|[1-9][0-9]*)$/).refine(
     value => BigInt(value) < (1n << 256n), "amount exceeds uint256",
   ).describe("Amount in raw token units");
-  server.tool("credis_reserve", "Reserve exact stablecoin principal and freeze loan terms for 15 minutes.",
+  server.tool("credis_reserve", "Reserve exact stablecoin principal and freeze the Credis terms for 15 minutes.",
     { smart_account: addr, source: addr.describe("Main account that pledges the Gratis collateral"), asset: addr, amount: rawAmount, reference_currency: z.number().int().min(1).max(65535) },
     handler(async ({ smart_account, source, asset, amount, reference_currency }) =>
       submit(ctx, { contract: "vaultrouter", method: "reserveStables", args: [smart_account, source, asset, BigInt(amount), reference_currency] })));

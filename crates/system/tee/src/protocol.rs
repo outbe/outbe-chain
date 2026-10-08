@@ -208,7 +208,7 @@ pub struct ParticipantAnnounce {
 /// The op determines two things:
 /// - the sign of the aggregate deltas that the host applies to the public
 ///   `total_supply` / `pledged_total_supply` scalars
-/// - which ciphertext account balance the enclave transforms
+/// - which of the account's liquid and pledged blobs the enclave transforms
 ///
 /// Mint, Burn and Pledge need the owner's modify authorization. The runtime
 /// authorizes the collateral ops. The modify MAC binds `op as u8`, so the Mint,
