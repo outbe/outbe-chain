@@ -506,6 +506,68 @@ fn failed_crosschain_deposit_does_not_consume_nonce_or_shares() {
 // --- liquidity sources / targets --------------------------------------------
 
 #[test]
+fn liquidity_registries_validate_entries_and_log_each_change() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        let rejects = [
+            runtime::add_liquidity_source(storage.clone(), stranger(), source_account(), 1),
+            runtime::add_liquidity_source(storage.clone(), owner(), Address::ZERO, 1),
+            runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 0),
+            runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 0),
+            runtime::remove_liquidity_source(storage.clone(), owner(), source_account()),
+            runtime::remove_liquidity_target(storage.clone(), owner(), target_account()),
+        ];
+        let expected = [
+            "unauthorized",
+            "zero address",
+            "invalid liquidity source",
+            "invalid liquidity target",
+            "liquidity source not found",
+            "liquidity target not found",
+        ];
+        for (result, text) in rejects.into_iter().zip(expected) {
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains(text), "expected {text:?}, got {err}");
+        }
+        runtime::add_liquidity_source(storage.clone(), owner(), source_account(), 1).unwrap();
+        runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
+        runtime::remove_liquidity_source(storage.clone(), owner(), source_account()).unwrap();
+        runtime::remove_liquidity_target(storage.clone(), owner(), target_account()).unwrap();
+        assert!(matches!(
+            runtime::registered_liquidity_source(&storage, source_account()).unwrap(),
+            IVaultRouter::StablesSource::Unknown
+        ));
+        assert!(matches!(
+            runtime::registered_liquidity_target(&storage, target_account()).unwrap(),
+            IVaultRouter::StablesTarget::Unknown
+        ));
+    });
+    let events = storage.get_events(VAULT_ROUTER_ADDRESS);
+    assert_eq!(events.len(), 4);
+    let added = IVaultRouter::LiquiditySourceAdded::decode_log_data(&events[0]).unwrap();
+    assert_eq!(
+        (added.sourceAddress, added.sourceType as u8),
+        (source_account(), 1)
+    );
+    let added = IVaultRouter::LiquidityTargetAdded::decode_log_data(&events[1]).unwrap();
+    assert_eq!(
+        (added.targetAddress, added.targetType as u8),
+        (target_account(), 1)
+    );
+    let removed = IVaultRouter::LiquiditySourceRemoved::decode_log_data(&events[2]).unwrap();
+    assert_eq!(
+        (removed.sourceAddress, removed.sourceType as u8),
+        (source_account(), 1)
+    );
+    let removed = IVaultRouter::LiquidityTargetRemoved::decode_log_data(&events[3]).unwrap();
+    assert_eq!(
+        (removed.targetAddress, removed.targetType as u8),
+        (target_account(), 1)
+    );
+}
+
+#[test]
 fn add_remove_liquidity_source_enumerates_and_round_trips_type() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
@@ -843,9 +905,11 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
         let err = runtime::withdraw(
             storage.clone(),
             target_account(),
-            asset(),
-            U256::from(10),
-            Address::ZERO,
+            IVaultRouter::withdrawCall {
+                asset: asset(),
+                amount: U256::from(10),
+                receiver: Address::ZERO,
+            },
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap_err();
@@ -855,9 +919,11 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
         let err = runtime::withdraw(
             storage.clone(),
             target_account(),
-            asset(),
-            U256::from(10),
-            receiver(),
+            IVaultRouter::withdrawCall {
+                asset: asset(),
+                amount: U256::from(10),
+                receiver: receiver(),
+            },
             IVaultRouter::StablesTarget::Unknown,
         )
         .unwrap_err();
@@ -880,9 +946,11 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
         let burned = runtime::withdraw(
             storage.clone(),
             target_account(),
-            asset(),
-            U256::from(10),
-            receiver(),
+            IVaultRouter::withdrawCall {
+                asset: asset(),
+                amount: U256::from(10),
+                receiver: receiver(),
+            },
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap();
@@ -907,9 +975,11 @@ fn withdraw_transfers_to_an_undeployed_receiver() {
         let burned = runtime::withdraw(
             storage.clone(),
             target_account(),
-            asset(),
-            U256::from(10),
-            receiver(),
+            IVaultRouter::withdrawCall {
+                asset: asset(),
+                amount: U256::from(10),
+                receiver: receiver(),
+            },
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap();
@@ -1099,10 +1169,12 @@ fn rebalance_rejects_same_vault() {
         let err = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_from(),
-            U256::from(10),
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_from(),
+                assetsAmount: U256::from(10),
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("same vault"), "{err}");
@@ -1117,10 +1189,12 @@ fn rebalance_rejects_zero_amount() {
         let err = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            U256::ZERO,
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: U256::ZERO,
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap_err();
         assert!(
@@ -1151,10 +1225,12 @@ fn rebalance_rejects_an_unregistered_source_vault() {
         let err = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            U256::from(10),
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: U256::from(10),
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("not registered"), "{err}");
@@ -1182,10 +1258,12 @@ fn rebalance_rejects_an_unregistered_destination_vault() {
         let err = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            U256::from(10),
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: U256::from(10),
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("not registered"), "{err}");
@@ -1239,10 +1317,12 @@ fn rebalance_accepts_a_vault_whose_reference_currency_index_is_unset() {
         let amount_to = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            amount,
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: amount,
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap();
         assert_eq!(amount_to, amount);
@@ -1281,10 +1361,12 @@ fn rebalance_rejects_insufficient_source_shares() {
         let err = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            U256::from(10),
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: U256::from(10),
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("insufficient shares"), "{err}");
@@ -1316,10 +1398,12 @@ fn rebalance_rejects_when_the_required_input_exceeds_max() {
         let err = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            amount,
-            amount - U256::from(1),
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: amount,
+                maxAmountTo: amount - U256::from(1),
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("exceeds max"), "{err}");
@@ -1356,10 +1440,12 @@ fn rebalance_prices_an_identical_asset_pair_one_to_one() {
         let amount_to = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            amount,
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: amount,
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap();
         assert_eq!(amount_to, amount);
@@ -1419,10 +1505,12 @@ fn rebalance_prices_a_same_currency_pair_one_to_one() {
         let amount_to = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            amount,
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: amount,
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap();
         assert_eq!(amount_to, amount);
@@ -1497,10 +1585,12 @@ fn rebalance_prices_a_cross_currency_pair_from_the_oracle() {
         let amount_to = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            amount,
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: amount,
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap();
         assert_eq!(amount_to, U256::from(20u64));
@@ -1556,10 +1646,12 @@ fn rebalance_scales_across_asset_decimals() {
             let amount_to = runtime::rebalance(
                 storage.clone(),
                 cca(),
-                vault_from(),
-                vault_to(),
-                U256::from(10u64),
-                U256::MAX,
+                IVaultRouter::rebalanceCall {
+                    vaultFrom: vault_from(),
+                    vaultTo: vault_to(),
+                    assetsAmount: U256::from(10u64),
+                    maxAmountTo: U256::MAX,
+                },
             )
             .unwrap();
             assert_eq!(
@@ -1618,10 +1710,12 @@ fn rebalance_scales_across_asset_decimals() {
             let amount_to = runtime::rebalance(
                 storage.clone(),
                 cca(),
-                vault_from(),
-                vault_to(),
-                amount,
-                U256::MAX,
+                IVaultRouter::rebalanceCall {
+                    vaultFrom: vault_from(),
+                    vaultTo: vault_to(),
+                    assetsAmount: amount,
+                    maxAmountTo: U256::MAX,
+                },
             )
             .unwrap();
             assert_eq!(amount_to, U256::from(11u64));
@@ -1663,10 +1757,12 @@ fn rebalance_rejects_assets_with_more_than_eighteen_decimals() {
         let err = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            U256::from(10),
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: U256::from(10),
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap_err();
         assert!(
@@ -1724,10 +1820,12 @@ fn rebalance_reverts_when_the_caller_has_not_approved_the_destination_asset() {
         runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            U256::from(10),
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: U256::from(10),
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap_err();
     });
@@ -1761,10 +1859,12 @@ fn rebalance_rolls_back_when_the_destination_deposit_fails() {
         runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            U256::from(10),
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: U256::from(10),
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap_err();
     });
@@ -1813,10 +1913,12 @@ fn rebalance_rolls_back_when_the_source_withdraw_fails() {
         runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            U256::from(10),
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: U256::from(10),
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap_err();
     });
@@ -1850,10 +1952,12 @@ fn rebalance_rejects_an_unregistered_stranger() {
         let err = runtime::rebalance(
             storage.clone(),
             stranger(),
-            vault_from(),
-            vault_to(),
-            amount,
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: amount,
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap_err();
         assert!(err.to_string().contains("CCA is not active"), "{err}");
@@ -1931,10 +2035,12 @@ fn preview_rebalance_matches_what_rebalance_pulls() {
         let amount_to = runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            amount,
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: amount,
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap();
         assert_eq!(preview_amount, amount_to);
@@ -2050,10 +2156,12 @@ fn rebalance_emits_liquidity_rebalanced_with_both_legs() {
         runtime::rebalance(
             storage.clone(),
             cca(),
-            vault_from(),
-            vault_to(),
-            amount,
-            U256::MAX,
+            IVaultRouter::rebalanceCall {
+                vaultFrom: vault_from(),
+                vaultTo: vault_to(),
+                assetsAmount: amount,
+                maxAmountTo: U256::MAX,
+            },
         )
         .unwrap();
     });
@@ -2123,10 +2231,12 @@ fn rebalance_rejects_invalid_live_reference_currencies() {
             let err = runtime::rebalance(
                 storage.clone(),
                 cca(),
-                vault_from(),
-                vault_to(),
-                U256::from(10),
-                U256::MAX,
+                IVaultRouter::rebalanceCall {
+                    vaultFrom: vault_from(),
+                    vaultTo: vault_to(),
+                    assetsAmount: U256::from(10),
+                    maxAmountTo: U256::MAX,
+                },
             )
             .unwrap_err();
             assert_eq!(

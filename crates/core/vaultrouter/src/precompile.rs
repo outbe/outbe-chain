@@ -163,14 +163,7 @@ fn dispatch_local(
             }),
             withdraw(c) => mutate(c, caller, |sender, c| {
                 let target = runtime::registered_liquidity_target(&storage, sender)?;
-                runtime::withdraw(
-                    storage.clone(),
-                    sender,
-                    c.asset,
-                    c.amount,
-                    c.receiver,
-                    target,
-                )
+                runtime::withdraw(storage.clone(), sender, c, target)
             }),
 
             // --- views over external state ---
@@ -198,14 +191,7 @@ fn dispatch_local(
 
             // --- rebalance (CCA-gated; caller supplies the destination asset) ---
             rebalance(c) => mutate(c, caller, |sender, c| {
-                runtime::rebalance(
-                    storage.clone(),
-                    sender,
-                    c.vaultFrom,
-                    c.vaultTo,
-                    c.assetsAmount,
-                    c.maxAmountTo,
-                )
+                runtime::rebalance(storage.clone(), sender, c)
             }),
             previewRebalance(c) => view(c, |c| {
                 let (asset_from, asset_to, amount_to) =
