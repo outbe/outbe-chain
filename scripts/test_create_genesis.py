@@ -808,6 +808,7 @@ class LaunchBundleTests(unittest.TestCase):
                     "run-radicle.sh",
                     "run-node.sh",
                     "run-feeder.sh",
+                    "run-tee-renew.sh",
                     "run-ocomp-exporter.sh",
                     "run-ocomp-worker.sh",
                     "start-all.sh",
@@ -1063,7 +1064,9 @@ class LaunchBundleTests(unittest.TestCase):
                 unit = unit_dir / f"outbe-{role}@.service"
                 self.assertTrue(unit.is_file(), f"{role} unit missing")
                 text = unit.read_text()
-                self.assertIn("Restart=on-failure", text)
+                self.assertIn("Restart=always", text)
+                self.assertIn("StartLimitIntervalSec=0", text)
+                self.assertNotIn("Requires=", text)
                 self.assertIn(f"run-{role}.sh", text)
             self.assertEqual(
                 {path.name for path in unit_dir.glob("*.service")},
@@ -1075,20 +1078,68 @@ class LaunchBundleTests(unittest.TestCase):
                     "outbe-ocomp-worker@.service",
                     "outbe-ocomp-successor-worker@.service",
                     "outbe-feeder@.service",
+                    "outbe-tee-renew@.service",
                 },
             )
-            # The node must not start before the enclave and Radicle it needs.
-            node = (unit_dir / "outbe-node@.service").read_text()
-            self.assertIn("outbe-radicle@%i.service", node)
-            radicle = (unit_dir / "outbe-radicle@.service").read_text()
-            self.assertIn("outbe-enclave@%i.service", radicle)
-            for role in ("ocomp-exporter", "ocomp-worker", "ocomp-successor-worker"):
+            self.assertEqual(
+                {path.name for path in unit_dir.glob("*.timer")},
+                {"outbe-tee-renew@.timer"},
+            )
+
+            dependencies = {
+                "radicle": "outbe-enclave@%i.service",
+                "node": "outbe-radicle@%i.service",
+                "ocomp-exporter": "outbe-node@%i.service",
+                "ocomp-worker": "outbe-node@%i.service",
+                "ocomp-successor-worker": "outbe-node@%i.service",
+                "feeder": "outbe-node@%i.service",
+            }
+            for role, dependency in dependencies.items():
                 unit = (unit_dir / f"outbe-{role}@.service").read_text()
-                self.assertIn("Requires=outbe-node@%i.service", unit)
+                self.assertIn(
+                    f"Wants=network-online.target {dependency}",
+                    unit,
+                )
+
+            enclave = (unit_dir / "outbe-enclave@.service").read_text()
+            self.assertIn("Wants=network-online.target", enclave)
+            self.assertNotIn("aesmd.service", enclave)
             # The enclave needs root for /dev/sgx_*.
-            self.assertIn("User=root", (unit_dir / "outbe-enclave@.service").read_text())
+            self.assertIn("User=root", enclave)
             installer = output_dir / "install-systemd.sh"
             self.assertTrue(installer.stat().st_mode & 0o111)
+            install_text = installer.read_text()
+            self.assertIn("for role in enclave radicle node", install_text)
+
+    def test_tee_renewal_is_daily_for_production_node_host_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            timer = (output_dir / "systemd" / "outbe-tee-renew@.timer").read_text()
+            service = (output_dir / "systemd" / "outbe-tee-renew@.service").read_text()
+            renewal = (output_dir / "validator-0" / "run-tee-renew.sh").read_text()
+
+            self.assertIn("OnCalendar=daily", timer)
+            self.assertIn("Persistent=true", timer)
+            self.assertIn("run-tee-renew.sh", service)
+            self.assertIn(f"exec {output_dir}/outbe-cli tee renew", renewal)
+            self.assertIn("tee renew", renewal)
+            self.assertIn("--rpc-url http://127.0.0.1:8545", renewal)
+            self.assertIn("keys/validator-0/evm-key.hex", renewal)
+            self.assertIn("keys/validator-0/reth-p2p-secret.hex", renewal)
+            self.assertIn(
+                'enable --now "outbe-tee-renew@$INDEX.timer"',
+                (output_dir / "install-systemd.sh").read_text(),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(
+                tmp,
+                {"enclave_sgx": False},
+            )
+            self.assertNotIn(
+                'enable --now "outbe-tee-renew@$INDEX.timer"',
+                (output_dir / "install-systemd.sh").read_text(),
+            )
 
     def test_bootnodes_are_stable_across_renders(self):
         with tempfile.TemporaryDirectory() as tmp:
