@@ -12,7 +12,7 @@ use super::{
     config::{DexMarketConfig, DexProviderConfig},
     math,
     pool::Decimals,
-    rpc::{quantity, Block, Rpc},
+    rpc::{quantity, Block, Log, Rpc},
 };
 use crate::provider::{Provider, TickerPrice};
 
@@ -226,49 +226,12 @@ impl MarketWorker {
                 }
                 Err(error) => return Err(error),
             };
-            let mut seen = BTreeMap::new();
-            let mut buckets: BTreeMap<u64, (u64, U256)> = BTreeMap::new();
-            let mut blocks: BTreeMap<u64, Block> = BTreeMap::new();
             let end = self.rpc.block_at(to).await?;
             ensure!(
                 end.timestamp <= head.timestamp,
                 "DEX log range extends past the head time"
             );
-            blocks.insert(to, end.clone());
-            for log in logs {
-                let number = quantity(&log.block_number)?;
-                let index = quantity(&log.log_index)?;
-                ensure!(
-                    (from..=to).contains(&number),
-                    "DEX log outside requested range"
-                );
-                let amount = self.market.swap_volume(&log)?;
-                // A block's log index is globally unique, including singleton
-                // managers. Identical duplicates are harmless; conflicts fail.
-                let identity = (log.block_hash, index);
-                let value = (log.transaction_hash, log.data.clone(), log.topics.clone());
-                if let Some(previous) = seen.insert(identity, value.clone()) {
-                    ensure!(previous == value, "conflicting duplicate DEX log");
-                    continue;
-                }
-                if let std::collections::btree_map::Entry::Vacant(entry) = blocks.entry(number) {
-                    entry.insert(self.rpc.block_at(number).await?);
-                }
-                let block = blocks
-                    .get(&number)
-                    .ok_or_else(|| eyre!("missing DEX log block"))?;
-                ensure!(
-                    block.hash == log.block_hash && block.timestamp <= head.timestamp,
-                    "DEX log is not in the canonical history"
-                );
-                let bucket = buckets
-                    .entry(number)
-                    .or_insert((block.timestamp, U256::ZERO));
-                bucket.1 = bucket
-                    .1
-                    .checked_add(amount)
-                    .ok_or_else(|| eyre!("DEX block volume overflow"))?;
-            }
+            let buckets = self.bucket_chunk(logs, from, &end, head).await?;
             // Commit only after validating the entire chunk. Retried requests
             // never append a partially processed chunk or count its logs twice.
             self.volumes.extend(buckets);
@@ -280,6 +243,57 @@ impl MarketWorker {
             from = to + 1;
         }
         Ok(())
+    }
+
+    /// Validates one chunk of Swap logs in `[from, end.number]` against the
+    /// canonical chain and sums the base-token amount per block.
+    async fn bucket_chunk(
+        &self,
+        logs: Vec<Log>,
+        from: u64,
+        end: &Block,
+        head: &Block,
+    ) -> Result<BTreeMap<u64, (u64, U256)>> {
+        let to = end.number;
+        let mut seen = BTreeMap::new();
+        let mut buckets: BTreeMap<u64, (u64, U256)> = BTreeMap::new();
+        let mut blocks: BTreeMap<u64, Block> = BTreeMap::new();
+        blocks.insert(to, end.clone());
+        for log in logs {
+            let number = quantity(&log.block_number)?;
+            let index = quantity(&log.log_index)?;
+            ensure!(
+                (from..=to).contains(&number),
+                "DEX log outside requested range"
+            );
+            let amount = self.market.swap_volume(&log)?;
+            // A block's log index is globally unique, including singleton
+            // managers. Identical duplicates are harmless; conflicts fail.
+            let identity = (log.block_hash, index);
+            let value = (log.transaction_hash, log.data.clone(), log.topics.clone());
+            if let Some(previous) = seen.insert(identity, value.clone()) {
+                ensure!(previous == value, "conflicting duplicate DEX log");
+                continue;
+            }
+            if let std::collections::btree_map::Entry::Vacant(entry) = blocks.entry(number) {
+                entry.insert(self.rpc.block_at(number).await?);
+            }
+            let block = blocks
+                .get(&number)
+                .ok_or_else(|| eyre!("missing DEX log block"))?;
+            ensure!(
+                block.hash == log.block_hash && block.timestamp <= head.timestamp,
+                "DEX log is not in the canonical history"
+            );
+            let bucket = buckets
+                .entry(number)
+                .or_insert((block.timestamp, U256::ZERO));
+            bucket.1 = bucket
+                .1
+                .checked_add(amount)
+                .ok_or_else(|| eyre!("DEX block volume overflow"))?;
+        }
+        Ok(buckets)
     }
 }
 
