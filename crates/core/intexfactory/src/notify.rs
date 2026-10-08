@@ -5,11 +5,13 @@ use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
+use outbe_primitives::{
+    block::BlockRuntimeContext, error::Result, storage::StorageHandle, sweep_budget::SweepBudget,
+};
 
 use crate::constants::{
-    MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, MAX_ROUTER_CALLS_PER_BLOCK,
-    MAX_SERIES_PER_MARK, NOTICE_RETRY_SECONDS,
+    MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, MAX_SERIES_PER_MARK,
+    NOTICE_RETRY_SECONDS,
 };
 use crate::precompile::IIntexFactory::CalledNoticeDropped;
 use crate::schema::IntexFactoryContract;
@@ -63,7 +65,7 @@ pub(crate) fn enqueue_notice(factory: &IntexFactoryContract, entry: U256) -> Res
     Ok(())
 }
 
-/// Sends the queued notices, at most [`MAX_ROUTER_CALLS_PER_BLOCK`] router calls' worth.
+/// Sends the queued notices, one write of the sweep budget per router call.
 /// The walk stops at the first entry not yet due: a refused one waits its pause, and the
 /// queue behind it waits no longer than one pause.
 pub fn send_notices(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -78,12 +80,12 @@ pub fn send_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         storage: &ctx.storage,
         now: ctx.block.timestamp,
         stop: tail,
-        messages: 0,
+        budget: SweepBudget::per_block(),
     };
     let mut index = head;
     let mut refused_runs: u32 = 0;
     while index < tail
-        && send.messages < MAX_ROUTER_CALLS_PER_BLOCK
+        && !send.budget.spent()
         && refused_runs < MAX_REFUSED_RUNS_PER_BLOCK
         && notice_retry_at(factory.notify_at.read(&index)?) <= send.now
     {
@@ -100,14 +102,14 @@ pub fn send_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// One block's send: the queue window it walks and the router calls it spent.
+/// One block's send: the queue window it walks and the router calls left.
 struct NoticeSend<'a, 'storage> {
     factory: &'a IntexFactoryContract<'storage>,
     storage: &'a StorageHandle<'storage>,
     now: u64,
     /// End of this block's window. Entries requeued behind it wait for a later block.
     stop: u32,
-    messages: u32,
+    budget: SweepBudget,
 }
 
 impl NoticeSend<'_, '_> {
@@ -117,7 +119,7 @@ impl NoticeSend<'_, '_> {
     fn run(&mut self, at: u32) -> Result<(u32, bool)> {
         let factory = self.factory;
         let first = factory.notify_at.read(&at)?;
-        let calls_left = MAX_ROUTER_CALLS_PER_BLOCK - self.messages;
+        let calls_left = self.budget.writes_left();
         let (first_id, called_at) = unpack_called_notice(first);
         let worldwide_day = first_id.worldwide_day();
         let mut run = vec![first_id];
@@ -141,7 +143,7 @@ impl NoticeSend<'_, '_> {
         for slot in at..index {
             factory.notify_at.clear(&slot)?;
         }
-        self.messages = self.messages.saturating_add(router_calls(run.len()));
+        self.budget.admit_writes(router_calls(run.len()));
         let refused = crate::called::notify_called(self.storage, worldwide_day, called_at, &run)?;
         let all_refused = refused.len() == run.len();
         // A refused entry goes behind this block's window, so it never wedges the queue.

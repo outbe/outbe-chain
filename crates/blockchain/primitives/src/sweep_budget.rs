@@ -58,6 +58,11 @@ impl SweepBudget {
         true
     }
 
+    /// Whether a walk whose next visit may write has to stop for this block.
+    pub fn spent(&self) -> bool {
+        self.visits == 0 || !self.fits_writes(1)
+    }
+
     pub fn body_write(&mut self) -> bool {
         take(&mut self.body_writes, 1)
     }
@@ -98,6 +103,15 @@ mod tests {
         assert!(!budget.write());
         assert!(budget.body_write());
         assert!(!budget.body_write());
+    }
+
+    #[test]
+    fn a_walk_stops_when_visits_or_writes_run_out() {
+        assert!(!SweepBudget::new(1, 1, 0).spent());
+        assert!(SweepBudget::new(0, 1, 0).spent());
+        let mut budget = SweepBudget::new(1, 1, 0);
+        assert!(budget.write());
+        assert!(budget.spent());
     }
 
     #[test]

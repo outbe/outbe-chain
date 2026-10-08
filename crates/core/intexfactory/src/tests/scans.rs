@@ -680,7 +680,7 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
         let deadline = now + DAY;
         let bucket = IntexFactoryContract::deadline_bucket(deadline);
 
-        let queued = crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK + 44;
+        let queued = outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK + 44;
         for index in 0..queued {
             let day = 20260101 + index;
             let member = called_series(&s, day);

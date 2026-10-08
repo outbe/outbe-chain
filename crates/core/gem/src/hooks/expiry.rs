@@ -6,7 +6,6 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
-use crate::constants::MAX_EXPIRY_STEPS_PER_BLOCK;
 use crate::errors::GemError;
 use crate::precompile::IGem::ExpiryDeferred;
 use crate::schema::GemContract;
@@ -20,7 +19,7 @@ pub(super) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         now: ctx.block.timestamp,
         burned: 0,
     };
-    let mut budget = SweepBudget::new(MAX_EXPIRY_STEPS_PER_BLOCK, MAX_EXPIRY_STEPS_PER_BLOCK, 0);
+    let mut budget = SweepBudget::per_block();
     expiry_queue::sweep(
         &ExpiryHours(&queue),
         &ctx.storage,

@@ -9,10 +9,7 @@ use outbe_primitives::{
 };
 
 use super::{materializing, sweep_failure};
-use crate::{
-    api, constants::MAX_NOD_FORFEITS_PER_BLOCK, precompile::INod, schema::NodContract,
-    state::ExpiryHours,
-};
+use crate::{api, precompile::INod, schema::NodContract, state::ExpiryHours};
 
 /// The storage, scope and parent bodies a forfeit loads and removes Nods through.
 pub(crate) struct Bodies<'a, 's, P> {
@@ -38,7 +35,7 @@ pub(crate) fn sweep_expired(
         nod: NodContract::new(ctx.storage.clone()),
         forfeited: 0,
     };
-    let mut budget = SweepBudget::new(MAX_NOD_FORFEITS_PER_BLOCK, 0, MAX_NOD_FORFEITS_PER_BLOCK);
+    let mut budget = SweepBudget::per_block();
     expiry_queue::sweep(
         &ExpiryHours(&queue),
         &ctx.storage,

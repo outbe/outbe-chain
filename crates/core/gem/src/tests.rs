@@ -1462,9 +1462,10 @@ fn a_call_slice_refreshes_all_metadata_once() {
 #[test]
 fn a_called_bucket_wider_than_the_budget_burns_over_several_blocks() {
     with_storage(|storage| {
-        let loads: Vec<u64> = (0..=u64::from(crate::constants::MAX_EXPIRY_STEPS_PER_BLOCK))
-            .map(|n| 1_000 + n)
-            .collect();
+        let loads: Vec<u64> =
+            (0..=u64::from(outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK))
+                .map(|n| 1_000 + n)
+                .collect();
         let gems = alice_gems(storage, &loads);
         call_gem(storage, gems[0], T_NOW);
         let notice = api::get_gem(storage, gems[0])
@@ -1624,8 +1625,8 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
             .unwrap();
         let pair = seed_currency(storage, 840, Some(U256::from(600_000u64)));
         let issued_at = T_NOW - 100 * 86_400;
-        // A bin that spends the whole budget, and one gem priced above it.
-        for nonce in 0..u64::from(crate::constants::MAX_BUCKET_VISITS_PER_BLOCK) {
+        // A bin whose calls spend the whole write budget, and one gem priced above it.
+        for nonce in 0..u64::from(outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK) {
             callable_gem_of(storage, 840, nonce, issued_at, U256::from(100_000u64));
         }
         let above = callable_gem_of(storage, 840, 999, issued_at, U256::from(200_000u64));
@@ -1674,7 +1675,7 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
             .write(crate::config::PROFILE_PROD)
             .unwrap();
         let pair = seed_currency(&storage, 840, Some(U256::from(600_000u64)));
-        for nonce in 0..=u64::from(crate::constants::MAX_BUCKET_VISITS_PER_BLOCK) {
+        for nonce in 0..=u64::from(outbe_primitives::sweep_budget::SWEEP_VISITS_PER_BLOCK) {
             callable_gem_of(
                 &storage,
                 840,
@@ -1729,7 +1730,7 @@ fn a_call_sweep_over_several_currencies_always_ends() {
             let pair = seed_currency(storage, iso, Some(U256::from(600_000u64)));
             priced_window(storage, pair, day, U256::from(300_000u64));
             // Issued five days ago: every gem is visited, decided and left where it is.
-            for nonce in 0..=u64::from(crate::constants::MAX_BUCKET_VISITS_PER_BLOCK) {
+            for nonce in 0..=u64::from(outbe_primitives::sweep_budget::SWEEP_VISITS_PER_BLOCK) {
                 callable_gem_of(
                     storage,
                     iso,

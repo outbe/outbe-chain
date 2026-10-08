@@ -19,15 +19,6 @@ pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB882
 /// cases, creators receive a single payment.
 pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
-/// Work one lifecycle scan may do: a decision reads a group, an action writes one
-/// series with its index move and notice. The two budgets are separate because they differ
-/// in cost.
-pub(crate) const MAX_GROUP_DECISIONS_PER_BLOCK: u32 = 256;
-pub(crate) const MAX_SERIES_ACTIONS_PER_BLOCK: u32 = 256;
-
-/// Router calls one block's notice send may make; an entry costing none still spends one.
-pub const MAX_ROUTER_CALLS_PER_BLOCK: u32 = 64;
-
 /// Router calls a Called notice gets before it is dropped.
 pub const MAX_CALLED_NOTICE_ATTEMPTS: u8 = 12;
 

@@ -12,8 +12,7 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::{
-    MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, MAX_ROUTER_CALLS_PER_BLOCK,
-    NOTICE_RETRY_SECONDS,
+    MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, NOTICE_RETRY_SECONDS,
 };
 use outbe_intexfactory::notify::{
     called_notice_attempts, notice_retry_at, pack_called_notice, send_notices,
@@ -25,6 +24,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
 use outbe_primitives::time::WorldwideDay;
 
 const CHAIN_ID: u64 = 1;
@@ -85,13 +85,13 @@ fn queue_bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
 fn a_backlog_drains_one_block_worth_at_a_time() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        let queued = MAX_ROUTER_CALLS_PER_BLOCK + 5;
+        let queued = SWEEP_WRITES_PER_BLOCK + 5;
         seed(&handle, queued);
 
         drain(&handle);
         assert_eq!(
             queue_bounds(&handle),
-            (MAX_ROUTER_CALLS_PER_BLOCK, queued),
+            (SWEEP_WRITES_PER_BLOCK, queued),
             "one block spends its budget and leaves the rest queued"
         );
 
@@ -135,7 +135,7 @@ fn an_empty_queue_is_a_noop() {
 fn an_exactly_full_block_rewinds_the_queue() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        seed(&handle, MAX_ROUTER_CALLS_PER_BLOCK);
+        seed(&handle, SWEEP_WRITES_PER_BLOCK);
         drain(&handle);
         assert_eq!(queue_bounds(&handle), (0, 0));
     });

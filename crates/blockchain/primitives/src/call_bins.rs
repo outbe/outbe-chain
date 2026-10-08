@@ -181,7 +181,8 @@ pub enum Visit {
 
 /// Walks the currency's bins up to `ceiling`, lowest first, each from the top, so a
 /// visit that swap-removes its entry only moves one already visited. Every entry
-/// costs one visit. Resumes where the last walk stopped. Returns whether it ended.
+/// costs one visit, and the walk stops once no write is left. Resumes where the last
+/// walk stopped. Returns whether it ended.
 pub fn walk<'s, S, F>(
     store: &S,
     ceiling: u32,
@@ -230,7 +231,7 @@ where
     F: FnMut(S::Entry, &mut SweepBudget) -> Result<Visit>,
 {
     while remaining > 0 {
-        if !budget.visit() {
+        if budget.spent() || !budget.visit() {
             return Ok(Some(remaining));
         }
         remaining -= 1;
@@ -254,7 +255,7 @@ where
 {
     let start = currency_position(currencies, cursor.read()?);
     for &iso in currencies.iter().skip(start) {
-        if budget.visits_left() == 0 || !per_currency(iso, budget)? {
+        if budget.spent() || !per_currency(iso, budget)? {
             cursor.write(u32::from(iso))?;
             return Ok(false);
         }

@@ -38,7 +38,7 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
-use crate::{constants::MAX_NOD_CALL_VISITS_PER_BLOCK, precompile::INod, schema::NodContract};
+use crate::{precompile::INod, schema::NodContract};
 
 pub(crate) use forfeits::sweep_expired;
 
@@ -119,7 +119,7 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
-        let mut budget = SweepBudget::new(MAX_NOD_CALL_VISITS_PER_BLOCK, u32::MAX, 0);
+        let mut budget = SweepBudget::per_block();
         let mut called_days = BTreeSet::new();
         let mut windows = CallWindows::new(pinned_day);
         let (called, finished) = calls::call_arm(

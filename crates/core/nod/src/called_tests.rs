@@ -12,7 +12,9 @@ use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
-use outbe_primitives::sweep_budget::SweepBudget;
+use outbe_primitives::sweep_budget::{
+    SweepBudget, SWEEP_BODY_WRITES_PER_BLOCK, SWEEP_VISITS_PER_BLOCK,
+};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::NOD_ADDRESS,
@@ -26,7 +28,7 @@ use crate::{
     api,
     constants::{
         CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_THRESHOLD_DAYS,
-        CALL_WINDOW, MAX_NOD_CALL_VISITS_PER_BLOCK, MAX_NOD_FORFEITS_PER_BLOCK, SECS_PER_DAY,
+        CALL_WINDOW, SECS_PER_DAY,
     },
     precompile::INod,
     NodContract, NodItemState, NodRepositoryReader,
@@ -1164,7 +1166,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             .unwrap(),
             (1, false)
         );
-        let mut visits = SweepBudget::new(MAX_NOD_CALL_VISITS_PER_BLOCK, u32::MAX, 0);
+        let mut visits = SweepBudget::new(SWEEP_VISITS_PER_BLOCK, u32::MAX, 0);
         assert_eq!(
             crate::called::call_currency(
                 &ctx,
@@ -1182,7 +1184,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
         );
         assert_eq!(
             visits.visits_left(),
-            MAX_NOD_CALL_VISITS_PER_BLOCK - 1,
+            SWEEP_VISITS_PER_BLOCK - 1,
             "the resumed walk visits only what was left"
         );
         assert_eq!(called_at(storage, items[0].bucket_key), at);
@@ -1225,7 +1227,7 @@ fn slice(
 #[test]
 fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
     harness(|storage, scope, parent| {
-        let items: Vec<NodItemState> = (1..=MAX_NOD_FORFEITS_PER_BLOCK + 1)
+        let items: Vec<NodItemState> = (1..=SWEEP_BODY_WRITES_PER_BLOCK + 1)
             .map(|owner| {
                 let item = nod_item(Address::left_padding_from(&owner.to_be_bytes()), ISO);
                 api::add_nod(storage, scope, parent, &item, entry_price()).unwrap();
@@ -1246,7 +1248,7 @@ fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
         finalize_through(storage, past);
         assert_eq!(
             scan(storage, scope, parent, past),
-            MAX_NOD_FORFEITS_PER_BLOCK
+            SWEEP_BODY_WRITES_PER_BLOCK
         );
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 1);
@@ -1273,7 +1275,7 @@ fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfe
 
         // Settled buckets still take a visit each and use up the budget in the first currency.
         let mut nod = NodContract::new(storage.clone());
-        for index in 1..=MAX_NOD_CALL_VISITS_PER_BLOCK {
+        for index in 1..=SWEEP_VISITS_PER_BLOCK {
             let key = B256::left_padding_from(&index.to_be_bytes());
             nod.callable_bucket_currency.write(&key, ISO).unwrap();
             nod.callable_bucket_call_price_minor
@@ -1748,7 +1750,7 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
                 &scope,
                 &parent,
                 bucket_key,
-                MAX_NOD_FORFEITS_PER_BLOCK,
+                SWEEP_BODY_WRITES_PER_BLOCK,
             )
             .unwrap(),
             3
@@ -1760,7 +1762,7 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
                 &scope,
                 &parent,
                 bucket_key,
-                MAX_NOD_FORFEITS_PER_BLOCK,
+                SWEEP_BODY_WRITES_PER_BLOCK,
             )
             .unwrap(),
             0
@@ -1893,7 +1895,7 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         register(&storage, ISO);
-        let items: Vec<NodItemState> = (1..=MAX_NOD_FORFEITS_PER_BLOCK)
+        let items: Vec<NodItemState> = (1..=SWEEP_BODY_WRITES_PER_BLOCK)
             .map(|owner| {
                 let mut item = nod_item(Address::left_padding_from(&owner.to_be_bytes()), ISO);
                 item.gratis_load_minor = U256::from(owner);
@@ -1918,7 +1920,7 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
                 .unwrap();
             assert_eq!(
                 scan(&storage, &scope, &parent, past),
-                MAX_NOD_FORFEITS_PER_BLOCK
+                SWEEP_BODY_WRITES_PER_BLOCK
             );
         }
         assert_eq!(nod.bucket_nod_count.read(&bucket_key).unwrap(), 0);
@@ -2009,7 +2011,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
             &probe_scope,
             &parent,
             probe_key,
-            MAX_NOD_FORFEITS_PER_BLOCK,
+            SWEEP_BODY_WRITES_PER_BLOCK,
         )
         .unwrap();
     });
@@ -2047,7 +2049,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
                 &scope,
                 &parent,
                 bucket_key,
-                MAX_NOD_FORFEITS_PER_BLOCK,
+                SWEEP_BODY_WRITES_PER_BLOCK,
             )
         });
         assert!(
@@ -2076,7 +2078,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
                     &scope,
                     &parent,
                     bucket_key,
-                    MAX_NOD_FORFEITS_PER_BLOCK,
+                    SWEEP_BODY_WRITES_PER_BLOCK,
                 )
                 .unwrap(),
                 3
@@ -2088,7 +2090,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
                     &scope,
                     &parent,
                     bucket_key,
-                    MAX_NOD_FORFEITS_PER_BLOCK,
+                    SWEEP_BODY_WRITES_PER_BLOCK,
                 )
                 .unwrap(),
                 0

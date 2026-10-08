@@ -931,7 +931,7 @@ fn settling_a_called_position_in_full_leaves_the_queue() {
 #[test]
 fn the_void_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
-    let budget = crate::expired::MAX_CREDIS_VOIDS_PER_BLOCK;
+    let budget = outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
     let total = budget + 1;
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap_for(&storage, alice(), pledge_cost() * U256::from(total));

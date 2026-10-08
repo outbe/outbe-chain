@@ -114,8 +114,9 @@ pub(crate) fn call_currency(
         &CallBins(&index, iso_code),
         ceiling,
         budget,
-        |bucket_key, _| match try_call(ctx, nod, window, bucket_key, now)? {
+        |bucket_key, budget| match try_call(ctx, nod, window, bucket_key, now)? {
             Some(true) => {
+                budget.write();
                 called = called.saturating_add(1);
                 called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
                 Ok(Visit::Next)

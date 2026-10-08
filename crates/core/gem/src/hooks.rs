@@ -14,7 +14,6 @@ use outbe_primitives::{
 };
 
 use crate::config::GemParams;
-use crate::constants::MAX_BUCKET_VISITS_PER_BLOCK;
 use crate::precompile::IGem::{BatchMetadataUpdate, CallScanSkipped, SweepDaySkipped};
 use crate::schema::GemContract;
 use crate::state::BucketBins;
@@ -111,7 +110,7 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
             params: crate::config::read_from(&self.gem, ctx.block.chain_id)?,
             windows: CallWindows::new(pinned_day),
         };
-        let mut budget = SweepBudget::new(MAX_BUCKET_VISITS_PER_BLOCK, u32::MAX, 0);
+        let mut budget = SweepBudget::per_block();
         let mut called: u32 = 0;
         let finished = call_bins::walk_currencies(
             &currencies,
@@ -203,8 +202,9 @@ pub(crate) fn call_currency(
         &BucketBins(&index, iso_code),
         ceiling,
         budget,
-        |bucket, _| match call_bucket(ctx, &mut gem, window, bucket)? {
+        |bucket, budget| match call_bucket(ctx, &mut gem, window, bucket)? {
             Some(true) => {
+                budget.write();
                 called = called.saturating_add(1);
                 Ok(Visit::Next)
             }

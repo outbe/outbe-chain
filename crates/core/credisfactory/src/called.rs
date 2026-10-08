@@ -36,10 +36,6 @@ use outbe_primitives::{
 use crate::precompile::ICredisFactory::{CallScanSkipped, SweepDaySkipped};
 use crate::schema::CredisFactoryContract;
 
-/// Max positions one block's slice visits. The rest of the pass continues on the
-/// next block, pinned to the same day.
-pub(crate) const MAX_CREDIS_CALL_VISITS_PER_BLOCK: u32 = 4096;
-
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut CredisCallSweep::new(ctx))
@@ -134,7 +130,7 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
             windows: CallWindows::new(pinned_day),
             called: 0,
         };
-        let mut budget = SweepBudget::new(MAX_CREDIS_CALL_VISITS_PER_BLOCK, u32::MAX, 0);
+        let mut budget = SweepBudget::per_block();
         let finished = call_bins::walk_currencies(
             &currencies,
             &self.factory.call_currency_cursor,
@@ -195,20 +191,27 @@ impl CallSlice<'_, '_> {
             &CallBins(index, iso_code),
             ceiling,
             budget,
-            |position_id, _| visit(ctx, credis, window, position_id, mutated),
+            |position_id, budget| match visit(ctx, credis, window, position_id)? {
+                Some(true) => {
+                    budget.write();
+                    *mutated = mutated.saturating_add(1);
+                    Ok(Visit::Next)
+                }
+                Some(false) => Ok(Visit::Next),
+                None => Ok(Visit::Stop),
+            },
         )
     }
 }
 
-/// Calls the position if its breach window filled. A deterministic error is isolated
-/// to this position. A node-local error fails the block.
+/// Whether the position was called, or `None` when the gas ran out before it. A
+/// deterministic error is isolated to this position. A node-local error fails the block.
 fn visit(
     ctx: &BlockRuntimeContext,
     credis: &mut CredisContract<'_>,
     window: &CallWindow,
     position_id: U256,
-    mutated: &mut u32,
-) -> Result<Visit> {
+) -> Result<Option<bool>> {
     // Structural reads stay on `?` so infra errors still propagate.
     let position = credis.get_position(position_id)?;
     let now = ctx.block.timestamp;
@@ -216,16 +219,11 @@ fn visit(
         .storage
         .with_checkpoint(|| call_if_breached(credis, window, &position, now));
     match call_sweep::decide(outcome, PrecompileError::sweep_failure)? {
-        Decided::Done(called) => {
-            if called {
-                *mutated = mutated.saturating_add(1);
-            }
-            Ok(Visit::Next)
-        }
-        Decided::Stopped => Ok(Visit::Stop),
+        Decided::Done(called) => Ok(Some(called)),
+        Decided::Stopped => Ok(None),
         Decided::Skipped(error) => {
             tracing::warn!(target: "outbe::credisfactory", %position_id, error = ?error, "credis scan: skipping position");
-            Ok(Visit::Next)
+            Ok(Some(false))
         }
     }
 }

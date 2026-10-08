@@ -46,14 +46,3 @@ pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECS_PER_DAY;
 /// Seconds after `called_at` within which the owner must settle. Once the
 /// period elapses, the CycleTick forfeit sweep burns the bucket's remaining Nods.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
-
-/// Buckets visited per call slice. The cursors resume the rest on the next
-/// CycleTick against the same frozen UTC day.
-pub const MAX_NOD_CALL_VISITS_PER_BLOCK: u32 = 4096;
-
-/// Forfeit-queue steps per block: one per Nod burned or queue slot visited. The
-/// cap is far below the call visit budget because a forfeit is a compressed-entity
-/// load plus delete rather than an EVM slot write.
-/// A correlated mass-forfeit is the expected shape of a call event, not a tail
-/// case, so the burst needs its own cap.
-pub const MAX_NOD_FORFEITS_PER_BLOCK: u32 = 256;

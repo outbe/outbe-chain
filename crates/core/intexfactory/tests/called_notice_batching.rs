@@ -5,12 +5,13 @@
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::{MAX_ROUTER_CALLS_PER_BLOCK, MAX_SERIES_PER_MARK};
+use outbe_intexfactory::constants::MAX_SERIES_PER_MARK;
 use outbe_intexfactory::notify::{joins_run, pack_called_notice, send_notices};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
 use outbe_primitives::time::WorldwideDay;
 
 const CHAIN_ID: u64 = 1;
@@ -87,7 +88,7 @@ fn a_run_never_reaches_past_the_chunk_limit() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         // One coalesced run: the wire cap turns every eight entries into one call.
-        let run_cap = MAX_ROUTER_CALLS_PER_BLOCK * MAX_SERIES_PER_MARK as u32;
+        let run_cap = SWEEP_WRITES_PER_BLOCK * MAX_SERIES_PER_MARK as u32;
         let queued = run_cap + 5;
         for index in 0..queued {
             push_called(&handle, index, CALLED_AT);
@@ -149,7 +150,7 @@ fn a_different_call_time_ends_the_run() {
 fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        let queued = MAX_ROUTER_CALLS_PER_BLOCK + 5;
+        let queued = SWEEP_WRITES_PER_BLOCK + 5;
         for index in 0..queued {
             push_called(&handle, index, CALLED_AT + index);
         }
@@ -157,12 +158,12 @@ fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
         drain(&handle);
         assert_eq!(
             bounds(&handle),
-            (MAX_ROUTER_CALLS_PER_BLOCK, queued),
+            (SWEEP_WRITES_PER_BLOCK, queued),
             "the firing stops on its router-call budget"
         );
 
         let factory = IntexFactoryContract::new(handle.clone());
-        for index in MAX_ROUTER_CALLS_PER_BLOCK..queued {
+        for index in SWEEP_WRITES_PER_BLOCK..queued {
             assert_ne!(
                 factory.notify_at.read(&index).unwrap(),
                 U256::ZERO,

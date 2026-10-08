@@ -21,10 +21,7 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
-use crate::constants::{
-    MAX_GROUP_DECISIONS_PER_BLOCK, MAX_SERIES_ACTIONS_PER_BLOCK, MAX_SERIES_PER_MARK,
-    ORIGIN_ROUTER_ADDRESS,
-};
+use crate::constants::{MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 use crate::state::CallBins;
@@ -106,11 +103,7 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
         let currencies = get_all_reference_currencies(ctx)?;
         let params = crate::config::read_from(&self.factory, ctx.block.chain_id)?;
         let mut windows = CallWindows::new(pinned_day);
-        let mut budget = SweepBudget::new(
-            MAX_GROUP_DECISIONS_PER_BLOCK,
-            MAX_SERIES_ACTIONS_PER_BLOCK,
-            0,
-        );
+        let mut budget = SweepBudget::per_block();
         let mut called: u32 = 0;
         let finished = call_bins::walk_currencies(
             &currencies,

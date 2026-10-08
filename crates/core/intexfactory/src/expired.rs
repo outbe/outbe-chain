@@ -11,7 +11,6 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
-use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 use crate::state::ExpiryHours;
@@ -23,11 +22,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         storage: &ctx.storage,
         factory: IntexFactoryContract::new(ctx.storage.clone()),
     };
-    let mut budget = SweepBudget::new(
-        MAX_SERIES_ACTIONS_PER_BLOCK,
-        MAX_SERIES_ACTIONS_PER_BLOCK,
-        0,
-    );
+    let mut budget = SweepBudget::per_block();
     expiry_queue::sweep(
         &ExpiryHours(&queue),
         &ctx.storage,
