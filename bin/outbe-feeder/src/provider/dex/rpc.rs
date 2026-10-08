@@ -121,7 +121,7 @@ impl Rpc {
         call: C,
         block: &Block,
     ) -> Result<C::Return> {
-        // EIP-1898 pins all state reads to one canonical finalized block hash.
+        // EIP-1898 pins all state reads to one canonical block hash.
         let value = self
             .request(
                 "eth_call",

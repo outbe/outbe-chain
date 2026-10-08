@@ -9,11 +9,14 @@
 //! deterministic FP18 integers. The final pair-specific conversion emits COEN/ISO at `1e6` and
 //! leaves generic pairs at `1e18`.
 
-use crate::config::{CurrencyPairSource, FeederConfig};
+mod math;
+
+use crate::config::{CurrencyPairConfig, CurrencyPairSource, FeederConfig};
 use crate::fixed::FixedValue;
 use crate::provider::{CandlePrice, Provider, TickerPrice};
 use alloy_primitives::{aliases::U1024, Address, U256, U512};
 use eyre::Result;
+use math::{filter_deviations, narrow_u1024, narrow_u512};
 use outbe_primitives::units::SCALE_1E18;
 use std::collections::HashMap;
 
@@ -93,6 +96,9 @@ fn compute_weighted(prices: &[(FixedValue, FixedValue)]) -> Result<Option<(U256,
     Ok(Some((price, volume)))
 }
 
+type ProviderTickers = Vec<(String, HashMap<String, TickerPrice>)>;
+type ProviderCandles = Vec<(String, HashMap<String, Vec<CandlePrice>>)>;
+
 /// Fetches provider-native source markets and emits one observation per Oracle pair.
 pub async fn fetch_and_aggregate(
     providers: &[Box<dyn Provider>],
@@ -102,9 +108,27 @@ pub async fn fetch_and_aggregate(
         return Ok(Vec::new());
     }
 
-    let mut all_tickers: Vec<(String, HashMap<String, TickerPrice>)> = Vec::new();
-    let mut all_candles: Vec<(String, HashMap<String, Vec<CandlePrice>>)> = Vec::new();
+    let (all_tickers, all_candles) = fetch_market_data(providers, config).await;
 
+    // Aggregate each source independently, then merge those source observations
+    // into exactly one wire tuple for the configured Oracle pair.
+    let mut results = Vec::new();
+    for pair_config in &config.currency_pairs {
+        if let Some(price) = aggregate_pair(pair_config, config, &all_tickers, &all_candles)? {
+            results.push(price);
+        }
+    }
+    Ok(results)
+}
+
+/// Asks every provider for the tickers and candles of the markets configured
+/// for it. A failed or slow provider is logged and left out.
+async fn fetch_market_data(
+    providers: &[Box<dyn Provider>],
+    config: &FeederConfig,
+) -> (ProviderTickers, ProviderCandles) {
+    let mut all_tickers = ProviderTickers::new();
+    let mut all_candles = ProviderCandles::new();
     for provider in providers {
         let mut source_pairs = config
             .currency_pairs
@@ -119,93 +143,84 @@ pub async fn fetch_and_aggregate(
             continue;
         }
 
-        // Fetch tickers
         match tokio::time::timeout(
             std::time::Duration::from_secs(5),
             provider.get_ticker_prices(&source_pairs),
         )
         .await
         {
-            Ok(Ok(tickers)) => {
-                all_tickers.push((provider.name().to_string(), tickers));
-            }
+            Ok(Ok(tickers)) => all_tickers.push((provider.name().to_string(), tickers)),
             Ok(Err(e)) => {
-                tracing::warn!(provider = provider.name(), error = %e, "provider ticker fetch failed");
+                tracing::warn!(provider = provider.name(), error = %e, "provider ticker fetch failed")
             }
-            Err(_) => {
-                tracing::warn!(
-                    provider = provider.name(),
-                    "provider ticker fetch timed out"
-                );
-            }
+            Err(_) => tracing::warn!(
+                provider = provider.name(),
+                "provider ticker fetch timed out"
+            ),
         }
 
-        // Fetch candles
         match tokio::time::timeout(
             std::time::Duration::from_secs(5),
             provider.get_candle_prices(&source_pairs),
         )
         .await
         {
-            Ok(Ok(candles)) => {
-                if !candles.is_empty() {
-                    all_candles.push((provider.name().to_string(), candles));
-                }
+            Ok(Ok(candles)) if !candles.is_empty() => {
+                all_candles.push((provider.name().to_string(), candles))
             }
+            Ok(Ok(_)) => {}
             Ok(Err(e)) => {
-                tracing::warn!(provider = provider.name(), error = %e, "provider candle fetch failed");
+                tracing::warn!(provider = provider.name(), error = %e, "provider candle fetch failed")
             }
-            Err(_) => {
-                tracing::warn!(
-                    provider = provider.name(),
-                    "provider candle fetch timed out"
-                );
-            }
+            Err(_) => tracing::warn!(
+                provider = provider.name(),
+                "provider candle fetch timed out"
+            ),
         }
     }
+    (all_tickers, all_candles)
+}
 
-    // Aggregate each source independently, then merge those source observations
-    // into exactly one wire tuple for the configured Oracle pair.
-    let mut results = Vec::new();
-
-    for pair_config in &config.currency_pairs {
-        let key = format!("{}/{}", pair_config.base, pair_config.quote);
-        let threshold = config.deviation_for(&pair_config.base);
-        let (base, quote) = pair_config.oracle_pair()?;
-        let is_coen_iso = is_coen_iso_pair(base, quote);
-        let mut observations = Vec::new();
-        for source in &pair_config.sources {
-            if let Some(observation) = source_observation(source, &all_tickers, &all_candles)? {
-                observations.push(observation);
-            }
-        }
-
-        if observations.is_empty() {
-            continue;
-        }
-
-        let filtered = filter_deviations(&observations, threshold)?;
-        if filtered.is_empty() {
-            continue;
-        }
-
-        let Some((vwap, total_volume)) = compute_weighted(&filtered)?
-            .and_then(|(price, volume)| finalize_pair_value(is_coen_iso, price, volume))
-        else {
-            continue;
-        };
-        if !vwap.is_zero() {
-            tracing::debug!(pair = %key, sources = filtered.len(), "aggregated Oracle pair");
-            results.push(AggregatedPrice {
-                base,
-                quote,
-                price: vwap,
-                volume: total_volume,
-            });
+/// One Oracle pair: filter its source observations, weight them by volume
+/// and convert to the pair's wire scale. `None` when nothing usable remains.
+fn aggregate_pair(
+    pair_config: &CurrencyPairConfig,
+    config: &FeederConfig,
+    all_tickers: &ProviderTickers,
+    all_candles: &ProviderCandles,
+) -> Result<Option<AggregatedPrice>> {
+    let key = format!("{}/{}", pair_config.base, pair_config.quote);
+    let threshold = config.deviation_for(&pair_config.base);
+    let (base, quote) = pair_config.oracle_pair()?;
+    let is_coen_iso = is_coen_iso_pair(base, quote);
+    let mut observations = Vec::new();
+    for source in &pair_config.sources {
+        if let Some(observation) = source_observation(source, all_tickers, all_candles)? {
+            observations.push(observation);
         }
     }
-
-    Ok(results)
+    if observations.is_empty() {
+        return Ok(None);
+    }
+    let filtered = filter_deviations(&observations, threshold)?;
+    if filtered.is_empty() {
+        return Ok(None);
+    }
+    let Some((vwap, total_volume)) = compute_weighted(&filtered)?
+        .and_then(|(price, volume)| finalize_pair_value(is_coen_iso, price, volume))
+    else {
+        return Ok(None);
+    };
+    if vwap.is_zero() {
+        return Ok(None);
+    }
+    tracing::debug!(pair = %key, sources = filtered.len(), "aggregated Oracle pair");
+    Ok(Some(AggregatedPrice {
+        base,
+        quote,
+        price: vwap,
+        volume: total_volume,
+    }))
 }
 
 fn source_observation(
@@ -238,78 +253,6 @@ fn source_observation(
         .and_then(|(_, prices)| prices.get(&key))
         .filter(|ticker| !ticker.price.is_zero())
         .map(|ticker| (ticker.price, ticker.volume)))
-}
-
-/// Filters prices that deviate more than `threshold` standard deviations from
-/// the median. Prices, threshold, mean, variance and square root are all
-/// deterministic integers. The threshold is dimensionless FP18.
-fn filter_deviations(
-    prices: &[(FixedValue, FixedValue)],
-    threshold: FixedValue,
-) -> Result<Vec<(FixedValue, FixedValue)>> {
-    if prices.len() <= 1 {
-        return Ok(prices.to_vec());
-    }
-
-    let mut sorted: Vec<U256> = prices.iter().map(|(price, _)| price.raw()).collect();
-    sorted.sort_unstable();
-    let median = sorted[sorted.len() / 2];
-
-    let sum = sorted.iter().try_fold(U512::ZERO, |sum, price| {
-        sum.checked_add(U512::from(*price))
-            .ok_or_else(|| eyre::eyre!("deviation mean sum overflow"))
-    })?;
-    let mean = narrow_u512(sum / U512::from(sorted.len()), "deviation mean")?;
-    let sum_sq = sorted.iter().try_fold(U1024::ZERO, |sum, price| {
-        let deviation = price.abs_diff(mean);
-        let wide = U1024::from(deviation);
-        sum.checked_add(wide * wide)
-            .ok_or_else(|| eyre::eyre!("deviation square sum overflow"))
-    })?;
-    let variance = sum_sq / U1024::from(sorted.len());
-    let std_dev = narrow_u1024(isqrt_u1024(variance), "deviation standard deviation")?;
-
-    if std_dev.is_zero() {
-        return Ok(prices.to_vec());
-    }
-
-    let allowed = U512::from(threshold.raw()) * U512::from(std_dev) / U512::from(SCALE_1E18);
-
-    Ok(prices
-        .iter()
-        .filter(|(price, _)| U512::from(price.raw().abs_diff(median)) <= allowed)
-        .cloned()
-        .collect())
-}
-
-fn narrow_u512(value: U512, label: &'static str) -> Result<U256> {
-    if value > U512::from(U256::MAX) {
-        return Err(eyre::eyre!("{label} exceeds U256"));
-    }
-    Ok(value.wrapping_to::<U256>())
-}
-
-fn narrow_u1024(value: U1024, label: &'static str) -> Result<U256> {
-    if value > U1024::from(U256::MAX) {
-        return Err(eyre::eyre!("{label} exceeds U256"));
-    }
-    Ok(value.wrapping_to::<U256>())
-}
-
-fn isqrt_u1024(n: U1024) -> U1024 {
-    if n.is_zero() {
-        return U1024::ZERO;
-    }
-    if n == U1024::ONE {
-        return U1024::ONE;
-    }
-    let mut x = n;
-    let mut y = (x >> 1) + (x & U1024::ONE);
-    while y < x {
-        x = y;
-        y = (x + n / x) >> 1;
-    }
-    x
 }
 
 #[cfg(test)]
@@ -483,55 +426,6 @@ mod tests {
         assert_eq!(volume, U256::ZERO);
     }
 
-    #[test]
-    fn test_filter_deviations() {
-        let prices = vec![
-            (fp("100"), fp("1")),
-            (fp("101"), fp("1")),
-            (fp("102"), fp("1")),
-            (fp("999"), fp("1")),
-        ];
-        let filtered = filter_deviations(&prices, fp("2")).unwrap();
-        assert!(filtered.len() < prices.len());
-        assert!(filtered.iter().all(|(p, _)| *p < fp("500")));
-    }
-
-    #[test]
-    fn test_filter_identical_prices() {
-        let prices = vec![
-            (fp("100"), fp("1")),
-            (fp("100"), fp("1")),
-            (fp("100"), fp("1")),
-        ];
-        let filtered = filter_deviations(&prices, fp("2")).unwrap();
-        assert_eq!(filtered.len(), 3);
-    }
-
-    #[test]
-    fn deviation_filter_includes_the_boundary_and_excludes_one_minor_unit_beyond_it() {
-        let one = FixedValue::from_raw(U256::ONE);
-        let on_boundary = vec![
-            (FixedValue::from_raw(U256::from(100u64)), one),
-            (FixedValue::from_raw(U256::from(100u64)), one),
-            (FixedValue::from_raw(U256::from(102u64)), one),
-            (FixedValue::from_raw(U256::from(102u64)), one),
-        ];
-        assert_eq!(filter_deviations(&on_boundary, fp("2")).unwrap().len(), 4);
-
-        let one_unit_outside = vec![
-            (FixedValue::from_raw(U256::from(99u64)), one),
-            (FixedValue::from_raw(U256::from(100u64)), one),
-            (FixedValue::from_raw(U256::from(102u64)), one),
-            (FixedValue::from_raw(U256::from(102u64)), one),
-        ];
-        let filtered = filter_deviations(&one_unit_outside, fp("2")).unwrap();
-
-        assert_eq!(filtered.len(), 3);
-        assert!(!filtered
-            .iter()
-            .any(|(price, _)| price.raw() == U256::from(99u64)));
-    }
-
     fn test_config(pairs: Vec<CurrencyPairConfig>) -> FeederConfig {
         FeederConfig {
             chain: ChainConfig {
@@ -551,6 +445,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
+            redstone: None,
             health: None,
         }
     }

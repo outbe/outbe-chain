@@ -15,9 +15,14 @@ pub(crate) struct DexProviderConfig {
     pub poll_interval_secs: u64,
     #[serde(default = "log_chunk")]
     pub log_chunk_blocks: u64,
-    /// Wall-clock age of the finalized block, including normal finality delay.
-    #[serde(default = "finalized_age")]
-    pub max_finalized_age_secs: u64,
+    /// Blocks behind `latest` to read from. Zero reads the head. A few blocks
+    /// keep ordinary short reorgs from reaching the price and volume reads; a
+    /// deeper reorg is still detected by hash and rebuilds the volume window.
+    #[serde(default = "confirmations")]
+    pub confirmations: u64,
+    /// Maximum wall-clock age of the block read, including `confirmations`.
+    #[serde(default = "block_age", alias = "max_finalized_age_secs")]
+    pub max_block_age_secs: u64,
     pub(super) markets: Vec<DexMarketConfig>,
 }
 
@@ -27,7 +32,10 @@ fn poll_interval() -> u64 {
 fn log_chunk() -> u64 {
     2_000
 }
-fn finalized_age() -> u64 {
+fn confirmations() -> u64 {
+    3
+}
+fn block_age() -> u64 {
     1_800
 }
 
@@ -121,8 +129,12 @@ impl DexProviderConfig {
             "DEX log_chunk_blocks must be 1..=10000"
         );
         ensure!(
-            self.max_finalized_age_secs > 0,
-            "DEX max_finalized_age_secs must be positive"
+            self.confirmations <= 1_000,
+            "DEX confirmations must be 0..=1000"
+        );
+        ensure!(
+            self.max_block_age_secs > 0,
+            "DEX max_block_age_secs must be positive"
         );
         ensure!(!self.markets.is_empty(), "DEX provider has no markets");
         let mut markets = BTreeSet::new();
