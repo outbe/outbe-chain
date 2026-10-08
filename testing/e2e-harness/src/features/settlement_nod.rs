@@ -325,9 +325,11 @@ fn assert_live_nod_revert<C: alloy_sol_types::SolCall>(
                     addresses::NOD_FACTORY_ADDR,
                     payer,
                     call,
-                    U256::ZERO,
-                    alloy_eips::BlockId::latest(),
-                    gas_limit,
+                    crate::internal::eth::RevertReplay {
+                        value: U256::ZERO,
+                        block: alloy_eips::BlockId::latest(),
+                        gas_limit,
+                    },
                 )
                 .map_err(|error| error.to_string())?;
                 assert_eq!(
@@ -613,7 +615,7 @@ fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV2, NodBu
     assert_eq!(body.leagueId, item.encrypted.terms.league_id);
     assert_eq!(
         Some(body.floorPriceMinor),
-        outbe_nod::NodContract::floor_price_minor(bodies.1.entry_price_minor)
+        outbe_nod::pricing::floor_price_minor(bodies.1.entry_price_minor)
     );
     assert_eq!(
         body.encryptedGratisAmount.as_ref(),

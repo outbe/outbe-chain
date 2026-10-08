@@ -4,6 +4,7 @@
 //! calls. Public Ethereum RPC gas accounting must expose only the committed
 //! header gas actually used by the visible transaction envelopes.
 
+use outbe_offchain_data::runtime_body_readers;
 use std::{path::PathBuf, process::Command, sync::Arc};
 
 use alloy_consensus::Transaction as _;
@@ -19,7 +20,6 @@ use outbe_compressed_entities::{
 use outbe_evm::OutbeEvmSigner;
 use outbe_metadosis::test_support::ForkInstallScenario;
 use outbe_node::OutbeNode;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
@@ -316,7 +316,7 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         shutdown: Default::default(),
         bridge: Some(bridge),
         evm_signer: Some(signer),
-        runtime_body_readers: RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
+        runtime_body_readers: runtime_body_readers(Arc::new(MemoryStorage::new())),
         compressed_tree_service,
         ocomp_fork_install: Some(ocomp_fork_install),
     };

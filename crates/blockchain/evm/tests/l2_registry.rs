@@ -199,7 +199,7 @@ fn run(db: &mut CacheDB<EmptyDB>, caller: Address, to: Address, data: Vec<u8>) -
         .basic(caller)
         .expect("caller account loads")
         .map_or(0, |info| info.nonce);
-    let mut evm = OutbeEvmFactory::new().create_evm(&mut *db, test_env());
+    let mut evm = OutbeEvmFactory::default().create_evm(&mut *db, test_env());
     let tx = TxEnv::builder()
         .caller(caller)
         .nonce(nonce)

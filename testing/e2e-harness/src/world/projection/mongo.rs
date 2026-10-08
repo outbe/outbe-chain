@@ -171,7 +171,7 @@ mod tests {
         cfg.dir = root.path().canonicalize().unwrap();
         cfg.scenario = 1;
         super::super::ensure_node_config(&cfg, 0).unwrap();
-        let fixture = super::super::ProjectionFixture::new(&cfg);
+        let fixture = super::super::projection_fixture(&cfg);
         fixture
             .run(|cfg| {
                 let opened = StorageProvider::new(super::super::storage_config(&cfg, 0)?)?

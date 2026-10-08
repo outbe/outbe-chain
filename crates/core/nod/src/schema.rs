@@ -1,10 +1,9 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
+use outbe_compressed_entities::WwdEntityId;
 use outbe_macros::{contract, storage_schema};
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::storage::types::Mapping;
-use outbe_primitives::storage::types::StorageKey;
 use outbe_primitives::time::WorldwideDay;
 use serde::{Deserialize, Serialize};
 
@@ -102,9 +101,9 @@ pub struct NodBucketState {
 }
 
 impl NodBucketState {
-    /// The floor every Nod in the bucket shares, derived from its entry price.
+    /// Calculates the floor that all NODs in this bucket share.
     pub fn floor_price_minor(&self) -> outbe_primitives::error::Result<U256> {
-        NodContract::floor_price_minor(self.entry_price_minor)
+        crate::pricing::floor_price_minor(self.entry_price_minor)
             .ok_or_else(|| crate::errors::NodError::FloorPriceOverflow.into())
     }
 }
@@ -378,55 +377,6 @@ pub struct NodContract {
 }
 
 impl<'storage> NodContract<'storage> {
-    pub(crate) fn storage_handle(&self) -> outbe_primitives::storage::StorageHandle<'storage> {
-        self.storage.clone()
-    }
-
-    /// A Nod floor derives from its entry alone, rounded down once. `None` only on overflow.
-    pub fn floor_price_minor(entry_price_minor: U256) -> Option<U256> {
-        entry_price_minor
-            .checked_mul(U256::from(100 + crate::constants::FLOOR_RATE_PCT))
-            .map(|scaled| scaled / U256::from(100u64))
-    }
-
-    /// Whether the floor and the call price at any `u16` call rate fit `U256` for this entry.
-    pub fn is_issuable_entry(entry_price_minor: U256) -> bool {
-        entry_price_minor
-            .checked_mul(U256::from(100 + u32::from(u16::MAX)))
-            .is_some()
-    }
-
-    /// Computes the bucket key from
-    /// `(worldwide_day, entry_price_minor, reference_currency)`.
-    ///
-    /// The currency is part of the preimage because `entry_price_minor` is
-    /// denominated in it. Two Nods that share a day and an entry value in
-    /// different currencies are priced against different oracle rates. They must
-    /// not share a bucket. This is the single derivation. The Lysis program
-    /// calls it too, so the off-chain and on-chain keys cannot drift.
-    pub fn bucket_key(
-        worldwide_day: WorldwideDay,
-        entry_price_minor: U256,
-        reference_currency: u16,
-    ) -> B256 {
-        use alloy_primitives::keccak256;
-        let mut buf = [0u8; 38];
-        buf[0..4].copy_from_slice(worldwide_day.key_bytes().as_slice());
-        buf[4..36].copy_from_slice(&entry_price_minor.to_be_bytes::<32>());
-        buf[36..38].copy_from_slice(&reference_currency.to_be_bytes());
-        keccak256(buf)
-    }
-
-    /// Deterministic full-width Poseidon NOD identity derived from
-    /// `(owner, worldwide_day)`. The typed Nod collection is its namespace.
-    pub fn generate_nod_id(
-        owner: Address,
-        worldwide_day: WorldwideDay,
-    ) -> outbe_primitives::error::Result<WwdEntityId> {
-        derive_poseidon_entity_id(owner, worldwide_day)
-            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
-    }
-
     /// Reads the exact certified target state used by JobIntent construction.
     pub fn ocomp_target_projection(
         &self,

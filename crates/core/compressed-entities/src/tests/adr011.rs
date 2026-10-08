@@ -96,7 +96,7 @@ fn with_active_scope(present: bool, test: impl FnOnce(StorageHandle<'_>, &Execut
                 U256::from_be_slice(root.as_slice()),
             )
             .unwrap();
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         scope
             .configure_parent_tree_factory(
                 Arc::new(PresentFactory { root, present }),
@@ -191,7 +191,7 @@ fn invalid_wwd_and_calls_outside_the_active_phase_are_rejected_and_cleanup_is_co
         end_block(storage.clone(), scope).unwrap();
         assert!(retire_partition(storage.clone(), scope, PartitionRef::TributeWwd(day)).is_err());
 
-        let next_scope = ExecutionScope::new();
+        let next_scope = ExecutionScope::default();
         next_scope
             .configure_parent_tree_factory(
                 Arc::new(PresentFactory {

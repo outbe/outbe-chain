@@ -15,18 +15,18 @@ use crate::schema::Gratis;
 
 /// Encrypted balance blob for `account`. Decrypt it client-side with the view key.
 pub fn balance_ct(storage: StorageHandle<'_>, account: Address) -> Result<Vec<u8>> {
-    Gratis::new(storage).balance_ct_of(account)
+    crate::state::account(&Gratis::new(storage), account).balance_ct()
 }
 
 /// The account's current modify-auth replay counter (the value the client's next
 /// write authorization must bind).
 pub fn op_nonce(storage: StorageHandle<'_>, account: Address) -> Result<u64> {
-    Gratis::new(storage).op_nonce_of(account)
+    crate::state::account(&Gratis::new(storage), account).op_nonce()
 }
 
 /// Public aggregate pledged into the credis escrow (per-account amounts hidden).
 pub fn pledged_total_supply(storage: StorageHandle<'_>) -> Result<U256> {
-    Gratis::new(storage).pledged_total_supply()
+    crate::state::pledged_total_supply(&Gratis::new(storage))
 }
 
 // --- Owner-authorized mutations ---

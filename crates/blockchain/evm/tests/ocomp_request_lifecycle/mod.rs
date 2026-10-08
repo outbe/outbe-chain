@@ -30,8 +30,8 @@ use commonware_cryptography::{
 use commonware_utils::Participant;
 use outbe_compressed_entities::{
     begin_block, end_block, CandidateCacheLimits, CeMdbx, CeTopologyV1, CeWorkConfig,
-    CompressedTreeService, EnvironmentIdentity, ExactParentIdentity, ExecutionScope,
-    FinalizedMarker, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+    CompressedTreeService, EnvironmentIdentity, ExactParentIdentity, FinalizedMarker,
+    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_consensus::{
     hybrid::HybridScheme,

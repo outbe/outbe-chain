@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, U256};
 use outbe_compressed_entities::{IdPageRequest, WwdEntityId};
-use outbe_nod::{NodItemState, NodPageRequest, NodRepositoryReader, NodRepositoryWriter};
+use outbe_nod::{NodItemState, NodPageRequest, NodRepositoryWriter};
 use outbe_offchain_storage::partitioned::{
     adapters::MemoryPartitionDataSource,
     routing::{RoutingRegistry, SharedRouting},
@@ -43,8 +43,8 @@ fn repository_updates_owner_index_and_keeps_global_identity_order() {
 
 fn exercise_repository(source: Arc<dyn outbe_offchain_storage::PartitionDataSource>) {
     let storage = Arc::new(PartitionedStorage::new(source, routing()));
-    let writer = NodRepositoryWriter::new(storage.clone(), storage.clone());
-    let reader = NodRepositoryReader::new(storage);
+    let writer = outbe_nod::nod_writer(storage.clone(), storage.clone());
+    let reader = outbe_nod::nod_reader(storage);
     let owner = Address::repeat_byte(17);
     let other = Address::repeat_byte(31);
     let mut first = item(owner, 7);
@@ -123,8 +123,7 @@ fn rocks_repository_reopens_id_shards_and_shared_owner_index() {
     assert!(root.path().join("nod/nod-shards/9/CURRENT").is_file());
     assert!(root.path().join("nod/shared/CURRENT").is_file());
     assert!(!root.path().join("nod-days").exists());
-    let reader =
-        NodRepositoryReader::new(Arc::new(PartitionedStorage::read_only(source, routing())));
+    let reader = outbe_nod::nod_reader(Arc::new(PartitionedStorage::read_only(source, routing())));
     let expected = item(Address::repeat_byte(17), 9);
     assert_eq!(reader.get(expected.nod_id).unwrap(), Some(expected.clone()));
     assert_eq!(

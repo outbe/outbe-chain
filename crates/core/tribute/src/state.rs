@@ -204,24 +204,6 @@ impl TributeContract<'_> {
             .collect())
     }
 
-    pub(crate) fn validate_tribute_for_issue(&self, tribute: &TributeData) -> Result<()> {
-        if tribute.owner.is_zero() {
-            return Err(TributeError::InvalidOwner.into());
-        }
-        if tribute.issuance_amount_minor.is_zero() {
-            return Err(TributeError::SettlementAmountMustBePositive.into());
-        }
-        let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
-        if tribute.tribute_id != expected {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Tribute canonical identity mismatch: expected {expected}, found {}",
-                tribute.tribute_id
-            )));
-        }
-        Ok(())
-    }
-
     pub(crate) fn ensure_day_accepts_tributes(&self, day: WorldwideDay) -> Result<()> {
         let totals = self.day_totals.get(day)?;
         if !totals.is_some_and(|totals| totals.initialized && !totals.is_sealed) {
@@ -392,7 +374,7 @@ impl TributeContract<'_> {
         self.day_totals.update(&totals)
     }
 
-    pub(crate) fn read_all_by_owner(
+    pub fn read_all_by_owner(
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
@@ -401,7 +383,7 @@ impl TributeContract<'_> {
         self.read_all(scope, parent, QueryRef::TributeByOwner(owner))
     }
 
-    pub(crate) fn read_all_by_day(
+    pub fn read_all_by_day(
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
@@ -466,14 +448,14 @@ fn reference_currency_refcount_key(day: WorldwideDay, currency: u16) -> B256 {
 
 pub(crate) fn record_from_verified(body: &VerifiedBody) -> Result<TributeRecord> {
     if let Some(encrypted) = body.payload().as_encrypted_tribute() {
-        return Ok(TributeRecord::from_encrypted(encrypted.clone()));
+        return Ok(crate::record::from_encrypted(encrypted.clone()));
     }
     let payload = body.payload().as_tribute().ok_or_else(|| {
         outbe_primitives::error::PrecompileError::BodyReadCorruption(
             "compressed-entity read returned a non-Tribute payload".into(),
         )
     })?;
-    Ok(TributeRecord::from_legacy(
+    Ok(crate::record::from_legacy(
         crate::repository::from_canonical_body(payload.clone()),
     ))
 }
@@ -488,4 +470,22 @@ fn calculation_view(record: &TributeRecord) -> Result<TributeData> {
             "Tribute private amount read failed: {error}"
         ))
     })
+}
+
+pub(crate) fn validate_tribute_for_issue(tribute: &TributeData) -> Result<()> {
+    if tribute.owner.is_zero() {
+        return Err(TributeError::InvalidOwner.into());
+    }
+    if tribute.issuance_amount_minor.is_zero() {
+        return Err(TributeError::SettlementAmountMustBePositive.into());
+    }
+    let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
+        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+    if tribute.tribute_id != expected {
+        return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
+            "Tribute canonical identity mismatch: expected {expected}, found {}",
+            tribute.tribute_id
+        )));
+    }
+    Ok(())
 }

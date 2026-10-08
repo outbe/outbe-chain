@@ -64,3 +64,88 @@ pub(super) fn collection_roots(
     }
     Ok(roots)
 }
+
+pub(super) fn point_evidence(
+    view: &AuthenticatedCatalogView,
+    catalog: (crate::CollectionKey, TreeLeaf),
+    domain: CeDomain,
+    raw_id: WwdEntityId,
+    root_catalog_proof: CkbCompiledProofV1,
+) -> Result<(TreeLeaf, PresentEvidenceV1), PointReadServiceError> {
+    let (collection, catalog_leaf) = catalog;
+    let roots = collection_roots(view, collection, domain, catalog_leaf)?;
+    let tree_key = derive_tree_key(collection_for_domain(domain), raw_id)
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let selected = shard_index(tree_key, domain.shard_count())
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let namespace = TreeNamespace::CollectionShard(collection, selected);
+    let shard_root = TreeRoot::from_be_bytes(roots[selected as usize].0)
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let shard = PoseidonSmt::open_with_store(
+        shard_root,
+        StagingCkbStore::new(view.clone(), namespace, roots[selected as usize]),
+    );
+    let leaf = shard
+        .get(tree_key)
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let proof = shard
+        .prove(vec![tree_key])
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    shard
+        .verify(shard_root, &proof, vec![(tree_key, leaf)])
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let evidence = PresentEvidenceV1 {
+        shard_smt_proof: CkbCompiledProofV1::from_tree(&proof)?,
+        shard_top_siblings: top_siblings(&roots, selected)?,
+        root_catalog_proof,
+    };
+    Ok((leaf, evidence))
+}
+
+pub(super) fn finalized_view(
+    service: &CompressedTreeService,
+) -> Result<(FinalizedMarker, AuthenticatedCatalogView), PointReadServiceError> {
+    let snapshot = service
+        .open_finalized_snapshot()
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let marker = snapshot
+        .marker()
+        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    if marker.height == 0 {
+        return Err(PointReadServiceError::GenesisUnavailable);
+    }
+    let view = AuthenticatedCatalogView::open(
+        snapshot,
+        ExactParentIdentity {
+            commitment_scheme_version: marker.commitment_scheme_version,
+            block_number: marker.height,
+            block_hash: marker.block_hash,
+            root: marker.new_root,
+        },
+    )
+    .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    Ok((marker, view))
+}
+
+pub(super) fn point_result(
+    common: PointProofCommonV1,
+    leaf: TreeLeaf,
+    evidence: PresentEvidenceV1,
+) -> FrozenResultV1 {
+    if leaf == TreeLeaf::ZERO {
+        FrozenResultV1::Absent {
+            common,
+            evidence: AbsentEvidenceV1::EntityAbsentInCollection {
+                shard_smt_proof: evidence.shard_smt_proof,
+                shard_top_siblings: evidence.shard_top_siblings,
+                root_catalog_proof: evidence.root_catalog_proof,
+            },
+        }
+    } else {
+        FrozenResultV1::Present {
+            common,
+            expected_leaf: B256::from(leaf.as_bytes()),
+            evidence,
+        }
+    }
+}

@@ -21,7 +21,7 @@ impl From<EncryptedTributeOfferResultV2> for ProcessedOffer {
     fn from(result: EncryptedTributeOfferResultV2) -> Self {
         Self {
             token_id: result.token_id,
-            tribute: result.tribute.map(TributeRecord::from_encrypted),
+            tribute: result.tribute.map(outbe_tribute::record::from_encrypted),
             su_hashes: result.su_hashes,
             wallet_addresses: result.wallet_addresses,
             sra_addresses: result.sra_addresses,
@@ -55,7 +55,7 @@ pub(crate) fn legacy_fixture(
     };
     Ok(ProcessedOffer {
         token_id: result.token_id,
-        tribute: Some(TributeRecord::from_legacy(body)),
+        tribute: Some(outbe_tribute::record::from_legacy(body)),
         su_hashes: result.su_hashes,
         wallet_addresses: result.wallet_addresses,
         sra_addresses: result.sra_addresses,

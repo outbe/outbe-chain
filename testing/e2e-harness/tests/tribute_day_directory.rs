@@ -8,7 +8,7 @@ use outbe_compressed_entities::{
     body_commitment, derive_poseidon_entity_id, encode_tribute_v1, ACTIVE_COMMITMENT_SCHEME,
     BODY_SCHEMA_V1,
 };
-use outbe_nod::{NodContract, NodItemState, NodRepositoryWriter};
+use outbe_nod::{NodItemState, NodRepositoryWriter};
 use outbe_offchain_data::{
     DayDatabaseRoute, FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection,
     ProjectionConfig, TributeRetentionSelector,
@@ -39,15 +39,17 @@ fn projection(store: &Store, pin: Option<RetainedTributePin>) -> OffchainDataPro
         start_block: 5,
     };
     let mut projection = match pin {
-        Some(pin) => OffchainDataProjection::open_with_retention_selector(
+        Some(pin) => outbe_offchain_data::open_projection_with_retention_selector(
             config,
             store.shared.clone(),
             store.shared.clone(),
             Arc::new(FixedPin(pin)),
         )
         .unwrap(),
-        None => OffchainDataProjection::open(config, store.shared.clone(), store.shared.clone())
-            .unwrap(),
+        None => {
+            outbe_offchain_data::open_projection(config, store.shared.clone(), store.shared.clone())
+                .unwrap()
+        }
     };
     projection
         .set_day_route(DayDatabaseRoute {
@@ -156,7 +158,7 @@ fn nod(owner: Address, day: u32) -> NodItemState {
     let entry = U256::from(13u64);
     NodItemState {
         is_settled: false,
-        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+        nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day).unwrap(),
         owner,
         encrypted: outbe_nod::test_support::encrypted_fixture(
             &outbe_nod::NodIssueParams {
@@ -172,7 +174,7 @@ fn nod(owner: Address, day: u32) -> NodItemState {
         ),
         worldwide_day,
         league_id: 4,
-        bucket_key: NodContract::bucket_key(worldwide_day, entry, 840),
+        bucket_key: outbe_nod::identity::bucket_key(worldwide_day, entry, 840),
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_752_534_000,
@@ -192,13 +194,10 @@ fn two_days_retire_the_first_and_keep_its_nod() {
     projection
         .project_block(&block(6, 0x45, vec![stored_log(&second)]))
         .unwrap();
-    NodRepositoryWriter::with_days(
-        store.shared.clone(),
-        store.shared.clone(),
-        store.databases.clone(),
-    )
-    .put_nod(&nod(Address::repeat_byte(0x11), 7))
-    .unwrap();
+    outbe_nod::nod_writer(store.shared.clone(), store.shared.clone())
+        .with_days(store.databases.clone())
+        .put_nod(&nod(Address::repeat_byte(0x11), 7))
+        .unwrap();
     projection
         .project_block(&block(
             7,

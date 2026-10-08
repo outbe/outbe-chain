@@ -60,7 +60,7 @@ pub use offer_key::{
     unseal_tribute_offer_and_group_sig_on_boot, DerivedTributeOfferKey, SharedTributeOfferKey,
 };
 
-pub use server::{serve, serve_tcp};
+pub use server::{serve, serve_tcp, ServerContext};
 
 pub use session::{serve_connection, serve_connection_with, EnclaveTransportStream};
 

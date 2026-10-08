@@ -40,7 +40,7 @@ impl TributeContract<'_> {
                 ),
             );
         }
-        let record = TributeRecord::from_encrypted(body.clone());
+        let record = crate::record::from_encrypted(body.clone());
         let expected = outbe_compressed_entities::derive_poseidon_entity_id(
             record.owner,
             record.worldwide_day,
@@ -59,8 +59,8 @@ impl TributeContract<'_> {
         parent: &impl ParentBodySource,
         tribute: &TributeData,
     ) -> Result<()> {
-        self.validate_tribute_for_issue(tribute)?;
-        self.issue_record_inner(scope, parent, &TributeRecord::from_legacy(tribute.clone()))
+        crate::state::validate_tribute_for_issue(tribute)?;
+        self.issue_record_inner(scope, parent, &crate::record::from_legacy(tribute.clone()))
     }
 
     fn issue_record_inner(

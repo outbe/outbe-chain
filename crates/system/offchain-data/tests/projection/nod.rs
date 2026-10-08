@@ -6,9 +6,7 @@ use outbe_compressed_entities::{
     body_commitment, encode_nod_bucket_v1, encode_nod_item_v2, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
-use outbe_nod::{
-    canonical_bucket, canonical_item, precompile::INod, NodPageRequest, NodRepositoryReader,
-};
+use outbe_nod::{canonical_bucket, canonical_item, precompile::INod, NodPageRequest};
 use outbe_offchain_data::FinalizedBlock;
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
@@ -37,7 +35,7 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
         )],
     };
     projection.project_block(&store_block).unwrap();
-    let repository = NodRepositoryReader::new(storage.clone());
+    let repository = outbe_nod::nod_reader(storage.clone());
     assert!(repository.get(nod_id).unwrap().is_some());
     assert!(repository.get_bucket(bucket_id).unwrap().is_some());
     assert_eq!(

@@ -1,19 +1,22 @@
+#[path = "../../../../testing/fixtures/storage_failures.rs"]
+mod storage_failures;
+use outbe_offchain_data::{runtime_body_readers, supervised_runtime_body_readers};
 use std::{sync::Arc, time::Duration};
+use storage_failures::FailingStorageReader;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v2, decode_stored_tribute_v1, EntityRef,
     IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, WwdEntityId,
 };
-use outbe_nod::{NodBucketState, NodItemState, NodRepositoryWriter};
-use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_nod::{NodBucketState, NodItemState};
 use outbe_offchain_storage::{
     Key, MemoryStorage, Namespace, ScanEntry, ScanPage, ScanRequest, StorageError,
     StorageErrorKind, StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle,
     StoredValue, Value,
 };
 use outbe_primitives::time::WorldwideDay;
-use outbe_tribute::{TributeData, TributeRepositoryWriter};
+use outbe_tribute::{TributeData, TributeReadView, TributeRepositoryWriter};
 use tracing_subscriber::{layer::SubscriberExt, Layer};
 
 fn entity(seed: u64) -> WwdEntityId {
@@ -41,7 +44,7 @@ fn tribute(tribute_id: WwdEntityId) -> TributeData {
 fn supervised_body_mismatch_does_not_publish_a_node_failure() {
     let storage = Arc::new(MemoryStorage::new());
     let (failure_tx, failure_rx) = tokio::sync::watch::channel(None);
-    let readers = RuntimeBodyReaders::new_supervised(storage, failure_tx);
+    let readers = supervised_runtime_body_readers(storage, failure_tx);
     readers.report_precompile_error(
         &outbe_primitives::error::PrecompileError::BodyReadCorruption(
             "body commitment mismatch".into(),
@@ -54,7 +57,7 @@ fn supervised_body_mismatch_does_not_publish_a_node_failure() {
 fn supervised_bundle_reports_read_failures_to_its_lifecycle_owner() {
     let storage = Arc::new(MemoryStorage::new());
     let (failure_tx, failure_rx) = tokio::sync::watch::channel(None);
-    let readers = RuntimeBodyReaders::new_supervised(storage, failure_tx);
+    let readers = supervised_runtime_body_readers(storage, failure_tx);
 
     readers.report_precompile_error(
         &outbe_primitives::error::PrecompileError::BodyReadUnavailable("replica election".into()),
@@ -121,7 +124,7 @@ fn typed_readers_share_one_memory_adapter() {
     let storage = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = storage.clone();
     let writer: StorageWriterHandle = storage;
-    let readers = RuntimeBodyReaders::new(reader.clone());
+    let readers = runtime_body_readers(reader.clone());
 
     let tribute_id = entity(1);
     let nod_id = entity(2);
@@ -131,11 +134,13 @@ fn typed_readers_share_one_memory_adapter() {
     TributeRepositoryWriter::new(reader.clone(), writer.clone())
         .put(&tribute(tribute_id))
         .unwrap();
-    let nod_writer = NodRepositoryWriter::new(reader, writer);
+    let nod_writer = outbe_nod::nod_writer(reader, writer);
     nod_writer.put_nod(&nod(nod_id, bucket_key)).unwrap();
     nod_writer.put_bucket(&bucket(bucket_key)).unwrap();
 
-    let stored_tribute = readers.tribute().get(tribute_id).unwrap().unwrap();
+    let stored_tribute = TributeReadView::get(readers.tribute(), tribute_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored_tribute.owner, Address::repeat_byte(0x11));
 
     let stored_nod = readers.nod().get(nod_id).unwrap().unwrap();
@@ -150,7 +155,7 @@ fn parent_body_source_gets_exact_bodies_and_lists_strict_id_pages() {
     let storage = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = storage.clone();
     let writer: StorageWriterHandle = storage;
-    let readers = RuntimeBodyReaders::new(reader.clone());
+    let readers = runtime_body_readers(reader.clone());
     let tribute_owner = Address::repeat_byte(0x11);
     let nod_owner = Address::repeat_byte(0x22);
     let tribute_ids = [entity(1), entity(2), entity(3)];
@@ -159,7 +164,7 @@ fn parent_body_source_gets_exact_bodies_and_lists_strict_id_pages() {
     let bucket_id = WwdEntityId::from_day_and_digest(WorldwideDay::new(20_260_715), bucket_key.0);
 
     let tribute_writer = TributeRepositoryWriter::new(reader.clone(), writer.clone());
-    let nod_writer = NodRepositoryWriter::new(reader, writer);
+    let nod_writer = outbe_nod::nod_writer(reader, writer);
     for id in [tribute_ids[2], tribute_ids[0], tribute_ids[1]] {
         tribute_writer.put(&tribute(id)).unwrap();
     }
@@ -237,30 +242,6 @@ fn parent_body_source_gets_exact_bodies_and_lists_strict_id_pages() {
     }
 }
 
-struct UnavailableReader;
-
-impl StorageReader for UnavailableReader {
-    fn get_record(
-        &self,
-        _namespace: Namespace,
-        _key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        Err(StorageError::Unavailable {
-            source: Box::new(std::io::Error::other("replica election")),
-        })
-    }
-
-    fn scan_prefix(
-        &self,
-        _namespace: Namespace,
-        _request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        Err(StorageError::Unavailable {
-            source: Box::new(std::io::Error::other("replica election")),
-        })
-    }
-}
-
 #[derive(Clone)]
 struct ScriptedScanReader {
     page: ScanPage,
@@ -294,7 +275,11 @@ fn scan_entry(id: WwdEntityId) -> ScanEntry {
 
 #[test]
 fn parent_body_source_classifies_backend_absence_and_canonical_failures() {
-    let unavailable = RuntimeBodyReaders::new(Arc::new(UnavailableReader));
+    let unavailable = runtime_body_readers(Arc::new(FailingStorageReader(|| {
+        StorageError::Unavailable {
+            source: Box::new(std::io::Error::other("replica election")),
+        }
+    })));
     assert!(matches!(
         ParentBodySource::get(&unavailable, EntityRef::Tribute(entity(1))),
         Err(ParentBodySourceError::Unavailable(_))
@@ -319,7 +304,7 @@ fn parent_body_source_classifies_backend_absence_and_canonical_failures() {
             &Value::new([0xff]).unwrap(),
         )
         .unwrap();
-    let corrupt = RuntimeBodyReaders::new(corrupt_storage);
+    let corrupt = runtime_body_readers(corrupt_storage);
     assert!(matches!(
         ParentBodySource::get(&corrupt, EntityRef::Tribute(entity(1))),
         Err(ParentBodySourceError::Corruption(_))
@@ -336,7 +321,7 @@ fn parent_body_source_classifies_backend_absence_and_canonical_failures() {
         Err(ParentBodySourceError::Corruption(_))
     ));
 
-    let descending = RuntimeBodyReaders::new(Arc::new(ScriptedScanReader {
+    let descending = runtime_body_readers(Arc::new(ScriptedScanReader {
         page: ScanPage {
             entries: vec![scan_entry(entity(2)), scan_entry(entity(1))],
             next_after: None,
@@ -354,7 +339,7 @@ fn parent_body_source_classifies_backend_absence_and_canonical_failures() {
         Err(ParentBodySourceError::Corruption(_))
     ));
 
-    let invalid_continuation = RuntimeBodyReaders::new(Arc::new(ScriptedScanReader {
+    let invalid_continuation = runtime_body_readers(Arc::new(ScriptedScanReader {
         page: ScanPage {
             entries: vec![scan_entry(entity(1))],
             next_after: Some(Key::new(entity(2).as_slice().to_vec()).unwrap()),
@@ -378,20 +363,20 @@ fn cloned_bundle_observes_later_writes_through_typed_readers() {
     let storage = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = storage.clone();
     let writer: StorageWriterHandle = storage;
-    let readers = RuntimeBodyReaders::new(reader.clone());
+    let readers = runtime_body_readers(reader.clone());
     let cloned = readers.clone();
     let tribute_id = entity(9);
 
-    assert!(cloned.tribute().get(tribute_id).unwrap().is_none());
+    assert!(TributeReadView::get(cloned.tribute(), tribute_id)
+        .unwrap()
+        .is_none());
 
     TributeRepositoryWriter::new(reader, writer)
         .put(&tribute(tribute_id))
         .unwrap();
 
     assert_eq!(
-        cloned
-            .tribute()
-            .get(tribute_id)
+        TributeReadView::get(cloned.tribute(), tribute_id)
             .unwrap()
             .unwrap()
             .tribute_id,
@@ -431,7 +416,7 @@ fn execution_read_uses_remaining_request_budget_without_reporting_mongo_outage()
         delay: Duration::from_millis(200),
     });
     let (failure_tx, failure_rx) = tokio::sync::watch::channel(None);
-    let readers = RuntimeBodyReaders::new_supervised(storage, failure_tx);
+    let readers = supervised_runtime_body_readers(storage, failure_tx);
     let request_budget = outbe_primitives::projection::ExecutionReadBudget::new();
     let _budget = readers.enter_execution_budget(request_budget.clone());
     std::thread::spawn(move || {
@@ -442,7 +427,7 @@ fn execution_read_uses_remaining_request_budget_without_reporting_mongo_outage()
     let started = std::time::Instant::now();
     let capture = DiagnosticCapture::default();
     let error = match tracing::subscriber::with_default(capture.subscriber(), || {
-        readers.tribute().get(entity(1))
+        TributeReadView::get(readers.tribute(), entity(1))
     }) {
         Ok(_) => panic!("delayed read must exceed the request budget"),
         Err(error) => error,
@@ -486,13 +471,13 @@ fn operation_timeout_is_mongo_unavailability_and_not_a_request_deadline() {
         delay: Duration::from_millis(1_200),
     });
     let (failure_tx, failure_rx) = tokio::sync::watch::channel(None);
-    let readers = RuntimeBodyReaders::new_supervised(storage, failure_tx);
+    let readers = supervised_runtime_body_readers(storage, failure_tx);
     let request_budget = outbe_primitives::projection::ExecutionReadBudget::new();
     let _budget = readers.enter_execution_budget(request_budget);
 
     let capture = DiagnosticCapture::default();
     let error = match tracing::subscriber::with_default(capture.subscriber(), || {
-        readers.tribute().get(entity(1))
+        TributeReadView::get(readers.tribute(), entity(1))
     }) {
         Ok(_) => panic!("read exceeding the MongoDB operation limit must fail"),
         Err(error) => error,
@@ -557,7 +542,11 @@ impl<S: tracing::Subscriber> Layer<S> for DiagnosticCapture {
 #[test]
 fn backend_failure_diagnostic_identifies_operation_without_record_or_error_contents() {
     let capture = DiagnosticCapture::default();
-    let readers = RuntimeBodyReaders::new(Arc::new(UnavailableReader));
+    let readers = runtime_body_readers(Arc::new(FailingStorageReader(|| {
+        StorageError::Unavailable {
+            source: Box::new(std::io::Error::other("replica election")),
+        }
+    })));
     let error = tracing::subscriber::with_default(capture.subscriber(), || {
         ParentBodySource::get(&readers, EntityRef::Tribute(entity(1))).unwrap_err()
     });

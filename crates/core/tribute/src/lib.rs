@@ -8,7 +8,7 @@ mod issuance;
 pub mod partitioning;
 pub mod precompile;
 pub mod projection;
-mod record;
+pub mod record;
 mod repository;
 mod retention;
 pub mod runtime;
@@ -21,13 +21,13 @@ pub use day_mark::{
 };
 pub use record::{TributeMetadata, TributeRecord};
 pub use repository::{
-    canonical_body, from_canonical_body, TributePage, TributePageRequest, TributeRepositoryError,
-    TributeRepositoryReader, TributeRepositoryWriter,
+    canonical_body, from_canonical_body, TributeMutationView, TributePage, TributePageRequest,
+    TributeReadView, TributeRepositoryError, TributeRepositoryReader, TributeRepositoryWriter,
 };
 pub use retention::{
     RetainedTributeAuditEntry, RetainedTributeAuditVisitor, RetainedTributeCursor,
     RetainedTributePage, RetainedTributePin, RetainedTributeReader, RetainedTributeRef,
-    RetainedTributeWriter, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
+    RetainedTributeView, RetainedTributeWriter, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
     OCOMP_RETAINED_TRIBUTES_NAMESPACE,
 };
 pub use runtime::LoadedTribute;

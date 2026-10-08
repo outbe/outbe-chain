@@ -12,6 +12,7 @@
 //! `Success` with empty returndata. Here we assert the returndata equals the
 //! Poseidon hash of the input.
 
+use outbe_offchain_data::runtime_body_readers;
 mod sub_call_support;
 
 use std::sync::Arc;
@@ -20,12 +21,11 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_compressed_entities::{
     begin_block, body_commitment, encode_nod_item_v2, AuthenticatedParentTree, CeWorkConfig,
-    Commitment, EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
+    Commitment, EntityRef, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
     ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_evm::sub_call;
-use outbe_nod::{precompile::INod, NodBucketState, NodRepositoryWriter};
-use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_nod::{precompile::INod, NodBucketState};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::{
     COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, UPDATE_ADDRESS,
@@ -263,12 +263,12 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     let adapter = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = adapter.clone();
     let writer: StorageWriterHandle = adapter;
-    let readers = RuntimeBodyReaders::new(reader.clone());
+    let readers = runtime_body_readers(reader.clone());
     let owner = Address::repeat_byte(0x11);
     let day = WorldwideDay::new(20_260_715);
-    let nod_id = outbe_nod::NodContract::generate_nod_id(owner, day).unwrap();
+    let nod_id = outbe_nod::identity::generate_nod_id(owner, day).unwrap();
     let bucket_key = B256::repeat_byte(0x42);
-    let repository = NodRepositoryWriter::new(reader, writer);
+    let repository = outbe_nod::nod_writer(reader, writer);
     repository
         .put_bucket(&NodBucketState {
             settled_nods: 0,
@@ -303,19 +303,21 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     )
     .unwrap();
     let mut database = CacheDB::new(EmptyDB::default());
-    let scope = Arc::new(ExecutionScope::with_parent_tree(
-        Arc::new(StaticAuthenticatedParent {
-            snapshot: StaticParentSnapshot {
-                block_hash: B256::ZERO,
-                root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
-                provisional_base_root: B256::ZERO,
-                entity: EntityRef::NodItem(nod_id),
-                commitment,
-                partition_present: false,
-            },
-        }),
-        CeWorkConfig::new(0, 0, u64::MAX),
-    ));
+    let scope = Arc::new(
+        outbe_compressed_entities::execution_scope::with_parent_tree(
+            Arc::new(StaticAuthenticatedParent {
+                snapshot: StaticParentSnapshot {
+                    block_hash: B256::ZERO,
+                    root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+                    provisional_base_root: B256::ZERO,
+                    entity: EntityRef::NodItem(nod_id),
+                    commitment,
+                    partition_present: false,
+                },
+            }),
+            CeWorkConfig::new(0, 0, u64::MAX),
+        ),
+    );
     let block = BlockContext::new(1, 1, outbe_primitives::chain::CHAIN_ID, owner, vec![owner]);
     let mut provider = DirectStorageProvider::new(&mut database, block);
     StorageHandle::enter(&mut provider, |storage| {

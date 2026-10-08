@@ -86,9 +86,13 @@ impl PublishedPlan {
         let admission_root = directory.path().join("admissions");
         let cas = FilesystemCas::open(&cas_root, CasWriterRole::Supervisor, CAS_LIMITS).unwrap();
         let published = publish_input_artifact_set(
-            &cas,
+            outbe_ocomp::input_artifacts::InputArtifactContext {
+                cas: &cas,
+                bundle,
+                limits,
+                list_limits,
+            },
             &input_ref_root,
-            bundle,
             InputArtifactContents {
                 identity: InputArtifactIdentity {
                     job_id,
@@ -111,8 +115,6 @@ impl PublishedPlan {
                 fidelity_openings: openings.fidelity,
                 oracle_opening: openings.oracle,
             },
-            &limits,
-            list_limits,
         )
         .unwrap();
         let mut manifest = InputManifestV1::decode_canonical(
@@ -239,7 +241,7 @@ impl ResultFixture<'_> {
 
         for plan_ordinal in 0..topology.total_unit_count() {
             let mut spec = {
-                let audit = LocalLysisPlanAuditV1::open(
+                let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
                     &admissions,
                     &input_refs,
                     &reader,

@@ -10,7 +10,7 @@ use outbe_compressed_entities::{
     MdbxAuthenticatedTree, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
     LOCAL_STORAGE_SCHEMA_VERSION,
 };
-use outbe_nod::{NodBucketState, NodRepositoryWriter};
+use outbe_nod::NodBucketState;
 use outbe_offchain_data::{ProjectionCheckpoint, ProjectionState, STORAGE_SCHEMA_VERSION};
 use outbe_offchain_storage::{Key, Namespace, StorageWriter, Value};
 use outbe_primitives::{
@@ -61,12 +61,13 @@ struct Fixture {
 
 fn populate_bodies(projection: &Arc<RocksDbStorage>) -> (Vec<FinalLeafMutation>, WwdEntityId) {
     let tribute_writer = TributeRepositoryWriter::new(projection.clone(), projection.clone());
-    let nod_writer = NodRepositoryWriter::new(projection.clone(), projection.clone());
+    let nod_writer = outbe_nod::nod_writer(projection.clone(), projection.clone());
     let mut bodies = Vec::new();
     for seed in [1, 2] {
         let body = tribute(seed);
         tribute_writer.put(&body).unwrap();
-        let stored = StoredBody::new_v1(
+        let stored = StoredBody::new(
+            outbe_compressed_entities::BODY_SCHEMA_V1,
             outbe_compressed_entities::encode_tribute_v1(&outbe_tribute::canonical_body(&body))
                 .unwrap(),
         )
@@ -113,8 +114,11 @@ fn populate_bodies(projection: &Arc<RocksDbStorage>) -> (Vec<FinalLeafMutation>,
     bodies.push((
         EntityRef::NodBucket(bucket_id),
         bucket_id,
-        StoredBody::new_v1(outbe_compressed_entities::encode_nod_bucket_v1(&canonical).unwrap())
-            .unwrap(),
+        StoredBody::new(
+            outbe_compressed_entities::BODY_SCHEMA_V1,
+            outbe_compressed_entities::encode_nod_bucket_v1(&canonical).unwrap(),
+        )
+        .unwrap(),
     ));
     retain_historical_body(projection, &tribute_writer);
     let mutations: Vec<_> = bodies

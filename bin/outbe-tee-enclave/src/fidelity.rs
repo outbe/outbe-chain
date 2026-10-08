@@ -240,7 +240,7 @@ pub fn apply_cohort_section(
     amount: U256,
     section: &FidelityOpSection,
 ) -> Result<FidelityOpOutcome> {
-    let view_key = Zeroizing::new(FIDELITY.derive_view_key(state_key, account)?);
+    let view_key = Zeroizing::new(FIDELITY.account_keys.derive_view_key(state_key, account)?);
     let (version, mut state) = read_state(&view_key, account, &section.current_blob)?;
 
     let mut qualified_start_initialized = None;
@@ -311,7 +311,11 @@ pub fn snapshot_leagues(
 ) -> Result<Vec<FidelityLeagueEntry>> {
     let mut leagues = Vec::with_capacity(req.entries.len());
     for entry in &req.entries {
-        let view_key = Zeroizing::new(FIDELITY.derive_view_key(state_key, entry.owner)?);
+        let view_key = Zeroizing::new(
+            FIDELITY
+                .account_keys
+                .derive_view_key(state_key, entry.owner)?,
+        );
         let (_, state) = read_state(&view_key, entry.owner, &entry.cohort_blob)?;
         let (_, _, league) = state.evaluate(req.timestamp, req.first_qualified_start)?;
         leagues.push(FidelityLeagueEntry {
@@ -366,7 +370,11 @@ pub fn query_index(
         _ => return Err(err("owner signature does not control account")),
     }
 
-    let view_key = Zeroizing::new(FIDELITY.derive_view_key(state_key, req.account)?);
+    let view_key = Zeroizing::new(
+        FIDELITY
+            .account_keys
+            .derive_view_key(state_key, req.account)?,
+    );
     let (_, state) = read_state(&view_key, req.account, &req.cohort_blob)?;
     let (rcfi, efficiency, league) =
         state.evaluate(req.query_timestamp, req.first_qualified_start)?;
@@ -440,7 +448,10 @@ mod tests {
         );
         assert_ne!(&one.new_blob[12..44], &amount.new_blob[12..44]);
         assert_ne!(&one.new_blob[12..44], &time.new_blob[12..44]);
-        let view_key = FIDELITY.derive_view_key(&key, alice()).unwrap();
+        let view_key = FIDELITY
+            .account_keys
+            .derive_view_key(&key, alice())
+            .unwrap();
         let (_, state) = read_state(&view_key, alice(), &one.new_blob).unwrap();
         let plaintext = outbe_tee::fidelity_decrypt::decrypt_fidelity_cohorts(
             &view_key,
@@ -485,7 +496,7 @@ mod tests {
             Some(1_000_000)
         );
         state.cohort_out(U256::from(400u64), 1_000_000 + 30 * DAY);
-        let vk = FIDELITY.derive_view_key(&sk, alice()).unwrap();
+        let vk = FIDELITY.account_keys.derive_view_key(&sk, alice()).unwrap();
         let blob = fidelity_cipher::write_blob(
             &vk,
             CohortTransition {

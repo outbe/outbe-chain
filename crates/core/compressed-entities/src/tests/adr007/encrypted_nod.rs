@@ -34,7 +34,7 @@ fn encrypted_nod_preserves_queries_settlement_delete_and_canonical_replay() {
     let id = body.encrypted.terms.nod_id;
     let owner = body.encrypted.terms.owner;
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(7);
     StorageHandle::enter(&mut provider, |storage| {
         begin_block(storage.clone(), &scope).unwrap();

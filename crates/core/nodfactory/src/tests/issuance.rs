@@ -4,7 +4,8 @@ use super::*;
 fn nod_pow_binds_owner_and_zero_sequence() {
     let owner = Address::repeat_byte(0x11);
     let other = Address::repeat_byte(0x22);
-    let nod_id = NodContract::generate_nod_id(owner, WorldwideDay::new(20_241_201)).unwrap();
+    let nod_id =
+        outbe_nod::identity::generate_nod_id(owner, WorldwideDay::new(20_241_201)).unwrap();
     let nonce = 42;
     let bound = runtime::compute_pow_hash(nod_id, owner, nonce);
     assert_ne!(bound, runtime::compute_pow_hash(nod_id, other, nonce));
@@ -73,7 +74,7 @@ fn second_same_block_issue_reuses_the_pending_bucket_without_parent_projection()
     let second_id = world.issue(&second);
     assert_ne!(first_id, second_id);
 
-    let bucket_key = NodContract::bucket_key(
+    let bucket_key = outbe_nod::identity::bucket_key(
         first.worldwide_day,
         first.entry_price_minor,
         first.reference_currency,
@@ -154,7 +155,9 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
     let mut world = World::new();
     let mut input = params(Address::repeat_byte(0x2E));
     input.entry_price_minor = U256::MAX / U256::from(100 + u32::from(u16::MAX)) + U256::from(1);
-    assert!(!NodContract::is_issuable_entry(input.entry_price_minor));
+    assert!(!outbe_nod::pricing::is_issuable_entry(
+        input.entry_price_minor
+    ));
     let storage_before = world.provider.storage.clone();
     let events_before = world.provider.get_ordered_events().len();
 
@@ -176,7 +179,7 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
     ));
     assert_eq!(world.provider.storage, storage_before);
     assert_eq!(world.provider.get_ordered_events().len(), events_before);
-    let nod_id = NodContract::generate_nod_id(input.owner, input.worldwide_day).unwrap();
+    let nod_id = outbe_nod::identity::generate_nod_id(input.owner, input.worldwide_day).unwrap();
     assert!(world
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()
@@ -266,7 +269,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()
         .is_none());
-    let bucket_key = NodContract::bucket_key(
+    let bucket_key = outbe_nod::identity::bucket_key(
         input.worldwide_day,
         input.entry_price_minor,
         input.reference_currency,

@@ -206,7 +206,7 @@ fn forfeit_last_member(
     };
     let nod_id = nod
         .bucket_nods
-        .read(&NodContract::bucket_nod_key(bucket_key, last))?;
+        .read(&crate::index_keys::bucket_nod_key(bucket_key, last))?;
     if nod_id.is_zero() {
         return Err(outbe_primitives::error::PrecompileError::Revert(format!(
             "Nod bucket {bucket_key} member slot {last} is empty during forfeit"

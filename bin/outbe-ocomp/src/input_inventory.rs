@@ -29,6 +29,20 @@ use outbe_primitives::time::WorldwideDay;
 use sha3::{Digest, Keccak256};
 use thiserror::Error;
 
+mod filesystem;
+mod header;
+mod open;
+mod owner_runs;
+
+use filesystem::*;
+use header::{decode_header, encode_header};
+pub use open::{open_sealed_inventory, open_sealed_inventory_observing};
+pub use owner_runs::OwnerBatchReader;
+use owner_runs::{
+    install_owner_file, merge_run_group, verify_owner_file, OwnerRunGroup, OwnerRunPosition,
+    OwnerRunWriter,
+};
+
 const DIRECTORY_MODE: u32 = 0o750;
 const FILE_MODE: u32 = 0o640;
 const HEADER_MAGIC: [u8; 8] = *b"OUTBTIH1";
@@ -122,17 +136,16 @@ pub struct TributeInventoryBuilder {
     _lock: InventoryLock,
 }
 
-pub struct SealedTributeInventory {
-    root: PathBuf,
+// Keep the authenticated header and its ISO bitmap in one immutable metadata value.
+struct InventoryMetadata {
     header: InventoryHeaderV1,
     isos: Box<[u8; ISO_BITMAP_BYTES]>,
-    _lock: InventoryLock,
 }
 
-pub struct OwnerBatchReader {
-    file: File,
-    remaining: u64,
-    previous: Option<Address>,
+pub struct SealedTributeInventory {
+    root: PathBuf,
+    metadata: InventoryMetadata,
+    _lock: InventoryLock,
 }
 
 pub struct TributeBodySpoolReader {
@@ -208,7 +221,7 @@ impl TributeInventoryBuilder {
                 "canonical Tribute stream order",
             ));
         }
-        let decoded = outbe_tribute::TributeRecord::decode_canonical(&record.canonical_body)
+        let decoded = outbe_tribute::record::decode_canonical(&record.canonical_body)
             .map_err(|_| TributeInventoryError::Authority("canonical Tribute body"))?;
         if decoded.tribute_id != record.tribute_id
             || decoded.owner != record.owner
@@ -357,8 +370,10 @@ impl TributeInventoryBuilder {
         on_progress();
         Ok(SealedTributeInventory {
             root: self.root,
-            header,
-            isos: self.iso_bitmap,
+            metadata: InventoryMetadata {
+                header,
+                isos: self.iso_bitmap,
+            },
             _lock: self._lock,
         })
     }
@@ -436,11 +451,14 @@ impl TributeInventoryBuilder {
                     .min(run_count);
                 merge_run_group(
                     &self.build_root,
-                    pass,
-                    start,
-                    end,
-                    output_pass,
-                    output_index,
+                    OwnerRunGroup {
+                        pass,
+                        range: start..end,
+                    },
+                    OwnerRunPosition {
+                        pass: output_pass,
+                        index: output_index,
+                    },
                     on_progress,
                 )?;
             }
@@ -459,95 +477,48 @@ impl TributeInventoryBuilder {
 }
 
 impl SealedTributeInventory {
-    pub fn open(
-        root: impl AsRef<Path>,
-        expected_subject: TributeInventorySubjectV1,
-    ) -> Result<Self, TributeInventoryError> {
-        Self::open_observing(root, expected_subject, || {})
-    }
-
-    pub fn open_observing(
-        root: impl AsRef<Path>,
-        expected_subject: TributeInventorySubjectV1,
-        on_progress: impl Fn(),
-    ) -> Result<Self, TributeInventoryError> {
-        let root = root.as_ref().to_path_buf();
-        inspect_private_directory(&root)?;
-        let lock = InventoryLock::acquire(&root)?;
-        let header = decode_header(&read_exact_file(&root.join(HEADER_FILE), header_len())?)?;
-        if header.subject != expected_subject {
-            return Err(TributeInventoryError::Authority("inventory subject"));
-        }
-        let owner_digest = digest_file_observing(&root.join(OWNERS_FILE), &on_progress)?;
-        if owner_digest != header.owner_file_digest {
-            return Err(TributeInventoryError::Corrupt("owner inventory digest"));
-        }
-        verify_owner_file(
-            &root.join(OWNERS_FILE),
-            header.unique_owner_count,
-            &on_progress,
-        )?;
-        if digest_file_observing(&root.join(BODIES_FILE), &on_progress)? != header.body_file_digest
-        {
-            return Err(TributeInventoryError::Corrupt("Tribute body spool digest"));
-        }
-        verify_body_spool(
-            &root.join(BODIES_FILE),
-            expected_subject.expected_tribute_count,
-            header.exact_body_bytes,
-            &on_progress,
-        )?;
-        let iso_bytes = read_exact_file(&root.join(ISOS_FILE), ISO_BITMAP_BYTES)?;
-        let mut isos = Box::new([0_u8; ISO_BITMAP_BYTES]);
-        isos.copy_from_slice(&iso_bytes);
-        if B256::from_slice(&Keccak256::digest(&isos[..])) != header.iso_bitmap_digest
-            || !contains_iso(&isos, 840)
-        {
-            return Err(TributeInventoryError::Corrupt("reference ISO inventory"));
-        }
-        Ok(Self {
-            root,
-            header,
-            isos,
-            _lock: lock,
-        })
-    }
-
     #[must_use]
     pub const fn unique_owner_count(&self) -> u64 {
-        self.header.unique_owner_count
+        self.metadata.header.unique_owner_count
     }
 
     #[must_use]
     pub fn authority_digest(&self) -> B256 {
-        B256::from_slice(&Keccak256::digest(encode_header(&self.header)))
+        B256::from_slice(&Keccak256::digest(encode_header(&self.metadata.header)))
     }
 
     pub fn owner_batches(&self) -> Result<OwnerBatchReader, TributeInventoryError> {
-        OwnerBatchReader::open(self.root.join(OWNERS_FILE), self.header.unique_owner_count)
+        OwnerBatchReader::open(
+            self.root.join(OWNERS_FILE),
+            self.metadata.header.unique_owner_count,
+        )
     }
 
     pub fn reference_isos(&self) -> Vec<u16> {
         (u16::MIN..=u16::MAX)
-            .filter(|iso| contains_iso(&self.isos, *iso))
+            .filter(|iso| contains_iso(&self.metadata.isos, *iso))
             .collect()
     }
 
     pub fn tribute_bodies(&self) -> Result<TributeBodySpoolReader, TributeInventoryError> {
         TributeBodySpoolReader::open(
             self.root.join(BODIES_FILE),
-            self.header.subject.expected_tribute_count,
-            self.header.exact_body_bytes,
+            self.metadata.header.subject.expected_tribute_count,
+            self.metadata.header.exact_body_bytes,
         )
     }
 
     pub fn source_proofs(&self) -> Result<TributeProofArchiveV1, TributeInventoryError> {
-        Ok(TributeProofArchiveV1::open(
+        Ok(outbe_compressed_entities::open_tribute_proof_archive(
             self.root.join(SOURCE_PROOF_ARCHIVE_DIRECTORY),
             TributePartitionExpectationV1 {
-                day: self.header.subject.worldwide_day,
-                exact_leaf_count: self.header.subject.expected_tribute_count,
-                expected_collection_root: self.header.subject.sealed_tribute_collection_root,
+                day: self.metadata.header.subject.worldwide_day,
+                exact_leaf_count: self.metadata.header.subject.expected_tribute_count,
+                expected_collection_root: self
+                    .metadata
+                    .header
+                    .subject
+                    .sealed_tribute_collection_root,
                 commitment_scheme: ACTIVE_COMMITMENT_SCHEME,
             },
         )?)
@@ -607,46 +578,6 @@ impl TributeBodySpoolReader {
             .checked_add(u64::try_from(length).map_err(|_| TributeInventoryError::IntegerOverflow)?)
             .ok_or(TributeInventoryError::IntegerOverflow)?;
         Ok(Some(body))
-    }
-}
-
-impl OwnerBatchReader {
-    fn open(path: PathBuf, expected_count: u64) -> Result<Self, TributeInventoryError> {
-        let mut file = open_regular_readonly(&path)?;
-        let count = read_run_header(&mut file, &path)?;
-        if count != expected_count {
-            return Err(TributeInventoryError::Corrupt("owner inventory count"));
-        }
-        Ok(Self {
-            file,
-            remaining: count,
-            previous: None,
-        })
-    }
-
-    pub fn next_batch(
-        &mut self,
-        max_owners: usize,
-    ) -> Result<Option<Vec<Address>>, TributeInventoryError> {
-        if max_owners == 0 {
-            return Err(TributeInventoryError::InvalidWorkConfig);
-        }
-        if self.remaining == 0 {
-            return Ok(None);
-        }
-        let take = usize::try_from(self.remaining.min(max_owners as u64))
-            .map_err(|_| TributeInventoryError::IntegerOverflow)?;
-        let mut owners = Vec::with_capacity(take);
-        for _ in 0..take {
-            let owner = read_owner(&mut self.file)?;
-            if self.previous.is_some_and(|previous| previous >= owner) {
-                return Err(TributeInventoryError::Corrupt("owner inventory order"));
-            }
-            self.previous = Some(owner);
-            self.remaining -= 1;
-            owners.push(owner);
-        }
-        Ok(Some(owners))
     }
 }
 
@@ -719,297 +650,6 @@ impl BodySpoolWriter {
             exact_body_bytes: self.exact_body_bytes,
         })
     }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct HeapOwner {
-    owner: Address,
-    reader_index: usize,
-}
-
-impl Ord for HeapOwner {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.owner
-            .cmp(&other.owner)
-            .then_with(|| self.reader_index.cmp(&other.reader_index))
-    }
-}
-
-impl PartialOrd for HeapOwner {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-struct OwnerRunReader {
-    file: File,
-    remaining: u64,
-}
-
-impl OwnerRunReader {
-    fn open(path: PathBuf) -> Result<Self, TributeInventoryError> {
-        let mut file = open_regular_readonly(&path)?;
-        let remaining = read_run_header(&mut file, &path)?;
-        Ok(Self { file, remaining })
-    }
-
-    fn next(&mut self) -> Result<Option<Address>, TributeInventoryError> {
-        if self.remaining == 0 {
-            return Ok(None);
-        }
-        self.remaining -= 1;
-        read_owner(&mut self.file).map(Some)
-    }
-}
-
-struct OwnerRunWriter {
-    path: PathBuf,
-    file: File,
-    count: u64,
-}
-
-impl OwnerRunWriter {
-    fn create(path: PathBuf) -> Result<Self, TributeInventoryError> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(FILE_MODE)
-            .open(&path)
-            .map_err(|source| io_error("create owner run", &path, source))?;
-        file.write_all(&RUN_MAGIC)
-            .and_then(|()| file.write_all(&0_u64.to_be_bytes()))
-            .map_err(|source| io_error("write owner run header", &path, source))?;
-        Ok(Self {
-            path,
-            file,
-            count: 0,
-        })
-    }
-
-    fn write(&mut self, owner: Address) -> Result<(), TributeInventoryError> {
-        self.file
-            .write_all(owner.as_slice())
-            .map_err(|source| io_error("write owner run", &self.path, source))?;
-        self.count = self
-            .count
-            .checked_add(1)
-            .ok_or(TributeInventoryError::IntegerOverflow)?;
-        Ok(())
-    }
-
-    fn finish(mut self) -> Result<u64, TributeInventoryError> {
-        self.file
-            .seek(SeekFrom::Start(8))
-            .and_then(|_| self.file.write_all(&self.count.to_be_bytes()))
-            .and_then(|()| self.file.sync_all())
-            .map_err(|source| io_error("finish owner run", &self.path, source))?;
-        Ok(self.count)
-    }
-}
-
-fn merge_run_group(
-    root: &Path,
-    input_pass: u32,
-    start: u64,
-    end: u64,
-    output_pass: u32,
-    output_index: u64,
-    on_progress: &impl Fn(),
-) -> Result<(), TributeInventoryError> {
-    let mut readers = Vec::with_capacity(
-        usize::try_from(end - start).map_err(|_| TributeInventoryError::IntegerOverflow)?,
-    );
-    for index in start..end {
-        readers.push(OwnerRunReader::open(run_path(root, input_pass, index))?);
-    }
-    let mut heap = BinaryHeap::new();
-    for (reader_index, reader) in readers.iter_mut().enumerate() {
-        if let Some(owner) = reader.next()? {
-            heap.push(Reverse(HeapOwner {
-                owner,
-                reader_index,
-            }));
-        }
-    }
-    let mut writer = OwnerRunWriter::create(run_path(root, output_pass, output_index))?;
-    let mut previous = None;
-    let mut records_since_progress = 0_u64;
-    while let Some(Reverse(item)) = heap.pop() {
-        if previous != Some(item.owner) {
-            writer.write(item.owner)?;
-            previous = Some(item.owner);
-        }
-        if let Some(owner) = readers[item.reader_index].next()? {
-            heap.push(Reverse(HeapOwner {
-                owner,
-                reader_index: item.reader_index,
-            }));
-        }
-        records_since_progress = records_since_progress.saturating_add(1);
-        if records_since_progress == INVENTORY_PROGRESS_RECORD_HEARTBEAT {
-            on_progress();
-            records_since_progress = 0;
-        }
-    }
-    writer.finish()?;
-    Ok(())
-}
-
-fn install_owner_file(
-    final_run: Option<&Path>,
-    destination: &Path,
-    on_progress: &impl Fn(),
-) -> Result<u64, TributeInventoryError> {
-    if let Some(source) = final_run {
-        let mut input = open_regular_readonly(source)?;
-        let count = read_run_header(&mut input, source)?;
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(FILE_MODE)
-            .open(destination)
-            .map_err(|source| io_error("create owner inventory", destination, source))?;
-        output
-            .write_all(&RUN_MAGIC)
-            .and_then(|()| output.write_all(&count.to_be_bytes()))
-            .map_err(|source| io_error("write owner inventory header", destination, source))?;
-        let mut buffer = [0_u8; 64 * 1024];
-        loop {
-            let read = input
-                .read(&mut buffer)
-                .map_err(|source| io_error("read owner inventory", destination, source))?;
-            if read == 0 {
-                break;
-            }
-            output
-                .write_all(&buffer[..read])
-                .map_err(|source| io_error("copy owner inventory", destination, source))?;
-            on_progress();
-        }
-        output
-            .sync_all()
-            .map_err(|source| io_error("fsync owner inventory", destination, source))?;
-        Ok(count)
-    } else {
-        OwnerRunWriter::create(destination.to_path_buf())?.finish()
-    }
-}
-
-fn verify_owner_file(
-    path: &Path,
-    expected_count: u64,
-    on_progress: &impl Fn(),
-) -> Result<(), TributeInventoryError> {
-    let mut reader = OwnerRunReader::open(path.to_path_buf())?;
-    let mut count = 0_u64;
-    let mut previous = None;
-    let mut records_since_progress = 0_u64;
-    while let Some(owner) = reader.next()? {
-        if previous.is_some_and(|candidate| candidate >= owner) {
-            return Err(TributeInventoryError::Corrupt("owner inventory order"));
-        }
-        previous = Some(owner);
-        count = count
-            .checked_add(1)
-            .ok_or(TributeInventoryError::IntegerOverflow)?;
-        records_since_progress = records_since_progress.saturating_add(1);
-        if records_since_progress == INVENTORY_PROGRESS_RECORD_HEARTBEAT {
-            on_progress();
-            records_since_progress = 0;
-        }
-    }
-    if count != expected_count {
-        return Err(TributeInventoryError::Corrupt("owner inventory count"));
-    }
-    Ok(())
-}
-
-fn encode_header(header: &InventoryHeaderV1) -> Vec<u8> {
-    let mut encoded = Vec::with_capacity(header_len());
-    encoded.extend_from_slice(&HEADER_MAGIC);
-    encoded.extend_from_slice(header.subject.protocol_bundle_hash.as_slice());
-    encoded.extend_from_slice(header.subject.job_id.as_slice());
-    encoded.extend_from_slice(&header.subject.attempt.to_be_bytes());
-    encoded.extend_from_slice(
-        &header
-            .subject
-            .checkpoint
-            .finalized_block_number
-            .to_be_bytes(),
-    );
-    encoded.extend_from_slice(header.subject.checkpoint.finalized_block_hash.as_slice());
-    encoded.extend_from_slice(header.subject.checkpoint.finalized_state_root.as_slice());
-    encoded.extend_from_slice(header.subject.checkpoint.finalized_ce_root.as_slice());
-    encoded.extend_from_slice(&header.subject.checkpoint.ce_schema_version.to_be_bytes());
-    encoded.extend_from_slice(&header.subject.worldwide_day.value().to_be_bytes());
-    encoded.extend_from_slice(header.subject.sealed_tribute_collection_root.as_slice());
-    encoded.extend_from_slice(&header.subject.expected_tribute_count.to_be_bytes());
-    encoded.extend_from_slice(&header.subject.expected_nominal_total.to_be_bytes::<32>());
-    encoded.extend_from_slice(&header.unique_owner_count.to_be_bytes());
-    encoded.extend_from_slice(header.owner_file_digest.as_slice());
-    encoded.extend_from_slice(header.iso_bitmap_digest.as_slice());
-    encoded.extend_from_slice(header.body_file_digest.as_slice());
-    encoded.extend_from_slice(&header.exact_body_bytes.to_be_bytes());
-    encoded
-}
-
-fn decode_header(encoded: &[u8]) -> Result<InventoryHeaderV1, TributeInventoryError> {
-    if encoded.len() != header_len() || encoded[..8] != HEADER_MAGIC {
-        return Err(TributeInventoryError::Corrupt("inventory header"));
-    }
-    let mut offset = 8;
-    let mut take = |count: usize| {
-        let start = offset;
-        offset += count;
-        &encoded[start..offset]
-    };
-    let protocol_bundle_hash = B256::from_slice(take(32));
-    let job_id = B256::from_slice(take(32));
-    let attempt = u32::from_be_bytes(take(4).try_into().expect("fixed header slice"));
-    let checkpoint = CheckpointIdentityV1 {
-        finalized_block_number: u64::from_be_bytes(take(8).try_into().expect("fixed header slice")),
-        finalized_block_hash: B256::from_slice(take(32)),
-        finalized_state_root: B256::from_slice(take(32)),
-        finalized_ce_root: B256::from_slice(take(32)),
-        ce_schema_version: u16::from_be_bytes(take(2).try_into().expect("fixed header slice")),
-    };
-    let worldwide_day = WorldwideDay::new(u32::from_be_bytes(
-        take(4).try_into().expect("fixed header slice"),
-    ));
-    let sealed_tribute_collection_root = B256::from_slice(take(32));
-    let expected_tribute_count =
-        u32::from_be_bytes(take(4).try_into().expect("fixed header slice"));
-    let expected_nominal_total = U256::from_be_slice(take(32));
-    let unique_owner_count = u64::from_be_bytes(take(8).try_into().expect("fixed header slice"));
-    let owner_file_digest = B256::from_slice(take(32));
-    let iso_bitmap_digest = B256::from_slice(take(32));
-    let body_file_digest = B256::from_slice(take(32));
-    let exact_body_bytes = u64::from_be_bytes(take(8).try_into().expect("fixed header slice"));
-    let header = InventoryHeaderV1 {
-        subject: TributeInventorySubjectV1 {
-            protocol_bundle_hash,
-            job_id,
-            attempt,
-            checkpoint,
-            worldwide_day,
-            sealed_tribute_collection_root,
-            expected_tribute_count,
-            expected_nominal_total,
-        },
-        unique_owner_count,
-        owner_file_digest,
-        iso_bitmap_digest,
-        body_file_digest,
-        exact_body_bytes,
-    };
-    if !header.subject.worldwide_day.is_valid() {
-        return Err(TributeInventoryError::Corrupt("inventory worldwide day"));
-    }
-    Ok(header)
-}
-
-const fn header_len() -> usize {
-    8 + 32 + 32 + 4 + 8 + 32 + 32 + 32 + 2 + 4 + 32 + 4 + 32 + 8 + 32 + 32 + 32 + 8
 }
 
 fn set_iso(bitmap: &mut [u8; ISO_BITMAP_BYTES], iso: u16) {
@@ -1111,224 +751,6 @@ fn read_owner(file: &mut File) -> Result<Address, TributeInventoryError> {
     file.read_exact(&mut bytes)
         .map_err(|source| io_error("read owner inventory", Path::new(OWNERS_FILE), source))?;
     Ok(Address::from(bytes))
-}
-
-fn digest_file_observing(
-    path: &Path,
-    on_progress: &impl Fn(),
-) -> Result<B256, TributeInventoryError> {
-    let mut file = open_regular_readonly(path)?;
-    let mut hasher = Keccak256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|source| io_error("hash inventory file", path, source))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-        on_progress();
-    }
-    Ok(B256::from_slice(&hasher.finalize()))
-}
-
-fn create_private_directory(path: &Path) -> Result<(), TributeInventoryError> {
-    reject_symlink_ancestors(path)?;
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            return Err(TributeInventoryError::UnsafePath(path.to_path_buf()));
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir_all(path)
-                .map_err(|source| io_error("create inventory directory", path, source))?;
-        }
-        Err(source) => return Err(io_error("inspect inventory directory", path, source)),
-    }
-    reject_symlink_ancestors(path)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(DIRECTORY_MODE))
-        .map_err(|source| io_error("set inventory directory permissions", path, source))
-}
-
-fn inspect_private_directory(path: &Path) -> Result<(), TributeInventoryError> {
-    reject_symlink_ancestors(path)?;
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|source| io_error("inspect inventory directory", path, source))?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(TributeInventoryError::UnsafePath(path.to_path_buf()));
-    }
-    Ok(())
-}
-
-fn reject_symlink_ancestors(path: &Path) -> Result<(), TributeInventoryError> {
-    for ancestor in path.ancestors() {
-        match fs::symlink_metadata(ancestor) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(TributeInventoryError::UnsafePath(ancestor.to_path_buf()));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => return Err(io_error("inspect inventory ancestor", ancestor, source)),
-        }
-    }
-    Ok(())
-}
-
-fn open_regular_readonly(path: &Path) -> Result<File, TributeInventoryError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|source| io_error("inspect inventory file", path, source))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(TributeInventoryError::UnsafePath(path.to_path_buf()));
-    }
-    OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|source| io_error("open inventory file", path, source))
-}
-
-fn read_exact_file(path: &Path, expected: usize) -> Result<Vec<u8>, TributeInventoryError> {
-    let mut file = open_regular_readonly(path)?;
-    let actual = usize::try_from(
-        file.metadata()
-            .map_err(|source| io_error("stat inventory file", path, source))?
-            .len(),
-    )
-    .map_err(|_| TributeInventoryError::IntegerOverflow)?;
-    if actual != expected {
-        return Err(TributeInventoryError::Corrupt("inventory file length"));
-    }
-    let mut bytes = vec![0_u8; expected];
-    file.read_exact(&mut bytes)
-        .map_err(|source| io_error("read inventory file", path, source))?;
-    Ok(bytes)
-}
-
-fn persist_new(path: &Path, bytes: &[u8]) -> Result<(), TributeInventoryError> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(FILE_MODE)
-        .open(path)
-        .map_err(|source| io_error("create inventory file", path, source))?;
-    file.write_all(bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|source| io_error("persist inventory file", path, source))
-}
-
-fn persist_atomic(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), TributeInventoryError> {
-    let temp = path.with_extension("tmp");
-    if path_exists(&temp)? {
-        let metadata = fs::symlink_metadata(&temp)
-            .map_err(|source| io_error("inspect inventory temp", &temp, source))?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(TributeInventoryError::UnsafePath(temp));
-        }
-        fs::remove_file(&temp)
-            .map_err(|source| io_error("remove inventory temp", &temp, source))?;
-    }
-    persist_new(&temp, bytes)?;
-    fs::rename(&temp, path).map_err(|source| io_error("install inventory file", path, source))?;
-    sync_directory(root)
-}
-
-fn remove_owned_build_directory(path: &Path) -> Result<(), TributeInventoryError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            Err(TributeInventoryError::UnsafePath(path.to_path_buf()))
-        }
-        Ok(_) => {
-            fs::remove_dir_all(path)
-                .map_err(|source| io_error("remove incomplete inventory build", path, source))?;
-            Ok(())
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(io_error("inspect inventory build directory", path, source)),
-    }
-}
-
-fn recover_unsealed_inventory(root: &Path) -> Result<(), TributeInventoryError> {
-    remove_owned_build_directory(&root.join(SOURCE_PROOF_ARCHIVE_DIRECTORY))?;
-    let mut removed = false;
-    for path in [
-        root.join(OWNERS_FILE),
-        root.join(ISOS_FILE),
-        root.join(BODIES_FILE),
-        root.join(format!("{OWNERS_FILE}.tmp")),
-        root.join(format!("{ISOS_FILE}.tmp")),
-        root.join(format!("{BODIES_FILE}.tmp")),
-        root.join(HEADER_FILE).with_extension("tmp"),
-    ] {
-        match fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-                return Err(TributeInventoryError::UnsafePath(path));
-            }
-            Ok(_) => {
-                fs::remove_file(&path).map_err(|source| {
-                    io_error("remove incomplete inventory file", &path, source)
-                })?;
-                removed = true;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(io_error("inspect incomplete inventory file", &path, source));
-            }
-        }
-    }
-    if removed {
-        sync_directory(root)?;
-    }
-    Ok(())
-}
-
-fn sync_directory(path: &Path) -> Result<(), TributeInventoryError> {
-    File::open(path)
-        .and_then(|file| file.sync_all())
-        .map_err(|source| io_error("fsync inventory directory", path, source))
-}
-
-fn path_exists(path: &Path) -> Result<bool, TributeInventoryError> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(io_error("inspect inventory path", path, source)),
-    }
-}
-
-struct InventoryLock {
-    file: File,
-}
-
-impl InventoryLock {
-    #[allow(unsafe_code)]
-    fn acquire(root: &Path) -> Result<Self, TributeInventoryError> {
-        let path = root.join(LOCK_FILE);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .mode(FILE_MODE)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .open(&path)
-            .map_err(|source| io_error("open inventory lock", &path, source))?;
-        // SAFETY: `file` owns a live descriptor for the complete flock call.
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if result != 0 {
-            return Err(TributeInventoryError::Locked);
-        }
-        Ok(Self { file })
-    }
-}
-
-impl Drop for InventoryLock {
-    #[allow(unsafe_code)]
-    fn drop(&mut self) {
-        // SAFETY: `self.file` remains open for the complete flock call.
-        unsafe {
-            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
-        }
-    }
 }
 
 #[derive(Debug, Error)]

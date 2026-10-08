@@ -88,15 +88,14 @@ impl TestTribute<'_, '_> {
         owner: alloy_primitives::Address,
     ) -> PrecompileResult<Vec<TributeData>> {
         self.contract
-            .get_tributes_by_owner(self.scope, &self.reader, owner)
+            .read_all_by_owner(self.scope, &self.reader, owner)
     }
 
     fn get_all_day_tributes(
         &self,
         day: outbe_primitives::time::WorldwideDay,
     ) -> PrecompileResult<Vec<TributeData>> {
-        self.contract
-            .get_all_day_tributes(self.scope, &self.reader, day)
+        self.contract.read_all_by_day(self.scope, &self.reader, day)
     }
 }
 
@@ -113,7 +112,7 @@ fn body_repository() -> (TributeRepositoryReader, TributeRepositoryWriter) {
 fn with_tribute<R>(f: impl FnOnce(&mut TestTribute<'_, '_>) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(1);
     let (reader, _writer) = body_repository();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut storage, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
@@ -134,7 +133,7 @@ fn with_provider<R>(
 ) -> R {
     let mut storage = HashMapStorageProvider::new(1);
     let (reader, _writer) = body_repository();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut storage, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
@@ -318,7 +317,7 @@ fn pre_admission_projection_removes_burned_tribute_contribution() {
 fn sealed_pre_admission_projection_is_immutable() {
     let mut provider = HashMapStorageProvider::new(1);
     let (reader, _writer) = body_repository();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let tribute = sample_tribute();
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -340,7 +339,7 @@ fn sealed_pre_admission_projection_is_immutable() {
         .is_err());
 
     let mut sibling_provider = HashMapStorageProvider::new(1);
-    let sibling_scope = ExecutionScope::new();
+    let sibling_scope = ExecutionScope::default();
     let mut sibling_tribute = sample_tribute();
     set_owner(
         &mut sibling_tribute,

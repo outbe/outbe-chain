@@ -44,7 +44,7 @@ pub mod worker;
 pub mod worker_observability;
 pub mod worker_transport;
 
-#[cfg(feature = "test-utils")]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_support;
 
 #[cfg(feature = "test-utils")]

@@ -102,39 +102,8 @@ fn assert_compiled_proof_mutations(
         ),
         _ => unreachable!(),
     };
-    for (is_catalog, proof) in [(false, shard_proof.clone()), (true, catalog_proof.clone())] {
-        for byte in 0..proof.0.len() {
-            let mut candidate = (*package).clone();
-            if let PointReadResultV1::Present { evidence, .. } = &mut candidate {
-                let target = if is_catalog {
-                    &mut evidence.root_catalog_proof
-                } else {
-                    &mut evidence.shard_smt_proof
-                };
-                let mut bytes = target.0.to_vec();
-                bytes[byte] ^= 1;
-                target.0 = bytes.into();
-            }
-            assert!(
-                verify_point_read_v1(7, request, header, &candidate).is_err(),
-                "every byte of each compiled proof is authenticated: catalog={is_catalog}, byte={byte}"
-            );
-        }
-        for malformed in [proof.0[..proof.0.len() - 1].to_vec(), {
-            let mut trailing = proof.0.to_vec();
-            trailing.push(0);
-            trailing
-        }] {
-            let mut candidate = (*package).clone();
-            if let PointReadResultV1::Present { evidence, .. } = &mut candidate {
-                if is_catalog {
-                    evidence.root_catalog_proof.0 = malformed.into();
-                } else {
-                    evidence.shard_smt_proof.0 = malformed.into();
-                }
-            }
-            assert!(verify_point_read_v1(7, request, header, &candidate).is_err());
-        }
+    for (is_catalog, proof) in [(false, shard_proof), (true, catalog_proof)] {
+        assert_one_compiled_proof_mutations(request, header, package, is_catalog, &proof);
     }
     for level in 0..siblings.len() {
         let mut candidate = (*package).clone();
@@ -183,7 +152,7 @@ fn assert_result_and_schema_mutations(
         assert!(verify_point_read_v1(7, request, header, &candidate).is_err());
     }
 
-    let stored = StoredBody::decode(match package {
+    let stored = crate::decode_stored_body(match package {
         PointReadResultV1::Present { body_bytes, .. } => body_bytes,
         _ => unreachable!(),
     })
@@ -237,5 +206,46 @@ fn assert_header_mutations(
     }
     for candidate_header in bad_headers {
         assert!(verify_point_read_v1(7, request, &candidate_header, package).is_err());
+    }
+}
+
+fn assert_one_compiled_proof_mutations(
+    request: PointReadRequestV1,
+    header: &SelectedHeaderV1,
+    package: &PointReadResultV1,
+    is_catalog: bool,
+    proof: &CkbCompiledProofV1,
+) {
+    for byte in 0..proof.0.len() {
+        let mut candidate = (*package).clone();
+        if let PointReadResultV1::Present { evidence, .. } = &mut candidate {
+            let target = if is_catalog {
+                &mut evidence.root_catalog_proof
+            } else {
+                &mut evidence.shard_smt_proof
+            };
+            let mut bytes = target.0.to_vec();
+            bytes[byte] ^= 1;
+            target.0 = bytes.into();
+        }
+        assert!(
+            verify_point_read_v1(7, request, header, &candidate).is_err(),
+            "every byte of each compiled proof is authenticated: catalog={is_catalog}, byte={byte}"
+        );
+    }
+    for malformed in [proof.0[..proof.0.len() - 1].to_vec(), {
+        let mut trailing = proof.0.to_vec();
+        trailing.push(0);
+        trailing
+    }] {
+        let mut candidate = (*package).clone();
+        if let PointReadResultV1::Present { evidence, .. } = &mut candidate {
+            if is_catalog {
+                evidence.root_catalog_proof.0 = malformed.into();
+            } else {
+                evidence.shard_smt_proof.0 = malformed.into();
+            }
+        }
+        assert!(verify_point_read_v1(7, request, header, &candidate).is_err());
     }
 }

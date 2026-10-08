@@ -33,16 +33,22 @@ pub fn dispatch(
         let gratis = Gratis::new(storage);
         use IGratis::IGratisCalls::*;
         match call {
-            name(_) => metadata::<IGratis::nameCall>(|| Ok(gratis.name().to_string())),
-            symbol(_) => metadata::<IGratis::symbolCall>(|| Ok(gratis.symbol().to_string())),
-            decimals(_) => metadata::<IGratis::decimalsCall>(|| Ok(gratis.decimals())),
-            pledgedTotalSupply(_) => {
-                metadata::<IGratis::pledgedTotalSupplyCall>(|| gratis.pledged_total_supply())
+            name(_) => metadata::<IGratis::nameCall>(|| Ok(crate::metadata::NAME.to_string())),
+            symbol(_) => {
+                metadata::<IGratis::symbolCall>(|| Ok(crate::metadata::SYMBOL.to_string()))
             }
+            decimals(_) => metadata::<IGratis::decimalsCall>(|| Ok(crate::metadata::DECIMALS)),
+            pledgedTotalSupply(_) => metadata::<IGratis::pledgedTotalSupplyCall>(|| {
+                crate::state::pledged_total_supply(&gratis)
+            }),
 
             // Confidential reads return ciphertext. Decrypt it client-side.
-            balanceOf(c) => view(c, |c| gratis.balance_ct_of(c.account).map(Bytes::from)),
-            opNonceOf(c) => view(c, |c| gratis.op_nonce_of(c.account)),
+            balanceOf(c) => view(c, |c| {
+                crate::state::account(&gratis, c.account)
+                    .balance_ct()
+                    .map(Bytes::from)
+            }),
+            opNonceOf(c) => view(c, |c| crate::state::account(&gratis, c.account).op_nonce()),
 
             // Non-transferable surface.
             allowance(c) => view(c, |_c| Ok(U256::ZERO)),

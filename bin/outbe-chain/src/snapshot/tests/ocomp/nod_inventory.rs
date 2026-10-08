@@ -15,7 +15,6 @@ use outbe_ocomp::{
     control::poc_schema_limits,
     input_artifacts::poc_input_list_limits,
     input_ref_catalog::VerifiedInputChunkRefCatalog,
-    lysis_plan_audit::LocalLysisPlanAuditV1,
 };
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
@@ -263,9 +262,14 @@ fn first_native_batch(root: &Path, f: &Fixture) -> usize {
         limits,
     )
     .unwrap();
-    let audit =
-        LocalLysisPlanAuditV1::open_read_only(&admissions, &inputs, &cas, &f.bundle, &limits)
-            .unwrap();
+    let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
+        &admissions,
+        &inputs,
+        &cas,
+        &f.bundle,
+        &limits,
+    )
+    .unwrap();
     let head = NodMaterializationHeadV1 {
         queue_sequence: 1,
         job_id: f.job_id,
@@ -412,7 +416,7 @@ impl FixtureAdmission<'_> {
     ) {
         for plan_ordinal in 0..topology.total_unit_count() {
             let spec = {
-                let audit = LocalLysisPlanAuditV1::open(
+                let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
                     self.admissions,
                     self.input_refs,
                     self.reader,

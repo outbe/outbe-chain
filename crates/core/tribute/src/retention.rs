@@ -5,6 +5,8 @@
 //! across a partition retirement. Every retained key binds the node-derived
 //! `InputLeaseId`, WWD, complete `WwdEntityId`, and CES1 body commitment.
 
+mod read;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -15,7 +17,7 @@ use outbe_compressed_entities::{
 use outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, DayDatabases, Key, ScanEntry, ScanRequest,
-    StorageReader, StorageReaderHandle, StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
+    StorageReaderHandle, StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
 };
 use outbe_primitives::time::WorldwideDay;
 
@@ -81,16 +83,32 @@ pub trait RetainedTributeAuditVisitor {
 /// Read and mutation-planning authority for the job-retained namespace.
 #[derive(Clone)]
 pub struct RetainedTributeReader {
+    view: RetainedTributeView,
+}
+
+/// Read and planning authority for one retained storage configuration.
+#[derive(Clone)]
+pub struct RetainedTributeView {
     storage: StorageReaderHandle,
     days: Option<Arc<DayDatabases>>,
+}
+
+impl std::ops::Deref for RetainedTributeReader {
+    type Target = RetainedTributeView;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view
+    }
 }
 
 impl RetainedTributeReader {
     #[must_use]
     pub fn new(storage: StorageReaderHandle) -> Self {
         Self {
-            storage,
-            days: None,
+            view: RetainedTributeView {
+                storage,
+                days: None,
+            },
         }
     }
 
@@ -98,11 +116,15 @@ impl RetainedTributeReader {
     #[must_use]
     pub fn with_days(storage: StorageReaderHandle, days: Arc<DayDatabases>) -> Self {
         Self {
-            storage,
-            days: Some(days),
+            view: RetainedTributeView {
+                storage,
+                days: Some(days),
+            },
         }
     }
+}
 
+impl RetainedTributeView {
     /// Enumerates every retained primary and verifies the entire day index.
     /// The caller supplies one immutable view and authenticates lease obligations
     /// separately. Empty or partial GC residuals need only be structurally valid.
@@ -116,7 +138,8 @@ impl RetainedTributeReader {
                 let entry = entry?;
                 let (pin, reference, key) = retained_audit_record(&entry, false)?;
                 let stored_body =
-                    StoredBody::decode(entry.value.as_bytes()).map_err(audit_error)?;
+                    outbe_compressed_entities::decode_stored_body(entry.value.as_bytes())
+                        .map_err(audit_error)?;
                 visitor.visit_retained(RetainedTributeAuditEntry {
                     pin,
                     reference,
@@ -225,71 +248,28 @@ impl RetainedTributeReader {
         expected_commitment: B256,
     ) -> Result<Option<StoredBody>, TributeRepositoryError> {
         ensure_pin_day(pin, tribute_id)?;
-        let mut selected: Option<Vec<u8>> = None;
-        let mut current_mismatch = false;
-
-        if let Some(current) = self
-            .storage
-            .get_record(namespace(TRIBUTES_NAMESPACE)?, &primary_key(tribute_id)?)?
-        {
-            let commitment = commitment_for_stored_bytes(tribute_id, current.value.as_bytes())?;
-            if commitment == expected_commitment {
-                selected = Some(current.value.as_bytes().to_vec());
-            } else {
-                current_mismatch = true;
-            }
-        }
-
-        let retained_key = retained_key(pin, tribute_id, expected_commitment)?;
-        if let Some(retained) = self
-            .storage
-            .get_record(namespace(OCOMP_RETAINED_TRIBUTES_NAMESPACE)?, &retained_key)?
-        {
-            if retained.metadata.is_some() {
-                return Err(TributeRepositoryError::RetainedMetadata {
-                    job_id: pin.input_lease_id,
-                    tribute_id,
-                });
-            }
-            let commitment = commitment_for_stored_bytes(tribute_id, retained.value.as_bytes())?;
-            if commitment != expected_commitment {
-                return Err(TributeRepositoryError::RetainedCommitmentMismatch {
-                    job_id: pin.input_lease_id,
-                    tribute_id,
-                });
-            }
-            validate_retained_index_record(&self.storage, &retained_key, pin)?;
-            if selected
-                .as_ref()
-                .is_some_and(|current| current.as_slice() != retained.value.as_bytes())
-            {
-                return Err(TributeRepositoryError::ConflictingRetainedBody {
-                    job_id: pin.input_lease_id,
-                    tribute_id,
-                });
-            }
-            selected = Some(retained.value.as_bytes().to_vec());
-        } else {
-            let conflicting = self.storage.scan_prefix(
-                namespace(OCOMP_RETAINED_TRIBUTES_NAMESPACE)?,
-                ScanRequest::new(&retained_identity_prefix(pin, tribute_id), None, 1)?,
-            )?;
-            if !conflicting.entries.is_empty() {
-                return Err(TributeRepositoryError::ConflictingRetainedBody {
-                    job_id: pin.input_lease_id,
-                    tribute_id,
-                });
-            }
-        }
+        let (mut selected, current_mismatch) =
+            read::current_body(&self.storage, tribute_id, expected_commitment)?;
+        read::select_retained_body(
+            &self.storage,
+            pin,
+            tribute_id,
+            expected_commitment,
+            &mut selected,
+        )?;
 
         if selected.is_none() && !current_mismatch {
-            if let Some(bytes) = retained_day_body(self, pin, tribute_id, expected_commitment)? {
+            if let Some(bytes) =
+                read::retained_day_body(self, pin, tribute_id, expected_commitment)?
+            {
                 selected = Some(bytes);
             }
         }
 
         match selected {
-            Some(bytes) => StoredBody::decode(&bytes).map(Some).map_err(Into::into),
+            Some(bytes) => outbe_compressed_entities::decode_stored_body(&bytes)
+                .map(Some)
+                .map_err(Into::into),
             None if current_mismatch => Err(TributeRepositoryError::RetainedCommitmentMismatch {
                 job_id: pin.input_lease_id,
                 tribute_id,
@@ -473,41 +453,6 @@ impl RetainedTributeWriter {
     }
 }
 
-fn retained_day_body(
-    reader: &RetainedTributeReader,
-    pin: RetainedTributePin,
-    tribute_id: WwdEntityId,
-    expected_commitment: B256,
-) -> Result<Option<Vec<u8>>, TributeRepositoryError> {
-    let Some(days) = &reader.days else {
-        return Ok(None);
-    };
-    let Some(TributeDayMark::Retained(lease)) =
-        day_mark::read_tribute_day_mark(reader.storage.as_ref(), pin.worldwide_day.value())?
-    else {
-        return Ok(None);
-    };
-    if lease != pin.input_lease_id {
-        return Ok(None);
-    }
-    let Some(storage) = days.tribute_if_present(pin.worldwide_day.value())? else {
-        return Ok(None);
-    };
-    let Some(record) =
-        storage.get_record(namespace(TRIBUTES_NAMESPACE)?, &primary_key(tribute_id)?)?
-    else {
-        return Ok(None);
-    };
-    let commitment = commitment_for_stored_bytes(tribute_id, record.value.as_bytes())?;
-    if commitment != expected_commitment {
-        return Err(TributeRepositoryError::RetainedCommitmentMismatch {
-            job_id: pin.input_lease_id,
-            tribute_id,
-        });
-    }
-    Ok(Some(record.value.as_bytes().to_vec()))
-}
-
 fn release_retained_days(
     storage: &StorageReaderHandle,
     writer: &StorageWriterHandle,
@@ -547,8 +492,8 @@ fn commitment_for_stored_bytes(
     tribute_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<B256, TributeRepositoryError> {
-    let stored = StoredBody::decode(bytes)?;
-    let body = crate::TributeRecord::decode_stored(bytes)?;
+    let stored = outbe_compressed_entities::decode_stored_body(bytes)?;
+    let body = crate::record::decode_stored(bytes)?;
     if body.tribute_id != tribute_id {
         return Err(TributeRepositoryError::PrimaryKeyBodyMismatch {
             expected: tribute_id,

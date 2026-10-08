@@ -56,7 +56,7 @@ fn issue_for_test(
     let encrypted = outbe_tee::nod_mine::create_nod_for_test(
         outbe_primitives::nod_encryption::NodTermsV2 {
             chain_id: storage.chain_id()?,
-            nod_id: NodContract::generate_nod_id(call.owner, day)?,
+            nod_id: outbe_nod::identity::generate_nod_id(call.owner, day)?,
             owner: call.owner,
             worldwide_day: day,
             league_id: 1,
@@ -70,7 +70,8 @@ fn issue_for_test(
     .map_err(|e| PrecompileError::Revert(e.to_string()))?;
     runtime::issue_nod(storage, scope, parent, &encrypted)?;
     if call.issuedAt != 0 {
-        let bucket_key = NodContract::bucket_key(day, call.entryPriceMinor, call.referenceCurrency);
+        let bucket_key =
+            outbe_nod::identity::bucket_key(day, call.entryPriceMinor, call.referenceCurrency);
         NodContract::new(storage.clone())
             .callable_bucket_issued_at
             .write(&bucket_key, call.issuedAt)?;

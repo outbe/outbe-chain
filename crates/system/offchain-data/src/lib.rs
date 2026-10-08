@@ -7,16 +7,22 @@
 mod day_apply;
 mod day_lifecycle;
 mod decode;
+mod open;
 mod prepare;
 mod retirement;
 mod runtime_readers;
 mod state;
 
+pub use open::{open_projection, open_projection_with_retention_selector};
 pub use outbe_primitives::projection::{
     projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
     ProjectionReadinessHandle, ProjectionReadinessPublisher, ProjectionStatus, WaitOutcome,
 };
-pub use runtime_readers::{ExecutionReadBudgetGuard, RuntimeBodyFailure, RuntimeBodyReaders};
+
+pub use runtime_readers::{
+    runtime_body_readers, supervised_day_runtime_body_readers, supervised_runtime_body_readers,
+    ExecutionReadBudgetGuard, RuntimeBodyFailure, RuntimeBodyReaders,
+};
 
 pub use state::{
     read_projection_state, ProjectionConfig, ProjectionSource, ProjectionState,
@@ -36,7 +42,7 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::TributeRepositoryError;
 use thiserror::Error;
 
-use state::{contains_unmanaged_data, state_batch};
+use state::state_batch;
 
 /// Backend-neutral finalized log, including its canonical block-global index.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,39 +153,6 @@ pub struct OffchainDataProjection {
 }
 
 impl OffchainDataProjection {
-    /// Opens a managed database or initializes an empty one.
-    pub fn open(
-        config: ProjectionConfig,
-        reader: StorageReaderHandle,
-        writer: StorageWriterHandle,
-    ) -> Result<Self, ProjectionError> {
-        let state = match read_projection_state(config, reader.clone())? {
-            Some(state) => state,
-            None => {
-                if contains_unmanaged_data(&reader)? {
-                    return Err(ProjectionError::UnmanagedProjectionData);
-                }
-                let state = ProjectionState {
-                    chain_id: config.chain_id,
-                    genesis_hash: config.genesis_hash,
-                    storage_schema_version: STORAGE_SCHEMA_VERSION,
-                    start_block: config.start_block,
-                    checkpoint: None,
-                };
-                writer.apply_atomic(&state_batch(&state)?)?;
-                state
-            }
-        };
-        Ok(Self {
-            reader,
-            writer,
-            state,
-            tribute_retention_selector: None,
-            day_route: None,
-            partition_retirement: false,
-        })
-    }
-
     /// Uses datasource-neutral physical partition retirement in finalized batches.
     pub fn enable_partition_retirement(&mut self) {
         self.partition_retirement = true;
@@ -198,18 +171,6 @@ impl OffchainDataProjection {
     #[must_use]
     pub fn day_route(&self) -> Option<&DayDatabaseRoute> {
         self.day_route.as_ref()
-    }
-
-    /// Opens the projector with the node-owned active-pin selector.
-    pub fn open_with_retention_selector(
-        config: ProjectionConfig,
-        reader: StorageReaderHandle,
-        writer: StorageWriterHandle,
-        selector: Arc<dyn TributeRetentionSelector>,
-    ) -> Result<Self, ProjectionError> {
-        let mut projection = Self::open(config, reader, writer)?;
-        projection.tribute_retention_selector = Some(selector);
-        Ok(projection)
     }
 
     #[must_use]

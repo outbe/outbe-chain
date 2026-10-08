@@ -53,7 +53,7 @@ pub(crate) fn issue_nod_at(
     if terms.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
     }
-    let nod_id = NodContract::generate_nod_id(terms.owner, terms.worldwide_day)?;
+    let nod_id = outbe_nod::identity::generate_nod_id(terms.owner, terms.worldwide_day)?;
     if terms.nod_id != nod_id
         || terms.chain_id != storage.chain_id()?
         || !encrypted.has_valid_encoding()
@@ -63,10 +63,10 @@ pub(crate) fn issue_nod_at(
     if nod_api::get_item(storage, scope, parent, nod_id)?.is_some() {
         return Err(NodFactoryError::NodAlreadyExists.into());
     }
-    if !NodContract::is_issuable_entry(terms.entry_price_minor) {
+    if !outbe_nod::pricing::is_issuable_entry(terms.entry_price_minor) {
         return Err(NodFactoryError::EntryPriceOutOfBounds.into());
     }
-    let floor_price_minor = NodContract::floor_price_minor(terms.entry_price_minor)
+    let floor_price_minor = outbe_nod::pricing::floor_price_minor(terms.entry_price_minor)
         .ok_or(NodFactoryError::EntryPriceOutOfBounds)?;
     let item = NodItemState {
         is_settled: false,
@@ -75,7 +75,7 @@ pub(crate) fn issue_nod_at(
         encrypted: encrypted.clone(),
         worldwide_day: terms.worldwide_day,
         league_id: terms.league_id,
-        bucket_key: NodContract::bucket_key(
+        bucket_key: outbe_nod::identity::bucket_key(
             terms.worldwide_day,
             terms.entry_price_minor,
             terms.reference_currency,

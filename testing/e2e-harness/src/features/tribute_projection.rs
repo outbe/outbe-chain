@@ -122,7 +122,16 @@ fn submit_one_cross_currency_offer(world: &mut World) {
     wait_for_offering(world, &wwd);
     let tx_hash = world
         .rpc
-        .tribute_cross_currency_offer(&key, &wwd, "0", "410000", 949, 978, false)
+        .tribute_cross_currency_offer(
+            &key,
+            crate::world::rpc::TributeOfferParams {
+                wwd: &wwd,
+                amounts: ("0", "410000"),
+                currency: 949,
+                exclude_from_intex_issuance: false,
+            },
+            978,
+        )
         .expect("native encrypted TRY/EUR offerTribute returned a transaction hash");
     world.state.tribute_tx_hash = Some(tx_hash);
 }
@@ -177,7 +186,15 @@ fn submit_duplicate_offer(world: &mut World) {
         // The first offer uses amount=100 and exclude=false. Change both
         // fields here: the second transaction must still collide because the
         // canonical Tribute identity is `(owner, worldwide_day)`.
-        .tribute_offer_with_params(&key, &wwd, "777", "0", 840, true)
+        .tribute_offer_with_params(
+            &key,
+            crate::world::rpc::TributeOfferParams {
+                wwd: &wwd,
+                amounts: ("777", "0"),
+                currency: 840,
+                exclude_from_intex_issuance: true,
+            },
+        )
         .expect("replayed offerTribute returned transaction hash");
     world.state.duplicate_tribute_tx_hash = Some(tx_hash);
 }
@@ -195,43 +212,7 @@ fn successful_receipt_and_supply(world: &mut World) {
             world
                 .rpc
                 .trace_tribute_state(tx_hash, "state-visible", primary);
-            // The offer just went through every enclave. The per-request
-            // telemetry line must be on the enclave log. The canary-fed enclave
-            // status of each validator must not be failing.
-            for index in 0..world.validators.size() {
-                let mut telemetry_visible = false;
-                for _ in 0..60 {
-                    if world
-                        .localnet
-                        .enclave_log_has(index, "req=process_tribute_offer_batch")
-                        .expect("read required owned process log")
-                    {
-                        telemetry_visible = true;
-                        break;
-                    }
-                    sleep(Duration::from_millis(250));
-                }
-                assert!(
-                    telemetry_visible,
-                    "validator-{index} enclave log lacks the offer telemetry line"
-                );
-                if let Some(raw) = world
-                    .rpc
-                    .consensus_status_field(world.validators.http_port(index), "enclave")
-                {
-                    let enclave: serde_json::Value =
-                        serde_json::from_str(&raw).expect("enclave status json");
-                    let state = enclave
-                        .get("state")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("unknown");
-                    assert!(
-                        state != "degraded" && state != "unavailable",
-                        "validator-{index} enclave canary is {state} right after a \
-                         successful enclave-backed offer"
-                    );
-                }
-            }
+            assert_enclave_offer_telemetry(world);
             return;
         }
         sleep(Duration::from_millis(500));
@@ -509,10 +490,17 @@ fn independent_user_offers_through_network(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("offering day");
     let day: u32 = wwd.parse().expect("numeric day");
     let (draft, su_hash) = l2_fixture::offer_identifiers("independent-user", caller, day);
-    let zk =
-        world
-            .rpc
-            .prove_offer_for_network(caller, network, day, 840, ("100", "0"), draft, su_hash);
+    let zk = world.rpc.prove_offer_for_network(
+        network,
+        crate::world::rpc::TributeProofInput {
+            caller,
+            worldwide_day: day,
+            tribute_currency: 840,
+            amounts: ("100", "0"),
+            draft_id: draft,
+            su_hash,
+        },
+    );
     let wrong_signature = l2_fixture::sign_merkle_root(
         network.checked_add(1).expect("other network key"),
         &zk.merkle_root,
@@ -638,4 +626,41 @@ fn independent_tribute_owner_is_projected(world: &mut World) {
         Some(0),
         "offer must not register its caller"
     );
+}
+
+fn assert_enclave_offer_telemetry(world: &World) {
+    for index in 0..world.validators.size() {
+        let mut telemetry_visible = false;
+        for _ in 0..60 {
+            if world
+                .localnet
+                .enclave_log_has(index, "req=process_tribute_offer_batch")
+                .expect("read required owned process log")
+            {
+                telemetry_visible = true;
+                break;
+            }
+            sleep(Duration::from_millis(250));
+        }
+        assert!(
+            telemetry_visible,
+            "validator-{index} enclave log lacks the offer telemetry line"
+        );
+        if let Some(raw) = world
+            .rpc
+            .consensus_status_field(world.validators.http_port(index), "enclave")
+        {
+            let enclave: serde_json::Value =
+                serde_json::from_str(&raw).expect("enclave status json");
+            let state = enclave
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            assert!(
+                state != "degraded" && state != "unavailable",
+                "validator-{index} enclave canary is {state} right after a \
+             successful enclave-backed offer"
+            );
+        }
+    }
 }

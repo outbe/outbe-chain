@@ -283,8 +283,10 @@ fn supply_removed(world: &mut World) {
             addresses::GRATIS_ADDR,
             owner(world),
             &totalSupplyCall {},
-            U256::ZERO,
-            height,
+            crate::internal::eth::RevertAt {
+                value: U256::ZERO,
+                height,
+            },
         )
         .expect("removed Gratis supply getter must produce an EVM revert");
     }

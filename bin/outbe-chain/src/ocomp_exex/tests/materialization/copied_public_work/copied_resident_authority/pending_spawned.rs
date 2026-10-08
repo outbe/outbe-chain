@@ -111,9 +111,14 @@ fn artifact(public: &Path, f: &Fixture) -> Vec<[u8; CONTRIBUTOR_LEAF_BYTES]> {
     let job_root = public.join("supervisor-v1/jobs").join(&job);
     let admissions =
         AdmissionCatalogReader::open_existing(job_root.join("admissions"), &cas, limits).unwrap();
-    let audit =
-        LocalLysisPlanAuditV1::open_read_only(&admissions, &inputs, &cas, &f.bundle, &limits)
-            .unwrap();
+    let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
+        &admissions,
+        &inputs,
+        &cas,
+        &f.bundle,
+        &limits,
+    )
+    .unwrap();
     let count = write_contributor_payout_artifact(&audit, &job_root).unwrap();
     assert_eq!(count, f.nod_count);
     let bytes = fs::read(job_root.join(CONTRIBUTOR_PAYOUT_ARTIFACT_FILE)).unwrap();
@@ -168,15 +173,21 @@ fn expected_payout(f: &Fixture, leaves: &[[u8; CONTRIBUTOR_LEAF_BYTES]]) -> Vec<
     .abi_encode()
 }
 
+fn contributor_totals(leaves: &[[u8; CONTRIBUTOR_LEAF_BYTES]]) -> (u32, B256, U256) {
+    let count = leaves.len() as u32;
+    let root = contributor_list_root(count, leaves.iter()).unwrap();
+    let total = leaves.iter().fold(U256::ZERO, |sum, leaf| {
+        sum.checked_add(decode_contributor_leaf(leaf).nominal)
+            .unwrap()
+    });
+    (count, root, total)
+}
+
 // Added below: native fixture owners and signed native-frame writer.
 fn seed_native(root: &Path, f: &Fixture, sender: Address, leaves: &[[u8; CONTRIBUTOR_LEAF_BYTES]]) {
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use reth_ethereum::provider::db::{
-        database::Database,
-        init_db,
-        mdbx::DatabaseArguments,
-        tables,
-        transaction::{DbTx, DbTxMut},
+        database::Database, init_db, mdbx::DatabaseArguments, transaction::DbTx,
     };
     let mut owner = HashMapStorageProvider::new_with_chain_identity(
         copied_native::chain().chain().id(),
@@ -186,12 +197,7 @@ fn seed_native(root: &Path, f: &Fixture, sender: Address, leaves: &[[u8; CONTRIB
     StorageHandle::enter(&mut owner, |storage| {
         f.seed_pending_head(&storage);
         let intex = outbe_intex::schema::IntexContract::new(storage.clone());
-        let count = leaves.len() as u32;
-        let root = contributor_list_root(count, leaves.iter()).unwrap();
-        let total = leaves.iter().fold(U256::ZERO, |sum, leaf| {
-            sum.checked_add(decode_contributor_leaf(leaf).nominal)
-                .unwrap()
-        });
+        let (count, root, total) = contributor_totals(leaves);
         intex.ocomp_contributor_root.write(&f.day, root).unwrap();
         intex
             .ocomp_contributor_metadata
@@ -203,33 +209,22 @@ fn seed_native(root: &Path, f: &Fixture, sender: Address, leaves: &[[u8; CONTRIB
             .unwrap();
         outbe_intex::api::open_certified_payout_round(&storage, f.day.into(), U256::from(10_000))
             .unwrap();
-        let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage);
-        validators.config_owner.write(sender).unwrap();
-        validators.set_config_max_validators(128).unwrap();
-        validators.config_epoch_length_blocks.write(10).unwrap();
-        // BLS12-381 G1 generator compressed. Only fixture admission uses it.
-        // No consensus signer/quorum or SGX identity is constructed here.
-        let key: [u8; 48] = hex::decode("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb").unwrap().try_into().unwrap();
-        validators.register_validator(sender, sender, &key).unwrap();
-        validators
-            .activate_validator_via_boundary_for_test(sender)
-            .unwrap();
-        assert_eq!(
-            validators
-                .resolve_validator_for_role(
-                    sender,
-                    outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp
-                )
-                .unwrap(),
-            Some(sender)
-        );
+        seed_native_validator(storage, sender);
     });
     let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
     let tx = db.tx_mut().unwrap();
+    persist_native_accounts(&tx, owner.storage);
+    tx.commit().unwrap();
+}
+
+fn persist_native_accounts<T: DbTxMut>(
+    tx: &T,
+    entries: impl IntoIterator<Item = ((Address, U256), U256)>,
+) {
     type Word = <tables::PlainStorageState as Table>::Value;
     type HistoryKey = <tables::StoragesHistory as Table>::Key;
     type HistoryBlocks = <tables::StoragesHistory as Table>::Value;
-    for ((address, slot), value) in owner.storage {
+    for ((address, slot), value) in entries {
         if value.is_zero() {
             continue;
         }
@@ -258,7 +253,6 @@ fn seed_native(root: &Path, f: &Fixture, sender: Address, leaves: &[[u8; CONTRIB
         )
         .unwrap();
     }
-    tx.commit().unwrap();
 }
 
 fn signed_frames(
@@ -467,24 +461,25 @@ fn enable_validator<P>(
 ) {
     // Reuse the existing component fixture. Configure all policy owners
     // consistently. This does not construct another FullNode adapter.
-    runtime.domain = EmbeddedOcompDomainV1::open(EmbeddedOcompDomainConfigV1 {
-        domain_root: public.to_path_buf(),
-        registry_generation: 1,
-        bundles: vec![EmbeddedOcompBundleConfigV1 {
-            worker_address: "127.0.0.1:0".parse().unwrap(),
-            identity: EndpointIdentity {
-                chain_id: copied_native::chain().chain().id(),
-                genesis_hash: copied_native::chain().genesis_hash(),
-                boot_nonce: B256::repeat_byte(0x81),
-                protocol_bundle_hash: bundle.hash(),
-            },
-            protocol_bundle: bundle.clone(),
-        }],
-        policy: EmbeddedNodePolicyV1::Validator,
-        validator_rpc_url: Some(url.to_owned()),
-        limits: poc_schema_limits(),
-    })
-    .unwrap();
+    runtime.domain =
+        outbe_ocomp::embedded_runtime::open_embedded_domain(EmbeddedOcompDomainConfigV1 {
+            domain_root: public.to_path_buf(),
+            registry_generation: 1,
+            bundles: vec![EmbeddedOcompBundleConfigV1 {
+                worker_address: "127.0.0.1:0".parse().unwrap(),
+                identity: EndpointIdentity {
+                    chain_id: copied_native::chain().chain().id(),
+                    genesis_hash: copied_native::chain().genesis_hash(),
+                    boot_nonce: B256::repeat_byte(0x81),
+                    protocol_bundle_hash: bundle.hash(),
+                },
+                protocol_bundle: bundle.clone(),
+            }],
+            policy: EmbeddedNodePolicyV1::Validator,
+            validator_rpc_url: Some(url.to_owned()),
+            limits: poc_schema_limits(),
+        })
+        .unwrap();
     runtime.policy = EmbeddedNodePolicyV1::Validator;
     runtime.state = EmbeddedOcompJobsV1::new(EmbeddedOcompModeV1::Validator);
 }
@@ -571,4 +566,27 @@ async fn copied_fullnode_with_resident_keys_never_submits_pending_nod_or_payout(
     if isolated("copied_fullnode_with_resident_keys_never_submits_pending_nod_or_payout") {
         exercise(false).await;
     }
+}
+
+fn seed_native_validator(storage: outbe_primitives::storage::StorageHandle<'_>, sender: Address) {
+    let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+    validators.config_owner.write(sender).unwrap();
+    validators.set_config_max_validators(128).unwrap();
+    validators.config_epoch_length_blocks.write(10).unwrap();
+    // BLS12-381 G1 generator compressed. Only fixture admission uses it.
+    // No consensus signer/quorum or SGX identity is constructed here.
+    let key: [u8; 48] = hex::decode("97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb").unwrap().try_into().unwrap();
+    validators.register_validator(sender, sender, &key).unwrap();
+    validators
+        .activate_validator_via_boundary_for_test(sender)
+        .unwrap();
+    assert_eq!(
+        validators
+            .resolve_validator_for_role(
+                sender,
+                outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp
+            )
+            .unwrap(),
+        Some(sender)
+    );
 }

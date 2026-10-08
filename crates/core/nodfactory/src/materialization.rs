@@ -297,7 +297,7 @@ fn validate_encrypted_materialization(
             let terms = &body.terms;
             (terms.chain_id, terms.worldwide_day.value()) == (authority.chain_id, day)
                 && !terms.owner.is_zero()
-                && NodContract::is_issuable_entry(terms.entry_price_minor)
+                && outbe_nod::pricing::is_issuable_entry(terms.entry_price_minor)
         });
     if !valid {
         return Err(NodFactoryError::InvalidMaterializationProof.into());
@@ -374,11 +374,11 @@ fn finish_materialization(
 #[cfg(any(test, feature = "test-utils"))]
 fn require_derived_nod_ids(actions: &[NodActionV1], worldwide_day: WorldwideDay) -> Result<()> {
     for action in actions {
-        let derived_nod_id = NodContract::generate_nod_id(action.owner, worldwide_day)?;
+        let derived_nod_id = outbe_nod::identity::generate_nod_id(action.owner, worldwide_day)?;
         let supplied_nod_id = WwdEntityId::try_from(action.nod_id.0.as_slice())
             .map_err(|_| PrecompileError::from(NodFactoryError::InvalidMaterializationProof))?;
         if supplied_nod_id != derived_nod_id
-            || !NodContract::is_issuable_entry(action.entry_price_minor)
+            || !outbe_nod::pricing::is_issuable_entry(action.entry_price_minor)
         {
             return Err(NodFactoryError::InvalidMaterializationProof.into());
         }

@@ -299,9 +299,13 @@ fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
     .unwrap();
     let input_ref_catalog_path = directory.path().join("input-refs");
     let published = publish_input_artifact_set(
-        &cas,
+        outbe_ocomp::input_artifacts::InputArtifactContext {
+            cas: &cas,
+            bundle: &bundle,
+            limits,
+            list_limits: poc_input_list_limits(),
+        },
         &input_ref_catalog_path,
-        &bundle,
         InputArtifactContents {
             identity: InputArtifactIdentity {
                 job_id,
@@ -324,8 +328,6 @@ fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
             fidelity_openings,
             oracle_opening: oracle_opening.unwrap(),
         },
-        &limits,
-        poc_input_list_limits(),
     )
     .unwrap();
 

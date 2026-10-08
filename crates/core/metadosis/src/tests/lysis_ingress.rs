@@ -6,7 +6,6 @@
 //! keeps its own machine-readable rejection codes.
 
 use super::*;
-use crate::fixture_kernel::ActivationFixture;
 use crate::schema::terminal_outcome;
 use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};
 use crate::{
@@ -52,7 +51,7 @@ fn submit_lysis_result_reverts_when_ocomp_lifecycle_is_inactive() {
 
 #[test]
 fn active_lifecycle_still_routes_lysis_vote_to_the_command_path() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     let calldata = fixture.calldata();
 
     // The view dispatcher never executes votes, even for a production-valid
@@ -76,7 +75,7 @@ fn active_lifecycle_still_routes_lysis_vote_to_the_command_path() {
 #[test]
 fn static_or_valued_lysis_call_rejects_with_call_mode_code_when_active() {
     with_storage(|storage| {
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         for (value, is_static) in [(U256::from(1_u8), false), (U256::ZERO, true)] {
             let err = dispatch_public_result_vote(storage.clone(), &scope, &[], value, is_static)
                 .expect_err("static or valued vote call must be rejected");

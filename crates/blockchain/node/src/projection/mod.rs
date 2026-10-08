@@ -13,6 +13,7 @@ use outbe_offchain_data::ProjectionReadinessPublisher;
 use outbe_offchain_data::ProjectionStatus;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_data::TributeRetentionSelector;
+use outbe_offchain_data::{supervised_day_runtime_body_readers, supervised_runtime_body_readers};
 use outbe_offchain_storage::OpenedStorage;
 use outbe_offchain_storage::PendingOverlayStorage;
 use outbe_offchain_storage::StorageCompletion;
@@ -77,12 +78,12 @@ impl PreparedOffchainDataProjection {
     pub fn runtime_body_readers(&self) -> RuntimeBodyReaders {
         let reader: StorageReaderHandle = self.overlay.clone();
         match self.projector.day_route() {
-            Some(route) => RuntimeBodyReaders::new_supervised_with_days(
+            Some(route) => supervised_day_runtime_body_readers(
                 reader,
                 route.clone(),
                 self.runtime_failure_sender.clone(),
             ),
-            None => RuntimeBodyReaders::new_supervised(reader, self.runtime_failure_sender.clone()),
+            None => supervised_runtime_body_readers(reader, self.runtime_failure_sender.clone()),
         }
     }
 

@@ -154,13 +154,16 @@ fn prepare_relayed_nod(
     // Keep enough allowance and funds for a duplicate to pay if its guard regresses.
     fund_and_approve(
         world,
-        asset,
-        PAYER_KEY,
-        payer,
-        addresses::NOD_FACTORY_ADDR,
-        body.settlementCostMinor
-            .checked_mul(U256::from(2))
-            .expect("two settlement costs"),
+        crate::features::settlement::SettlementFunding {
+            asset,
+            owner_key: PAYER_KEY,
+            owner: payer,
+            spender: addresses::NOD_FACTORY_ADDR,
+            amount: body
+                .settlementCostMinor
+                .checked_mul(U256::from(2))
+                .expect("two settlement costs"),
+        },
     );
     let owner_keys =
         eth::derive_account_keys(&url, &owner_key, Ledger::Gratis).expect("owner Gratis keys");
@@ -355,11 +358,13 @@ fn prepare_mining_attempt(
     // This is a valid MAC for the payer's own account, never the Nod owner's.
     let wrong_mac = outbe_tee_enclave::gratis::modify_mac(
         &scenario.payer_keys.modify,
-        scenario.payer,
-        GratisOp::Mint,
-        scenario.gratis_load,
-        nonce,
-        pair_chain_id,
+        &outbe_tee_enclave::gratis::ModifyOperation {
+            account: scenario.payer,
+            op: GratisOp::Mint,
+            amount: scenario.gratis_load,
+            op_nonce: nonce,
+            chain_id: pair_chain_id,
+        },
     );
     let mine = eth::INodFactory::mineGratisCall {
         nodId: scenario.id.to_u256(),
@@ -530,11 +535,13 @@ fn mine_nod(
     let mut mine = attempt.mine.clone();
     mine.mac = B256::from(outbe_tee_enclave::gratis::modify_mac(
         &scenario.owner_keys.modify,
-        scenario.owner,
-        GratisOp::Mint,
-        scenario.gratis_load,
-        attempt.nonce,
-        attempt.pair_chain_id,
+        &outbe_tee_enclave::gratis::ModifyOperation {
+            account: scenario.owner,
+            op: GratisOp::Mint,
+            amount: scenario.gratis_load,
+            op_nonce: attempt.nonce,
+            chain_id: attempt.pair_chain_id,
+        },
     ));
     assert_only_mac_changed(&attempt.wrong_call, &mine);
     assert_eq!(

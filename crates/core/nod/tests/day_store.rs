@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, U256};
 use outbe_compressed_entities::{IdPageRequest, WwdEntityId};
-use outbe_nod::{
-    NodContract, NodItemState, NodPageRequest, NodRepositoryReader, NodRepositoryWriter,
-};
+use outbe_nod::{NodItemState, NodPageRequest, NodRepositoryReader, NodRepositoryWriter};
 use outbe_offchain_storage::{
     DayDatabases, Key, Namespace, RocksDbStorage, ScanRequest, StorageReader, StorageWriter, Value,
 };
@@ -33,12 +31,12 @@ fn item(owner: Address, day: u32) -> NodItemState {
     outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day).unwrap(),
             owner,
             gratis_load_minor: U256::from(11u64),
             worldwide_day,
             league_id: 4,
-            bucket_key: NodContract::bucket_key(worldwide_day, entry, 840),
+            bucket_key: outbe_nod::identity::bucket_key(worldwide_day, entry, 840),
             issuance_currency: 840,
             reference_currency: 840,
             issued_at: 1_752_534_000,
@@ -66,19 +64,13 @@ fn owner_day_count(store: &Store) -> usize {
 }
 
 fn routed_reader(store: &Store) -> NodRepositoryReader {
-    NodRepositoryReader::with_days(
-        store.shared.clone(),
-        store.shared.clone(),
-        store.databases.clone(),
-    )
+    outbe_nod::nod_reader(store.shared.clone())
+        .with_days(store.shared.clone(), store.databases.clone())
 }
 
 fn routed_writer(store: &Store) -> NodRepositoryWriter {
-    NodRepositoryWriter::with_days(
-        store.shared.clone(),
-        store.shared.clone(),
-        store.databases.clone(),
-    )
+    outbe_nod::nod_writer(store.shared.clone(), store.shared.clone())
+        .with_days(store.databases.clone())
 }
 
 #[test]
@@ -115,7 +107,7 @@ fn nod_list_resumes_from_id_cursor() {
 fn legacy_keys_move_once_and_read_from_the_day() {
     let store = open();
     let nod = item(Address::repeat_byte(0x32), 7);
-    NodRepositoryWriter::new(store.shared.clone(), store.shared.clone())
+    outbe_nod::nod_writer(store.shared.clone(), store.shared.clone())
         .put_nod(&nod)
         .unwrap();
 
@@ -136,10 +128,7 @@ fn legacy_keys_move_once_and_read_from_the_day() {
     let day = store.databases.nod_if_present(7).unwrap().unwrap();
     assert_eq!(
         outbe_nod::api::calculation_amount(
-            &NodRepositoryReader::new(day)
-                .get(nod.nod_id)
-                .unwrap()
-                .unwrap()
+            &outbe_nod::nod_reader(day).get(nod.nod_id).unwrap().unwrap()
         )
         .unwrap(),
         outbe_nod::api::calculation_amount(&nod).unwrap()
@@ -320,7 +309,7 @@ fn owner_change_clears_the_previous_owner_day() {
 fn legacy_owner_list_reads_the_moved_nod() {
     let store = open();
     let nod = item(Address::repeat_byte(0x44), 7);
-    NodRepositoryWriter::new(store.shared.clone(), store.shared.clone())
+    outbe_nod::nod_writer(store.shared.clone(), store.shared.clone())
         .put_nod(&nod)
         .unwrap();
 

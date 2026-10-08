@@ -30,7 +30,7 @@ pub fn serve_connection<S: EnclaveTransportStream>(
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
 ) -> Result<(), TransportError> {
-    let initialization = InitializationState::development();
+    let initialization = crate::initialization::factory::development();
     serve_connection_with(stream, keys, offer_key, None, &initialization)
 }
 
@@ -43,7 +43,7 @@ pub fn serve_connection_for_network_test<S: EnclaveTransportStream>(
     offer_key: &SharedTributeOfferKey,
     network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
 ) -> Result<(), TransportError> {
-    let initialization = InitializationState::development_for_network(network_binding);
+    let initialization = crate::initialization::factory::development_for_network(network_binding);
     serve_connection_with(stream, keys, offer_key, None, &initialization)
 }
 

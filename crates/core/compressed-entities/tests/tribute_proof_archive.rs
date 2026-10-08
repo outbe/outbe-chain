@@ -3,7 +3,7 @@ use outbe_compressed_entities::{
     body_commitment, derive_poseidon_entity_id, encode_tribute_v2,
     tribute_partition_root_from_leaves, verify_body_in_collection, BoundedTributePartitionVerifier,
     CeDomain, StoredBody, TributePartitionExpectationV1, TributePartitionWorkConfig,
-    TributeProofArchiveV1, ACTIVE_COMMITMENT_SCHEME, TRIBUTE_BODY_SCHEMA_V2,
+    ACTIVE_COMMITMENT_SCHEME, TRIBUTE_BODY_SCHEMA_V2,
 };
 use outbe_primitives::{
     time::WorldwideDay,
@@ -76,7 +76,8 @@ fn frozen_inventory_proofs_survive_reopen_and_reject_substituted_bodies() {
     let archive = builder.finish_with_archive(|| {}).unwrap();
     assert_eq!(archive.collection_root(), root);
     drop(archive);
-    let archive = TributeProofArchiveV1::open(&path, expectation).unwrap();
+    let archive =
+        outbe_compressed_entities::open_tribute_proof_archive(&path, expectation).unwrap();
     for (index, (id, body, _)) in bodies.iter().enumerate() {
         let proof = archive.proof(*id).unwrap();
         verify_body_in_collection(root, CeDomain::Tribute, *id, body, &proof).unwrap();
@@ -106,5 +107,5 @@ fn frozen_inventory_proofs_survive_reopen_and_reject_substituted_bodies() {
     );
     let mut wrong = expectation;
     wrong.expected_collection_root = B256::repeat_byte(0x11);
-    assert!(TributeProofArchiveV1::open(&path, wrong).is_err());
+    assert!(outbe_compressed_entities::open_tribute_proof_archive(&path, wrong).is_err());
 }

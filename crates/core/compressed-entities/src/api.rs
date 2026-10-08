@@ -497,119 +497,9 @@ impl Drop for ExplicitGasWindow<'_> {
     }
 }
 
+pub mod scope_factory;
+
 impl ExecutionScope {
-    #[must_use]
-    pub fn new() -> Self {
-        // Empty-tree harnesses use this constructor. Production starts with `for_finalized_rpc`.
-        // `configure_parent_tree_factory` binds the parent for lazy access during begin-block.
-        Self {
-            phase: AtomicU8::new(PHASE_BEFORE_BEGIN),
-            explicit_gas_charged: AtomicU64::new(0),
-            explicit_gas_window_active: AtomicBool::new(false),
-            explicit_gas_window_start: AtomicU64::new(0),
-            explicit_gas_window_limit: AtomicU64::new(0),
-            parent_tree: Mutex::new(Some(Arc::new(EmptyAuthenticatedTree))),
-            parent_tree_factory: Mutex::new(None),
-            parent_identity_without_root: Mutex::new(None),
-            parent_binding_configured: AtomicBool::new(false),
-            rpc_read_only: AtomicBool::new(false),
-            provisional_seal: Mutex::new(None),
-            completed_seal: Mutex::new(None),
-            ce_work_config: CeWorkConfig::new(0, 0, u64::MAX),
-            ce_work: Mutex::new(CeWorkState {
-                used: 0,
-                seen_keys: BTreeSet::new(),
-                transaction_start: None,
-            }),
-            ce_work_failure: AtomicU8::new(CE_WORK_FAILURE_NONE),
-        }
-    }
-
-    #[must_use]
-    pub fn with_parent_tree(
-        parent_tree: Arc<dyn AuthenticatedParentTree>,
-        ce_work_config: CeWorkConfig,
-    ) -> Self {
-        Self {
-            phase: AtomicU8::new(PHASE_BEFORE_BEGIN),
-            explicit_gas_charged: AtomicU64::new(0),
-            explicit_gas_window_active: AtomicBool::new(false),
-            explicit_gas_window_start: AtomicU64::new(0),
-            explicit_gas_window_limit: AtomicU64::new(0),
-            parent_tree: Mutex::new(Some(parent_tree)),
-            parent_tree_factory: Mutex::new(None),
-            parent_identity_without_root: Mutex::new(None),
-            parent_binding_configured: AtomicBool::new(true),
-            rpc_read_only: AtomicBool::new(false),
-            provisional_seal: Mutex::new(None),
-            completed_seal: Mutex::new(None),
-            ce_work_config,
-            ce_work: Mutex::new(CeWorkState {
-                used: 0,
-                seen_keys: BTreeSet::new(),
-                transaction_start: None,
-            }),
-            ce_work_failure: AtomicU8::new(CE_WORK_FAILURE_NONE),
-        }
-    }
-
-    #[must_use]
-    pub fn with_parent_tree_factory(
-        factory: Arc<dyn AuthenticatedParentTreeFactory>,
-        commitment_scheme_version: u32,
-        parent_block_number: u64,
-        parent_block_hash: B256,
-        ce_work_config: CeWorkConfig,
-    ) -> Self {
-        Self {
-            phase: AtomicU8::new(PHASE_BEFORE_BEGIN),
-            explicit_gas_charged: AtomicU64::new(0),
-            explicit_gas_window_active: AtomicBool::new(false),
-            explicit_gas_window_start: AtomicU64::new(0),
-            explicit_gas_window_limit: AtomicU64::new(0),
-            parent_tree: Mutex::new(None),
-            parent_tree_factory: Mutex::new(Some(factory)),
-            parent_identity_without_root: Mutex::new(Some((
-                commitment_scheme_version,
-                parent_block_number,
-                parent_block_hash,
-            ))),
-            parent_binding_configured: AtomicBool::new(true),
-            rpc_read_only: AtomicBool::new(false),
-            provisional_seal: Mutex::new(None),
-            completed_seal: Mutex::new(None),
-            ce_work_config,
-            ce_work: Mutex::new(CeWorkState {
-                used: 0,
-                seen_keys: BTreeSet::new(),
-                transaction_start: None,
-            }),
-            ce_work_failure: AtomicU8::new(CE_WORK_FAILURE_NONE),
-        }
-    }
-
-    /// Creates a finalized-state read scope for EVM instances used by RPC
-    /// simulation. A real block executor replaces this fallback binding before
-    /// begin-block and activates the normal mutation lifecycle.
-    #[must_use]
-    pub fn for_finalized_rpc(
-        factory: Arc<dyn AuthenticatedParentTreeFactory>,
-        commitment_scheme_version: u32,
-        block_number: u64,
-        block_hash: B256,
-    ) -> Self {
-        let mut scope = Self::with_parent_tree_factory(
-            factory,
-            commitment_scheme_version,
-            block_number,
-            block_hash,
-            CeWorkConfig::new(0, 0, u64::MAX),
-        );
-        scope.parent_binding_configured = AtomicBool::new(false);
-        scope.rpc_read_only = AtomicBool::new(true);
-        scope
-    }
-
     /// Binds the factory/identity to the scope already captured by this EVM's
     /// precompiles. Live wiring calls this after the block parent is known and
     /// before begin-block. Lifecycle and every nested precompile therefore keep
@@ -732,13 +622,12 @@ impl ExecutionScope {
 
     /// Best-effort context for a failed body check; never selects a different tree.
     pub(crate) fn diagnostic_parent_binding(&self) -> String {
-        format!(
-            "binding={:?} rpc_read_only={}",
-            self.parent_identity_without_root
-                .lock()
-                .map(|binding| *binding),
-            self.rpc_read_only.load(Ordering::Acquire),
-        )
+        let binding = self
+            .parent_identity_without_root
+            .lock()
+            .map(|binding| *binding);
+        let rpc_read_only = self.rpc_read_only.load(Ordering::Acquire);
+        format!("binding={binding:?} rpc_read_only={rpc_read_only}")
     }
 
     /// Returns the exact root prepared from all CE mutations currently staged
@@ -1218,7 +1107,10 @@ fn fatal_scope(message: impl Into<String>) -> outbe_primitives::error::Precompil
 
 impl Default for ExecutionScope {
     fn default() -> Self {
-        Self::new()
+        scope_factory::empty_scope(
+            Some(Arc::new(EmptyAuthenticatedTree)),
+            CeWorkConfig::new(0, 0, u64::MAX),
+        )
     }
 }
 

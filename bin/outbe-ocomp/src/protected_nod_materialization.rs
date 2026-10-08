@@ -42,7 +42,7 @@ pub fn materialization_sources(
     built: &BuiltNodMaterializationBatchV1,
     inventory_root: &Path,
 ) -> Result<(Vec<NodSourceV2>, Vec<CasObjectRefV1>), ProtectedNodPreparationError> {
-    let archive = TributeProofArchiveV1::open(
+    let archive = outbe_compressed_entities::open_tribute_proof_archive(
         inventory_root.join(SOURCE_PROOF_ARCHIVE_DIRECTORY),
         TributePartitionExpectationV1 {
             day: WorldwideDay::new(audit.manifest().wwd),
@@ -97,7 +97,7 @@ fn encrypted_source(
 ) -> Result<NodSourceV2, ProtectedNodPreparationError> {
     let id = WwdEntityId::from(action.tribute_id);
     for canonical in &chunk.canonical_records_or_openings {
-        let record = outbe_tribute::TributeRecord::decode_canonical(&canonical.0)?;
+        let record = outbe_tribute::record::decode_canonical(&canonical.0)?;
         if record.tribute_id != id {
             continue;
         }

@@ -440,7 +440,7 @@ fn empty_tribute_day_restores_outer_ce_checkpoint_after_late_parent_failure_then
         parent_root,
         calls: AtomicUsize::new(0),
     });
-    let scope = ExecutionScope::with_parent_tree(
+    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
         tree.clone(),
         outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
@@ -987,7 +987,7 @@ impl PersistentTree {
                 root,
             })
             .unwrap();
-        ExecutionScope::with_parent_tree(
+        outbe_compressed_entities::execution_scope::with_parent_tree(
             parent,
             outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
         )

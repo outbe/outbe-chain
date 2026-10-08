@@ -322,16 +322,7 @@ impl Lifecycle for NodLifecycle {
                     &url,
                     addresses::NOD_FACTORY_ADDR,
                     &key,
-                    &eth::INodFactory::mineGratisCall {
-                        nodId: id,
-                        nonce: find_mining_pow_nonce(
-                            outbe_common::pow::MiningDomain::Nod,
-                            id,
-                            owner,
-                        ),
-                        mac,
-                        opNonce: op_nonce,
-                    },
+                    &paid_nod_mining_call(id, owner, mac, op_nonce),
                     None,
                 )
                 .expect("submit Gratis mining");
@@ -434,4 +425,18 @@ fn wait_for_nod_of(url: &str, owner: Address) -> U256 {
         },
     );
     id.expect("owner's Nod id")
+}
+
+fn paid_nod_mining_call(
+    id: U256,
+    owner: Address,
+    mac: alloy_primitives::B256,
+    op_nonce: u64,
+) -> eth::INodFactory::mineGratisCall {
+    eth::INodFactory::mineGratisCall {
+        nodId: id,
+        nonce: find_mining_pow_nonce(outbe_common::pow::MiningDomain::Nod, id, owner),
+        mac,
+        opNonce: op_nonce,
+    }
 }

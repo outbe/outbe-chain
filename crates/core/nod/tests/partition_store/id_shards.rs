@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 struct Repository {
     storage: Arc<PartitionedStorage>,
-    reader: NodRepositoryReader,
+    reader: outbe_nod::NodRepositoryReader,
     writer: NodRepositoryWriter,
 }
 
@@ -21,8 +21,8 @@ impl Repository {
     fn with_source(source: Arc<dyn PartitionDataSource>) -> Self {
         let storage = Arc::new(PartitionedStorage::new(source, routing()));
         Self {
-            reader: NodRepositoryReader::new(storage.clone()),
-            writer: NodRepositoryWriter::new(storage.clone(), storage.clone()),
+            reader: outbe_nod::nod_reader(storage.clone()),
+            writer: outbe_nod::nod_writer(storage.clone(), storage.clone()),
             storage,
         }
     }

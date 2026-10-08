@@ -98,27 +98,7 @@ pub fn classify_ocomp_system_carrier(
     if !is_vote && !is_materialization {
         return Ok(None);
     }
-    if !tx.is_eip1559 {
-        return Err(OcompSystemCarrierError::NotEip1559);
-    }
-    if !tx.value.is_zero() {
-        return Err(OcompSystemCarrierError::NonZeroValue);
-    }
-    if tx.max_priority_fee_per_gas != Some(0) {
-        return Err(OcompSystemCarrierError::NonZeroPriorityFee);
-    }
-    if tx.max_fee_per_gas < MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS {
-        return Err(OcompSystemCarrierError::FeeCapTooLow {
-            actual: tx.max_fee_per_gas,
-            minimum: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
-        });
-    }
-    if tx.gas_limit != OCOMP_SYSTEM_CARRIER_GAS_LIMIT {
-        return Err(OcompSystemCarrierError::WrongGasLimit {
-            actual: tx.gas_limit,
-            expected: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-        });
-    }
+    validate_carrier_envelope(&tx)?;
     let calldata_limit = if is_vote {
         MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES
     } else {
@@ -142,4 +122,31 @@ pub fn classify_ocomp_system_carrier(
             first_nod_ordinal: batch.first_nod_ordinal,
         }))
     }
+}
+
+fn validate_carrier_envelope(
+    tx: &OcompSystemCarrierView<'_>,
+) -> Result<(), OcompSystemCarrierError> {
+    if !tx.is_eip1559 {
+        return Err(OcompSystemCarrierError::NotEip1559);
+    }
+    if !tx.value.is_zero() {
+        return Err(OcompSystemCarrierError::NonZeroValue);
+    }
+    if tx.max_priority_fee_per_gas != Some(0) {
+        return Err(OcompSystemCarrierError::NonZeroPriorityFee);
+    }
+    if tx.max_fee_per_gas < MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS {
+        return Err(OcompSystemCarrierError::FeeCapTooLow {
+            actual: tx.max_fee_per_gas,
+            minimum: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+        });
+    }
+    if tx.gas_limit != OCOMP_SYSTEM_CARRIER_GAS_LIMIT {
+        return Err(OcompSystemCarrierError::WrongGasLimit {
+            actual: tx.gas_limit,
+            expected: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+        });
+    }
+    Ok(())
 }

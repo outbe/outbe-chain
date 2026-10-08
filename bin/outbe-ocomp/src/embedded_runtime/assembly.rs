@@ -1,5 +1,70 @@
 use super::*;
 
+pub fn open_embedded_domain(
+    config: EmbeddedOcompDomainConfigV1,
+) -> Result<EmbeddedOcompDomainV1, EmbeddedOcompRuntimeErrorV1> {
+    if config.registry_generation == 0 || config.bundles.is_empty() {
+        return Err(EmbeddedOcompRuntimeErrorV1::InvalidConfig);
+    }
+    #[cfg(feature = "test-protocol-overrides")]
+    let local_result_mismatch_marker = config
+        .domain_root
+        .join("test-faults")
+        .join("local-result-mismatch.once");
+    let layout = EmbeddedOcompLayoutV1::from_root(&config.domain_root)?;
+    for private_root in [
+        &layout.roots.node,
+        &layout.roots.supervisor,
+        &layout.roots.exporter,
+    ] {
+        let mut root_builder = DirBuilder::new();
+        root_builder
+            .recursive(true)
+            .mode(0o700)
+            .create(private_root)
+            .map_err(|error| stage("create embedded OCOMP private root", error))?;
+    }
+    let cas_limits = CasLimits {
+        max_object_bytes: CAS_MAX_OBJECT_BYTES,
+        // CAS is disk-backed and chunked. The filesystem/operator governs
+        // capacity, never a product-level total-job cap.
+        max_total_bytes: u64::MAX,
+    };
+    let local_results = Arc::new(
+        LocalLysisResultStore::open(&layout.local_result_root, config.limits)
+            .map_err(|error| stage("open embedded OCOMP local result store", error))?,
+    );
+    if config.policy == EmbeddedNodePolicyV1::FullNode && config.validator_rpc_url.is_some() {
+        return Err(EmbeddedOcompRuntimeErrorV1::FullNodeVoteAuthority);
+    }
+    let assembly = LaneAssembly {
+        config: &config,
+        layout: &layout,
+        cas_limits,
+        submission_gate: Arc::new(ValidatorOcompSubmissionGateV1::default()),
+    };
+    let mut lanes = std::collections::BTreeMap::new();
+    let mut identities = LaneIdentities::default();
+    for bundle_config in &config.bundles {
+        identities.check(bundle_config)?;
+        let bundle_hash = bundle_config.protocol_bundle.hash();
+        let lane = assembly.open(bundle_config, &mut identities.expected_key_hash)?;
+        if lanes.insert(bundle_hash, lane).is_some() {
+            return Err(EmbeddedOcompRuntimeErrorV1::InvalidConfig);
+        }
+    }
+    Ok(EmbeddedOcompDomainV1 {
+        lanes,
+        local_journal: EmbeddedLocalJournalV1 {
+            results: local_results,
+            checkpoint_root: layout.checkpoint_root,
+            fatal_evidence_root: layout.fatal_evidence_root,
+            #[cfg(feature = "test-protocol-overrides")]
+            local_result_mismatch_marker,
+        },
+    })
+}
+
 #[derive(Default)]
 pub(super) struct LaneIdentities {
     worker_addresses: std::collections::BTreeSet<std::net::SocketAddr>,

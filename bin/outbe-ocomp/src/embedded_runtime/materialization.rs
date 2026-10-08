@@ -95,8 +95,14 @@ impl MaterializationJob {
             limits,
         )
         .map_err(|error| stage("open NOD materialization admissions", error))?;
-        let audit = LocalLysisPlanAuditV1::open(&admissions, &input_refs, &reader, bundle, &limits)
-            .map_err(|error| stage("audit NOD materialization plan", error))?;
+        let audit = crate::lysis_plan_audit::open_local_plan_audit(
+            &admissions,
+            &input_refs,
+            &reader,
+            bundle,
+            &limits,
+        )
+        .map_err(|error| stage("audit NOD materialization plan", error))?;
         let mut built =
             build_nod_materialization_batch_with_references(&audit, head, batch_subtree_height)
                 .map_err(|error| stage("build NOD materialization batch", error))?;

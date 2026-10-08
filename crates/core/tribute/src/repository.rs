@@ -176,8 +176,22 @@ pub enum TributeRepositoryError {
 /// Cloneable read authority for Tribute bodies and typed indexes.
 #[derive(Clone)]
 pub struct TributeRepositoryReader {
+    view: TributeReadView,
+}
+
+/// Query authority over one configured Tribute storage route.
+#[derive(Clone)]
+pub struct TributeReadView {
     storage: StorageReaderHandle,
     route: Option<day_store::DayRoute>,
+}
+
+impl std::ops::Deref for TributeRepositoryReader {
+    type Target = TributeReadView;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view
+    }
 }
 
 impl TributeRepositoryReader {
@@ -185,8 +199,10 @@ impl TributeRepositoryReader {
     #[must_use]
     pub fn new(storage: StorageReaderHandle) -> Self {
         Self {
-            storage,
-            route: None,
+            view: TributeReadView {
+                storage,
+                route: None,
+            },
         }
     }
 
@@ -200,12 +216,14 @@ impl TributeRepositoryReader {
         databases: Arc<DayDatabases>,
     ) -> Self {
         Self {
-            storage: shared,
-            route: Some(day_store::DayRoute {
-                shared_writer,
-                databases,
-                wrap: None,
-            }),
+            view: TributeReadView {
+                storage: shared,
+                route: Some(day_store::DayRoute {
+                    shared_writer,
+                    databases,
+                    wrap: None,
+                }),
+            },
         }
     }
 
@@ -215,12 +233,14 @@ impl TributeRepositoryReader {
         mut self,
         wrap: Arc<dyn Fn(StorageReaderHandle) -> StorageReaderHandle + Send + Sync>,
     ) -> Self {
-        if let Some(route) = &mut self.route {
+        if let Some(route) = &mut self.view.route {
             route.wrap = Some(wrap);
         }
         self
     }
+}
 
+impl TributeReadView {
     /// Enumerates canonical primary bodies independently of secondary indexes.
     /// The caller must provide a stable reader across pages.
     pub fn scan_stored_bodies(
@@ -660,8 +680,21 @@ impl ParentBodySource for TributeRepositoryReader {
 /// Callers must serialize mutations of the same Tribute identity. Each resulting body/index batch
 /// is atomic, but the old-body read used to plan replacement or deletion precedes that batch.
 pub struct TributeRepositoryWriter {
+    view: TributeMutationView,
+}
+
+/// Mutation authority over the configured body and index storage.
+pub struct TributeMutationView {
     reader: TributeRepositoryReader,
     writer: StorageWriterHandle,
+}
+
+impl std::ops::Deref for TributeRepositoryWriter {
+    type Target = TributeMutationView;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view
+    }
 }
 
 impl TributeRepositoryWriter {
@@ -671,8 +704,10 @@ impl TributeRepositoryWriter {
     #[must_use]
     pub fn new(reader: StorageReaderHandle, writer: StorageWriterHandle) -> Self {
         Self {
-            reader: TributeRepositoryReader::new(reader),
-            writer,
+            view: TributeMutationView {
+                reader: TributeRepositoryReader::new(reader),
+                writer,
+            },
         }
     }
 
@@ -684,15 +719,19 @@ impl TributeRepositoryWriter {
         databases: Arc<DayDatabases>,
     ) -> Self {
         Self {
-            reader: TributeRepositoryReader::with_days(
-                shared_reader,
-                shared_writer.clone(),
-                databases,
-            ),
-            writer: shared_writer,
+            view: TributeMutationView {
+                reader: TributeRepositoryReader::with_days(
+                    shared_reader,
+                    shared_writer.clone(),
+                    databases,
+                ),
+                writer: shared_writer,
+            },
         }
     }
+}
 
+impl TributeMutationView {
     /// Inserts or replaces one body and its owner/day indexes.
     pub fn put(&self, tribute: &TributeData) -> Result<(), TributeRepositoryError> {
         if self.reader.route.is_some() {
@@ -727,14 +766,16 @@ pub(crate) fn namespace(name: &'static str) -> Result<Namespace, TributeReposito
 
 pub(crate) fn encode_body(tribute: &TributeData) -> Result<Value, TributeRepositoryError> {
     let payload = encode_tribute_v1(&canonical_body(tribute))?;
-    Ok(Value::new(StoredBody::new_v1(payload)?.encode())?)
+    Ok(Value::new(
+        StoredBody::new(outbe_compressed_entities::BODY_SCHEMA_V1, payload)?.encode(),
+    )?)
 }
 
 pub(crate) fn decode_body(
     tribute_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<TributeRecord, TributeRepositoryError> {
-    let body = TributeRecord::decode_stored(bytes)?;
+    let body = crate::record::decode_stored(bytes)?;
     if body.tribute_id != tribute_id {
         return Err(TributeRepositoryError::PrimaryKeyBodyMismatch {
             expected: tribute_id,
@@ -748,8 +789,8 @@ fn decode_stored_body(
     tribute_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<StoredBody, TributeRepositoryError> {
-    let stored = StoredBody::decode(bytes)?;
-    let body = TributeRecord::decode_stored(bytes)?;
+    let stored = outbe_compressed_entities::decode_stored_body(bytes)?;
+    let body = crate::record::decode_stored(bytes)?;
     if body.tribute_id != tribute_id {
         return Err(TributeRepositoryError::PrimaryKeyBodyMismatch {
             expected: tribute_id,

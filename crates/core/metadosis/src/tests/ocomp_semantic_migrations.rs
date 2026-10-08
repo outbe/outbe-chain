@@ -140,7 +140,7 @@ fn retire_completed_vote_authority(fixture: &mut ActivationFixture) -> u64 {
 
 #[test]
 fn completed_vote_replay_after_authority_retirement_is_a_noop() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     fixture.apply().unwrap();
     retire_completed_vote_authority(&mut fixture);
     let before = fixture.rollback_snapshot();
@@ -151,7 +151,7 @@ fn completed_vote_replay_after_authority_retirement_is_a_noop() {
 
 #[test]
 fn fourth_timely_vote_after_authority_retirement_preserves_completed_lysis() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     fixture.apply().unwrap();
     let height = retire_completed_vote_authority(&mut fixture);
     let before = fixture.semantic_snapshot();
@@ -181,7 +181,7 @@ fn fourth_timely_vote_after_authority_retirement_preserves_completed_lysis() {
 
 #[test]
 fn invalid_votes_after_authority_retirement_revert_without_blocking_valid_votes() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     fixture.apply().unwrap();
     let height = retire_completed_vote_authority(&mut fixture);
     let valid = fixture.signed_result_vote(2);
@@ -208,7 +208,7 @@ fn invalid_votes_after_authority_retirement_revert_without_blocking_valid_votes(
 
 #[test]
 fn completed_vote_after_authority_retirement_still_obeys_exclusive_deadline() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     fixture.apply().unwrap();
     retire_completed_vote_authority(&mut fixture);
     let vote = fixture.signed_result_vote(2);
@@ -300,7 +300,7 @@ fn transition_validator_to_status_for_test(
 
 #[test]
 fn finalized_attempt_uses_exact_1800_block_compute_vote_window() {
-    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
             .ocomp_job_record(fixture.intent_id, &fixture.limits)
@@ -315,7 +315,7 @@ fn finalized_attempt_uses_exact_1800_block_compute_vote_window() {
 
 #[test]
 fn deadline_opens_recovery_only_for_the_missing_pinned_validator_after_early_quorum() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     fixture.seed_ocomp_recovery_stake_for_test();
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -374,7 +374,7 @@ fn deadline_opens_recovery_only_for_the_missing_pinned_validator_after_early_quo
 
 #[test]
 fn missing_vote_slashes_bonded_once_and_opens_recovery() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     fixture.seed_ocomp_recovery_stake_for_test();
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -422,7 +422,7 @@ fn missing_vote_slashes_bonded_once_and_opens_recovery() {
 
 #[test]
 fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
@@ -484,7 +484,7 @@ fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
 
 #[test]
 fn q_forming_validator_quorum_is_canonical_without_node_local_result() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
 
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     assert_eq!(fixture.terminal_outcome(), ActivationOutcome::Applied);
@@ -492,7 +492,7 @@ fn q_forming_validator_quorum_is_canonical_without_node_local_result() {
 
 #[test]
 fn no_quorum_deadline_opens_recovery_for_every_missing_validator_and_expires_attempt() {
-    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
     fixture.seed_ocomp_recovery_stake_for_test();
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -547,7 +547,7 @@ fn no_quorum_deadline_opens_recovery_for_every_missing_validator_and_expires_att
 
 #[test]
 fn authentic_carrier_after_deadline_resolves_pinned_signer_and_returns_deadline_revert() {
-    let mut fixture = ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
@@ -582,7 +582,7 @@ fn authentic_carrier_after_deadline_resolves_pinned_signer_and_returns_deadline_
 
 #[test]
 fn deadline_is_replay_safe_for_missing_validators_already_jailed_or_exiting() {
-    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
     fixture.seed_ocomp_recovery_stake_for_test();
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -657,7 +657,7 @@ fn deadline_is_replay_safe_for_missing_validators_already_jailed_or_exiting() {
 
 #[test]
 fn deadline_records_missing_pending_validator_without_mutating_or_fatal() {
-    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
@@ -724,7 +724,7 @@ fn deadline_keeps_every_non_active_missing_status_unchanged() {
         validator_status::INACTIVE,
         validator_status::JAILED,
     ] {
-        let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
         assert_eq!(fixture.apply().unwrap(), Bytes::new());
         let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
             MetadosisContract::new(storage)
@@ -784,7 +784,7 @@ fn deadline_keeps_every_non_active_missing_status_unchanged() {
 
 #[test]
 fn deadline_records_missing_removed_validator_without_fatal() {
-    let mut fixture = ActivationFixture::new_voting(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(20, 1_010, true);
     assert_eq!(fixture.apply().unwrap(), Bytes::new());
     let finalized = StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
@@ -833,7 +833,7 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
         ("Tribute", TRIBUTE_ADDRESS),
         ("CarryOver", PROMIS_LIMIT_ADDRESS),
     ] {
-        let mut fixture = ActivationFixture::new(20, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
         let before = fixture.rollback_snapshot();
         fixture.provider.fail_mutation_at_address(address);
 
@@ -863,7 +863,7 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
         ActivationReceiptFault::CarryOver,
         ActivationReceiptFault::RequestSplit,
     ] {
-        let mut fixture = ActivationFixture::new(20, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
         let before = fixture.rollback_snapshot();
         let error = fixture
             .apply_with_receipt_fault(fault)
@@ -878,7 +878,7 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
         assert_eq!(fixture.terminal_outcome(), ActivationOutcome::Applied);
     }
 
-    let mut control = ActivationFixture::new(20, 1_010, true);
+    let mut control = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     control.provider.fail_after_mutation_at(usize::MAX);
     assert_eq!(control.apply().unwrap(), Bytes::new());
     let mutation_count = control.provider.clear_mutation_failure();
@@ -889,7 +889,7 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
     let clean_after = control.rollback_snapshot();
 
     for operation in 0..mutation_count {
-        let mut fixture = ActivationFixture::new(20, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
         let before = fixture.rollback_snapshot();
         fixture.provider.fail_after_mutation_at(operation);
 
@@ -918,7 +918,7 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
 #[test]
 fn changed_activation_preconditions_reject_quorum_commit_without_closing_the_job() {
     let prepare_conflicted = || {
-        let mut fixture = ActivationFixture::new(20, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
         StorageHandle::enter(&mut fixture.provider, |storage| {
             let tribute = TributeContract::new(storage);
             let mut admission = tribute
@@ -964,7 +964,7 @@ fn changed_activation_preconditions_reject_quorum_commit_without_closing_the_job
 #[test]
 fn quorum_preserved_response_close_rolls_back_every_mutation_and_retries_exactly() {
     let prepare = || {
-        let mut fixture = ActivationFixture::new(20, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
         assert_eq!(fixture.apply().unwrap(), Bytes::new());
         let deadline_height = StorageHandle::enter(&mut fixture.provider, |storage| {
             MetadosisContract::new(storage)
@@ -1009,7 +1009,7 @@ fn quorum_preserved_response_close_rolls_back_every_mutation_and_retries_exactly
 // OCOMP-TEST-ID: OCM-TIM-001
 #[test]
 fn request_pinned_semantics_are_identical_at_different_activation_heights() {
-    let mut first = ActivationFixture::new(20, 1_010, true);
+    let mut first = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     let first_calldata = first.calldata();
     first.apply().expect("first q-forming vote must apply");
     assert_eq!(first.terminal_outcome(), ActivationOutcome::Applied);
@@ -1017,7 +1017,7 @@ fn request_pinned_semantics_are_identical_at_different_activation_heights() {
     let first_metadata = first.activation_metadata();
     let first_state = first.rollback_snapshot();
 
-    let mut second = ActivationFixture::new(40, 2_020, true);
+    let mut second = crate::fixture_kernel::ActivationScenario::build(40, 2_020, true);
     assert_eq!(
         second.calldata(),
         first_calldata,
@@ -1103,8 +1103,12 @@ fn assert_public_dispatch_uses_pinned_dynamic_membership(
     quorum_threshold: u16,
     quorum_bitmap: Vec<u8>,
 ) {
-    let mut fixture =
-        ActivationFixture::new_voting_with_member_count(14, 1_010, true, member_count);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting_with_member_count(
+        14,
+        1_010,
+        true,
+        member_count,
+    );
     let job_id = fixture.result.job_id;
     let intent_id = fixture.intent_id;
     let expected_result_digest = result_digest(&fixture);
@@ -1156,7 +1160,7 @@ fn public_dispatch_uses_pinned_dynamic_membership_and_quorum() {
 
 #[test]
 fn historical_vote_participant_resolution_does_not_consult_current_active_status() {
-    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
     let vote = fixture.signed_result_vote(1);
     let prefix = vote.prefix();
     let historical_validator = Address::repeat_byte(0xB1);
@@ -1185,7 +1189,7 @@ fn historical_vote_participant_resolution_does_not_consult_current_active_status
 
 #[test]
 fn system_carrier_signer_is_bound_to_the_historical_validator_or_its_delegate() {
-    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
     let vote = fixture.signed_result_vote(1);
     let prefix = vote.prefix();
     let historical_validator = Address::repeat_byte(0xB1);
@@ -1248,7 +1252,7 @@ fn system_carrier_signer_is_bound_to_the_historical_validator_or_its_delegate() 
 
 #[test]
 fn vote_binding_mismatch_is_rejected_before_historical_snapshot_lookup() {
-    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
     let mut vote = fixture.signed_result_vote(1);
     let snapshot_key = outbe_validatorset::committee_snapshot_key(
         vote.result_validator_set_epoch,
@@ -1276,7 +1280,7 @@ fn vote_binding_mismatch_is_rejected_before_historical_snapshot_lookup() {
 
 #[test]
 fn public_vote_rejects_every_pinned_identity_and_signature_mismatch() {
-    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
     let base = fixture.signed_result_vote(1);
     let mut cases = Vec::new();
 
@@ -1318,7 +1322,7 @@ fn public_vote_rejects_every_pinned_identity_and_signature_mismatch() {
 
 #[test]
 fn old_job_keeps_its_four_member_snapshot_across_a_four_to_five_boundary() {
-    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
     let next_snapshot = fixture.activate_additional_validator_for_test(4);
     assert_eq!(next_snapshot.member_count, 5);
 
@@ -1337,7 +1341,7 @@ fn old_job_keeps_its_four_member_snapshot_across_a_four_to_five_boundary() {
 
 #[test]
 fn missing_pinned_snapshot_reverts_public_vote_without_changing_the_job() {
-    let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
     let vote = fixture.signed_result_vote(0);
     let snapshot_key = outbe_validatorset::committee_snapshot_key(
         vote.result_validator_set_epoch,

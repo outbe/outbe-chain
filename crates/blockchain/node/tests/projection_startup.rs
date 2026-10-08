@@ -11,7 +11,7 @@ use outbe_node::projection::{
     prepare_offchain_data_projection, validate_offchain_data_checkpoint,
     OffchainDataProjectionConfig,
 };
-use outbe_offchain_data::{FinalizedBlock, OffchainDataProjection, ProjectionConfig};
+use outbe_offchain_data::{FinalizedBlock, ProjectionConfig};
 use outbe_offchain_storage::{MongoStorage, MongoStorageConfig};
 use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use reth_chainspec::ChainInfo;
@@ -46,7 +46,7 @@ fn rocksdb_startup_reopens_durable_checkpoint_and_rejects_wrong_chain_or_hash() 
             .unwrap();
         storage.ownership.activate().unwrap();
         let completion = storage.ownership.completion();
-        let mut projection = OffchainDataProjection::open(
+        let mut projection = outbe_offchain_data::open_projection(
             ProjectionConfig {
                 chain_id: config.chain_id,
                 genesis_hash: config.genesis_hash,
@@ -139,7 +139,7 @@ fn replica_set_passes_startup_and_persisted_identity_is_validated() {
         ),
         outbe_offchain_data::entity_partition_routing().unwrap(),
     ));
-    let mut projector = OffchainDataProjection::open(
+    let mut projector = outbe_offchain_data::open_projection(
         ProjectionConfig {
             chain_id: first.chain_id,
             genesis_hash: first.genesis_hash,
@@ -313,9 +313,12 @@ fn rocksdb_secondary_checkpoint_is_frozen_and_next_session_catches_up() {
         genesis_hash: B256::repeat_byte(0x11),
         start_block: 1,
     };
-    let mut projection =
-        OffchainDataProjection::open(config, storage.reader.clone(), storage.writer.clone())
-            .unwrap();
+    let mut projection = outbe_offchain_data::open_projection(
+        config,
+        storage.reader.clone(),
+        storage.writer.clone(),
+    )
+    .unwrap();
     let canonical = MockEthProvider::new();
     let hashes = (1..=3)
         .map(|number| add_empty_block(&canonical, number, number))
@@ -411,7 +414,8 @@ fn canonical_rejection_preserves_prepared_journal_until_validated_activation() {
     };
     let memory = Arc::new(MemoryStorage::new());
     let mut projector =
-        OffchainDataProjection::open(projection_config, memory.clone(), memory.clone()).unwrap();
+        outbe_offchain_data::open_projection(projection_config, memory.clone(), memory.clone())
+            .unwrap();
     projector
         .project_block(&FinalizedBlock {
             number: 1,

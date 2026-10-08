@@ -71,7 +71,7 @@ pub fn decode_tribute_v2(bytes: &[u8]) -> Result<EncryptedTributeV2, CanonicalBo
 }
 
 pub fn decode_stored_tribute_v2(bytes: &[u8]) -> Result<EncryptedTributeV2, CanonicalBodyError> {
-    let stored = StoredBody::decode(bytes)?;
+    let stored = crate::decode_stored_body(bytes)?;
     if stored.schema_version() != TRIBUTE_BODY_SCHEMA_V2 {
         return Err(CanonicalBodyError::UnsupportedSchema {
             actual: stored.schema_version(),

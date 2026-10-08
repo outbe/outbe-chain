@@ -24,11 +24,13 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
                 .and_then(|state| {
                     state.retire_remote_sessions(retirement_height)?;
                     state.authorize_remote_session_at_generation(
-                        ticket_id,
-                        initiator_static_x25519,
-                        responder_static_x25519,
-                        deadline,
-                        finalized_block_hash,
+                        crate::initialization::RemoteSessionAuthorization {
+                            ticket_id,
+                            initiator_static_x25519,
+                            responder_static_x25519,
+                            deadline,
+                            finalized_block_hash,
+                        },
                         retirement_height,
                         keys,
                     )
@@ -52,11 +54,13 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
                 };
             };
             match initialization.authorize_remote_session(
-                ticket_id,
-                initiator_static_x25519,
-                responder_static_x25519,
-                deadline,
-                finalized_block_hash,
+                crate::initialization::RemoteSessionAuthorization {
+                    ticket_id,
+                    initiator_static_x25519,
+                    responder_static_x25519,
+                    deadline,
+                    finalized_block_hash,
+                },
                 keys,
             ) {
                 Ok(()) => EnclaveResponse::RemoteSessionAuthorizedV1 { ticket_id },

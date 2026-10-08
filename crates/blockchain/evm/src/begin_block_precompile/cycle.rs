@@ -18,8 +18,8 @@ pub(super) fn run_cycle_tick_at_activation(
         use std::sync::Arc;
 
         let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-        let parent = outbe_offchain_data::RuntimeBodyReaders::new(storage);
-        let scope = outbe_compressed_entities::ExecutionScope::new();
+        let parent = outbe_offchain_data::runtime_body_readers(storage);
+        let scope = outbe_compressed_entities::ExecutionScope::default();
         let compressed =
             outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
         <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(

@@ -67,7 +67,7 @@ fn try_tx_to(
         },
     };
     let outcome = {
-        let mut evm = OutbeEvmFactory::new().create_evm(&mut *db, env);
+        let mut evm = OutbeEvmFactory::default().create_evm(&mut *db, env);
         evm.transact_raw(
             TxEnv::builder()
                 .caller(CCA)

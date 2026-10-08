@@ -1,4 +1,4 @@
-#[path = "../src/test_support.rs"]
+#[path = "../src/test_support/common.rs"]
 mod fixture_support;
 
 mod support;
@@ -72,7 +72,7 @@ impl Fixture {
         let admissions =
             VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits)
                 .unwrap();
-        let audit = LocalLysisPlanAuditV1::open(
+        let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
             &admissions,
             &input_refs,
             &reader,
@@ -177,7 +177,7 @@ fn result_catalog_error_for_fault(fault: ResultCatalogFault) -> LysisResultCatal
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,

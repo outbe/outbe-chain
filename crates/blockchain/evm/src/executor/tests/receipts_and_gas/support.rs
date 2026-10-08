@@ -335,8 +335,10 @@ pub(super) fn prepare_capacity_parent(proposer: Address) -> eyre::Result<Capacit
         block_hash: B256::ZERO,
         root: empty_root,
     })?;
-    let seed_scope =
-        ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
+    let seed_scope = outbe_compressed_entities::execution_scope::with_parent_tree(
+        parent_tree,
+        CeWorkConfig::new(0, 0, u64::MAX),
+    );
     let body_storage = Arc::new(MemoryStorage::new());
     let body_reader: StorageReaderHandle = body_storage;
     let tribute_parent = TributeRepositoryReader::new(body_reader.clone());

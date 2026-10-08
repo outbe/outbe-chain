@@ -110,9 +110,12 @@ fn tribute_v1_uses_one_strict_canonical_protobuf_representation() {
     assert_eq!(payload, expected);
     assert_eq!(decode_tribute_v1(&payload).unwrap(), body);
 
-    let stored = StoredBody::new_v1(payload.clone()).unwrap();
+    let stored = StoredBody::new(crate::BODY_SCHEMA_V1, payload.clone()).unwrap();
     let canonical_envelope = stored.encode();
-    assert_eq!(StoredBody::decode(&canonical_envelope).unwrap(), stored);
+    assert_eq!(
+        crate::decode_stored_body(&canonical_envelope).unwrap(),
+        stored
+    );
 
     let mut unknown_field = payload;
     unknown_field.extend_from_slice(&[0x50, 0x01]);
@@ -403,7 +406,7 @@ fn typed_stored_body_and_wire_profile_reject_alternative_representations() {
                 Err(CanonicalBodyError::ExplicitDefault { field: 3 })
             )),
             "empty_stored_payload" | "zero_stored_schema" => {
-                assert!(StoredBody::decode(&json_hex(&artifact["stored_body_hex"])).is_err())
+                assert!(crate::decode_stored_body(&json_hex(&artifact["stored_body_hex"])).is_err())
             }
             other => panic!("unknown canonical rejection vector {other}"),
         }
@@ -624,6 +627,14 @@ fn commitment_golden_vectors_are_pinned() {
 #[test]
 fn commitment_identity_and_body_golden_vectors_are_pinned() {
     let vectors = commitment_vectors();
+    assert_identity_vectors(&vectors);
+    assert_body_vectors(&vectors);
+    let (identity, payload) = assert_schema_vectors(&vectors);
+    assert_bit_flip_vectors(&vectors);
+    assert_rejected_vectors(&vectors, identity, &payload);
+}
+
+fn assert_identity_vectors(vectors: &serde_json::Value) {
     for vector in vectors["identities"].as_array().unwrap() {
         let identity = WwdEntityId::try_from(json_hex(&vector["identity_hex"]).as_slice()).unwrap();
         assert_eq!(identity.worldwide_day().value(), vector["worldwide_day"]);
@@ -646,7 +657,9 @@ fn commitment_identity_and_body_golden_vectors_are_pinned() {
             vector["identity_field"].as_str().unwrap()
         );
     }
+}
 
+fn assert_body_vectors(vectors: &serde_json::Value) {
     for vector in vectors["bodies"].as_array().unwrap() {
         let identity = WwdEntityId::try_from(json_hex(&vector["identity_hex"]).as_slice()).unwrap();
         let payload = json_hex(&vector["payload_hex"]);
@@ -665,7 +678,7 @@ fn commitment_identity_and_body_golden_vectors_are_pinned() {
             ),
             other => panic!("unknown body vector {other}"),
         }
-        let stored = StoredBody::decode(&json_hex(&vector["stored_body_hex"])).unwrap();
+        let stored = crate::decode_stored_body(&json_hex(&vector["stored_body_hex"])).unwrap();
         assert_eq!(stored.schema_version(), vector["schema_version"]);
         assert_eq!(stored.payload(), payload);
         assert_eq!(
@@ -677,7 +690,9 @@ fn commitment_identity_and_body_golden_vectors_are_pinned() {
             vector["leaf"].as_str().unwrap()
         );
     }
+}
 
+fn assert_schema_vectors(vectors: &serde_json::Value) -> (WwdEntityId, Vec<u8>) {
     let schema = &vectors["schema_variation"];
     let identity = WwdEntityId::try_from(json_hex(&schema["identity_hex"]).as_slice()).unwrap();
     let payload = json_hex(&schema["payload_hex"]);
@@ -710,7 +725,10 @@ fn commitment_identity_and_body_golden_vectors_are_pinned() {
         ),
         schema["scheme_1_schema_2_leaf"]
     );
+    (identity, payload)
+}
 
+fn assert_bit_flip_vectors(vectors: &serde_json::Value) {
     for dimension in ["identity", "payload"] {
         let vector = &vectors["bit_flips"][dimension];
         let original_identity = WwdEntityId::try_from(
@@ -736,7 +754,10 @@ fn commitment_identity_and_body_golden_vectors_are_pinned() {
         );
         assert_ne!(vector["original_leaf"], vector["flipped_leaf"]);
     }
+}
 
+fn assert_rejected_vectors(vectors: &serde_json::Value, identity: WwdEntityId, payload: &[u8]) {
+    let schema = &vectors["schema_variation"];
     let rejected = &vectors["rejection_artifacts"];
     assert!(matches!(
         crate::Commitment::try_from(json_bytes32(&rejected["zero_present_leaf"])),
@@ -756,7 +777,7 @@ fn commitment_identity_and_body_golden_vectors_are_pinned() {
             .unwrap() as u32,
         1,
         identity,
-        &payload
+        payload
     )
     .is_err());
     assert!(body_commitment(1, 1, identity, &json_hex(&rejected["empty_payload_hex"])).is_err());

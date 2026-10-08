@@ -78,6 +78,38 @@ pub struct InputArtifactRetentionStatsV1 {
     pub configured_tribute_record_bound: usize,
 }
 
+#[derive(Clone, Copy)]
+pub struct InputArtifactContext<'a> {
+    pub cas: &'a FilesystemCas,
+    pub bundle: &'a ProtocolBundleV1,
+    pub limits: SchemaLimits,
+    pub list_limits: OrderedListLimits,
+}
+
+pub struct TributeInputStream<F> {
+    pub expected_count: u32,
+    pub next: F,
+}
+
+pub struct InputArtifactOpenings {
+    pub fidelity: Vec<AuthenticatedOpeningV1>,
+    pub oracle: AuthenticatedOpeningV1,
+}
+
+pub struct ExpectedInputCounts {
+    pub tribute_count: u32,
+    pub tribute_nominal_total: U256,
+    pub fidelity_openings: u32,
+}
+
+#[derive(Clone, Copy)]
+pub struct InputManifestVerification<'a> {
+    pub reader: &'a FilesystemCasReader,
+    pub bundle: &'a ProtocolBundleV1,
+    pub manifest: &'a InputManifestV1,
+    pub limits: &'a SchemaLimits,
+}
+
 pub struct DurableInputArtifactPublisher<'a> {
     cas: &'a FilesystemCas,
     reader: &'a FilesystemCasReader,
@@ -211,88 +243,41 @@ pub fn validate_verified_input_manifest_semantics(
 ) -> Result<(), InputArtifactError> {
     validate_verified_input_manifest_semantics_observing(
         catalog,
-        reader,
-        bundle,
-        manifest,
-        limits,
+        InputManifestVerification {
+            reader,
+            bundle,
+            manifest,
+            limits,
+        },
         || {},
     )
 }
 
+mod semantics;
+use semantics::{observe_manifest_chunk, ManifestSemanticTotals};
+
 pub fn validate_verified_input_manifest_semantics_observing(
     catalog: &VerifiedInputChunkRefCatalog,
-    reader: &FilesystemCasReader,
-    bundle: &ProtocolBundleV1,
-    manifest: &InputManifestV1,
-    limits: &SchemaLimits,
+    verification: InputManifestVerification<'_>,
     on_progress: impl Fn(),
 ) -> Result<(), InputArtifactError> {
+    let InputManifestVerification {
+        reader,
+        bundle,
+        manifest,
+        limits,
+    } = verification;
     manifest.validate_against_bundle(bundle, limits)?;
-    let mut tribute_count = 0_u32;
-    let mut tribute_nominal_total = U256::ZERO;
-    let mut fidelity_count = 0_u32;
-    let mut oracle_count = 0_u32;
+    let mut totals = ManifestSemanticTotals::default();
     for verified in catalog.exact_verified_cursor_observing(reader, bundle, &on_progress)? {
-        let verified = verified?;
-        if verified.reference.kind != InputChunkKind::Tribute
-            && verified.chunk.canonical_records_or_openings.len() != 1
-        {
-            return Err(InputArtifactError::Invariant(
-                "one opening record per input chunk",
-            ));
-        }
-        for record in &verified.chunk.canonical_records_or_openings {
-            match verified.reference.kind {
-                InputChunkKind::Tribute => {
-                    let tribute = outbe_tribute::TributeRecord::decode_canonical(&record.0)?
-                        .calculation_view()?;
-                    require(
-                        tribute.worldwide_day.value() == manifest.wwd,
-                        "Tribute WWD matches manifest",
-                    )?;
-                    tribute_count = tribute_count
-                        .checked_add(1)
-                        .ok_or(InputArtifactError::CountOverflow)?;
-                    tribute_nominal_total = tribute_nominal_total
-                        .checked_add(tribute.nominal_amount_minor)
-                        .ok_or(InputArtifactError::NominalTotalOverflow)?;
-                }
-                InputChunkKind::Fidelity | InputChunkKind::Oracle => {
-                    let opening =
-                        AuthenticatedOpeningV1::decode_canonical_record(&record.0, limits)?;
-                    opening.validate_against_bundle(bundle, limits)?;
-                    let _ = opening.decode_and_validate_raw_opening(
-                        manifest.checkpoint.finalized_state_root,
-                        limits,
-                    )?;
-                    match verified.reference.kind {
-                        InputChunkKind::Fidelity => {
-                            require(
-                                opening.source_kind == OpeningSourceKind::Fidelity,
-                                "Fidelity opening source",
-                            )?;
-                            fidelity_count = fidelity_count
-                                .checked_add(1)
-                                .ok_or(InputArtifactError::CountOverflow)?;
-                        }
-                        InputChunkKind::Oracle => {
-                            require(
-                                opening.source_kind == OpeningSourceKind::Oracle,
-                                "Oracle opening source",
-                            )?;
-                            oracle_count = oracle_count
-                                .checked_add(1)
-                                .ok_or(InputArtifactError::CountOverflow)?;
-                        }
-                        InputChunkKind::Tribute => {
-                            return Err(InputArtifactError::Invariant("opening chunk kind"));
-                        }
-                    }
-                }
-            }
-            on_progress();
-        }
+        observe_manifest_chunk(&mut totals, &verified?, verification, &on_progress)?;
     }
+    let ManifestSemanticTotals {
+        tribute_count,
+        tribute_nominal_total,
+        fidelity_count,
+        oracle_count,
+    } = totals;
     require(
         tribute_count == manifest.tribute_count,
         "manifest Tribute count",
@@ -330,16 +315,18 @@ pub fn validate_verified_input_manifest_semantics_observing(
 }
 
 impl<'a> DurableInputArtifactPublisher<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub fn open(
-        cas: &'a FilesystemCas,
+        context: InputArtifactContext<'a>,
         reader: &'a FilesystemCasReader,
         input_ref_catalog_root: impl AsRef<Path>,
-        bundle: &'a ProtocolBundleV1,
         identity: InputArtifactIdentity,
-        limits: SchemaLimits,
-        list_limits: OrderedListLimits,
     ) -> Result<Self, InputArtifactError> {
+        let InputArtifactContext {
+            cas,
+            bundle,
+            limits,
+            list_limits,
+        } = context;
         let protocol_bundle_hash = bundle.protocol_bundle_hash(&limits)?;
         let refs = InputRefCatalogPublisher::open_or_resume(
             input_ref_catalog_root,
@@ -376,8 +363,7 @@ impl<'a> DurableInputArtifactPublisher<'a> {
 
     pub fn publish_tribute(&mut self, canonical: Vec<u8>) -> Result<(), InputArtifactError> {
         require(!self.tributes_finished, "Tribute publication remains open")?;
-        let tribute =
-            outbe_tribute::TributeRecord::decode_canonical(&canonical)?.calculation_view()?;
+        let tribute = outbe_tribute::record::decode_canonical(&canonical)?.calculation_view()?;
         require(
             tribute.worldwide_day.value() == self.identity.wwd,
             "Tribute WWD matches input identity",
@@ -478,9 +464,11 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             -> Result<Option<AuthenticatedOpeningV1>, InputArtifactError>,
     ) -> Result<PublishedStreamingInputArtifacts, InputArtifactError> {
         self.finish_observing(
-            expected_tribute_count,
-            expected_tribute_nominal_total,
-            expected_fidelity_openings,
+            ExpectedInputCounts {
+                tribute_count: expected_tribute_count,
+                tribute_nominal_total: expected_tribute_nominal_total,
+                fidelity_openings: expected_fidelity_openings,
+            },
             next_fidelity_opening,
             || {},
         )
@@ -488,15 +476,18 @@ impl<'a> DurableInputArtifactPublisher<'a> {
 
     pub fn finish_observing(
         mut self,
-        expected_tribute_count: u32,
-        expected_tribute_nominal_total: U256,
-        expected_fidelity_openings: u32,
+        expected: ExpectedInputCounts,
         mut next_fidelity_opening: impl FnMut() -> Result<
             Option<AuthenticatedOpeningV1>,
             InputArtifactError,
         >,
         on_progress: impl Fn(),
     ) -> Result<PublishedStreamingInputArtifacts, InputArtifactError> {
+        let ExpectedInputCounts {
+            tribute_count: expected_tribute_count,
+            tribute_nominal_total: expected_tribute_nominal_total,
+            fidelity_openings: expected_fidelity_openings,
+        } = expected;
         require(self.tributes_finished, "Tribute publication closed")?;
         require(self.oracle_published, "Oracle opening published")?;
         if self.tribute_count != expected_tribute_count {
@@ -639,12 +630,9 @@ impl<'a> DurableInputArtifactPublisher<'a> {
 }
 
 pub fn publish_input_artifact_set(
-    cas: &FilesystemCas,
+    context: InputArtifactContext<'_>,
     input_ref_catalog_root: impl AsRef<Path>,
-    bundle: &ProtocolBundleV1,
     contents: InputArtifactContents,
-    limits: &SchemaLimits,
-    list_limits: OrderedListLimits,
 ) -> Result<PublishedInputArtifacts, InputArtifactError> {
     let InputArtifactContents {
         identity,
@@ -656,245 +644,68 @@ pub fn publish_input_artifact_set(
         u32::try_from(canonical_tributes.len()).map_err(|_| InputArtifactError::CountOverflow)?;
     let mut canonical_tributes = canonical_tributes.into_iter();
     publish_streaming_input_artifact_set(
-        cas,
+        context,
         input_ref_catalog_root,
-        bundle,
         identity,
-        expected_tribute_count,
-        || Ok(canonical_tributes.next()),
-        fidelity_openings,
-        oracle_opening,
-        limits,
-        list_limits,
+        TributeInputStream {
+            expected_count: expected_tribute_count,
+            next: || Ok(canonical_tributes.next()),
+        },
+        InputArtifactOpenings {
+            fidelity: fidelity_openings,
+            oracle: oracle_opening,
+        },
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+mod publication;
+use publication::{
+    publication_manifest, publish_opening_chunks, publish_tribute_chunks, seal_input_publication,
+    InputPublication,
+};
+
 pub fn publish_streaming_input_artifact_set(
-    cas: &FilesystemCas,
+    context: InputArtifactContext<'_>,
     input_ref_catalog_root: impl AsRef<Path>,
-    bundle: &ProtocolBundleV1,
     identity: InputArtifactIdentity,
-    expected_tribute_count: u32,
-    mut next_tribute: impl FnMut() -> Result<Option<Vec<u8>>, InputArtifactError>,
-    fidelity_openings: Vec<AuthenticatedOpeningV1>,
-    oracle_opening: AuthenticatedOpeningV1,
-    limits: &SchemaLimits,
-    list_limits: OrderedListLimits,
+    source: TributeInputStream<impl FnMut() -> Result<Option<Vec<u8>>, InputArtifactError>>,
+    openings: InputArtifactOpenings,
 ) -> Result<PublishedInputArtifacts, InputArtifactError> {
-    require(expected_tribute_count > 0, "Tribute input set")?;
-    require(!fidelity_openings.is_empty(), "Fidelity opening set")?;
+    let TributeInputStream {
+        expected_count,
+        next,
+    } = source;
+    require(expected_count > 0, "Tribute input set")?;
+    require(!openings.fidelity.is_empty(), "Fidelity opening set")?;
     require(
-        oracle_opening.source_kind == OpeningSourceKind::Oracle,
+        openings.oracle.source_kind == OpeningSourceKind::Oracle,
         "Oracle opening source",
     )?;
-    let protocol_bundle_hash = bundle.protocol_bundle_hash(limits)?;
-    let mut chunk_objects = Vec::new();
-    let mut chunk_references = Vec::new();
-    let mut ordinal = 0_u32;
-    let tribute_chunk_items =
-        usize::try_from(PRIMARY_WORK_SHARD_SIZE).map_err(|_| InputArtifactError::CountOverflow)?;
-
-    let mut tribute_count = 0_u32;
-    let mut tribute_nominal_total = U256::ZERO;
-    let mut tribute_chunk = Vec::with_capacity(tribute_chunk_items);
-    while let Some(canonical) = next_tribute()? {
-        let tribute =
-            outbe_tribute::TributeRecord::decode_canonical(&canonical)?.calculation_view()?;
-        require(
-            tribute.worldwide_day.value() == identity.wwd,
-            "Tribute WWD matches input identity",
-        )?;
-        tribute_count = tribute_count
-            .checked_add(1)
-            .ok_or(InputArtifactError::CountOverflow)?;
-        if tribute_count > expected_tribute_count {
-            return Err(InputArtifactError::TributeCountMismatch {
-                expected: expected_tribute_count,
-                actual: tribute_count,
-            });
-        }
-        tribute_nominal_total = tribute_nominal_total
-            .checked_add(tribute.nominal_amount_minor)
-            .ok_or(InputArtifactError::NominalTotalOverflow)?;
-        tribute_chunk.push(outbe_ocomp_protocol::common::BoundedBytes(canonical));
-        if tribute_chunk.len() == tribute_chunk_items {
-            publish_chunk(
-                cas,
-                bundle,
-                limits,
-                AuthenticatedInputChunkV1 {
-                    protocol_bundle_hash,
-                    job_id: identity.job_id,
-                    kind: InputChunkKind::Tribute,
-                    ordinal,
-                    canonical_records_or_openings: core::mem::take(&mut tribute_chunk),
-                },
-                &mut chunk_objects,
-                &mut chunk_references,
-            )?;
-            ordinal = ordinal
-                .checked_add(1)
-                .ok_or(InputArtifactError::CountOverflow)?;
-        }
-    }
-    if tribute_count != expected_tribute_count {
-        return Err(InputArtifactError::TributeCountMismatch {
-            expected: expected_tribute_count,
-            actual: tribute_count,
-        });
-    }
-    if !tribute_chunk.is_empty() {
-        publish_chunk(
-            cas,
-            bundle,
-            limits,
-            AuthenticatedInputChunkV1 {
-                protocol_bundle_hash,
-                job_id: identity.job_id,
-                kind: InputChunkKind::Tribute,
-                ordinal,
-                canonical_records_or_openings: tribute_chunk,
-            },
-            &mut chunk_objects,
-            &mut chunk_references,
-        )?;
-        ordinal = ordinal
-            .checked_add(1)
-            .ok_or(InputArtifactError::CountOverflow)?;
-    }
-    for opening in &fidelity_openings {
-        require(
-            opening.source_kind == OpeningSourceKind::Fidelity,
-            "Fidelity opening source",
-        )?;
-        publish_chunk(
-            cas,
-            bundle,
-            limits,
-            AuthenticatedInputChunkV1 {
-                protocol_bundle_hash,
-                job_id: identity.job_id,
-                kind: InputChunkKind::Fidelity,
-                ordinal,
-                canonical_records_or_openings: vec![outbe_ocomp_protocol::common::BoundedBytes(
-                    opening.encode_canonical_record(limits)?,
-                )],
-            },
-            &mut chunk_objects,
-            &mut chunk_references,
-        )?;
-        ordinal = ordinal
-            .checked_add(1)
-            .ok_or(InputArtifactError::CountOverflow)?;
-    }
-    publish_chunk(
-        cas,
-        bundle,
-        limits,
-        AuthenticatedInputChunkV1 {
-            protocol_bundle_hash,
-            job_id: identity.job_id,
-            kind: InputChunkKind::Oracle,
-            ordinal,
-            canonical_records_or_openings: vec![outbe_ocomp_protocol::common::BoundedBytes(
-                oracle_opening.encode_canonical_record(limits)?,
-            )],
-        },
-        &mut chunk_objects,
-        &mut chunk_references,
-    )?;
-
-    let input_chunk_count =
-        u32::try_from(chunk_references.len()).map_err(|_| InputArtifactError::CountOverflow)?;
-    let input_chunk_list_root = streaming_input_chunk_reference_root(
-        input_chunk_count,
-        chunk_references.iter().cloned().map(Ok),
-        limits,
-    )?;
-    let fidelity_opening_root = authenticated_opening_root(
-        OpeningSourceKind::Fidelity,
-        &fidelity_openings,
-        bundle,
-        limits,
-        list_limits,
-    )?;
-    let oracle_opening_root = authenticated_opening_root(
-        OpeningSourceKind::Oracle,
-        std::slice::from_ref(&oracle_opening),
-        bundle,
-        limits,
-        list_limits,
-    )?;
-
-    let exact_encoded_bytes = chunk_references
-        .iter()
-        .try_fold(0_u64, |total, reference| {
-            total
-                .checked_add(reference.encoded_bytes)
-                .ok_or(InputArtifactError::ByteCountOverflow)
-        })?;
-    let exact_record_count = chunk_references
-        .iter()
-        .try_fold(0_u32, |total, reference| {
-            total
-                .checked_add(reference.record_count)
-                .ok_or(InputArtifactError::CountOverflow)
-        })?;
-    let manifest = InputManifestV1 {
+    let protocol_bundle_hash = context.bundle.protocol_bundle_hash(&context.limits)?;
+    let mut publication = InputPublication {
         protocol_bundle_hash,
-        job_id: identity.job_id,
-        attempt: identity.attempt,
-        checkpoint: identity.checkpoint,
-        wwd: identity.wwd,
-        sealed_tribute_collection_key: identity.sealed_tribute_collection_key,
-        sealed_tribute_collection_root: identity.sealed_tribute_collection_root,
-        tribute_count,
-        tribute_nominal_total,
-        input_chunk_count,
-        input_chunk_list_root,
-        fidelity_opening_root,
-        oracle_opening_root,
-        exact_encoded_bytes,
-        exact_record_count,
-        body_codec_id: bundle.tribute_body_codec_id,
-        opening_codec_registry_hash: bundle.opening_codec_registry_hash()?,
-        compression: Compression::None,
+        chunk_objects: Vec::new(),
+        chunk_references: Vec::new(),
+        ordinal: 0,
+        tribute_count: 0,
+        tribute_nominal_total: U256::ZERO,
     };
-    let manifest_bytes = manifest.encode_canonical(limits)?;
-    let mut manifest_ref = cas.publish_bytes(&manifest_bytes)?;
-    manifest_ref.expected_ocb1_kind = Some(ObjectKind::InputManifestV1.tag());
-    let manifest_object = cas.read_verified(&manifest_ref)?;
-    let verified = verify_input_artifact_set(
-        &manifest_object,
-        &chunk_objects,
-        bundle,
-        limits,
-        list_limits,
+    publish_tribute_chunks(
+        context,
+        &identity,
+        TributeInputStream {
+            expected_count,
+            next,
+        },
+        &mut publication,
     )?;
-    let mut input_ref_catalog = VerifiedInputChunkRefCatalog::open(
-        input_ref_catalog_root,
-        cas,
-        &manifest_ref,
-        *limits,
-        list_limits,
-    )?;
-    for reference in &chunk_references {
-        let _ = input_ref_catalog.admit(reference)?;
-    }
-    let _ = input_ref_catalog.exact_cursor()?;
-
-    Ok(PublishedInputArtifacts {
-        manifest_ref,
-        ordered_chunk_refs: chunk_objects
-            .iter()
-            .map(VerifiedCasObject::reference)
-            .collect(),
-        manifest_hash: verified.manifest_hash,
-        tribute_count: verified.tribute_count,
-        tribute_nominal_total: verified.tribute_nominal_total,
-    })
+    publish_opening_chunks(context, &identity, &openings, &mut publication)?;
+    let manifest = publication_manifest(context, &identity, &openings, &publication)?;
+    seal_input_publication(context, input_ref_catalog_root, manifest, publication)
 }
+
+mod verification;
+use verification::{summarize_verified_chunks, verify_input_openings};
 
 pub fn verify_input_artifact_set(
     manifest_object: &VerifiedCasObject,
@@ -914,58 +725,9 @@ pub fn verify_input_artifact_set(
         "manifest input chunk count",
     )?;
 
-    let mut references = Vec::new();
-    references
-        .try_reserve_exact(chunk_objects.len())
-        .map_err(|_| InputArtifactError::Invariant("input chunk reference allocation"))?;
-    let mut exact_encoded_bytes = 0_u64;
-    let mut exact_record_count = 0_usize;
-    let mut tribute_count = 0_usize;
-    let mut tribute_nominal_total = U256::ZERO;
-    let mut tribute_owners = BTreeSet::new();
-    let mut tribute_isos = BTreeSet::from([840_u16]);
-    let mut fidelity_openings = Vec::new();
-    let mut oracle_openings = Vec::new();
-    let mut previous_kind = None;
-
-    for (index, object) in chunk_objects.iter().enumerate() {
-        let derived = derive_input_chunk(object, bundle, limits)?;
-        let expected_ordinal =
-            u32::try_from(index).map_err(|_| InputArtifactError::CountOverflow)?;
-        require(
-            derived.ordinal == expected_ordinal,
-            "input chunk ordinal sequence",
-        )?;
-        require(
-            derived.protocol_bundle_hash == manifest.protocol_bundle_hash,
-            "input chunk protocol bundle hash",
-        )?;
-        require(derived.job_id == manifest.job_id, "input chunk job id")?;
-        if let Some(kind) = previous_kind {
-            require(kind <= derived.kind, "input chunk kind order")?;
-        }
-        previous_kind = Some(derived.kind);
-
-        exact_encoded_bytes = exact_encoded_bytes
-            .checked_add(derived.public.reference.encoded_bytes)
-            .ok_or(InputArtifactError::ByteCountOverflow)?;
-        exact_record_count = exact_record_count
-            .checked_add(derived.record_count)
-            .ok_or(InputArtifactError::CountOverflow)?;
-        tribute_count = tribute_count
-            .checked_add(derived.tribute_count)
-            .ok_or(InputArtifactError::CountOverflow)?;
-        tribute_nominal_total = tribute_nominal_total
-            .checked_add(derived.tribute_nominal_total)
-            .ok_or(InputArtifactError::NominalTotalOverflow)?;
-        tribute_owners.extend(derived.tribute_owners);
-        tribute_isos.extend(derived.tribute_isos);
-        fidelity_openings.extend(derived.fidelity_openings);
-        oracle_openings.extend(derived.oracle_openings);
-        references.push(derived.public.reference);
-    }
-
-    let reference_bytes = references
+    let summary = summarize_verified_chunks(&manifest, chunk_objects, bundle, limits)?;
+    let reference_bytes = summary
+        .references
         .iter()
         .map(|reference| reference.encode_canonical_record(limits))
         .collect::<Result<Vec<_>, _>>()?;
@@ -978,93 +740,31 @@ pub fn verify_input_artifact_set(
         "input chunk reference list root",
     )?;
     require(
-        exact_encoded_bytes == manifest.exact_encoded_bytes,
+        summary.exact_encoded_bytes == manifest.exact_encoded_bytes,
         "manifest exact encoded bytes",
     )?;
     require(
-        u32::try_from(exact_record_count).map_err(|_| InputArtifactError::CountOverflow)?
+        u32::try_from(summary.exact_record_count).map_err(|_| InputArtifactError::CountOverflow)?
             == manifest.exact_record_count,
         "manifest exact record count",
     )?;
     require(
-        u32::try_from(tribute_count).map_err(|_| InputArtifactError::CountOverflow)?
+        u32::try_from(summary.tribute_count).map_err(|_| InputArtifactError::CountOverflow)?
             == manifest.tribute_count,
         "manifest Tribute count",
     )?;
     require(
-        tribute_nominal_total == manifest.tribute_nominal_total,
+        summary.tribute_nominal_total == manifest.tribute_nominal_total,
         "manifest Tribute nominal total",
     )?;
 
-    require(!fidelity_openings.is_empty(), "Fidelity opening set")?;
-    let mut opened_owners = Vec::new();
-    for opening in &fidelity_openings {
-        opening.validate_against_bundle(bundle, limits)?;
-        let _ = opening
-            .decode_and_validate_raw_opening(manifest.checkpoint.finalized_state_root, limits)?;
-        opened_owners.extend(decode_fidelity_subject_key(
-            &opening.canonical_subject_key.0,
-        )?);
-    }
-    require(
-        opened_owners == tribute_owners.into_iter().collect::<Vec<_>>(),
-        "Fidelity subjects cover the exact Tribute owner set",
-    )?;
-    require(
-        authenticated_opening_root(
-            OpeningSourceKind::Fidelity,
-            &fidelity_openings,
-            bundle,
-            limits,
-            list_limits,
-        )? == manifest.fidelity_opening_root,
-        "Fidelity opening root",
-    )?;
-
-    require(oracle_openings.len() == 1, "exactly one Oracle opening")?;
-    let oracle = &oracle_openings[0];
-    oracle.validate_against_bundle(bundle, limits)?;
-    let _ =
-        oracle.decode_and_validate_raw_opening(manifest.checkpoint.finalized_state_root, limits)?;
-    let (oracle_wwd, oracle_isos) = decode_oracle_subject_key(&oracle.canonical_subject_key.0)?;
-    require(oracle_wwd == manifest.wwd, "Oracle subject WWD")?;
-    require(
-        oracle_isos == tribute_isos.into_iter().collect::<Vec<_>>(),
-        "Oracle subject covers the exact Tribute currency set",
-    )?;
-    require(
-        authenticated_opening_root(
-            OpeningSourceKind::Oracle,
-            &oracle_openings,
-            bundle,
-            limits,
-            list_limits,
-        )? == manifest.oracle_opening_root,
-        "Oracle opening root",
-    )?;
+    verify_input_openings(&manifest, summary, bundle, limits, list_limits)?;
 
     Ok(VerifiedInputArtifacts {
         manifest_hash: manifest.manifest_hash(limits)?,
         tribute_count: manifest.tribute_count,
         tribute_nominal_total: manifest.tribute_nominal_total,
     })
-}
-
-fn publish_chunk(
-    cas: &FilesystemCas,
-    bundle: &ProtocolBundleV1,
-    limits: &SchemaLimits,
-    chunk: AuthenticatedInputChunkV1,
-    objects: &mut Vec<VerifiedCasObject>,
-    references: &mut Vec<InputChunkRefV1>,
-) -> Result<(), InputArtifactError> {
-    let encoded = chunk.encode_canonical(limits)?;
-    let mut object_ref = cas.publish_bytes(&encoded)?;
-    object_ref.expected_ocb1_kind = Some(ObjectKind::AuthenticatedInputChunkV1.tag());
-    let object = cas.read_verified(&object_ref)?;
-    references.push(derive_input_chunk_ref(&object, bundle, limits)?.reference);
-    objects.push(object);
-    Ok(())
 }
 
 fn derive_input_chunk(
@@ -1096,8 +796,8 @@ fn derive_input_chunk(
     for record in &chunk.canonical_records_or_openings {
         match chunk.kind {
             InputChunkKind::Tribute => {
-                let tribute = outbe_tribute::TributeRecord::decode_canonical(&record.0)?
-                    .calculation_view()?;
+                let tribute =
+                    outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
                 keys.push(tribute.tribute_id.as_slice().to_vec());
                 tribute_count = tribute_count
                     .checked_add(1)

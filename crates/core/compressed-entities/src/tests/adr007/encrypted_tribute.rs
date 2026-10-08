@@ -31,7 +31,7 @@ fn encrypted_tribute_survives_ce_reads_queries_and_event_replay_as_ciphertext() 
     let body = encrypted_body();
     let context = &body.context;
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(context.chain_id);
     StorageHandle::enter(&mut provider, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
@@ -112,7 +112,9 @@ fn encrypted_tribute_survives_ce_reads_queries_and_event_replay_as_ciphertext() 
 fn encrypted_schema_rejects_plain_bodies_malformed_blobs_and_noncanonical_bytes() {
     let body = encrypted_body();
     let payload = crate::encode_tribute_v2(&body).unwrap();
-    let v1_envelope = StoredBody::new_v1(payload.clone()).unwrap().encode();
+    let v1_envelope = StoredBody::new(crate::BODY_SCHEMA_V1, payload.clone())
+        .unwrap()
+        .encode();
     assert!(crate::decode_stored_tribute_v2(&v1_envelope).is_err());
     for change in [
         (|body: &mut EncryptedTributeV2| body.encrypted_amounts.clear()) as fn(&mut _),

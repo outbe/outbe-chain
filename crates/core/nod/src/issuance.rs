@@ -1,5 +1,5 @@
 //! Static issuance invariants checked before compressed state is changed.
-use crate::{errors::NodError, NodContract, NodItemState};
+use crate::{errors::NodError, NodItemState};
 use alloy_primitives::U256;
 use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_primitives::error::Result;
@@ -49,7 +49,7 @@ pub(crate) fn validate_item(item: &NodItemState, entry_price_minor: U256) -> Res
         return Err(NodError::ZeroReferenceCurrency.into());
     }
 
-    let canonical_bucket_key = NodContract::bucket_key(
+    let canonical_bucket_key = crate::identity::bucket_key(
         item.worldwide_day,
         entry_price_minor,
         item.reference_currency,

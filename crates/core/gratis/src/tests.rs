@@ -28,7 +28,16 @@ fn auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth 
     let sk = test_enclave::state_key();
     let mk = derive_modify_key(&sk, account).unwrap();
     ModifyAuth {
-        mac: modify_mac(&mk, account, op, amount, nonce, chain_b256()),
+        mac: modify_mac(
+            &mk,
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account,
+                op,
+                amount,
+                op_nonce: nonce,
+                chain_id: chain_b256(),
+            },
+        ),
         op_nonce: nonce,
     }
 }
@@ -166,13 +175,21 @@ fn run_dispatch(call: Bytes, caller: Address) -> outbe_primitives::error::Result
 
 #[test]
 fn metadata_uses_six_decimal_gratis_units() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let gratis = crate::Gratis::new(storage);
-        assert_eq!(gratis.name(), "gratis");
-        assert_eq!(gratis.symbol(), "GRATIS");
-        assert_eq!(gratis.decimals(), 6);
-    });
+    let name = run_dispatch(IGratis::nameCall {}.abi_encode().into(), alice()).unwrap();
+    let symbol = run_dispatch(IGratis::symbolCall {}.abi_encode().into(), alice()).unwrap();
+    let decimals = run_dispatch(IGratis::decimalsCall {}.abi_encode().into(), alice()).unwrap();
+    assert_eq!(
+        IGratis::nameCall::abi_decode_returns(&name).unwrap(),
+        "gratis"
+    );
+    assert_eq!(
+        IGratis::symbolCall::abi_decode_returns(&symbol).unwrap(),
+        "GRATIS"
+    );
+    assert_eq!(
+        IGratis::decimalsCall::abi_decode_returns(&decimals).unwrap(),
+        6
+    );
 }
 
 #[test]

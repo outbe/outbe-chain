@@ -143,6 +143,13 @@ fn decode_nod_event(
         )
         .map(Some);
     }
+    decode_nod_bucket_event(signature, data)
+}
+
+fn decode_nod_bucket_event(
+    signature: B256,
+    data: &LogData,
+) -> Result<Option<CanonicalBodyEvent>, ReplayEventError> {
     if signature == NodBucketBodyStored::SIGNATURE_HASH {
         let event = NodBucketBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;

@@ -62,7 +62,8 @@ pub(crate) fn config(start_block: u64) -> ProjectionConfig {
 }
 
 pub(crate) fn open(storage: &Arc<RecordingStorage>, start_block: u64) -> OffchainDataProjection {
-    OffchainDataProjection::open(config(start_block), storage.clone(), storage.clone()).unwrap()
+    outbe_offchain_data::open_projection(config(start_block), storage.clone(), storage.clone())
+        .unwrap()
 }
 
 #[derive(Clone, Copy)]

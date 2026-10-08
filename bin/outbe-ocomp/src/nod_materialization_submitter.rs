@@ -381,57 +381,65 @@ pub fn reconcile_finalized_materialization_references(
     require_directory(submission_root)?;
     let mut released = 0usize;
     for job_entry in job_directories {
-        let job_entry = job_entry?;
-        require_directory(&job_entry.path())?;
-        let job_component = job_entry
+        reconcile_materialization_job(job_entry?, reference_root, &mut released)?;
+    }
+    Ok(released)
+}
+
+fn reconcile_materialization_job(
+    job_entry: fs::DirEntry,
+    reference_root: &Path,
+    released: &mut usize,
+) -> Result<(), NodMaterializationSubmissionErrorV1> {
+    require_directory(&job_entry.path())?;
+    let job_component = job_entry
+        .file_name()
+        .into_string()
+        .map_err(|_| NodMaterializationSubmissionErrorV1::InvalidJournal)?;
+    if job_component.len() != 64 {
+        return Err(NodMaterializationSubmissionErrorV1::InvalidJournal);
+    }
+    let job_id_bytes = hex::decode(&job_component)
+        .map_err(|_| NodMaterializationSubmissionErrorV1::InvalidJournal)?;
+    if job_id_bytes.len() != 32 {
+        return Err(NodMaterializationSubmissionErrorV1::InvalidJournal);
+    }
+    let job_id = B256::from_slice(&job_id_bytes);
+    for ordinal_entry in fs::read_dir(job_entry.path())? {
+        let ordinal_entry = ordinal_entry?;
+        require_directory(&ordinal_entry.path())?;
+        let ordinal_component = ordinal_entry
             .file_name()
             .into_string()
             .map_err(|_| NodMaterializationSubmissionErrorV1::InvalidJournal)?;
-        if job_component.len() != 64 {
-            return Err(NodMaterializationSubmissionErrorV1::InvalidJournal);
-        }
-        let job_id_bytes = hex::decode(&job_component)
+        let ordinal = ordinal_component
+            .parse::<u32>()
             .map_err(|_| NodMaterializationSubmissionErrorV1::InvalidJournal)?;
-        if job_id_bytes.len() != 32 {
+        if ordinal.to_string() != ordinal_component
+            || ordinal_entry.path().join(TEMP_FILE).try_exists()?
+        {
             return Err(NodMaterializationSubmissionErrorV1::InvalidJournal);
         }
-        let job_id = B256::from_slice(&job_id_bytes);
-        for ordinal_entry in fs::read_dir(job_entry.path())? {
-            let ordinal_entry = ordinal_entry?;
-            require_directory(&ordinal_entry.path())?;
-            let ordinal_component = ordinal_entry
-                .file_name()
-                .into_string()
-                .map_err(|_| NodMaterializationSubmissionErrorV1::InvalidJournal)?;
-            let ordinal = ordinal_component
-                .parse::<u32>()
-                .map_err(|_| NodMaterializationSubmissionErrorV1::InvalidJournal)?;
-            if ordinal.to_string() != ordinal_component
-                || ordinal_entry.path().join(TEMP_FILE).try_exists()?
-            {
-                return Err(NodMaterializationSubmissionErrorV1::InvalidJournal);
-            }
-            let Some(record) = load_record(&ordinal_entry.path().join(RECORD_FILE))? else {
-                continue;
-            };
-            if record.job_id != job_id || record.first_nod_ordinal != ordinal {
-                return Err(NodMaterializationSubmissionErrorV1::InvalidJournal);
-            }
-            if record.stage != StageV1::Finalized {
-                continue;
-            }
-            let references = MaterializationReferenceStoreV1::open(
-                reference_root.join(&job_component).join(&ordinal_component),
-            )?;
-            if references.load_exact(job_id)?.is_some() {
-                references.release(job_id)?;
-                released = released
-                    .checked_add(1)
-                    .ok_or(NodMaterializationSubmissionErrorV1::GenerationOverflow)?;
-            }
+        let Some(record) = load_record(&ordinal_entry.path().join(RECORD_FILE))? else {
+            continue;
+        };
+        if record.job_id != job_id || record.first_nod_ordinal != ordinal {
+            return Err(NodMaterializationSubmissionErrorV1::InvalidJournal);
+        }
+        if record.stage != StageV1::Finalized {
+            continue;
+        }
+        let references = MaterializationReferenceStoreV1::open(
+            reference_root.join(&job_component).join(&ordinal_component),
+        )?;
+        if references.load_exact(job_id)?.is_some() {
+            references.release(job_id)?;
+            *released = released
+                .checked_add(1)
+                .ok_or(NodMaterializationSubmissionErrorV1::GenerationOverflow)?;
         }
     }
-    Ok(released)
+    Ok(())
 }
 
 fn load_record(path: &Path) -> Result<Option<RecordV1>, NodMaterializationSubmissionErrorV1> {

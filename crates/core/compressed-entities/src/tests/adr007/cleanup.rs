@@ -5,7 +5,7 @@ fn cleanup_zeroes_overlay_and_phase_rejects_post_end_access() {
     let owner = address!("8000000000000000000000000000000000000008");
     let body = tribute(entity(14, 8), owner, 100);
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
     let mut locator = B256::ZERO;
 
@@ -91,8 +91,8 @@ fn cleanup_zeroes_overlay_and_phase_rejects_post_end_access() {
 fn begin_block_rejects_a_dirty_prior_overlay_without_repairing_it() {
     let owner = address!("8100000000000000000000000000000000000008");
     let body = tribute(entity(14, 81), owner, 100);
-    let first_scope = ExecutionScope::new();
-    let second_scope = ExecutionScope::new();
+    let first_scope = ExecutionScope::default();
+    let second_scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         begin_block(storage.clone(), &first_scope).unwrap();
@@ -136,7 +136,7 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
     ];
 
     let mut baseline = HashMapStorageProvider::new(1);
-    let baseline_scope = ExecutionScope::new();
+    let baseline_scope = ExecutionScope::default();
     populate_cleanup_fixture(&mut baseline, &baseline_scope, &fixtures);
     let baseline_preview = StorageHandle::enter(&mut baseline, |storage| {
         crate::preview_end_block(storage, &baseline_scope).unwrap()
@@ -152,7 +152,7 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
     for position in [FaultPosition::Before, FaultPosition::After] {
         for failure_at in 0..cleanup_operations {
             let mut provider = HashMapStorageProvider::new(1);
-            let scope = ExecutionScope::new();
+            let scope = ExecutionScope::default();
             populate_cleanup_fixture(&mut provider, &scope, &fixtures);
             let preview = StorageHandle::enter(&mut provider, |storage| {
                 crate::preview_end_block(storage, &scope).unwrap()
@@ -198,9 +198,10 @@ fn the_body_reserve_spans_the_widest_v1_body_and_tail_cleanup_is_exact() {
         reference_currency: u16::MAX,
         issued_at: u64::MAX,
     };
-    let maximum_stored = StoredBody::new_v1(encode_nod_item_v1(&maximum).unwrap())
-        .unwrap()
-        .encode();
+    let maximum_stored =
+        StoredBody::new(crate::BODY_SCHEMA_V1, encode_nod_item_v1(&maximum).unwrap())
+            .unwrap()
+            .encode();
 
     // The reserve prepays the storage tail of the widest v1 body, in whole slots.
     let widest_tribute = TributeBodyV1 {
@@ -217,10 +218,13 @@ fn the_body_reserve_spans_the_widest_v1_body_and_tail_cleanup_is_exact() {
     let widest_stored = [
         stored_tribute(&widest_tribute).encode().len(),
         maximum_stored.len(),
-        StoredBody::new_v1(encode_nod_bucket_v1(&widest_bucket(day)).unwrap())
-            .unwrap()
-            .encode()
-            .len(),
+        StoredBody::new(
+            crate::BODY_SCHEMA_V1,
+            encode_nod_bucket_v1(&widest_bucket(day)).unwrap(),
+        )
+        .unwrap()
+        .encode()
+        .len(),
     ]
     .into_iter()
     .max()
@@ -230,7 +234,7 @@ fn the_body_reserve_spans_the_widest_v1_body_and_tail_cleanup_is_exact() {
         MAX_STORED_BODY_BYTES_V1.div_ceil(32)
     );
 
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let parent = MemoryParent::default();
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
@@ -312,7 +316,7 @@ fn shrinking_a_body_zeroes_truncated_bytes_and_storage_padding() {
         ..widest.clone()
     };
     let stored = |body: &NodItemBodyV1| {
-        StoredBody::new_v1(encode_nod_item_v1(body).unwrap())
+        StoredBody::new(crate::BODY_SCHEMA_V1, encode_nod_item_v1(body).unwrap())
             .unwrap()
             .encode()
     };
@@ -321,7 +325,7 @@ fn shrinking_a_body_zeroes_truncated_bytes_and_storage_padding() {
     assert!(narrowest_bytes.len() < widest_bytes.len());
     let widest_slots = widest_bytes.len().div_ceil(32);
 
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let parent = MemoryParent::default();
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {

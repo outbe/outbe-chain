@@ -2,7 +2,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
     CeAuditLimits, CeAuditWork, IdPageRequest, StoredBody, StoredBodyPage, WwdEntityId,
 };
-use outbe_nod::{NodBucketState, NodRepositoryReader, NodRepositoryWriter};
+use outbe_nod::{NodBucketState, NodRepositoryReader};
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, ScanEntry, ScanPage,
     ScanRequest, StorageError, StorageMetadata, StorageReader, StorageWriter, StoredValue, Value,
@@ -47,7 +47,7 @@ fn work() -> CeAuditWork {
 
 fn fixture() -> Arc<MemoryStorage> {
     let storage = Arc::new(MemoryStorage::new());
-    let writer = NodRepositoryWriter::new(storage.clone(), storage.clone());
+    let writer = outbe_nod::nod_writer(storage.clone(), storage.clone());
     for seed in [3, 1, 2] {
         writer
             .put_nod(&outbe_nod::test_support::item(
@@ -116,7 +116,7 @@ fn scan(
 fn primary_scans_return_exact_bodies_and_strict_exclusive_boundaries() {
     let storage = fixture();
     let before = snapshot(&storage);
-    let reader = NodRepositoryReader::new(storage.clone());
+    let reader = outbe_nod::nod_reader(storage.clone());
     for bucket in [false, true] {
         let offset = if bucket { 10 } else { 0 };
         let page = scan(
@@ -229,7 +229,7 @@ fn owner_audit_rejects_missing_dangling_wrong_owner_duplicates_and_bad_records()
             _ => unreachable!(),
         }
         let before = snapshot(&storage);
-        let reader = NodRepositoryReader::new(storage.clone());
+        let reader = outbe_nod::nod_reader(storage.clone());
         // Primary enumeration must still expose all bodies despite damaged indexes.
         assert_eq!(
             reader
@@ -257,7 +257,7 @@ fn primary_scans_reject_malformed_keys_bodies_id_mismatches_and_schema() {
             let storage = fixture();
             corrupt_primary(&storage, bucket, corruption);
             let before = snapshot(&storage);
-            let reader = NodRepositoryReader::new(storage.clone());
+            let reader = outbe_nod::nod_reader(storage.clone());
             assert!(scan(
                 &reader,
                 bucket,
@@ -300,7 +300,8 @@ fn corrupt_primary(storage: &MemoryStorage, bucket: bool, corruption: u8) {
                 .unwrap();
         }
         3 => {
-            let stored = StoredBody::decode(original.as_bytes()).unwrap();
+            let stored =
+                outbe_compressed_entities::decode_stored_body(original.as_bytes()).unwrap();
             let value = Value::new(
                 StoredBody::new(u32::MAX, stored.payload().to_vec())
                     .unwrap()
@@ -315,168 +316,5 @@ fn corrupt_primary(storage: &MemoryStorage, bucket: bool, corruption: u8) {
     }
 }
 
-#[derive(Clone, Copy)]
-enum PageMode {
-    Short,
-    Descending,
-    Duplicate,
-    WrongContinuation,
-    EmptyContinuation,
-    Oversized,
-    RepeatCursor,
-    LateError,
-}
-
-struct PageReader {
-    storage: Arc<MemoryStorage>,
-    mode: PageMode,
-}
-
-impl StorageReader for PageReader {
-    fn get_record(
-        &self,
-        namespace: Namespace,
-        key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        self.storage.get_record(namespace, key)
-    }
-
-    fn scan_prefix(
-        &self,
-        namespace: Namespace,
-        request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        if matches!(self.mode, PageMode::LateError) && request.after().is_some() {
-            return Err(StorageError::Corruption("interrupted later page".into()));
-        }
-        let limit = if matches!(self.mode, PageMode::Short | PageMode::LateError) {
-            1
-        } else {
-            request.limit()
-        };
-        let mut page = self.storage.scan_prefix(
-            namespace.clone(),
-            ScanRequest::new(request.prefix(), request.after(), limit)?,
-        )?;
-        self.mutate_page(namespace, request, &mut page)?;
-        Ok(page)
-    }
-}
-
-impl PageReader {
-    fn mutate_page(
-        &self,
-        namespace: Namespace,
-        request: ScanRequest<'_>,
-        page: &mut ScanPage,
-    ) -> Result<(), StorageError> {
-        match self.mode {
-            PageMode::Short | PageMode::LateError => {}
-            PageMode::Descending => page.entries.reverse(),
-            PageMode::Duplicate => {
-                if let Some(first) = page.entries.first().cloned() {
-                    page.entries.insert(0, first);
-                }
-            }
-            PageMode::WrongContinuation => page.next_after = Some(Key::new(vec![0xff])?),
-            PageMode::EmptyContinuation => {
-                page.entries.clear();
-                page.next_after = Some(Key::new(vec![0xff])?);
-            }
-            PageMode::Oversized => {
-                if let Some(first) = page.entries.first().cloned() {
-                    page.entries.resize(request.limit() + 1, first);
-                }
-                page.next_after = None;
-            }
-            PageMode::RepeatCursor => {
-                if let Some(after) = request.after() {
-                    if let Some(record) = self.storage.get_record(namespace, after)? {
-                        page.entries.insert(
-                            0,
-                            ScanEntry {
-                                key: after.clone(),
-                                value: record.value,
-                                metadata: record.metadata,
-                            },
-                        );
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[test]
-fn primary_scans_reject_invalid_backend_page_order_size_and_continuations() {
-    for mode in [
-        PageMode::Descending,
-        PageMode::Duplicate,
-        PageMode::WrongContinuation,
-        PageMode::EmptyContinuation,
-        PageMode::Oversized,
-        PageMode::RepeatCursor,
-    ] {
-        let storage = fixture();
-        let before = snapshot(&storage);
-        let reader = NodRepositoryReader::new(Arc::new(PageReader {
-            storage: storage.clone(),
-            mode,
-        }));
-        for bucket in [false, true] {
-            assert!(scan(
-                &reader,
-                bucket,
-                IdPageRequest {
-                    after: Some(id(if bucket { 11 } else { 1 })),
-                    limit: 2
-                }
-            )
-            .is_err());
-        }
-        assert_eq!(snapshot(&storage), before);
-    }
-}
-
-#[test]
-fn audits_follow_short_pages_and_propagate_later_page_failures() {
-    let storage = fixture();
-    let before = snapshot(&storage);
-    let reader = NodRepositoryReader::new(Arc::new(PageReader {
-        storage: storage.clone(),
-        mode: PageMode::Short,
-    }));
-    for bucket in [false, true] {
-        let mut after = None;
-        let mut ids = Vec::new();
-        loop {
-            let page = scan(&reader, bucket, IdPageRequest { after, limit: 10 }).unwrap();
-            assert_eq!(page.entries.len(), 1);
-            ids.push(page.entries[0].0);
-            after = page.next_after;
-            if after.is_none() {
-                break;
-            }
-        }
-        assert_eq!(
-            ids,
-            if bucket {
-                vec![id(11), id(12), id(13)]
-            } else {
-                vec![id(1), id(2), id(3)]
-            }
-        );
-    }
-    reader.audit_indexes(&work()).unwrap();
-    let interrupted = NodRepositoryReader::new(Arc::new(PageReader {
-        storage: storage.clone(),
-        mode: PageMode::LateError,
-    }));
-    assert!(interrupted
-        .audit_indexes(&work())
-        .unwrap_err()
-        .to_string()
-        .contains("interrupted later page"));
-    assert_eq!(snapshot(&storage), before);
-}
+#[path = "projection_audit/backend_pages.rs"]
+mod backend_pages;

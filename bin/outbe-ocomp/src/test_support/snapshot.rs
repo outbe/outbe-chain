@@ -46,9 +46,13 @@ pub fn publish_fixture_plan(
     let limits = poc_schema_limits();
     let list_limits = poc_input_list_limits();
     let published = publish_input_artifact_set(
-        cas,
+        crate::input_artifacts::InputArtifactContext {
+            cas,
+            bundle,
+            limits,
+            list_limits,
+        },
         input_ref_root,
-        bundle,
         InputArtifactContents {
             identity: InputArtifactIdentity {
                 job_id,
@@ -71,8 +75,6 @@ pub fn publish_fixture_plan(
             fidelity_openings,
             oracle_opening,
         },
-        &limits,
-        list_limits,
     )
     .unwrap();
     let manifest = InputManifestV1::decode_canonical(

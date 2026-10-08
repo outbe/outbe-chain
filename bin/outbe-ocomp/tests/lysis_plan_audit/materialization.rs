@@ -13,7 +13,7 @@ fn one_chunk_nod_generation_builds_exact_first_adaptive_and_final_batch_paths() 
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -99,7 +99,7 @@ fn cold_reloaded_result_catalog_builds_a_verified_nod_proof_across_shards() {
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -160,7 +160,7 @@ fn addressable_chunk_and_batch_proof_do_not_scan_preceding_chunks() {
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -222,7 +222,7 @@ fn missing_result_chunk_makes_the_nod_read_unavailable() {
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,

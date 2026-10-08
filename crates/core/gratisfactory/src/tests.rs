@@ -12,7 +12,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
+use outbe_tee_enclave::gratis::{decrypt_balance, derive_view_key};
 
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
@@ -33,11 +33,13 @@ fn chain_b256() -> B256 {
 /// Build the modify authorization a client holding `owner`'s modify key sends for
 /// `op` on `amount` at `op_nonce`.
 fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth {
-    let mk = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
-    ModifyAuth {
-        mac: modify_mac(&mk, owner, op, amount, op_nonce, chain_b256()),
+    test_enclave::modify_auth(outbe_tee_enclave::gratis::ModifyOperation {
+        account: owner,
+        op,
+        amount,
         op_nonce,
-    }
+        chain_id: chain_b256(),
+    })
 }
 
 fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {

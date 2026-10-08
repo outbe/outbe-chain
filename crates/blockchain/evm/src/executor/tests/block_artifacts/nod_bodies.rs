@@ -2,6 +2,7 @@
 //! receipts and balances on both execution roles.
 
 use super::*;
+use outbe_offchain_data::runtime_body_readers;
 use outbe_primitives::projection::{ExecutionReadBudget, ExecutionReadCancelled};
 
 type NodBlockObservation = (
@@ -183,12 +184,12 @@ fn independent_body_stores_produce_identical_full_block_state_receipts_and_balan
     let proposer = test_evm_signer().address();
     let worldwide_day = WorldwideDay::new(20_241_220);
     let entry_price_minor = U256::from(450_000_000u64);
-    let bucket_key = NodContract::bucket_key(worldwide_day, entry_price_minor, 840);
+    let bucket_key = outbe_nod::identity::bucket_key(worldwide_day, entry_price_minor, 840);
     let nod_item = || {
         outbe_nod::test_support::item(
             outbe_nod::test_support::NodItemFixture {
                 is_settled: false,
-                nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
+                nod_id: outbe_nod::identity::generate_nod_id(proposer, worldwide_day).unwrap(),
                 owner: proposer,
                 gratis_load_minor: U256::from(1_000_000u64),
                 worldwide_day,
@@ -292,7 +293,7 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         outbe_compressed_entities::derive_poseidon_entity_id(tribute_owner, day).unwrap();
     let nod_owner = Address::repeat_byte(0x32);
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
-    let bucket_key = NodContract::bucket_key(day, U256::from(16), 978);
+    let bucket_key = outbe_nod::identity::bucket_key(day, U256::from(16), 978);
     let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
 
     let tribute_fixture = || TributeData {
@@ -327,8 +328,8 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
     let run = || {
         let bodies = Arc::new(MemoryStorage::new());
         let tribute_reader = TributeRepositoryReader::new(bodies.clone());
-        let nod_reader = NodRepositoryReader::new(bodies);
-        let scope = ExecutionScope::new();
+        let nod_reader = outbe_nod::nod_reader(bodies);
+        let scope = ExecutionScope::default();
         let mut state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
         let (changes, events) =
@@ -396,8 +397,8 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
 
     let bodies = Arc::new(MemoryStorage::new());
     let tribute_reader = TributeRepositoryReader::new(bodies.clone());
-    let nod_reader = NodRepositoryReader::new(bodies);
-    let scope = ExecutionScope::new();
+    let nod_reader = outbe_nod::nod_reader(bodies);
+    let scope = ExecutionScope::default();
     let mut failed_state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
     let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
@@ -463,7 +464,10 @@ fn seed_nod_body_state(fixture: &NodBodyFixture) -> eyre::Result<SeededNodParent
         block_hash: B256::ZERO,
         root: empty_root,
     })?;
-    let scope = ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
+    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
+        parent_tree,
+        CeWorkConfig::new(0, 0, u64::MAX),
+    );
     let mut staged = None;
     let mut seeded = Ok(());
     let state = state_with_active_validators_seeded_at_block(
@@ -506,7 +510,7 @@ fn seed_called_nod(
         U256::from_be_bytes(empty_root.0),
     )?;
     outbe_compressed_entities::begin_block(storage.clone(), scope)?;
-    let empty_reader = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let empty_reader = outbe_nod::nod_reader(Arc::new(MemoryStorage::new()));
     outbe_nod::api::add_nod(
         &storage,
         scope,
@@ -555,7 +559,7 @@ fn independent_nod_readers(fixture: &NodBodyFixture) -> eyre::Result<RuntimeBody
     let adapter = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = adapter.clone();
     let writer: StorageWriterHandle = adapter;
-    let repository = NodRepositoryWriter::new(reader.clone(), writer);
+    let repository = outbe_nod::nod_writer(reader.clone(), writer);
     repository.put_nod(&fixture.item)?;
     repository.put_bucket(&NodBucketState {
         settled_nods: 0,
@@ -564,7 +568,7 @@ fn independent_nod_readers(fixture: &NodBodyFixture) -> eyre::Result<RuntimeBody
         entry_price_minor,
         reference_currency: 840,
     })?;
-    let readers = RuntimeBodyReaders::new(reader);
+    let readers = runtime_body_readers(reader);
     assert!(readers
         .nod()
         .get_bucket(outbe_compressed_entities::WwdEntityId::from_day_and_digest(
@@ -611,8 +615,10 @@ fn assert_clean_ce_lifecycle(
         block_hash,
         root: block_root,
     })?;
-    let clean_scope =
-        ExecutionScope::with_parent_tree(clean_parent, CeWorkConfig::new(0, 0, u64::MAX));
+    let clean_scope = outbe_compressed_entities::execution_scope::with_parent_tree(
+        clean_parent,
+        CeWorkConfig::new(0, 0, u64::MAX),
+    );
     let clean_ctx = BlockContext::new(3, 2, CHAIN_ID, proposer, vec![proposer]);
     super::run_atomic_storage_hooks(state, clean_ctx, |hook_ctx| {
         outbe_compressed_entities::begin_block(hook_ctx.storage.clone(), &clean_scope)?;

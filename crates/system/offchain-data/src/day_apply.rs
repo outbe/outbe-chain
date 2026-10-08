@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::Address;
-use outbe_nod::{clear_owner_day, NodRepositoryReader};
+use outbe_nod::clear_owner_day;
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, DayDatabases, StorageError, StorageReaderHandle,
     StorageWriterHandle,
@@ -66,7 +66,7 @@ pub(super) fn write_day_operations(
         handle.apply_atomic(&day_batch)?;
         if domain == Domain::Nod {
             let reader: StorageReaderHandle = storage;
-            let reader = NodRepositoryReader::new(reader);
+            let reader = outbe_nod::nod_reader(reader);
             for owner in owners {
                 shared.push(reader.owner_day_marker(owner, day)?);
             }

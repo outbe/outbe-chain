@@ -6,7 +6,6 @@ use std::collections::HashMap;
 
 use alloy_primitives::{Address, U256};
 use outbe_compressed_entities::derive_poseidon_entity_id;
-use outbe_nod::NodContract;
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::WorldwideDay;
 
@@ -204,7 +203,7 @@ impl ProgramExecutionV1 {
             entry_price_minor,
         });
 
-        if !NodContract::is_issuable_entry(entry_price_minor) {
+        if !outbe_nod::pricing::is_issuable_entry(entry_price_minor) {
             return Err(ProgramErrorV1::Arithmetic {
                 message: format!("Nod entry price out of bounds at {ordinal}"),
             });

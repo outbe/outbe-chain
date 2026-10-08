@@ -62,7 +62,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
 
 #[test]
 fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
-    use outbe_nod::{api, NodContract, NodRepositoryReader};
+    use outbe_nod::{api, NodContract};
     use outbe_oracle::{api::AddressPair, schema::OracleContract};
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
@@ -71,7 +71,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(block_ctx(2, midnight - 1), storage.clone());
         with_execution_scope(&ctx, |scope, _| {
-            let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+            let parent = outbe_nod::nod_reader(Arc::new(MemoryStorage::new()));
             let cycle = Cycle::new(storage.clone());
             // Isolate Nod's schedule. Unrelated triggers are not due.
             for spec in ACTIVE_TRIGGERS {
@@ -96,12 +96,16 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
                 let body = outbe_nod::test_support::item(
                     outbe_nod::test_support::NodItemFixture {
                         is_settled: false,
-                        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+                        nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day).unwrap(),
                         owner,
                         gratis_load_minor: U256::from(11),
                         worldwide_day,
                         league_id: 4,
-                        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(entry), 840),
+                        bucket_key: outbe_nod::identity::bucket_key(
+                            worldwide_day,
+                            U256::from(entry),
+                            840,
+                        ),
                         issuance_currency: 840,
                         reference_currency: 840,
                         issued_at: GENESIS_TS,

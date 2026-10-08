@@ -121,42 +121,53 @@ pub struct OutbeEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
     >,
     inspect: bool,
     abort_bridge: crate::precompiles::ExecutionAbortBridge,
+    runtime_scope: EvmRuntimeScope,
+}
+
+/// Body readers and compressed-state authority for one concrete EVM.
+pub struct EvmRuntimeScope {
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
 }
 
-impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
-    /// Creates a new Outbe EVM instance.
-    pub fn new(
-        evm: RevmEvm<
-            EthEvmContext<DB>,
-            I,
-            EthInstructions<EthInterpreter, EthEvmContext<DB>>,
-            PRECOMPILE,
-            EthFrame,
-        >,
-        inspect: bool,
-        runtime_body_readers: Option<RuntimeBodyReaders>,
-        execution_scope: Arc<ExecutionScope>,
-    ) -> Self {
-        Self {
-            inner: evm,
-            inspect,
-            abort_bridge: crate::precompiles::ExecutionAbortBridge::default(),
-            runtime_body_readers,
-            execution_scope,
-        }
-    }
-
-    /// Readers scoped to this concrete EVM instance and its nested calls.
-    pub const fn runtime_body_readers(&self) -> Option<&RuntimeBodyReaders> {
+impl EvmRuntimeScope {
+    pub const fn body_readers(&self) -> Option<&RuntimeBodyReaders> {
         self.runtime_body_readers.as_ref()
     }
 
-    /// Block-scoped compressed-entity lifecycle capability shared with every
-    /// top-level and nested precompile dispatch in this EVM.
     pub fn execution_scope(&self) -> &Arc<ExecutionScope> {
         &self.execution_scope
+    }
+}
+
+/// Creates a new Outbe EVM instance.
+pub fn outbe_evm<DB: Database, I, PRECOMPILE>(
+    evm: RevmEvm<
+        EthEvmContext<DB>,
+        I,
+        EthInstructions<EthInterpreter, EthEvmContext<DB>>,
+        PRECOMPILE,
+        EthFrame,
+    >,
+    inspect: bool,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
+) -> OutbeEvm<DB, I, PRECOMPILE> {
+    OutbeEvm {
+        inner: evm,
+        inspect,
+        abort_bridge: crate::precompiles::ExecutionAbortBridge::default(),
+        runtime_scope: EvmRuntimeScope {
+            runtime_body_readers,
+            execution_scope,
+        },
+    }
+}
+
+impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
+    /// Return the execution capabilities propagated to nested precompiles.
+    pub const fn runtime_scope(&self) -> &EvmRuntimeScope {
+        &self.runtime_scope
     }
 
     /// Consumes self and returns the inner revm instance.
@@ -215,15 +226,15 @@ where
     type Inspector = I;
 
     fn block(&self) -> &BlockEnv {
-        &self.block
+        &self.inner.ctx.block
     }
 
     fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
-        &self.cfg
+        &self.inner.ctx.cfg
     }
 
     fn chain_id(&self) -> u64 {
-        self.cfg.chain_id
+        self.inner.ctx.cfg.chain_id
     }
 
     fn transact_raw(
@@ -349,6 +360,12 @@ pub struct OutbeEvmFactory {
     genesis_hash: B256,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
     runtime_body_readers: Option<RuntimeBodyReaders>,
+    installations: EvmRuntimeInstallations,
+}
+
+/// Shared runtime services installed during node construction.
+#[derive(Clone, Default)]
+pub struct EvmRuntimeInstallations {
     compressed_tree_service:
         Arc<std::sync::RwLock<Option<Arc<outbe_compressed_entities::CompressedTreeService>>>>,
     ocomp_finality_authority:
@@ -396,16 +413,23 @@ impl core::fmt::Debug for OutbeEvmFactory {
     }
 }
 
-impl OutbeEvmFactory {
-    /// Constructs an EVM factory without off-chain runtime body readers.
-    ///
-    /// This transitional constructor supports focused tests and offline tools.
-    /// Live node construction installs the required readers through
-    /// [`Self::with_runtime_body_readers`].
-    pub fn new() -> Self {
-        Self::default()
+/// Constructs an EVM factory with read-only Tribute and Nod body authority.
+#[must_use]
+pub fn evm_factory_with_body_readers(runtime_body_readers: RuntimeBodyReaders) -> OutbeEvmFactory {
+    OutbeEvmFactory {
+        genesis_hash: B256::ZERO,
+        tee_attestation_v1: TeeAttestationChainSpecStateV1::Unbound,
+        runtime_body_readers: Some(runtime_body_readers),
+        installations: EvmRuntimeInstallations {
+            compressed_tree_service: Arc::default(),
+            ocomp_finality_authority: Arc::default(),
+            ocomp_lifecycle_activation: Arc::default(),
+            ocomp_fork_install: Arc::default(),
+        },
     }
+}
 
+impl OutbeEvmFactory {
     /// Binds every EVM/precompile context created by this factory to the
     /// canonical genesis hash from ChainSpec.
     #[must_use]
@@ -426,26 +450,22 @@ impl OutbeEvmFactory {
         self
     }
 
-    /// Constructs an EVM factory with read-only Tribute and Nod body authority.
-    #[must_use]
-    pub fn with_runtime_body_readers(runtime_body_readers: RuntimeBodyReaders) -> Self {
-        Self {
-            genesis_hash: B256::ZERO,
-            tee_attestation_v1: TeeAttestationChainSpecStateV1::Unbound,
-            runtime_body_readers: Some(runtime_body_readers),
-            compressed_tree_service: Arc::default(),
-            ocomp_finality_authority: Arc::default(),
-            ocomp_lifecycle_activation: Arc::default(),
-            ocomp_fork_install: Arc::default(),
-        }
-    }
-
     /// Returns the typed runtime body readers installed in this factory.
     #[must_use]
     pub const fn runtime_body_readers(&self) -> Option<&RuntimeBodyReaders> {
         self.runtime_body_readers.as_ref()
     }
+}
 
+impl core::ops::Deref for OutbeEvmFactory {
+    type Target = EvmRuntimeInstallations;
+
+    fn deref(&self) -> &Self::Target {
+        &self.installations
+    }
+}
+
+impl EvmRuntimeInstallations {
     pub fn install_compressed_tree_service(
         &self,
         service: Arc<outbe_compressed_entities::CompressedTreeService>,
@@ -496,6 +516,7 @@ impl EvmFactory for OutbeEvmFactory {
         let spec = input.cfg_env.spec;
         let block_number = input.block_env.number.saturating_to::<u64>();
         let ocomp_lifecycle_active = self
+            .installations
             .ocomp_lifecycle_activation
             .read()
             .is_ok_and(|activation| activation.is_active_at(block_number));
@@ -505,6 +526,7 @@ impl EvmFactory for OutbeEvmFactory {
             .as_ref()
             .map(RuntimeBodyReaders::fork_execution);
         let rpc_tree_service = self
+            .installations
             .compressed_tree_service
             .read()
             .ok()
@@ -512,21 +534,25 @@ impl EvmFactory for OutbeEvmFactory {
         let execution_scope = rpc_tree_service
             .and_then(|service| {
                 service.finalized_marker().ok().map(|marker| {
-                    Arc::new(ExecutionScope::for_finalized_rpc(
-                        service,
-                        marker.commitment_scheme_version,
-                        marker.height,
-                        marker.block_hash,
-                    ))
+                    Arc::new(
+                        outbe_compressed_entities::execution_scope::for_finalized_rpc(
+                            service,
+                            marker.commitment_scheme_version,
+                            marker.height,
+                            marker.block_hash,
+                        ),
+                    )
                 })
             })
-            .unwrap_or_else(|| Arc::new(ExecutionScope::new()));
+            .unwrap_or_else(|| Arc::new(ExecutionScope::default()));
         let ocomp_finality_authority = self
+            .installations
             .ocomp_finality_authority
             .read()
             .ok()
             .and_then(|authority| authority.clone());
         let ocomp_fork_install = self
+            .installations
             .ocomp_fork_install
             .read()
             .ok()
@@ -556,7 +582,7 @@ impl EvmFactory for OutbeEvmFactory {
             .with_precompiles(precompiles);
         create_guard::install(&mut evm.instruction);
 
-        let mut evm = OutbeEvm::new(evm, false, runtime_body_readers, execution_scope);
+        let mut evm = outbe_evm(evm, false, runtime_body_readers, execution_scope);
         evm.abort_bridge = abort_bridge;
         evm
     }
@@ -568,10 +594,10 @@ impl EvmFactory for OutbeEvmFactory {
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let evm = self.create_evm(db, input);
-        let runtime_body_readers = evm.runtime_body_readers().cloned();
-        let execution_scope = evm.execution_scope().clone();
+        let runtime_body_readers = evm.runtime_scope().body_readers().cloned();
+        let execution_scope = evm.runtime_scope().execution_scope().clone();
         let abort_bridge = evm.abort_bridge.clone();
-        let mut evm = OutbeEvm::new(
+        let mut evm = outbe_evm(
             evm.into_inner().with_inspector(inspector),
             true,
             runtime_body_readers,
@@ -586,7 +612,7 @@ impl EvmFactory for OutbeEvmFactory {
 mod tests {
     use super::*;
     use alloy_primitives::{Address, U256};
-    use outbe_offchain_data::RuntimeBodyReaders;
+    use outbe_offchain_data::runtime_body_readers;
     use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
     use outbe_primitives::time::WorldwideDay;
     use outbe_tribute::{TributeData, TributeRepositoryWriter};
@@ -612,12 +638,12 @@ mod tests {
         let storage = Arc::new(MemoryStorage::new());
         let reader: StorageReaderHandle = storage.clone();
         let writer: StorageWriterHandle = storage;
-        let readers = RuntimeBodyReaders::new(reader.clone());
-        let factory = OutbeEvmFactory::with_runtime_body_readers(readers.clone());
+        let readers = runtime_body_readers(reader.clone());
+        let factory = crate::factory::evm_factory_with_body_readers(readers.clone());
         let _evm = factory.create_evm(EmptyDB::default(), test_env());
         let worldwide_day = WorldwideDay::new(20_260_715);
         let tribute_id =
-            outbe_nod::NodContract::generate_nod_id(Address::repeat_byte(0x11), worldwide_day)
+            outbe_nod::identity::generate_nod_id(Address::repeat_byte(0x11), worldwide_day)
                 .unwrap();
 
         assert!(readers.tribute().get(tribute_id).unwrap().is_none());
@@ -649,7 +675,7 @@ mod tests {
 
     #[test]
     fn outbe_system_call_uses_artifact_gas_limit_without_changing_block_limit() {
-        let factory = OutbeEvmFactory::new();
+        let factory = OutbeEvmFactory::default();
         let mut evm = factory.create_evm(EmptyDB::default(), test_env());
 
         let _ = evm.transact_system_call(
@@ -667,7 +693,7 @@ mod tests {
 
     #[test]
     fn non_outbe_system_call_keeps_upstream_gas_limit() {
-        let factory = OutbeEvmFactory::new();
+        let factory = OutbeEvmFactory::default();
         let mut evm = factory.create_evm(EmptyDB::default(), test_env());
 
         let _ = evm.transact_system_call(

@@ -41,9 +41,14 @@ fn expected(root: &Path, f: &Fixture) -> Expected {
     .unwrap();
     let admissions =
         AdmissionCatalogReader::open_existing(admission_root(root, f), &cas, limits).unwrap();
-    let audit =
-        LocalLysisPlanAuditV1::open_read_only(&admissions, &inputs, &cas, &f.bundle, &limits)
-            .unwrap();
+    let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
+        &admissions,
+        &inputs,
+        &cas,
+        &f.bundle,
+        &limits,
+    )
+    .unwrap();
     let topology = LysisPlanTopologyV1::new(audit.plan().primary_work_unit_count).unwrap();
     Expected {
         manifest: audit.manifest().clone(),

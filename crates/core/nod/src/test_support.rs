@@ -9,7 +9,7 @@ use outbe_primitives::{
 };
 
 pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNodV2 {
-    let nod_id = crate::NodContract::generate_nod_id(params.owner, params.worldwide_day).unwrap();
+    let nod_id = crate::identity::generate_nod_id(params.owner, params.worldwide_day).unwrap();
     encrypt(
         NodTermsV2 {
             chain_id,
@@ -75,6 +75,31 @@ pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
         is_settled: f.is_settled,
     }
 }
+/// Creates an unsettled fixture with a bucket derived from its encrypted terms.
+pub fn unsettled_item(terms: NodTermsV2, amount: U256, issued_at: u64) -> NodItemState {
+    assert_eq!(terms.chain_id, 1, "NOD item fixture requires chain 1");
+    let bucket_key = crate::identity::bucket_key(
+        terms.worldwide_day,
+        terms.entry_price_minor,
+        terms.reference_currency,
+    );
+    item(
+        NodItemFixture {
+            nod_id: terms.nod_id,
+            owner: terms.owner,
+            gratis_load_minor: amount,
+            worldwide_day: terms.worldwide_day,
+            league_id: terms.league_id,
+            bucket_key,
+            issuance_currency: terms.issuance_currency,
+            reference_currency: terms.reference_currency,
+            issued_at,
+            is_settled: false,
+        },
+        terms.entry_price_minor,
+    )
+}
+
 pub fn set_amount(item: &mut NodItemState, amount: U256) {
     item.encrypted = encrypt(item.encrypted.terms.clone(), amount);
 }

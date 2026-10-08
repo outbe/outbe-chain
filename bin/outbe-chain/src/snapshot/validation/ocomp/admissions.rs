@@ -63,8 +63,13 @@ pub(crate) fn verify_present_admissions(
             .join(&job)
             .join("admissions");
         let admissions = AdmissionCatalogReader::open_existing(&root, &cas, limits)?;
-        let audit =
-            LocalLysisPlanAuditV1::open_read_only(&admissions, &inputs, &cas, &bundle, &limits)?;
+        let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
+            &admissions,
+            &inputs,
+            &cas,
+            &bundle,
+            &limits,
+        )?;
         ensure!(
             audit.manifest() == expected_manifest
                 && audit.plan().lysis_limit_minor == expected_lysis_limit

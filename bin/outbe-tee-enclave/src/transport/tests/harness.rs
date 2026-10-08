@@ -40,16 +40,17 @@ impl Enclave {
         let challenge = [seed.wrapping_add(0x40); 32];
         let (manifest, node_signature) =
             signed_initialization_manifest(&keys, challenge, [0x43; 32]);
-        let initialization = InitializationState::production_with_trusted_network_descriptor(
-            boot.clone(),
-            &keys,
-            challenge,
-            outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1 {
-                network_binding: manifest.network_binding(),
-                genesis_consensus_keys: vec![[0x61; 48]],
-            },
-        )
-        .unwrap();
+        let initialization =
+            crate::initialization::factory::production_with_trusted_network_descriptor(
+                boot.clone(),
+                &keys,
+                challenge,
+                outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1 {
+                    network_binding: manifest.network_binding(),
+                    genesis_consensus_keys: vec![[0x61; 48]],
+                },
+            )
+            .unwrap();
         let pending = initialization
             .prepare(
                 &manifest.encode_canonical().unwrap(),

@@ -558,11 +558,13 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     assert_eq!(quote.paymentMinor, body.settlementCostMinor);
     fund_and_approve(
         world,
-        fixture.asset,
-        &key,
-        owner,
-        addresses::NOD_FACTORY_ADDR,
-        quote.paymentMinor,
+        crate::features::settlement::SettlementFunding {
+            asset: fixture.asset,
+            owner_key: &key,
+            owner,
+            spender: addresses::NOD_FACTORY_ADDR,
+            amount: quote.paymentMinor,
+        },
     );
 
     let settlement = eth::send_call_outcome(
@@ -602,11 +604,13 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     let chain_id = chain_id_b256(world);
     let mint_mac = outbe_tee_enclave::gratis::modify_mac(
         &keys.modify,
-        owner,
-        GratisOp::Mint,
-        gratis_load,
-        mint_nonce,
-        chain_id,
+        &outbe_tee_enclave::gratis::ModifyOperation {
+            account: owner,
+            op: GratisOp::Mint,
+            amount: gratis_load,
+            op_nonce: mint_nonce,
+            chain_id,
+        },
     );
     let pow = find_mining_pow_nonce(
         outbe_common::pow::MiningDomain::Nod,
@@ -641,11 +645,13 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     .expect("Gratis nonce before COEN mining");
     let burn_mac = outbe_tee_enclave::gratis::modify_mac(
         &keys.modify,
-        owner,
-        GratisOp::Burn,
-        gratis_load,
-        burn_nonce,
-        chain_id,
+        &outbe_tee_enclave::gratis::ModifyOperation {
+            account: owner,
+            op: GratisOp::Burn,
+            amount: gratis_load,
+            op_nonce: burn_nonce,
+            chain_id,
+        },
     );
     let native_before = eth::balance(&url, owner).expect("native balance before Gratis burn");
     let mine_coen = eth::send_call_outcome(
@@ -787,14 +793,14 @@ pub(crate) fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
     SettlementFixture { asset, vault }
 }
 
-pub(crate) fn fund_and_approve(
-    world: &World,
-    asset: Address,
-    owner_key: &str,
-    owner: Address,
-    spender: Address,
-    amount: U256,
-) {
+pub(crate) fn fund_and_approve(world: &World, funding: SettlementFunding<'_>) {
+    let SettlementFunding {
+        asset,
+        owner_key,
+        owner,
+        spender,
+        amount,
+    } = funding;
     let url = world.rpc.url(world.validators.primary_port());
     let mint = eth::send_call(
         &url,
@@ -958,124 +964,6 @@ fn assert_reward_gem_queue_parity(world: &World, expected: RewardGemQueueSnapsho
     }
 }
 
-fn find_canonical_reward_gem_delivery_block_number(world: &World, gem_id: U256) -> Option<u64> {
-    canonical_reward_gem_delivery_block_numbers(world, gem_id)
-        .into_iter()
-        .next()
-}
-
-fn canonical_reward_gem_delivery_block_numbers(world: &World, gem_id: U256) -> Vec<u64> {
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    let Some(finalized) = world.rpc.finalized(port) else {
-        return Vec::new();
-    };
-    let from = finalized.saturating_sub(MAX_REWARD_DELIVERY_SCAN_BLOCKS.saturating_sub(1));
-    let Some(blocks) = eth::blocks_with_transactions(
-        &url,
-        from,
-        finalized,
-        usize::try_from(MAX_REWARD_DELIVERY_SCAN_BLOCKS).unwrap_or(usize::MAX),
-    ) else {
-        return Vec::new();
-    };
-    let gem_id_topic = format!("{:#066x}", gem_id);
-    let gem_issued_topic = format!("{:#x}", eth::IGemFactory::GemIssued::SIGNATURE_HASH);
-    let delivery_prefix = "0x4f53473202";
-    let cycle_prefix = "0x4f53433202";
-    let mut matching_block_numbers = Vec::new();
-    for (block_number, block) in (from..=finalized).zip(blocks) {
-        let Some(transactions) = block
-            .get("transactions")
-            .and_then(serde_json::Value::as_array)
-        else {
-            continue;
-        };
-        for (index, transaction) in transactions.iter().enumerate() {
-            if index == 0 {
-                continue;
-            }
-            let Some(transaction_hash) =
-                transaction.get("hash").and_then(serde_json::Value::as_str)
-            else {
-                continue;
-            };
-            let Some(receipt) = eth::receipt_json(&url, transaction_hash) else {
-                continue;
-            };
-            if transaction_is_reward_delivery_for_gem(
-                &transactions[index - 1],
-                transaction,
-                &receipt,
-                cycle_prefix,
-                delivery_prefix,
-                &gem_issued_topic,
-                &gem_id_topic,
-            ) {
-                matching_block_numbers.push(block_number);
-            }
-        }
-    }
-    matching_block_numbers
-}
-
-fn transaction_is_reward_delivery_for_gem(
-    previous: &serde_json::Value,
-    transaction: &serde_json::Value,
-    receipt: &serde_json::Value,
-    cycle_prefix: &str,
-    delivery_prefix: &str,
-    gem_issued_topic: &str,
-    gem_id_topic: &str,
-) -> bool {
-    let input = transaction
-        .get("input")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let previous_input = previous
-        .get("input")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let to = transaction
-        .get("to")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|value| value.parse::<Address>().ok());
-    let success = receipt
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|status| status == "0x1");
-    input.starts_with(delivery_prefix)
-        && previous_input.starts_with(cycle_prefix)
-        && to == Some(outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS)
-        && success
-        && receipt
-            .get("logs")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|logs| {
-                logs.iter().any(|log| {
-                    let address_matches = log
-                        .get("address")
-                        .and_then(serde_json::Value::as_str)
-                        .and_then(|value| value.parse::<Address>().ok())
-                        == Some(addresses::GEM_FACTORY_ADDR);
-                    let topics = log.get("topics").and_then(serde_json::Value::as_array);
-                    address_matches
-                        && topics.is_some_and(|topics| {
-                            topics
-                                .first()
-                                .and_then(serde_json::Value::as_str)
-                                .is_some_and(|topic| topic.eq_ignore_ascii_case(gem_issued_topic))
-                                && topics
-                                    .get(1)
-                                    .and_then(serde_json::Value::as_str)
-                                    .is_some_and(|topic| topic.eq_ignore_ascii_case(gem_id_topic))
-                        })
-                })
-            })
-}
-
 pub(crate) fn chain_id_b256(world: &World) -> B256 {
     B256::from(U256::from(
         world
@@ -1226,10 +1114,12 @@ mod tests {
             &cycle,
             &delivery,
             &receipt,
-            "0x4f53433202",
-            "0x4f53473202",
-            &topic,
-            &gem_id_topic,
+            RewardDeliverySelectors {
+                cycle_prefix: "0x4f53433202",
+                delivery_prefix: "0x4f53473202",
+                gem_issued_topic: &topic,
+                gem_id_topic: &gem_id_topic,
+            },
         ));
 
         let wrong_predecessor = serde_json::json!({ "input": "0x4f53413202" });
@@ -1237,19 +1127,34 @@ mod tests {
             &wrong_predecessor,
             &delivery,
             &receipt,
-            "0x4f53433202",
-            "0x4f53473202",
-            &topic,
-            &gem_id_topic,
+            RewardDeliverySelectors {
+                cycle_prefix: "0x4f53433202",
+                delivery_prefix: "0x4f53473202",
+                gem_issued_topic: &topic,
+                gem_id_topic: &gem_id_topic,
+            },
         ));
         assert!(!transaction_is_reward_delivery_for_gem(
             &cycle,
             &delivery,
             &receipt,
-            "0x4f53433202",
-            "0x4f53473202",
-            &topic,
-            &format!("{:#066x}", U256::from(8)),
+            RewardDeliverySelectors {
+                cycle_prefix: "0x4f53433202",
+                delivery_prefix: "0x4f53473202",
+                gem_issued_topic: &topic,
+                gem_id_topic: &format!("{:#066x}", U256::from(8)),
+            },
         ));
     }
 }
+
+pub(crate) struct SettlementFunding<'a> {
+    pub(crate) asset: Address,
+    pub(crate) owner_key: &'a str,
+    pub(crate) owner: Address,
+    pub(crate) spender: Address,
+    pub(crate) amount: U256,
+}
+
+mod reward_delivery;
+use reward_delivery::*;

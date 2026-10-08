@@ -202,16 +202,22 @@ fn artifact_bytes(records: &[AuthenticatedTributeRecord]) -> (Vec<u8>, Vec<Vec<u
     .unwrap();
     let mut bodies = records.iter().map(|record| record.canonical_body.clone());
     let published = publish_streaming_input_artifact_set(
-        &cas,
+        outbe_ocomp::input_artifacts::InputArtifactContext {
+            cas: &cas,
+            bundle: &bundle,
+            limits,
+            list_limits: poc_input_list_limits(),
+        },
         canonical_root.join("refs"),
-        &bundle,
         identity,
-        u32::try_from(records.len()).unwrap(),
-        || Ok(bodies.next()),
-        fidelity,
-        oracle.unwrap(),
-        &limits,
-        poc_input_list_limits(),
+        outbe_ocomp::input_artifacts::TributeInputStream {
+            expected_count: u32::try_from(records.len()).unwrap(),
+            next: || Ok(bodies.next()),
+        },
+        outbe_ocomp::input_artifacts::InputArtifactOpenings {
+            fidelity,
+            oracle: oracle.unwrap(),
+        },
     )
     .unwrap();
     let manifest = cas

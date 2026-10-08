@@ -10,8 +10,8 @@ use outbe_compressed_entities::{
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_ocomp::input_inventory::{
-    SealedTributeInventory, TributeInventoryBuilder, TributeInventoryRecordV1,
-    TributeInventorySubjectV1, TributeInventoryWorkConfig,
+    TributeInventoryBuilder, TributeInventoryRecordV1, TributeInventorySubjectV1,
+    TributeInventoryWorkConfig,
 };
 use outbe_ocomp_protocol::input::CheckpointIdentityV1;
 use outbe_primitives::time::WorldwideDay;
@@ -185,7 +185,8 @@ fn encrypted_inventory_authenticates_ciphertext_then_reads_private_amounts_and_p
     assert!(spool.next_body(1_048_576).unwrap().is_none());
     drop(inventory);
 
-    let reopened = SealedTributeInventory::open(directory.path(), authority).unwrap();
+    let reopened =
+        outbe_ocomp::input_inventory::open_sealed_inventory(directory.path(), authority).unwrap();
     let archive = reopened.source_proofs().unwrap();
     let proof = archive.proof(record.tribute_id).unwrap();
     let stored_body = outbe_compressed_entities::StoredBody::new(
@@ -225,12 +226,16 @@ fn frozen_inventory_retains_membership_proofs_across_external_sort_and_restart()
         builder.push(record).unwrap();
     }
     drop(builder.finish().unwrap());
-    let inventory = SealedTributeInventory::open(directory.path(), authority).unwrap();
+    let inventory =
+        outbe_ocomp::input_inventory::open_sealed_inventory(directory.path(), authority).unwrap();
     let archive = inventory.source_proofs().unwrap();
     for record in records {
-        let stored = outbe_compressed_entities::StoredBody::new_v1(record.canonical_body)
-            .unwrap()
-            .encode();
+        let stored = outbe_compressed_entities::StoredBody::new(
+            outbe_compressed_entities::BODY_SCHEMA_V1,
+            record.canonical_body,
+        )
+        .unwrap()
+        .encode();
         let proof = archive.proof(record.tribute_id).unwrap();
         outbe_compressed_entities::verify_body_in_collection(
             root,
@@ -284,7 +289,8 @@ fn inventory_streams_4097_bodies_and_disk_sorts_unique_owners() {
     assert!(bodies.next_body(1_048_576).unwrap().is_none());
     drop(inventory);
 
-    let reopened = SealedTributeInventory::open(&inventory_root, authority).unwrap();
+    let reopened =
+        outbe_ocomp::input_inventory::open_sealed_inventory(&inventory_root, authority).unwrap();
     assert_eq!(reopened.unique_owner_count(), 4_097);
 }
 
@@ -362,7 +368,9 @@ fn sealed_inventory_rejects_a_substituted_finalized_checkpoint() {
 
     let mut substituted = authority.clone();
     substituted.checkpoint.finalized_block_number += 1;
-    assert!(SealedTributeInventory::open(&inventory_root, substituted).is_err());
+    assert!(
+        outbe_ocomp::input_inventory::open_sealed_inventory(&inventory_root, substituted).is_err()
+    );
 }
 
 #[test]
@@ -381,5 +389,7 @@ fn sealed_inventory_detects_body_spool_corruption() {
     let mut bytes = fs::read(&spool).unwrap();
     *bytes.last_mut().unwrap() ^= 1;
     fs::write(spool, bytes).unwrap();
-    assert!(SealedTributeInventory::open(&inventory_root, authority).is_err());
+    assert!(
+        outbe_ocomp::input_inventory::open_sealed_inventory(&inventory_root, authority).is_err()
+    );
 }

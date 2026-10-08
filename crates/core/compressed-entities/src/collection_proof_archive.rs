@@ -35,49 +35,84 @@ pub struct TributeProofArchiveV1 {
     root_ids: [u64; SHARDS],
 }
 
-impl TributeProofArchiveV1 {
-    pub fn open(
-        root: impl AsRef<Path>,
-        expectation: TributePartitionExpectationV1,
-    ) -> Result<Self> {
-        let root = root.as_ref().to_path_buf();
-        let path = root.join(HEADER);
-        let mut bytes = Vec::with_capacity(HEADER_BYTES + 1);
-        File::open(&path)
-            .map_err(|e| archive_io("open archive header", &path, e))?
-            .take((HEADER_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|e| archive_io("read archive header", &path, e))?;
-        if bytes.len() != HEADER_BYTES || &bytes[..8] != MAGIC {
-            return Err(corrupt(&path));
-        }
-        if expectation.commitment_scheme != ACTIVE_COMMITMENT_SCHEME {
-            return Err(corrupt(&path));
-        }
-        if bytes[..48] != archive_header_prefix(expectation) {
-            return Err(corrupt(&path));
-        }
-        let mut shard_roots = [B256::ZERO; SHARDS];
-        let mut root_ids = [0; SHARDS];
-        for index in 0..SHARDS {
-            let start = 48 + index * 40;
-            shard_roots[index] = B256::from_slice(&bytes[start..start + 32]);
-            root_ids[index] = u64::from_be_bytes(
-                bytes[start + 32..start + 40]
-                    .try_into()
-                    .map_err(|_| corrupt(&path))?,
-            );
-        }
-        let archive = Self {
-            root,
-            expectation,
-            shard_roots,
-            root_ids,
-        };
-        archive.check_root()?;
-        Ok(archive)
+/// Opens and validates one immutable Tribute proof archive.
+pub fn open_tribute_proof_archive(
+    root: impl AsRef<Path>,
+    expectation: TributePartitionExpectationV1,
+) -> Result<TributeProofArchiveV1> {
+    let root = root.as_ref().to_path_buf();
+    let path = root.join(HEADER);
+    let mut bytes = Vec::with_capacity(HEADER_BYTES + 1);
+    File::open(&path)
+        .map_err(|e| archive_io("open archive header", &path, e))?
+        .take((HEADER_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| archive_io("read archive header", &path, e))?;
+    if bytes.len() != HEADER_BYTES || &bytes[..8] != MAGIC {
+        return Err(corrupt(&path));
     }
+    if expectation.commitment_scheme != ACTIVE_COMMITMENT_SCHEME {
+        return Err(corrupt(&path));
+    }
+    if bytes[..48] != archive_header_prefix(expectation) {
+        return Err(corrupt(&path));
+    }
+    let mut shard_roots = [B256::ZERO; SHARDS];
+    let mut root_ids = [0; SHARDS];
+    for index in 0..SHARDS {
+        let start = 48 + index * 40;
+        shard_roots[index] = B256::from_slice(&bytes[start..start + 32]);
+        root_ids[index] = u64::from_be_bytes(
+            bytes[start + 32..start + 40]
+                .try_into()
+                .map_err(|_| corrupt(&path))?,
+        );
+    }
+    let archive = TributeProofArchiveV1 {
+        root,
+        expectation,
+        shard_roots,
+        root_ids,
+    };
+    archive.check_root()?;
+    Ok(archive)
+}
 
+/// Publishes and synchronizes one validated Tribute proof archive.
+pub(crate) fn publish_tribute_proof_archive(
+    root: PathBuf,
+    expectation: TributePartitionExpectationV1,
+    shard_roots: [B256; SHARDS],
+    root_ids: [u64; SHARDS],
+) -> Result<TributeProofArchiveV1> {
+    let archive = TributeProofArchiveV1 {
+        root,
+        expectation,
+        shard_roots,
+        root_ids,
+    };
+    archive.check_root()?;
+    let mut bytes = archive_header_prefix(expectation).to_vec();
+    for index in 0..SHARDS {
+        bytes.extend_from_slice(archive.shard_roots[index].as_slice());
+        bytes.extend_from_slice(&archive.root_ids[index].to_be_bytes());
+    }
+    let path = archive.root.join(HEADER);
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| archive_io("create archive header", &path, e))?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|e| archive_io("persist archive header", &path, e))?;
+    File::open(&archive.root)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|e| archive_io("sync archive directory", &archive.root, e))?;
+    Ok(archive)
+}
+
+impl TributeProofArchiveV1 {
     pub fn path(&self) -> &Path {
         &self.root
     }
@@ -121,39 +156,6 @@ impl TributeProofArchiveV1 {
             shard_top_siblings: top_siblings(&self.shard_roots, shard as u32)
                 .map_err(|e| protocol_error(e.to_string()))?,
         })
-    }
-
-    pub(crate) fn publish(
-        root: PathBuf,
-        expectation: TributePartitionExpectationV1,
-        shard_roots: [B256; SHARDS],
-        root_ids: [u64; SHARDS],
-    ) -> Result<Self> {
-        let archive = Self {
-            root,
-            expectation,
-            shard_roots,
-            root_ids,
-        };
-        archive.check_root()?;
-        let mut bytes = archive_header_prefix(expectation).to_vec();
-        for index in 0..SHARDS {
-            bytes.extend_from_slice(archive.shard_roots[index].as_slice());
-            bytes.extend_from_slice(&archive.root_ids[index].to_be_bytes());
-        }
-        let path = archive.root.join(HEADER);
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&path)
-            .map_err(|e| archive_io("create archive header", &path, e))?;
-        file.write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .map_err(|e| archive_io("persist archive header", &path, e))?;
-        File::open(&archive.root)
-            .and_then(|dir| dir.sync_all())
-            .map_err(|e| archive_io("sync archive directory", &archive.root, e))?;
-        Ok(archive)
     }
 
     fn check_root(&self) -> Result<()> {

@@ -62,7 +62,7 @@ impl AuthenticatedParentTree for TestAuthenticatedTree {
 }
 
 pub(super) fn scope_with_tree(tree: Arc<TestAuthenticatedTree>) -> ExecutionScope {
-    ExecutionScope::with_parent_tree(tree, CeWorkConfig::new(0, 0, u64::MAX))
+    crate::execution_scope::with_parent_tree(tree, CeWorkConfig::new(0, 0, u64::MAX))
 }
 
 pub(super) fn overlay_leaf(
@@ -215,11 +215,11 @@ pub(super) fn nod_item(id: WwdEntityId, owner: Address) -> NodItemBodyV1 {
 }
 
 pub(super) fn stored_tribute(body: &TributeBodyV1) -> StoredBody {
-    StoredBody::new_v1(encode_tribute_v1(body).unwrap()).unwrap()
+    StoredBody::new(crate::BODY_SCHEMA_V1, encode_tribute_v1(body).unwrap()).unwrap()
 }
 
 fn stored_nod_item(body: &NodItemBodyV1) -> StoredBody {
-    StoredBody::new_v1(encode_nod_item_v1(body).unwrap()).unwrap()
+    StoredBody::new(crate::BODY_SCHEMA_V1, encode_nod_item_v1(body).unwrap()).unwrap()
 }
 
 pub(super) fn tribute_commitment(body: &TributeBodyV1) -> crate::Commitment {

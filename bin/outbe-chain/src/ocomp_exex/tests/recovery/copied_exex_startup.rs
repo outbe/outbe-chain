@@ -297,50 +297,10 @@ fn write_frames(root: &Path, first: u64, last: u64) -> Vec<ProjectionCheckpoint>
     let mut headers = files.get_writer(first, StaticFileSegment::Headers).unwrap();
     let mut points = Vec::new();
     for height in first..=last {
-        let signer =
-            outbe_primitives::signer::OutbeEvmSigner::from_secret_bytes([0x41; 32]).unwrap();
-        let input = outbe_primitives::system_tx::SystemTxInputV2::CycleTick;
-        let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx(
-            input.kind(),
-            0,
-            height,
-            chain().chain().id(),
-            input.encode().unwrap(),
-        )
-        .unwrap();
-        let transaction: OutbeTxEnvelope = signer.sign_unsigned(unsigned).unwrap();
-        let receipt = OutbeReceipt {
-            success: true,
-            cumulative_gas_used: 21_000,
-            ..Default::default()
-        };
-        let header = if height == 0 {
-            chain().genesis_header().clone()
-        } else {
-            copied_native::frame_header(
-                copied_native::FrameIdentity {
-                    height,
-                    parent,
-                    timestamp: 1_800_000_000 + height,
-                },
-                &transaction,
-                &receipt,
-            )
-        };
+        let (transaction, receipt, header) = native_cycle_frame(height, parent);
         let hash = header.hash_slow();
         headers.append_header(&header, &hash).unwrap();
-        tx.put::<tables::CanonicalHeaders>(height, hash).unwrap();
-        tx.put::<tables::HeaderNumbers>(hash, height).unwrap();
-        tx.put::<tables::Headers<OutbeHeader>>(height, header)
-            .unwrap();
-        tx.put::<tables::BlockBodyIndices>(
-            height,
-            StoredBlockBodyIndices {
-                first_tx_num: height.saturating_sub(1),
-                tx_count: u64::from(height != 0),
-            },
-        )
-        .unwrap();
+        persist_frame_indexes(&tx, height, hash, header);
         writer.increment_block(height).unwrap();
         if height != 0 {
             writer.append_transaction(height - 1, &transaction).unwrap();
@@ -356,14 +316,7 @@ fn write_frames(root: &Path, first: u64, last: u64) -> Vec<ProjectionCheckpoint>
     drop(writer);
     drop(headers);
     files.commit().unwrap();
-    type Stage = <tables::StageCheckpoints as reth_ethereum::provider::db::table::Table>::Value;
-    for stage in ["Headers", "Bodies", "Execution", "Finish"] {
-        tx.put::<tables::StageCheckpoints>(stage.into(), Stage::new(last))
-            .unwrap();
-    }
-    tx.put::<tables::ChainState>(tables::ChainStateKey::LastFinalizedBlock, last)
-        .unwrap();
-    tx.commit().unwrap();
+    commit_native_frame_checkpoint(tx, last);
     drop(files);
     drop(db);
     drop(
@@ -373,6 +326,55 @@ fn write_frames(root: &Path, first: u64, last: u64) -> Vec<ProjectionCheckpoint>
             .unwrap(),
     );
     points
+}
+
+fn native_cycle_frame(height: u64, parent: B256) -> (OutbeTxEnvelope, OutbeReceipt, OutbeHeader) {
+    let transaction = signed_cycle_frame_transaction(height);
+    let receipt = OutbeReceipt {
+        success: true,
+        cumulative_gas_used: 21_000,
+        ..Default::default()
+    };
+    let header = if height == 0 {
+        chain().genesis_header().clone()
+    } else {
+        copied_native::frame_header(
+            copied_native::FrameIdentity {
+                height,
+                parent,
+                timestamp: 1_800_000_000 + height,
+            },
+            &transaction,
+            &receipt,
+        )
+    };
+    (transaction, receipt, header)
+}
+
+fn persist_frame_indexes<T: DbTxMut>(tx: &T, height: u64, hash: B256, header: OutbeHeader) {
+    tx.put::<tables::CanonicalHeaders>(height, hash).unwrap();
+    tx.put::<tables::HeaderNumbers>(hash, height).unwrap();
+    tx.put::<tables::Headers<OutbeHeader>>(height, header)
+        .unwrap();
+    tx.put::<tables::BlockBodyIndices>(
+        height,
+        StoredBlockBodyIndices {
+            first_tx_num: height.saturating_sub(1),
+            tx_count: u64::from(height != 0),
+        },
+    )
+    .unwrap();
+}
+
+fn commit_native_frame_checkpoint<T: DbTxMut + DbTx>(tx: T, last: u64) {
+    type Stage = <tables::StageCheckpoints as reth_ethereum::provider::db::table::Table>::Value;
+    for stage in ["Headers", "Bodies", "Execution", "Finish"] {
+        tx.put::<tables::StageCheckpoints>(stage.into(), Stage::new(last))
+            .unwrap();
+    }
+    tx.put::<tables::ChainState>(tables::ChainStateKey::LastFinalizedBlock, last)
+        .unwrap();
+    tx.commit().unwrap();
 }
 
 struct NativeBuilder {
@@ -575,114 +577,12 @@ fn run_owned(
 ) -> eyre::Result<Vec<BlockNumHash>> {
     let executor = native_executor()?;
     let mut storage_completion = None;
-    let outcome = executor.block_on(async {
-        let runtime = Runtime::test();
-        let manager = runtime.take_task_manager_handle().expect("fixture manager");
-        let mut exex_tasks = tokio::task::JoinSet::new();
-        let mut notification_owner = None;
-        let mut payload_shutdown = None;
-        let result = AssertUnwindSafe(async {
-            let provider = open_native(&root.join("chain"), runtime.clone());
-            let NativeBuilder {
-                context: builder,
-                config,
-                chain,
-            } = prepare_native_builder(root, target, &provider, &runtime)?;
-            let evm = OutbeEvmConfig::new(chain.clone());
-            let pool = OutbePoolBuilder::default()
-                .build_pool(&builder, evm.clone())
-                .await?;
-            let network_config = builder.build_network_config(
-                builder
-                    .network_config_builder()?
-                    .disable_discovery()
-                    .disable_nat()
-                    .listener_addr(([127, 0, 0, 1], 0).into()),
-            );
-            let network_owner = NetworkManager::builder(network_config).await?;
-            let payload = NoopPayloadServiceBuilder::default()
-                .spawn_payload_builder_service(&builder, pool.clone(), evm.clone())
-                .await?;
-            payload_shutdown =
-                Some(tokio::time::timeout(Duration::from_secs(10), payload.subscribe()).await??);
-            let adapter: NodeAdapter<Native> = NodeAdapter {
-                components: Components {
-                    transaction_pool: pool,
-                    evm_config: evm.clone(),
-                    consensus: Arc::new(OutbeBeaconConsensus::new(chain)),
-                    network: network_owner.handle(),
-                    payload_builder_handle: payload,
-                },
-                task_executor: runtime.clone(),
-                provider: provider.clone(),
-            };
-            let prepared = prepare_offchain_data_projection(projection_config(root))?;
-            storage_completion = Some(prepared.storage_completion());
-            let ready = validate_offchain_data_checkpoint(prepared, &provider)?;
-            let current = closed(root);
-            let (publisher, readiness) = outbe_primitives::projection::projection_readiness(
-                current,
-                ProjectionStatus::CatchingUp {
-                    checkpoint: Some(current),
-                },
-            );
-            let (exit, mut exit_rx) = tokio::sync::mpsc::unbounded_channel();
-            let (events, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
-            let (notifications_tx, notifications_rx) = tokio::sync::mpsc::channel(1);
-            notification_owner = Some(notifications_tx);
-            let wal = Wal::<OutbePrimitives>::new(root.join("wal"))?;
-            let notifications = ExExNotifications::new(
-                (target.block_number, target.block_hash).into(),
-                provider,
-                evm,
-                notifications_rx,
-                wal.handle(),
-            );
-            let ctx = ExExContext {
-                head: (target.block_number, target.block_hash).into(),
-                config,
-                reth_config: Default::default(),
-                events,
-                notifications,
-                components: adapter,
-            };
-            exex_tasks.spawn(run_ocomp_exex(
-                ctx,
-                ready,
-                exex_config(root),
-                publisher,
-                exit,
-            ));
-            let finished = observe_startup(
-                target,
-                expect_fatal,
-                &readiness,
-                &mut exit_rx,
-                &mut event_rx,
-            )
-            .await?;
-            // A fatal handoff also must keep the ExEx pending until its owner tears down.
-            assert_owned_task_pending(&mut exex_tasks).await?;
-            drop(network_owner);
-            drop(wal);
-            Ok::<_, eyre::Report>(finished)
-        })
-        .catch_unwind()
-        .await;
-
-        // This cleanup runs on success, Result failure, and assertion panic.
-        // Joining the ExEx drops its JoinSet and its worker server (Drop joins
-        // the server thread). Sender closure below witnesses notification drain exit.
-        exex_tasks.shutdown().await;
-        let shutdown = stop_native_components(
-            &runtime,
-            notification_owner,
-            manager,
-            payload_shutdown.map(|events| async move { events.recv().await.is_none() }),
-        )
-        .await;
-        (result, shutdown)
-    });
+    let outcome = executor.block_on(run_owned_components(
+        root,
+        target,
+        expect_fatal,
+        &mut storage_completion,
+    ));
     drop(executor);
     // Session Drop closes native storage on a separate thread. Its completion
     // acknowledges actual RocksDB lock release before the fixture reopens it.
@@ -697,9 +597,98 @@ fn run_owned(
     }
 }
 
+type OwnedRunOutcome = (
+    std::thread::Result<eyre::Result<Vec<BlockNumHash>>>,
+    eyre::Result<()>,
+);
+
+async fn run_owned_components(
+    root: &Path,
+    target: ProjectionCheckpoint,
+    expect_fatal: bool,
+    storage_completion: &mut Option<outbe_offchain_storage::StorageCompletion>,
+) -> OwnedRunOutcome {
+    let runtime = Runtime::test();
+    let manager = runtime.take_task_manager_handle().expect("fixture manager");
+    let mut exex_tasks = tokio::task::JoinSet::new();
+    let mut notification_owner = None;
+    let mut payload_shutdown = None;
+    let result = AssertUnwindSafe(async {
+        let provider = open_native(&root.join("chain"), runtime.clone());
+        let NativeBuilder {
+            context: builder,
+            config,
+            chain,
+        } = prepare_native_builder(root, target, &provider, &runtime)?;
+        let (adapter, evm, network_owner, shutdown) =
+            prepare_owned_components(&builder, chain, provider.clone(), runtime.clone()).await?;
+        payload_shutdown = Some(shutdown);
+        let prepared = prepare_offchain_data_projection(projection_config(root))?;
+        *storage_completion = Some(prepared.storage_completion());
+        let ready = validate_offchain_data_checkpoint(prepared, &provider)?;
+        let current = closed(root);
+        let (publisher, readiness) = outbe_primitives::projection::projection_readiness(
+            current,
+            ProjectionStatus::CatchingUp {
+                checkpoint: Some(current),
+            },
+        );
+        let (exit, mut exit_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (events, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (notifications_tx, notifications_rx) = tokio::sync::mpsc::channel(1);
+        notification_owner = Some(notifications_tx);
+        let wal = Wal::<OutbePrimitives>::new(root.join("wal"))?;
+        let notifications = ExExNotifications::new(
+            (target.block_number, target.block_hash).into(),
+            provider,
+            evm,
+            notifications_rx,
+            wal.handle(),
+        );
+        let ctx = ExExContext {
+            head: (target.block_number, target.block_hash).into(),
+            config,
+            reth_config: Default::default(),
+            events,
+            notifications,
+            components: adapter,
+        };
+        exex_tasks.spawn(run_ocomp_exex(
+            ctx,
+            ready,
+            exex_config(root),
+            publisher,
+            exit,
+        ));
+        let finished = observe_startup(
+            target,
+            expect_fatal,
+            &readiness,
+            &mut exit_rx,
+            &mut event_rx,
+        )
+        .await?;
+        // A fatal handoff also must keep the ExEx pending until its owner tears down.
+        assert_owned_task_pending(&mut exex_tasks).await?;
+        drop(network_owner);
+        drop(wal);
+        Ok::<_, eyre::Report>(finished)
+    })
+    .catch_unwind()
+    .await;
+
+    // This cleanup runs on success, Result failure, and assertion panic.
+    // Joining the ExEx drops its JoinSet and its worker server (Drop joins
+    // the server thread). Sender closure below witnesses notification drain exit.
+    exex_tasks.shutdown().await;
+    let shutdown =
+        stop_native_components(&runtime, notification_owner, manager, payload_shutdown).await;
+    (result, shutdown)
+}
+
 fn seed_fatal(root: &Path) {
     let config = exex_config(root);
-    let domain = EmbeddedOcompDomainV1::open(EmbeddedOcompDomainConfigV1 {
+    let domain = outbe_ocomp::embedded_runtime::open_embedded_domain(EmbeddedOcompDomainConfigV1 {
         domain_root: config.domain_root,
         registry_generation: 1,
         bundles: config
@@ -800,4 +789,62 @@ fn copied_fullnode_quiet_h_and_next_frame_reach_k_without_validator_submission()
     // This test has no pending NOD/payout obligation. It establishes actual
     // quiet/next-frame control flow and FullNode non-submission, not all of
     // Task08 Tests-first7 or completed-Lysis/pending-action acceptance.
+}
+
+fn signed_cycle_frame_transaction(height: u64) -> OutbeTxEnvelope {
+    let signer = outbe_primitives::signer::OutbeEvmSigner::from_secret_bytes([0x41; 32]).unwrap();
+    let input = outbe_primitives::system_tx::SystemTxInputV2::CycleTick;
+    let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx(
+        input.kind(),
+        0,
+        height,
+        chain().chain().id(),
+        input.encode().unwrap(),
+    )
+    .unwrap();
+    signer.sign_unsigned(unsigned).unwrap()
+}
+
+async fn prepare_owned_components(
+    builder: &BuilderContext<Native>,
+    chain: Arc<reth_chainspec::ChainSpec<OutbeHeader>>,
+    provider: NativeProvider,
+    runtime: Runtime,
+) -> eyre::Result<(
+    NodeAdapter<Native>,
+    OutbeEvmConfig,
+    impl Send + 'static,
+    impl std::future::Future<Output = bool> + 'static,
+)> {
+    let evm = OutbeEvmConfig::new(chain.clone());
+    let pool = OutbePoolBuilder::default()
+        .build_pool(builder, evm.clone())
+        .await?;
+    let network_config = builder.build_network_config(
+        builder
+            .network_config_builder()?
+            .disable_discovery()
+            .disable_nat()
+            .listener_addr(([127, 0, 0, 1], 0).into()),
+    );
+    let network_owner = NetworkManager::builder(network_config).await?;
+    let payload = NoopPayloadServiceBuilder::default()
+        .spawn_payload_builder_service(builder, pool.clone(), evm.clone())
+        .await?;
+    let payload_events =
+        tokio::time::timeout(Duration::from_secs(10), payload.subscribe()).await??;
+    let adapter: NodeAdapter<Native> = NodeAdapter {
+        components: Components {
+            transaction_pool: pool,
+            evm_config: evm.clone(),
+            consensus: Arc::new(OutbeBeaconConsensus::new(chain)),
+            network: network_owner.handle(),
+            payload_builder_handle: payload,
+        },
+        task_executor: runtime.clone(),
+        provider: provider.clone(),
+    };
+    Ok((adapter, evm, network_owner, async move {
+        payload_events.recv().await.is_none()
+    }))
 }

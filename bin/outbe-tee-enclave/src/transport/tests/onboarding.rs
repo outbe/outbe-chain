@@ -123,7 +123,7 @@ fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
     let root = tempfile::tempdir().unwrap();
     let boot = EnclaveBootConfig::new(testnet_chain_word(), root.path().to_path_buf(), 0);
     let keys = EnclaveKeys::new([0x41; 32], Some([0x41; 32])).unwrap();
-    let initialization = InitializationState::production_with_challenge_and_attestation(
+    let initialization = crate::initialization::factory::production_with_challenge_and_attestation(
         Arc::new(boot.clone()),
         &keys,
         [0x42; 32],
@@ -299,13 +299,14 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         1,
     ));
     let target_keys = EnclaveKeys::new([0x25; 32], Some([0x25; 32])).unwrap();
-    let target_initialization = InitializationState::production_with_challenge_and_attestation(
-        target_boot.clone(),
-        &target_keys,
-        [0x26; 32],
-        crate::gramine::AttestationType::SgxNoAttest,
-    )
-    .unwrap();
+    let target_initialization =
+        crate::initialization::factory::production_with_challenge_and_attestation(
+            target_boot.clone(),
+            &target_keys,
+            [0x26; 32],
+            crate::gramine::AttestationType::SgxNoAttest,
+        )
+        .unwrap();
     let (target_manifest, target_node_signature) = signed_initialization_manifest_for_mode(
         &target_keys,
         [0x26; 32],

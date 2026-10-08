@@ -187,71 +187,7 @@ impl AuthenticatedTributeStream<'_, '_> {
         }
         self.previous_id = Some(candidate.tribute_id);
 
-        let authenticated_commitment = match self.authority {
-            TributeCommitmentAuthority::Authenticated(partition) => Some(B256::from(
-                *partition
-                    .tribute_commitment(candidate.tribute_id)
-                    .map_err(|error| FinalizedTributeError::Ce(error.to_string()))?
-                    .ok_or(FinalizedTributeError::UnauthenticatedCandidate(
-                        candidate.tribute_id,
-                    ))?
-                    .as_bytes(),
-            )),
-            TributeCommitmentAuthority::Reconstruct => None,
-        };
-        if let Some(commitment) = authenticated_commitment {
-            if candidate
-                .retained_commitment
-                .is_some_and(|retained| retained != commitment)
-            {
-                return Err(FinalizedTributeError::RetainedIndexCommitmentMismatch(
-                    candidate.tribute_id,
-                ));
-            }
-        }
-        let stored = match (authenticated_commitment, candidate.retained_commitment) {
-            (Some(commitment), _) => self.retained_reader.get_current_or_retained(
-                self.pin,
-                candidate.tribute_id,
-                commitment,
-            )?,
-            (None, Some(commitment)) => self.retained_reader.get_current_or_retained(
-                self.pin,
-                candidate.tribute_id,
-                commitment,
-            )?,
-            (None, None) => self.current_reader.get_stored_body(candidate.tribute_id)?,
-        }
-        .ok_or(FinalizedTributeError::MissingBody(candidate.tribute_id))?;
-        let record = outbe_tribute::TributeRecord::decode_payload(
-            stored.schema_version(),
-            stored.payload(),
-        )?;
-        if record.tribute_id != candidate.tribute_id
-            || record.worldwide_day != self.pin.worldwide_day
-        {
-            return Err(FinalizedTributeError::BodyIdentityMismatch(
-                candidate.tribute_id,
-            ));
-        }
-        let recomputed = B256::from(
-            *body_commitment(
-                ACTIVE_COMMITMENT_SCHEME,
-                stored.schema_version(),
-                candidate.tribute_id,
-                stored.payload(),
-            )?
-            .as_bytes(),
-        );
-        if authenticated_commitment.is_some_and(|commitment| commitment != recomputed)
-            || candidate
-                .retained_commitment
-                .is_some_and(|commitment| commitment != recomputed)
-        {
-            return Err(FinalizedTributeError::RetainedIndexCommitmentMismatch(
-                candidate.tribute_id,
-            ));
-        }
+        let (stored, record, recomputed) = self.authenticate_candidate(candidate)?;
 
         // The exact original ciphertext commitment has been authenticated above.
         let body = outbe_tribute::canonical_body(&record.calculation_view()?);
@@ -289,6 +225,84 @@ impl AuthenticatedTributeStream<'_, '_> {
             canonical_body: stored.payload().to_vec(),
             body,
         }))
+    }
+
+    fn authenticate_candidate(
+        &self,
+        candidate: BodyCandidate,
+    ) -> Result<
+        (
+            outbe_compressed_entities::StoredBody,
+            outbe_tribute::TributeRecord,
+            B256,
+        ),
+        FinalizedTributeError,
+    > {
+        let authenticated_commitment = match self.authority {
+            TributeCommitmentAuthority::Authenticated(partition) => Some(B256::from(
+                *partition
+                    .tribute_commitment(candidate.tribute_id)
+                    .map_err(|error| FinalizedTributeError::Ce(error.to_string()))?
+                    .ok_or(FinalizedTributeError::UnauthenticatedCandidate(
+                        candidate.tribute_id,
+                    ))?
+                    .as_bytes(),
+            )),
+            TributeCommitmentAuthority::Reconstruct => None,
+        };
+        if let Some(commitment) = authenticated_commitment {
+            if candidate
+                .retained_commitment
+                .is_some_and(|retained| retained != commitment)
+            {
+                return Err(FinalizedTributeError::RetainedIndexCommitmentMismatch(
+                    candidate.tribute_id,
+                ));
+            }
+        }
+        let stored = match (authenticated_commitment, candidate.retained_commitment) {
+            (Some(commitment), _) => self.retained_reader.get_current_or_retained(
+                self.pin,
+                candidate.tribute_id,
+                commitment,
+            )?,
+            (None, Some(commitment)) => self.retained_reader.get_current_or_retained(
+                self.pin,
+                candidate.tribute_id,
+                commitment,
+            )?,
+            (None, None) => self.current_reader.get_stored_body(candidate.tribute_id)?,
+        }
+        .ok_or(FinalizedTributeError::MissingBody(candidate.tribute_id))?;
+        let record =
+            outbe_tribute::record::decode_payload(stored.schema_version(), stored.payload())?;
+        if record.tribute_id != candidate.tribute_id
+            || record.worldwide_day != self.pin.worldwide_day
+        {
+            return Err(FinalizedTributeError::BodyIdentityMismatch(
+                candidate.tribute_id,
+            ));
+        }
+        let recomputed = B256::from(
+            *body_commitment(
+                ACTIVE_COMMITMENT_SCHEME,
+                stored.schema_version(),
+                candidate.tribute_id,
+                stored.payload(),
+            )?
+            .as_bytes(),
+        );
+        if authenticated_commitment.is_some_and(|commitment| commitment != recomputed)
+            || candidate
+                .retained_commitment
+                .is_some_and(|commitment| commitment != recomputed)
+        {
+            return Err(FinalizedTributeError::RetainedIndexCommitmentMismatch(
+                candidate.tribute_id,
+            ));
+        }
+
+        Ok((stored, record, recomputed))
     }
 
     pub fn finish(self) -> Result<TributeStreamSummary, FinalizedTributeError> {

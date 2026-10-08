@@ -259,7 +259,10 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
     let mut corrupted = body.clone();
     corrupted.encrypted.encrypted_gratis_amount.truncate(55);
     assert!(encode_nod_item_v2(&corrupted).is_err());
-    let legacy =
-        outbe_compressed_entities::StoredBody::new_v1(encode_nod_item_v2(&body).unwrap()).unwrap();
+    let legacy = outbe_compressed_entities::StoredBody::new(
+        outbe_compressed_entities::BODY_SCHEMA_V1,
+        encode_nod_item_v2(&body).unwrap(),
+    )
+    .unwrap();
     assert!(outbe_compressed_entities::decode_stored_nod_item_v2(&legacy.encode()).is_err());
 }

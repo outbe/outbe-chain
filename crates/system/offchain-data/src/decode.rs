@@ -72,15 +72,23 @@ impl ProjectionEvent {
 }
 
 pub(super) fn is_projection_pair(emitter: Address, signature: B256) -> bool {
-    (emitter == TRIBUTE_ADDRESS
-        && (signature == ITribute::TributeBodyStored::SIGNATURE_HASH
-            || signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH
-            || signature == ITribute::TributePartitionRetired::SIGNATURE_HASH))
-        || (emitter == NOD_ADDRESS
-            && (signature == INod::NodBodyStored::SIGNATURE_HASH
-                || signature == INod::NodBodyDeleted::SIGNATURE_HASH
-                || signature == INod::NodBucketBodyStored::SIGNATURE_HASH
-                || signature == INod::NodBucketBodyDeleted::SIGNATURE_HASH))
+    let signatures: &[B256] = if emitter == TRIBUTE_ADDRESS {
+        &[
+            ITribute::TributeBodyStored::SIGNATURE_HASH,
+            ITribute::TributeBodyDeleted::SIGNATURE_HASH,
+            ITribute::TributePartitionRetired::SIGNATURE_HASH,
+        ]
+    } else if emitter == NOD_ADDRESS {
+        &[
+            INod::NodBodyStored::SIGNATURE_HASH,
+            INod::NodBodyDeleted::SIGNATURE_HASH,
+            INod::NodBucketBodyStored::SIGNATURE_HASH,
+            INod::NodBucketBodyDeleted::SIGNATURE_HASH,
+        ]
+    } else {
+        &[]
+    };
+    signatures.contains(&signature)
 }
 
 pub(super) fn decode_event(
@@ -105,11 +113,9 @@ fn decode_tribute_event(
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
         let tribute_id = WwdEntityId::from(event.tributeId);
-        let canonical = outbe_tribute::TributeRecord::decode_payload(
-            event.schemaVersion,
-            &event.canonicalPayload,
-        )
-        .map_err(|error| malformed_event(source, error))?;
+        let canonical =
+            outbe_tribute::record::decode_payload(event.schemaVersion, &event.canonicalPayload)
+                .map_err(|error| malformed_event(source, error))?;
         if canonical.tribute_id != tribute_id {
             return Err(malformed_event(
                 source,

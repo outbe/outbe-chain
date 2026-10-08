@@ -8,7 +8,7 @@ use outbe_compressed_entities::{
     body_commitment, encode_nod_bucket_v1, encode_nod_item_v2, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
-use outbe_nod::{NodBucketState, NodItemState, NodRepositoryReader};
+use outbe_nod::{NodBucketState, NodItemState};
 use outbe_offchain_storage::{AtomicWriteBatch, StorageMetadata};
 use outbe_primitives::projection::ProjectionCheckpoint;
 use outbe_tribute::{RetainedTributeReader, TributeRecord, TributeRepositoryReader};

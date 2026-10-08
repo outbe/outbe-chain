@@ -164,7 +164,15 @@ impl Rpc {
 
     /// Submit a tribute offer for worldwide-day `wwd` from `key`. Returns the tx hash if any.
     pub fn tribute_offer(&self, key: &str, wwd: &str) -> Option<String> {
-        self.tribute_offer_with_params(key, wwd, "100", "0", 840, false)
+        self.tribute_offer_with_params(
+            key,
+            crate::world::rpc::TributeOfferParams {
+                wwd,
+                amounts: ("100", "0"),
+                currency: 840,
+                exclude_from_intex_issuance: false,
+            },
+        )
     }
 
     /// Submit a Tribute offer with explicit business fields. Duplicate-identity
@@ -177,38 +185,44 @@ impl Rpc {
     pub fn tribute_offer_with_params(
         &self,
         key: &str,
-        wwd: &str,
-        amount_base: &str,
-        amount_micro: &str,
-        currency: u16,
-        exclude_from_intex_issuance: bool,
+        offer: TributeOfferParams<'_>,
     ) -> Option<String> {
+        let TributeOfferParams {
+            wwd,
+            amounts: (amount_base, amount_micro),
+            currency,
+            exclude_from_intex_issuance,
+        } = offer;
+
         let caller = eth::address_of(key)?;
         let l2_chain_id = self.l2_chain_by_l1_address(caller)?;
         self.tribute_offer_for_network_with_params(
             key,
             l2_chain_id,
-            wwd,
-            amount_base,
-            amount_micro,
-            currency,
-            exclude_from_intex_issuance,
+            crate::world::rpc::TributeOfferParams {
+                wwd,
+                amounts: (amount_base, amount_micro),
+                currency,
+                exclude_from_intex_issuance,
+            },
         )
     }
 
     /// Submit through a registered network independently of the caller's own
     /// operator mapping, preserving the real caller-bound proof and CLI path.
-    #[allow(clippy::too_many_arguments)]
     pub fn tribute_offer_for_network_with_params(
         &self,
         key: &str,
         l2_chain_id: u64,
-        wwd: &str,
-        amount_base: &str,
-        amount_micro: &str,
-        currency: u16,
-        exclude_from_intex_issuance: bool,
+        offer: TributeOfferParams<'_>,
     ) -> Option<String> {
+        let TributeOfferParams {
+            wwd,
+            amounts: (amount_base, amount_micro),
+            currency,
+            exclude_from_intex_issuance,
+        } = offer;
+
         self.submit_tribute_cli(
             key,
             TributeCliOffer {
@@ -257,13 +271,15 @@ impl Rpc {
         let worldwide_day = wwd.parse::<u32>().expect("numeric worldwide day");
         let (draft_id, su_hash) = l2_fixture::offer_identifiers("cli-offer", caller, worldwide_day);
         let zk = self.prove_offer_for_network(
-            caller,
             l2_chain_id,
-            worldwide_day,
-            currency,
-            (amount_base, amount_micro),
-            draft_id,
-            su_hash,
+            crate::world::rpc::TributeProofInput {
+                caller,
+                worldwide_day,
+                tribute_currency: currency,
+                amounts: (amount_base, amount_micro),
+                draft_id,
+                su_hash,
+            },
         );
         let mut args = vec![
             "--private-key".to_owned(),
@@ -351,24 +367,26 @@ impl Rpc {
         const AMOUNT_BASE: &str = "100";
         const AMOUNT_MICRO: &str = "0";
         let zk = self.prove_offer_for_network(
-            creator,
             l2_chain_id,
-            worldwide_day,
-            840,
-            (AMOUNT_BASE, AMOUNT_MICRO),
-            tribute_draft_id,
-            su_hash,
+            crate::world::rpc::TributeProofInput {
+                caller: creator,
+                worldwide_day,
+                tribute_currency: 840,
+                amounts: (AMOUNT_BASE, AMOUNT_MICRO),
+                draft_id: tribute_draft_id,
+                su_hash,
+            },
         );
-        let plaintext = encode_reward_bearing_tribute_plaintext(
-            creator,
-            tribute_draft_id,
-            AMOUNT_BASE,
-            AMOUNT_MICRO,
-            su_hash,
-            wallet_addresses,
-            sra_addresses,
-        )
-        .ok()?;
+        let plaintext =
+            encode_reward_bearing_tribute_plaintext(crate::world::rpc::RewardBearingTribute {
+                creator,
+                tribute_draft_id,
+                amounts: (AMOUNT_BASE, AMOUNT_MICRO),
+                su_hash,
+                wallet_addresses,
+                sra_addresses,
+            })
+            .ok()?;
         let (cipher_text, nonce, ephemeral_public_key) =
             outbe_tee::offer_encrypt::encrypt_tribute_offer(
                 &offer_public_key.to_be_bytes::<32>(),
@@ -418,17 +436,18 @@ impl Rpc {
     /// of the TributeDraft claim) and the declared amounts, so the golden
     /// nominal/reference price this scenario asserts comes from a fully
     /// ZK-verified offer.
-    #[allow(clippy::too_many_arguments)]
     pub fn tribute_cross_currency_offer(
         &self,
         key: &str,
-        wwd: &str,
-        amount_base: &str,
-        amount_micro: &str,
-        tribute_currency: u16,
+        offer: TributeOfferParams<'_>,
         reference_currency: u16,
-        exclude_from_intex_issuance: bool,
     ) -> Option<String> {
+        let TributeOfferParams {
+            wwd,
+            amounts: (amount_base, amount_micro),
+            currency: tribute_currency,
+            exclude_from_intex_issuance,
+        } = offer;
         let worldwide_day = wwd.parse::<u32>().ok()?;
         let creator = eth::address_of(key)?;
         let bootstrapped: bool = eth::read_call(
@@ -447,14 +466,14 @@ impl Rpc {
         let offer_public_key: [u8; 32] = offer_public_key.to_be_bytes();
         let (tribute_draft_id, su_hash) =
             l2_fixture::offer_identifiers("cross-currency-tribute", creator, worldwide_day);
-        let zk = self.prove_offer(
-            creator,
+        let zk = self.prove_offer(crate::world::rpc::TributeProofInput {
+            caller: creator,
             worldwide_day,
             tribute_currency,
-            (amount_base, amount_micro),
-            tribute_draft_id,
+            amounts: (amount_base, amount_micro),
+            draft_id: tribute_draft_id,
             su_hash,
-        );
+        });
         let plaintext = serde_json::to_vec(&serde_json::json!({
             "creator": format!("{creator:?}"),
             "creator_public_key": crate::internal::tribute_keys::public_hex(creator),
@@ -521,15 +540,16 @@ impl Rpc {
     /// network. The proof is bound to `caller`, this host chain's id, the
     /// selected L2 chain id, and the offer's day, currency, amounts and draft.
     /// Its Merkle root is signed with the key that network registered.
-    fn prove_offer(
-        &self,
-        caller: Address,
-        worldwide_day: u32,
-        tribute_currency: u16,
-        (amount_base, amount_micro): (&str, &str),
-        draft_id: B256,
-        su_hash: B256,
-    ) -> TributeOfferZk {
+    fn prove_offer(&self, input: TributeProofInput<'_>) -> TributeOfferZk {
+        let TributeProofInput {
+            caller,
+            worldwide_day,
+            tribute_currency,
+            amounts: (amount_base, amount_micro),
+            draft_id,
+            su_hash,
+        } = input;
+
         let l2_chain_id = self
             .l2_chain_by_l1_address(caller)
             .expect("read the offering operator's L2Registry entry");
@@ -538,29 +558,34 @@ impl Rpc {
             "offer fixtures register the operator's L2 network before offering: {caller:#x}"
         );
         self.prove_offer_for_network(
-            caller,
             l2_chain_id,
-            worldwide_day,
-            tribute_currency,
-            (amount_base, amount_micro),
-            draft_id,
-            su_hash,
+            crate::world::rpc::TributeProofInput {
+                caller,
+                worldwide_day,
+                tribute_currency,
+                amounts: (amount_base, amount_micro),
+                draft_id,
+                su_hash,
+            },
         )
     }
 
     /// A caller-bound Demo Tribute proof for a selected registered network. Network
     /// ownership and the user submitting the Tribute are independent identities.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn prove_offer_for_network(
         &self,
-        caller: Address,
         l2_chain_id: u64,
-        worldwide_day: u32,
-        tribute_currency: u16,
-        (amount_base, amount_micro): (&str, &str),
-        draft_id: B256,
-        su_hash: B256,
+        input: TributeProofInput<'_>,
     ) -> TributeOfferZk {
+        let TributeProofInput {
+            caller,
+            worldwide_day,
+            tribute_currency,
+            amounts: (amount_base, amount_micro),
+            draft_id,
+            su_hash,
+        } = input;
+
         assert_ne!(
             l2_chain_id, 0,
             "selected fixture network must be registered"
@@ -684,14 +709,16 @@ impl Rpc {
 
 #[cfg(feature = "ocomp-integration")]
 pub(in crate::world::rpc) fn encode_reward_bearing_tribute_plaintext(
-    creator: Address,
-    tribute_draft_id: B256,
-    amount_base: &str,
-    amount_micro: &str,
-    su_hash: B256,
-    wallet_addresses: &[Address],
-    sra_addresses: &[Address],
+    input: RewardBearingTribute<'_>,
 ) -> Result<Vec<u8>> {
+    let RewardBearingTribute {
+        creator,
+        tribute_draft_id,
+        amounts: (amount_base, amount_micro),
+        su_hash,
+        wallet_addresses,
+        sra_addresses,
+    } = input;
     serde_json::to_vec(&serde_json::json!({
         "creator": format!("{creator:#x}"),
         "creator_public_key": crate::internal::tribute_keys::public_hex(creator),
@@ -709,4 +736,28 @@ pub(in crate::world::rpc) fn encode_reward_bearing_tribute_plaintext(
             .collect::<Vec<_>>(),
     }))
     .map_err(Into::into)
+}
+
+pub struct TributeOfferParams<'a> {
+    pub wwd: &'a str,
+    pub amounts: (&'a str, &'a str),
+    pub currency: u16,
+    pub exclude_from_intex_issuance: bool,
+}
+pub(crate) struct TributeProofInput<'a> {
+    pub caller: Address,
+    pub worldwide_day: u32,
+    pub tribute_currency: u16,
+    pub amounts: (&'a str, &'a str),
+    pub draft_id: B256,
+    pub su_hash: B256,
+}
+#[cfg(feature = "ocomp-integration")]
+pub(in crate::world::rpc) struct RewardBearingTribute<'a> {
+    pub creator: Address,
+    pub tribute_draft_id: B256,
+    pub amounts: (&'a str, &'a str),
+    pub su_hash: B256,
+    pub wallet_addresses: &'a [Address],
+    pub sra_addresses: &'a [Address],
 }

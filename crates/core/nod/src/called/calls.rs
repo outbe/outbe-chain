@@ -64,7 +64,7 @@ pub(super) fn call_arm(
 fn window_ceiling(window: &[(u32, Option<U256>)], iso_code: u16) -> Option<u32> {
     // Nothing priced above the window's high can have breached.
     let high = window.iter().filter_map(|(_, vwap)| *vwap).max()?;
-    match NodContract::price_to_bin(high) {
+    match crate::pricing::price_to_bin(high) {
         Ok(bin) => Some(bin),
         Err(error) => {
             tracing::warn!(
@@ -105,7 +105,7 @@ pub(crate) fn call_currency(
         };
         let count = nod
             .call_bin_count
-            .read(&NodContract::scoped(iso_code, bin_id))?;
+            .read(&crate::index_keys::scoped(iso_code, bin_id))?;
         remaining = if bin_id == from_bin && remaining != 0 {
             remaining.min(count)
         } else {
@@ -121,7 +121,9 @@ pub(crate) fn call_currency(
             remaining -= 1;
             let bucket_key = nod
                 .call_bin_buckets
-                .read(&NodContract::bin_index_key(iso_code, bin_id, remaining))?;
+                .read(&crate::index_keys::bin_index_key(
+                    iso_code, bin_id, remaining,
+                ))?;
             match try_call(ctx, nod, window, bucket_key, now)? {
                 Some(true) => {
                     called = called.saturating_add(1);

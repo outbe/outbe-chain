@@ -98,7 +98,7 @@ fn transact_from(
     data: Bytes,
     gas: u64,
 ) -> ExecutionResult {
-    let mut evm = OutbeEvmFactory::new().create_evm(db, env());
+    let mut evm = OutbeEvmFactory::default().create_evm(db, env());
     let tx = TxEnv::builder()
         .caller(caller)
         .nonce(0)
@@ -221,7 +221,7 @@ fn static_result_vote_returns_domain_rejection_without_aborting_caller() {
     .abi_encode();
     let mut db = funded_db();
     install(&mut db, PROXY, proxy(METADOSIS_ADDRESS, 0xfa, 100_000));
-    let factory = OutbeEvmFactory::new();
+    let factory = OutbeEvmFactory::default();
     factory.install_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
     let mut evm = factory.create_evm(db, env());
     let tx = TxEnv::builder()

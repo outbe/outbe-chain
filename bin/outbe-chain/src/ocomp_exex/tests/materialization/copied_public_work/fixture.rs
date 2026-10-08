@@ -54,16 +54,17 @@ impl SourcePopulation {
         let tributes = fixture_support::tribute_population(day, tribute_count);
         let contributors_by_owner = fixture_support::contributor_population(&tributes);
         let source_actions = fixture_support::nod_actions(&tributes, 0);
-        let protected_sources =
-            outbe_nodfactory::test_support::MaterializationFixture::new_with_archive(
-                &source_actions,
-                copied_native::chain().chain().id(),
-                &root
-                    .join("exporter-v1/input-refs/.work")
-                    .join(hex::encode(job_id))
-                    .join("inventory/source-proof-archive-v1"),
-            )
-            .unwrap();
+        let protected_sources = outbe_nodfactory::test_support::MaterializationFixtureBuilder::new(
+            &source_actions,
+            copied_native::chain().chain().id(),
+        )
+        .build_at(
+            &root
+                .join("exporter-v1/input-refs/.work")
+                .join(hex::encode(job_id))
+                .join("inventory/source-proof-archive-v1"),
+        )
+        .unwrap();
         Self {
             tributes,
             contributors_by_owner,
@@ -133,12 +134,14 @@ impl PublishedPlan {
         .unwrap();
         let cas = FilesystemCas::open(&cas_root, CasWriterRole::Supervisor, CAS_LIMITS).unwrap();
         let published = publish_input_artifact_set(
-            &cas,
+            outbe_ocomp::input_artifacts::InputArtifactContext {
+                cas: &cas,
+                bundle,
+                limits,
+                list_limits,
+            },
             &input_ref_root,
-            bundle,
             population.input_contents(setup),
-            &limits,
-            list_limits,
         )
         .unwrap();
         let manifest = InputManifestV1::decode_canonical(
@@ -237,7 +240,7 @@ impl FixtureResults {
         let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count).unwrap();
         for plan_ordinal in 0..topology.total_unit_count() {
             let spec = {
-                let audit = LocalLysisPlanAuditV1::open(
+                let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
                     &admissions,
                     &input_refs,
                     &reader,

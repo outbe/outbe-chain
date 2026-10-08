@@ -1,6 +1,8 @@
+#[path = "../../../../testing/fixtures/mongo.rs"]
+mod mongo_fixture;
+use mongo_fixture::run_isolated_mongo;
 use std::{
     io,
-    panic::AssertUnwindSafe,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -8,14 +10,12 @@ use std::{
 };
 
 use alloy_primitives::{Address, U256};
-use mongodb::sync::Client;
 use outbe_compressed_entities::{
     decode_tribute_v1, encode_tribute_v1, IdPageRequest, StoredBody, WwdEntityId,
 };
 use outbe_offchain_storage::{
-    AtomicWriteBatch, Key, MemoryStorage, MongoStorage, MongoStorageConfig, Namespace,
-    StorageError, StorageReader, StorageReaderHandle, StorageWriter, StorageWriterHandle, Value,
-    MAX_SCAN_ENTRIES,
+    AtomicWriteBatch, Key, MemoryStorage, Namespace, StorageError, StorageReader,
+    StorageReaderHandle, StorageWriter, StorageWriterHandle, Value, MAX_SCAN_ENTRIES,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
@@ -112,9 +112,12 @@ fn projection_store_derives_identity_and_indexes_from_the_canonical_stored_body(
     let writer: StorageWriterHandle = storage.clone();
     let body = tribute(U256::from(41), Address::repeat_byte(0x41), 20260716);
     let stored_body = Value::new(
-        StoredBody::new_v1(encode_tribute_v1(&outbe_tribute::canonical_body(&body)).unwrap())
-            .unwrap()
-            .encode(),
+        StoredBody::new(
+            outbe_compressed_entities::BODY_SCHEMA_V1,
+            encode_tribute_v1(&outbe_tribute::canonical_body(&body)).unwrap(),
+        )
+        .unwrap()
+        .encode(),
     )
     .unwrap();
 
@@ -173,7 +176,8 @@ fn projection_session_owns_prior_state_and_rejects_untracked_identity() {
         old.worldwide_day.value(),
     );
     let replacement_body = Value::new(
-        StoredBody::new_v1(
+        StoredBody::new(
+            outbe_compressed_entities::BODY_SCHEMA_V1,
             encode_tribute_v1(&outbe_tribute::canonical_body(&replacement)).unwrap(),
         )
         .unwrap()
@@ -410,7 +414,8 @@ fn parent_seam_returns_exact_stored_bodies_and_strict_id_pages() {
             .unwrap();
     }
 
-    let expected = StoredBody::new_v1(
+    let expected = StoredBody::new(
+        outbe_compressed_entities::BODY_SCHEMA_V1,
         encode_tribute_v1(&outbe_tribute::canonical_body(&tribute(
             U256::from(1),
             owner,
@@ -521,10 +526,12 @@ fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: Storage
     ));
 
     let wrong = tribute(U256::from(10), owner, 4);
-    let wrong_bytes =
-        StoredBody::new_v1(encode_tribute_v1(&outbe_tribute::canonical_body(&wrong)).unwrap())
-            .unwrap()
-            .encode();
+    let wrong_bytes = StoredBody::new(
+        outbe_compressed_entities::BODY_SCHEMA_V1,
+        encode_tribute_v1(&outbe_tribute::canonical_body(&wrong)).unwrap(),
+    )
+    .unwrap()
+    .encode();
     storage
         .put(
             namespace("tributes"),
@@ -541,10 +548,12 @@ fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: Storage
         tribute_id: id,
         ..tribute(U256::from(9), owner, 4)
     };
-    let mut trailing =
-        StoredBody::new_v1(encode_tribute_v1(&outbe_tribute::canonical_body(&matching)).unwrap())
-            .unwrap()
-            .encode();
+    let mut trailing = StoredBody::new(
+        outbe_compressed_entities::BODY_SCHEMA_V1,
+        encode_tribute_v1(&outbe_tribute::canonical_body(&matching)).unwrap(),
+    )
+    .unwrap()
+    .encode();
     trailing.push(0);
     storage
         .put(
@@ -645,10 +654,12 @@ fn run_corruption_contract(reader_storage: StorageReaderHandle, storage: Storage
         worldwide_day: WorldwideDay::new(4),
         ..tribute(U256::from(9), actual_owner, 4)
     };
-    let mismatched_bytes =
-        StoredBody::new_v1(encode_tribute_v1(&outbe_tribute::canonical_body(&mismatched)).unwrap())
-            .unwrap()
-            .encode();
+    let mismatched_bytes = StoredBody::new(
+        outbe_compressed_entities::BODY_SCHEMA_V1,
+        encode_tribute_v1(&outbe_tribute::canonical_body(&mismatched)).unwrap(),
+    )
+    .unwrap()
+    .encode();
     storage
         .put(
             namespace("tributes"),
@@ -815,27 +826,5 @@ fn failures_before_each_tribute_batch_step_leave_repository_unchanged() {
             .get(namespace("tributes"), &id_key(id))
             .unwrap()
             .is_some());
-    }
-}
-
-fn run_isolated_mongo(test_name: &str, test: fn(StorageReaderHandle, StorageWriterHandle)) {
-    let uri = std::env::var("OUTBE_TEST_MONGODB_URI")
-        .expect("set OUTBE_TEST_MONGODB_URI before running ignored MongoDB tests");
-    let database = format!("outbe_{}_{}_{}", test_name, std::process::id(), 1);
-    let client = Client::with_uri_str(&uri).unwrap();
-    client.database(&database).drop().run().unwrap();
-    let storage = Arc::new(
-        MongoStorage::connect(MongoStorageConfig {
-            uri,
-            database: database.clone(),
-        })
-        .unwrap(),
-    );
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        test(storage.clone(), storage);
-    }));
-    client.database(&database).drop().run().unwrap();
-    if let Err(payload) = result {
-        std::panic::resume_unwind(payload);
     }
 }

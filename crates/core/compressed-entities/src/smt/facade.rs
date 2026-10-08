@@ -16,8 +16,57 @@ use thiserror::Error;
 use super::codec::{hash_error, is_canonical, PoseidonCkbHasher};
 use crate::{schema::Collection, WwdEntityId};
 
+/// A canonical field encoding retains its tree role in the type system.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct TreeKey([u8; 32]);
+pub(crate) struct CanonicalFieldWord<Role>([u8; 32], std::marker::PhantomData<Role>);
+
+pub(crate) trait FieldRole {
+    const KIND: &'static str;
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct KeyRole;
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct LeafRole;
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct RootRole;
+
+impl FieldRole for KeyRole {
+    const KIND: &'static str = "tree key";
+}
+impl FieldRole for LeafRole {
+    const KIND: &'static str = "tree leaf";
+}
+impl FieldRole for RootRole {
+    const KIND: &'static str = "tree root";
+}
+
+pub(crate) type TreeKey = CanonicalFieldWord<KeyRole>;
+pub(crate) type TreeLeaf = CanonicalFieldWord<LeafRole>;
+pub(crate) type TreeRoot = CanonicalFieldWord<RootRole>;
+
+impl<Role: FieldRole> CanonicalFieldWord<Role> {
+    pub(crate) fn from_be_bytes(bytes: [u8; 32]) -> Result<Self, TreeError> {
+        validate_field_bytes(bytes, Role::KIND)?;
+        Ok(Self(bytes, std::marker::PhantomData))
+    }
+
+    pub(crate) const fn as_bytes(&self) -> [u8; 32] {
+        self.0
+    }
+
+    fn ckb(self) -> H256 {
+        H256::from(self.0)
+    }
+}
+
+impl TreeLeaf {
+    pub(crate) const ZERO: Self = Self([0_u8; 32], std::marker::PhantomData);
+}
+
+impl TreeRoot {
+    pub(crate) const EMPTY: Self = Self([0_u8; 32], std::marker::PhantomData);
+}
 
 impl Ord for TreeKey {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -28,61 +77,6 @@ impl Ord for TreeKey {
 impl PartialOrd for TreeKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl TreeKey {
-    pub(crate) fn from_be_bytes(bytes: [u8; 32]) -> Result<Self, TreeError> {
-        validate_field_bytes(bytes, "tree key")?;
-        Ok(Self(bytes))
-    }
-
-    pub(crate) const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-
-    fn ckb(self) -> H256 {
-        H256::from(self.0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TreeLeaf([u8; 32]);
-
-impl TreeLeaf {
-    pub(crate) const ZERO: Self = Self([0_u8; 32]);
-
-    pub(crate) fn from_be_bytes(bytes: [u8; 32]) -> Result<Self, TreeError> {
-        validate_field_bytes(bytes, "tree leaf")?;
-        Ok(Self(bytes))
-    }
-
-    pub(crate) const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-
-    fn ckb(self) -> H256 {
-        H256::from(self.0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TreeRoot([u8; 32]);
-
-impl TreeRoot {
-    pub(crate) const EMPTY: Self = Self([0_u8; 32]);
-
-    pub(crate) fn from_be_bytes(bytes: [u8; 32]) -> Result<Self, TreeError> {
-        validate_field_bytes(bytes, "tree root")?;
-        Ok(Self(bytes))
-    }
-
-    pub(crate) const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-
-    fn ckb(self) -> H256 {
-        H256::from(self.0)
     }
 }
 

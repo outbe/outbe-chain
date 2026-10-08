@@ -5,7 +5,8 @@ use outbe_compressed_entities::{
     AuthenticatedParentTreeFactory, Commitment, EntityRef, ExactParentIdentity, FinalLeafMutation,
     PartitionRef, ProvisionalTreeBatch, ACTIVE_COMMITMENT_SCHEME, NOD_BODY_SCHEMA_V2,
 };
-use outbe_nod::{precompile::INod, NodRepositoryWriter};
+use outbe_nod::precompile::INod;
+use outbe_offchain_data::{runtime_body_readers, supervised_runtime_body_readers};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
@@ -88,7 +89,7 @@ type SupervisedFixture = (
 fn supervised_fixture(mismatch: bool) -> SupervisedFixture {
     let owner = Address::repeat_byte(0x11);
     let day = WorldwideDay::new(20261007);
-    let id = outbe_nod::NodContract::generate_nod_id(owner, day).unwrap();
+    let id = outbe_nod::identity::generate_nod_id(owner, day).unwrap();
     let item = outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
@@ -105,7 +106,7 @@ fn supervised_fixture(mismatch: bool) -> SupervisedFixture {
         alloy_primitives::U256::ONE,
     );
     let storage = Arc::new(MemoryStorage::new());
-    NodRepositoryWriter::new(storage.clone(), storage.clone())
+    outbe_nod::nod_writer(storage.clone(), storage.clone())
         .put_nod(&item)
         .unwrap();
     let payload = encode_nod_item_v2(&outbe_nod::canonical_item(&item)).unwrap();
@@ -122,11 +123,11 @@ fn supervised_fixture(mismatch: bool) -> SupervisedFixture {
         .unwrap(),
     };
     let (failure_tx, failure_rx) = tokio::sync::watch::channel(None);
-    let factory = OutbeEvmFactory::with_runtime_body_readers(RuntimeBodyReaders::new_supervised(
+    let factory = crate::factory::evm_factory_with_body_readers(supervised_runtime_body_readers(
         storage, failure_tx,
     ));
     let mut evm = factory.create_evm(CacheDB::new(EmptyDB::default()), super::tests::test_env());
-    let scope = evm.execution_scope().clone();
+    let scope = evm.runtime_scope().execution_scope().clone();
     scope
         .configure_parent_tree_factory(Arc::new(parent), ACTIVE_COMMITMENT_SCHEME, 0, B256::ZERO)
         .unwrap();
@@ -212,7 +213,8 @@ fn cancelled_read_preserves_its_type_through_real_evm_calls() {
         let (mut evm, calldata, owner) = fixture();
         let budget = ExecutionReadBudget::new();
         let _guard = evm
-            .runtime_body_readers()
+            .runtime_scope()
+            .body_readers()
             .unwrap()
             .enter_execution_budget(budget.clone());
         budget.cancel();
@@ -240,7 +242,8 @@ fn fresh_execution_fork_reads_the_same_body_after_another_execution_cancels() {
     let (mut cancelled, calldata, owner) = fixture();
     let budget = ExecutionReadBudget::new();
     let _guard = cancelled
-        .runtime_body_readers()
+        .runtime_scope()
+        .body_readers()
         .unwrap()
         .enter_execution_budget(budget.clone());
     budget.cancel();
@@ -261,7 +264,7 @@ fn fresh_execution_fork_reads_the_same_body_after_another_execution_cancels() {
 #[test]
 fn factory_forks_keep_cancellation_local_over_one_shared_backend() {
     use outbe_compressed_entities::{ParentBodySource, WwdEntityId};
-    let factory = OutbeEvmFactory::with_runtime_body_readers(RuntimeBodyReaders::new(Arc::new(
+    let factory = crate::factory::evm_factory_with_body_readers(runtime_body_readers(Arc::new(
         MemoryStorage::new(),
     )));
     let first = factory.create_evm(EmptyDB::default(), super::tests::test_env());
@@ -272,11 +275,13 @@ fn factory_forks_keep_cancellation_local_over_one_shared_backend() {
     );
     let first_budget = ExecutionReadBudget::new();
     let _first_guard = first
-        .runtime_body_readers()
+        .runtime_scope()
+        .body_readers()
         .unwrap()
         .enter_execution_budget(first_budget.clone());
     let _second_guard = second
-        .runtime_body_readers()
+        .runtime_scope()
+        .body_readers()
         .unwrap()
         .enter_execution_budget(ExecutionReadBudget::new());
     first_budget.cancel();
@@ -284,9 +289,9 @@ fn factory_forks_keep_cancellation_local_over_one_shared_backend() {
         WorldwideDay::new(20261007),
         [1; 32],
     ));
-    assert!(ParentBodySource::get(first.runtime_body_readers().unwrap(), entity).is_err());
+    assert!(ParentBodySource::get(first.runtime_scope().body_readers().unwrap(), entity).is_err());
     assert!(
-        ParentBodySource::get(second.runtime_body_readers().unwrap(), entity)
+        ParentBodySource::get(second.runtime_scope().body_readers().unwrap(), entity)
             .unwrap()
             .is_none()
     );
@@ -311,7 +316,8 @@ fn nested_contract_call_keeps_the_exact_body_read_cancellation() {
     );
     let budget = ExecutionReadBudget::new();
     let _guard = evm
-        .runtime_body_readers()
+        .runtime_scope()
+        .body_readers()
         .unwrap()
         .enter_execution_budget(budget.clone());
     budget.cancel();

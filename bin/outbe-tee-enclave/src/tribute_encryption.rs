@@ -7,25 +7,17 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 use crate::{
-    confidential::Domain,
+    confidential::SlotCipherDomain,
     crypto::hkdf_sha256,
     errors::{Result, TeeError},
 };
 
-const CREATOR_PUBLIC_KEY: Domain = Domain {
-    state_info: b"outbe/tribute/creator-key/state/v2",
-    view_info: b"outbe/tribute/creator-key/view/v2",
-    modify_info: b"outbe/tribute/creator-key/modify/v2",
+const CREATOR_PUBLIC_KEY: SlotCipherDomain = SlotCipherDomain {
     nonce_info: b"outbe/tribute/creator-key/nonce/v2",
-    modify_tag: b"outbe/tribute/creator-key/auth/v2",
 };
 
-const AMOUNTS: Domain = Domain {
-    state_info: b"outbe/tribute/amount/state/v2",
-    view_info: b"outbe/tribute/amount/view/v2",
-    modify_info: b"outbe/tribute/amount/modify/v2",
+const AMOUNTS: SlotCipherDomain = SlotCipherDomain {
     nonce_info: TRIBUTE_AMOUNT_NONCE_INFO,
-    modify_tag: b"outbe/tribute/amount/auth/v2",
 };
 
 /// Encrypt the validated, deterministically calculated amounts of one offer.
@@ -37,8 +29,9 @@ pub fn encrypt_tribute(
     amounts: &TributeAmountsV2,
 ) -> Result<EncryptedTributeV2> {
     let slot = context.crypto_slot();
-    let encrypted_creator_public_key =
-        CREATOR_PUBLIC_KEY.write_blob(network_secret, slot, 0, 0, creator_public)?;
+    let encrypted_creator_public_key = CREATOR_PUBLIC_KEY
+        .slot(network_secret, slot, 0)
+        .write_blob(0, creator_public)?;
     let amount_key = derive_amount_key(
         network_secret,
         creator_public,
@@ -46,7 +39,9 @@ pub fn encrypt_tribute(
         &encrypted_creator_public_key,
     )?;
     let plaintext = Zeroizing::new(amounts.to_be_bytes());
-    let encrypted_amounts = AMOUNTS.write_blob(&amount_key, slot, 0, 0, plaintext.as_ref())?;
+    let encrypted_amounts = AMOUNTS
+        .slot(&amount_key, slot, 0)
+        .write_blob(0, plaintext.as_ref())?;
     Ok(EncryptedTributeV2 {
         context,
         encrypted_creator_public_key,
@@ -63,12 +58,9 @@ pub fn decrypt_tribute(
         return Err(TeeError::DecryptFailed);
     }
     let slot = tribute.context.crypto_slot();
-    let (_, creator_bytes) = CREATOR_PUBLIC_KEY.read_blob(
-        network_secret,
-        slot,
-        0,
-        &tribute.encrypted_creator_public_key,
-    )?;
+    let (_, creator_bytes) = CREATOR_PUBLIC_KEY
+        .slot(network_secret, slot, 0)
+        .read_blob(&tribute.encrypted_creator_public_key)?;
     let creator_public = creator_bytes
         .as_slice()
         .try_into()
@@ -79,7 +71,9 @@ pub fn decrypt_tribute(
         &tribute.context,
         &tribute.encrypted_creator_public_key,
     )?;
-    let (_, plaintext) = AMOUNTS.read_blob(&key, slot, 0, &tribute.encrypted_amounts)?;
+    let (_, plaintext) = AMOUNTS
+        .slot(&key, slot, 0)
+        .read_blob(&tribute.encrypted_amounts)?;
     let plaintext = Zeroizing::new(plaintext);
     let amounts = plaintext
         .as_slice()
@@ -95,12 +89,9 @@ pub(crate) fn read_creator_public_key(
     if !tribute.has_valid_encoding() {
         return Err(TeeError::DecryptFailed);
     }
-    let (_, bytes) = CREATOR_PUBLIC_KEY.read_blob(
-        network_secret,
-        tribute.context.crypto_slot(),
-        0,
-        &tribute.encrypted_creator_public_key,
-    )?;
+    let (_, bytes) = CREATOR_PUBLIC_KEY
+        .slot(network_secret, tribute.context.crypto_slot(), 0)
+        .read_blob(&tribute.encrypted_creator_public_key)?;
     bytes
         .as_slice()
         .try_into()

@@ -13,9 +13,7 @@
 //! when no enclave is configured.
 
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_tee::protocol::{
-    gratis_op_canonical_hash, EnclaveRequest, EnclaveResponse, GratisOpRequest, GratisOpResult,
-};
+use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse, GratisOpRequest, GratisOpResult};
 
 /// Run one Gratis op inside the enclave and validate the response.
 ///
@@ -32,45 +30,16 @@ pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
         return Ok(result);
     }
 
-    let expected_hash = gratis_op_canonical_hash(&req);
-    let (attestation_pub, response) = outbe_tee::try_with_enclave(|client| {
-        let attestation_pub = client.attestation_pub();
-        let response = client.request(&EnclaveRequest::ApplyGratisOp {
+    match outbe_tee::balance_client::execute_confidential_balance_op(
+        EnclaveRequest::ApplyGratisOp {
             request: Box::new(req),
-        });
-        (attestation_pub, response)
-    })
-    .ok_or_else(|| PrecompileError::Fatal("tee_sidecar_unavailable".to_string()))?;
-    let response =
-        response.map_err(|e| PrecompileError::Fatal(format!("tee_sidecar_unavailable: {e}")))?;
-
-    let result = match response {
-        EnclaveResponse::GratisOpApplied { result } => *result,
-        EnclaveResponse::Error { message } => {
-            return Err(PrecompileError::Fatal(format!(
-                "enclave ApplyGratisOp error: {message}"
-            )))
-        }
-        other => {
-            return Err(PrecompileError::Fatal(format!(
-                "unexpected enclave response: {other:?}"
-            )))
-        }
-    };
-
-    if result.inputs_canonical_hash != expected_hash {
-        return Err(PrecompileError::Fatal(
-            "tee_enclave_nondeterminism".to_string(),
-        ));
+        },
+    )? {
+        EnclaveResponse::GratisOpApplied { result } => Ok(*result),
+        other => Err(PrecompileError::Fatal(format!(
+            "unexpected enclave response: {other:?}"
+        ))),
     }
-    outbe_tee::verify_gratis_op_attestation(
-        &attestation_pub,
-        result.inputs_canonical_hash,
-        &result,
-        &result.attestation_tag,
-    )
-    .map_err(|e| PrecompileError::Fatal(format!("tee_gratis_attestation_invalid: {e}")))?;
-    Ok(result)
 }
 
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
@@ -113,6 +82,18 @@ pub mod test_enclave {
         STATE_KEY
             .with(|k| *k.borrow())
             .expect("test enclave not installed")
+    }
+
+    /// Builds an authorization with the installed fixture key and operation nonce.
+    pub fn modify_auth(
+        operation: outbe_tee_enclave::gratis::ModifyOperation,
+    ) -> outbe_tee::protocol::ModifyAuth {
+        let key =
+            outbe_tee_enclave::gratis::derive_modify_key(&state_key(), operation.account).unwrap();
+        outbe_tee::protocol::ModifyAuth {
+            mac: outbe_tee_enclave::gratis::modify_mac(&key, &operation),
+            op_nonce: operation.op_nonce,
+        }
     }
 
     pub(crate) fn try_mine(

@@ -63,15 +63,12 @@ impl ProjectionSessions {
                     route.durable_writer.clone(),
                     route.databases.clone(),
                 ),
-                NodRepositoryReader::with_days(
-                    route.durable_reader.clone(),
-                    route.durable_writer.clone(),
-                    route.databases.clone(),
-                ),
+                outbe_nod::nod_reader(route.durable_reader.clone())
+                    .with_days(route.durable_writer.clone(), route.databases.clone()),
             ),
             None => (
                 TributeRepositoryReader::new(projector.reader.clone()),
-                NodRepositoryReader::new(projector.reader.clone()),
+                outbe_nod::nod_reader(projector.reader.clone()),
             ),
         };
         let retained_tribute_reader = RetainedTributeReader::new(projector.reader.clone());

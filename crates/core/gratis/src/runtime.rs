@@ -52,7 +52,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
 /// Reject unless the supplied op-nonce equals the account's current on-chain
 /// counter. This check makes a captured modify-auth non-replayable.
 fn check_op_nonce(gratis: &Gratis<'_>, account: Address, provided: u64) -> Result<()> {
-    let current = gratis.op_nonce_of(account)?;
+    let current = crate::state::account(gratis, account).op_nonce()?;
     if provided != current {
         return Err(PrecompileError::Revert(format!(
             "invalid op nonce: expected {current}, got {provided}"
@@ -76,7 +76,7 @@ fn write_account_blobs(
     result: &GratisOpResult,
 ) -> Result<()> {
     if !result.new_balance.is_empty() {
-        gratis.write_balance_ct(account, &result.new_balance)?;
+        crate::state::account(gratis, account).write_balance_ct(&result.new_balance)?;
     }
     Ok(())
 }
@@ -89,13 +89,13 @@ fn apply_owner_movement(
     let gratis = Gratis::new(storage.clone());
     let account = request.account;
     check_op_nonce(&gratis, account, request.modify_auth.op_nonce)?;
-    request.current_balance = gratis.balance_ct_of(account)?;
+    request.current_balance = crate::state::account(&gratis, account).balance_ct()?;
     let operation = request.op;
     let _scope = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = apply_gratis_op(request)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, account, &result)?;
-    gratis.set_op_nonce(account, result.next_op_nonce)?;
+    crate::state::account(&gratis, account).set_op_nonce(result.next_op_nonce)?;
     let event = match operation {
         GratisOp::Mint => SolEvent::encode_log_data(&IGratis::GratisMinted {
             account,
@@ -197,7 +197,7 @@ pub(crate) fn pledge_with_fidelity(
         let gratis = Gratis::new(storage.clone());
         check_op_nonce(&gratis, caller, auth.op_nonce)?;
         let mut req = base_request(GratisOp::Pledge, chain_id_b256(&storage)?, caller, amount);
-        req.current_balance = gratis.balance_ct_of(caller)?;
+        req.current_balance = crate::state::account(&gratis, caller).balance_ct()?;
         req.modify_auth = auth;
         req.fidelity = Some(fidelity);
         let _scope = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
@@ -209,10 +209,10 @@ pub(crate) fn pledge_with_fidelity(
         let outcome = require_fidelity_outcome(result.fidelity.clone())?;
         let commitment = crate::pledge::fund(&storage, result.note_serial, amount, B256::ZERO)?;
         write_account_blobs(&gratis, caller, &result)?;
-        gratis.set_op_nonce(caller, result.next_op_nonce)?;
-        gratis.set_pledged_total_supply(
-            gratis
-                .pledged_total_supply()?
+        crate::state::account(&gratis, caller).set_op_nonce(result.next_op_nonce)?;
+        crate::state::set_pledged_total_supply(
+            &gratis,
+            crate::state::pledged_total_supply(&gratis)?
                 .checked_add(amount)
                 .ok_or_else(|| PrecompileError::Revert("pledged supply overflow".into()))?,
         )?;
@@ -230,7 +230,7 @@ fn collateral_balance(
 ) -> Result<()> {
     let gratis = Gratis::new(storage.clone());
     let mut req = base_request(op, chain_id_b256(storage)?, account, amount);
-    req.current_balance = gratis.balance_ct_of(account)?;
+    req.current_balance = crate::state::account(&gratis, account).balance_ct()?;
     let _scope = outbe_tee::call_context::ContextScope::from_storage(storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
@@ -254,9 +254,9 @@ pub(crate) fn unpledge(storage: StorageHandle<'_>, proof: &[u8]) -> Result<U256>
             GratisOp::Unpledge,
         )?;
         let gratis = Gratis::new(storage.clone());
-        gratis.set_pledged_total_supply(
-            gratis
-                .pledged_total_supply()?
+        crate::state::set_pledged_total_supply(
+            &gratis,
+            crate::state::pledged_total_supply(&gratis)?
                 .checked_sub(claim.spend_amount)
                 .ok_or_else(|| PrecompileError::Fatal("pledged supply underflow".into()))?,
         )?;
@@ -301,9 +301,9 @@ pub(crate) fn forfeit(storage: &StorageHandle<'_>, amount: U256) -> Result<()> {
             GratisOp::BurnPledged,
         )?;
         let gratis = Gratis::new(storage.clone());
-        gratis.set_pledged_total_supply(
-            gratis
-                .pledged_total_supply()?
+        crate::state::set_pledged_total_supply(
+            &gratis,
+            crate::state::pledged_total_supply(&gratis)?
                 .checked_sub(amount)
                 .ok_or_else(|| PrecompileError::Fatal("pledged supply underflow".into()))?,
         )?;
@@ -324,14 +324,14 @@ pub(crate) fn mint_encrypted_nod(
     check_op_nonce(&gratis, nod.terms.owner, auth.op_nonce)?;
     let request = outbe_tee::nod_mine::MineEncryptedNodRequestV2 {
         nod: nod.clone(),
-        current_balance: gratis.balance_ct_of(nod.terms.owner)?,
+        current_balance: crate::state::account(&gratis, nod.terms.owner).balance_ct()?,
         modify_auth: auth,
         fidelity,
     };
     let _context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = crate::enclave_client::mine_encrypted_nod(request)?;
-    gratis.write_balance_ct(nod.terms.owner, &result.new_balance)?;
-    gratis.set_op_nonce(nod.terms.owner, result.next_op_nonce)?;
+    crate::state::account(&gratis, nod.terms.owner).write_balance_ct(&result.new_balance)?;
+    crate::state::account(&gratis, nod.terms.owner).set_op_nonce(result.next_op_nonce)?;
     storage.emit_event(
         GRATIS_ADDRESS,
         SolEvent::encode_log_data(&IGratis::GratisMinedFromNod {

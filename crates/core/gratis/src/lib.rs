@@ -29,6 +29,7 @@ pub mod pledge;
 pub mod precompile;
 pub mod schema;
 
+pub(crate) mod metadata;
 pub(crate) mod runtime;
 pub(crate) mod state;
 

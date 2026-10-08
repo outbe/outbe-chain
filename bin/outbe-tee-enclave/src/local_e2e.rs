@@ -185,7 +185,7 @@ pub fn run() -> Result<(), String> {
         0,
     ));
     let keys = Arc::new(EnclaveKeys::new([0; 32], Some(hex32("--identity-seed")?))?);
-    let state = Arc::new(InitializationState::local_e2e(
+    let state = Arc::new(crate::initialization::factory::local_e2e(
         boot.clone(),
         &keys,
         descriptor.clone(),
@@ -209,11 +209,13 @@ pub fn run() -> Result<(), String> {
     eprintln!("LOCAL_E2E: software identity/sealing, no SGX guarantees; listening {endpoint}");
     transport::serve_tcp(
         &listener,
-        keys,
-        Some(boot),
-        offer_key,
-        state,
-        descriptor.network_binding.chain_id.into(),
+        transport::ServerContext {
+            keys,
+            boot: Some(boot),
+            offer_key,
+            initialization: state,
+            chain_id: descriptor.network_binding.chain_id.into(),
+        },
     )
     .map_err(|e| e.to_string())
 }

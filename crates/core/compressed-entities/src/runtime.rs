@@ -1,4 +1,7 @@
+mod body;
 mod pagination;
+
+use body::{prepare_input, verify_stored};
 
 use std::collections::BTreeSet;
 
@@ -76,7 +79,7 @@ pub(crate) fn read(
     match pending {
         PendingWord::Set(commitment) => {
             charge_body_read(&storage, scope, pending_body.len())?;
-            let stored = StoredBody::decode(&pending_body)
+            let stored = crate::decode_stored_body(&pending_body)
                 .map_err(|error| fatal(format!("invalid pending StoredBody: {error}")))?;
             verify_stored(entity, stored, commitment, BodyOrigin::Overlay).map(Some)
         }
@@ -200,186 +203,6 @@ pub(crate) fn list(
     .read()
 }
 
-fn prepare_input(input: BodyInput<'_>) -> Result<PreparedBody> {
-    match input {
-        BodyInput::Tribute(body) => prepare_tribute(body.clone()),
-        BodyInput::EncryptedTribute(body) => prepare_encrypted_tribute(body),
-        BodyInput::NodItem(body) => prepare_nod_item(body.clone()),
-        BodyInput::EncryptedNodItem(body) => prepare_encrypted_nod_item(body),
-        BodyInput::NodBucket(body) => prepare_nod_bucket(body.clone()),
-    }
-}
-
-fn prepare_tribute(body: TributeBodyV1) -> Result<PreparedBody> {
-    let payload = encode_tribute_v1(&body).map_err(input_error)?;
-    let stored_body = StoredBody::new_v1(payload.clone()).map_err(input_error)?;
-    let entity_id = body.tribute_id;
-    let commitment = calculate_commitment(entity_id, &payload)?;
-    let memberships = vec![
-        IndexRecord::owner(IndexKind::TributeByOwner, body.owner, entity_id),
-        IndexRecord::day(body.worldwide_day, entity_id),
-    ];
-    Ok(PreparedBody {
-        collection: Collection::Tribute,
-        entity_id,
-        stored_body,
-        commitment,
-        memberships,
-    })
-}
-
-fn prepare_encrypted_tribute(
-    body: &outbe_primitives::tribute_encryption::EncryptedTributeV2,
-) -> Result<PreparedBody> {
-    let payload = crate::encode_tribute_v2(body).map_err(input_error)?;
-    let stored_body =
-        StoredBody::new(crate::TRIBUTE_BODY_SCHEMA_V2, payload.clone()).map_err(input_error)?;
-    let entity_id = body.context.tribute_id;
-    let commitment = body_commitment(
-        ACTIVE_COMMITMENT_SCHEME,
-        stored_body.schema_version(),
-        entity_id,
-        &payload,
-    )
-    .map_err(|error| fatal(error.to_string()))?;
-    Ok(PreparedBody {
-        collection: Collection::Tribute,
-        entity_id,
-        stored_body,
-        commitment,
-        memberships: vec![
-            IndexRecord::owner(IndexKind::TributeByOwner, body.context.owner, entity_id),
-            IndexRecord::day(body.context.worldwide_day, entity_id),
-        ],
-    })
-}
-
-fn prepare_nod_item(body: NodItemBodyV1) -> Result<PreparedBody> {
-    let payload = encode_nod_item_v1(&body).map_err(input_error)?;
-    let stored_body = StoredBody::new_v1(payload.clone()).map_err(input_error)?;
-    let entity_id = body.nod_id;
-    let commitment = calculate_commitment(entity_id, &payload)?;
-    let memberships = vec![
-        IndexRecord::owner(IndexKind::NodByOwner, body.owner, entity_id),
-        IndexRecord::nod_all(entity_id),
-    ];
-    Ok(PreparedBody {
-        collection: Collection::NodItem,
-        entity_id,
-        stored_body,
-        commitment,
-        memberships,
-    })
-}
-
-fn prepare_nod_bucket(body: NodBucketBodyV1) -> Result<PreparedBody> {
-    let payload = encode_nod_bucket_v1(&body).map_err(input_error)?;
-    let stored_body = StoredBody::new_v1(payload.clone()).map_err(input_error)?;
-    let entity_id = body.entity_id();
-    let commitment = calculate_commitment(entity_id, &payload)?;
-    Ok(PreparedBody {
-        collection: Collection::NodBucket,
-        entity_id,
-        stored_body,
-        commitment,
-        memberships: Vec::new(),
-    })
-}
-
-fn verify_stored(
-    entity: EntityRef,
-    stored_body: StoredBody,
-    expected: Commitment,
-    origin: BodyOrigin,
-) -> Result<VerifiedBody> {
-    let encrypted_tribute = matches!(entity, EntityRef::Tribute(_))
-        && stored_body.schema_version() == crate::TRIBUTE_BODY_SCHEMA_V2;
-    let encrypted_nod = matches!(entity, EntityRef::NodItem(_))
-        && stored_body.schema_version() == crate::NOD_BODY_SCHEMA_V2;
-    if stored_body.schema_version() != BODY_SCHEMA_V1 && !encrypted_tribute && !encrypted_nod {
-        return Err(origin.invalid(format!(
-            "unsupported stored body schema {}",
-            stored_body.schema_version()
-        )));
-    }
-    let payload = stored_body.payload();
-    let entity_id = entity.entity_id();
-    let (decoded_id, verified_payload) = decode_stored_payload(entity, &stored_body, origin)?;
-    if decoded_id != entity_id {
-        return Err(origin.invalid(format!(
-            "body identity {decoded_id} does not match requested {entity_id}"
-        )));
-    }
-    let actual = body_commitment(
-        ACTIVE_COMMITMENT_SCHEME,
-        stored_body.schema_version(),
-        entity_id,
-        payload,
-    )
-    .map_err(|error| origin.invalid(error.to_string()))?;
-    if actual != expected {
-        // Preserve the exact authenticated input, not a re-encoded replacement.
-        // Bodies are canonical on-chain event payloads, never enclave key material.
-        return Err(origin.invalid(format!(
-            "body commitment mismatch for {entity_id}; [CE_BODY_DIAGNOSTIC] entity={entity:?} origin={origin:?} scheme={ACTIVE_COMMITMENT_SCHEME} schema={} expected=0x{} actual=0x{} payload_len={} payload_hex={} stored_body_hex={} decoded={verified_payload:?}",
-            stored_body.schema_version(),
-            hex::encode(expected.as_bytes()),
-            hex::encode(actual.as_bytes()),
-            payload.len(),
-            hex::encode(payload),
-            hex::encode(stored_body.encode()),
-        )));
-    }
-    Ok(VerifiedBody {
-        entity,
-        commitment: expected,
-        stored_body,
-        payload: verified_payload,
-    })
-}
-
-fn decode_stored_payload(
-    entity: EntityRef,
-    stored_body: &StoredBody,
-    origin: BodyOrigin,
-) -> Result<(WwdEntityId, crate::api::VerifiedPayload)> {
-    let payload = stored_body.payload();
-    let decoded = match entity {
-        EntityRef::Tribute(_) if stored_body.schema_version() == crate::TRIBUTE_BODY_SCHEMA_V2 => {
-            let body = crate::decode_tribute_v2(payload)
-                .map_err(|error| origin.invalid(error.to_string()))?;
-            (
-                body.context.tribute_id,
-                crate::api::encrypted_tribute_payload(body),
-            )
-        }
-        EntityRef::Tribute(_) => {
-            let body =
-                decode_tribute_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
-            (body.tribute_id, tribute_payload(body))
-        }
-        EntityRef::NodItem(_) if stored_body.schema_version() == crate::NOD_BODY_SCHEMA_V2 => {
-            let body = crate::decode_nod_item_v2(payload)
-                .map_err(|error| origin.invalid(error.to_string()))?;
-            (
-                body.encrypted.terms.nod_id,
-                crate::api::encrypted_nod_item_payload(body),
-            )
-        }
-        EntityRef::NodItem(_) => {
-            let body =
-                decode_nod_item_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
-            (body.nod_id, nod_item_payload(body))
-        }
-        EntityRef::NodBucket(_) => {
-            let body =
-                decode_nod_bucket_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
-            (body.entity_id(), nod_bucket_payload(body))
-        }
-    };
-    Ok(decoded)
-}
-
 fn calculate_commitment(entity_id: WwdEntityId, payload: &[u8]) -> Result<Commitment> {
     body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, entity_id, payload)
         .map_err(|error| fatal(error.to_string()))
@@ -397,7 +220,7 @@ fn current_commitment(
             scope.read_parent_leaf_verified(entity_from_parts(collection, entity_id), state.root()?)
         }
         PendingWord::Set(value) => {
-            let stored = StoredBody::decode(&body)
+            let stored = crate::decode_stored_body(&body)
                 .map_err(|error| fatal(format!("invalid pending StoredBody: {error}")))?;
             verify_stored(
                 entity_from_parts(collection, entity_id),
@@ -540,128 +363,6 @@ fn emit_deleted(
     storage.emit_event(emitter, event)
 }
 
-fn validate_page_request(query: QueryRef, request: IdPageRequest) -> Result<()> {
-    if request.limit == 0 || request.limit > MAX_ID_PAGE_LIMIT {
-        return Err(revert(format!(
-            "page limit must be in 1..={MAX_ID_PAGE_LIMIT}"
-        )));
-    }
-    if let (QueryRef::TributeByDay(day), Some(after)) = (query, request.after) {
-        if after.worldwide_day() != day {
-            return Err(revert("TributeByDay cursor has the wrong day prefix"));
-        }
-    }
-    Ok(())
-}
-
-fn validate_parent_page(
-    query: QueryRef,
-    after: Option<WwdEntityId>,
-    limit: u32,
-    page: &crate::IdPage,
-) -> Result<()> {
-    if page.ids.len() > limit as usize {
-        return Err(PrecompileError::BodyReadCorruption(
-            "parent page exceeds requested limit".into(),
-        ));
-    }
-    let mut previous = after;
-    for id in &page.ids {
-        if previous.is_some_and(|value| *id <= value) {
-            return Err(PrecompileError::BodyReadCorruption(
-                "parent IDs are not strictly ascending after the cursor".into(),
-            ));
-        }
-        if let QueryRef::TributeByDay(day) = query {
-            if id.worldwide_day() != day {
-                return Err(PrecompileError::BodyReadCorruption(
-                    "parent TributeByDay ID has the wrong day prefix".into(),
-                ));
-            }
-        }
-        previous = Some(*id);
-    }
-    match page.next_after {
-        Some(next) if page.ids.last().copied() != Some(next) => {
-            Err(PrecompileError::BodyReadCorruption(
-                "parent next_after must equal its last returned ID".into(),
-            ))
-        }
-        Some(_) if page.ids.is_empty() => Err(PrecompileError::BodyReadCorruption(
-            "empty parent page cannot advertise a continuation".into(),
-        )),
-        _ => Ok(()),
-    }
-}
-
-fn merged_candidates(
-    parent: &BTreeSet<WwdEntityId>,
-    added: &BTreeSet<WwdEntityId>,
-    removed: &BTreeSet<WwdEntityId>,
-) -> Vec<WwdEntityId> {
-    parent
-        .difference(removed)
-        .copied()
-        .chain(added.iter().copied())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn record_matches_query(record: &IndexRecord, query: QueryRef) -> bool {
-    match query {
-        QueryRef::TributeByOwner(owner) => {
-            record.kind == IndexKind::TributeByOwner && record.partition == owner.as_slice()
-        }
-        QueryRef::TributeByDay(day) => {
-            record.kind == IndexKind::TributeByDay && record.partition == day.value().to_be_bytes()
-        }
-        QueryRef::NodByOwner(owner) => {
-            record.kind == IndexKind::NodByOwner && record.partition == owner.as_slice()
-        }
-        QueryRef::NodAll => record.kind == IndexKind::NodAll && record.partition.is_empty(),
-    }
-}
-
-fn verified_matches_query(body: &VerifiedBody, query: QueryRef) -> bool {
-    if let Some(tribute) = body.payload().as_encrypted_tribute() {
-        return match query {
-            QueryRef::TributeByOwner(owner) => tribute.context.owner == owner,
-            QueryRef::TributeByDay(day) => tribute.context.worldwide_day == day,
-            _ => false,
-        };
-    }
-    if let Some(item) = body.payload().as_encrypted_nod_item() {
-        return match query {
-            QueryRef::NodByOwner(owner) => item.encrypted.terms.owner == owner,
-            QueryRef::NodAll => true,
-            _ => false,
-        };
-    }
-    match query {
-        QueryRef::TributeByOwner(owner) => body
-            .payload()
-            .as_tribute()
-            .is_some_and(|tribute| tribute.owner == owner),
-        QueryRef::TributeByDay(day) => body
-            .payload()
-            .as_tribute()
-            .is_some_and(|tribute| tribute.worldwide_day == day),
-        QueryRef::NodByOwner(owner) => body
-            .payload()
-            .as_nod_item()
-            .is_some_and(|item| item.owner == owner),
-        QueryRef::NodAll => body.payload().as_nod_item().is_some(),
-    }
-}
-
-fn entity_for_query(query: QueryRef, id: WwdEntityId) -> EntityRef {
-    match query {
-        QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => EntityRef::Tribute(id),
-        QueryRef::NodByOwner(_) | QueryRef::NodAll => EntityRef::NodItem(id),
-    }
-}
-
 const fn entity_from_parts(collection: Collection, id: WwdEntityId) -> EntityRef {
     match collection {
         Collection::Tribute => EntityRef::Tribute(id),
@@ -719,28 +420,4 @@ fn fatal(message: impl Into<String>) -> PrecompileError {
 
 fn revert(message: impl Into<String>) -> PrecompileError {
     PrecompileError::Revert(message.into())
-}
-
-fn prepare_encrypted_nod_item(body: &crate::NodItemBodyV2) -> Result<PreparedBody> {
-    let payload = crate::encode_nod_item_v2(body).map_err(input_error)?;
-    let stored_body =
-        StoredBody::new(crate::NOD_BODY_SCHEMA_V2, payload.clone()).map_err(input_error)?;
-    let entity_id = body.encrypted.terms.nod_id;
-    let commitment = body_commitment(
-        ACTIVE_COMMITMENT_SCHEME,
-        stored_body.schema_version(),
-        entity_id,
-        &payload,
-    )
-    .map_err(|error| fatal(error.to_string()))?;
-    Ok(PreparedBody {
-        collection: Collection::NodItem,
-        entity_id,
-        stored_body,
-        commitment,
-        memberships: vec![
-            IndexRecord::owner(IndexKind::NodByOwner, body.encrypted.terms.owner, entity_id),
-            IndexRecord::nod_all(entity_id),
-        ],
-    })
 }

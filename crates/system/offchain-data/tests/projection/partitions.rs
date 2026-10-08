@@ -1,10 +1,7 @@
 //! Finalized entity projection through the same ports used by the node.
 use super::support::*;
 use alloy_primitives::{Address, B256};
-use outbe_nod::NodRepositoryReader;
-use outbe_offchain_data::{
-    entity_partition_routing, FinalizedBlock, FinalizedLog, OffchainDataProjection,
-};
+use outbe_offchain_data::{entity_partition_routing, FinalizedBlock, FinalizedLog};
 use outbe_offchain_storage::partitioned::adapters::{
     MemoryPartitionDataSource, RocksPartitionDataSource, RocksPartitionReadView,
 };
@@ -38,7 +35,7 @@ fn exercise(source: Arc<dyn PartitionDataSource>, retained: bool) {
         input_lease_id: B256::repeat_byte(0x71),
     };
     let mut projection = if retained {
-        OffchainDataProjection::open_with_retention_selector(
+        outbe_offchain_data::open_projection_with_retention_selector(
             config(10),
             storage.clone(),
             storage.clone(),
@@ -46,7 +43,7 @@ fn exercise(source: Arc<dyn PartitionDataSource>, retained: bool) {
         )
         .unwrap()
     } else {
-        OffchainDataProjection::open(config(10), storage.clone(), storage.clone()).unwrap()
+        outbe_offchain_data::open_projection(config(10), storage.clone(), storage.clone()).unwrap()
     };
     projection.enable_partition_retirement();
     projection
@@ -79,7 +76,7 @@ fn exercise(source: Arc<dyn PartitionDataSource>, retained: bool) {
         &[outbe_tribute::partitioning::day_scope(day).unwrap()]
     );
     assert!(tribute.get(tribute_id).unwrap().is_none());
-    assert!(NodRepositoryReader::new(storage.clone())
+    assert!(outbe_nod::nod_reader(storage.clone())
         .get(nod_id)
         .unwrap()
         .is_some());
@@ -124,7 +121,7 @@ fn finalized_rocks_retirement_removes_only_tribute_folder_and_snapshot_opens_eve
             Arc::new(RocksPartitionReadView::open(root.path(), scratch.path()).unwrap()),
             entity_partition_routing().unwrap(),
         ));
-        assert!(NodRepositoryReader::new(reader)
+        assert!(outbe_nod::nod_reader(reader)
             .get(poseidon_entity(Address::repeat_byte(17), 20260715))
             .unwrap()
             .is_some());

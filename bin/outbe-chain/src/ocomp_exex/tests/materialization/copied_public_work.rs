@@ -14,7 +14,6 @@ use outbe_ocomp::{
         InputArtifactIdentity,
     },
     input_ref_catalog::VerifiedInputChunkRefCatalog,
-    lysis_plan_audit::LocalLysisPlanAuditV1,
 };
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
@@ -213,8 +212,13 @@ fn build_remaining(
         &cas,
         limits,
     )?;
-    let audit =
-        LocalLysisPlanAuditV1::open_read_only(&admissions, &inputs, &cas, &f.bundle, &limits)?;
+    let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
+        &admissions,
+        &inputs,
+        &cas,
+        &f.bundle,
+        &limits,
+    )?;
     Ok(build_nod_materialization_batch_with_references(
         &audit, head, 3,
     )?)
@@ -277,9 +281,55 @@ fn complete_local_job<P>(runtime: &mut EmbeddedOcompExExV1<P>, job_id: B256) {
         .unwrap();
 }
 
+fn pin_pending_batch(
+    public: &Path,
+    f: &Fixture,
+    head: &NodMaterializationHeadV1,
+    built: &outbe_ocomp::nod_materialization::BuiltNodMaterializationBatchV1,
+) -> (PathBuf, Vec<u8>) {
+    use outbe_ocomp::nod_materialization::MaterializationReferenceStoreV1;
+    let references = MaterializationReferenceStoreV1::open(reference_root(
+        public,
+        f.job_id,
+        head.next_nod_ordinal,
+    ))
+    .unwrap();
+    references.pin_exact(f.job_id, &built.dependencies).unwrap();
+    let reference_member = reference_root(Path::new(""), f.job_id, head.next_nod_ordinal).join(
+        format!("{}.materialization-refs-v1.json", hex::encode(f.job_id)),
+    );
+    let reference_bytes = fs::read(public.join(&reference_member)).unwrap();
+    assert!(!reference_bytes.is_empty());
+    drop(references);
+    (reference_member, reference_bytes)
+}
+
+fn remaining_pending_batch<P: reth_provider::StateProviderFactory>(
+    provider: &P,
+    public: &Path,
+    f: &Fixture,
+) -> (
+    NodMaterializationHeadV1,
+    outbe_ocomp::nod_materialization::BuiltNodMaterializationBatchV1,
+) {
+    let head = read_native_pending_head(provider);
+    assert_eq!(head, pending_head(f));
+    let built = build_remaining(public, f, &head).unwrap();
+    assert_eq!(built.batch.actions.len(), 1);
+    assert_eq!(built.batch.actions[0].raw_ordinal, 256);
+    (head, built)
+}
+
+fn remove_consumed_chunks(public: &Path, f: &Fixture, remove_required: bool) {
+    // This is a dependency-absence control, not an invocation of the GC scheduler.
+    fs::remove_file(chunk_path(public, f, 0)).unwrap();
+    if remove_required {
+        fs::remove_file(chunk_path(public, f, 1)).unwrap();
+    }
+}
+
 #[test]
 fn copied_pending_nod_remains_buildable_after_terminal_pruning_and_consumed_chunk_removal() {
-    use outbe_ocomp::nod_materialization::MaterializationReferenceStoreV1;
     for remove_required in [false, true] {
         let donor = tempfile::tempdir().unwrap();
         let receiver = tempfile::tempdir().unwrap();
@@ -298,24 +348,8 @@ fn copied_pending_nod_remains_buildable_after_terminal_pruning_and_consumed_chun
         runtime.state.prune_terminal_job(f.job_id).unwrap();
         assert!(runtime.state.state(f.job_id).is_none());
         assert!(runtime.jobs.is_empty());
-        let head = read_native_pending_head(&runtime.provider);
-        assert_eq!(head, pending_head(&f));
-        let built = build_remaining(&public, &f, &head).unwrap();
-        assert_eq!(built.batch.actions.len(), 1);
-        assert_eq!(built.batch.actions[0].raw_ordinal, 256);
-        let references = MaterializationReferenceStoreV1::open(reference_root(
-            &public,
-            f.job_id,
-            head.next_nod_ordinal,
-        ))
-        .unwrap();
-        references.pin_exact(f.job_id, &built.dependencies).unwrap();
-        let reference_member = reference_root(Path::new(""), f.job_id, head.next_nod_ordinal).join(
-            format!("{}.materialization-refs-v1.json", hex::encode(f.job_id)),
-        );
-        let reference_bytes = fs::read(public.join(&reference_member)).unwrap();
-        assert!(!reference_bytes.is_empty());
-        drop(references);
+        let (head, built) = remaining_pending_batch(&runtime.provider, &public, &f);
+        let (reference_member, reference_bytes) = pin_pending_batch(&public, &f, &head, &built);
         drop(runtime);
         copied_native::copy_tree(donor.path(), receiver.path());
         donor.close().unwrap();
@@ -324,11 +358,7 @@ fn copied_pending_nod_remains_buildable_after_terminal_pruning_and_consumed_chun
             fs::read(public.join(&reference_member)).unwrap(),
             reference_bytes
         );
-        // This is a dependency-absence control, not an invocation of the GC scheduler.
-        fs::remove_file(chunk_path(&public, &f, 0)).unwrap();
-        if remove_required {
-            fs::remove_file(chunk_path(&public, &f, 1)).unwrap();
-        }
+        remove_consumed_chunks(&public, &f, remove_required);
         let runtime = copied_native::runtime(
             copied_native::provider(&receiver.path().join("chain")),
             &public,
@@ -347,39 +377,15 @@ fn copied_pending_nod_remains_buildable_after_terminal_pruning_and_consumed_chun
         }
         assert_eq!(actual.unwrap(), built);
         drop(runtime);
-        let later = copied_native::write_frames(&receiver.path().join("chain"), 101, 102);
-        let mut runtime = copied_native::runtime(
-            copied_native::provider(&receiver.path().join("chain")),
-            &public,
-            f.bundle.clone(),
-        );
-        copied_native::catch_up(&mut runtime, later[1]);
-        drop(runtime);
-        let restarted = copied_native::runtime(
-            copied_native::provider(&receiver.path().join("chain")),
-            &public,
-            f.bundle.clone(),
-        );
-        assert_eq!(restarted.closure_checkpoint.current().unwrap(), later[1]);
-        assert_eq!(
-            fs::read(public.join(&reference_member)).unwrap(),
-            reference_bytes
-        );
-        assert_eq!(
-            build_remaining(&public, &f, &read_native_pending_head(&restarted.provider)).unwrap(),
-            built
-        );
-        assert_eq!(
-            MaterializationReferenceStoreV1::open(reference_root(
-                &public,
-                f.job_id,
-                head.next_nod_ordinal
-            ))
-            .unwrap()
-            .load_exact(f.job_id)
-            .unwrap(),
-            Some(built.dependencies)
-        );
+        assert_pending_nod_after_restart(PendingNodReplay {
+            receiver: receiver.path(),
+            public: &public,
+            fixture: &f,
+            reference_member: &reference_member,
+            reference_bytes: &reference_bytes,
+            head: &head,
+            built,
+        });
     }
 }
 struct PrepareOnlyRpc {
@@ -483,3 +489,63 @@ fn copied_foreign_signed_materialization_journal_is_rejected_without_rewriting_r
 }
 
 mod copied_resident_authority;
+
+struct PendingNodReplay<'a> {
+    receiver: &'a Path,
+    public: &'a Path,
+    fixture: &'a Fixture,
+    reference_member: &'a Path,
+    reference_bytes: &'a [u8],
+    head: &'a NodMaterializationHeadV1,
+    built: outbe_ocomp::nod_materialization::BuiltNodMaterializationBatchV1,
+}
+fn assert_pending_nod_after_restart(replay: PendingNodReplay<'_>) {
+    use outbe_ocomp::nod_materialization::MaterializationReferenceStoreV1;
+    let PendingNodReplay {
+        receiver,
+        public,
+        fixture,
+        reference_member,
+        reference_bytes,
+        head,
+        built,
+    } = replay;
+    let later = copied_native::write_frames(&receiver.join("chain"), 101, 102);
+    let mut runtime = copied_native::runtime(
+        copied_native::provider(&receiver.join("chain")),
+        public,
+        fixture.bundle.clone(),
+    );
+    copied_native::catch_up(&mut runtime, later[1]);
+    drop(runtime);
+    let restarted = copied_native::runtime(
+        copied_native::provider(&receiver.join("chain")),
+        public,
+        fixture.bundle.clone(),
+    );
+    assert_eq!(restarted.closure_checkpoint.current().unwrap(), later[1]);
+    assert_eq!(
+        fs::read(public.join(reference_member)).unwrap(),
+        *reference_bytes
+    );
+    assert_eq!(
+        build_remaining(
+            public,
+            fixture,
+            &read_native_pending_head(&restarted.provider)
+        )
+        .unwrap(),
+        built
+    );
+    assert_eq!(
+        MaterializationReferenceStoreV1::open(reference_root(
+            public,
+            fixture.job_id,
+            head.next_nod_ordinal
+        ))
+        .unwrap()
+        .load_exact(fixture.job_id)
+        .unwrap(),
+        Some(built.dependencies)
+    );
+}

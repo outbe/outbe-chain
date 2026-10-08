@@ -56,7 +56,7 @@ fn bench_gas_saturated_touches(c: &mut Criterion) {
         b.iter(|| {
             let mut provider = seeded_provider();
             provider.set_gas_limit(BLOCK_GAS_LIMIT);
-            let scope = ExecutionScope::new();
+            let scope = ExecutionScope::default();
             StorageHandle::enter(&mut provider, |storage| {
                 let lifecycle = lifecycle(storage.clone(), &scope);
                 <CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(&lifecycle).unwrap();
@@ -83,7 +83,7 @@ fn bench_touched_list_merge(c: &mut Criterion) {
     c.bench_function("adr007_touched_owner_list_merge", |b| {
         b.iter(|| {
             let mut provider = seeded_provider();
-            let scope = ExecutionScope::new();
+            let scope = ExecutionScope::default();
             StorageHandle::enter(&mut provider, |storage| {
                 let lifecycle = lifecycle(storage.clone(), &scope);
                 <CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(&lifecycle).unwrap();

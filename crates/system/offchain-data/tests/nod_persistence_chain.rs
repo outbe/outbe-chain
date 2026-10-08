@@ -1,18 +1,19 @@
 //! Exercise production NOD mutations, emitted receipts, CE sealing and RocksDB projection.
 //! Only the EVM storage host and finalized receipt/header envelopes are test fixtures.
 
+use outbe_offchain_data::{runtime_body_readers, supervised_runtime_body_readers};
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    begin_block, derive_poseidon_entity_id, encode_nod_item_v2, end_block, CeMdbx, CeWorkConfig,
-    EntityRef, EnvironmentIdentity, ExactParentIdentity, ExecutionScope, FinalizedMarker,
+    begin_block, derive_poseidon_entity_id, encode_nod_item_v2, end_block, execution_scope, CeMdbx,
+    CeWorkConfig, EntityRef, EnvironmentIdentity, ExactParentIdentity, FinalizedMarker,
     MdbxAuthenticatedTree, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_nod::{api, canonical_item, NodContract, NodItemState};
 use outbe_offchain_data::{
-    FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
-    RuntimeBodyReaders,
+    open_projection, FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection,
+    ProjectionConfig, RuntimeBodyReaders,
 };
 use outbe_offchain_storage::RocksDbStorage;
 use outbe_primitives::{
@@ -28,7 +29,7 @@ fn assert_authenticated_nods(
     readers: &RuntimeBodyReaders,
     items: &[NodItemState],
 ) {
-    let scope = ExecutionScope::with_parent_tree(
+    let scope = execution_scope::with_parent_tree(
         Arc::new(MdbxAuthenticatedTree::open(ce.clone(), identity).unwrap()),
         CeWorkConfig::new(0, 0, u64::MAX),
     );
@@ -161,6 +162,15 @@ fn project_mutation_receipt(
         .unwrap();
 }
 
+fn genesis_parent_identity(genesis: B256, empty_root: B256) -> ExactParentIdentity {
+    ExactParentIdentity {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        block_number: 0,
+        block_hash: genesis,
+        root: empty_root,
+    }
+}
+
 #[test]
 fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
     let directory = tempfile::tempdir().unwrap();
@@ -176,67 +186,20 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
     let rocks_path = directory.path().join("projection");
     let genesis = config.genesis_hash;
     let empty_root = genesis_marker.new_root;
-    let mut projector = OffchainDataProjection::open(config, rocks.clone(), rocks.clone()).unwrap();
-    let readers = RuntimeBodyReaders::new(rocks.clone());
-    let day = WorldwideDay::new(20260906);
+    let mut projector = open_projection(config, rocks.clone(), rocks.clone()).unwrap();
+    let readers = runtime_body_readers(rocks.clone());
     let mut items = Vec::new();
-    let mut identity = ExactParentIdentity {
-        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-        block_number: 0,
-        block_hash: genesis,
-        root: empty_root,
-    };
+    let mut identity = genesis_parent_identity(genesis, empty_root);
 
     for height in 1..=2_u64 {
-        let owner = Address::repeat_byte(height as u8);
-        let item = outbe_nod::test_support::item(
-            outbe_nod::test_support::NodItemFixture {
-                is_settled: false,
-                nod_id: derive_poseidon_entity_id(owner, day).unwrap(),
-                owner,
-                gratis_load_minor: U256::from(123_456),
-                worldwide_day: day,
-                league_id: 7,
-                bucket_key: NodContract::bucket_key(day, U256::from(5), 978),
-                issuance_currency: 840,
-                reference_currency: 978,
-                issued_at: 1_788_652_800 + height,
-            },
-            U256::from(5),
-        );
-        evm.set_block_number(height);
-        let first_event = evm.get_ordered_events().len();
-        let scope = ExecutionScope::with_parent_tree(
-            Arc::new(MdbxAuthenticatedTree::open(ce.clone(), identity).unwrap()),
-            CeWorkConfig::new(0, 0, u64::MAX),
-        );
-        let seal = StorageHandle::enter(&mut evm, |storage| {
-            begin_block(storage.clone(), &scope).unwrap();
-            api::add_nod(&storage, &scope, &readers, &item, U256::from(5)).unwrap();
-            end_block(storage, &scope).unwrap()
-        });
-        let hash = B256::repeat_byte(height as u8);
-        let batch = seal.staged_tree_batch.freeze(hash);
-        ce.apply_finalized(&batch).unwrap();
-        identity = ExactParentIdentity {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            block_number: height,
-            block_hash: hash,
-            root: seal.new_root,
-        };
-        StorageHandle::enter(&mut evm, |storage| {
-            assert_eq!(
-                NodContract::new(storage)
-                    .bucket_nod_count
-                    .read(&item.bucket_key)
-                    .unwrap(),
-                height as u32
-            );
-        });
+        let (item, next_identity, first_event) =
+            mint_authenticated_nod(&mut evm, &ce, identity, &readers, height);
+        identity = next_identity;
+        assert_bucket_membership(&mut evm, &item, height);
         if height == 2 {
             // CE already includes the second member, while RocksDB is still at block 1.
             // The existing NOD and its shared bucket remain readable without a bucket rewrite.
-            assert_eq!(projector.state().checkpoint.unwrap().block_number, 1);
+            assert_projection_checkpoint(&projector, 1);
             assert_authenticated_nods(&mut evm, &ce, identity, &readers, &items);
         }
         project_mutation_receipt(&mut projector, &evm, first_event, identity);
@@ -251,41 +214,52 @@ fn production_nod_receipts_and_ce_seal_agree_with_rocksdb_after_reopen() {
     let reopened_ce = Arc::new(CeMdbx::open(&ce_path, environment, genesis_marker).unwrap());
     let reopened_rocks = Arc::new(RocksDbStorage::open(&rocks_path).unwrap());
     let reopened_projector =
-        OffchainDataProjection::open(config, reopened_rocks.clone(), reopened_rocks.clone())
-            .unwrap();
-    assert_eq!(
-        reopened_projector.state().checkpoint.unwrap().block_number,
-        2
-    );
+        open_projection(config, reopened_rocks.clone(), reopened_rocks.clone()).unwrap();
+    assert_projection_checkpoint(&reopened_projector, 2);
     let (failure_sender, failures) = tokio::sync::watch::channel(None);
-    let reopened_readers =
-        RuntimeBodyReaders::new_supervised(reopened_rocks.clone(), failure_sender);
+    let reopened_readers = supervised_runtime_body_readers(reopened_rocks.clone(), failure_sender);
     assert_authenticated_nods(&mut evm, &reopened_ce, identity, &reopened_readers, &items);
 
     // A changed field must fail authentication.
     // This read error must not stop the node.
-    let mut changed = items.remove(0);
-    let next_amount = outbe_nod::api::calculation_amount(&changed).unwrap() + U256::from(1);
-    outbe_nod::test_support::set_amount(&mut changed, next_amount);
-    outbe_nod::NodRepositoryWriter::new(reopened_rocks.clone(), reopened_rocks)
-        .put_nod(&changed)
-        .unwrap();
-    let scope = ExecutionScope::with_parent_tree(
-        Arc::new(MdbxAuthenticatedTree::open(reopened_ce, identity).unwrap()),
-        CeWorkConfig::new(0, 0, u64::MAX),
+    assert_corrupt_read_is_nonfatal(
+        &mut evm,
+        &reopened_readers,
+        CorruptNodFixture {
+            ce: reopened_ce,
+            rocks: reopened_rocks,
+            identity,
+            item: items.remove(0),
+        },
+        &failures,
     );
-    let error = StorageHandle::enter(&mut evm, |storage| {
-        begin_block(storage.clone(), &scope).unwrap();
-        outbe_compressed_entities::read(
-            storage,
-            &scope,
-            &reopened_readers,
-            EntityRef::NodItem(changed.nod_id),
-        )
-        .unwrap_err()
+}
+
+fn assert_bucket_membership(evm: &mut HashMapStorageProvider, item: &NodItemState, height: u64) {
+    StorageHandle::enter(evm, |storage| {
+        assert_eq!(
+            NodContract::new(storage)
+                .bucket_nod_count
+                .read(&item.bucket_key)
+                .unwrap(),
+            height as u32
+        );
     });
+}
+
+fn assert_projection_checkpoint(projector: &OffchainDataProjection, height: u64) {
+    assert_eq!(projector.state().checkpoint.unwrap().block_number, height);
+}
+
+fn assert_corrupt_read_is_nonfatal(
+    evm: &mut HashMapStorageProvider,
+    readers: &RuntimeBodyReaders,
+    fixture: CorruptNodFixture,
+    failures: &tokio::sync::watch::Receiver<Option<outbe_offchain_data::RuntimeBodyFailure>>,
+) {
+    let error = read_corrupt_nod(evm, readers, fixture);
     assert_corruption_diagnostics(&error);
-    reopened_readers.report_precompile_error(&error);
+    readers.report_precompile_error(&error);
     assert!(failures.borrow().is_none());
 }
 
@@ -305,4 +279,84 @@ fn assert_corruption_diagnostics(error: &outbe_primitives::error::PrecompileErro
     ] {
         assert!(message.contains(field), "missing {field}: {message}");
     }
+}
+
+fn mint_authenticated_nod(
+    evm: &mut HashMapStorageProvider,
+    ce: &Arc<CeMdbx>,
+    identity: ExactParentIdentity,
+    readers: &impl outbe_compressed_entities::ParentBodySource,
+    height: u64,
+) -> (outbe_nod::NodItemState, ExactParentIdentity, usize) {
+    let day = WorldwideDay::new(20260906);
+    let owner = Address::repeat_byte(height as u8);
+    let item = outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: derive_poseidon_entity_id(owner, day).unwrap(),
+            owner,
+            gratis_load_minor: U256::from(123_456),
+            worldwide_day: day,
+            league_id: 7,
+            bucket_key: outbe_nod::identity::bucket_key(day, U256::from(5), 978),
+            issuance_currency: 840,
+            reference_currency: 978,
+            issued_at: 1_788_652_800 + height,
+        },
+        U256::from(5),
+    );
+    evm.set_block_number(height);
+    let first_event = evm.get_ordered_events().len();
+    let scope = execution_scope::with_parent_tree(
+        Arc::new(MdbxAuthenticatedTree::open(ce.clone(), identity).unwrap()),
+        CeWorkConfig::new(0, 0, u64::MAX),
+    );
+    let seal = StorageHandle::enter(evm, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        api::add_nod(&storage, &scope, readers, &item, U256::from(5)).unwrap();
+        end_block(storage, &scope).unwrap()
+    });
+    let hash = B256::repeat_byte(height as u8);
+    let batch = seal.staged_tree_batch.freeze(hash);
+    ce.apply_finalized(&batch).unwrap();
+    let identity = ExactParentIdentity {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        block_number: height,
+        block_hash: hash,
+        root: seal.new_root,
+    };
+    (item, identity, first_event)
+}
+
+struct CorruptNodFixture {
+    ce: Arc<CeMdbx>,
+    rocks: Arc<RocksDbStorage>,
+    identity: ExactParentIdentity,
+    item: outbe_nod::NodItemState,
+}
+fn read_corrupt_nod(
+    evm: &mut HashMapStorageProvider,
+    readers: &outbe_offchain_data::RuntimeBodyReaders,
+    fixture: CorruptNodFixture,
+) -> outbe_primitives::error::PrecompileError {
+    let CorruptNodFixture {
+        ce,
+        rocks,
+        identity,
+        mut item,
+    } = fixture;
+    let next_amount = outbe_nod::api::calculation_amount(&item).unwrap() + U256::from(1);
+    outbe_nod::test_support::set_amount(&mut item, next_amount);
+    outbe_nod::nod_writer(rocks.clone(), rocks)
+        .put_nod(&item)
+        .unwrap();
+    let scope = execution_scope::with_parent_tree(
+        Arc::new(MdbxAuthenticatedTree::open(ce, identity).unwrap()),
+        CeWorkConfig::new(0, 0, u64::MAX),
+    );
+    StorageHandle::enter(evm, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        outbe_compressed_entities::read(storage, &scope, readers, EntityRef::NodItem(item.nod_id))
+            .unwrap_err()
+    })
 }

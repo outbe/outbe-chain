@@ -13,37 +13,45 @@ pub fn derive_gratis_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> 
 /// Per-account view key: read capability AND the AEAD key for the account's
 /// balance blobs, so a holder can decrypt its own state client-side.
 pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
-    GRATIS.derive_view_key(state_key, account)
+    GRATIS.account_keys.derive_view_key(state_key, account)
 }
 
 /// Per-account modify key: authorizes writes (via HMAC). It never decrypts state.
 pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
-    GRATIS.derive_modify_key(state_key, account)
+    GRATIS.account_keys.derive_modify_key(state_key, account)
 }
 
-pub fn modify_mac(
-    modify_key: &[u8; 32],
-    account: Address,
-    op: GratisOp,
-    amount: U256,
-    op_nonce: u64,
-    chain_id: B256,
-) -> [u8; 32] {
-    GRATIS.modify_mac(modify_key, account, op as u8, amount, op_nonce, chain_id)
+/// The account operation covered by a Gratis authorization.
+pub struct ModifyOperation {
+    pub account: Address,
+    pub op: GratisOp,
+    pub amount: U256,
+    pub op_nonce: u64,
+    pub chain_id: B256,
 }
 
-fn verify_modify_auth(
-    modify_key: &[u8; 32],
-    account: Address,
-    op: GratisOp,
-    amount: U256,
-    op_nonce: u64,
-    chain_id: B256,
-    mac: &[u8; 32],
-) -> bool {
-    GRATIS.verify_modify_auth(
-        modify_key, account, op as u8, amount, op_nonce, chain_id, mac,
-    )
+impl ModifyOperation {
+    fn authorization(&self) -> crate::confidential::ModifyAuthorization {
+        crate::confidential::ModifyAuthorization {
+            account: self.account,
+            op_tag: self.op as u8,
+            amount: self.amount,
+            op_nonce: self.op_nonce,
+            chain_id: self.chain_id,
+        }
+    }
+}
+
+pub fn modify_mac(modify_key: &[u8; 32], operation: &ModifyOperation) -> [u8; 32] {
+    GRATIS
+        .authorization
+        .modify_mac(modify_key, &operation.authorization())
+}
+
+fn verify_modify_auth(modify_key: &[u8; 32], operation: &ModifyOperation, mac: &[u8; 32]) -> bool {
+    GRATIS
+        .authorization
+        .verify_modify_auth(modify_key, &operation.authorization(), mac)
 }
 
 /// Decrypt a `version || ct` amount blob. An empty blob is a fresh slot (`0`).
@@ -104,49 +112,62 @@ pub fn apply_op(state_key: &[u8; 32], req: &GratisOpRequest) -> GratisOpResult {
     result
 }
 
-fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
-    use outbe_primitives::addresses::CREDIS_ADDRESS;
+fn prepare_owner_result(
+    state_key: &[u8; 32],
+    req: &GratisOpRequest,
+    r: &mut GratisOpResult,
+) -> Result<Option<&'static str>> {
     use outbe_protocol::codec;
     use outbe_zk_canonical::pledgenote;
+    let modify_key = derive_modify_key(state_key, req.account)?;
+    if !verify_modify_auth(
+        &modify_key,
+        &ModifyOperation {
+            account: req.account,
+            op: req.op,
+            amount: req.amount,
+            op_nonce: req.modify_auth.op_nonce,
+            chain_id: req.chain_id,
+        },
+        &req.modify_auth.mac,
+    ) {
+        return Ok(Some("invalid modify authorization"));
+    }
+    let Some(nonce) = req.modify_auth.op_nonce.checked_add(1) else {
+        return Ok(Some("modify nonce exhausted"));
+    };
+    r.next_op_nonce = nonce;
+    if matches!(req.op, GratisOp::Pledge) {
+        let entropy = outbe_tee::protocol::initial_pledge_secret(
+            &modify_key,
+            req.amount,
+            req.modify_auth.op_nonce,
+        );
+        let secret = codec::field_from_be_bytes(&entropy);
+        if secret == pledgenote::Field::from(0) {
+            return Ok(Some("zero note secret"));
+        }
+        let serial = pledgenote::note_sn(req.account, secret)
+            .map_err(|_| crate::errors::TeeError::DecryptFailed)?;
+        if serial == pledgenote::Field::from(0) {
+            return Ok(Some("zero note serial"));
+        }
+        r.note_serial =
+            codec::field_to_b256(&serial).map_err(|_| crate::errors::TeeError::DecryptFailed)?;
+    }
+    Ok(None)
+}
+
+fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
+    use outbe_primitives::addresses::CREDIS_ADDRESS;
     if req.amount.is_zero() || req.account.is_zero() {
         return Ok(reject("amount and account must be nonzero"));
     }
     let owner_op = matches!(req.op, GratisOp::Mint | GratisOp::Burn | GratisOp::Pledge);
     let mut r = base_result();
     if owner_op {
-        let modify_key = derive_modify_key(state_key, req.account)?;
-        if !verify_modify_auth(
-            &modify_key,
-            req.account,
-            req.op,
-            req.amount,
-            req.modify_auth.op_nonce,
-            req.chain_id,
-            &req.modify_auth.mac,
-        ) {
-            return Ok(reject("invalid modify authorization"));
-        }
-        let Some(nonce) = req.modify_auth.op_nonce.checked_add(1) else {
-            return Ok(reject("modify nonce exhausted"));
-        };
-        r.next_op_nonce = nonce;
-        if matches!(req.op, GratisOp::Pledge) {
-            let entropy = outbe_tee::protocol::initial_pledge_secret(
-                &modify_key,
-                req.amount,
-                req.modify_auth.op_nonce,
-            );
-            let secret = codec::field_from_be_bytes(&entropy);
-            if secret == pledgenote::Field::from(0) {
-                return Ok(reject("zero note secret"));
-            }
-            let serial = pledgenote::note_sn(req.account, secret)
-                .map_err(|_| crate::errors::TeeError::DecryptFailed)?;
-            if serial == pledgenote::Field::from(0) {
-                return Ok(reject("zero note serial"));
-            }
-            r.note_serial = codec::field_to_b256(&serial)
-                .map_err(|_| crate::errors::TeeError::DecryptFailed)?;
+        if let Some(reason) = prepare_owner_result(state_key, req, &mut r)? {
+            return Ok(reject(reason));
         }
     } else if matches!(
         req.op,
@@ -200,7 +221,16 @@ mod tests {
     fn auth(sk: &[u8; 32], acct: Address, op: GratisOp, amount: U256, nonce: u64) -> ModifyAuth {
         let mk = derive_modify_key(sk, acct).unwrap();
         ModifyAuth {
-            mac: modify_mac(&mk, acct, op, amount, nonce, CHAIN),
+            mac: modify_mac(
+                &mk,
+                &ModifyOperation {
+                    account: acct,
+                    op,
+                    amount,
+                    op_nonce: nonce,
+                    chain_id: CHAIN,
+                },
+            ),
             op_nonce: nonce,
         }
     }
@@ -247,7 +277,16 @@ mod tests {
             U256::from(1000u64),
         );
         let mk = derive_modify_key(&sk, alice()).unwrap();
-        let mac = modify_mac(&mk, alice(), GratisOp::Mint, U256::from(1000u64), 0, CHAIN);
+        let mac = modify_mac(
+            &mk,
+            &ModifyOperation {
+                account: alice(),
+                op: GratisOp::Mint,
+                amount: U256::from(1000u64),
+                op_nonce: 0,
+                chain_id: CHAIN,
+            },
+        );
         assert_eq!(
             alloy_primitives::hex::encode(mac),
             "688879e6e80acafeb78b7804de6edbd1032d95b2b654a049824c269c4aace152"

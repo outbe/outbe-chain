@@ -89,7 +89,7 @@ fn revert_reason(result: &ExecutionResult) -> Option<String> {
 /// Runs `calldata` against `to` with `value` and returns the whole outcome so
 /// callers can assert on post-state as well as the result.
 fn run(db: CacheDB<EmptyDB>, to: Address, value: u64, calldata: Bytes) -> ResultAndState {
-    let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+    let mut evm = OutbeEvmFactory::default().create_evm(db, test_env());
     let tx = TxEnv::builder()
         .caller(EOA)
         .nonce(0)
@@ -324,7 +324,7 @@ fn native_transfer_to_stablecoin_class_address_succeeds() {
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(EOA, funded(1_000_000_000));
 
-    let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+    let mut evm = OutbeEvmFactory::default().create_evm(db, test_env());
     let tx = TxEnv::builder()
         .caller(EOA)
         .nonce(0)
@@ -492,7 +492,7 @@ fn execute_delegation_call(
         .gas_limit(GAS_LIMIT)
         .build()
         .unwrap();
-    let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+    let mut evm = OutbeEvmFactory::default().create_evm(db, test_env());
     if normalize {
         evm.set_inspector_enabled(inspect);
         evm.transact_raw(tx).unwrap()
@@ -799,13 +799,13 @@ fn assert_direct_native_value_rejection(inspect: bool) {
 #[test]
 fn system_call_to_native_delegation_executes_empty_code() {
     use revm::SystemCallEvm;
-    let mut baseline = OutbeEvmFactory::new()
+    let mut baseline = OutbeEvmFactory::default()
         .create_evm(delegation_db(false), test_env())
         .into_inner();
     let expected = baseline
         .system_call_with_caller(EOA, BORROWER, Bytes::new())
         .unwrap();
-    let mut actual = OutbeEvmFactory::new().create_evm(delegation_db(true), test_env());
+    let mut actual = OutbeEvmFactory::default().create_evm(delegation_db(true), test_env());
     let actual = actual
         .transact_system_call(EOA, BORROWER, Bytes::new())
         .unwrap();
@@ -854,7 +854,7 @@ fn borrowed_delegation_outcome(
         0,
         0,
     );
-    let mut evm = OutbeEvmFactory::new().create_evm(db, test_env());
+    let mut evm = OutbeEvmFactory::default().create_evm(db, test_env());
     // A native caller is already loaded by its enclosing frame.
     evm.ctx_mut().journal_mut().load_account_with_code(EOA)?;
     let outcome = outbe_evm::sub_call::run(

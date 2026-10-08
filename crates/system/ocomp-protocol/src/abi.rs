@@ -135,6 +135,39 @@ fn decode_dynamic_bytes_call(
     payload_cap: usize,
 ) -> Result<&[u8], ProtocolError> {
     const ABI_HEAD_LEN: usize = 68;
+    let payload_len = dynamic_bytes_payload_len(calldata, selector, payload_cap)?;
+    let padded_len = payload_len.checked_add(31).map(|value| value & !31).ok_or(
+        ProtocolError::IntegerOverflow {
+            what: "dynamic ABI padding",
+        },
+    )?;
+    let expected_len =
+        ABI_HEAD_LEN
+            .checked_add(padded_len)
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "dynamic ABI calldata length",
+            })?;
+    if calldata.len() != expected_len {
+        return Err(ProtocolError::InvalidInvariant("dynamic ABI length"));
+    }
+    let payload_end =
+        ABI_HEAD_LEN
+            .checked_add(payload_len)
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "dynamic ABI payload end",
+            })?;
+    if !calldata[payload_end..].iter().all(|byte| *byte == 0) {
+        return Err(ProtocolError::InvalidInvariant("dynamic ABI padding"));
+    }
+    Ok(&calldata[ABI_HEAD_LEN..payload_end])
+}
+
+fn dynamic_bytes_payload_len(
+    calldata: &[u8],
+    selector: [u8; 4],
+    payload_cap: usize,
+) -> Result<usize, ProtocolError> {
+    const ABI_HEAD_LEN: usize = 68;
     if calldata.len() < ABI_HEAD_LEN {
         return Err(ProtocolError::UnexpectedEof {
             offset: 0,
@@ -161,28 +194,5 @@ fn decode_dynamic_bytes_call(
             actual: payload_len,
         });
     }
-    let padded_len = payload_len.checked_add(31).map(|value| value & !31).ok_or(
-        ProtocolError::IntegerOverflow {
-            what: "dynamic ABI padding",
-        },
-    )?;
-    let expected_len =
-        ABI_HEAD_LEN
-            .checked_add(padded_len)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "dynamic ABI calldata length",
-            })?;
-    if calldata.len() != expected_len {
-        return Err(ProtocolError::InvalidInvariant("dynamic ABI length"));
-    }
-    let payload_end =
-        ABI_HEAD_LEN
-            .checked_add(payload_len)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "dynamic ABI payload end",
-            })?;
-    if !calldata[payload_end..].iter().all(|byte| *byte == 0) {
-        return Err(ProtocolError::InvalidInvariant("dynamic ABI padding"));
-    }
-    Ok(&calldata[ABI_HEAD_LEN..payload_end])
+    Ok(payload_len)
 }

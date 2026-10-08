@@ -73,135 +73,6 @@ fn record_sha256(namespace: &str, record: &ScanEntry) -> Result<String> {
     ))?))
 }
 
-/// Create once, privately. A restart validates and reuses the operator's exact file.
-pub(crate) fn ensure_node_config(cfg: &Config, index: usize) -> Result<()> {
-    let path = cfg.projection_storage_config(index);
-    reject_symlink_path(&path)?;
-    if path.exists() {
-        storage_config(cfg, index)?;
-        if cfg.projection_backend == crate::env::ProjectionBackend::Mongodb {
-            mongo::ensure(cfg)?;
-        }
-        return Ok(());
-    }
-    fs::create_dir_all(cfg.validator_dir(index))?;
-    let directory = cfg.validator_dir(index).canonicalize()?;
-    reject_symlink_path(&directory.join("data/offchain"))?;
-    reject_symlink_path(&directory.join("ocomp/rocksdb-secondary"))?;
-    let backend = match cfg.projection_backend {
-        crate::env::ProjectionBackend::Rocksdb => StorageBackend::RocksDb(RocksDbConfig {
-            path: directory.join("data/offchain"),
-            secondary_path: directory.join("ocomp/rocksdb-secondary"),
-        }),
-        crate::env::ProjectionBackend::Mongodb => {
-            mongo::ensure(cfg)?;
-            StorageBackend::MongoDb(mongo::config(cfg, index)?)
-        }
-    };
-    let document = StorageConfig {
-        start_block: 1,
-        backend,
-    }
-    .to_toml()?;
-    let mut file = tempfile::NamedTempFile::new_in(cfg.validator_dir(index))?;
-    file.write_all(document.as_bytes())?;
-    file.as_file().sync_all()?;
-    match file.persist_noclobber(&path) {
-        Ok(_) => {}
-        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            storage_config(cfg, index)?;
-        }
-        Err(error) => return Err(error.error.into()),
-    }
-    storage_config(cfg, index)?;
-    Ok(())
-}
-
-/// Recovered follower argv may already carry the flag from its original node launch.
-pub(crate) fn configure_node_command(
-    cfg: &Config,
-    index: usize,
-    command: &mut std::process::Command,
-) -> Result<()> {
-    ensure_node_config(cfg, index)?;
-    let expected = cfg.projection_storage_config(index);
-    let args = command.get_args().collect::<Vec<_>>();
-    let mut occurrences = 0;
-    for (position, argument) in args.iter().enumerate() {
-        let text = argument.to_string_lossy();
-        let path = if text == "--projection.storage-config" {
-            Some(std::path::PathBuf::from(
-                args.get(position + 1)
-                    .ok_or_else(|| eyre!("storage-config missing value"))?,
-            ))
-        } else {
-            text.strip_prefix("--projection.storage-config=")
-                .map(std::path::PathBuf::from)
-        };
-        if let Some(path) = path {
-            occurrences += 1;
-            if path != expected {
-                bail!("node role transition changed its projection storage config");
-            }
-        }
-    }
-    if occurrences > 1 {
-        bail!("duplicate projection storage config arguments");
-    }
-    if occurrences == 0 {
-        command.arg("--projection.storage-config").arg(expected);
-    }
-    Ok(())
-}
-
-/// Validate the exact scenario-owned storage identity at each consumer.
-/// This read-only check starts no service and changes no configuration.
-pub(crate) fn storage_config(cfg: &Config, index: usize) -> Result<StorageConfig> {
-    reject_symlink_path(&cfg.projection_storage_config(index))?;
-    let config = StorageConfig::load(cfg.projection_storage_config(index))?;
-    if cfg.projection_backend == crate::env::ProjectionBackend::Mongodb {
-        if config.start_block != 1
-            || config.backend != StorageBackend::MongoDb(mongo::config(cfg, index)?)
-        {
-            bail!("validator-{index}: E2E MongoDB storage identity changed");
-        }
-        return Ok(config);
-    }
-    let StorageBackend::RocksDb(ref rocks) = config.backend else {
-        bail!("E2E requires RocksDB storage for validator-{index}");
-    };
-    let expected = cfg.validator_dir(index).canonicalize()?;
-    reject_symlink_path(&rocks.path)?;
-    reject_symlink_path(&rocks.secondary_path)?;
-    if config.start_block != 1
-        || rocks.path != expected.join("data/offchain")
-        || rocks.secondary_path != expected.join("ocomp/rocksdb-secondary")
-    {
-        bail!("validator-{index}: E2E RocksDB storage identity changed");
-    }
-    Ok(config)
-}
-
-fn reject_symlink_path(path: &std::path::Path) -> Result<()> {
-    for ancestor in path.ancestors() {
-        if ancestor.as_os_str().is_empty() {
-            continue;
-        }
-        match fs::symlink_metadata(ancestor) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                bail!(
-                    "E2E storage path must not traverse symlink {}",
-                    ancestor.display()
-                );
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(())
-}
-
 fn session(cfg: &Config, index: usize) -> Result<StorageReaderHandle> {
     let config = storage_config(cfg, index)?;
     Ok(StorageProvider::new(config)?
@@ -210,11 +81,11 @@ fn session(cfg: &Config, index: usize) -> Result<StorageReaderHandle> {
         .open_session()?)
 }
 
-impl ProjectionFixture {
-    pub(crate) fn new(cfg: &Config) -> Self {
-        Self { cfg: cfg.clone() }
-    }
+pub(crate) fn projection_fixture(cfg: &Config) -> ProjectionFixture {
+    ProjectionFixture { cfg: cfg.clone() }
+}
 
+impl ProjectionFixture {
     /// The caller must stop all nodes before deliberate re-bootstrap.
     pub fn reset_projection_state(&self) -> Result<()> {
         let mut targets = Vec::new();
@@ -298,16 +169,6 @@ impl ProjectionFixture {
         self.run(move |cfg| projected_from_readers(&tribute_readers(&cfg, validator)?, &tx_hash))
     }
 
-    /// Read one Tribute from all entity partitions under an off-chain root.
-    pub fn observe_offchain_tribute(
-        offchain_root: &Path,
-        tx_hash: &str,
-    ) -> Result<ProjectedTribute> {
-        let scratch = tempfile::tempdir()?;
-        let readers = open_tribute_readers(offchain_root, scratch.path())?;
-        projected_from_readers(&readers, tx_hash)
-    }
-
     pub fn tribute_projection_snapshot(
         &self,
         validator: usize,
@@ -335,6 +196,13 @@ impl ProjectionFixture {
     }
 }
 
+/// Read one Tribute from all entity partitions under an off-chain root.
+pub fn observe_offchain_tribute(offchain_root: &Path, tx_hash: &str) -> Result<ProjectedTribute> {
+    let scratch = tempfile::tempdir()?;
+    let readers = open_tribute_readers(offchain_root, scratch.path())?;
+    projected_from_readers(&readers, tx_hash)
+}
+
 fn reset_targets(cfg: &Config, paths: [PathBuf; 2]) -> Result<Vec<PathBuf>> {
     let mut targets = Vec::new();
     for path in paths {
@@ -348,133 +216,6 @@ fn reset_targets(cfg: &Config, paths: [PathBuf; 2]) -> Result<Vec<PathBuf>> {
         targets.push(path);
     }
     Ok(targets)
-}
-
-fn projected_from_readers(
-    readers: &[StorageReaderHandle],
-    tx_hash: &str,
-) -> Result<ProjectedTribute> {
-    let record = find_primary(readers, tx_hash)?.1;
-    Ok(ProjectedTribute {
-        raw_id: WwdEntityId::try_from(record.key.as_bytes())?,
-        stored_body: record.value.as_bytes().to_vec(),
-    })
-}
-
-fn tribute_readers(cfg: &Config, index: usize) -> Result<Vec<StorageReaderHandle>> {
-    Ok(vec![session(cfg, index)?])
-}
-
-fn open_tribute_readers(
-    offchain_root: &Path,
-    secondary_root: &Path,
-) -> Result<Vec<StorageReaderHandle>> {
-    let source = outbe_offchain_storage::partitioned::adapters::RocksPartitionReadView::open(
-        offchain_root,
-        secondary_root,
-    )?;
-    Ok(vec![Arc::new(
-        outbe_offchain_storage::PartitionedStorage::read_only(
-            Arc::new(source),
-            outbe_offchain_data::entity_partition_routing()?,
-        ),
-    )])
-}
-
-fn find_primary(readers: &[StorageReaderHandle], tx_hash: &str) -> Result<(usize, ScanEntry)> {
-    let mut found = None;
-    for (index, reader) in readers.iter().enumerate() {
-        match primary(reader.as_ref(), tx_hash) {
-            Ok(entry) => {
-                if found.is_some() {
-                    bail!("multiple Tribute records for transaction {tx_hash}");
-                }
-                found = Some((index, entry));
-            }
-            Err(error) if error.to_string().contains("no Tribute") => {}
-            Err(error) => return Err(error),
-        }
-    }
-    found.ok_or_else(|| eyre!("no Tribute for transaction {tx_hash}"))
-}
-
-fn snapshot_across(
-    readers: &[StorageReaderHandle],
-    tx_hash: &str,
-) -> Result<TributeProjectionSnapshot> {
-    let (index, _) = find_primary(readers, tx_hash)?;
-    snapshot(readers[index].as_ref(), tx_hash)
-}
-
-fn primary(reader: &dyn StorageReader, tx_hash: &str) -> Result<ScanEntry> {
-    let namespace = Namespace::new(COLLECTIONS[0])?;
-    let mut after = None;
-    let mut found = None;
-    loop {
-        let page = reader.scan_prefix(
-            namespace.clone(),
-            ScanRequest::new(&[], after.as_ref(), 256)?,
-        )?;
-        for entry in page.entries {
-            if entry
-                .metadata
-                .as_ref()
-                .and_then(|m| m.get("tx_hash"))
-                .is_some_and(|tx| tx.eq_ignore_ascii_case(tx_hash))
-                && found.replace(entry).is_some()
-            {
-                bail!("multiple Tribute records for transaction {tx_hash}");
-            }
-        }
-        after = page.next_after;
-        if after.is_none() {
-            break;
-        }
-    }
-    found.ok_or_else(|| eyre!("no Tribute for transaction {tx_hash}"))
-}
-
-fn snapshot(reader: &dyn StorageReader, tx_hash: &str) -> Result<TributeProjectionSnapshot> {
-    let primary = primary(reader, tx_hash)?;
-    let raw_id = WwdEntityId::try_from(primary.key.as_bytes())?;
-    let (tribute_id, owner, day) = match decode_stored_tribute_v2(primary.value.as_bytes()) {
-        Ok(body) => (
-            body.context.tribute_id,
-            body.context.owner,
-            body.context.worldwide_day,
-        ),
-        Err(_) => {
-            let body = decode_stored_tribute_v1(primary.value.as_bytes())
-                .wrap_err("decode projected Tribute")?;
-            (body.tribute_id, body.owner, body.worldwide_day)
-        }
-    };
-    if tribute_id != raw_id {
-        bail!("Tribute primary key does not match its body");
-    }
-    let owner_key = [owner.as_slice(), raw_id.as_slice()].concat();
-    let day_key = [day.value().to_be_bytes().as_slice(), raw_id.as_slice()].concat();
-    let index = |name: &str, key: Vec<u8>| -> Result<ScanEntry> {
-        let key = Key::new(key)?;
-        let record = reader
-            .get_record(Namespace::new(name)?, &key)?
-            .ok_or_else(|| eyre!("missing {name} index"))?;
-        if !record.value.as_bytes().is_empty() {
-            bail!("{name} index value must be empty");
-        }
-        Ok(ScanEntry {
-            key,
-            value: record.value,
-            metadata: record.metadata,
-        })
-    };
-    Ok(TributeProjectionSnapshot {
-        records: [
-            primary,
-            index(COLLECTIONS[1], owner_key)?,
-            index(COLLECTIONS[2], day_key)?,
-        ],
-    })
 }
 
 impl Drop for ProjectionFixture {
@@ -580,9 +321,7 @@ mod tests {
             .to_string()
             .contains("requires RocksDB"));
         assert!(session(&cfg, 0).is_err());
-        assert!(ProjectionFixture::new(&cfg)
-            .reset_projection_state()
-            .is_err());
+        assert!(projection_fixture(&cfg).reset_projection_state().is_err());
         assert_eq!(fs::read_to_string(path).unwrap(), incompatible);
     }
 
@@ -627,9 +366,7 @@ mod tests {
         fs::write(external.path().join("sentinel"), "preserved").unwrap();
         assert!(ensure_node_config(&cfg, 0).is_err());
         assert!(session(&cfg, 0).is_err());
-        assert!(ProjectionFixture::new(&cfg)
-            .reset_projection_state()
-            .is_err());
+        assert!(projection_fixture(&cfg).reset_projection_state().is_err());
         assert_eq!(
             fs::read_to_string(external.path().join("sentinel")).unwrap(),
             "preserved"
@@ -670,9 +407,7 @@ mod tests {
         let mut config = StorageConfig::load(&path).unwrap();
         config.start_block = 2;
         fs::write(path, config.to_toml().unwrap()).unwrap();
-        assert!(ProjectionFixture::new(&cfg)
-            .reset_projection_state()
-            .is_err());
+        assert!(projection_fixture(&cfg).reset_projection_state().is_err());
         assert_eq!(fs::read_to_string(&sentinel).unwrap(), "preserved");
     }
 
@@ -718,3 +453,11 @@ mod tests {
             .unwrap();
     }
 }
+
+mod configuration;
+mod tribute;
+#[cfg(any(test, feature = "ocomp-integration"))]
+pub(crate) use configuration::ensure_node_config;
+use configuration::reject_symlink_path;
+pub(crate) use configuration::{configure_node_command, storage_config};
+use tribute::*;

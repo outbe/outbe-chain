@@ -572,7 +572,6 @@ mod tests {
     use super::*;
     use crate::{
         aggregate::{ValidatedWwdAggregate, WwdDayType, WwdStatus},
-        fixture_kernel::ActivationFixture,
         ocomp::schema::{poc_schema_limits, ResponseDeadlineKey},
         schema::{
             day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord,
@@ -722,7 +721,8 @@ mod tests {
 
     #[test]
     fn aggregate_requires_exact_response_deadline_equivalence() {
-        let mut missing = ActivationFixture::new_voting(100, 1_700_000_000, true);
+        let mut missing =
+            crate::fixture_kernel::ActivationScenario::new_voting(100, 1_700_000_000, true);
         missing
             .provider
             .enter(|storage| {
@@ -736,7 +736,8 @@ mod tests {
             })
             .unwrap();
 
-        let mut stale = ActivationFixture::new_voting(100, 1_700_000_000, true);
+        let mut stale =
+            crate::fixture_kernel::ActivationScenario::new_voting(100, 1_700_000_000, true);
         stale
             .provider
             .enter(|storage| {

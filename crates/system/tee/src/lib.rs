@@ -10,6 +10,7 @@
 //! lives only in `bin/outbe-tee-enclave`. Here we keep the message contract and
 //! transport.
 
+pub mod balance_client;
 pub mod call_context;
 pub mod canary;
 pub mod client;
@@ -58,7 +59,7 @@ pub use client_global::{
     is_enclave_configured, prepare_gramine_direct_dev_onboarding_artifact_v1,
     resident_offer_public_key_state_v1, resident_offer_public_key_v1, try_with_enclave,
     verify_dcap_evidence_v1, verify_dcap_registration_and_seal_v1, InstallError,
-    RuntimeEnclaveClient,
+    RegistrationVerificationRequest, RuntimeEnclaveClient,
 };
 #[cfg(feature = "native-dcap")]
 pub use dcap_v1::{dcap_collateral_validity_window_v1, DcapCollateralValidityWindowV1};

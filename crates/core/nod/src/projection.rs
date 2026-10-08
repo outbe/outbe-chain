@@ -67,19 +67,19 @@ const BUCKETS: BodyKind<NodBucketState> = BodyKind {
     plan_delete: plan_bucket_delete,
 };
 
-impl NodProjectionSession {
-    pub(crate) fn from_records(
-        nod_ids: &[WwdEntityId],
-        items: Vec<Option<NodItemRecordWithMetadata>>,
-        bucket_ids: &[WwdEntityId],
-        buckets: Vec<Option<NodBucketRecordWithMetadata>>,
-    ) -> Self {
-        Self {
-            items: nod_ids.iter().copied().zip(items).collect(),
-            buckets: bucket_ids.iter().copied().zip(buckets).collect(),
-        }
+pub(crate) fn session_from_records(
+    nod_ids: &[WwdEntityId],
+    items: Vec<Option<NodItemRecordWithMetadata>>,
+    bucket_ids: &[WwdEntityId],
+    buckets: Vec<Option<NodBucketRecordWithMetadata>>,
+) -> NodProjectionSession {
+    NodProjectionSession {
+        items: nod_ids.iter().copied().zip(items).collect(),
+        buckets: bucket_ids.iter().copied().zip(buckets).collect(),
     }
+}
 
+impl NodProjectionSession {
     /// Returns the current item body from the repository snapshot or in-block overlay.
     pub fn current_item(
         &self,

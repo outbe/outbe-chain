@@ -179,81 +179,16 @@ fn nod_fields_match_public_inputs(world: &mut World) {
         .ocomp_certified_generation
         .as_ref()
         .expect("certified Nod set");
-    let ports = world.validators.committee_ports();
+    let arithmetic = authenticated_arithmetic_inputs(world, request);
+    let InputArithmetic {
+        request,
+        ref ports,
+        ref checkpoint,
+        ref intent,
+        inputs,
+    } = arithmetic;
     let height = request.request_height;
-    world
-        .rpc
-        .wait_finalized_checkpoint(&ports, height, 120)
-        .expect("input checkpoint");
-    let checkpoint = world
-        .rpc
-        .checkpoint_at(ports[0], height)
-        .expect("input checkpoint identity");
-    assert_eq!(checkpoint.block_hash, request.request_block_hash);
-    let intent = world
-        .rpc
-        .ocomp_job_record_at_on(ports[0], request.intent_id, height)
-        .expect("input JobIntent at request height")
-        .intent;
-    // Processing retires the current Tribute partition. Retain independently
-    // authenticated inputs before that transition. Never read result bodies as
-    // the source of expected economic fields.
-    let inputs = world
-        .state
-        .ocomp_nod_input_bodies
-        .as_ref()
-        .expect("authenticated inputs captured before processing");
-    for body in inputs {
-        assert_eq!(body.worldwide_day.value(), request.worldwide_day);
-    }
-    assert_eq!(intent.authenticated_day_count as usize, inputs.len());
-    assert_eq!(
-        intent.authenticated_day_nominal,
-        inputs
-            .iter()
-            .map(|body| body.nominal_amount_minor)
-            .sum::<U256>()
-    );
-    let mut expected_league = None;
-    for &port in &ports {
-        assert_eq!(
-            world
-                .rpc
-                .ocomp_job_record_at_on(port, request.intent_id, height)
-                .expect("peer input JobIntent")
-                .intent,
-            intent,
-            "input intent on {port}"
-        );
-        for body in inputs {
-            let slot = league_snapshot_slot(request.worldwide_day, body.owner);
-            let raw = eth::raw_json_with_params(
-                &world.rpc.url(port),
-                "eth_getStorageAt",
-                serde_json::json!([
-                    crate::internal::addresses::WWD_ADDR,
-                    slot,
-                    format!("0x{height:x}")
-                ]),
-            )
-            .expect("input league slot");
-            let value: U256 = serde_json::from_value(raw).expect("canonical input league word");
-            let league = u16::try_from(value).expect("input league fits u16");
-            assert!(league > 0, "input league is available");
-            assert_eq!(
-                *expected_league.get_or_insert(league),
-                league,
-                "one-league fixture and all-validator input parity"
-            );
-        }
-        assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, height)
-                .expect("recheck input checkpoint"),
-            checkpoint
-        );
-    }
+    let expected_league = assert_input_leagues(world, &arithmetic);
     if inputs.len() == 1 {
         let expected = super::oracle_expectations::fresh_wwd_price(world, height);
         assert_eq!(
@@ -296,4 +231,108 @@ fn nod_fields_match_public_inputs(world: &mut World) {
             "expected_actions": expected.iter().map(|action| format!("{action:?}")).collect::<Vec<_>>(),
         })
     );
+}
+
+struct InputArithmetic<'a> {
+    request: &'a crate::world::rpc::OcompPublicJobRequestV1,
+    ports: Vec<u16>,
+    checkpoint: crate::world::rpc::FinalizedCheckpoint,
+    intent: outbe_ocomp_protocol::intent::JobIntentV1,
+    inputs: &'a [TributeBodyV1],
+}
+fn authenticated_arithmetic_inputs<'a>(
+    world: &'a World,
+    request: &'a crate::world::rpc::OcompPublicJobRequestV1,
+) -> InputArithmetic<'a> {
+    let ports = world.validators.committee_ports();
+    let height = request.request_height;
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, height, 120)
+        .expect("input checkpoint");
+    let checkpoint = world
+        .rpc
+        .checkpoint_at(ports[0], height)
+        .expect("input checkpoint identity");
+    assert_eq!(checkpoint.block_hash, request.request_block_hash);
+    let intent = world
+        .rpc
+        .ocomp_job_record_at_on(ports[0], request.intent_id, height)
+        .expect("input JobIntent at request height")
+        .intent;
+    // Processing retires the current Tribute partition. Retain independently
+    // authenticated inputs before that transition. Never read result bodies as
+    // the source of expected economic fields.
+    let inputs = world
+        .state
+        .ocomp_nod_input_bodies
+        .as_ref()
+        .expect("authenticated inputs captured before processing");
+    for body in inputs {
+        assert_eq!(body.worldwide_day.value(), request.worldwide_day);
+    }
+    assert_eq!(intent.authenticated_day_count as usize, inputs.len());
+    assert_eq!(
+        intent.authenticated_day_nominal,
+        inputs
+            .iter()
+            .map(|body| body.nominal_amount_minor)
+            .sum::<U256>()
+    );
+    InputArithmetic {
+        request,
+        ports,
+        checkpoint,
+        intent,
+        inputs,
+    }
+}
+fn assert_input_leagues(world: &World, arithmetic: &InputArithmetic<'_>) -> Option<u16> {
+    let request = arithmetic.request;
+    let ports = &arithmetic.ports;
+    let checkpoint = &arithmetic.checkpoint;
+    let intent = &arithmetic.intent;
+    let inputs = arithmetic.inputs;
+    let height = request.request_height;
+    let mut expected_league = None;
+    for &port in ports {
+        assert_eq!(
+            world
+                .rpc
+                .ocomp_job_record_at_on(port, request.intent_id, height)
+                .expect("peer input JobIntent")
+                .intent,
+            *intent,
+            "input intent on {port}"
+        );
+        for body in inputs {
+            let slot = league_snapshot_slot(request.worldwide_day, body.owner);
+            let raw = eth::raw_json_with_params(
+                &world.rpc.url(port),
+                "eth_getStorageAt",
+                serde_json::json!([
+                    crate::internal::addresses::WWD_ADDR,
+                    slot,
+                    format!("0x{height:x}")
+                ]),
+            )
+            .expect("input league slot");
+            let value: U256 = serde_json::from_value(raw).expect("canonical input league word");
+            let league = u16::try_from(value).expect("input league fits u16");
+            assert!(league > 0, "input league is available");
+            assert_eq!(
+                *expected_league.get_or_insert(league),
+                league,
+                "one-league fixture and all-validator input parity"
+            );
+        }
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, height)
+                .expect("recheck input checkpoint"),
+            *checkpoint
+        );
+    }
+    expected_league
 }

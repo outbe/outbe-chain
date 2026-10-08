@@ -281,66 +281,76 @@ impl StorageReader for BudgetedStorageReader {
 /// That migration writes the shared database and the day databases.
 #[derive(Clone)]
 pub struct RuntimeBodyReaders {
+    execution: ExecutionBodyReadSession,
+}
+
+#[derive(Clone)]
+struct RuntimeReaderFactory {
     storage: StorageReaderHandle,
-    tribute: TributeRepositoryReader,
-    nod: NodRepositoryReader,
     failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
-    budgets: Arc<ExecutionReadBudgets>,
     days: Option<DayDatabaseRoute>,
 }
 
-impl RuntimeBodyReaders {
-    /// Builds both domain readers over one shared storage adapter.
-    #[must_use]
-    pub fn new(storage: StorageReaderHandle) -> Self {
-        Self::build(storage, None, None)
-    }
+#[derive(Clone)]
+struct ExecutionBodyReadSession {
+    factory: RuntimeReaderFactory,
+    tribute: TributeRepositoryReader,
+    nod: NodRepositoryReader,
+    budgets: Arc<ExecutionReadBudgets>,
+}
 
-    /// Builds supervised readers whose infrastructure failures share the ExEx outage lifecycle.
-    #[must_use]
-    pub fn new_supervised(
-        storage: StorageReaderHandle,
-        failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
-    ) -> Self {
-        Self::build(storage, Some(failure_sender), None)
+/// Builds both domain readers over one shared storage adapter.
+#[must_use]
+pub fn runtime_body_readers(storage: StorageReaderHandle) -> RuntimeBodyReaders {
+    RuntimeReaderFactory {
+        storage,
+        failure_sender: None,
+        days: None,
     }
+    .build()
+}
 
-    /// Supervised readers that load Tribute and Nod bodies from per-day databases.
-    #[must_use]
-    pub fn new_supervised_with_days(
-        storage: StorageReaderHandle,
-        days: DayDatabaseRoute,
-        failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
-    ) -> Self {
-        Self::build(storage, Some(failure_sender), Some(days))
+/// Builds supervised readers that share the ExEx outage lifecycle.
+#[must_use]
+pub fn supervised_runtime_body_readers(
+    storage: StorageReaderHandle,
+    failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
+) -> RuntimeBodyReaders {
+    RuntimeReaderFactory {
+        storage,
+        failure_sender: Some(failure_sender),
+        days: None,
     }
+    .build()
+}
 
-    /// Creates an execution-local budget scope over the same least-authority backend.
-    #[must_use]
-    pub fn fork_execution(&self) -> Self {
-        Self::build(
-            self.storage.clone(),
-            self.failure_sender.clone(),
-            self.days.clone(),
-        )
+/// Builds supervised readers for per-day Tribute and Nod databases.
+#[must_use]
+pub fn supervised_day_runtime_body_readers(
+    storage: StorageReaderHandle,
+    days: DayDatabaseRoute,
+    failure_sender: tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>,
+) -> RuntimeBodyReaders {
+    RuntimeReaderFactory {
+        storage,
+        failure_sender: Some(failure_sender),
+        days: Some(days),
     }
+    .build()
+}
 
-    fn build(
-        storage: StorageReaderHandle,
-        failure_sender: Option<tokio::sync::watch::Sender<Option<RuntimeBodyFailure>>>,
-        days: Option<DayDatabaseRoute>,
-    ) -> Self {
+impl RuntimeReaderFactory {
+    fn build(self) -> RuntimeBodyReaders {
         let budgets = Arc::new(ExecutionReadBudgets::default());
-        let raw_storage = storage.clone();
-        let (tribute, nod) = match &days {
+        let (tribute, nod) = match &self.days {
             None => {
                 let budgeted: StorageReaderHandle = Arc::new(BudgetedStorageReader {
-                    inner: storage,
+                    inner: self.storage.clone(),
                     budgets: budgets.clone(),
                 });
                 (
                     TributeRepositoryReader::new(budgeted.clone()),
-                    NodRepositoryReader::new(budgeted),
+                    outbe_nod::nod_reader(budgeted),
                 )
             }
             Some(route) => {
@@ -352,34 +362,40 @@ impl RuntimeBodyReaders {
                         route.databases.clone(),
                     )
                     .with_day_read_wrap(wrap.clone()),
-                    NodRepositoryReader::with_days(
-                        route.durable_reader.clone(),
-                        route.durable_writer.clone(),
-                        route.databases.clone(),
-                    )
-                    .with_day_read_wrap(wrap),
+                    outbe_nod::nod_reader(route.durable_reader.clone())
+                        .with_days(route.durable_writer.clone(), route.databases.clone())
+                        .with_day_read_wrap(wrap),
                 )
             }
         };
-        Self {
-            storage: raw_storage,
-            tribute,
-            nod,
-            failure_sender,
-            budgets,
-            days,
+        RuntimeBodyReaders {
+            execution: ExecutionBodyReadSession {
+                factory: self,
+                tribute,
+                nod,
+                budgets,
+            },
         }
+    }
+}
+
+impl RuntimeBodyReaders {
+    /// Creates a separate execution budget over the same storage backend.
+    #[must_use]
+    pub fn fork_execution(&self) -> Self {
+        self.execution.factory.clone().build()
     }
 
     /// Applies the caller's remaining execution budget to every body read in this executor.
     #[must_use]
     pub fn enter_execution_budget(&self, budget: ExecutionReadBudget) -> ExecutionReadBudgetGuard {
-        self.budgets.enter(budget)
+        self.execution.budgets.enter(budget)
     }
 
     /// Identifies the cancelled request in this execution-local reader scope.
     pub fn cancelled_read_budget(&self) -> Option<ExecutionReadBudget> {
-        self.budgets
+        self.execution
+            .budgets
             .active
             .lock()
             .ok()?
@@ -391,18 +407,18 @@ impl RuntimeBodyReaders {
     /// Returns the typed Tribute body reader.
     #[must_use]
     pub const fn tribute(&self) -> &TributeRepositoryReader {
-        &self.tribute
+        &self.execution.tribute
     }
 
     /// Returns the typed Nod item and bucket reader.
     #[must_use]
     pub const fn nod(&self) -> &NodRepositoryReader {
-        &self.nod
+        &self.execution.nod
     }
 
     /// Reports a technical read failure without exposing readiness write authority to domains.
     pub fn report_unavailable(&self) {
-        if let Some(sender) = &self.failure_sender {
+        if let Some(sender) = &self.execution.factory.failure_sender {
             sender.send_if_modified(|current| match current {
                 Some(RuntimeBodyFailure::Fatal(_)) => false,
                 Some(RuntimeBodyFailure::Unavailable { generation, .. }) => {
@@ -433,7 +449,7 @@ impl RuntimeBodyReaders {
         class: ProjectionFailureClass,
         message: impl Into<std::sync::Arc<str>>,
     ) {
-        if let Some(sender) = &self.failure_sender {
+        if let Some(sender) = &self.execution.factory.failure_sender {
             sender.send_replace(Some(RuntimeBodyFailure::Fatal(ProjectionFailure::new(
                 class, message,
             ))));
@@ -462,14 +478,17 @@ impl ParentBodySource for RuntimeBodyReaders {
     fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
         match entity {
             EntityRef::Tribute(tribute_id) => self
+                .execution
                 .tribute
                 .get_stored_body(tribute_id)
                 .map_err(map_tribute_parent_error),
             EntityRef::NodItem(nod_id) => self
+                .execution
                 .nod
                 .get_stored_item(nod_id)
                 .map_err(map_nod_parent_error),
             EntityRef::NodBucket(bucket_id) => self
+                .execution
                 .nod
                 .get_stored_bucket(bucket_id)
                 .map_err(map_nod_parent_error),
@@ -483,18 +502,25 @@ impl ParentBodySource for RuntimeBodyReaders {
     ) -> Result<IdPage, ParentBodySourceError> {
         match query {
             QueryRef::TributeByOwner(owner) => self
+                .execution
                 .tribute
                 .list_ids_by_owner(owner, request)
                 .map_err(map_tribute_parent_error),
             QueryRef::TributeByDay(worldwide_day) => self
+                .execution
                 .tribute
                 .list_ids_by_day(worldwide_day, request)
                 .map_err(map_tribute_parent_error),
             QueryRef::NodByOwner(owner) => self
+                .execution
                 .nod
                 .list_ids_by_owner(owner, request)
                 .map_err(map_nod_parent_error),
-            QueryRef::NodAll => self.nod.list_ids_all(request).map_err(map_nod_parent_error),
+            QueryRef::NodAll => self
+                .execution
+                .nod
+                .list_ids_all(request)
+                .map_err(map_nod_parent_error),
         }
     }
 }

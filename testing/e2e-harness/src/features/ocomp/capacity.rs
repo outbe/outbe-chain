@@ -81,11 +81,15 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize, batch
                         rpc.tribute_offer_for_network_with_params(
                             private_key,
                             CAPACITY_L2_CHAIN_ID,
-                            &worldwide_day,
-                            OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
-                            OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO,
-                            840,
-                            false,
+                            crate::world::rpc::TributeOfferParams {
+                                wwd: &worldwide_day,
+                                amounts: (
+                                    OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
+                                    OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO,
+                                ),
+                                currency: 840,
+                                exclude_from_intex_issuance: false,
+                            },
                         )
                         .ok_or_else(|| {
                             format!(
@@ -367,11 +371,13 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
     assert_eq!(quote.paymentMinor, body.settlementCostMinor);
     crate::features::settlement::fund_and_approve(
         world,
-        fixture.asset,
-        &private_key,
-        owner,
-        crate::internal::addresses::NOD_FACTORY_ADDR,
-        quote.paymentMinor,
+        crate::features::settlement::SettlementFunding {
+            asset: fixture.asset,
+            owner_key: &private_key,
+            owner,
+            spender: crate::internal::addresses::NOD_FACTORY_ADDR,
+            amount: quote.paymentMinor,
+        },
     );
     world
         .rpc

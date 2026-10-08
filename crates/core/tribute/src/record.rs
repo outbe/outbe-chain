@@ -40,73 +40,74 @@ impl Deref for TributeRecord {
     }
 }
 
+pub fn from_encrypted(body: EncryptedTributeV2) -> TributeRecord {
+    let context = &body.context;
+    let metadata = TributeMetadata {
+        tribute_id: context.tribute_id,
+        owner: context.owner,
+        worldwide_day: context.worldwide_day,
+        issuance_currency: context.issuance_currency,
+        reference_currency: context.reference_currency,
+        tribute_price_minor: context.tribute_price_minor,
+        exclude_from_intex_issuance: context.exclude_from_intex_issuance,
+    };
+    TributeRecord {
+        metadata,
+        body: Body::Encrypted(body),
+    }
+}
+
+pub fn from_legacy(body: TributeData) -> TributeRecord {
+    let metadata = TributeMetadata {
+        tribute_id: body.tribute_id,
+        owner: body.owner,
+        worldwide_day: body.worldwide_day,
+        issuance_currency: body.issuance_currency,
+        reference_currency: body.reference_currency,
+        tribute_price_minor: body.tribute_price_minor,
+        exclude_from_intex_issuance: body.exclude_from_intex_issuance,
+    };
+    TributeRecord {
+        metadata,
+        body: Body::Legacy(body),
+    }
+}
+
+pub fn decode_payload(schema: u32, payload: &[u8]) -> Result<TributeRecord, CanonicalBodyError> {
+    match schema {
+        outbe_compressed_entities::BODY_SCHEMA_V1 => {
+            outbe_compressed_entities::decode_tribute_v1(payload)
+                .map(crate::from_canonical_body)
+                .map(from_legacy)
+        }
+        outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2 => {
+            outbe_compressed_entities::decode_tribute_v2(payload).map(from_encrypted)
+        }
+        actual => Err(CanonicalBodyError::UnsupportedSchema { actual }),
+    }
+}
+
+pub fn decode_stored(bytes: &[u8]) -> Result<TributeRecord, CanonicalBodyError> {
+    let stored = outbe_compressed_entities::decode_stored_body(bytes)?;
+    decode_payload(stored.schema_version(), stored.payload())
+}
+
+/// Both canonical payload encodings are strict and disjoint: the V1 amount
+/// is 32 bytes, while the V2 packed amount ciphertext is 88 bytes. This
+/// preserves the original OCOMP chunk bytes and their authenticated digest.
+pub fn decode_canonical(payload: &[u8]) -> Result<TributeRecord, CanonicalBodyError> {
+    outbe_compressed_entities::decode_tribute_v2(payload)
+        .map(from_encrypted)
+        .or_else(|_| decode_payload(outbe_compressed_entities::BODY_SCHEMA_V1, payload))
+}
+
 impl TributeRecord {
-    pub fn from_encrypted(body: EncryptedTributeV2) -> Self {
-        let context = &body.context;
-        let metadata = TributeMetadata {
-            tribute_id: context.tribute_id,
-            owner: context.owner,
-            worldwide_day: context.worldwide_day,
-            issuance_currency: context.issuance_currency,
-            reference_currency: context.reference_currency,
-            tribute_price_minor: context.tribute_price_minor,
-            exclude_from_intex_issuance: context.exclude_from_intex_issuance,
-        };
-        Self {
-            metadata,
-            body: Body::Encrypted(body),
-        }
-    }
-
-    pub fn from_legacy(body: TributeData) -> Self {
-        let metadata = TributeMetadata {
-            tribute_id: body.tribute_id,
-            owner: body.owner,
-            worldwide_day: body.worldwide_day,
-            issuance_currency: body.issuance_currency,
-            reference_currency: body.reference_currency,
-            tribute_price_minor: body.tribute_price_minor,
-            exclude_from_intex_issuance: body.exclude_from_intex_issuance,
-        };
-        Self {
-            metadata,
-            body: Body::Legacy(body),
-        }
-    }
-
-    pub fn decode_payload(schema: u32, payload: &[u8]) -> Result<Self, CanonicalBodyError> {
-        match schema {
-            outbe_compressed_entities::BODY_SCHEMA_V1 => {
-                outbe_compressed_entities::decode_tribute_v1(payload)
-                    .map(crate::from_canonical_body)
-                    .map(Self::from_legacy)
-            }
-            outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2 => {
-                outbe_compressed_entities::decode_tribute_v2(payload).map(Self::from_encrypted)
-            }
-            actual => Err(CanonicalBodyError::UnsupportedSchema { actual }),
-        }
-    }
-
-    pub fn decode_stored(bytes: &[u8]) -> Result<Self, CanonicalBodyError> {
-        let stored = StoredBody::decode(bytes)?;
-        Self::decode_payload(stored.schema_version(), stored.payload())
-    }
-
-    /// Both canonical payload encodings are strict and disjoint: the V1 amount
-    /// is 32 bytes, while the V2 packed amount ciphertext is 88 bytes. This
-    /// preserves the original OCOMP chunk bytes and their authenticated digest.
-    pub fn decode_canonical(payload: &[u8]) -> Result<Self, CanonicalBodyError> {
-        outbe_compressed_entities::decode_tribute_v2(payload)
-            .map(Self::from_encrypted)
-            .or_else(|_| Self::decode_payload(outbe_compressed_entities::BODY_SCHEMA_V1, payload))
-    }
-
     pub fn stored_body(&self) -> Result<StoredBody, CanonicalBodyError> {
         match &self.body {
-            Body::Legacy(body) => StoredBody::new_v1(outbe_compressed_entities::encode_tribute_v1(
-                &crate::canonical_body(body),
-            )?),
+            Body::Legacy(body) => StoredBody::new(
+                outbe_compressed_entities::BODY_SCHEMA_V1,
+                outbe_compressed_entities::encode_tribute_v1(&crate::canonical_body(body))?,
+            ),
             Body::Encrypted(body) => StoredBody::new(
                 outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2,
                 outbe_compressed_entities::encode_tribute_v2(body)?,

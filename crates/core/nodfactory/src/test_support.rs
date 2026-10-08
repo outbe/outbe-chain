@@ -41,21 +41,25 @@ fn open(
         .map_err(|e| TransportError::NodMaterializationRejected(e.to_string()))
 }
 
-pub struct MaterializationFixture {
-    day: WorldwideDay,
-    source_root: B256,
-    sources: BTreeMap<B256, NodSourceV2>,
+/// Prepares source bodies and proofs before a materialization test starts.
+pub struct MaterializationFixtureBuilder<'a> {
+    actions: &'a [NodActionV1],
+    chain_id: u64,
 }
-impl MaterializationFixture {
-    pub fn new(actions: &[NodActionV1], chain_id: u64) -> Result<Self, String> {
-        let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
-        Self::new_with_archive(actions, chain_id, &scratch.path().join("retained-proofs"))
+impl<'a> MaterializationFixtureBuilder<'a> {
+    pub fn new(actions: &'a [NodActionV1], chain_id: u64) -> Self {
+        Self { actions, chain_id }
     }
-    pub fn new_with_archive(
-        actions: &[NodActionV1],
-        chain_id: u64,
+    pub fn build(&self) -> Result<MaterializationFixture, String> {
+        let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
+        self.build_at(&scratch.path().join("retained-proofs"))
+    }
+    pub fn build_at(
+        &self,
         archive_path: &std::path::Path,
-    ) -> Result<Self, String> {
+    ) -> Result<MaterializationFixture, String> {
+        let actions = self.actions;
+        let chain_id = self.chain_id;
         let day = WorldwideDay::new(actions.first().ok_or("empty materialization fixture")?.wwd);
         let bodies = actions
             .iter()
@@ -105,12 +109,20 @@ impl MaterializationFixture {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         std::fs::rename(archive.path(), archive_path).map_err(|e| e.to_string())?;
-        Ok(Self {
+        Ok(MaterializationFixture {
             day,
             source_root,
             sources,
         })
     }
+}
+
+pub struct MaterializationFixture {
+    day: WorldwideDay,
+    source_root: B256,
+    sources: BTreeMap<B256, NodSourceV2>,
+}
+impl MaterializationFixture {
     pub fn canonical_source_bodies(&self) -> Result<Vec<Vec<u8>>, String> {
         self.sources
             .values()

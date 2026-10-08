@@ -1,4 +1,10 @@
 use super::*;
+use outbe_compressed_entities::{
+    body_commitment, encode_tribute_v1, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+};
+use outbe_offchain_data::{FinalizedBlock, FinalizedLog, FinalizedReceipt, ProjectionConfig};
+use outbe_primitives::addresses::TRIBUTE_ADDRESS;
+use outbe_tribute::{canonical_body, precompile::ITribute, TributeRepositoryReader};
 
 #[test]
 fn finalized_request_is_durable_across_nodes_before_canonical_job_binding() {
@@ -188,212 +194,284 @@ fn finalized_event_mismatch_cannot_create_a_durable_registration() {
 
 #[test]
 fn durable_finalized_admission_precedes_same_frame_retirement_and_survives_replay() {
-    use outbe_compressed_entities::{
-        body_commitment, encode_tribute_v1, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-    };
-    use outbe_offchain_data::{
-        FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
-    };
-    use outbe_primitives::addresses::TRIBUTE_ADDRESS;
-    use outbe_tribute::{canonical_body, precompile::ITribute, TributeRepositoryReader};
-
     for failure in [None, Some(FailSync::File), Some(FailSync::Directory)] {
-        let fixture = production_candidate_source();
-        let root = tempfile::tempdir().unwrap();
-        let storage = Arc::new(MemoryStorage::default());
-        let config = ProjectionConfig {
-            chain_id: 42,
-            genesis_hash: B256::repeat_byte(1),
-            start_block: fixture.request.number() - 1,
-        };
-        let mut preceding =
-            OffchainDataProjection::open(config, storage.clone(), storage.clone()).unwrap();
-        let day = WorldwideDay::new(fixture.candidate.wwd);
-        let tribute_id =
-            outbe_compressed_entities::derive_poseidon_entity_id(Address::repeat_byte(2), day)
-                .unwrap();
-        let body = TributeData {
-            tribute_id,
-            owner: Address::repeat_byte(2),
-            worldwide_day: day,
-            issuance_amount_minor: U256::from(10),
-            issuance_currency: 840,
-            nominal_amount_minor: U256::from(11),
-            reference_currency: 978,
-            tribute_price_minor: U256::from(12),
-            exclude_from_intex_issuance: false,
-        };
-        let payload = encode_tribute_v1(&canonical_body(&body)).unwrap();
-        let commitment = body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
-            tribute_id,
-            &payload,
-        )
-        .unwrap();
-        let stored = ITribute::TributeBodyStored {
-            tributeId: tribute_id.to_u256(),
-            commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
-            previousCommitment: B256::ZERO,
-            newCommitment: B256::from(*commitment.as_bytes()),
-            canonicalPayload: Bytes::from(payload),
-        };
-        preceding
-            .project_block(&FinalizedBlock {
-                number: fixture.request.number() - 1,
-                hash: fixture.request.parent_hash(),
-                receipts: vec![FinalizedReceipt {
-                    tx_hash: B256::repeat_byte(0x43),
-                    transaction_index: 0,
-                    success: true,
-                    logs: vec![FinalizedLog {
-                        log_index: 0,
-                        emitter: TRIBUTE_ADDRESS,
-                        data: stored.encode_log_data(),
-                    }],
-                }],
-            })
-            .unwrap();
-        let previous_checkpoint = preceding.state().checkpoint;
-        drop(preceding);
-        let mut receipts = fixture.receipts.clone();
-        receipts[0].logs.push(Log {
-            address: TRIBUTE_ADDRESS,
-            data: ITribute::TributePartitionRetired {
-                worldwideDay: day.value(),
-            }
-            .encode_log_data(),
-        });
-        let frame = frame_for_block(&fixture.request, receipts.clone());
-        let normalized = FinalizedBlock {
-            number: frame.identity().number,
-            hash: frame.identity().hash,
+        let case = retirement_case();
+        assert_retirement_admission(&case, failure);
+        assert_retirement_replay(&case);
+    }
+}
+
+struct TributeSeed {
+    day: WorldwideDay,
+    body: TributeData,
+    commitment: B256,
+    previous_checkpoint: Option<outbe_primitives::projection::ProjectionCheckpoint>,
+}
+struct RetirementCase {
+    storage: Arc<MemoryStorage>,
+    root: tempfile::TempDir,
+    fixture: ProductionCandidateFixture,
+    config: ProjectionConfig,
+    seed: TributeSeed,
+    frame: FinalizedFrame,
+    normalized: FinalizedBlock,
+}
+fn seed_preceding_tribute(
+    fixture: &ProductionCandidateFixture,
+    storage: &Arc<MemoryStorage>,
+    config: ProjectionConfig,
+) -> TributeSeed {
+    let mut preceding =
+        outbe_offchain_data::open_projection(config, storage.clone(), storage.clone()).unwrap();
+    let day = WorldwideDay::new(fixture.candidate.wwd);
+    let tribute_id =
+        outbe_compressed_entities::derive_poseidon_entity_id(Address::repeat_byte(2), day).unwrap();
+    let body = TributeData {
+        tribute_id,
+        owner: Address::repeat_byte(2),
+        worldwide_day: day,
+        issuance_amount_minor: U256::from(10),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(11),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(12),
+        exclude_from_intex_issuance: false,
+    };
+    let payload = encode_tribute_v1(&canonical_body(&body)).unwrap();
+    let commitment = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        BODY_SCHEMA_V1,
+        tribute_id,
+        &payload,
+    )
+    .unwrap();
+    let stored = ITribute::TributeBodyStored {
+        tributeId: tribute_id.to_u256(),
+        commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+        schemaVersion: BODY_SCHEMA_V1,
+        previousCommitment: B256::ZERO,
+        newCommitment: B256::from(*commitment.as_bytes()),
+        canonicalPayload: Bytes::from(payload),
+    };
+    preceding
+        .project_block(&FinalizedBlock {
+            number: fixture.request.number() - 1,
+            hash: fixture.request.parent_hash(),
             receipts: vec![FinalizedReceipt {
-                tx_hash: B256::repeat_byte(0x44),
+                tx_hash: B256::repeat_byte(0x43),
                 transaction_index: 0,
                 success: true,
-                logs: receipts[0]
-                    .logs
-                    .iter()
-                    .enumerate()
-                    .map(|(i, log)| FinalizedLog {
-                        log_index: i as u64,
-                        emitter: log.address,
-                        data: log.data.clone(),
-                    })
-                    .collect(),
+                logs: vec![FinalizedLog {
+                    log_index: 0,
+                    emitter: TRIBUTE_ADDRESS,
+                    data: stored.encode_log_data(),
+                }],
             }],
-        };
-        let durability = Arc::new(match failure {
-            Some(point) => FailOnceDurability::at(point),
-            None => FailOnceDurability::disarmed(FailSync::File),
-        });
-        let coordinator = Arc::new(
-            OcompRetentionCoordinator::open_with_retained_tributes_and_durability(
-                root.path(),
-                fixture.source.clone(),
-                Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
-                durability,
-            ),
-        );
-        let mut projector = OffchainDataProjection::open_with_retention_selector(
-            config,
-            storage.clone(),
-            storage.clone(),
-            coordinator.clone(),
-        )
+        })
         .unwrap();
-        let admitted = coordinator
-            .reconcile_finalized_frame(&frame, observe_finalized_request(&frame).unwrap());
-        if failure.is_some() {
-            assert!(
-                matches!(admitted, Err(RetentionError::Io { .. })),
-                "{admitted:?}"
-            );
-            assert!(matches!(
-                projector.project_block(&normalized),
-                Err(outbe_offchain_data::ProjectionError::RetentionSelector { .. })
-            ));
-            assert_eq!(projector.state().checkpoint, previous_checkpoint);
-            let current = TributeRepositoryReader::new(storage.clone())
-                .get(tribute_id)
-                .unwrap()
-                .unwrap();
-            assert_eq!(current.tribute_id, body.tribute_id);
-            assert_eq!(current.owner, body.owner);
-            assert_eq!(
-                current.calculation_view().unwrap().nominal_amount_minor,
-                body.nominal_amount_minor
-            );
-        } else {
-            admitted.unwrap();
+    let previous_checkpoint = preceding.state().checkpoint;
+    drop(preceding);
+    TributeSeed {
+        day,
+        body,
+        commitment: B256::from(*commitment.as_bytes()),
+        previous_checkpoint,
+    }
+}
+fn retirement_case() -> RetirementCase {
+    let fixture = production_candidate_source();
+    let root = tempfile::tempdir().unwrap();
+    let storage = Arc::new(MemoryStorage::default());
+    let config = ProjectionConfig {
+        chain_id: 42,
+        genesis_hash: B256::repeat_byte(1),
+        start_block: fixture.request.number() - 1,
+    };
+    let seed = seed_preceding_tribute(&fixture, &storage, config);
+    let day = seed.day;
+    let mut receipts = fixture.receipts.clone();
+    receipts[0].logs.push(Log {
+        address: TRIBUTE_ADDRESS,
+        data: ITribute::TributePartitionRetired {
+            worldwideDay: day.value(),
         }
-        // Crash after admission (or its interrupted durable write), before projection.
-        drop(projector);
-        drop(coordinator);
-        let coordinator = Arc::new(OcompRetentionCoordinator::open_with_retained_tributes(
+        .encode_log_data(),
+    });
+    let frame = frame_for_block(&fixture.request, receipts.clone());
+    let normalized = FinalizedBlock {
+        number: frame.identity().number,
+        hash: frame.identity().hash,
+        receipts: vec![FinalizedReceipt {
+            tx_hash: B256::repeat_byte(0x44),
+            transaction_index: 0,
+            success: true,
+            logs: receipts[0]
+                .logs
+                .iter()
+                .enumerate()
+                .map(|(i, log)| FinalizedLog {
+                    log_index: i as u64,
+                    emitter: log.address,
+                    data: log.data.clone(),
+                })
+                .collect(),
+        }],
+    };
+    RetirementCase {
+        storage,
+        root,
+        fixture,
+        config,
+        seed,
+        frame,
+        normalized,
+    }
+}
+fn assert_retirement_admission(case: &RetirementCase, failure: Option<FailSync>) {
+    let RetirementCase {
+        fixture,
+        root,
+        storage,
+        config,
+        seed,
+        frame,
+        normalized,
+    } = case;
+    let config = *config;
+    let TributeSeed {
+        body,
+        previous_checkpoint,
+        ..
+    } = seed;
+    let tribute_id = body.tribute_id;
+    let durability = Arc::new(match failure {
+        Some(point) => FailOnceDurability::at(point),
+        None => FailOnceDurability::disarmed(FailSync::File),
+    });
+    let coordinator = Arc::new(
+        OcompRetentionCoordinator::open_with_retained_tributes_and_durability(
             root.path(),
             fixture.source.clone(),
             Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
-        ));
-        coordinator
-            .reconcile_finalized_frame(&frame, observe_finalized_request(&frame).unwrap())
-            .unwrap();
-        let journal_before = fs::read(root.path().join("pin.v1")).unwrap();
-        let mut projector = OffchainDataProjection::open_with_retention_selector(
-            config,
-            storage.clone(),
-            storage.clone(),
-            coordinator.clone(),
-        )
-        .unwrap();
-        projector.project_block(&normalized).unwrap();
-        assert_eq!(
-            projector.state().checkpoint.unwrap().block_hash,
-            frame.identity().hash
+            durability,
+        ),
+    );
+    let mut projector = outbe_offchain_data::open_projection_with_retention_selector(
+        config,
+        storage.clone(),
+        storage.clone(),
+        coordinator.clone(),
+    )
+    .unwrap();
+    let admitted =
+        coordinator.reconcile_finalized_frame(frame, observe_finalized_request(frame).unwrap());
+    if failure.is_some() {
+        assert!(
+            matches!(admitted, Err(RetentionError::Io { .. })),
+            "{admitted:?}"
         );
-        assert!(TributeRepositoryReader::new(storage.clone())
+        assert!(matches!(
+            projector.project_block(normalized),
+            Err(outbe_offchain_data::ProjectionError::RetentionSelector { .. })
+        ));
+        assert_eq!(projector.state().checkpoint, *previous_checkpoint);
+        let current = TributeRepositoryReader::new(storage.clone())
             .get(tribute_id)
             .unwrap()
-            .is_none());
-        let retained = RetainedTributeReader::new(storage.clone());
-        let pin = RetainedTributePin {
-            input_lease_id: fixture.candidate.input_lease_id,
-            worldwide_day: day,
-        };
-        let page = retained.list_by_day(pin, None, 10).unwrap();
-        assert_eq!(
-            page.records,
-            vec![outbe_tribute::RetainedTributeRef {
-                tribute_id,
-                body_commitment: B256::from(*commitment.as_bytes()),
-            }]
-        );
-        // Crash after projection but before canonical job binding. Neither the
-        // journal nor retained bodies may be duplicated or discarded by replay.
-        drop(projector);
-        drop(coordinator);
-        let restarted = Arc::new(OcompRetentionCoordinator::open_with_retained_tributes(
-            root.path(),
-            fixture.source.clone(),
-            Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
-        ));
-        restarted
-            .reconcile_finalized_frame(&frame, observe_finalized_request(&frame).unwrap())
             .unwrap();
-        let mut projector = OffchainDataProjection::open_with_retention_selector(
-            config,
-            storage.clone(),
-            storage.clone(),
-            restarted,
-        )
-        .unwrap();
-        projector.project_block(&normalized).unwrap();
-        assert_eq!(retained.list_by_day(pin, None, 10).unwrap(), page);
+        assert_eq!(current.tribute_id, body.tribute_id);
+        assert_eq!(current.owner, body.owner);
         assert_eq!(
-            fs::read(root.path().join("pin.v1")).unwrap(),
-            journal_before
+            current.calculation_view().unwrap().nominal_amount_minor,
+            body.nominal_amount_minor
         );
+    } else {
+        admitted.unwrap();
     }
+    // Crash after admission (or its interrupted durable write), before projection.
+    drop(projector);
+    drop(coordinator);
+}
+fn assert_retirement_replay(case: &RetirementCase) {
+    let RetirementCase {
+        fixture,
+        root,
+        storage,
+        config,
+        seed,
+        frame,
+        normalized,
+    } = case;
+    let config = *config;
+    let TributeSeed {
+        day,
+        body,
+        commitment,
+        ..
+    } = seed;
+    let tribute_id = body.tribute_id;
+    let day = *day;
+    let coordinator = Arc::new(OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        fixture.source.clone(),
+        Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
+    ));
+    coordinator
+        .reconcile_finalized_frame(frame, observe_finalized_request(frame).unwrap())
+        .unwrap();
+    let journal_before = fs::read(root.path().join("pin.v1")).unwrap();
+    let mut projector = outbe_offchain_data::open_projection_with_retention_selector(
+        config,
+        storage.clone(),
+        storage.clone(),
+        coordinator.clone(),
+    )
+    .unwrap();
+    projector.project_block(normalized).unwrap();
+    assert_eq!(
+        projector.state().checkpoint.unwrap().block_hash,
+        frame.identity().hash
+    );
+    assert!(TributeRepositoryReader::new(storage.clone())
+        .get(tribute_id)
+        .unwrap()
+        .is_none());
+    let retained = RetainedTributeReader::new(storage.clone());
+    let pin = RetainedTributePin {
+        input_lease_id: fixture.candidate.input_lease_id,
+        worldwide_day: day,
+    };
+    let page = retained.list_by_day(pin, None, 10).unwrap();
+    assert_eq!(
+        page.records,
+        vec![outbe_tribute::RetainedTributeRef {
+            tribute_id,
+            body_commitment: *commitment,
+        }]
+    );
+    // Crash after projection but before canonical job binding. Neither the
+    // journal nor retained bodies may be duplicated or discarded by replay.
+    drop(projector);
+    drop(coordinator);
+    let restarted = Arc::new(OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        fixture.source.clone(),
+        Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
+    ));
+    restarted
+        .reconcile_finalized_frame(frame, observe_finalized_request(frame).unwrap())
+        .unwrap();
+    let mut projector = outbe_offchain_data::open_projection_with_retention_selector(
+        config,
+        storage.clone(),
+        storage.clone(),
+        restarted,
+    )
+    .unwrap();
+    projector.project_block(normalized).unwrap();
+    assert_eq!(retained.list_by_day(pin, None, 10).unwrap(), page);
+    assert_eq!(
+        fs::read(root.path().join("pin.v1")).unwrap(),
+        journal_before
+    );
 }

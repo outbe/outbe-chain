@@ -1,4 +1,7 @@
+#[path = "../../../../testing/fixtures/storage_failures.rs"]
+mod storage_failures;
 use std::sync::Arc;
+use storage_failures::FailingStorageReader;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_compressed_entities::{
@@ -7,8 +10,8 @@ use outbe_compressed_entities::{
     SealOutput, StoredBody, WwdEntityId,
 };
 use outbe_offchain_storage::{
-    Key, MemoryStorage, Namespace, ScanPage, ScanRequest, StorageError, StorageReader,
-    StorageReaderHandle, StorageWriter, StorageWriterHandle, StoredValue, Value,
+    Key, MemoryStorage, Namespace, StorageError, StorageReaderHandle, StorageWriter,
+    StorageWriterHandle, Value,
 };
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -118,7 +121,10 @@ impl TreeHarness {
                 root: marker.new_root,
             })
             .unwrap();
-        let scope = ExecutionScope::with_parent_tree(parent, CeWorkConfig::new(0, 0, u64::MAX));
+        let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
+            parent,
+            CeWorkConfig::new(0, 0, u64::MAX),
+        );
         StorageHandle::enter(provider, |storage| begin_block(storage, &scope).unwrap());
         scope
     }
@@ -409,7 +415,11 @@ fn absence_corruption_and_unavailability_remain_distinct() {
     });
     finish(&mut provider, &scope, &tree);
 
-    let unavailable_reader = TributeRepositoryReader::new(Arc::new(UnavailableReader));
+    let unavailable_reader = TributeRepositoryReader::new(Arc::new(FailingStorageReader(|| {
+        StorageError::Unavailable {
+            source: Box::new(std::io::Error::other("test backend unavailable")),
+        }
+    })));
     let scope = activate(&mut provider, &tree);
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
@@ -420,7 +430,10 @@ fn absence_corruption_and_unavailability_remain_distinct() {
     });
     finish(&mut provider, &scope, &tree);
 
-    let backend_reader = TributeRepositoryReader::new(Arc::new(BackendErrorReader));
+    let backend_reader =
+        TributeRepositoryReader::new(Arc::new(FailingStorageReader(|| StorageError::Backend {
+            source: Box::new(std::io::Error::other("deterministic backend failure")),
+        })));
     let scope = activate(&mut provider, &tree);
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
@@ -480,7 +493,9 @@ fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
         };
         assert_raw_tribute_is_rejected(
             &original,
-            StoredBody::new_v1(payload).unwrap().encode(),
+            StoredBody::new(outbe_compressed_entities::BODY_SCHEMA_V1, payload)
+                .unwrap()
+                .encode(),
             field,
         );
     }
@@ -496,7 +511,12 @@ fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
     noncanonical_payload.extend_from_slice(&[0x50, 0x01]);
     assert_raw_tribute_is_rejected(
         &original,
-        StoredBody::new_v1(noncanonical_payload).unwrap().encode(),
+        StoredBody::new(
+            outbe_compressed_entities::BODY_SCHEMA_V1,
+            noncanonical_payload,
+        )
+        .unwrap()
+        .encode(),
         "stored_payload",
     );
 
@@ -545,54 +565,6 @@ fn assert_raw_tribute_is_rejected(original: &TributeData, stored: Vec<u8>, field
         );
     });
     finish(&mut provider, &scope, &tree);
-}
-
-struct UnavailableReader;
-
-struct BackendErrorReader;
-
-impl StorageReader for UnavailableReader {
-    fn get_record(
-        &self,
-        _namespace: Namespace,
-        _key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        Err(StorageError::Unavailable {
-            source: Box::new(std::io::Error::other("test backend unavailable")),
-        })
-    }
-
-    fn scan_prefix(
-        &self,
-        _namespace: Namespace,
-        _request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        Err(StorageError::Unavailable {
-            source: Box::new(std::io::Error::other("test backend unavailable")),
-        })
-    }
-}
-
-impl StorageReader for BackendErrorReader {
-    fn get_record(
-        &self,
-        _namespace: Namespace,
-        _key: &Key,
-    ) -> Result<Option<StoredValue>, StorageError> {
-        Err(StorageError::Backend {
-            source: Box::new(std::io::Error::other("deterministic backend failure")),
-        })
-    }
-
-    fn scan_prefix(
-        &self,
-        _namespace: Namespace,
-        _request: ScanRequest<'_>,
-    ) -> Result<ScanPage, StorageError> {
-        Err(StorageError::Backend {
-            source: Box::new(std::io::Error::other("deterministic backend failure")),
-        })
-    }
 }
 
 fn encrypted_body() -> outbe_primitives::tribute_encryption::EncryptedTributeV2 {

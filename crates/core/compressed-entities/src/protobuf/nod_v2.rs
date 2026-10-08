@@ -75,7 +75,7 @@ pub fn decode_nod_item_v2(bytes: &[u8]) -> Result<NodItemBodyV2, CanonicalBodyEr
     Ok(body)
 }
 pub fn decode_stored_nod_item_v2(bytes: &[u8]) -> Result<NodItemBodyV2, CanonicalBodyError> {
-    let stored = StoredBody::decode(bytes)?;
+    let stored = crate::decode_stored_body(bytes)?;
     if stored.schema_version() != NOD_BODY_SCHEMA_V2 {
         return Err(CanonicalBodyError::UnsupportedSchema {
             actual: stored.schema_version(),

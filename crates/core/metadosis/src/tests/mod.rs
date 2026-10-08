@@ -78,7 +78,7 @@ impl TestParent {
         let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
         Self {
             tribute: TributeRepositoryReader::new(storage.clone()),
-            nod: NodRepositoryReader::new(storage),
+            nod: outbe_nod::nod_reader(storage),
         }
     }
 }
@@ -114,7 +114,7 @@ fn with_active_scope<R>(
     f: impl FnOnce(&ExecutionScope, &TestParent) -> R,
 ) -> R {
     let parent = TestParent::empty();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     if storage
         .sload(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO)
         .unwrap()

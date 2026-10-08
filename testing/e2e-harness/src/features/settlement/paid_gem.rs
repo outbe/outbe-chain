@@ -209,11 +209,13 @@ fn prepare(world: &mut World) -> PaidGem {
     .expect("reserve before settlement");
     fund_and_approve(
         world,
-        asset,
-        &key,
-        owner,
-        addresses::GEM_FACTORY_ADDR,
-        payable,
+        crate::features::settlement::SettlementFunding {
+            asset,
+            owner_key: &key,
+            owner,
+            spender: addresses::GEM_FACTORY_ADDR,
+            amount: payable,
+        },
     );
 
     let keys = eth::derive_account_keys(&url, &key, Ledger::Promis)

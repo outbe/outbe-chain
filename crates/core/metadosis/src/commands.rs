@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn command_ce_checkpoint_covers_post_effect_aggregate_validation() {
         let mut provider = HashMapStorageProvider::new(1);
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         StorageHandle::enter(&mut provider, |storage| {
             crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
             begin_block(storage, &scope).unwrap();

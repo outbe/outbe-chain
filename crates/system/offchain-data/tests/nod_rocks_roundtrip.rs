@@ -50,7 +50,8 @@ fn nod_bytes_and_commitment_survive_rocksdb_write_read_and_reopen() {
     let assert_roundtrip = |storage: &RocksDbStorage, stage: &str| {
         let read_value = storage.get(namespace.clone(), &key).unwrap().unwrap();
         assert_eq!(read_value.as_bytes(), stored_bytes, "stored bytes: {stage}");
-        let read_body = StoredBody::decode(read_value.as_bytes()).unwrap();
+        let read_body =
+            outbe_compressed_entities::decode_stored_body(read_value.as_bytes()).unwrap();
         assert_eq!(read_body.payload(), payload, "payload bytes: {stage}");
         let actual_commitment = body_commitment(
             ACTIVE_COMMITMENT_SCHEME,

@@ -1041,7 +1041,7 @@ pub(super) fn executor_inputs_from_ctx(
 
 fn empty_execution_runtime() -> BlockExecutionRuntime {
     BlockExecutionRuntime {
-        compressed_entities_scope: Arc::new(ExecutionScope::new()),
+        compressed_entities_scope: Arc::new(ExecutionScope::default()),
         compressed_tree_service: None,
         runtime_body_readers: None,
         execution_read_budget: None,

@@ -1,6 +1,6 @@
 //! Stateless NOD encryption with repeated ECDH on every read.
 use crate::{
-    confidential::Domain,
+    confidential::SlotCipherDomain,
     crypto::hkdf_sha256,
     errors::{Result, TeeError},
     tribute_encryption::read_creator_public_key,
@@ -13,19 +13,11 @@ use outbe_primitives::{
 use ring::hmac;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
-const CREATOR_KEY: Domain = Domain {
-    state_info: b"outbe/nod/creator-key/state/v2",
-    view_info: b"outbe/nod/creator-key/view/v2",
-    modify_info: b"outbe/nod/creator-key/modify/v2",
+const CREATOR_KEY: SlotCipherDomain = SlotCipherDomain {
     nonce_info: b"outbe/nod/creator-key/nonce/v2",
-    modify_tag: b"outbe/nod/creator-key/auth/v2",
 };
-const AMOUNT: Domain = Domain {
-    state_info: b"outbe/nod/amount/state/v2",
-    view_info: b"outbe/nod/amount/view/v2",
-    modify_info: b"outbe/nod/amount/modify/v2",
+const AMOUNT: SlotCipherDomain = SlotCipherDomain {
     nonce_info: NOD_AMOUNT_NONCE_INFO,
-    modify_tag: b"outbe/nod/amount/auth/v2",
 };
 /// The caller authenticates the certified action and source membership first.
 pub fn encrypt_nod_for_tribute(
@@ -71,31 +63,31 @@ pub fn encrypt_nod(
         encrypted_creator_public_key: Vec::new(),
         encrypted_gratis_amount: Vec::new(),
     };
-    nod.encrypted_creator_public_key =
-        CREATOR_KEY.write_blob(network_secret, nod.crypto_slot(), 0, 0, creator)?;
+    nod.encrypted_creator_public_key = CREATOR_KEY
+        .slot(network_secret, nod.crypto_slot(), 0)
+        .write_blob(0, creator)?;
     let key = amount_key(network_secret, creator, &nod)?;
     let plaintext = Zeroizing::new(amount.to_be_bytes::<32>());
-    nod.encrypted_gratis_amount =
-        AMOUNT.write_blob(&key, nod.crypto_slot(), 0, 0, plaintext.as_ref())?;
+    nod.encrypted_gratis_amount = AMOUNT
+        .slot(&key, nod.crypto_slot(), 0)
+        .write_blob(0, plaintext.as_ref())?;
     Ok(nod)
 }
 pub fn decrypt_nod(network_secret: &[u8; 32], nod: &EncryptedNodV2) -> Result<U256> {
     if !nod.has_valid_encoding() {
         return Err(TeeError::DecryptFailed);
     }
-    let (_, creator) = CREATOR_KEY.read_blob(
-        network_secret,
-        nod.crypto_slot(),
-        0,
-        &nod.encrypted_creator_public_key,
-    )?;
+    let (_, creator) = CREATOR_KEY
+        .slot(network_secret, nod.crypto_slot(), 0)
+        .read_blob(&nod.encrypted_creator_public_key)?;
     let creator: &[u8; 32] = creator
         .as_slice()
         .try_into()
         .map_err(|_| TeeError::DecryptFailed)?;
     let key = amount_key(network_secret, creator, nod)?;
-    let (_, plaintext) =
-        AMOUNT.read_blob(&key, nod.crypto_slot(), 0, &nod.encrypted_gratis_amount)?;
+    let (_, plaintext) = AMOUNT
+        .slot(&key, nod.crypto_slot(), 0)
+        .read_blob(&nod.encrypted_gratis_amount)?;
     let plaintext = Zeroizing::new(plaintext);
     let amount: &[u8; 32] = plaintext
         .as_slice()

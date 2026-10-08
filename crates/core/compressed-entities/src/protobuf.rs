@@ -74,11 +74,6 @@ pub struct StoredBody {
 }
 
 impl StoredBody {
-    /// Wraps one canonical v1 typed payload.
-    pub fn new_v1(payload: Vec<u8>) -> Result<Self, CanonicalBodyError> {
-        Self::new(BODY_SCHEMA_V1, payload)
-    }
-
     /// Wraps a non-empty payload with an explicit non-zero schema version.
     pub fn new(schema_version: u32, payload: Vec<u8>) -> Result<Self, CanonicalBodyError> {
         if schema_version == 0 {
@@ -111,21 +106,21 @@ impl StoredBody {
         encode_bytes_field(2, &self.payload, &mut output);
         output
     }
+}
 
-    /// Strictly decodes, validates, and canonical-re-encodes a StoredBody.
-    pub fn decode(bytes: &[u8]) -> Result<Self, CanonicalBodyError> {
-        let mut fields = Fields::new(bytes);
-        let schema_version = required_varint(&mut fields, 1)?;
-        let schema_version = u32::try_from(schema_version)
-            .map_err(|_| CanonicalBodyError::IntegerOutOfRange { field: 1 })?;
-        let payload = required_bytes(&mut fields, 2)?.to_vec();
-        fields.finish()?;
-        let body = Self::new(schema_version, payload)?;
-        if body.encode() != bytes {
-            return Err(CanonicalBodyError::NonCanonicalEncoding);
-        }
-        Ok(body)
+/// Decodes a stored body and requires its canonical wire representation.
+pub fn decode_stored_body(bytes: &[u8]) -> Result<StoredBody, CanonicalBodyError> {
+    let mut fields = Fields::new(bytes);
+    let schema_version = required_varint(&mut fields, 1)?;
+    let schema_version = u32::try_from(schema_version)
+        .map_err(|_| CanonicalBodyError::IntegerOutOfRange { field: 1 })?;
+    let payload = required_bytes(&mut fields, 2)?.to_vec();
+    fields.finish()?;
+    let body = StoredBody::new(schema_version, payload)?;
+    if body.encode() != bytes {
+        return Err(CanonicalBodyError::NonCanonicalEncoding);
     }
+    Ok(body)
 }
 
 /// Encodes and validates the canonical v1 Tribute payload.
@@ -294,7 +289,7 @@ pub fn decode_stored_nod_bucket_v1(bytes: &[u8]) -> Result<NodBucketBodyV1, Cano
 }
 
 fn decode_active_stored_body(bytes: &[u8]) -> Result<StoredBody, CanonicalBodyError> {
-    let stored = StoredBody::decode(bytes)?;
+    let stored = crate::decode_stored_body(bytes)?;
     if stored.schema_version() != BODY_SCHEMA_V1 {
         return Err(CanonicalBodyError::UnsupportedSchema {
             actual: stored.schema_version(),

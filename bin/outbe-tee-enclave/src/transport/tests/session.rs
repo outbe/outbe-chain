@@ -15,7 +15,7 @@ fn authorized_node_host_client_signs_dev_evidence_in_sgx_no_attest_mode() {
     ));
     let keys = Arc::new(EnclaveKeys::new([0x53; 32], Some([0x53; 32])).unwrap());
     let initialization = Arc::new(
-        InitializationState::production_with_challenge_and_attestation(
+        crate::initialization::factory::production_with_challenge_and_attestation(
             boot.clone(),
             &keys,
             [0x54; 32],

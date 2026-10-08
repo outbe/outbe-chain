@@ -505,41 +505,9 @@ fn drain_snapshot_exporter_lane(
     observability: &SnapshotExporterObservabilityServerV1,
     completions: &tokio::sync::mpsc::UnboundedSender<SnapshotExporterCompletionV1>,
 ) {
-    let mut cycle_failed = false;
-    match lane.spool.pending_cursor() {
-        Ok(cursor) => {
-            for pending in cursor {
-                let pending = match pending {
-                    Ok(pending) => pending,
-                    Err(error) => {
-                        cycle_failed = true;
-                        let detail = error.to_string();
-                        observability.discovery_error(detail.clone());
-                        let _ = completions.send(SnapshotExporterCompletionV1::Failed {
-                            bundle_hash,
-                            observation_id: None,
-                            detail,
-                        });
-                        continue;
-                    }
-                };
-                match export_pending_discovery(lane, &pending, observability) {
-                    Ok(()) => {}
-                    Err(error) => {
-                        cycle_failed = true;
-                        let detail = error.to_string();
-                        observability.export_error(detail.clone());
-                        let _ = completions.send(SnapshotExporterCompletionV1::Failed {
-                            bundle_hash,
-                            observation_id: Some(pending.reference.observation_id),
-                            detail,
-                        });
-                    }
-                }
-            }
-        }
+    let cursor = match lane.spool.pending_cursor() {
+        Ok(cursor) => cursor,
         Err(error) => {
-            cycle_failed = true;
             let detail = error.to_string();
             observability.discovery_error(detail.clone());
             let _ = completions.send(SnapshotExporterCompletionV1::Failed {
@@ -547,6 +515,41 @@ fn drain_snapshot_exporter_lane(
                 observation_id: None,
                 detail,
             });
+            let _ = completions.send(SnapshotExporterCompletionV1::Cycle {
+                bundle_hash,
+                failed: true,
+            });
+            return;
+        }
+    };
+    let mut cycle_failed = false;
+    for pending in cursor {
+        let pending = match pending {
+            Ok(pending) => pending,
+            Err(error) => {
+                cycle_failed = true;
+                let detail = error.to_string();
+                observability.discovery_error(detail.clone());
+                let _ = completions.send(SnapshotExporterCompletionV1::Failed {
+                    bundle_hash,
+                    observation_id: None,
+                    detail,
+                });
+                continue;
+            }
+        };
+        match export_pending_discovery(lane, &pending, observability) {
+            Ok(()) => {}
+            Err(error) => {
+                cycle_failed = true;
+                let detail = error.to_string();
+                observability.export_error(detail.clone());
+                let _ = completions.send(SnapshotExporterCompletionV1::Failed {
+                    bundle_hash,
+                    observation_id: Some(pending.reference.observation_id),
+                    detail,
+                });
+            }
         }
     }
     let _ = completions.send(SnapshotExporterCompletionV1::Cycle {

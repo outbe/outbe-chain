@@ -235,8 +235,8 @@ fn derive_account_keys(context: RequestContext<'_>, request: AccountKeyRequest) 
     let sealed = (|| -> crate::errors::Result<crate::crypto::EncryptedShare> {
         let domain = crate::confidential::domain_for(ledger);
         let state_key = domain.derive_state_key(derived.group_sig(), chain_id, 0)?;
-        let view_key = domain.derive_view_key(&state_key, account)?;
-        let modify_key = domain.derive_modify_key(&state_key, account)?;
+        let view_key = domain.account_keys.derive_view_key(&state_key, account)?;
+        let modify_key = domain.account_keys.derive_modify_key(&state_key, account)?;
         let mut plaintext = view_key.to_vec();
         plaintext.extend_from_slice(&modify_key);
         crate::crypto::encrypt_share(&requester_ephemeral_pubkey, &plaintext)

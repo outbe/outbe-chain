@@ -403,7 +403,7 @@ fn seeded_world(fixture: &Fixture) -> HashMapStorageProvider {
 fn prepared_world(fixture: &Fixture) -> (HashMapStorageProvider, ExecutionScope) {
     let mut provider = seeded_world(fixture);
     let scope = StorageHandle::enter(&mut provider, |storage| {
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         begin_block(storage, &scope).unwrap();
         scope
     });
@@ -557,7 +557,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
     let fixture = &prepared.fixture;
     let mut provider = prepared.provider.clone();
     let scope = StorageHandle::enter(&mut provider, |storage| {
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         begin_block(storage, &scope).map_err(|error| error.to_string())?;
         Ok::<_, String>(scope)
     })?;

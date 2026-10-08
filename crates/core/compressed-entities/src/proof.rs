@@ -1,3 +1,6 @@
+#[cfg(test)]
+use crate::StoredBody;
+
 mod frozen;
 
 use alloy_primitives::{Bytes, B256};
@@ -15,8 +18,8 @@ use crate::{
     sharding::{aggregate_b256_shard_roots, shard_index},
     smt::{derive_tree_key, PoseidonSmt, TreeKey, TreeLeaf, TreeProof, TreeRoot},
     staging::{AuthenticatedCatalogView, StagingCkbStore},
-    CeDomain, CompressedTreeService, ExactParentIdentity, FinalizedMarker, StoredBody,
-    TreeNamespace, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
+    CeDomain, CompressedTreeService, ExactParentIdentity, FinalizedMarker, TreeNamespace,
+    WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
 };
 
 pub const PROOF_ENCODING_VERSION_V1: u32 = 1;
@@ -273,25 +276,7 @@ impl CompressedTreeService {
         request: PointReadRequestV1,
         domain: CeDomain,
     ) -> Result<FrozenPointReadV1, PointReadServiceError> {
-        let snapshot = self
-            .open_finalized_snapshot()
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let marker = snapshot
-            .marker()
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        if marker.height == 0 {
-            return Err(PointReadServiceError::GenesisUnavailable);
-        }
-        let view = AuthenticatedCatalogView::open(
-            snapshot,
-            ExactParentIdentity {
-                commitment_scheme_version: marker.commitment_scheme_version,
-                block_number: marker.height,
-                block_hash: marker.block_hash,
-                root: marker.new_root,
-            },
-        )
-        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+        let (marker, view) = frozen::finalized_view(self)?;
         let common = PointProofCommonV1 {
             proof_encoding_version: PROOF_ENCODING_VERSION_V1,
             chain_id,
@@ -320,48 +305,14 @@ impl CompressedTreeService {
                 },
             });
         }
-        let roots = frozen::collection_roots(&view, collection, domain, catalog_leaf)?;
-        let tree_key = derive_tree_key(collection_for_domain(domain), request.raw_id)
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let selected = shard_index(tree_key, domain.shard_count())
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let namespace = TreeNamespace::CollectionShard(collection, selected);
-        let shard_root = TreeRoot::from_be_bytes(roots[selected as usize].0)
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let shard = PoseidonSmt::open_with_store(
-            shard_root,
-            StagingCkbStore::new(view.clone(), namespace, roots[selected as usize]),
-        );
-        let leaf = shard
-            .get(tree_key)
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let proof = shard
-            .prove(vec![tree_key])
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        shard
-            .verify(shard_root, &proof, vec![(tree_key, leaf)])
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-        let evidence = PresentEvidenceV1 {
-            shard_smt_proof: CkbCompiledProofV1::from_tree(&proof)?,
-            shard_top_siblings: top_siblings(&roots, selected)?,
+        let (leaf, evidence) = frozen::point_evidence(
+            &view,
+            (collection, catalog_leaf),
+            domain,
+            request.raw_id,
             root_catalog_proof,
-        };
-        let result = if leaf == TreeLeaf::ZERO {
-            FrozenResultV1::Absent {
-                common,
-                evidence: AbsentEvidenceV1::EntityAbsentInCollection {
-                    shard_smt_proof: evidence.shard_smt_proof,
-                    shard_top_siblings: evidence.shard_top_siblings,
-                    root_catalog_proof: evidence.root_catalog_proof,
-                },
-            }
-        } else {
-            FrozenResultV1::Present {
-                common,
-                expected_leaf: B256::from(leaf.as_bytes()),
-                evidence,
-            }
-        };
+        )?;
+        let result = frozen::point_result(common, leaf, evidence);
         Ok(FrozenPointReadV1 { marker, result })
     }
 }
@@ -505,11 +456,10 @@ fn validate_common(
         == (chain_id, request.domain_id, request.raw_id);
     let header_bound =
         (common.block_number, common.block_hash) == (header.block_number, header.block_hash);
-    if common.proof_encoding_version != PROOF_ENCODING_VERSION_V1
-        || !request_bound
-        || common.block_number == 0
-        || !header_bound
-    {
+    if common.proof_encoding_version != PROOF_ENCODING_VERSION_V1 || !request_bound {
+        return Err(PointReadServiceError::InvalidPackage("common binding"));
+    }
+    if common.block_number == 0 || !header_bound {
         return Err(PointReadServiceError::InvalidPackage("common binding"));
     }
     Ok(())
@@ -557,7 +507,7 @@ pub(crate) fn canonical_body_leaf(
     raw_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<B256, PointReadServiceError> {
-    let stored = StoredBody::decode(bytes)
+    let stored = crate::decode_stored_body(bytes)
         .map_err(|_| PointReadServiceError::InvalidPackage("stored body envelope"))?;
     let body_id = match domain {
         CeDomain::Tribute if stored.schema_version() == crate::TRIBUTE_BODY_SCHEMA_V2 => {
@@ -825,7 +775,8 @@ mod tests {
             reference_currency: 840,
         };
         let id = body.entity_id();
-        let stored = StoredBody::new_v1(encode_nod_bucket_v1(&body).unwrap()).unwrap();
+        let stored =
+            StoredBody::new(crate::BODY_SCHEMA_V1, encode_nod_bucket_v1(&body).unwrap()).unwrap();
         let leaf = body_commitment(
             ACTIVE_COMMITMENT_SCHEME,
             stored.schema_version(),
@@ -837,7 +788,7 @@ mod tests {
     }
 
     fn stored_body(id: WwdEntityId, payload: Vec<u8>) -> (Vec<u8>, crate::Commitment) {
-        let stored = StoredBody::new_v1(payload).unwrap();
+        let stored = StoredBody::new(crate::BODY_SCHEMA_V1, payload).unwrap();
         let leaf = body_commitment(
             ACTIVE_COMMITMENT_SCHEME,
             stored.schema_version(),

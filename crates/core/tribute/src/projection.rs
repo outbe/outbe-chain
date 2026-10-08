@@ -31,7 +31,7 @@ pub const TRIBUTE_PROJECTION_NAMESPACES: [&str; 5] = [
 /// Repository-owned prior state plus an in-block overlay for Tribute projection.
 ///
 /// Callers can mutate only identities loaded through
-/// [`crate::TributeRepositoryReader::projection_session`]. They cannot supply or omit an
+/// [`crate::TributeReadView::projection_session`]. They cannot supply or omit an
 /// arbitrary semantic prior body.
 pub struct TributeProjectionSession {
     records: BTreeMap<WwdEntityId, Option<ProjectionTributeRecord>>,

@@ -1,4 +1,6 @@
 //! Restores typed cancellation across the provider's string-only fatal channel.
+#[cfg(test)]
+use outbe_offchain_data::runtime_body_readers;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     error::PrecompileError, projection::ExecutionReadCancelled, storage::SubCallError,
@@ -77,7 +79,7 @@ mod tests {
 
     #[test]
     fn abort_marker_cannot_reclassify_a_database_or_later_provider_failure() {
-        let readers = RuntimeBodyReaders::new(Arc::new(MemoryStorage::new()));
+        let readers = runtime_body_readers(Arc::new(MemoryStorage::new()));
         let budget = ExecutionReadBudget::new();
         let _guard = readers.enter_execution_budget(budget.clone());
         budget.cancel();
@@ -108,7 +110,7 @@ mod tests {
 
     #[test]
     fn dropped_call_clears_its_abort_before_the_next_call() {
-        let readers = RuntimeBodyReaders::new(Arc::new(MemoryStorage::new()));
+        let readers = runtime_body_readers(Arc::new(MemoryStorage::new()));
         let budget = ExecutionReadBudget::new();
         let _guard = readers.enter_execution_budget(budget.clone());
         budget.cancel();

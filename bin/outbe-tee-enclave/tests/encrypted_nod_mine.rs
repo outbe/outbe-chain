@@ -34,7 +34,16 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
     let modify_key = gratis::derive_modify_key(&key, account).unwrap();
     let chain = B256::from(U256::ONE);
     let auth = |op, value, nonce| ModifyAuth {
-        mac: gratis::modify_mac(&modify_key, account, op, value, nonce, chain),
+        mac: gratis::modify_mac(
+            &modify_key,
+            &gratis::ModifyOperation {
+                account,
+                op,
+                amount: value,
+                op_nonce: nonce,
+                chain_id: chain,
+            },
+        ),
         op_nonce: nonce,
     };
     let request = MineEncryptedNodRequestV2 {

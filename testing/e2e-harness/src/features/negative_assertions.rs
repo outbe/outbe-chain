@@ -118,9 +118,14 @@ fn assert_mined_revert_on<C: SolCall>(
                     .expect("pre-call checkpoint"),
                 checkpoint
             );
-            let actual =
-                eth::read_call_revert_data_at(&world.rpc.url(port), to, from, call, value, height)
-                    .expect("exact EVM rejection with valid caller, value and fixed gas");
+            let actual = eth::read_call_revert_data_at(
+                &world.rpc.url(port),
+                to,
+                from,
+                call,
+                crate::internal::eth::RevertAt { value, height },
+            )
+            .expect("exact EVM rejection with valid caller, value and fixed gas");
             assert_eq!(
                 actual.as_ref(),
                 expected,

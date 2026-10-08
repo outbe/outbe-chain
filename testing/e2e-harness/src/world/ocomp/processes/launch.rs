@@ -359,25 +359,14 @@ impl OcompTopology {
         ));
         let mut command = self.release_role_command(validator_index);
         configure_snapshot_exporter_command(&mut command, supervisor_address);
-        command
-            .current_dir(&self.cfg.repo)
-            .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
-            .env(
-                "OCOMP_GENESIS_HASH",
-                format!("{:#x}", identity.genesis_hash),
-            )
-            .env(
-                "OCOMP_BOOT_NONCE",
-                format!(
-                    "{:#x}",
-                    B256::repeat_byte(validator_index.saturating_add(1))
-                ),
-            )
-            .env(
-                "OCOMP_PROTOCOL_BUNDLE_HASHES",
-                installed_protocol_bundle_hashes(&domain_root, identity.protocol_bundle_hash)?,
-            )
-            .env("OCOMP_REGISTRY_GENERATION", "1");
+        configure_exporter_identity(
+            &mut command,
+            &self.cfg,
+            validator_index,
+            identity,
+            &domain_root,
+        )?;
+        command.env("OCOMP_REGISTRY_GENERATION", "1");
         let validator_index = usize::from(validator_index);
         command.env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index));
         configure_snapshot_exporter_projection(&mut command, &self.cfg, validator_index)?;
@@ -414,24 +403,13 @@ impl OcompTopology {
             SocketAddr::from(([127, 0, 0, 1], self.cfg.ocomp_endpoint_port(index)));
         let mut command = self.release_role_command(validator_index);
         configure_snapshot_exporter_command(&mut command, supervisor_address);
-        command
-            .current_dir(&self.cfg.repo)
-            .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
-            .env(
-                "OCOMP_GENESIS_HASH",
-                format!("{:#x}", identity.genesis_hash),
-            )
-            .env(
-                "OCOMP_BOOT_NONCE",
-                format!(
-                    "{:#x}",
-                    B256::repeat_byte(validator_index.saturating_add(1))
-                ),
-            )
-            .env(
-                "OCOMP_PROTOCOL_BUNDLE_HASHES",
-                installed_protocol_bundle_hashes(&domain_root, identity.protocol_bundle_hash)?,
-            );
+        configure_exporter_identity(
+            &mut command,
+            &self.cfg,
+            validator_index,
+            identity,
+            &domain_root,
+        )?;
         command.env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index));
         configure_snapshot_exporter_projection(&mut command, &self.cfg, index)?;
         command.stdout(Stdio::from(log)).stderr(Stdio::from(stderr));
@@ -594,4 +572,33 @@ fn worker_boot_nonce(validator_index: u8, worker_ordinal: u32) -> B256 {
     bytes[0] = validator_index.saturating_add(1);
     bytes[28..].copy_from_slice(&worker_ordinal.to_be_bytes());
     B256::from(bytes)
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn configure_exporter_identity(
+    command: &mut std::process::Command,
+    cfg: &crate::internal::config::Config,
+    validator_index: u8,
+    identity: OcompLaunchIdentityV1,
+    domain_root: &std::path::Path,
+) -> Result<()> {
+    command
+        .current_dir(&cfg.repo)
+        .env("OCOMP_CHAIN_ID", identity.chain_id.to_string())
+        .env(
+            "OCOMP_GENESIS_HASH",
+            format!("{:#x}", identity.genesis_hash),
+        )
+        .env(
+            "OCOMP_BOOT_NONCE",
+            format!(
+                "{:#x}",
+                B256::repeat_byte(validator_index.saturating_add(1))
+            ),
+        )
+        .env(
+            "OCOMP_PROTOCOL_BUNDLE_HASHES",
+            installed_protocol_bundle_hashes(domain_root, identity.protocol_bundle_hash)?,
+        );
+    Ok(())
 }

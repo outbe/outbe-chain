@@ -67,7 +67,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
     outbe_tribute::enclave_client::test_enclave::install();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let parent = TestParent::empty();
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0708);
     let block_number = 19;
@@ -1196,7 +1196,7 @@ fn prepare_request_fixture_with_day_type(
     oracle_ready: bool,
     day_type: WwdDayType,
 ) -> PreparedRequestFixture {
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let parent = TestParent::empty();
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0709);
     let block_number = 23;
@@ -1283,7 +1283,7 @@ fn prepare_ready_days_fixture(
     provider: &mut HashMapStorageProvider,
     oracle_ready: bool,
 ) -> ReadyDaysFixture {
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let parent = TestParent::empty();
     let first_wwd = outbe_primitives::time::WorldwideDay::new(2026_0710);
     let later_wwd = outbe_primitives::time::WorldwideDay::new(2026_0711);
@@ -1351,7 +1351,7 @@ fn prepare_ready_days_fixture(
                     &scope,
                     &parent,
                     &TributeData {
-                        tribute_id: NodContract::generate_nod_id(owner, wwd).unwrap(),
+                        tribute_id: outbe_nod::identity::generate_nod_id(owner, wwd).unwrap(),
                         owner,
                         worldwide_day: wwd,
                         issuance_amount_minor: U256::from(1_000),
@@ -1436,7 +1436,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
     outbe_tribute::enclave_client::test_enclave::install();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let parent = TestParent::empty();
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0709);
     let block_number = 19;

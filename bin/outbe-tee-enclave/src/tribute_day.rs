@@ -9,17 +9,13 @@ use ring::hmac;
 use zeroize::Zeroizing;
 
 use crate::{
-    confidential::Domain,
+    confidential::SlotCipherDomain,
     errors::{Result, TeeError},
     tribute_encryption::decrypt_tribute,
 };
 
-const DAY_AMOUNT: Domain = Domain {
-    state_info: b"outbe/tribute/day/state/v2",
-    view_info: b"outbe/tribute/day/view/v2",
-    modify_info: b"outbe/tribute/day/modify/v2",
+const DAY_AMOUNT: SlotCipherDomain = SlotCipherDomain {
     nonce_info: b"outbe/tribute/day/nonce/v2",
-    modify_tag: b"outbe/tribute/day/auth/v2",
 };
 
 pub fn read_day_amount(
@@ -29,12 +25,9 @@ pub fn read_day_amount(
     if record.version().is_none() {
         return Err(TeeError::DecryptFailed);
     }
-    let (_, bytes) = DAY_AMOUNT.read_blob(
-        network_secret,
-        record.crypto_slot(),
-        0,
-        &record.encrypted_amount,
-    )?;
+    let (_, bytes) = DAY_AMOUNT
+        .slot(network_secret, record.crypto_slot(), 0)
+        .read_blob(&record.encrypted_amount)?;
     let bytes = Zeroizing::new(bytes);
     let amount: &[u8; 32] = bytes
         .as_slice()
@@ -80,13 +73,9 @@ pub fn apply_day_operation(
         encrypted_amount: Vec::new(),
     };
     let plaintext = Zeroizing::new(next.to_be_bytes::<32>());
-    record.encrypted_amount = DAY_AMOUNT.write_blob(
-        network_secret,
-        record.crypto_slot(),
-        0,
-        previous_version,
-        plaintext.as_ref(),
-    )?;
+    record.encrypted_amount = DAY_AMOUNT
+        .slot(network_secret, record.crypto_slot(), 0)
+        .write_blob(previous_version, plaintext.as_ref())?;
     Ok(record)
 }
 

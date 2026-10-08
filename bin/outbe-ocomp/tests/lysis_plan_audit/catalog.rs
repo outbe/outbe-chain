@@ -13,7 +13,7 @@ fn cold_restart_rejects_a_self_consistent_artifact_for_the_wrong_plan_spec() {
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -47,7 +47,7 @@ fn cold_restart_streams_the_complete_exact_plan_when_every_spec_matches() {
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -101,7 +101,7 @@ fn scheduler_prepares_manifest_bound_two_shard_worker_requests_after_cold_restar
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -218,7 +218,7 @@ fn fidelity_membership_search_reports_bounded_progress_before_the_next_input_chu
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -272,7 +272,7 @@ fn cold_restart_rejects_manifest_opening_roots_not_derived_from_the_cas_inputs()
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -313,7 +313,7 @@ fn exact_closure_reports_bounded_progress_before_rejecting_a_later_catalog_tail(
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,

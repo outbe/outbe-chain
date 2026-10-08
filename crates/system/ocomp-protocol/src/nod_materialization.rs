@@ -142,8 +142,11 @@ fn validate_head(
         head.queue_sequence != 0
             && !head.job_id.is_zero()
             && !head.program_semantics_hash.is_zero()
-            && head.worldwide_day != 0
-            && head.generation != 0
+            && head.worldwide_day != 0,
+        "materialization head authority",
+    )?;
+    require(
+        head.generation != 0
             && !head.nod_root.is_zero()
             && head.nod_count != 0
             && head.next_nod_ordinal < head.nod_count,

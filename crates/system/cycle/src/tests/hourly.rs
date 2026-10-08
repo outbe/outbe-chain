@@ -20,23 +20,7 @@ fn hourly_protocol_cycle_commits_the_same_typed_missed_offering_outcome() {
             .offering_end
     });
     let fire_at = offering_end.div_ceil(3_600) * 3_600;
-    let previous_hour = fire_at - 3_600;
-
-    storage.enter(|handle| {
-        let cycle: Cycle<'_> = handle.contract::<Cycle<'_>>();
-        for spec in ACTIVE_TRIGGERS {
-            let last = if spec.id == TriggerId::ProtocolCycle.as_u32() {
-                previous_hour
-            } else {
-                fire_at
-            };
-            cycle.last_executed_at.write(&spec.id, last).unwrap();
-        }
-        cycle
-            .active_utc_day
-            .write(outbe_primitives::time::timestamp_to_date_key(fire_at))
-            .unwrap();
-    });
+    storage.enter(|handle| seed_trigger_clock(&handle, fire_at));
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block_ctx(20, fire_at), handle.clone());
@@ -205,4 +189,21 @@ fn hourly_protocol_cycle_applies_exact_capacity_forfeiture_to_the_new_due_candid
             next_block
         );
     });
+}
+
+pub(super) fn seed_trigger_clock(handle: &StorageHandle<'_>, fire_at: u64) {
+    let previous_hour = fire_at - 3_600;
+    let cycle: Cycle<'_> = handle.contract::<Cycle<'_>>();
+    for spec in ACTIVE_TRIGGERS {
+        let last = if spec.id == TriggerId::ProtocolCycle.as_u32() {
+            previous_hour
+        } else {
+            fire_at
+        };
+        cycle.last_executed_at.write(&spec.id, last).unwrap();
+    }
+    cycle
+        .active_utc_day
+        .write(outbe_primitives::time::timestamp_to_date_key(fire_at))
+        .unwrap();
 }

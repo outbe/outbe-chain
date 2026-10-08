@@ -33,7 +33,7 @@ impl MetadosisContract<'_> {
             return Ok(());
         }
         let tributes =
-            TributeContract::new(self.storage.clone()).get_all_day_tributes(scope, parent, wwd)?;
+            TributeContract::new(self.storage.clone()).read_all_by_day(scope, parent, wwd)?;
         // One canonical Tribute per owner per day -> the owner set must be
         // unique. Sorting also yields the canonical OCOMP subject order.
         let mut owners: Vec<Address> = tributes.iter().map(|t| t.owner).collect();

@@ -134,11 +134,13 @@ pub(crate) fn pay(world: &World, target: &Target, payer: Payer, iso: u16, terms:
     let outcome = loop {
         fund_and_approve(
             world,
-            vault.asset,
-            &payer_key,
-            payer_address,
-            factory(target),
-            quoted.payable,
+            crate::features::settlement::SettlementFunding {
+                asset: vault.asset,
+                owner_key: &payer_key,
+                owner: payer_address,
+                spender: factory(target),
+                amount: quoted.payable,
+            },
         );
         let outcome = settle_erc20(&url, target, &payer_key, vault.asset, quoted.snapshot);
         if outcome.success {

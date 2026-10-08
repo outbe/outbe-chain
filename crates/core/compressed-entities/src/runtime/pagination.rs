@@ -1,3 +1,10 @@
+mod query;
+
+use query::{
+    entity_for_query, merged_candidates, record_matches_query, validate_page_request,
+    validate_parent_page, verified_matches_query,
+};
+
 use super::*;
 use crate::api::IdPage;
 

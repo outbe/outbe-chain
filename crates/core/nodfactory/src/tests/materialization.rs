@@ -23,8 +23,8 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
     let owner = Address::from_word(B256::from(U256::from(ordinal + 1)));
     let worldwide_day = WorldwideDay::new(materialization_wwd);
     let entry_price_minor = U256::from(500_000);
-    let tribute_id = NodContract::generate_nod_id(owner, worldwide_day).unwrap();
-    let nod_id = NodContract::generate_nod_id(owner, worldwide_day).unwrap();
+    let tribute_id = outbe_nod::identity::generate_nod_id(owner, worldwide_day).unwrap();
+    let nod_id = outbe_nod::identity::generate_nod_id(owner, worldwide_day).unwrap();
     NodActionV1 {
         raw_ordinal: ordinal,
         tribute_id: *tribute_id,
@@ -412,7 +412,7 @@ fn a_materialized_nod_keeps_the_batch_entry_price() {
     let worldwide_day = WorldwideDay::new(MATERIALIZATION_WWD);
     let bucket_id = WwdEntityId::from_day_and_digest(
         worldwide_day,
-        NodContract::bucket_key(
+        outbe_nod::identity::bucket_key(
             worldwide_day,
             action.entry_price_minor,
             action.reference_currency,
@@ -510,7 +510,7 @@ fn a_certified_nod_id_its_owner_does_not_give_is_rejected_before_any_write() {
     let mut actions = (0..8)
         .map(|ordinal| action_for(MATERIALIZATION_WWD, ordinal))
         .collect::<Vec<_>>();
-    actions[3].nod_id = *NodContract::generate_nod_id(
+    actions[3].nod_id = *outbe_nod::identity::generate_nod_id(
         Address::repeat_byte(0xee),
         WorldwideDay::new(MATERIALIZATION_WWD),
     )
@@ -800,7 +800,9 @@ fn encrypted_materialization_uses_current_frozen_authority_without_source_body_s
     let population = population(10);
     seed_generation(&mut world, &population);
     let fixture =
-        crate::test_support::MaterializationFixture::new(&population.actions, CHAIN_ID).unwrap();
+        crate::test_support::MaterializationFixtureBuilder::new(&population.actions, CHAIN_ID)
+            .build()
+            .unwrap();
     world
         .enter(|storage, _, _| fixture.seed_source_root(&storage))
         .unwrap();
@@ -853,7 +855,9 @@ fn tampered_encrypted_batch_and_changed_frozen_root_preserve_every_prestate() {
     let population = population(8);
     seed_generation(&mut world, &population);
     let fixture =
-        crate::test_support::MaterializationFixture::new(&population.actions, CHAIN_ID).unwrap();
+        crate::test_support::MaterializationFixtureBuilder::new(&population.actions, CHAIN_ID)
+            .build()
+            .unwrap();
     world
         .enter(|storage, _, _| fixture.seed_source_root(&storage))
         .unwrap();
@@ -872,7 +876,9 @@ fn tampered_encrypted_batch_and_changed_frozen_root_preserve_every_prestate() {
     assert_eq!(world.provider.get_ordered_events(), events);
     let mut changed = population.actions.clone();
     changed[0].gratis_load_minor += U256::ONE;
-    let different = crate::test_support::MaterializationFixture::new(&changed, CHAIN_ID).unwrap();
+    let different = crate::test_support::MaterializationFixtureBuilder::new(&changed, CHAIN_ID)
+        .build()
+        .unwrap();
     world
         .enter(|storage, _, _| different.seed_source_root(&storage))
         .unwrap();

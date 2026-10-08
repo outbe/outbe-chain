@@ -42,11 +42,13 @@ fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
     ModifyAuth {
         mac: modify_mac(
             &modify_key,
-            owner,
-            GratisOp::Mint,
-            amount,
-            0,
-            B256::from(U256::from(1)),
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account: owner,
+                op: GratisOp::Mint,
+                amount,
+                op_nonce: 0,
+                chain_id: B256::from(U256::from(1)),
+            },
         ),
         op_nonce: 0,
     }
@@ -134,7 +136,7 @@ impl World {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_block_number(1);
         provider.set_timestamp(U256::from(1_700_000_000));
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         provider.stub_sub_call_at_selector(
             outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
             IVaultRouter::assetVaultsCountCall::SELECTOR,
@@ -154,7 +156,7 @@ impl World {
         Self {
             provider,
             scope,
-            parent: NodRepositoryReader::new(Arc::new(MemoryStorage::new())),
+            parent: outbe_nod::nod_reader(Arc::new(MemoryStorage::new())),
         }
     }
 

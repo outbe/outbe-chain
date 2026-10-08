@@ -191,7 +191,16 @@ fn gratis_auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> Modi
     let sk = outbe_gratis::enclave_client::test_enclave::state_key();
     let mk = outbe_tee_enclave::gratis::derive_modify_key(&sk, account).unwrap();
     ModifyAuth {
-        mac: outbe_tee_enclave::gratis::modify_mac(&mk, account, op, amount, nonce, chain_b256()),
+        mac: outbe_tee_enclave::gratis::modify_mac(
+            &mk,
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account,
+                op,
+                amount,
+                op_nonce: nonce,
+                chain_id: chain_b256(),
+            },
+        ),
         op_nonce: nonce,
     }
 }

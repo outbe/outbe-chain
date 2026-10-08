@@ -91,7 +91,7 @@ fn certified_action(index: usize) -> NodActionV1 {
     let entry_price_minor = U256::from(510);
     let tribute_id = outbe_compressed_entities::derive_poseidon_entity_id(owner, TARGET_WWD)
         .expect("fixture identity");
-    let nod_id = NodContract::generate_nod_id(owner, TARGET_WWD)
+    let nod_id = outbe_nod::identity::generate_nod_id(owner, TARGET_WWD)
         .expect("benchmark owner and worldwide day form a Nod id");
     NodActionV1 {
         raw_ordinal: ordinal,
@@ -159,7 +159,9 @@ fn certified_fixture(count: usize) -> Result<CertifiedFixture, String> {
         })
         .collect();
 
-    let sources = outbe_nodfactory::test_support::MaterializationFixture::new(&actions, CHAIN_ID)?;
+    let sources =
+        outbe_nodfactory::test_support::MaterializationFixtureBuilder::new(&actions, CHAIN_ID)
+            .build()?;
     let batches = batches
         .into_iter()
         .enumerate()
@@ -388,7 +390,7 @@ fn measure_certified(prepared: &PreparedNod) -> Result<Observation, String> {
         .ok_or_else(|| "certified Nod fixture is missing".to_owned())?;
     let mut provider = prepared.provider.clone();
     let scope = StorageHandle::enter(&mut provider, |storage| {
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         begin_block(storage, &scope).map_err(|error| error.to_string())?;
         Ok::<_, String>(scope)
     })?;
@@ -465,7 +467,7 @@ fn measure_certified(prepared: &PreparedNod) -> Result<Observation, String> {
 fn measure_direct(prepared: &PreparedNod) -> Result<Observation, String> {
     let mut provider = prepared.provider.clone();
     let scope = StorageHandle::enter(&mut provider, |storage| {
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         begin_block(storage, &scope).map_err(|error| error.to_string())?;
         Ok::<_, String>(scope)
     })?;

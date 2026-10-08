@@ -75,7 +75,7 @@ fn result_catalog_latches_failure_when_a_chunk_changes_after_admission() {
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -109,7 +109,7 @@ fn result_catalog_rederives_leaf_carriers_from_exact_chunk_bytes() {
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -206,7 +206,7 @@ fn result_catalog_decodes_every_admission_before_directory_eof() {
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -247,7 +247,7 @@ fn result_catalog_rejects_valid_same_ordinal_entry_substitution_between_passes()
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,
@@ -316,7 +316,7 @@ fn result_catalog_requires_admission_directory_eof_after_the_last_chunk() {
     .unwrap();
     let admissions =
         VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = LocalLysisPlanAuditV1::open(
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
         &admissions,
         &input_refs,
         &reader,

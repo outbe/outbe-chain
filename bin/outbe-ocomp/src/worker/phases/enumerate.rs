@@ -8,11 +8,8 @@ use outbe_lysis::program_v1::artifacts::enumerate_tributes;
 
 use outbe_lysis::program_v1::TributeInputV1;
 use outbe_ocomp_protocol::common::BoundedBytes;
-use outbe_ocomp_protocol::input::AuthenticatedInputChunkV1;
 
 use outbe_ocomp_protocol::input::InputChunkKind;
-use outbe_ocomp_protocol::input::InputChunkRefV1;
-use outbe_ocomp_protocol::input::InputManifestV1;
 
 use outbe_ocomp_protocol::unit::InputPurpose;
 
@@ -22,20 +19,20 @@ use outbe_ocomp_protocol::unit::UnitInterval;
 use outbe_ocomp_protocol::unit::UnitSpecV1;
 use outbe_ocomp_protocol::unit::WorkOutputHeaderV1;
 
-use outbe_ocomp_protocol::SchemaLimits;
-
 use outbe_primitives::time::WorldwideDay;
-
-use std::sync::atomic::AtomicBool;
 
 pub(in super::super) fn execute_enumerate_unit(
     spec: &UnitSpecV1,
-    manifest: &InputManifestV1,
-    input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
-    producer_artifacts: &[UnitArtifactV1],
-    limits: &SchemaLimits,
-    cancelled: Option<&AtomicBool>,
+    authority: super::super::UnitExecutionAuthority<'_>,
 ) -> Result<UnitArtifactV1, WorkerError> {
+    let super::super::UnitExecutionAuthority {
+        manifest,
+        input_chunks,
+        producer_artifacts,
+        limits,
+        cancelled,
+        ..
+    } = authority;
     if !producer_artifacts.is_empty() || input_chunks.len() != 1 {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -59,8 +56,7 @@ pub(in super::super) fn execute_enumerate_unit(
         .map_err(|_| WorkerError::UnitBindingMismatch)?;
     for record in &chunk.canonical_records_or_openings {
         require_lease_active(cancelled)?;
-        let tribute =
-            outbe_tribute::TributeRecord::decode_canonical(&record.0)?.calculation_view()?;
+        let tribute = outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
         let id = *tribute.tribute_id;
         if id < range.start || range.end.is_some_and(|end| id >= end) {
             return Err(WorkerError::UnitBindingMismatch);

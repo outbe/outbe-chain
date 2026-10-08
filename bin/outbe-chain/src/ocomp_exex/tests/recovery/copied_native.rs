@@ -259,7 +259,7 @@ pub(in crate::ocomp_exex::tests) fn runtime_with_endpoint<P>(
     )
     .unwrap();
     let closed = closure_checkpoint.current().unwrap();
-    let domain = EmbeddedOcompDomainV1::open(EmbeddedOcompDomainConfigV1 {
+    let domain = outbe_ocomp::embedded_runtime::open_embedded_domain(EmbeddedOcompDomainConfigV1 {
         domain_root: root.to_path_buf(),
         registry_generation: 1,
         bundles: vec![EmbeddedOcompBundleConfigV1 {
@@ -368,121 +368,34 @@ where
 }
 
 use outbe_ocomp_protocol::{
-    common::BoundedBytes,
-    control::{FinalizedJobSpecV1, FinalizedJobSummaryV1},
+    control::FinalizedJobSpecV1,
     hash::hash_framed,
-    intent::{
-        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
-    },
+    intent::JobIntentV1,
     registry::HashDomain,
-    result::{
-        lysis_v1_empty_semantic_event_root, CarryOverCreditActionV1, CarryOverReason,
-        CompletionStatus, ConservationTotalsV1, ExactCountsV1, MetadosisCompletionSummaryV1,
-        ResultRootsV1,
-    },
+    result::ResultRootsV1,
     state::{OcompFinalizedJobV1, OcompJobRecordV1},
 };
-fn hash(byte: u8) -> B256 {
-    B256::repeat_byte(if byte == 0 { 0xff } else { byte })
-}
 fn finalized_job_spec(
     seed: u8,
     cursor: u64,
     chain_id: u64,
     genesis_hash: B256,
 ) -> FinalizedJobSpecV1 {
-    let limits = poc_schema_limits();
-    let day = 20_260_901_u32;
-    let bundle = bundle();
-    let bundle = bundle.bundle();
-    let protocol_bundle_hash = bundle.protocol_bundle_hash(&limits).unwrap();
-    let collection_key = hash(seed.wrapping_add(2));
-    let collection_root = hash(seed.wrapping_add(3));
-    let nominal = U256::from(1);
-    let intent = JobIntentV1 {
-        chain_id,
-        genesis_hash,
-        fork_id: bundle.fork_id,
-        wwd: day,
-        pending_nonce: 0,
-        attempt: 0,
-        protocol_bundle_hash,
-        ce_sealed_root: hash(seed.wrapping_add(5)),
-        sealed_tribute_collection_key: collection_key,
-        sealed_tribute_collection_root: collection_root,
-        authenticated_day_count: 1,
-        authenticated_day_nominal: nominal,
-        pre_admission_envelope_hash: hash(seed.wrapping_add(6)),
-        source_availability_policy_id: hash(seed.wrapping_add(7)),
-        frozen_metadosis_values: FrozenMetadosisValuesV1 {
-            day_type: DayType::Green,
-            day_limit: nominal,
-            previous_vwap: nominal,
-            current_vwap: nominal,
-            gratis_demand: U256::ZERO,
-            day_gratis_limit_minor: U256::ZERO,
-            lysis_limit_minor: nominal,
-            desis_limit_minor: U256::ZERO,
-            request_limit_split_receipt_hash: hash(seed.wrapping_add(8)),
-        },
-        logical_evaluation_height: cursor,
-        logical_evaluation_time: cursor,
-        activation_preconditions: ActivationPreconditionsV1 {
-            tribute: TributeInputBindingV1 {
-                wwd: day,
-                source_generation: 1,
-                collection_key,
-                sealed_collection_root: collection_root,
-                exact_count: 1,
-                exact_nominal_total: nominal,
-            },
-            nod: NodTargetPreconditionV1 {
-                wwd: day,
-                target_generation: 1,
-                namespace_root_before: hash(seed.wrapping_add(9)),
-                max_nod_count: 1,
-            },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: day,
-                expected_series_version: 1,
-                max_contributor_count: 1,
-                max_eligible_nominal_total: nominal,
-            },
-            metadosis: MetadosisAttemptPreconditionV1 {
-                wwd: day,
-                pending_nonce: 0,
-                expected_status: MetadosisExpectedStatus::OffchainPending,
-                state_version: 1,
-            },
-        },
-        result_validator_set_epoch: 1,
-        result_committee_set_hash: hash(seed.wrapping_add(10)),
-        result_ocomp_binding_hash: hash(seed.wrapping_add(11)),
-        result_member_count: 4,
-        result_quorum_threshold: 3,
-        custody_committee_epoch_hash: None,
-    };
-    let finalized_block_hash = hash(seed.wrapping_add(12));
-    let finalized_state_root = hash(seed.wrapping_add(13));
-    FinalizedJobSpecV1 {
-        summary: FinalizedJobSummaryV1 {
+    outbe_ocomp::test_support::finalized_single_tribute_job(
+        outbe_ocomp::test_support::FixtureJobIdentity {
+            seed,
             cursor,
-            job_id: intent
-                .job_id(finalized_block_hash, finalized_state_root, &limits)
-                .unwrap(),
-            intent_id: intent.intent_id(&limits).unwrap(),
-            finalized_block_hash,
-            finalized_state_root,
-            protocol_bundle_hash,
+            chain_id,
+            genesis_hash,
+        },
+        bundle().bundle(),
+        || outbe_ocomp::test_support::FixtureJobTiming {
             open_height: cursor + outbe_ocomp_protocol::state::RESULT_VOTE_MIN_FINALITY_DEPTH,
             deadline_height: cursor
                 + outbe_ocomp_protocol::state::RESULT_VOTE_MIN_FINALITY_DEPTH
                 + 1_800,
         },
-        canonical_job_intent: BoundedBytes(intent.encode_canonical(&limits).unwrap()),
-    }
+    )
 }
 
 fn refresh_arithmetic(result: &mut LysisResultV1) {
@@ -501,74 +414,24 @@ fn refresh_arithmetic(result: &mut LysisResultV1) {
 // and B-derived JobId. This proves stored evidence, not worker execution.
 fn result_for(job: &OcompJobRecordV1) -> LysisResultV1 {
     let intent = &job.intent;
-    let frozen = &intent.frozen_metadosis_values;
-    let unused = frozen.lysis_limit_minor;
-    let conservation = ConservationTotalsV1 {
-        tribute_nominal_total: intent.authenticated_day_nominal,
-        eligible_nominal_total: U256::ZERO,
-        day_limit: frozen.day_limit,
-        gratis_demand: frozen.gratis_demand,
-        day_gratis_limit_minor: frozen.day_gratis_limit_minor,
-        lysis_limit_minor: frozen.lysis_limit_minor,
-        desis_limit_minor: frozen.desis_limit_minor,
-        lysis_allocation_minor: U256::ZERO,
-        unused_lysis_limit_minor: unused,
-        carry_over_credit: unused,
-        nod_cost_total: U256::ZERO,
-    };
-    let mut result = LysisResultV1 {
-        protocol_bundle_hash: intent.protocol_bundle_hash,
-        job_id: job.finalized.as_ref().unwrap().job_id,
-        attempt: intent.attempt,
-        input_manifest_hash: B256::repeat_byte(0x35),
-        plan_hash: B256::repeat_byte(0x36),
-        unit_artifact_root: B256::repeat_byte(0x37),
-        fidelity_fraction_root: B256::repeat_byte(0x38),
-        gratis_prefix_root: B256::repeat_byte(0x39),
-        result_chunk_count: 1,
-        result_chunk_list_root: B256::repeat_byte(0x3a),
-        carry_over_credit: CarryOverCreditActionV1 {
-            source_wwd: intent.wwd,
-            reason: CarryOverReason::UnusedLysis,
-            amount: unused,
+    let mut result = outbe_ocomp::test_support::unused_lysis_result(
+        intent,
+        job.finalized.as_ref().unwrap().job_id,
+        outbe_ocomp::test_support::FixtureResultCommitments {
+            input_manifest_hash: B256::repeat_byte(0x35),
+            plan_hash: B256::repeat_byte(0x36),
+            unit_artifact_root: B256::repeat_byte(0x37),
+            fidelity_fraction_root: B256::repeat_byte(0x38),
+            gratis_prefix_root: B256::repeat_byte(0x39),
+            result_chunk_list_root: B256::repeat_byte(0x3a),
+            roots: ResultRootsV1 {
+                nod_root: B256::repeat_byte(0x31),
+                bucket_root: B256::repeat_byte(0x32),
+                contributor_root: B256::repeat_byte(0x33),
+                output_manifest_root: B256::repeat_byte(0x34),
+            },
         },
-        metadosis_completion_summary: MetadosisCompletionSummaryV1 {
-            wwd: intent.wwd,
-            pending_nonce: intent.pending_nonce,
-            day_type: frozen.day_type,
-            tribute_nominal_total: intent.authenticated_day_nominal,
-            day_limit: frozen.day_limit,
-            gratis_demand: frozen.gratis_demand,
-            day_gratis_limit_minor: frozen.day_gratis_limit_minor,
-            lysis_limit_minor: frozen.lysis_limit_minor,
-            desis_limit_minor: frozen.desis_limit_minor,
-            lysis_allocation_minor: U256::ZERO,
-            unused_lysis_limit_minor: unused,
-            carry_over_credit: unused,
-            status: CompletionStatus::Completed,
-            logical_evaluation_height: intent.logical_evaluation_height,
-            logical_evaluation_time: intent.logical_evaluation_time,
-        },
-        tribute_count: intent.authenticated_day_count,
-        tribute_nominal_total: intent.authenticated_day_nominal,
-        unused_lysis_limit_minor: unused,
-        roots: ResultRootsV1 {
-            nod_root: B256::repeat_byte(0x31),
-            bucket_root: B256::repeat_byte(0x32),
-            contributor_root: B256::repeat_byte(0x33),
-            output_manifest_root: B256::repeat_byte(0x34),
-        },
-        counts: ExactCountsV1 {
-            tribute_count: intent.authenticated_day_count,
-            nod_count: intent.authenticated_day_count,
-            bucket_count: 0,
-            contributor_count: 0,
-            semantic_event_count: 0,
-        },
-        conservation,
-        arithmetic_commitment: B256::ZERO,
-        event_summary_hash: lysis_v1_empty_semantic_event_root().unwrap(),
-    };
+    );
     refresh_arithmetic(&mut result);
     result.validate_finalized_intent(intent).unwrap();
     result

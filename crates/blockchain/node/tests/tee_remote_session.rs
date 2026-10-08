@@ -30,7 +30,6 @@ use outbe_tee::{
     RemoteSessionExpectationV1,
 };
 use outbe_tee_enclave::{
-    initialization::InitializationState,
     keys::EnclaveKeys,
     seal::EnclaveBootConfig,
     transport::{serve_connection_with, SharedTributeOfferKey},
@@ -258,7 +257,11 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
     ));
     let keys = Arc::new(EnclaveKeys::new([0x92; 32], Some([0x92; 32])).unwrap());
     let initialization = Arc::new(
-        InitializationState::production_with_synthetic_dcap_for_test(boot.clone(), &keys).unwrap(),
+        outbe_tee_enclave::initialization::factory::production_with_synthetic_dcap_for_test(
+            boot.clone(),
+            &keys,
+        )
+        .unwrap(),
     );
     let challenge = match initialization.challenge_response(&keys).unwrap() {
         outbe_tee::protocol::EnclaveResponse::InitializationChallenge { challenge, .. } => {
