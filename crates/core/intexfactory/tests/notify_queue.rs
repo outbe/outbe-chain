@@ -15,7 +15,7 @@ use outbe_intexfactory::constants::{
     MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, NOTICE_RETRY_SECONDS,
 };
 use outbe_intexfactory::notify::{
-    called_notice_attempts, notice_retry_at, pack_called_notice, send_notices,
+    called_notice_attempts, notice_retry_at, pack_called_notice, send_notices, with_retry_at,
 };
 use outbe_intexfactory::precompile::IIntexFactory::CalledNoticeDropped;
 use outbe_intexfactory::IntexFactoryContract;
@@ -101,6 +101,35 @@ fn a_backlog_drains_one_block_worth_at_a_time() {
             (0, 0),
             "emptying the queue rewinds it so the indices cannot run away"
         );
+    });
+}
+
+/// A paused entry of the same day and call time does not ride along with a due one.
+#[test]
+fn a_paused_entry_waits_out_its_pause_behind_a_due_one() {
+    let mut storage = provider();
+    StorageHandle::enter(&mut storage, |handle| {
+        let day = WorldwideDay::new(20_260_101);
+        let due = SeriesId::pack(day, *b"USD", b'U').unwrap();
+        let paused = SeriesId::pack(day, *b"EUR", b'U').unwrap();
+        let factory = IntexFactoryContract::new(handle.clone());
+        factory
+            .notify_at
+            .write(&0, pack_called_notice(due, CALLED_AT))
+            .unwrap();
+        factory
+            .notify_at
+            .write(
+                &1,
+                with_retry_at(pack_called_notice(paused, CALLED_AT), NOW + 1),
+            )
+            .unwrap();
+        factory.notify_tail.write(2).unwrap();
+
+        drain(&handle);
+        assert_eq!(queue_bounds(&handle), (1, 2));
+        drain_at(&handle, NOW + 1);
+        assert_eq!(queue_bounds(&handle), (0, 0));
     });
 }
 

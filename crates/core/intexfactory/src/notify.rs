@@ -41,7 +41,7 @@ pub fn notice_retry_at(entry: U256) -> u64 {
     ((entry >> RETRY_AT_SHIFT) & U256::from(u64::MAX)).to::<u64>()
 }
 
-fn with_retry_at(entry: U256, retry_at: u64) -> U256 {
+pub fn with_retry_at(entry: U256, retry_at: u64) -> U256 {
     (entry & !(U256::from(u64::MAX) << RETRY_AT_SHIFT)) | (U256::from(retry_at) << RETRY_AT_SHIFT)
 }
 
@@ -132,7 +132,7 @@ impl NoticeSend<'_, '_> {
         while index < self.stop && run.len() < run_cap {
             let entry = factory.notify_at.read(&index)?;
             let (id, ts) = unpack_called_notice(entry);
-            if !joins_run(worldwide_day, called_at, id, ts) {
+            if !joins_run(worldwide_day, called_at, id, ts) || notice_retry_at(entry) > self.now {
                 break;
             }
             run.push(id);

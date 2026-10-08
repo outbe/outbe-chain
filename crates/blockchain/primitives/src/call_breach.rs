@@ -64,10 +64,14 @@ pub fn scan_terms(
     let window = max_window
         .read(&reference_currency)?
         .max(live_window_seconds);
-    let stored_threshold = min_threshold.read(&reference_currency)?;
-    let threshold = match stored_threshold {
-        0 => live_threshold_seconds,
-        stored => stored.min(live_threshold_seconds),
+    // A live threshold under a day is not one, as in `widen_scan_terms`.
+    let threshold = match (
+        min_threshold.read(&reference_currency)?,
+        live_threshold_seconds >= SECS_PER_DAY,
+    ) {
+        (0, _) => live_threshold_seconds,
+        (stored, true) => stored.min(live_threshold_seconds),
+        (stored, false) => stored,
     };
     Ok(ScanTerms {
         window_days: window / SECS_PER_DAY,
@@ -139,6 +143,22 @@ mod tests {
         let vwaps = days(&[Some(11), Some(11), Some(11)]);
         assert!(breached_enough(&vwaps, &terms(10, 3, 2, 99)));
         assert!(!breached_enough(&vwaps, &terms(10, 3, 2, 100)));
+    }
+
+    #[test]
+    fn a_live_threshold_under_a_day_leaves_the_stored_one() {
+        use crate::storage::{dsl::Map, hashmap::HashMapStorageProvider, StorageHandle};
+        let contract = alloy_primitives::address!("0x0000000000000000000000000000000000001003");
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let max_window: Map<'_, u16, u32> = Map::new(U256::from(0), contract, storage.clone());
+            let min_threshold: Map<'_, u16, u32> = Map::new(U256::from(1), contract, storage);
+            min_threshold.write(&840, 2 * DAY).unwrap();
+            let terms = scan_terms(&max_window, &min_threshold, 840, 4 * DAY, DAY - 1).unwrap();
+            assert_eq!((terms.window_days, terms.threshold_days), (4, 2));
+            let terms = scan_terms(&max_window, &min_threshold, 840, 4 * DAY, DAY).unwrap();
+            assert_eq!(terms.threshold_days, 1);
+        });
     }
 
     #[test]

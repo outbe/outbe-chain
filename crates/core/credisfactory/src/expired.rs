@@ -44,7 +44,9 @@ impl ExpiryHandler<U256> for CredisExpiry<'_, '_> {
     type Member = U256;
 
     fn due(&mut self, position_id: U256) -> Result<Due> {
-        let position = self.credis.get_position(position_id)?;
+        let Some(position) = self.credis.positions.get(position_id)? else {
+            return Ok(Due::Drop);
+        };
         let voidable = position.lifecycle_state()? == CredisState::Called
             && !position.outstanding_principal_minor.is_zero();
         Ok(if voidable { Due::Expire } else { Due::Drop })

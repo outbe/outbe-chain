@@ -212,12 +212,11 @@ fn visit(
     window: &CallWindow,
     position_id: U256,
 ) -> Result<Option<bool>> {
-    // Structural reads stay on `?` so infra errors still propagate.
-    let position = credis.get_position(position_id)?;
     let now = ctx.block.timestamp;
-    let outcome = ctx
-        .storage
-        .with_checkpoint(|| call_if_breached(credis, window, &position, now));
+    let outcome = ctx.storage.with_checkpoint(|| {
+        let position = credis.get_position(position_id)?;
+        call_if_breached(credis, window, &position, now)
+    });
     match call_sweep::decide(outcome, PrecompileError::sweep_failure)? {
         Decided::Done(called) => Ok(Some(called)),
         Decided::Stopped => Ok(None),
