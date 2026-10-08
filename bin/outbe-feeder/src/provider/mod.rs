@@ -13,6 +13,7 @@ pub mod mock;
 pub mod mock_http;
 pub mod okx;
 pub mod pyth;
+pub mod redstone;
 #[cfg(test)]
 pub(crate) mod test_server;
 mod websocket;
@@ -201,6 +202,12 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                 Box::new(mock_http::MockHttpProvider::new(endpoint)?)
             }
             "pyth" => Box::new(pyth::PythProvider::new()?),
+            "redstone" => Box::new(redstone::RedstoneProvider::new(
+                config
+                    .redstone
+                    .as_ref()
+                    .ok_or_else(|| eyre!("provider redstone requires a [redstone] section"))?,
+            )?),
             "binance" => Box::new(binance::BinanceProvider::new()?),
             "kraken" => Box::new(kraken::KrakenProvider::new()?),
             "okx" => Box::new(okx::OkxProvider::new()?),

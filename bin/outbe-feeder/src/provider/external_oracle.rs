@@ -48,7 +48,7 @@ const MAX_FUTURE_SECS: u64 = 60;
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExternalOracleConfig {
     /// Provider name referenced by `currency_pairs.sources`, e.g. `chainlink`
-    /// or `redstone`; must not collide with a built-in provider name.
+    /// or `redstone_push`; must not collide with a built-in provider name.
     pub name: String,
     pub chain_id: u64,
     pub rpc_endpoint: String,
@@ -524,14 +524,14 @@ mod tests {
 
         // The same market from a second vendor is a second source.
         let mut redstone = config("http://localhost:8545");
-        redstone.name = "redstone".into();
+        redstone.name = "redstone_push".into();
         redstone.feeds[0].contract = address!("0x67F6838e58859d612E4ddF04dA396d6DABB66Dc4");
         redstone.feeds[0].description = "RedStone Price Feed for ETH".into();
         feeder.external_oracles.push(redstone);
         feeder.currency_pairs[0]
             .sources
             .push(crate::config::CurrencyPairSource {
-                provider: "redstone".into(),
+                provider: "redstone_push".into(),
                 base: "ETH".into(),
                 quote: "840".into(),
             });
@@ -539,13 +539,13 @@ mod tests {
         let providers = crate::provider::create_providers(&feeder).unwrap();
         let mut names: Vec<&str> = providers.iter().map(|p| p.name()).collect();
         names.sort_unstable();
-        assert_eq!(names, ["chainlink", "redstone"]);
+        assert_eq!(names, ["chainlink", "redstone_push"]);
 
         feeder.external_oracles[1].name = "chainlink".into();
         assert!(feeder.validate().is_err(), "duplicate section name");
         feeder.external_oracles[1].name = "binance".into();
         assert!(feeder.validate().is_err(), "built-in name is reserved");
-        feeder.external_oracles[1].name = "redstone".into();
+        feeder.external_oracles[1].name = "redstone_push".into();
         feeder.external_oracles[1].feeds[0].quote = "USD".into();
         assert!(feeder.validate().is_err(), "source without matching feed");
     }

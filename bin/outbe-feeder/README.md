@@ -52,9 +52,19 @@ provider = "mock_http"
 base = "COEN"
 quote = "USDC"
 
+# A USD-quoted feed from the RedStone gateway; needs the [redstone] section.
+[[currency_pairs.sources]]
+provider = "redstone"
+base = "USDC"
+quote = "840"
+
 [[provider_endpoints]]
 name = "mock_http"
 rest = "https://prc.testnet.outbe.net"
+
+# RedStone gateway access, one key per validator.
+[redstone]
+api_key = "REPLACE_WITH_REDSTONE_API_KEY"
 
 # Optional exchange WebSocket override. Omit it to use the exchange default.
 [[provider_endpoints]]
@@ -88,6 +98,8 @@ threshold = "2.0"
 | `provider_endpoints[].name` | only endpoint-backed providers | Provider endpoint name |
 | `provider_endpoints[].rest` | only endpoint-backed providers | Provider REST base URL |
 | `provider_endpoints[].websocket` | no | Exchange market-stream endpoint override (`ws://`, `wss://`, or a host); omitted uses the exchange default |
+| `redstone.api_key` | only `redstone` sources | RedStone authenticated-gateway key, one per validator |
+| `redstone.gateway` | no | RedStone gateway URL override |
 | `dex_providers` | only DEX sources | Explicit RPC, network and pool configuration; see [DEX providers](#dex-providers) |
 | `external_oracles[].name` | only external-oracle sources | Provider name for `currency_pairs.sources`; one section per vendor and network, see [External oracles](#external-oracles) |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
@@ -101,7 +113,7 @@ At startup, the feeder validates:
 - `validator_address` is a valid 20-byte hex address
 - Each on-chain pair has at least 1 external source market
 - ISO markets use `COEN/ISO`; reverse `ISO/COEN` configuration is rejected
-- All provider names are known: `mock`, `mock_http`, `pyth`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`, or the `name` of an `[[external_oracles]]` section
+- All provider names are known: `mock`, `mock_http`, `pyth`, `redstone`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`, or the `name` of an `[[external_oracles]]` section
 - WebSocket endpoints are only accepted for streaming exchange providers
 - Provider endpoint names are unique
 
@@ -121,6 +133,7 @@ volume-weighted mean rounded down.
 | `mock_http` | Working | Configured REST endpoint compatible with the migrated Cosmos test price server |
 | `pyth` | Working | Pyth Hermes REST API for supported BTC/ETH feeds |
 | `<external_oracles[].name>` | Implemented | Another oracle's on-chain feed contract (Chainlink, RedStone push; Chainlink `AggregatorV3Interface`) read over EVM JSON-RPC at `latest`; name chosen in config |
+| `redstone` | Implemented | RedStone authenticated gateway: USD-quoted feeds, median of the 3 registered signers closest to the median |
 | `binance` | Working | Binance WebSocket ticker/candle streams with REST bootstrap fallback |
 | `kraken` | Working | Kraken WebSocket ticker/candle streams with REST bootstrap fallback |
 | `okx` | Working | OKX WebSocket ticker/candle streams with REST bootstrap fallback |
@@ -128,8 +141,8 @@ volume-weighted mean rounded down.
 | `huobi` | Working | Huobi WebSocket ticker/candle streams with REST bootstrap fallback |
 | `mexc` | Working | MEXC protobuf WebSocket ticker/candle streams with REST bootstrap fallback |
 | `coinbase` | Working | Coinbase WebSocket ticker stream with REST bootstrap fallback |
-| `uniswap` | Implemented | Ethereum finalized V2/V3/V4 pool spot rate and 1h COEN swap volume |
-| `pancakeswap` | Implemented | BNB Chain finalized V2/V3/Infinity CL/Bin pool spot rate and 1h COEN swap volume |
+| `uniswap` | Implemented | Ethereum V2/V3/V4 pool spot rate and 1h COEN swap volume, read a few blocks behind the head |
+| `pancakeswap` | Implemented | BNB Chain V2/V3/Infinity CL/Bin pool spot rate and 1h COEN swap volume, read a few blocks behind the head |
 
 Provider errors, non-success responses, unsupported custom pairs, and timeouts are logged and skipped. The feeder does not fabricate fallback prices from failed providers.
 
@@ -139,6 +152,24 @@ protocol heartbeats, and reconnect with automatic resubscription. Until a
 stream has produced data for a configured pair, its existing REST adapter is
 used as bootstrap fallback.
 
+### RedStone provider
+
+`redstone` reads signed data packages from the RedStone authenticated gateway
+(`/v2/data-packages/latest-by-data-feeds/redstone-primary-prod`). It needs a
+`[redstone]` section with `api_key` (issued by RedStone, one per validator)
+and optionally `gateway` to override the gateway URL. Feeds are USD quoted,
+so a source must use quote `840` or `USD`; the base symbol is the RedStone
+feed id (`USDC`, `USDT`, `ETH`).
+
+Selection follows the RedStone SDK defaults. For each feed the provider keeps
+the packages that share the newest timestamp and come from a signer registered
+for `redstone-primary-prod` (the registry list is compiled in and dated in
+`provider/redstone.rs`), requires three distinct signers, takes the three
+values closest to the median, and publishes their median. Packages older than
+60 seconds or more than 30 seconds in the future reject the feed. Package
+signatures are not verified; the gateway is trusted like Pyth Hermes.
+RedStone lists no COEN feed. See the configuration example above for the
+`[redstone]` section and a `redstone` source.
 ### External oracles
 
 `[[external_oracles]]` sections read price feeds from another oracle's on-chain
@@ -159,7 +190,7 @@ base = "ETH"
 quote = "840"
 
 [[currency_pairs.sources]]
-provider = "redstone"
+provider = "redstone_push"
 base = "ETH"
 quote = "840"
 
@@ -175,7 +206,7 @@ contract = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
 description = "ETH / USD"
 
 [[external_oracles]]
-name = "redstone"
+name = "redstone_push"
 chain_id = 1
 rpc_endpoint = "https://ethereum-rpc.example.invalid"
 
@@ -225,7 +256,8 @@ Each `[[dex_providers]]` contains:
 | `rpc_endpoint` | HTTP(S) JSON-RPC; separate from the destination `[chain]` RPC |
 | `poll_interval_secs` | Poll/retry delay, default 2 seconds, allowed 1–10 |
 | `log_chunk_blocks` | Maximum blocks per log request, default 2000, allowed 1–10000; errors reduce the range down to one block |
-| `max_finalized_age_secs` | Maximum wall-clock age of the finalized block, default 1800 seconds, including the chain's finality delay |
+| `confirmations` | Blocks behind `latest` to read from, default 3, allowed 0–1000; zero reads the head |
+| `max_block_age_secs` | Maximum wall-clock age of the block read, default 1800 seconds (`max_finalized_age_secs` is accepted as an alias) |
 | `markets` | Explicit `base`, `quote`, `base_token`, `quote_token`, and nested `pool` configuration |
 
 One pool is selected explicitly per `(provider, base, quote)`; duplicate markets
@@ -251,21 +283,25 @@ the lower 16 bits contain the hook bitmap; the next 24 bits contain CL tick
 spacing, or the next 16 bits contain Bin step. Copy the actual creation key,
 including its hook settings and fee. A dynamic fee is encoded as `8388608`.
 
-RPC must support `eth_chainId`, `eth_getBlockByNumber("finalized")`, historical
+RPC must support `eth_chainId`, `eth_getBlockByNumber("latest")`, historical
 block headers, `eth_getLogs`, and EIP-1898 `eth_call` with
-`{blockHash, requireCanonical: true}`. Price and decimals reads use one finalized
-block hash; volume covers `(block timestamp - 1h, block timestamp]`. There is no
-fallback to `latest`. Some [public BNB RPCs disable eth_getLogs](https://docs.bnbchain.org/bnb-smart-chain/developers/json_rpc/json-rpc-endpoint/);
+`{blockHash, requireCanonical: true}`. Each cycle reads `latest`, steps back
+`confirmations` blocks by number, and pins every price, decimals and log read to
+that block's hash; volume covers `(block timestamp - 1h, block timestamp]`.
+The feeder does not wait for the `finalized` tag: on Ethereum that lags about
+13 minutes and moves once per epoch, while three confirmations already rule
+out ordinary one-block reorgs. A deeper reorg still fails the hash checks and
+rebuilds the volume window. Some [public BNB RPCs disable eth_getLogs](https://docs.bnbchain.org/bnb-smart-chain/developers/json_rpc/json-rpc-endpoint/);
 use an endpoint that exposes it and returns complete results or a range-limit
 error. Oversized responses above 16 MiB are rejected and log ranges reduced.
 
 Each market has an independent background worker. It backfills the volume
-window at startup, then scans only new finalized blocks. It deduplicates log
+window at startup, then scans only new confirmed blocks. It deduplicates log
 rows, checks block hashes and commits a range only after validating every event.
 V2 volume uses the absolute net base-token input/output; V3/V4/Infinity use the
 absolute signed base-token delta. Volumes remain in COEN units for comparable
 weights across USDC/USDT markets. Only per-block sums are retained in memory;
-restart rebuilds the window from RPC, and detected finalized-history changes
+restart rebuilds the window from RPC, and detected chain-history changes
 clear it for rebuilding.
 
 Uninitialized pools, RPC failures and incomplete backfills publish no ticker.
@@ -273,7 +309,7 @@ A complete window with no swaps publishes real zero volume. Cached observations
 expire 30 seconds after their state acquisition began; a long backfill cannot
 make an old spot price look freshly acquired. A failed market does not block
 other markets. Dropping the provider cancels its workers. Logs distinguish
-warmup, a ready finalized block/hash and retryable unavailability.
+warmup, a ready block/hash and retryable unavailability.
 
 ABI and price formula references:
 [Uniswap V2](https://github.com/Uniswap/v2-core/blob/master/contracts/interfaces/IUniswapV2Pair.sol),

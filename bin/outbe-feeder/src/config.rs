@@ -28,6 +28,8 @@ pub struct FeederConfig {
     /// provider named by the operator, with its own EVM RPC.
     #[serde(default)]
     pub external_oracles: Vec<crate::provider::external_oracle::ExternalOracleConfig>,
+    /// RedStone gateway access; only read when a source names `redstone`.
+    pub redstone: Option<RedstoneConfig>,
     /// Health/status HTTP server configuration.
     pub health: Option<HealthConfig>,
 }
@@ -117,6 +119,17 @@ pub struct ProviderEndpointConfig {
     pub websocket: String,
 }
 
+/// RedStone authenticated gateway access; required by the `redstone` provider.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RedstoneConfig {
+    /// Gateway key issued by RedStone, one per validator.
+    pub api_key: String,
+    /// Gateway URL override. Empty selects the RedStone default.
+    #[serde(default)]
+    pub gateway: String,
+}
+
 /// Deviation threshold for outlier filtering.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeviationThreshold {
@@ -156,12 +169,22 @@ impl FeederConfig {
         "mexc",
         "coinbase",
         "mock_http",
+        "redstone",
         "uniswap",
         "pancakeswap",
     ];
 
     /// Validates configuration at startup. Returns error for invalid values.
     pub fn validate(&self) -> Result<()> {
+        self.validate_oracle_and_account()?;
+        self.validate_currency_pairs()?;
+        self.validate_provider_endpoints()?;
+        crate::provider::dex::validate_config(self)?;
+        crate::provider::external_oracle::validate_config(self, Self::KNOWN_PROVIDERS)?;
+        crate::provider::redstone::validate_config(self)
+    }
+
+    fn validate_oracle_and_account(&self) -> Result<()> {
         // vote_period must be > 0
         if self.oracle.vote_period == 0 {
             return Err(eyre::eyre!(
@@ -177,7 +200,12 @@ impl FeederConfig {
                 self.account.validator_address
             ));
         }
+        Ok(())
+    }
 
+    /// Every on-chain pair is distinct, well-formed and has at least one
+    /// known, distinct source market.
+    fn validate_currency_pairs(&self) -> Result<()> {
         let mut oracle_pairs = std::collections::BTreeSet::new();
         for pair in &self.currency_pairs {
             let base = parse_oracle_asset(&pair.base)?;
@@ -210,50 +238,62 @@ impl FeederConfig {
                     pair.quote
                 ));
             }
-            if pair.sources.is_empty() {
+            self.validate_pair_sources(pair)?;
+        }
+        Ok(())
+    }
+
+    /// A pair names at least one source; each source is well-formed, uses a
+    /// known provider and appears once.
+    fn validate_pair_sources(&self, pair: &CurrencyPairConfig) -> Result<()> {
+        if pair.sources.is_empty() {
+            return Err(eyre::eyre!(
+                "currency pair {}/{} has no sources configured",
+                pair.base,
+                pair.quote
+            ));
+        }
+        let mut sources = std::collections::BTreeSet::new();
+        for source in &pair.sources {
+            if source.base.trim().is_empty() || source.quote.trim().is_empty() {
                 return Err(eyre::eyre!(
-                    "currency pair {}/{} has no sources configured",
+                    "provider source for {}/{} has an empty market asset",
                     pair.base,
                     pair.quote
                 ));
             }
-            let mut sources = std::collections::BTreeSet::new();
-            for source in &pair.sources {
-                if source.base.trim().is_empty() || source.quote.trim().is_empty() {
-                    return Err(eyre::eyre!(
-                        "provider source for {}/{} has an empty market asset",
-                        pair.base,
-                        pair.quote
-                    ));
-                }
-                if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str())
-                    && !crate::provider::external_oracle::is_section_name(self, &source.provider)
-                {
-                    return Err(eyre::eyre!(
-                        "unknown provider '{}' for pair {}/{}. Known: {:?} or an external_oracles section name",
-                        source.provider,
-                        pair.base,
-                        pair.quote,
-                        Self::KNOWN_PROVIDERS
-                    ));
-                }
-                if !sources.insert((
-                    source.provider.as_str(),
-                    source.base.as_str(),
-                    source.quote.as_str(),
-                )) {
-                    return Err(eyre::eyre!(
-                        "duplicate provider source '{}' {}/{} for pair {}/{}",
-                        source.provider,
-                        source.base,
-                        source.quote,
-                        pair.base,
-                        pair.quote
-                    ));
-                }
+            if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str())
+                && !crate::provider::external_oracle::is_section_name(self, &source.provider)
+            {
+                return Err(eyre::eyre!(
+                    "unknown provider '{}' for pair {}/{}. Known: {:?} or an external_oracles section name",
+                    source.provider,
+                    pair.base,
+                    pair.quote,
+                    Self::KNOWN_PROVIDERS
+                ));
+            }
+            if !sources.insert((
+                source.provider.as_str(),
+                source.base.as_str(),
+                source.quote.as_str(),
+            )) {
+                return Err(eyre::eyre!(
+                    "duplicate provider source '{}' {}/{} for pair {}/{}",
+                    source.provider,
+                    source.base,
+                    source.quote,
+                    pair.base,
+                    pair.quote
+                ));
             }
         }
+        Ok(())
+    }
 
+    /// Endpoint names are known and unique; websocket overrides are only
+    /// accepted for streaming exchanges and look like a websocket address.
+    fn validate_provider_endpoints(&self) -> Result<()> {
         let mut endpoint_names = std::collections::BTreeSet::new();
         for endpoint in &self.provider_endpoints {
             if !Self::KNOWN_PROVIDERS.contains(&endpoint.name.as_str()) {
@@ -294,9 +334,6 @@ impl FeederConfig {
                 }
             }
         }
-
-        crate::provider::dex::validate_config(self)?;
-        crate::provider::external_oracle::validate_config(self, Self::KNOWN_PROVIDERS)?;
         Ok(())
     }
 
@@ -357,6 +394,7 @@ mod tests {
             provider_endpoints: vec![],
             dex_providers: vec![],
             external_oracles: vec![],
+            redstone: None,
             health: None,
         }
     }
