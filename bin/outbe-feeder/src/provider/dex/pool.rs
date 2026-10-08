@@ -191,70 +191,56 @@ impl DexMarketConfig {
         if let Some(id) = self.pool.pool_id(self)? {
             ensure!(log.topics[1] == id, "DEX Swap belongs to another pool");
         }
-        let base0 = self.base_is_token0();
-        let amount = match self.pool {
-            PoolConfig::UniswapV2 { .. } | PoolConfig::PancakeswapV2 { .. } => {
-                let e = Pair::Swap::decode_raw_log_validate(log.topics.iter().copied(), &log.data)?;
-                let (input, output) = if base0 {
-                    (e.amount0In, e.amount0Out)
-                } else {
-                    (e.amount1In, e.amount1Out)
-                };
-                input.abs_diff(output)
-            }
-            PoolConfig::UniswapV3 { .. } => {
-                let e =
-                    UniV3::Swap::decode_raw_log_validate(log.topics.iter().copied(), &log.data)?;
-                if base0 {
-                    e.amount0.unsigned_abs()
-                } else {
-                    e.amount1.unsigned_abs()
-                }
-            }
-            PoolConfig::PancakeswapV3 { .. } => {
-                let e = PancakeV3::Swap::decode_raw_log_validate(
-                    log.topics.iter().copied(),
-                    &log.data,
-                )?;
-                if base0 {
-                    e.amount0.unsigned_abs()
-                } else {
-                    e.amount1.unsigned_abs()
-                }
-            }
-            PoolConfig::UniswapV4 { .. } => {
-                let e =
-                    UniV4::Swap::decode_raw_log_validate(log.topics.iter().copied(), &log.data)?;
-                U256::from(if base0 {
-                    e.amount0.unsigned_abs()
-                } else {
-                    e.amount1.unsigned_abs()
-                })
-            }
-            PoolConfig::InfinityCl { .. } => {
-                let e = InfinityCl::Swap::decode_raw_log_validate(
-                    log.topics.iter().copied(),
-                    &log.data,
-                )?;
-                U256::from(if base0 {
-                    e.amount0.unsigned_abs()
-                } else {
-                    e.amount1.unsigned_abs()
-                })
-            }
-            PoolConfig::InfinityBin { .. } => {
-                let e = InfinityBin::Swap::decode_raw_log_validate(
-                    log.topics.iter().copied(),
-                    &log.data,
-                )?;
-                U256::from(if base0 {
-                    e.amount0.unsigned_abs()
-                } else {
-                    e.amount1.unsigned_abs()
-                })
+        self.base_delta(log)
+    }
+
+    /// Decodes one Swap event for the pool's protocol and returns the
+    /// absolute base-token amount it moved.
+    fn base_delta(&self, log: &Log) -> Result<U256> {
+        let topics = || log.topics.iter().copied();
+        // The base token's side of the event: amount0 when base is token0.
+        let pick = |amount0: U256, amount1: U256| {
+            if self.base_is_token0() {
+                amount0
+            } else {
+                amount1
             }
         };
-        Ok(amount)
+        Ok(match self.pool {
+            PoolConfig::UniswapV2 { .. } | PoolConfig::PancakeswapV2 { .. } => {
+                let e = Pair::Swap::decode_raw_log_validate(topics(), &log.data)?;
+                pick(e.amount0In, e.amount1In).abs_diff(pick(e.amount0Out, e.amount1Out))
+            }
+            PoolConfig::UniswapV3 { .. } => {
+                let e = UniV3::Swap::decode_raw_log_validate(topics(), &log.data)?;
+                pick(e.amount0.unsigned_abs(), e.amount1.unsigned_abs())
+            }
+            PoolConfig::PancakeswapV3 { .. } => {
+                let e = PancakeV3::Swap::decode_raw_log_validate(topics(), &log.data)?;
+                pick(e.amount0.unsigned_abs(), e.amount1.unsigned_abs())
+            }
+            PoolConfig::UniswapV4 { .. } => {
+                let e = UniV4::Swap::decode_raw_log_validate(topics(), &log.data)?;
+                pick(
+                    U256::from(e.amount0.unsigned_abs()),
+                    U256::from(e.amount1.unsigned_abs()),
+                )
+            }
+            PoolConfig::InfinityCl { .. } => {
+                let e = InfinityCl::Swap::decode_raw_log_validate(topics(), &log.data)?;
+                pick(
+                    U256::from(e.amount0.unsigned_abs()),
+                    U256::from(e.amount1.unsigned_abs()),
+                )
+            }
+            PoolConfig::InfinityBin { .. } => {
+                let e = InfinityBin::Swap::decode_raw_log_validate(topics(), &log.data)?;
+                pick(
+                    U256::from(e.amount0.unsigned_abs()),
+                    U256::from(e.amount1.unsigned_abs()),
+                )
+            }
+        })
     }
 }
 
