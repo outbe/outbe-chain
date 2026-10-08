@@ -204,17 +204,6 @@ pub struct CredisContract {
     #[attribute(order = 4)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    /// Dense index of the positions still on the price path, that is, those in
-    /// `Open` or `Called`. Membership invariant: a position is listed iff its
-    /// state is non-terminal. Thus the daily scan visits only the positions that
-    /// can still transition, not the whole book.
-    #[attribute(order = 5)]
-    pub active_positions: outbe_primitives::storage::dsl::List<U256>,
-
-    /// position_id -> its slot in [`Self::active_positions`], for O(1) swap-remove.
-    #[attribute(order = 6)]
-    pub active_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
-
     /// Per-account count of positions currently `Called`, backing the
     /// `hasCalledPosition` view.
     #[attribute(order = 7)]
@@ -252,6 +241,24 @@ pub struct CredisContract {
     /// currency. With the widest window it bounds the call prices the scan visits.
     #[attribute(order = 19)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    // Open positions by call price, one trie per reference currency. A call takes
+    // the position out, so the daily scan visits only what can still be called.
+    #[attribute(order = 20)]
+    pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
+    #[attribute(order = 21)]
+    pub call_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 22)]
+    pub call_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 23)]
+    pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    #[attribute(order = 24)]
+    pub call_bin_positions: outbe_primitives::storage::dsl::Map<B256, U256>,
+    #[attribute(order = 25)]
+    pub call_position_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
+    /// `(bin << 32) | positions of that bin still to visit`. 0 = start from the lowest bin.
+    #[attribute(order = 26)]
+    pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 }
 
 impl CredisContract<'_> {

@@ -6,6 +6,7 @@
 
 use alloy_primitives::{Address, U256};
 
+use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
 
@@ -91,45 +92,26 @@ impl CredisContract<'_> {
     }
 
     // ---------------------------------------------------------------------
-    // Active-position index (non-terminal positions only)
+    // Call-price index (Open positions only)
     // ---------------------------------------------------------------------
 
-    /// Appends a position to the dense active index.
-    pub(crate) fn insert_active(&mut self, position_id: U256) -> Result<()> {
-        let index = self.active_positions.len()?;
-        self.active_positions.push(position_id)?;
-        self.active_position_index.write(&position_id, index)?;
+    /// Puts an Open position in the bin of its sealed call price.
+    pub(crate) fn index_for_call(&mut self, position: &Position) -> Result<()> {
+        let bin = call_bins::price_to_bin(position.call_price_minor)?;
+        call_bins::insert(
+            &CallBins(self, position.reference_currency),
+            position.position_id,
+            bin,
+        )
+    }
+
+    /// No-op for a position the call index no longer holds.
+    pub(crate) fn unindex_for_call(&mut self, position: &Position) -> Result<()> {
+        call_bins::remove(
+            &CallBins(self, position.reference_currency),
+            position.position_id,
+        )?;
         Ok(())
-    }
-
-    /// Swap-removes a position from the dense active index. Caller guarantees
-    /// the position is currently listed, i.e. its state was non-terminal.
-    pub(crate) fn remove_active(&mut self, position_id: U256) -> Result<()> {
-        let index = self.active_position_index.read(&position_id)?;
-        let last = self
-            .active_positions
-            .len()?
-            .checked_sub(1)
-            .ok_or(CredisError::PositionNotFound)?;
-        if index != last {
-            let moved = self
-                .active_positions
-                .get(last)?
-                .ok_or(CredisError::PositionNotFound)?;
-            self.active_positions.set(index, moved)?;
-            self.active_position_index.write(&moved, index)?;
-        }
-        self.active_positions.pop()?;
-        self.active_position_index.clear(&position_id)?;
-        Ok(())
-    }
-
-    pub(crate) fn read_active_len(&self) -> Result<u32> {
-        self.active_positions.len()
-    }
-
-    pub(crate) fn read_active_at(&self, index: u32) -> Result<Option<U256>> {
-        self.active_positions.get(index)
     }
 
     // ---------------------------------------------------------------------
@@ -175,4 +157,17 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<U256> {
     deadline: called_deadline,
     sweep_bucket: expiry_sweep_hour,
     cursor: expiry_cursor,
+});
+
+/// One reference currency's Open positions, by call price.
+pub struct CallBins<'a, 'storage>(pub &'a CredisContract<'storage>, pub u16);
+
+outbe_primitives::impl_call_bins!(CallBins<U256> {
+    root: call_bin_tree_root,
+    mid: call_bin_tree_mid,
+    leaf: call_bin_tree_leaf,
+    count: call_bin_count,
+    at: call_bin_positions,
+    slot: call_position_slot,
+    cursor: call_bin_cursor,
 });

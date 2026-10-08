@@ -8,7 +8,7 @@
 use alloy_primitives::{Address, U256};
 
 use outbe_credis::constants::{CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS, SECS_PER_DAY};
-use outbe_credis::{CredisContract, CredisState};
+use outbe_credis::{CallBins, CredisContract, CredisState};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::previous_date_key;
 
@@ -477,14 +477,11 @@ fn the_call_and_the_void_compose_across_runs() {
             pledge_cost()
         );
 
-        // The void cleared the owner's called count and left the active index.
+        // The void cleared the owner's called count and left the deadline queue.
         assert!(!CredisContract::new(storage.clone())
             .has_called_position(alice())
             .unwrap());
-        assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            0
-        );
+        assert_eq!(queued_at(&storage, position_id), 0);
     });
     teardown();
 }
@@ -498,10 +495,14 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
         let position_id = open(&storage, 1);
 
         // Re-point the stored position's ANCHOR at an unregistered currency, so it
-        // prices off a series that does not exist.
+        // prices off a series that does not exist, and index it there.
         {
+            use outbe_primitives::call_bins;
             let credis = CredisContract::new(storage.clone());
             let mut position = credis.get_position(position_id).unwrap();
+            let bin = call_bins::price_to_bin(position.call_price_minor).unwrap();
+            call_bins::remove(&CallBins(&credis, REFERENCE_ISO), position_id).unwrap();
+            call_bins::insert(&CallBins(&credis, UNPRICED_ISO), position_id, bin).unwrap();
             position.reference_currency = UNPRICED_ISO;
             credis.positions.update(&position).unwrap();
         }
@@ -582,7 +583,7 @@ fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
 }
 
 /// Opens one position for each of three distinct owners, so none of them trips
-/// the called-position gate. Returns the ids in active-index order.
+/// the called-position gate. Returns the ids in call-index order.
 fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
     let owners: [Address; 3] = [alice(), bob(), cca()];
     for owner in owners {
@@ -594,8 +595,21 @@ fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
         .collect()
 }
 
+/// Positions of the reference currency's walk in flight still to visit in its bin.
 fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
-    factory(storage).call_scan_cursor.read().unwrap()
+    let packed = CredisContract::new(storage.clone())
+        .call_bin_cursor
+        .read(&REFERENCE_ISO)
+        .unwrap();
+    outbe_primitives::call_bins::unpack_cursor(packed).1
+}
+
+fn is_indexed(storage: &StorageHandle<'_>, position_id: U256) -> bool {
+    CredisContract::new(storage.clone())
+        .call_position_slot
+        .read(&position_id)
+        .unwrap()
+        != 0
 }
 
 #[test]
@@ -603,10 +617,12 @@ fn a_completed_pass_resets_the_cursor() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
-        assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            3
-        );
+        for id in &ids {
+            assert!(
+                is_indexed(&storage, *id),
+                "an open position waits for its call"
+            );
+        }
 
         let at = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, at);
@@ -632,11 +648,20 @@ fn factory<'storage>(
     crate::schema::CredisFactoryContract::new(storage.clone())
 }
 
-/// Pins `day` as the sweep in flight, stopped before active index `cursor - 1`.
-fn pin_sweep(storage: &StorageHandle<'_>, day: u32, cursor: u32) {
-    let factory = factory(storage);
-    factory.call_sweep_day.write(day).unwrap();
-    factory.call_scan_cursor.write(cursor).unwrap();
+/// Pins `day` as the sweep in flight, stopped with `remaining` positions of the
+/// bin `sample` sits in still to visit.
+fn pin_sweep(storage: &StorageHandle<'_>, day: u32, sample: U256, remaining: u32) {
+    factory(storage).call_sweep_day.write(day).unwrap();
+    let credis = CredisContract::new(storage.clone());
+    let price = credis.get_position(sample).unwrap().call_price_minor;
+    let bin = outbe_primitives::call_bins::price_to_bin(price).unwrap();
+    credis
+        .call_bin_cursor
+        .write(
+            &REFERENCE_ISO,
+            outbe_primitives::call_bins::pack_cursor(bin, remaining),
+        )
+        .unwrap();
 }
 
 fn sweep_days(storage: &StorageHandle<'_>) -> (u32, u32) {
@@ -660,8 +685,8 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             CALL_LOOKBACK_DAYS,
             above_call(),
         );
-        // The stored cursor is `index + 1`, so 2 resumes at index 1.
-        pin_sweep(&storage, last_closed_day(at), 2);
+        // Two positions of the bin are left to visit: indices 1 and 0.
+        pin_sweep(&storage, last_closed_day(at), ids[0], 2);
 
         assert_eq!(slice(&storage, at), 2);
         assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
@@ -695,7 +720,7 @@ fn a_newer_closed_day_waits_for_the_pass_in_flight() {
             CALL_LOOKBACK_DAYS + 1,
             above_call(),
         );
-        pin_sweep(&storage, last_closed_day(at), 2);
+        pin_sweep(&storage, last_closed_day(at), ids[0], 2);
 
         assert_eq!(scan(&storage, next), 0, "the newer day only queues");
         assert_eq!(
@@ -722,7 +747,7 @@ fn a_third_closed_day_replaces_the_waiting_one_and_names_it() {
 
     let mut provider = env();
     let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
-        open_three(&storage);
+        let ids = open_three(&storage);
         let at = CREATED_AT + AFTER_WINDOW;
         let later = at + 2 * DAY;
         advance_to(&storage, later);
@@ -732,7 +757,7 @@ fn a_third_closed_day_replaces_the_waiting_one_and_names_it() {
             CALL_LOOKBACK_DAYS + 2,
             above_call(),
         );
-        pin_sweep(&storage, last_closed_day(at), 2);
+        pin_sweep(&storage, last_closed_day(at), ids[0], 2);
         factory(&storage)
             .call_pending_day
             .write(last_closed_day(at + DAY))
@@ -783,7 +808,7 @@ fn a_pinned_day_the_oracle_has_not_finalized_holds_the_sweep() {
         let at = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, at);
         fill_days(&storage, day_back(at, 1), CALL_LOOKBACK_DAYS, above_call());
-        pin_sweep(&storage, last_closed_day(at), 2);
+        pin_sweep(&storage, last_closed_day(at), ids[0], 2);
 
         assert_eq!(slice(&storage, at), 0);
         assert_eq!(state_of(&storage, ids[1]), CredisState::Open);
@@ -823,10 +848,6 @@ fn voiding_several_positions_in_one_block_skips_none() {
             assert_eq!(state_of(&storage, *id), CredisState::Void);
             assert_eq!(queued_at(&storage, *id), 0);
         }
-        assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
-            0
-        );
     });
     teardown();
 }
@@ -929,7 +950,9 @@ fn the_void_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
 
         assert_eq!(expire(&storage, lapsed), budget);
         assert_eq!(
-            CredisContract::new(storage.clone()).active_len().unwrap(),
+            ids.iter()
+                .filter(|id| queued_at(&storage, **id) != 0)
+                .count(),
             1
         );
         assert_eq!(expire(&storage, lapsed), 1);
