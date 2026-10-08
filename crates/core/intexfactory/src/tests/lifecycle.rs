@@ -385,7 +385,7 @@ mod call_sweep {
             assert_eq!(factory.expiry_bucket_live.read(&bucket).unwrap(), 1);
             assert_eq!(factory.call_group_count.read(&key).unwrap(), 1);
             assert_eq!(
-                factory.called_group_deadline.read(&key).unwrap(),
+                factory.called_deadline.read(&key).unwrap(),
                 scan_ts + 7 * DAY
             );
             assert_eq!(
@@ -413,7 +413,7 @@ mod call_sweep {
         );
         called::scan_and_call(&ctx).unwrap();
         IntexFactoryContract::new(s.clone())
-            .called_group_deadline
+            .called_deadline
             .read(&IntexFactoryContract::scoped(REFERENCE_ISO, worldwide_day))
             .unwrap()
     }
@@ -427,7 +427,7 @@ mod call_sweep {
     fn sweep_at(s: &StorageHandle<'_>, now: u64) {
         let ctx =
             BlockRuntimeContext::new(BlockContext::empty_for_tests(2, now, CHAIN_ID), s.clone());
-        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        crate::expired::sweep_expired(&ctx).unwrap();
     }
 
     fn unallocated(s: &StorageHandle<'_>) -> U256 {
@@ -950,7 +950,7 @@ mod call_sweep {
             );
             assert_ne!(
                 IntexFactoryContract::new(s.clone())
-                    .call_scan_cursor
+                    .call_bin_cursor
                     .read(&REFERENCE_ISO)
                     .unwrap(),
                 0,
@@ -1086,7 +1086,7 @@ mod call_sweep {
                 s.clone(),
             );
             called::scan_and_call(&ctx).unwrap();
-            let cursor = factory.call_scan_cursor.read(&REFERENCE_ISO).unwrap();
+            let cursor = factory.call_bin_cursor.read(&REFERENCE_ISO).unwrap();
             assert_ne!(cursor, 0, "the first slice gave out inside the range");
 
             let next_ts = scan_ts + DAY;
@@ -1100,7 +1100,7 @@ mod call_sweep {
             assert_eq!(factory.call_sweep_day.read().unwrap(), day);
             assert_eq!(factory.call_pending_day.read().unwrap(), next_day);
             assert_eq!(
-                factory.call_scan_cursor.read(&REFERENCE_ISO).unwrap(),
+                factory.call_bin_cursor.read(&REFERENCE_ISO).unwrap(),
                 cursor,
                 "the walk in flight was not restarted"
             );

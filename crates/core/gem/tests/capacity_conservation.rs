@@ -1,7 +1,7 @@
 //! Included Gem subtypes conserve live load through real call/expiry hooks.
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use outbe_gem::{api, config::PROFILE_PROD, hooks, GemAddParams, GemContract, GemState};
+use outbe_gem::{api, called, config::PROFILE_PROD, hooks, GemAddParams, GemContract, GemState};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     address_pair::AddressPair,
@@ -71,7 +71,7 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         }
         oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, CALLED, 1), s.clone());
-        hooks::scan_and_call(&ctx).unwrap();
+        called::scan_and_call(&ctx).unwrap();
         for (id, _) in &rights {
             assert_eq!(
                 api::get_gem(&s, *id).unwrap().unwrap().state,

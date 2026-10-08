@@ -153,7 +153,7 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<U256> {
     len: expiry_bucket_len,
     live: expiry_bucket_live,
     at: expiry_bucket_at,
-    slot: called_slot,
+    slot: called_position_slot,
     deadline: called_deadline,
     sweep_bucket: expiry_sweep_hour,
     cursor: expiry_cursor,

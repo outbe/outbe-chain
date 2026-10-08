@@ -480,7 +480,7 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
             BlockContext::empty_for_tests(1, now + 2 * DAY, CHAIN_ID),
             s.clone(),
         );
-        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        crate::expired::sweep_expired(&ctx).unwrap();
 
         let near_day = IntexFactoryContract::deadline_bucket(now + DAY);
         let far_day = IntexFactoryContract::deadline_bucket(now + 10 * DAY);
@@ -519,7 +519,7 @@ fn a_node_local_failure_while_expiring_fails_the_sweep() {
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s);
-        crate::expired::sweep_expiry_deadlines(&ctx)
+        crate::expired::sweep_expired(&ctx)
     });
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -558,7 +558,7 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
             BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(bucket), CHAIN_ID),
             s,
         );
-        crate::expired::sweep_expiry_deadlines(&ctx)
+        crate::expired::sweep_expired(&ctx)
     });
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -588,15 +588,13 @@ fn a_bucket_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
             .unwrap();
         let bucket = IntexFactoryContract::deadline_bucket(now + DAY);
         let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
-        f.called_group_deadline
-            .write(&key, now + 400 * DAY)
-            .unwrap();
+        f.called_deadline.write(&key, now + 400 * DAY).unwrap();
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(bucket), CHAIN_ID),
             s.clone(),
         );
-        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        crate::expired::sweep_expired(&ctx).unwrap();
 
         let later = IntexFactoryContract::deadline_bucket(now + 400 * DAY);
         assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), 0);
@@ -630,11 +628,11 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
         let member = called_series(&s, day.value());
         f.seed_called_group(REFERENCE_ISO, day, now + DAY, &[member])
             .unwrap();
-        f.called_group_deadline.write(&key, now + 3 * DAY).unwrap();
+        f.called_deadline.write(&key, now + 3 * DAY).unwrap();
         let sweep = |at: u64| {
             let ctx =
                 BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
-            crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+            crate::expired::sweep_expired(&ctx).unwrap();
         };
         let unallocated = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
@@ -692,7 +690,7 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
         let sweep = |at: u64| {
             let ctx =
                 BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
-            crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+            crate::expired::sweep_expired(&ctx).unwrap();
         };
         let due = IntexFactoryContract::bucket_end(bucket);
 
@@ -703,7 +701,7 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
             "one block takes what it is budgeted for and no more, got {left} of {queued}"
         );
         assert_eq!(
-            f.expiry_sweep_day.read().unwrap(),
+            f.expiry_sweep_hour.read().unwrap(),
             bucket,
             "the unfinished bucket is remembered"
         );
@@ -742,7 +740,7 @@ fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
         let sweep = |at: u64| {
             let ctx =
                 BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
-            crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+            crate::expired::sweep_expired(&ctx).unwrap();
         };
 
         sweep(deadline + 1);
@@ -795,7 +793,7 @@ fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
             .unwrap();
         f.call_group_count.write(&key, 2).unwrap();
 
-        let deadline = f.called_group_deadline.read(&key).unwrap();
+        let deadline = f.called_deadline.read(&key).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(
                 1,
@@ -804,7 +802,7 @@ fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
             ),
             s.clone(),
         );
-        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        crate::expired::sweep_expired(&ctx).unwrap();
 
         assert!(
             !outbe_promislimit::PromisLimitContract::new(s.clone())
@@ -955,14 +953,14 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
             .unwrap();
         f.call_group_count.write(&key, 2).unwrap();
 
-        let deadline = f.called_group_deadline.read(&key).unwrap();
+        let deadline = f.called_deadline.read(&key).unwrap();
         let first_pass =
             IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(deadline));
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, first_pass, CHAIN_ID),
             s.clone(),
         );
-        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        crate::expired::sweep_expired(&ctx).unwrap();
 
         let unallocated = |s: &StorageHandle<'_>| {
             outbe_promislimit::PromisLimitContract::new(s.clone())
@@ -996,7 +994,7 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
             BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(retry_day), CHAIN_ID),
             s.clone(),
         );
-        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+        crate::expired::sweep_expired(&ctx).unwrap();
 
         assert_eq!(
             unallocated(&s),

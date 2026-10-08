@@ -230,7 +230,7 @@ pub struct GemContract {
     #[attribute(order = 30)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 31)]
-    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 32)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
@@ -278,22 +278,22 @@ pub struct GemContract {
 
     // --- Uncalled buckets by call price, one trie per reference currency.
     #[attribute(order = 47)]
-    pub bucket_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
+    pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 48)]
-    pub bucket_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub call_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 49)]
-    pub bucket_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub call_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 50)]
-    pub bucket_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     /// `bin_index_key(currency, bin, index)` -> bucket.
     #[attribute(order = 51)]
-    pub bucket_bin_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub call_bin_buckets: outbe_primitives::storage::dsl::Map<B256, B256>,
     /// Bucket -> `(bin << 32) | (index + 1)` of its place in the trie. 0 once it left.
     #[attribute(order = 52)]
-    pub bucket_bin_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub call_bucket_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     /// `(bin << 32) | buckets of that bin still to visit`. 0 = start from the lowest bin.
     #[attribute(order = 53)]
-    pub bucket_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
+    pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 
     /// Lowest sealed `call_threshold_seconds` of at least a day per reference currency.
     /// With the widest window it bounds the call prices the scan visits.

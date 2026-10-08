@@ -5,18 +5,13 @@
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
-/// Daily cycle-trigger entry: schedules the day the Oracle has just finalized.
-pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    crate::called::schedule(ctx)
-}
-
 /// Burns the unpaid Nods of the called buckets whose notice period lapsed.
 pub fn sweep_forfeits(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<()> {
-    crate::called::sweep_expired(ctx, scope, parent)?;
+    crate::expired::sweep_expired(ctx, scope, parent)?;
     Ok(())
 }
 

@@ -60,7 +60,7 @@ pub struct IntexFactoryContract {
     // `(bin << 32) | groups of that bin still to visit` where each currency's call scan
     // resumes. 0 = fresh sweep.
     #[attribute(order = 14)]
-    pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
+    pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 
     // Group members, keyed by `scoped(iso, day)`: a decision reads only fields the
     // whole (reference currency, worldwide day) pair shares. A called group keeps them
@@ -104,7 +104,7 @@ pub struct IntexFactoryContract {
     /// `scoped(iso, day)` -> when the group's settlement window closes. Stored so
     /// the head check costs no record load.
     #[attribute(order = 31)]
-    pub called_group_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub called_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
     // Widest terms ever issued in a currency. Both only move outwards, so the range
     // they define covers series the live profile no longer names.
     #[attribute(order = 34)]
@@ -124,7 +124,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 39)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 40)]
-    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 41)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 42)]

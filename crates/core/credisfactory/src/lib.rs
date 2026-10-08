@@ -12,12 +12,10 @@
 pub mod called;
 pub mod errors;
 pub mod expired;
+pub mod hooks;
 pub mod precompile;
 pub mod runtime;
-pub mod schema;
 mod sol_ext;
-
-pub use schema::CredisFactoryContract;
 
 #[cfg(test)]
 mod tests;

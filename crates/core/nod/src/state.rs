@@ -644,7 +644,7 @@ pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketS
     Ok(crate::repository::from_canonical_bucket(payload.clone()))
 }
 
-/// One currency's call-price trie, like `outbe_gem::state::BucketBins`.
+/// One currency's call-price trie, like `outbe_gem::state::CallBins`.
 pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
 
 outbe_primitives::impl_call_bins!(CallBins<B256> {
@@ -653,7 +653,7 @@ outbe_primitives::impl_call_bins!(CallBins<B256> {
     leaf: call_bin_tree_leaf,
     count: call_bin_count,
     at: call_bin_buckets,
-    slot: call_bucket_bin,
+    slot: call_bucket_slot,
     cursor: call_bin_cursor,
     failed: call_scan_failed_day,
 });

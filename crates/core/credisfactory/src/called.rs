@@ -33,24 +33,10 @@ use outbe_primitives::{
 };
 
 use crate::precompile::ICredisFactory::{CallScanSkipped, SweepDaySkipped};
-use crate::schema::CredisFactoryContract;
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut CredisCallSweep::new(ctx))
-}
-
-/// Voids the called positions whose settlement window lapsed.
-pub fn sweep_forfeits(ctx: &BlockRuntimeContext) -> Result<()> {
-    crate::expired::sweep_expired(ctx)?;
-    Ok(())
-}
-
-/// One block of every Credis sweep: what fell due, then a slice of the call sweep.
-pub fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
-    sweep_forfeits(ctx)?;
-    run_call_slice(ctx)?;
-    Ok(())
 }
 
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
@@ -68,14 +54,12 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
 }
 
 struct CredisCallSweep<'storage> {
-    factory: CredisFactoryContract<'storage>,
     credis: CredisContract<'storage>,
 }
 
 impl<'storage> CredisCallSweep<'storage> {
     fn new(ctx: &BlockRuntimeContext<'storage>) -> Self {
         Self {
-            factory: CredisFactoryContract::new(ctx.storage.clone()),
             credis: CredisContract::new(ctx.storage.clone()),
         }
     }
@@ -91,8 +75,8 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
 
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
-            current: &self.factory.call_sweep_day,
-            pending: &self.factory.call_pending_day,
+            current: &self.credis.call_sweep_day,
+            pending: &self.credis.call_pending_day,
         }
     }
 
@@ -101,7 +85,7 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
     }
 
     fn currency_cursor(&self) -> &Value<'storage, u32> {
-        &self.factory.call_currency_cursor
+        &self.credis.call_currency_cursor
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
@@ -124,7 +108,7 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
         let index = &self.credis;
         let finished = call_bins::walk_currencies(
             &currencies,
-            &self.factory.call_currency_cursor,
+            &self.credis.call_currency_cursor,
             &mut budget,
             |iso_code, budget| {
                 let bins = CallBins(index, iso_code);

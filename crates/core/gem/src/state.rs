@@ -374,12 +374,12 @@ impl GemContract<'_> {
 
     fn insert_bucket_bin(&mut self, bucket: B256, terms: &BucketTerms) -> Result<()> {
         let bin = Self::price_to_bin(terms.call_price_minor)?;
-        call_bins::insert(&BucketBins(self, terms.reference_currency), bucket, bin)
+        call_bins::insert(&CallBins(self, terms.reference_currency), bucket, bin)
     }
 
     /// No-op for a bucket the trie no longer holds.
     pub(crate) fn remove_bucket_bin(&mut self, bucket: B256, terms: &BucketTerms) -> Result<()> {
-        call_bins::remove(&BucketBins(self, terms.reference_currency), bucket)?;
+        call_bins::remove(&CallBins(self, terms.reference_currency), bucket)?;
         Ok(())
     }
 
@@ -402,21 +402,21 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
     at: expiry_bucket_at,
     slot: called_bucket_slot,
     deadline: called_deadline,
-    sweep_bucket: expiry_sweep_day,
+    sweep_bucket: expiry_sweep_hour,
     cursor: expiry_cursor,
 });
 
 /// The uncalled buckets of one reference currency, by call price.
-pub(crate) struct BucketBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
+pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
 
-outbe_primitives::impl_call_bins!(BucketBins<B256> {
-    root: bucket_bin_tree_root,
-    mid: bucket_bin_tree_mid,
-    leaf: bucket_bin_tree_leaf,
-    count: bucket_bin_count,
-    at: bucket_bin_at,
-    slot: bucket_bin_slot,
-    cursor: bucket_scan_cursor,
+outbe_primitives::impl_call_bins!(CallBins<B256> {
+    root: call_bin_tree_root,
+    mid: call_bin_tree_mid,
+    leaf: call_bin_tree_leaf,
+    count: call_bin_count,
+    at: call_bin_buckets,
+    slot: call_bucket_slot,
+    cursor: call_bin_cursor,
     failed: call_scan_failed_day,
 });
 

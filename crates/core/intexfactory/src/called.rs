@@ -62,7 +62,7 @@ impl<'storage> IntexCallSweep<'storage> {
 }
 
 impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
-    const CONSUMER: &'static str = "intexfactory";
+    const CONSUMER: &'static str = "intex";
 
     type Bins<'a>
         = CallBins<'a, 'storage>

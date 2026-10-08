@@ -994,13 +994,17 @@ fn called_repayment_and_void_have_complementary_deadline_boundaries() {
                     .to_string()
                     .contains("call window has lapsed"));
                 assert_eq!(credis.get_position(id).unwrap(), before);
-                assert_ne!(credis.called_slot.read(&id).unwrap(), 0, "still queued");
+                assert_ne!(
+                    credis.called_position_slot.read(&id).unwrap(),
+                    0,
+                    "still queued"
+                );
                 assert!(credis.has_called_position(alice()).unwrap());
                 assert_eq!(
                     credis.void_position(id, now).unwrap().gratis_burned_minor,
                     before.outstanding_gratis_minor
                 );
-                assert_eq!(credis.called_slot.read(&id).unwrap(), 0);
+                assert_eq!(credis.called_position_slot.read(&id).unwrap(), 0);
             }
         });
     }
@@ -1160,11 +1164,11 @@ fn the_call_index_holds_exactly_the_open_positions() {
         // The call takes it out: from here the deadline queue tracks it.
         credis.mark_called(id, at(10)).unwrap();
         assert!(indexed_ids(&credis, id).is_empty());
-        assert_ne!(credis.called_slot.read(&id).unwrap(), 0);
+        assert_ne!(credis.called_position_slot.read(&id).unwrap(), 0);
 
         credis.void_position(id, at(24)).unwrap();
         assert!(indexed_ids(&credis, id).is_empty());
-        assert_eq!(credis.called_slot.read(&id).unwrap(), 0);
+        assert_eq!(credis.called_position_slot.read(&id).unwrap(), 0);
     });
 }
 

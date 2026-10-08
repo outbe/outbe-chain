@@ -642,16 +642,14 @@ fn a_completed_pass_resets_the_cursor() {
     teardown();
 }
 
-fn factory<'storage>(
-    storage: &StorageHandle<'storage>,
-) -> crate::schema::CredisFactoryContract<'storage> {
-    crate::schema::CredisFactoryContract::new(storage.clone())
+fn sweep_state<'storage>(storage: &StorageHandle<'storage>) -> CredisContract<'storage> {
+    CredisContract::new(storage.clone())
 }
 
 /// Pins `day` as the sweep in flight, stopped with `remaining` positions of the
 /// bin `sample` sits in still to visit.
 fn pin_sweep(storage: &StorageHandle<'_>, day: u32, sample: U256, remaining: u32) {
-    factory(storage).call_sweep_day.write(day).unwrap();
+    sweep_state(storage).call_sweep_day.write(day).unwrap();
     let credis = CredisContract::new(storage.clone());
     let price = credis.get_position(sample).unwrap().call_price_minor;
     let bin = outbe_primitives::call_bins::price_to_bin(price).unwrap();
@@ -665,10 +663,10 @@ fn pin_sweep(storage: &StorageHandle<'_>, day: u32, sample: U256, remaining: u32
 }
 
 fn sweep_days(storage: &StorageHandle<'_>) -> (u32, u32) {
-    let factory = factory(storage);
+    let state = sweep_state(storage);
     (
-        factory.call_sweep_day.read().unwrap(),
-        factory.call_pending_day.read().unwrap(),
+        state.call_sweep_day.read().unwrap(),
+        state.call_pending_day.read().unwrap(),
     )
 }
 
@@ -758,7 +756,7 @@ fn a_third_closed_day_replaces_the_waiting_one_and_names_it() {
             above_call(),
         );
         pin_sweep(&storage, last_closed_day(at), ids[0], 2);
-        factory(&storage)
+        sweep_state(&storage)
             .call_pending_day
             .write(last_closed_day(at + DAY))
             .unwrap();
@@ -828,7 +826,7 @@ fn call_by_hand(storage: &StorageHandle<'_>, ids: &[U256], called_at: u64) {
 
 fn queued_at(storage: &StorageHandle<'_>, position_id: U256) -> u64 {
     CredisContract::new(storage.clone())
-        .called_slot
+        .called_position_slot
         .read(&position_id)
         .unwrap()
 }

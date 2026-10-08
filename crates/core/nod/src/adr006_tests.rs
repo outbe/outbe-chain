@@ -315,7 +315,7 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(39));
         assert_eq!(nod.call_bin_count.base_slot(), U256::from(40));
         assert_eq!(nod.call_bin_buckets.base_slot(), U256::from(41));
-        assert_eq!(nod.call_bucket_bin.base_slot(), U256::from(42));
+        assert_eq!(nod.call_bucket_slot.base_slot(), U256::from(42));
         assert_eq!(nod.expiry_tree_root.slot(), U256::from(43));
         assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(45));
         assert_eq!(nod.call_currency_cursor.slot(), U256::from(46));

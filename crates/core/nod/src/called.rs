@@ -15,13 +15,12 @@
 //! The breach rule needs no per-bucket streak state. The daily series is global
 //! per currency, so one trailing window per currency decides every bucket
 //! denominated in it. Every run recomputes the count from oracle history rather
-//! than carrying it. Mirrors `outbe_gem::hooks::scan_and_call` and
+//! than carrying it. Mirrors `outbe_gem::called::scan_and_call` and
 //! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
 //!
 //! Calls count only days from `first_full_day` of the bucket's sealed `issued_at`.
 
 mod calls;
-mod forfeits;
 
 use std::collections::BTreeSet;
 
@@ -36,12 +35,8 @@ use outbe_primitives::{
 
 use crate::{precompile::INod, schema::NodContract, state::CallBins};
 
-pub(crate) use forfeits::sweep_expired;
-
 #[cfg(test)]
 pub(crate) use calls::{call_currency, CurrencyScan};
-#[cfg(test)]
-pub(crate) use forfeits::{forfeit_member, Bodies};
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 ///
@@ -49,7 +44,7 @@ pub(crate) use forfeits::{forfeit_member, Bodies};
 /// a handler error out of the `CycleTick` system transaction, which fails the
 /// block. An unregistered pair, an unpriced currency or an unfinalized day
 /// therefore each degrade to "no transition" instead.
-pub fn schedule(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut NodCallSweep::new(ctx))
 }
 
@@ -132,7 +127,7 @@ pub(crate) fn sweep_failure(error: &PrecompileError) -> SweepFailure {
 }
 
 /// Whether the certified generation of the bucket's Worldwide Day still has Nods to land.
-fn materializing(nod: &NodContract<'_>, bucket_key: B256) -> Result<bool> {
+pub(crate) fn materializing(nod: &NodContract<'_>, bucket_key: B256) -> Result<bool> {
     let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
     Ok(nod.ocomp_target_generation.read(&worldwide_day)? != 0)
 }

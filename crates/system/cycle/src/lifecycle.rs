@@ -67,15 +67,16 @@ impl BlockLifecycle for CycleLifecycle {
         // that forms the day.
         outbe_nod::hooks::sweep_forfeits(&ctx.runtime, ctx.scope, &ctx.parent)?;
         outbe_gem::hooks::sweep_forfeits(&ctx.runtime)?;
+        outbe_intexfactory::hooks::sweep_proceeds(&ctx.runtime)?;
         outbe_intexfactory::hooks::sweep_forfeits(&ctx.runtime)?;
-        outbe_credisfactory::called::sweep_forfeits(&ctx.runtime)?;
+        outbe_credisfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         crate::runtime::dispatch_triggers(&ctx.runtime, ctx.scope, &ctx.parent)?;
         // The daily triggers only schedule. Each right walks one slice of its pinned day.
         outbe_nod::called::run_call_slice(&ctx.runtime)?;
-        outbe_gem::hooks::run_call_slice(&ctx.runtime)?;
+        outbe_gem::called::run_call_slice(&ctx.runtime)?;
         outbe_intexfactory::called::run_call_slice(&ctx.runtime)?;
-        outbe_intexfactory::notify::send_notices(&ctx.runtime)?;
         outbe_credisfactory::called::run_call_slice(&ctx.runtime)?;
+        outbe_intexfactory::notify::send_notices(&ctx.runtime)?;
         Ok(())
     }
 

@@ -8,7 +8,7 @@ use super::{
     api, begin_block_at, block_ctx_at, call_gem, callable_gem_of, gem_state, mature_gem,
     priced_window, seed_currency, unallocated, with_storage, T_NOW,
 };
-use crate::hooks::{run_call_slice, scan_and_call};
+use crate::called::{run_call_slice, scan_and_call};
 use crate::precompile::IGem;
 use crate::schema::{GemContract, GemState};
 

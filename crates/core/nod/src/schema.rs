@@ -364,7 +364,7 @@ pub struct NodContract {
     pub call_bin_buckets: outbe_primitives::storage::dsl::Map<B256, B256>,
     /// Bucket key -> `(bin << 32) | (index + 1)` of its place in the trie; 0 = not there.
     #[attribute(order = 66)]
-    pub call_bucket_bin: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub call_bucket_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // Called buckets, queued by the hour their notice period closes in. The trie
     // sits here and the bucket columns follow `config_profile`, whose slot genesis pins.

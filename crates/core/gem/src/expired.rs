@@ -12,7 +12,7 @@ use crate::schema::GemContract;
 use crate::state::ExpiryHours;
 
 /// Forfeit-burn the gems of the called buckets whose notice period closed.
-pub(super) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut expiry = GemExpiry {
         gem: GemContract::new(ctx.storage.clone()),

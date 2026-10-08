@@ -162,7 +162,7 @@ impl IntexFactoryContract<'_> {
             return Ok(());
         }
         // A second push would orphan the first slot and credit the members twice.
-        if self.called_group_deadline.read(&key)? != 0 {
+        if self.called_deadline.read(&key)? != 0 {
             return Err(IntexFactoryError::GroupAlreadyIndexed {
                 iso: reference_currency,
                 worldwide_day,
@@ -335,8 +335,8 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<u64> {
     live: expiry_bucket_live,
     at: expiry_bucket_at,
     slot: called_group_slot,
-    deadline: called_group_deadline,
-    sweep_bucket: expiry_sweep_day,
+    deadline: called_deadline,
+    sweep_bucket: expiry_sweep_hour,
     cursor: expiry_cursor,
 });
 
@@ -350,6 +350,6 @@ outbe_primitives::impl_call_bins!(CallBins<u64> {
     count: call_bin_count,
     at: call_bin_groups,
     slot: call_group_slot,
-    cursor: call_scan_cursor,
+    cursor: call_bin_cursor,
     failed: call_scan_failed_day,
 });

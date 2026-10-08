@@ -70,7 +70,7 @@ fn requeue_called_group(
     let mut factory = IntexFactoryContract::new(storage.clone());
     let worldwide_day = WorldwideDay::from(worldwide_day);
     let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
-    if factory.called_group_deadline.read(&key)? == 0 {
+    if factory.called_deadline.read(&key)? == 0 {
         return Err(outbe_primitives::error::PrecompileError::Revert(
             "closeCallNoticeForTest: no called group".into(),
         ));

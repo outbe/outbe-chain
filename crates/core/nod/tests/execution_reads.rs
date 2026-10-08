@@ -9,7 +9,9 @@ use outbe_compressed_entities::{
     begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
     ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
 };
-use outbe_nod::{api, hooks, precompile::INod, NodContract, NodItemState, NodRepositoryReader};
+use outbe_nod::{
+    api, called, hooks, precompile::INod, NodContract, NodItemState, NodRepositoryReader,
+};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::{
@@ -284,7 +286,7 @@ fn idle_daily_scans_do_not_write_storage() {
             BlockContext::empty_for_tests(1, midnight, 1),
             storage.clone(),
         );
-        hooks::run_daily(&ctx).unwrap();
+        called::run_daily(&ctx).unwrap();
         hooks::continue_sweeps(&ctx, &scope, &parent).unwrap();
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),

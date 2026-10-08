@@ -303,13 +303,13 @@ fn the_last_gem_out_closes_its_bucket() {
         let bucket = bucket_of(storage, gem_id);
         let gem = GemContract::new(storage.clone());
         let bin = GemContract::price_to_bin(sample_params(ALICE).call_price_minor).unwrap();
-        assert!(tree_math::contains(&crate::state::BucketBins(&gem, 840), bin).unwrap());
+        assert!(tree_math::contains(&crate::state::CallBins(&gem, 840), bin).unwrap());
 
         api::set_state(storage, gem_id, GemState::Settled).unwrap();
         assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 0);
         assert!(gem.bucket_call_price_minor.read(&bucket).unwrap().is_zero());
-        assert_eq!(gem.bucket_bin_slot.read(&bucket).unwrap(), 0);
-        assert!(!tree_math::contains(&crate::state::BucketBins(&gem, 840), bin).unwrap());
+        assert_eq!(gem.call_bucket_slot.read(&bucket).unwrap(), 0);
+        assert!(!tree_math::contains(&crate::state::CallBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -390,7 +390,7 @@ fn a_gem_without_a_floor_qualifies_on_its_first_closed_day() {
         assert!(is_qualified(storage, gem_id));
         let gem = GemContract::new(storage.clone());
         let bin = GemContract::price_to_bin(p.call_price_minor).unwrap();
-        assert!(tree_math::contains(&crate::state::BucketBins(&gem, 840), bin).unwrap());
+        assert!(tree_math::contains(&crate::state::CallBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -533,7 +533,10 @@ fn call_scan_reads_each_gem_own_pair_window() {
             .write(last_closed_day)
             .unwrap();
 
-        assert_eq!(crate::hooks::scan_and_call(&block_ctx(storage)).unwrap(), 1);
+        assert_eq!(
+            crate::called::scan_and_call(&block_ctx(storage)).unwrap(),
+            1
+        );
         assert_eq!(
             api::get_gem(storage, eur_id).unwrap().unwrap().state,
             GemState::Called as u8
@@ -653,7 +656,7 @@ fn gem_storage_layout_matches_genesis_seeder() {
         assert_eq!(gem.gem_index.base_slot(), U256::from(20u64));
         assert_eq!(gem.owner_gem_position.base_slot(), U256::from(43u64));
         assert_eq!(gem.gem_bucket.base_slot(), U256::from(44u64));
-        assert_eq!(gem.bucket_scan_cursor.base_slot(), U256::from(61u64));
+        assert_eq!(gem.call_bin_cursor.base_slot(), U256::from(61u64));
         // The seeder writes the raw `state` byte, so its GEM_STATE_SETTLED must
         // track this discriminant.
         assert_eq!(GemState::Settled as u8, 3);
@@ -731,7 +734,7 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
             crate::constants::CALL_THRESHOLD / 86_400,
         );
         assert_eq!(
-            crate::hooks::call_currency(
+            crate::called::call_currency(
                 &ctx,
                 840,
                 &window,
@@ -752,7 +755,7 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
 
         let mut budget = outbe_primitives::sweep_budget::SweepBudget::new(8, u32::MAX, 0);
         assert_eq!(
-            crate::hooks::call_currency(
+            crate::called::call_currency(
                 &ctx,
                 840,
                 &window,
@@ -795,7 +798,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
             .unwrap();
 
         let ctx = block_ctx(storage);
-        crate::hooks::scan_and_call(&ctx).unwrap();
+        crate::called::scan_and_call(&ctx).unwrap();
         let gem = GemContract::new(storage.clone());
         assert_eq!(
             api::get_gem(storage, first_id).unwrap().unwrap().state,
@@ -808,7 +811,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
         second.issued_at = T_NOW - 100 * 86_400;
         second.call_price_minor = U256::from(100_001u64);
         let second_id = api::add_gem(storage, second).unwrap();
-        assert_eq!(crate::hooks::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
         assert_eq!(
             api::get_gem(storage, second_id).unwrap().unwrap().state,
             GemState::Issued as u8
@@ -844,7 +847,7 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
         );
         let walk = |budget: u32| {
             let mut budget = outbe_primitives::sweep_budget::SweepBudget::new(budget, u32::MAX, 0);
-            crate::hooks::call_currency(
+            crate::called::call_currency(
                 &ctx,
                 840,
                 &window,
@@ -858,7 +861,7 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
         assert_eq!(gem_state(storage, ids[0]), GemState::Issued as u8);
         assert_eq!(
             GemContract::new(storage.clone())
-                .bucket_scan_cursor
+                .call_bin_cursor
                 .read(&840)
                 .unwrap(),
             (u64::from(bin) << 32) | 1
@@ -985,7 +988,10 @@ fn a_gem_above_the_window_is_not_visited_but_still_expires() {
             .write(last_closed_day)
             .unwrap();
 
-        assert_eq!(crate::hooks::scan_and_call(&block_ctx(storage)).unwrap(), 0);
+        assert_eq!(
+            crate::called::scan_and_call(&block_ctx(storage)).unwrap(),
+            0
+        );
         assert_eq!(
             api::get_gem(storage, gem_id).unwrap().unwrap().state,
             GemState::Issued as u8
@@ -1049,7 +1055,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
             .unwrap();
 
         let ctx = block_ctx(&storage);
-        assert_eq!(crate::hooks::scan_and_call(&ctx).unwrap(), 0);
+        assert_eq!(crate::called::scan_and_call(&ctx).unwrap(), 0);
         assert_eq!(
             api::get_gem(&storage, gem_id).unwrap().unwrap().state,
             GemState::Issued as u8,
@@ -1064,7 +1070,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
 
         // Another slice of the same pass skips it instead of re-reading the window.
         gem.call_sweep_day.write(last_closed_day).unwrap();
-        assert_eq!(crate::hooks::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
         last_closed_day
     });
 
@@ -1142,17 +1148,17 @@ fn call_skips_below_threshold() {
 fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
     let currencies = [840u16, 978u16];
     assert_eq!(
-        crate::hooks::currency_position(&currencies, 978),
+        crate::called::currency_position(&currencies, 978),
         1,
         "the cursor names a currency, not a slot"
     );
     assert_eq!(
-        crate::hooks::currency_position(&currencies[1..], 978),
+        crate::called::currency_position(&currencies[1..], 978),
         0,
         "dropping the currency ahead of it does not shift the cursor onto a stranger"
     );
     assert_eq!(
-        crate::hooks::currency_position(&currencies, 392),
+        crate::called::currency_position(&currencies, 392),
         0,
         "a currency the registry no longer carries restarts at the head"
     );
@@ -1439,7 +1445,7 @@ fn a_call_slice_refreshes_all_metadata_once() {
         let day = previous_date_key(timestamp_to_date_key(T_NOW));
         priced_window(&storage, pair, day, U256::from(300_000u64));
         assert_eq!(
-            crate::hooks::scan_and_call(&block_ctx_at(&storage, T_NOW)).unwrap(),
+            crate::called::scan_and_call(&block_ctx_at(&storage, T_NOW)).unwrap(),
             3
         );
     });
@@ -1633,25 +1639,25 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
 
         let day = previous_date_key(timestamp_to_date_key(T_NOW));
         priced_window(storage, pair, day, U256::from(300_000u64));
-        crate::hooks::scan_and_call(&block_ctx_at(storage, T_NOW)).unwrap();
-        let cursor = gem.bucket_scan_cursor.read(&840).unwrap();
+        crate::called::scan_and_call(&block_ctx_at(storage, T_NOW)).unwrap();
+        let cursor = gem.call_bin_cursor.read(&840).unwrap();
         assert_ne!(cursor, 0, "the first slice gave out inside the range");
 
         let next_ts = T_NOW + 86_400;
         let next_day = previous_date_key(timestamp_to_date_key(next_ts));
         priced_window(storage, pair, next_day, U256::from(300_000u64));
         let next = block_ctx_at(storage, next_ts);
-        crate::hooks::run_daily(&next).unwrap();
+        crate::called::run_daily(&next).unwrap();
         assert_eq!(gem.call_sweep_day.read().unwrap(), day);
         assert_eq!(gem.call_pending_day.read().unwrap(), next_day);
         assert_eq!(
-            gem.bucket_scan_cursor.read(&840).unwrap(),
+            gem.call_bin_cursor.read(&840).unwrap(),
             cursor,
             "the walk in flight was not restarted"
         );
 
         // The next slice finishes the old day and hands the sweep to the queued one.
-        crate::hooks::run_call_slice(&next).unwrap();
+        crate::called::run_call_slice(&next).unwrap();
         assert_eq!(
             api::get_gem(storage, above).unwrap().unwrap().state,
             GemState::Called as u8
@@ -1692,8 +1698,8 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
             // Only the first trigger's block walks: the later days arrive meanwhile.
             let ctx = block_ctx_at(&storage, ts);
             match offset {
-                0 => crate::hooks::scan_and_call(&ctx).map(drop),
-                _ => crate::hooks::run_daily(&ctx),
+                0 => crate::called::scan_and_call(&ctx).map(drop),
+                _ => crate::called::run_daily(&ctx),
             }
             .unwrap();
             closed.push(day);
@@ -1742,9 +1748,9 @@ fn a_call_sweep_over_several_currencies_always_ends() {
         }
 
         let ctx = block_ctx_at(storage, T_NOW);
-        crate::hooks::scan_and_call(&ctx).unwrap();
+        crate::called::scan_and_call(&ctx).unwrap();
         for _ in 0..3 {
-            crate::hooks::run_call_slice(&ctx).unwrap();
+            crate::called::run_call_slice(&ctx).unwrap();
         }
         assert_eq!(gem.call_sweep_day.read().unwrap(), 0, "the sweep closed");
     });

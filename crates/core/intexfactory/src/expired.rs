@@ -16,7 +16,7 @@ use crate::schema::IntexFactoryContract;
 use crate::state::ExpiryHours;
 
 /// Retire every group whose settlement window has closed, earliest bucket first.
-pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
+pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<()> {
     let queue = IntexFactoryContract::new(ctx.storage.clone());
     let mut expiry = IntexExpiry {
         storage: &ctx.storage,

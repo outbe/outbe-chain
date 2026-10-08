@@ -200,7 +200,7 @@ fn scan(
 ) -> u32 {
     let ctx = block_at(storage, timestamp);
     crate::called::scan_and_call(&ctx).unwrap()
-        + crate::called::sweep_expired(&ctx, scope, parent).unwrap()
+        + crate::expired::sweep_expired(&ctx, scope, parent).unwrap()
 }
 
 fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeContext<'s> {
@@ -257,7 +257,7 @@ fn try_forfeit(
     // Burns from the last member down, each in its own checkpoint, as the sweep does.
     storage.with_checkpoint(|| {
         let mut nod = NodContract::new(storage.clone());
-        let bodies = crate::called::Bodies {
+        let bodies = crate::expired::Bodies {
             storage,
             scope,
             parent,
@@ -271,7 +271,7 @@ fn try_forfeit(
                 .bucket_nods
                 .read(&NodContract::bucket_nod_key(bucket_key, last))?;
             let burn = storage.with_checkpoint(|| {
-                crate::called::forfeit_member(&bodies, &mut nod, bucket_key, nod_id)
+                crate::expired::forfeit_member(&bodies, &mut nod, bucket_key, nod_id)
             });
             match burn {
                 Ok(()) => burned += 1,
@@ -410,7 +410,7 @@ fn issuance_seals_the_call_terms_on_the_bucket() {
             START
         );
         assert_ne!(
-            nod.call_bucket_bin.read(&item.bucket_key).unwrap(),
+            nod.call_bucket_slot.read(&item.bucket_key).unwrap(),
             0,
             "issuance puts the bucket in its call bin"
         );
@@ -885,7 +885,7 @@ fn forfeiting_the_last_member_drops_the_bucket_from_the_call_index() {
         let nod = NodContract::new(storage.clone());
         assert!(is_queued(storage, item.bucket_key));
         assert_eq!(
-            nod.call_bucket_bin.read(&item.bucket_key).unwrap(),
+            nod.call_bucket_slot.read(&item.bucket_key).unwrap(),
             0,
             "the call moved the bucket out of its bin"
         );
@@ -1221,7 +1221,7 @@ fn slice(
 ) -> u32 {
     let ctx = block_at(storage, timestamp);
     crate::called::run_call_slice(&ctx).unwrap()
-        + crate::called::sweep_expired(&ctx, scope, parent).unwrap()
+        + crate::expired::sweep_expired(&ctx, scope, parent).unwrap()
 }
 
 #[test]
@@ -1282,11 +1282,11 @@ fn failing_members_over_the_forfeit_budget_do_not_hold_the_queue() {
         let past = START + 30 * DAY + NOTICE + HOUR;
         let ctx = block_at(storage, past);
         assert_eq!(
-            crate::called::sweep_expired(&ctx, scope, parent).unwrap(),
+            crate::expired::sweep_expired(&ctx, scope, parent).unwrap(),
             0
         );
         assert_eq!(
-            crate::called::sweep_expired(&ctx, scope, parent).unwrap(),
+            crate::expired::sweep_expired(&ctx, scope, parent).unwrap(),
             3
         );
         assert_eq!(reserve(storage), U256::from(5u64 + 6 + 7));
@@ -1722,12 +1722,12 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         nod.call_sweep_day.write(closed[0]).unwrap();
         nod.call_bin_cursor.write(&ISO, 1).unwrap();
 
-        crate::called::schedule(&BlockRuntimeContext::new(
+        crate::called::run_daily(&BlockRuntimeContext::new(
             BlockContext::empty_for_tests(BLOCK_NUMBER, at + DAY, CHAIN_ID),
             storage.clone(),
         ))
         .unwrap();
-        crate::called::schedule(&BlockRuntimeContext::new(
+        crate::called::run_daily(&BlockRuntimeContext::new(
             BlockContext::empty_for_tests(BLOCK_NUMBER, at + 2 * DAY, CHAIN_ID),
             storage.clone(),
         ))
@@ -2007,7 +2007,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     });
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |storage| {
-        crate::called::sweep_expired(&block_at(&storage, past), &scope, &parent)
+        crate::expired::sweep_expired(&block_at(&storage, past), &scope, &parent)
     });
     provider.clear_mutation_failure();
     assert!(matches!(

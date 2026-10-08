@@ -229,7 +229,7 @@ pub struct CredisContract {
     #[attribute(order = 14)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
     #[attribute(order = 15)]
-    pub called_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
+    pub called_position_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
     #[attribute(order = 16)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
     #[attribute(order = 17)]
@@ -263,6 +263,16 @@ pub struct CredisContract {
     /// day's pass passes it by.
     #[attribute(order = 27)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    /// ISO 4217 code of the currency the call sweep resumes at.
+    #[attribute(order = 28)]
+    pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    /// UTC day the unfinished call sweep is pinned to. 0 = none in flight.
+    #[attribute(order = 29)]
+    pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    /// UTC day waiting behind it. 0 = none.
+    #[attribute(order = 30)]
+    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl CredisContract<'_> {
