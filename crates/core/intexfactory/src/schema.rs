@@ -57,10 +57,10 @@ pub struct IntexFactoryContract {
     #[attribute(order = 13)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
-    // Bin each currency's call scan resumes from: without it a budgeted run re-walks the
-    // lowest bins every day and never reaches the series above them. 0 = fresh sweep.
+    // `(bin << 32) | groups of that bin still to visit` where each currency's call scan
+    // resumes. 0 = fresh sweep.
     #[attribute(order = 14)]
-    pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 
     // Group members, keyed by `scoped(iso, day)`: a decision reads only fields the
     // whole (reference currency, worldwide day) pair shares.
@@ -69,18 +69,18 @@ pub struct IntexFactoryContract {
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
     #[attribute(order = 19)]
     pub call_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// `scoped(iso, worldwide_day)` -> the bin holding the group. Valid while it has members.
+    /// `scoped(iso, worldwide_day)` -> `(bin << 32) | (index + 1)` of the group in its bin.
     #[attribute(order = 20)]
-    pub call_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
+    pub call_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
 
     // UTC day an unfinished call sweep is pinned to, so its later slices decide
     // against the prices it opened with. 0 = none in flight. A date key is never 0.
     #[attribute(order = 21)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
+    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> `scoped(iso, worldwide_day)`.
     #[attribute(order = 23)]
-    pub call_bin_group_days: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub call_bin_groups: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // Lifecycle notices waiting for the `intex_drain_notices` trigger to send them: the
     // scans run in a block hook, which cannot call contracts. Head and tail reset

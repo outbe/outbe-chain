@@ -952,8 +952,8 @@ mod call_sweep {
             );
             assert_eq!(
                 called::scan_and_call(&ctx).unwrap(),
-                MAX_SERIES_ACTIONS_PER_BLOCK,
-                "the slice stops on its action budget"
+                crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK - 1,
+                "the slice stops on its visits, one of them spent on the young group"
             );
             assert_ne!(
                 IntexFactoryContract::new(s.clone())

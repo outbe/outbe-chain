@@ -308,7 +308,7 @@ fn the_last_gem_out_closes_its_bucket() {
         api::set_state(storage, gem_id, GemState::Settled).unwrap();
         assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 0);
         assert!(gem.bucket_call_price_minor.read(&bucket).unwrap().is_zero());
-        assert_eq!(gem.bucket_bin_index.read(&bucket).unwrap(), 0);
+        assert_eq!(gem.bucket_bin_slot.read(&bucket).unwrap(), 0);
         assert!(!tree_math::contains(&crate::state::BucketBins(&gem, 840), bin).unwrap());
     });
 }
@@ -722,7 +722,7 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
 
         // A budget of one takes the lower bin and persists the cursor above it.
         let ctx = block_ctx(storage);
-        let mut budget = 1u32;
+        let mut budget = outbe_primitives::sweep_budget::SweepBudget::new(1, u32::MAX, 0);
         let window = outbe_oracle::call_window::CallWindow::from_vwaps(
             vec![
                 (last_closed_day, Some(U256::from(300_000u64)));
@@ -750,7 +750,7 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
             GemState::Issued as u8
         );
 
-        let mut budget = 8u32;
+        let mut budget = outbe_primitives::sweep_budget::SweepBudget::new(8, u32::MAX, 0);
         assert_eq!(
             crate::hooks::call_currency(
                 &ctx,
@@ -843,7 +843,7 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
             crate::constants::CALL_THRESHOLD / 86_400,
         );
         let walk = |budget: u32| {
-            let mut budget = budget;
+            let mut budget = outbe_primitives::sweep_budget::SweepBudget::new(budget, u32::MAX, 0);
             crate::hooks::call_currency(
                 &ctx,
                 840,

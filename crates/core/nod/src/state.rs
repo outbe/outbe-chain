@@ -7,7 +7,6 @@ use outbe_compressed_entities::{
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
-use outbe_primitives::math::tree_math;
 use outbe_primitives::time::WorldwideDay;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -459,77 +458,17 @@ impl NodContract<'_> {
         call_bins::bin_to_price_floor(bin_id)
     }
 
-    /// ISO `0` would alias the un-namespaced key; `record_nod_issued` rejects it.
-    pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
-        call_bins::scoped(reference_currency, key)
-    }
-
-    pub(crate) fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
-        call_bins::bin_index_key(reference_currency, bin_id, index)
-    }
-
     /// Parks a new bucket in the bin of its sealed call price.
     pub(crate) fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
-        let bin_id = Self::price_to_bin(self.callable_bucket_call_price_minor.read(&bucket_key)?)?;
-        let scoped = Self::scoped(iso, bin_id);
-        let count = self.call_bin_count.read(&scoped)?;
-        let next_count = count.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod call bin {iso}:{bin_id} member count overflow"
-            ))
-        })?;
-        self.call_bin_buckets
-            .write(&Self::bin_index_key(iso, bin_id, count), bucket_key)?;
-        self.call_bin_count.write(&scoped, next_count)?;
-        self.call_bucket_bin
-            .write(&bucket_key, call_bins::pack_slot(bin_id, count))?;
-        tree_math::add(&CallBins(self, iso), bin_id)?;
-        Ok(())
+        let bin = Self::price_to_bin(self.callable_bucket_call_price_minor.read(&bucket_key)?)?;
+        call_bins::insert(&CallBins(self, iso), bucket_key, bin)
     }
 
     /// No-op for a bucket the trie does not hold.
     pub(crate) fn remove_call_bin(&mut self, bucket_key: B256) -> Result<()> {
-        let packed = self.call_bucket_bin.read(&bucket_key)?;
-        if packed == 0 {
-            return Ok(());
-        }
-        let (bin_id, index) = call_bins::unpack_slot(packed);
         let iso = self.callable_bucket_currency.read(&bucket_key)?;
-        if self
-            .call_bin_buckets
-            .read(&Self::bin_index_key(iso, bin_id, index))?
-            != bucket_key
-        {
-            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
-                "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
-            )));
-        }
-        let scoped = Self::scoped(iso, bin_id);
-        let last = self
-            .call_bin_count
-            .read(&scoped)?
-            .checked_sub(1)
-            .filter(|last| index <= *last)
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Revert(format!(
-                    "Nod call bin {iso}:{bin_id} does not hold bucket {bucket_key} at {index}"
-                ))
-            })?;
-        let last_key = Self::bin_index_key(iso, bin_id, last);
-        if index != last {
-            let moved = self.call_bin_buckets.read(&last_key)?;
-            self.call_bin_buckets
-                .write(&Self::bin_index_key(iso, bin_id, index), moved)?;
-            self.call_bucket_bin
-                .write(&moved, call_bins::pack_slot(bin_id, index))?;
-        }
-        self.call_bin_buckets.write(&last_key, B256::ZERO)?;
-        self.call_bin_count.write(&scoped, last)?;
-        self.call_bucket_bin.clear(&bucket_key)?;
-        if last == 0 {
-            tree_math::remove(&CallBins(self, iso), bin_id)?;
-        }
+        call_bins::remove(&CallBins(self, iso), bucket_key)?;
         Ok(())
     }
 
@@ -708,10 +647,14 @@ pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketS
 /// One currency's call-price trie, like `outbe_gem::state::BucketBins`.
 pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
 
-outbe_primitives::impl_bin_tree_storage!(CallBins scoped by NodContract::scoped {
+outbe_primitives::impl_call_bins!(CallBins<B256> {
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,
+    count: call_bin_count,
+    at: call_bin_buckets,
+    slot: call_bucket_bin,
+    cursor: call_bin_cursor,
 });
 
 /// Called buckets, queued by the hour their notice period closes in.

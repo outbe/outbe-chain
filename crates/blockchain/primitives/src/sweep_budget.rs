@@ -42,14 +42,19 @@ impl SweepBudget {
         self.admit_writes(1)
     }
 
+    /// Whether a batch of `count` writes that must not split would be taken now.
+    pub fn fits_writes(&self, count: u32) -> bool {
+        count <= self.writes || !self.written
+    }
+
     /// Takes `count` writes at once. A batch that must not split passes whole when
     /// nothing was written yet, so a batch wider than the budget still gets a block.
     pub fn admit_writes(&mut self, count: u32) -> bool {
-        if count > self.writes && self.written {
+        if !self.fits_writes(count) {
             return false;
         }
         self.writes = self.writes.saturating_sub(count);
-        self.written = true;
+        self.written |= count != 0;
         true
     }
 

@@ -187,8 +187,6 @@ mod group_scans {
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::time::WorldwideDay;
 
-    use crate::called::ScanBudget;
-    use crate::constants::MAX_SERIES_ACTIONS_PER_BLOCK;
     use crate::runtime;
     use crate::schema::{IntexFactoryContract, IssuanceParams};
 
@@ -261,42 +259,5 @@ mod group_scans {
             let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
             assert_eq!(f.call_bin_groups(REFERENCE_ISO, bin).unwrap(), vec![day()]);
         });
-    }
-
-    #[test]
-    fn the_budget_takes_groups_whole() {
-        let mut budget = ScanBudget::for_call();
-        assert!(budget.admits_actions(2));
-        budget.spend_decision();
-        budget.spend_actions(2);
-
-        // What is left still fits a small group.
-        assert!(budget.admits_actions(MAX_SERIES_ACTIONS_PER_BLOCK - 2));
-        // One series wider than the remainder waits for the next slice.
-        assert!(!budget.admits_actions(MAX_SERIES_ACTIONS_PER_BLOCK - 1));
-
-        // A group wider than the whole allowance would stall forever, so an
-        // untouched budget accepts it.
-        assert!(ScanBudget::for_call().admits_actions(MAX_SERIES_ACTIONS_PER_BLOCK + 1));
-    }
-
-    #[test]
-    fn the_budget_stops_when_either_half_runs_out() {
-        let mut budget = ScanBudget::for_call();
-        budget.spend_actions(MAX_SERIES_ACTIONS_PER_BLOCK);
-        assert!(budget.is_spent());
-        assert!(!budget.admits_actions(1));
-
-        let mut budget = ScanBudget::for_call();
-        for _ in 0..crate::constants::MAX_GROUP_DECISIONS_PER_BLOCK {
-            budget.spend_decision();
-        }
-        assert!(
-            budget.is_spent(),
-            "spent decisions stop the scan between bins"
-        );
-        // Deciding costs no actions, so a group still fits: what bounds an
-        // undecided bin is the boundary check, not this one.
-        assert!(budget.admits_actions(1));
     }
 }

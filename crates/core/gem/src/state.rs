@@ -2,7 +2,6 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::call_bins;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::expiry_queue;
-use outbe_primitives::math::tree_math;
 
 use crate::{
     constants::{TOKEN_NAME, TOKEN_SYMBOL},
@@ -437,44 +436,13 @@ impl GemContract<'_> {
     // --- Bucket bins: uncalled buckets by call price ---------------------
 
     fn insert_bucket_bin(&mut self, bucket: B256, terms: &BucketTerms) -> Result<()> {
-        let iso = terms.reference_currency;
         let bin = Self::price_to_bin(terms.call_price_minor)?;
-        let scoped = Self::scoped(iso, bin);
-        let index = self.bucket_bin_count.read(&scoped)?;
-        self.bucket_bin_at
-            .write(&Self::bin_index_key(iso, bin, index), bucket)?;
-        self.bucket_bin_index.write(&bucket, index + 1)?;
-        self.bucket_bin_count.write(&scoped, index + 1)?;
-        tree_math::add(&BucketBins(self, iso), bin)?;
-        Ok(())
+        call_bins::insert(&BucketBins(self, terms.reference_currency), bucket, bin)
     }
 
     /// No-op for a bucket the trie no longer holds.
     pub(crate) fn remove_bucket_bin(&mut self, bucket: B256, terms: &BucketTerms) -> Result<()> {
-        let Some(index) = self.bucket_bin_index.read(&bucket)?.checked_sub(1) else {
-            return Ok(());
-        };
-        let iso = terms.reference_currency;
-        let bin = Self::price_to_bin(terms.call_price_minor)?;
-        let scoped = Self::scoped(iso, bin);
-        let last = self
-            .bucket_bin_count
-            .read(&scoped)?
-            .checked_sub(1)
-            .ok_or_else(|| corrupt(format!("call bin {bin} of {iso} is empty")))?;
-        let last_key = Self::bin_index_key(iso, bin, last);
-        if index != last {
-            let moved = self.bucket_bin_at.read(&last_key)?;
-            self.bucket_bin_at
-                .write(&Self::bin_index_key(iso, bin, index), moved)?;
-            self.bucket_bin_index.write(&moved, index + 1)?;
-        }
-        self.bucket_bin_at.clear(&last_key)?;
-        self.bucket_bin_index.clear(&bucket)?;
-        self.bucket_bin_count.write(&scoped, last)?;
-        if last == 0 {
-            tree_math::remove(&BucketBins(self, iso), bin)?;
-        }
+        call_bins::remove(&BucketBins(self, terms.reference_currency), bucket)?;
         Ok(())
     }
 
@@ -482,14 +450,6 @@ impl GemContract<'_> {
 
     pub fn price_to_bin(price: U256) -> Result<u32> {
         call_bins::price_to_bin(price)
-    }
-
-    pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
-        call_bins::scoped(reference_currency, key)
-    }
-
-    pub(crate) fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
-        call_bins::bin_index_key(reference_currency, bin_id, index)
     }
 }
 
@@ -512,10 +472,14 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<U256> {
 /// The uncalled buckets of one reference currency, by call price.
 pub(crate) struct BucketBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
 
-outbe_primitives::impl_bin_tree_storage!(BucketBins scoped by GemContract::scoped {
+outbe_primitives::impl_call_bins!(BucketBins<B256> {
     root: bucket_bin_tree_root,
     mid: bucket_bin_tree_mid,
     leaf: bucket_bin_tree_leaf,
+    count: bucket_bin_count,
+    at: bucket_bin_at,
+    slot: bucket_bin_slot,
+    cursor: bucket_scan_cursor,
 });
 
 /// A called bucket's entry in the expiry queue, which otherwise holds gem ids.

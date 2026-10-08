@@ -13,9 +13,10 @@ use outbe_primitives::daily_sweep::{PinnedDay, Scheduled, SweepDays};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
+    call_bins::{self, Visit},
     error::{Result, SweepFailure},
-    math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
+    sweep_budget::SweepBudget,
 };
 
 use crate::constants::{
@@ -99,24 +100,25 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let currencies = outbe_oracle::api::get_all_reference_currencies(ctx)?;
-    let start = currency_position(&currencies, factory.call_currency_cursor.read()?);
 
-    let mut budget = ScanBudget::for_call();
+    let mut budget = SweepBudget::new(
+        MAX_GROUP_DECISIONS_PER_BLOCK,
+        MAX_SERIES_ACTIONS_PER_BLOCK,
+        0,
+    );
     let mut called: u32 = 0;
-    // One pass down the list: a currency closed behind the cursor is never walked
-    // again, so every sweep ends however much it leaves undecided.
-    for &iso_code in currencies.iter().skip(start) {
-        let finished = if budget.is_spent() {
-            false
-        } else {
-            let (calls, finished) = call_currency(ctx, iso_code, pinned_day, &mut budget)?;
+    let finished = call_bins::walk_currencies(
+        &currencies,
+        &factory.call_currency_cursor,
+        &mut budget,
+        |iso_code, budget| {
+            let (calls, finished) = call_currency(ctx, iso_code, pinned_day, budget)?;
             called = called.saturating_add(calls);
-            finished
-        };
-        if !finished {
-            factory.call_currency_cursor.write(u32::from(iso_code))?;
-            return Ok(called);
-        }
+            Ok(finished)
+        },
+    )?;
+    if !finished {
+        return Ok(called);
     }
 
     // The next day starts on the next block, so no slice mixes two days' prices.
@@ -132,7 +134,7 @@ fn call_currency<'storage>(
     ctx: &BlockRuntimeContext<'storage>,
     iso_code: u16,
     last_closed_day: u32,
-    budget: &mut ScanBudget,
+    budget: &mut SweepBudget,
 ) -> Result<(u32, bool)> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let params = crate::config::read_from(&factory, ctx.block.chain_id)?;
@@ -166,98 +168,36 @@ fn call_currency<'storage>(
         }
     };
 
-    BinScan {
-        ctx,
-        factory,
-        window,
-        iso_code,
+    let index = IntexFactoryContract::new(ctx.storage.clone());
+    let mut factory = factory;
+    let mut called: u32 = 0;
+    let finished = call_bins::walk(
+        &CallBins(&index, iso_code),
+        p_bin,
         budget,
-    }
-    .walk(p_bin)
-}
-
-/// One currency's walk of its call-price bins, against the window it opened with.
-struct BinScan<'a, 'storage> {
-    ctx: &'a BlockRuntimeContext<'storage>,
-    factory: IntexFactoryContract<'storage>,
-    window: CallWindow,
-    iso_code: u16,
-    budget: &'a mut ScanBudget,
-}
-
-impl BinScan<'_, '_> {
-    fn walk(&mut self, p_bin: u32) -> Result<(u32, bool)> {
-        let iso_code = self.iso_code;
-        let mut called: u32 = 0;
-        let mut finished = true;
-        let mut cursor: u32 = self.factory.call_scan_cursor.read(&iso_code)?;
-        loop {
-            if self.budget.is_spent() {
-                // Between bins, so the next slice resumes at a bin it has not opened.
-                self.factory.call_scan_cursor.write(&iso_code, cursor)?;
-                finished = false;
-                break;
+        |group, budget| {
+            let (_, worldwide_day) = IntexFactoryContract::unscoped(group);
+            let group = factory.call_bin_group(iso_code, worldwide_day)?;
+            let members = group.members.len() as u32;
+            if !budget.fits_writes(members) {
+                return Ok(Visit::Stop);
             }
-            let next = match tree_math::find_first_left_inclusive(
-                &CallBins(&self.factory, iso_code),
-                cursor,
-            )? {
-                Some(b) if b <= p_bin => b,
-                _ => {
-                    // End of the eligible range: the next run sweeps this currency afresh.
-                    self.factory.call_scan_cursor.write(&iso_code, 0)?;
-                    break;
-                }
-            };
-
-            let (calls, bin_finished) = self.call_bin(next)?;
-            called = called.saturating_add(calls);
-            if !bin_finished {
-                finished = false;
-                break;
-            }
-
-            cursor = match next.checked_add(1) {
-                Some(c) if c <= MAX_BIN_ID => c,
-                _ => {
-                    self.factory.call_scan_cursor.write(&iso_code, 0)?;
-                    break;
-                }
-            };
-        }
-        Ok((called, finished))
-    }
-
-    /// Returns the calls made in `bin` and whether the budget let all of it through.
-    fn call_bin(&mut self, bin: u32) -> Result<(u32, bool)> {
-        let iso_code = self.iso_code;
-        let mut called: u32 = 0;
-        // Snapshot the bin before mutating: a called group leaves it.
-        for worldwide_day in self.factory.call_bin_groups(iso_code, bin)? {
-            let group = self.factory.call_bin_group(iso_code, worldwide_day)?;
-            if !self.budget.admits_actions(group.members.len() as u32) {
-                // Called groups have left this bin, so resuming on it redoes nothing.
-                self.factory.call_scan_cursor.write(&iso_code, bin)?;
-                return Ok((called, false));
-            }
-            self.budget.spend_decision();
             // Isolate per group. A deterministic Err rolls back the group's checkpoint, and the
-            // scan logs it and skips the group. A node-local Err, like the structural reads
-            // above, fails the block.
-            let res = self.ctx.storage.with_checkpoint(|| {
+            // scan logs it and skips the group. A node-local Err fails the block.
+            let res = ctx.storage.with_checkpoint(|| {
                 try_call_group(
                     GroupCall {
-                        storage: &self.ctx.storage,
-                        factory: &mut self.factory,
+                        storage: &ctx.storage,
+                        factory: &mut factory,
                     },
                     &group,
-                    &self.window,
-                    self.ctx.block.timestamp,
+                    &window,
+                    ctx.block.timestamp,
                 )
             });
             match res {
                 Ok(applied) => {
-                    self.budget.spend_actions(applied);
+                    budget.admit_writes(applied);
                     called = called.saturating_add(applied);
                 }
                 Err(e) if e.sweep_failure() == SweepFailure::Propagate => return Err(e),
@@ -265,9 +205,10 @@ impl BinScan<'_, '_> {
                     tracing::warn!(target: "outbe::intexfactory", iso_code, worldwide_day = %worldwide_day, error = ?e, "call scan: skipping group");
                 }
             }
-        }
-        Ok((called, true))
-    }
+            Ok(Visit::Next)
+        },
+    )?;
+    Ok((called, finished))
 }
 
 /// Cycle daily-trigger entry: opens the day's Called sweep, discarding the count.
@@ -322,41 +263,5 @@ pub(crate) fn notify_called(
     Ok(refused)
 }
 
+#[cfg(test)]
 pub(crate) use outbe_primitives::daily_sweep::currency_position;
-
-/// Work one scan may do, split by cost. Deciding a group is a single read.
-/// Applying it writes once per series and queues its notice.
-pub(crate) struct ScanBudget {
-    decisions: u32,
-    actions: u32,
-    actions_full: u32,
-}
-
-impl ScanBudget {
-    pub(crate) fn for_call() -> Self {
-        Self {
-            decisions: MAX_GROUP_DECISIONS_PER_BLOCK,
-            actions: MAX_SERIES_ACTIONS_PER_BLOCK,
-            actions_full: MAX_SERIES_ACTIONS_PER_BLOCK,
-        }
-    }
-
-    pub(crate) fn is_spent(&self) -> bool {
-        self.decisions == 0 || self.actions == 0
-    }
-
-    /// Whole groups only. A transition shrinks its bin, so stopping on actions
-    /// resumes past the work done. Stopping on decisions would restart on the
-    /// same groups, so they bound the scan at the next bin boundary instead.
-    pub(crate) fn admits_actions(&self, members: u32) -> bool {
-        members <= self.actions || self.actions == self.actions_full
-    }
-
-    pub(crate) fn spend_decision(&mut self) {
-        self.decisions = self.decisions.saturating_sub(1);
-    }
-
-    pub(crate) fn spend_actions(&mut self, series: u32) {
-        self.actions = self.actions.saturating_sub(series);
-    }
-}

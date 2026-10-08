@@ -290,9 +290,9 @@ pub struct GemContract {
     /// `bin_index_key(currency, bin, index)` -> bucket.
     #[attribute(order = 51)]
     pub bucket_bin_at: outbe_primitives::storage::dsl::Map<B256, B256>,
-    /// Bucket -> its index in its bin, plus one. The value is 0 once it left the trie.
+    /// Bucket -> `(bin << 32) | (index + 1)` of its place in the trie. 0 once it left.
     #[attribute(order = 52)]
-    pub bucket_bin_index: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_bin_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     /// `(bin << 32) | buckets of that bin still to visit`. 0 = start from the lowest bin.
     #[attribute(order = 53)]
     pub bucket_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,

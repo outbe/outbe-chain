@@ -7,7 +7,6 @@ use outbe_primitives::call_bins;
 use outbe_primitives::call_breach::{self, ScanTerms};
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
-use outbe_primitives::math::tree_math::{self, BinTreeStorage};
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::WorldwideDay;
@@ -112,13 +111,19 @@ impl IntexFactoryContract<'_> {
             .remove_group(&CallBins(&*self, reference_currency), worldwide_day)
     }
 
+    #[cfg(test)]
     pub(crate) fn call_bin_groups(
         &self,
         reference_currency: u16,
         bin_id: u32,
     ) -> Result<Vec<WorldwideDay>> {
-        self.call_bin_index(reference_currency)
-            .groups_in_bin(bin_id)
+        let bins = CallBins(self, reference_currency);
+        (0..call_bins::len(&bins, bin_id)?)
+            .map(|index| {
+                let group = call_bins::entry_at(&bins, bin_id, index)?;
+                Ok(Self::unscoped(group).1)
+            })
+            .collect()
     }
 
     pub(crate) fn call_bin_group_members(
@@ -276,11 +281,8 @@ impl IntexFactoryContract<'_> {
 impl<'storage> IntexFactoryContract<'storage> {
     fn call_bin_index(&self, reference_currency: u16) -> GroupIndex<'storage> {
         GroupIndex {
-            bin_count: self.call_bin_count.clone(),
-            bin_groups: self.call_bin_group_days.clone(),
             group_count: self.call_group_count.clone(),
             group_members: self.call_group_members.clone(),
-            group_bin: self.call_group_bin.clone(),
             iso: reference_currency,
         }
     }
@@ -297,11 +299,8 @@ pub(crate) struct Group {
 /// One currency's two-level index: price bins hold worldwide-day groups, and
 /// each group holds the series that share its decision inputs.
 struct GroupIndex<'storage> {
-    bin_count: Map<'storage, u64, u32>,
-    bin_groups: Map<'storage, B256, u32>,
     group_count: Map<'storage, u64, u32>,
     group_members: Map<'storage, B256, U256>,
-    group_bin: Map<'storage, u64, u32>,
     iso: u16,
 }
 
@@ -312,23 +311,6 @@ impl GroupIndex<'_> {
 
     fn member_key(&self, worldwide_day: WorldwideDay, index: u32) -> B256 {
         IntexFactoryContract::group_member_key(self.iso, worldwide_day, index)
-    }
-
-    fn bin_key(&self, bin_id: u32, index: u32) -> B256 {
-        IntexFactoryContract::bin_index_key(self.iso, bin_id, index)
-    }
-
-    fn groups_in_bin(&self, bin_id: u32) -> Result<Vec<WorldwideDay>> {
-        let count = self
-            .bin_count
-            .read(&IntexFactoryContract::scoped(self.iso, bin_id))?;
-        let mut groups = Vec::with_capacity(count as usize);
-        for index in 0..count {
-            groups.push(WorldwideDay::new(
-                self.bin_groups.read(&self.bin_key(bin_id, index))?,
-            ));
-        }
-        Ok(groups)
     }
 
     fn members(&self, worldwide_day: WorldwideDay) -> Result<Vec<SeriesId>> {
@@ -345,14 +327,14 @@ impl GroupIndex<'_> {
 
     /// Append `series_id` to its day's group, creating it in `bin_id` when first.
     /// A member priced into another bin would split the group's decision: refused.
-    fn insert(&self, tree: &impl BinTreeStorage, series_id: SeriesId, bin_id: u32) -> Result<()> {
+    fn insert(&self, bins: &CallBins<'_, '_>, series_id: SeriesId, bin_id: u32) -> Result<()> {
         let worldwide_day = series_id.worldwide_day();
         let group_key = self.group_key(worldwide_day);
         let count = self.group_count.read(&group_key)?;
         if count == 0 {
-            self.attach(tree, worldwide_day, bin_id)?;
+            call_bins::insert(bins, group_key, bin_id)?;
         } else {
-            let expected = self.group_bin.read(&group_key)?;
+            let expected = call_bins::bin_of(bins, group_key)?.unwrap_or_default();
             if expected != bin_id {
                 return Err(IntexFactoryError::GroupBinMismatch {
                     iso: self.iso,
@@ -370,7 +352,7 @@ impl GroupIndex<'_> {
     }
 
     /// Drop a whole group: its members and its place in the bin.
-    fn remove_group(&self, tree: &impl BinTreeStorage, worldwide_day: WorldwideDay) -> Result<()> {
+    fn remove_group(&self, bins: &CallBins<'_, '_>, worldwide_day: WorldwideDay) -> Result<()> {
         let group_key = self.group_key(worldwide_day);
         let count = self.group_count.read(&group_key)?;
         if count == 0 {
@@ -381,69 +363,10 @@ impl GroupIndex<'_> {
                 .clear(&self.member_key(worldwide_day, index))?;
         }
         self.group_count.write(&group_key, 0)?;
-        let bin_id = self.group_bin.read(&group_key)?;
-        self.detach(tree, worldwide_day, bin_id)
-    }
-
-    /// Register the group in `bin_id` and set the bin's trie bit.
-    fn attach(
-        &self,
-        tree: &impl BinTreeStorage,
-        worldwide_day: WorldwideDay,
-        bin_id: u32,
-    ) -> Result<()> {
-        let scoped = IntexFactoryContract::scoped(self.iso, bin_id);
-        let count = self.bin_count.read(&scoped)?;
-        self.bin_groups
-            .write(&self.bin_key(bin_id, count), worldwide_day.value())?;
-        self.bin_count.write(&scoped, count + 1)?;
-        self.group_bin
-            .write(&self.group_key(worldwide_day), bin_id)?;
-        tree_math::add(tree, bin_id)?;
-        Ok(())
-    }
-
-    /// Drop the group's bin entry (swap-and-pop). Clear the trie bit when the bin
-    /// empties.
-    fn detach(
-        &self,
-        tree: &impl BinTreeStorage,
-        worldwide_day: WorldwideDay,
-        bin_id: u32,
-    ) -> Result<()> {
-        let scoped = IntexFactoryContract::scoped(self.iso, bin_id);
-        let count = self.bin_count.read(&scoped)?;
-        if count == 0 {
-            return Ok(());
-        }
-        let mut found: Option<u32> = None;
-        for index in 0..count {
-            if self.bin_groups.read(&self.bin_key(bin_id, index))? == worldwide_day.value() {
-                found = Some(index);
-                break;
-            }
-        }
-        let Some(idx) = found else {
-            return Ok(());
-        };
-        let last = count - 1;
-        if idx != last {
-            let last_day = self.bin_groups.read(&self.bin_key(bin_id, last))?;
-            self.bin_groups
-                .write(&self.bin_key(bin_id, idx), last_day)?;
-        }
-        self.bin_groups.clear(&self.bin_key(bin_id, last))?;
-        self.bin_count.write(&scoped, last)?;
-        self.group_bin.clear(&self.group_key(worldwide_day))?;
-        if last == 0 {
-            tree_math::remove(tree, bin_id)?;
-        }
+        call_bins::remove(bins, group_key)?;
         Ok(())
     }
 }
-
-// Adapters between one currency's slice of a bin-tree's columns and `BinTreeStorage`.
-// Construct inline at each `tree_math` call, so it never conflicts with a `&mut` borrow.
 
 /// Buckets holding a called group whose settlement window has not closed yet.
 pub(crate) struct ExpiryHours<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>);
@@ -461,11 +384,15 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<u64> {
     cursor: expiry_cursor,
 });
 
-/// The call-price trie of one reference currency.
+/// The call-price bins of one reference currency, holding its worldwide-day groups.
 pub(crate) struct CallBins<'a, 'b>(pub(crate) &'a IntexFactoryContract<'b>, pub(crate) u16);
 
-outbe_primitives::impl_bin_tree_storage!(CallBins scoped by IntexFactoryContract::scoped {
+outbe_primitives::impl_call_bins!(CallBins<u64> {
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,
+    count: call_bin_count,
+    at: call_bin_groups,
+    slot: call_group_slot,
+    cursor: call_scan_cursor,
 });

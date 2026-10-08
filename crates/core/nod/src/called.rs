@@ -134,11 +134,15 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
-    let mut visits: u32 = 0;
+    let mut budget = outbe_primitives::sweep_budget::SweepBudget::new(
+        crate::constants::MAX_NOD_CALL_VISITS_PER_BLOCK,
+        u32::MAX,
+        0,
+    );
     let mut called_days = BTreeSet::new();
     let mut windows = outbe_oracle::call_window::CallWindows::new(pinned_day);
     let (called, finished) =
-        calls::call_arm(ctx, &mut nod, &mut windows, &mut visits, &mut called_days)?;
+        calls::call_arm(ctx, &mut nod, &mut windows, &mut budget, &mut called_days)?;
     nod.emit_days_metadata_update(&called_days)?;
     if finished {
         finish_call_sweep(ctx, &nod, pinned_day)?;

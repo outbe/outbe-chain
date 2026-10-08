@@ -8,10 +8,11 @@ use outbe_primitives::{
     call_breach::ScanTerms,
     daily_sweep::{PinnedDay, Scheduled, SweepDays},
     error::Result,
-    math::{constants::MAX_BIN_ID, tree_math},
+    math::tree_math,
 };
 
-use outbe_primitives::call_bins::{pack_cursor, unpack_cursor};
+use outbe_primitives::call_bins::{self, unpack_cursor, Visit};
+use outbe_primitives::sweep_budget::SweepBudget;
 
 use crate::config::GemParams;
 use crate::constants::{CALL_SWEEP, MAX_BUCKET_VISITS_PER_BLOCK};
@@ -45,6 +46,7 @@ fn closed_day(ctx: &BlockRuntimeContext) -> Result<Option<u32>> {
     outbe_oracle::closed_day::finalized_closed_day(ctx.storage.clone(), ctx.block.timestamp, "gem")
 }
 
+#[cfg(test)]
 pub(crate) use outbe_primitives::daily_sweep::currency_position;
 
 fn pinned_call_day<'a, 'storage>(gem: &'a GemContract<'storage>) -> PinnedDay<'a, 'storage> {
@@ -118,32 +120,30 @@ fn call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
     let currencies = get_all_reference_currencies(ctx)?;
-    let start = currency_position(&currencies, gem.call_currency_cursor.read()?);
     let params = crate::config::read_from(&gem, ctx.block.chain_id)?;
+    let cursor = GemContract::new(ctx.storage.clone());
     let mut sweep = CallSweep {
         ctx,
         gem,
         pinned_day,
         params,
         windows: CallWindows::new(pinned_day),
-        budget: MAX_BUCKET_VISITS_PER_BLOCK,
     };
+    let mut budget = SweepBudget::new(MAX_BUCKET_VISITS_PER_BLOCK, u32::MAX, 0);
     let mut called: u32 = 0;
-    // One pass down the list: a currency closed behind the cursor is never walked
-    // again, so every sweep ends however much it leaves undecided.
-    for &iso_code in currencies.iter().skip(start) {
-        if sweep.budget == 0 {
-            sweep.gem.call_currency_cursor.write(u32::from(iso_code))?;
-            return Ok(called);
-        }
-        let (calls, finished) = sweep.scan_currency(iso_code)?;
-        called = called.saturating_add(calls);
-        if !finished {
-            sweep.gem.call_currency_cursor.write(u32::from(iso_code))?;
-            return Ok(called);
-        }
+    let finished = call_bins::walk_currencies(
+        &currencies,
+        &cursor.call_currency_cursor,
+        &mut budget,
+        |iso_code, budget| {
+            let (calls, finished) = sweep.scan_currency(iso_code, budget)?;
+            called = called.saturating_add(calls);
+            Ok(finished)
+        },
+    )?;
+    if finished {
+        sweep.finish()?;
     }
-    sweep.finish()?;
     Ok(called)
 }
 
@@ -154,11 +154,10 @@ struct CallSweep<'a, 'storage> {
     pinned_day: u32,
     params: GemParams,
     windows: CallWindows,
-    budget: u32,
 }
 
 impl CallSweep<'_, '_> {
-    fn scan_currency(&mut self, iso_code: u16) -> Result<(u32, bool)> {
+    fn scan_currency(&mut self, iso_code: u16, budget: &mut SweepBudget) -> Result<(u32, bool)> {
         // A currency this day's pass could not price is settled for the day.
         if self.gem.call_scan_failed_day.read(&iso_code)? == self.pinned_day {
             return Ok((0, true));
@@ -194,7 +193,7 @@ impl CallSweep<'_, '_> {
                 return Ok((0, true));
             }
         };
-        call_currency(self.ctx, iso_code, window, ceiling, &mut self.budget)
+        call_currency(self.ctx, iso_code, window, ceiling, budget)
     }
 
     fn finish(&self) -> Result<()> {
@@ -220,106 +219,46 @@ fn scan_terms(gem: &GemContract<'_>, iso_code: u16, params: &GemParams) -> Resul
 
 /// Walk one currency's bucket bins up to `ceiling`, resuming where it stopped.
 /// Returns the calls made and whether the eligible range was walked to the end.
-///
-/// Each bin is walked from the top, so a call's swap-pop only moves a bucket already
-/// visited, and a bin wider than the budget resumes inside itself.
 pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
     iso_code: u16,
     window: &CallWindow,
     ceiling: u32,
-    budget: &mut u32,
+    budget: &mut SweepBudget,
 ) -> Result<(u32, bool)> {
-    let gem = GemContract::new(ctx.storage.clone());
-    let (mut from_bin, mut remaining) = unpack_cursor(gem.bucket_scan_cursor.read(&iso_code)?);
-    let mut scan = BucketCallScan {
-        ctx,
-        gem,
-        iso_code,
-        window,
-        budget,
-    };
+    let index = GemContract::new(ctx.storage.clone());
+    let mut gem = GemContract::new(ctx.storage.clone());
     let mut called: u32 = 0;
-    loop {
-        let bin =
-            match tree_math::find_first_left_inclusive(&BucketBins(&scan.gem, iso_code), from_bin)?
-            {
-                Some(bin) if bin <= ceiling => bin,
-                _ => {
-                    scan.gem.bucket_scan_cursor.write(&iso_code, 0)?;
-                    return Ok((called, true));
-                }
-            };
-        let (calls, finished) = scan.visit_bin(bin, from_bin, remaining)?;
-        called = called.saturating_add(calls);
-        if !finished {
-            return Ok((called, false));
-        }
-        remaining = 0;
-        from_bin = match bin.checked_add(1) {
-            Some(next) if next <= MAX_BIN_ID => next,
-            _ => {
-                scan.gem.bucket_scan_cursor.write(&iso_code, 0)?;
-                return Ok((called, true));
-            }
-        };
-    }
-}
-
-/// A currency's reverse bucket walk shares one budget across its bins.
-struct BucketCallScan<'a, 'storage> {
-    ctx: &'a BlockRuntimeContext<'storage>,
-    gem: GemContract<'storage>,
-    iso_code: u16,
-    window: &'a CallWindow,
-    budget: &'a mut u32,
-}
-
-impl BucketCallScan<'_, '_> {
-    fn visit_bin(&mut self, bin: u32, from_bin: u32, remaining: u32) -> Result<(u32, bool)> {
-        let count = self
-            .gem
-            .bucket_bin_count
-            .read(&GemContract::scoped(self.iso_code, bin))?;
-        let mut remaining = if bin == from_bin && remaining != 0 {
-            remaining.min(count)
-        } else {
-            count
-        };
-        let mut called: u32 = 0;
-        while remaining > 0 {
-            if *self.budget == 0 {
-                self.gem
-                    .bucket_scan_cursor
-                    .write(&self.iso_code, pack_cursor(bin, remaining))?;
-                return Ok((called, false));
-            }
-            *self.budget -= 1;
-            remaining -= 1;
-            let bucket = self.gem.bucket_bin_at.read(&GemContract::bin_index_key(
-                self.iso_code,
-                bin,
-                remaining,
-            ))?;
-            if self.call_bucket(bucket)? {
+    let finished = call_bins::walk(
+        &BucketBins(&index, iso_code),
+        ceiling,
+        budget,
+        |bucket, _| {
+            if call_bucket(ctx, &mut gem, window, bucket)? {
                 called = called.saturating_add(1);
             }
-        }
-        Ok((called, true))
-    }
+            Ok(Visit::Next)
+        },
+    )?;
+    Ok((called, finished))
+}
 
-    /// Protocol errors roll back only this bucket. Node-local failures fail the block.
-    fn call_bucket(&mut self, bucket: B256) -> Result<bool> {
-        match self.ctx.storage.with_checkpoint(|| {
-            self.gem
-                .trigger_bucket_call(self.window, bucket, self.ctx.block.timestamp)
-        }) {
-            Ok(called) => Ok(called),
-            Err(error) if error.is_node_local() => Err(error),
-            Err(error) => {
-                tracing::warn!(target: "outbe::gem", %bucket, error = ?error, "call scan: skipping bucket");
-                Ok(false)
-            }
+/// Protocol errors roll back only this bucket. Node-local failures fail the block.
+fn call_bucket(
+    ctx: &BlockRuntimeContext,
+    gem: &mut GemContract<'_>,
+    window: &CallWindow,
+    bucket: B256,
+) -> Result<bool> {
+    match ctx
+        .storage
+        .with_checkpoint(|| gem.trigger_bucket_call(window, bucket, ctx.block.timestamp))
+    {
+        Ok(called) => Ok(called),
+        Err(error) if error.is_node_local() => Err(error),
+        Err(error) => {
+            tracing::warn!(target: "outbe::gem", %bucket, error = ?error, "call scan: skipping bucket");
+            Ok(false)
         }
     }
 }

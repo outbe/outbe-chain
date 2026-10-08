@@ -12,6 +12,7 @@ use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
+use outbe_primitives::sweep_budget::SweepBudget;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::NOD_ADDRESS,
@@ -1129,7 +1130,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
         let mut nod = NodContract::new(storage.clone());
 
         // Two visits: the young bucket on top, then the middle one, which is called.
-        let mut visits = MAX_NOD_CALL_VISITS_PER_BLOCK - 2;
+        let mut visits = SweepBudget::new(2, u32::MAX, 0);
         assert_eq!(
             crate::called::call_currency(
                 &ctx,
@@ -1145,7 +1146,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             .unwrap(),
             (1, false)
         );
-        let mut visits = 0;
+        let mut visits = SweepBudget::new(MAX_NOD_CALL_VISITS_PER_BLOCK, u32::MAX, 0);
         assert_eq!(
             crate::called::call_currency(
                 &ctx,
@@ -1161,27 +1162,31 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             .unwrap(),
             (1, true)
         );
-        assert_eq!(visits, 1, "the resumed walk visits only what was left");
+        assert_eq!(
+            visits.visits_left(),
+            MAX_NOD_CALL_VISITS_PER_BLOCK - 1,
+            "the resumed walk visits only what was left"
+        );
         assert_eq!(called_at(storage, items[0].bucket_key), at);
         assert_eq!(called_at(storage, items[1].bucket_key), at);
         assert_eq!(called_at(storage, items[2].bucket_key), 0);
         let bin = NodContract::price_to_bin(at_call()).unwrap();
         assert_eq!(
             nod.call_bin_count
-                .read(&NodContract::scoped(ISO, bin))
+                .read(&outbe_primitives::call_bins::scoped(ISO, bin))
                 .unwrap(),
             1
         );
         assert_eq!(
             nod.call_bin_buckets
-                .read(&NodContract::bin_index_key(ISO, bin, 0))
+                .read(&outbe_primitives::call_bins::bin_index_key(ISO, bin, 0))
                 .unwrap(),
             items[2].bucket_key
         );
         nod.remove_call_bin(items[2].bucket_key).unwrap();
         assert_eq!(
             nod.call_bin_count
-                .read(&NodContract::scoped(ISO, bin))
+                .read(&outbe_primitives::call_bins::scoped(ISO, bin))
                 .unwrap(),
             0
         );

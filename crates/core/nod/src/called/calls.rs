@@ -5,18 +5,15 @@ use outbe_oracle::api::get_all_reference_currencies;
 use outbe_oracle::call_window::{CallWindow, CallWindows};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    call_bins::{pack_cursor, unpack_cursor},
+    call_bins::{self, Visit},
     call_breach::{BreachTerms, ScanTerms},
     error::{Result, SweepFailure},
-    math::{constants::MAX_BIN_ID, tree_math},
+    sweep_budget::SweepBudget,
     time::first_full_day,
 };
 
 use super::{materializing, sweep_failure};
-use crate::{
-    api, constants::MAX_NOD_CALL_VISITS_PER_BLOCK, precompile::INod, schema::NodContract,
-    state::CallBins,
-};
+use crate::{api, precompile::INod, schema::NodContract, state::CallBins};
 
 /// One currency's call walk: its trailing VWAP window, and the highest bin a
 /// bucket that window breached can sit in.
@@ -31,36 +28,38 @@ pub(super) fn call_arm(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
     windows: &mut CallWindows,
-    visits: &mut u32,
+    budget: &mut SweepBudget,
     called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
     let currencies = get_all_reference_currencies(ctx)?;
-    let start = currency_position(&currencies, nod.call_currency_cursor.read()?);
     let params = crate::config::read_from(nod, ctx.block.chain_id)?;
+    let cursor = NodContract::new(ctx.storage.clone());
     let mut called: u32 = 0;
-    for &iso_code in currencies.iter().skip(start) {
-        if nod.call_bin_tree_root.read(&iso_code)?.is_zero() {
-            continue;
-        }
-        let window = windows.window(&ctx.storage, iso_code, || {
-            scan_terms(nod, iso_code, &params)
-        })?;
-        let Some(ceiling) = window_ceiling(window, iso_code) else {
-            continue;
-        };
-        let scan = CurrencyScan {
-            iso_code,
-            window,
-            ceiling,
-        };
-        let (calls, finished) = call_currency(ctx, nod, scan, visits, called_days)?;
-        called = called.saturating_add(calls);
-        if !finished {
-            nod.call_currency_cursor.write(u32::from(iso_code))?;
-            return Ok((called, false));
-        }
-    }
-    Ok((called, true))
+    let finished = call_bins::walk_currencies(
+        &currencies,
+        &cursor.call_currency_cursor,
+        budget,
+        |iso_code, budget| {
+            if nod.call_bin_tree_root.read(&iso_code)?.is_zero() {
+                return Ok(true);
+            }
+            let window = windows.window(&ctx.storage, iso_code, || {
+                scan_terms(nod, iso_code, &params)
+            })?;
+            let Some(ceiling) = window_ceiling(window, iso_code) else {
+                return Ok(true);
+            };
+            let scan = CurrencyScan {
+                iso_code,
+                window,
+                ceiling,
+            };
+            let (calls, finished) = call_currency(ctx, nod, scan, budget, called_days)?;
+            called = called.saturating_add(calls);
+            Ok(finished)
+        },
+    )?;
+    Ok((called, finished))
 }
 
 /// The live profile is the terms the next bucket is sealed with.
@@ -94,12 +93,12 @@ fn window_ceiling(window: &CallWindow, iso_code: u16) -> Option<u32> {
     }
 }
 
-/// Each bin is walked from the top, so a call's swap-pop only moves an entry already visited.
+/// Walks the currency's bins up to the window's ceiling, resuming where it stopped.
 pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
     scan: CurrencyScan<'_>,
-    visits: &mut u32,
+    budget: &mut SweepBudget,
     called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
     let CurrencyScan {
@@ -108,57 +107,23 @@ pub(crate) fn call_currency(
         ceiling,
     } = scan;
     let now = ctx.block.timestamp;
-    let (mut from_bin, mut remaining) = unpack_cursor(nod.call_bin_cursor.read(&iso_code)?);
+    let index = NodContract::new(ctx.storage.clone());
     let mut called: u32 = 0;
-    loop {
-        let bin_id = match tree_math::find_first_left_inclusive(&CallBins(nod, iso_code), from_bin)?
-        {
-            Some(bin) if bin <= ceiling => bin,
-            _ => {
-                nod.call_bin_cursor.write(&iso_code, 0)?;
-                return Ok((called, true));
+    let finished = call_bins::walk(
+        &CallBins(&index, iso_code),
+        ceiling,
+        budget,
+        |bucket_key, _| match try_call(ctx, nod, window, bucket_key, now)? {
+            Some(true) => {
+                called = called.saturating_add(1);
+                called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
+                Ok(Visit::Next)
             }
-        };
-        let count = nod
-            .call_bin_count
-            .read(&NodContract::scoped(iso_code, bin_id))?;
-        remaining = if bin_id == from_bin && remaining != 0 {
-            remaining.min(count)
-        } else {
-            count
-        };
-        while remaining > 0 {
-            if *visits >= MAX_NOD_CALL_VISITS_PER_BLOCK {
-                nod.call_bin_cursor
-                    .write(&iso_code, pack_cursor(bin_id, remaining))?;
-                return Ok((called, false));
-            }
-            *visits += 1;
-            remaining -= 1;
-            let bucket_key = nod
-                .call_bin_buckets
-                .read(&NodContract::bin_index_key(iso_code, bin_id, remaining))?;
-            match try_call(ctx, nod, window, bucket_key, now)? {
-                Some(true) => {
-                    called = called.saturating_add(1);
-                    called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
-                }
-                Some(false) => {}
-                None => {
-                    nod.call_bin_cursor
-                        .write(&iso_code, pack_cursor(bin_id, remaining + 1))?;
-                    return Ok((called, false));
-                }
-            }
-        }
-        from_bin = match bin_id.checked_add(1) {
-            Some(next) if next <= MAX_BIN_ID => next,
-            _ => {
-                nod.call_bin_cursor.write(&iso_code, 0)?;
-                return Ok((called, true));
-            }
-        };
-    }
+            Some(false) => Ok(Visit::Next),
+            None => Ok(Visit::Stop),
+        },
+    )?;
+    Ok((called, finished))
 }
 
 /// Whether the bucket was called, or `None` when the gas ran out before it.
@@ -199,8 +164,6 @@ fn try_call(
         },
     }
 }
-
-pub(crate) use outbe_primitives::daily_sweep::currency_position;
 
 /// Stamps the call and opens the settlement window the bucket sealed.
 fn mark_called(
