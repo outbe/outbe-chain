@@ -18,7 +18,9 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
+use outbe_tee_enclave::gratis::{
+    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
+};
 use outbe_vaultrouter::{api::IVaultRouter, LiquidityReservation, VaultRouterContract};
 use revm::{
     context_interface::JournalTr,
@@ -291,6 +293,28 @@ fn pledged_blob(evm: &mut IssuanceEvm) -> eyre::Result<Bytes> {
     .returndata)
 }
 
+/// The source's decrypted liquid and pledged Gratis.
+fn source_gratis(evm: &mut IssuanceEvm) -> eyre::Result<(U256, U256)> {
+    let view_key = derive_view_key(&test_enclave::state_key(), OWNER)?;
+    let liquid = call!(
+        evm,
+        OWNER,
+        GRATIS_ADDRESS,
+        U256::ZERO,
+        IGratis::balanceOfCall { account: OWNER }
+    );
+    let liquid = IGratis::balanceOfCall::abi_decode_returns(&liquid.returndata)?;
+    let pledged = IGratis::pledgedOfCall::abi_decode_returns(&pledged_blob(evm)?)?;
+    Ok((
+        decrypt_balance(&view_key, OWNER, &liquid)?,
+        if pledged.is_empty() {
+            U256::ZERO
+        } else {
+            decrypt_pledged(&view_key, OWNER, &pledged)?
+        },
+    ))
+}
+
 fn prepare_issuance_counterparties(evm: &mut IssuanceEvm, failure: u64) -> eyre::Result<()> {
     for (account, amount) in [(ACCOUNT, 2_000_000), (VAULT_ROUTER_ADDRESS, 2_000_000)] {
         assert!(matches!(
@@ -449,7 +473,7 @@ fn retry_issuance_and_cancel_expired(
     );
     if failure == 8 {
         assert!(String::from_utf8_lossy(&retry.returndata).contains("expired"));
-        let pledged = pledged_blob(evm)?;
+        assert_eq!(source_gratis(evm)?, (U256::ZERO, U256::from(GRATIS)));
         let cancel = IGratisFactory::cancelPledgeNoteCall {
             reservationId: U256::ONE,
         };
@@ -480,7 +504,7 @@ fn retry_issuance_and_cancel_expired(
             (cancelled[0].source, cancelled[0].gratisMinor),
             (OWNER, U256::from(GRATIS))
         );
-        assert_ne!(pledged_blob(evm)?, pledged);
+        assert_eq!(source_gratis(evm)?, (U256::from(GRATIS), U256::ZERO));
         assert!(!matches!(
             call!(evm, OWNER, GRATIS_FACTORY_ADDRESS, U256::ZERO, cancel).status,
             SubCallStatus::Success
@@ -582,7 +606,7 @@ fn settle_successful_issuance(
         position,
         position_call,
         before,
-        pledged: pledged.clone(),
+        pledged,
     };
     for mode in [1, 2, 3, 9, 10] {
         assert_payment_rollback(evm, mode, &payment)?;
@@ -602,7 +626,8 @@ fn settle_successful_issuance(
         "{:?}",
         paid.returndata
     );
-    assert_ne!(pledged_blob(evm)?, pledged);
+    let half = U256::from(GRATIS / 2);
+    assert_eq!(source_gratis(evm)?, (half, half));
 
     Ok(())
 }

@@ -466,3 +466,30 @@ fn a_pledge_outlives_its_returned_reservation_and_can_be_cancelled() {
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
 }
+
+#[test]
+fn mining_coen_cannot_spend_pledged_gratis() {
+    with_env(|storage| {
+        let id = fund_and_reserve(&storage, alice());
+        pledge(&storage, alice(), id, 1).unwrap();
+        let liquid = U256::from(1_000 - RESERVED);
+        let too_much = liquid + U256::ONE;
+        assert!(runtime::mine_coen(
+            storage.clone(),
+            alice(),
+            too_much,
+            auth(GratisOp::Burn, alice(), too_much, 2),
+        )
+        .is_err());
+        assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
+        runtime::mine_coen(
+            storage.clone(),
+            alice(),
+            liquid,
+            auth(GratisOp::Burn, alice(), liquid, 2),
+        )
+        .unwrap();
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, alice()), U256::from(RESERVED));
+    });
+}

@@ -212,6 +212,8 @@ mod tests {
             alloy_primitives::hex::encode(&blob),
             "0000000000000001186436dfe4774b400beaa3115d0ab9abae57d6defa6f80943ec703ede5ea855d8823cdeb05b2de5491aaf6829c5b213b"
         );
+        let pledged = write_amount(&vk, alice(), FIELD_PLEDGED, 0, U256::from(1000u64)).unwrap();
+        assert_eq!(alloy_primitives::hex::encode(&pledged), "0000000000000001067486674e123e00e26faa10058874b27c1b6e83cd4790eac7e13fccc9e0844f0f48b392582560d6f9e42ddc89d3746f");
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let mac = modify_mac(&mk, alice(), GratisOp::Mint, U256::from(1000u64), 0, CHAIN);
         assert_eq!(
@@ -294,6 +296,14 @@ mod tests {
         let mut r = req(GratisOp::ReleasePledged, alice(), U256::from(1u64), 0);
         r.current_balance = blob.clone();
         r.current_pledged = blob;
+        assert!(matches!(
+            apply_op(&sk, &r).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+        let balance = write_amount(&vk, alice(), FIELD_BALANCE, 0, U256::from(100u64)).unwrap();
+        assert!(decrypt_pledged(&vk, alice(), &balance).is_err());
+        let mut r = req(GratisOp::BurnPledged, alice(), U256::from(1u64), 0);
+        r.current_pledged = balance;
         assert!(matches!(
             apply_op(&sk, &r).status,
             GratisOpStatus::Rejected { .. }

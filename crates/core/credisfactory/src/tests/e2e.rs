@@ -25,27 +25,67 @@ fn call_and_lapse(storage: &StorageHandle<'_>, id: U256, owner: Address) {
     advance_to(storage, CREATED_AT + NOTICE + 1);
 }
 
+fn expect_issue_error(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    id: U256,
+    stake: U256,
+    text: &str,
+) {
+    let err = runtime::issue_credis(storage.clone(), caller, id, stake).unwrap_err();
+    assert!(
+        err.to_string().contains(text),
+        "expected {text:?}, got {err}"
+    );
+}
+
 #[test]
 fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
     let mut provider = env();
-    StorageHandle::enter(&mut provider, |storage| {
+    let (id, reservation) = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2));
         let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
         fund_stake(&storage, pledge_stake());
-        let err = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap_err();
-        assert!(err.to_string().contains("pledge not found"), "{err}");
+        expect_issue_error(&storage, cca(), id, pledge_stake(), "pledge not found");
+        expect_issue_error(
+            &storage,
+            cca(),
+            U256::from(999),
+            pledge_stake(),
+            "reservation not found",
+        );
 
         pledge(&storage, alice(), id, 1);
         let reservation = outbe_vaultrouter::api::reservation_of(&storage, id).unwrap();
-        assert!(runtime::issue_credis(storage.clone(), cca(), id, U256::ZERO).is_err());
-        assert!(runtime::issue_credis(storage.clone(), bob(), id, pledge_stake()).is_err());
+        expect_issue_error(&storage, cca(), id, U256::ZERO, "attached COEN");
+        expect_issue_error(&storage, bob(), id, pledge_stake(), "CCA is not active");
+        storage
+            .increase_balance(
+                outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
+                outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            )
+            .unwrap();
+        outbe_ccaregistry::runtime::bond(
+            storage.clone(),
+            bob(),
+            outbe_ccaregistry::constants::BOND_REQUIREMENT,
+            "Other CCA".into(),
+        )
+        .unwrap();
+        expect_issue_error(
+            &storage,
+            bob(),
+            id,
+            pledge_stake(),
+            "reservation cca mismatch",
+        );
         let mut undeployed = reservation.clone();
         undeployed.smart_account = bob();
         VaultRouterContract::new(storage.clone())
             .reservations
             .update(&undeployed)
             .unwrap();
-        assert!(runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).is_err());
+        expect_issue_error(&storage, cca(), id, pledge_stake(), "not deployed");
         VaultRouterContract::new(storage.clone())
             .reservations
             .update(&reservation)
@@ -75,9 +115,19 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
             position.call_notice_period_seconds,
             outbe_credis::constants::CALL_NOTICE_PERIOD
         );
+        (id, reservation)
+    });
+    // A later block derives a fresh position id, so only the spent pledge can stop a replay.
+    provider.set_block_number(BLOCK_NUMBER + 1);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            outbe_vaultrouter::api::reservation_of(&storage, id).unwrap(),
+            reservation
+        );
         fund_stake(&storage, pledge_stake());
-        assert!(runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).is_err());
-        assert!(cancel_pledge_note(storage.clone(), alice(), id).is_err());
+        expect_issue_error(&storage, cca(), id, pledge_stake(), "pledge not found");
+        let err = cancel_pledge_note(storage.clone(), alice(), id).unwrap_err();
+        assert!(err.to_string().contains("pledge not found"), "{err}");
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
     });
     teardown();

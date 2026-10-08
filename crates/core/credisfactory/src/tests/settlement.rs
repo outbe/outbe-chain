@@ -444,17 +444,22 @@ fn the_stake_stays_with_the_smart_account_through_settlement_and_void() {
 #[test]
 fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_positions() {
     let mut provider = env();
-    StorageHandle::enter(&mut provider, |storage| {
-        bootstrap(&storage, pledge_cost());
+    let (position_id, next) = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(2u64));
         let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), id, 1);
         let day = outbe_primitives::time::timestamp_to_date_key(CREATED_AT);
-        assert!(runtime::issue_credis(storage.clone(), cca(), id, U256::ZERO).is_err());
+        // The unfunded stake transfer fails after the pledge was handed to Credis.
+        assert!(runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).is_err());
         assert_eq!(
             outbe_gratisfactory::runtime::pledge_of(&storage, id)
                 .unwrap()
                 .source,
             alice()
+        );
+        assert_eq!(
+            CredisContract::new(storage.clone()).active_len().unwrap(),
+            0
         );
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
@@ -469,10 +474,91 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_posit
         );
         outbe_ccaregistry::runtime::unbond(storage.clone(), cca()).unwrap();
         let next = seed_reservation(&storage, alice(), alice(), pledge_stables());
-        assert!(runtime::issue_credis(storage.clone(), cca(), next, pledge_stake()).is_err());
+        pledge(&storage, alice(), next, 2);
+        fund_stake(&storage, pledge_stake());
+        (position_id, next)
+    });
+    provider.set_block_number(BLOCK_NUMBER + 1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let err = runtime::issue_credis(storage.clone(), cca(), next, pledge_stake()).unwrap_err();
+        assert!(err.to_string().contains("CCA is not active"), "{err}");
         assert_eq!(
             position(&storage, position_id).outstanding_principal_minor,
             pledge_stables()
+        );
+        assert_eq!(
+            outbe_gratisfactory::runtime::pledge_of(&storage, next)
+                .unwrap()
+                .source,
+            alice()
+        );
+    });
+    teardown();
+}
+
+#[test]
+fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source() {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(2u64));
+        deploy_smart_account(&storage, bob());
+        let id = seed_reservation(&storage, bob(), alice(), pledge_stables());
+        pledge(&storage, alice(), id, 1);
+        let unused = seed_reservation(&storage, alice(), alice(), pledge_stables());
+        pledge(&storage, alice(), unused, 2);
+        fund_stake(&storage, pledge_stake());
+        let position_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
+            .unwrap()
+            .0;
+        let half = pledge_cost() / U256::from(2u64);
+        settle_principal(
+            &storage,
+            bob(),
+            position_id,
+            pledge_stables() / U256::from(2u64),
+        );
+        assert_eq!(view_balance(&storage, alice()), half);
+        assert_eq!(view_pledged(&storage, alice()), pledge_cost() + half);
+
+        let called_at = now_of(&storage);
+        assert!(CredisContract::new(storage.clone())
+            .mark_called(position_id, called_at)
+            .unwrap());
+        let deadline = outbe_credis::settlement_deadline(&position(&storage, position_id));
+        for at in [deadline - 1, deadline] {
+            advance_to(&storage, at);
+            finalize_through(&storage, at);
+            assert_eq!(scan(&storage, at), 0);
+            assert_eq!(
+                position(&storage, position_id).lifecycle_state().unwrap(),
+                CredisState::Called
+            );
+        }
+        let supply = outbe_gratis::api::total_supply(storage.clone()).unwrap();
+        advance_to(&storage, deadline + 1);
+        finalize_through(&storage, deadline + 1);
+        assert_eq!(scan(&storage, deadline + 1), 1);
+        assert_eq!(scan(&storage, deadline + 1), 0);
+        assert_eq!(
+            position(&storage, position_id).lifecycle_state().unwrap(),
+            CredisState::Void
+        );
+        assert_eq!(view_pledged(&storage, alice()), pledge_cost());
+        assert_eq!(view_balance(&storage, alice()), half);
+        assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
+        assert_eq!(view_balance(&storage, bob()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            supply - half
+        );
+        assert_eq!(unallocated(&storage), half);
+
+        cancel_pledge_note(storage.clone(), alice(), unused).unwrap();
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(view_balance(&storage, alice()), pledge_cost() + half);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
         );
     });
     teardown();
