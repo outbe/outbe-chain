@@ -239,9 +239,10 @@ fn open_position_requires_a_pledge_source() {
     with_credis(|storage| {
         let mut no_source = params(alice());
         no_source.source = Address::ZERO;
-        assert!(CredisContract::new(storage)
+        let err = CredisContract::new(storage)
             .open_position(no_source)
-            .is_err());
+            .unwrap_err();
+        assert!(err.to_string().contains("pledge source is zero"), "{err}");
     });
 }
 

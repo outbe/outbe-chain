@@ -172,8 +172,11 @@ impl CredisContract<'_> {
                 params.entry_price_minor,
                 params.call_anchor_price_minor,
             ];
-            if terms.iter().any(U256::is_zero) || params.source.is_zero() {
+            if terms.iter().any(U256::is_zero) {
                 return Err(CredisError::InvalidAmount.into());
+            }
+            if params.source.is_zero() {
+                return Err(CredisError::InvalidSource.into());
             }
 
             let position_id = CredisContract::position_id(
