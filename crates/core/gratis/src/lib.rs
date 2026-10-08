@@ -26,6 +26,7 @@ pub mod enclave_client;
 pub mod precompile;
 pub mod schema;
 
+pub(crate) mod metadata;
 pub(crate) mod runtime;
 pub(crate) mod state;
 

@@ -17,9 +17,9 @@ interface ITribute {
         address indexed owner,
         uint256 tributeId,
         uint32 worldwideDay,
-        uint256 issuanceAmountMinor,
+        bytes issuanceAmountMinor,
         uint16 settlementCurrency,
-        uint256 nominalAmountMinor
+        bytes nominalAmountMinor
     );
 
     event TributeBurned(uint256 tributeId, address owner, uint32 worldwideDay);
@@ -37,7 +37,7 @@ interface ITribute {
         uint64 sourceGeneration,
         bytes32 sealedCollectionRoot,
         uint32 consumedCount,
-        uint256 consumedNominalTotalMinor,
+        bytes consumedNominalTotalMinor,
         uint64 retiredGeneration,
         bytes32 stateEventDigest
     );
@@ -51,7 +51,7 @@ interface ITribute {
     function getDayTotals(uint32 worldwideDay)
         external
         view
-        returns (uint32 tributeCount, uint256 tributeNominalTotalMinor, bool isSealed);
+        returns (uint32 tributeCount, bytes tributeNominalTotalMinor, bool isSealed);
     function getTributesByOwner(address owner) external view returns (uint256[] memory tributeIds);
     function getTributesByDay(uint32 worldwideDay) external view returns (uint256[] memory tributeIds);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

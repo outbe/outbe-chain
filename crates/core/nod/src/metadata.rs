@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISION};
+use outbe_common::nft_card::{self, Card, Trait, PRICE_PRECISION};
 use outbe_primitives::error::Result;
 
 use crate::api;
@@ -31,10 +31,7 @@ pub(crate) fn token_uri(
     let id = format!("{}-{}", item.worldwide_day, &hex[8..16]);
     let floor_price = bucket.floor_price_minor()?;
     let mut rows = vec![
-        (
-            "Gratis Load",
-            nft_card::amount_grouped(item.gratis_load_minor, AMOUNT_PRECISION),
-        ),
+        ("Gratis Load", "Encrypted".into()),
         (
             "Entry Price",
             nft_card::amount_grouped(bucket.entry_price_minor, PRICE_PRECISION),
@@ -57,10 +54,12 @@ pub(crate) fn token_uri(
         Trait::amount("Entry Price", bucket.entry_price_minor, PRICE_PRECISION),
         Trait::amount("Floor Price", floor_price, PRICE_PRECISION),
         Trait::amount("Call Price", call_price, PRICE_PRECISION),
-        Trait::amount("Gratis Load", item.gratis_load_minor, AMOUNT_PRECISION),
+    ];
+    traits.extend(encrypted_traits(item));
+    traits.extend([
         Trait::integer("Issuance Currency", item.issuance_currency),
         Trait::integer("Reference Currency", item.reference_currency),
-    ];
+    ]);
     if called {
         traits.push(Trait::date("Called At", called_at));
         rows.push(("Settlement Deadline", nft_card::timestamp_utc(deadline)));
@@ -80,4 +79,22 @@ pub(crate) fn token_uri(
         &card,
         &traits,
     ))
+}
+
+fn encrypted_traits(item: &NodItemState) -> [Trait; 4] {
+    [
+        Trait::text(
+            "Encrypted Gratis Load",
+            alloy_primitives::hex::encode_prefixed(&item.encrypted.encrypted_gratis_amount),
+        ),
+        Trait::text(
+            "Encrypted Creator Public Key",
+            alloy_primitives::hex::encode_prefixed(&item.encrypted.encrypted_creator_public_key),
+        ),
+        Trait::text(
+            "Encryption Binding",
+            item.encrypted.encryption_binding.to_string(),
+        ),
+        Trait::integer("Chain ID", item.encrypted.terms.chain_id),
+    ]
 }

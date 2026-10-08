@@ -5,7 +5,7 @@
 //! state exclusively through [`outbe_nod::api`] and emits its own events at
 //! [`NOD_FACTORY_ADDRESS`].
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
@@ -18,25 +18,26 @@ use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodBucket, LoadedNodItem};
-use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
+use outbe_nod::schema::{NodContract, NodItemState};
+use outbe_primitives::nod_encryption::EncryptedNodV2;
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
 
-/// Issues a Nod through the block-scoped compressed-body lifecycle.
+/// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
 pub fn issue_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    params: &NodIssueParams,
+    encrypted: &EncryptedNodV2,
 ) -> Result<WwdEntityId> {
     issue_nod_at(
         storage,
         scope,
         parent,
-        params,
+        encrypted,
         storage.timestamp()?.to::<u64>(),
     )
 }
@@ -45,73 +46,63 @@ pub(crate) fn issue_nod_at(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    params: &NodIssueParams,
+    encrypted: &EncryptedNodV2,
     issued_at: u64,
 ) -> Result<WwdEntityId> {
-    if params.owner.is_zero() {
+    let terms = &encrypted.terms;
+    if terms.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
     }
-
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
+    let nod_id = outbe_nod::identity::generate_nod_id(terms.owner, terms.worldwide_day)?;
+    if terms.nod_id != nod_id
+        || terms.chain_id != storage.chain_id()?
+        || !encrypted.has_valid_encoding()
+    {
+        return Err(NodFactoryError::InvalidMaterializationProof.into());
+    }
     if nod_api::get_item(storage, scope, parent, nod_id)?.is_some() {
         return Err(NodFactoryError::NodAlreadyExists.into());
     }
-
-    issue_nod_inner(storage, params, issued_at, |item| {
-        nod_api::add_nod(storage, scope, parent, item, params.entry_price_minor)
-    })
-}
-
-fn issue_nod_inner(
-    storage: &StorageHandle<'_>,
-    params: &NodIssueParams,
-    issued_at: u64,
-    add: impl FnOnce(&NodItemState) -> Result<()>,
-) -> Result<WwdEntityId> {
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
-
-    if !NodContract::is_issuable_entry(params.entry_price_minor) {
+    if !outbe_nod::pricing::is_issuable_entry(terms.entry_price_minor) {
         return Err(NodFactoryError::EntryPriceOutOfBounds.into());
     }
-    let floor_price_minor = NodContract::floor_price_minor(params.entry_price_minor)
+    let floor_price_minor = outbe_nod::pricing::floor_price_minor(terms.entry_price_minor)
         .ok_or(NodFactoryError::EntryPriceOutOfBounds)?;
-    let bucket_key = NodContract::bucket_key(
-        params.worldwide_day,
-        params.entry_price_minor,
-        params.reference_currency,
-    );
-
     let item = NodItemState {
         is_settled: false,
         nod_id,
-        owner: params.owner,
-        gratis_load_minor: params.gratis_load_minor,
-        worldwide_day: params.worldwide_day,
-        league_id: params.league_id,
-        bucket_key,
-        issuance_currency: params.issuance_currency,
-        reference_currency: params.reference_currency,
+        owner: terms.owner,
+        encrypted: encrypted.clone(),
+        worldwide_day: terms.worldwide_day,
+        league_id: terms.league_id,
+        bucket_key: outbe_nod::identity::bucket_key(
+            terms.worldwide_day,
+            terms.entry_price_minor,
+            terms.reference_currency,
+        ),
+        issuance_currency: terms.issuance_currency,
+        reference_currency: terms.reference_currency,
         issued_at,
     };
-    add(&item)?;
-
+    // Existing settlement pricing remains public in this privacy stage.
+    let settlement_cost_minor = nod_api::settlement_cost_minor(
+        terms.entry_price_minor,
+        nod_api::calculation_amount(&item)?,
+    )?;
+    nod_api::add_nod(storage, scope, parent, &item, terms.entry_price_minor)?;
     emit_event(
         storage,
         INodFactory::NodIssued {
-            owner: params.owner,
+            owner: terms.owner,
             nodId: nod_id.to_u256(),
-            worldwideDay: U256::from(u32::from(params.worldwide_day)),
-            leagueId: U256::from(params.league_id),
+            worldwideDay: U256::from(u32::from(terms.worldwide_day)),
+            leagueId: U256::from(terms.league_id),
             floorPriceMinor: floor_price_minor,
-            gratisLoadMinor: params.gratis_load_minor,
-            entryPriceMinor: params.entry_price_minor,
-            settlementCostMinor: nod_api::settlement_cost_minor(
-                params.entry_price_minor,
-                params.gratis_load_minor,
-            )?,
+            encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
+            entryPriceMinor: terms.entry_price_minor,
+            settlementCostMinor: settlement_cost_minor,
         },
     )?;
-
     Ok(nod_id)
 }
 
@@ -165,7 +156,7 @@ pub fn settle_nod(
     let terms = SettlementTerms {
         issuance_currency: item.body().issuance_currency,
         reference_currency: item.body().reference_currency,
-        gratis_load_minor: item.body().gratis_load_minor,
+        gratis_load_minor: nod_api::calculation_amount(item.body())?,
     };
     let currency = accept_payment_asset(
         storage,
@@ -264,7 +255,7 @@ pub fn mine_gratis(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     request: MineGratisRequest,
-) -> Result<U256> {
+) -> Result<Bytes> {
     let MineGratisRequest {
         nod_id,
         nonce,
@@ -277,15 +268,17 @@ pub fn mine_gratis(
     }
     let owner = item.body().owner;
     validate_pow(nod_id, owner, nonce)?;
-    let gratis_load_minor = item.body().gratis_load_minor;
+    let encrypted = item.body().encrypted.clone();
     storage.clone().with_checkpoint(|| {
         nod_api::remove_nod(storage, scope, item, bucket)?;
+        // The Nod owner authorizes the mint, including when a relayer submits it.
+        outbe_gratisfactory::api::mint_encrypted_nod(storage.clone(), &encrypted, auth)?;
         emit_event(
             storage,
             INodFactory::NodExercised {
                 owner,
                 nodId: nod_id.to_u256(),
-                gratisLoadMinor: gratis_load_minor,
+                encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
             },
         )?;
         emit_event(
@@ -293,12 +286,10 @@ pub fn mine_gratis(
             INodFactory::NodBurned {
                 owner,
                 nodId: nod_id.to_u256(),
-                gratisLoadMinor: gratis_load_minor,
+                encryptedGratisAmount: encrypted.encrypted_gratis_amount.into(),
             },
         )?;
-        // Anyone may submit. The Nod owner's modify key authorizes the mint.
-        outbe_gratisfactory::api::mint(storage.clone(), owner, gratis_load_minor, auth)?;
-        Ok(gratis_load_minor)
+        outbe_gratisfactory::api::encrypted_balance(storage.clone(), owner)
     })
 }
 
@@ -459,7 +450,7 @@ pub fn quote_settlement(
     let terms = SettlementTerms {
         issuance_currency: item.body().issuance_currency,
         reference_currency: item.body().reference_currency,
-        gratis_load_minor: item.body().gratis_load_minor,
+        gratis_load_minor: nod_api::calculation_amount(item.body())?,
     };
     let currency = accept_payment_asset(
         storage,

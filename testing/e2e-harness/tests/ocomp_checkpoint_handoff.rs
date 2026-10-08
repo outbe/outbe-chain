@@ -8,7 +8,7 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use eyre::Result;
 use outbe_node::projection::{ocomp_projection_contains, OcompProjectionContainment};
-use outbe_offchain_data::{FinalizedBlock, OffchainDataProjection, ProjectionConfig};
+use outbe_offchain_data::{FinalizedBlock, ProjectionConfig};
 use outbe_offchain_storage::RocksDbStorage;
 use outbe_primitives::{chain::DEVNET_CHAIN_ID, projection::ProjectionCheckpoint};
 use reth_chainspec::ChainInfo;
@@ -28,7 +28,7 @@ fn checkpoint_handoff_uses_real_rocksdb_for_behind_exact_and_ahead() -> Result<(
         start_block: 1,
     };
     let mut projector =
-        OffchainDataProjection::open(projection_config, storage.clone(), storage.clone())?;
+        outbe_offchain_data::open_projection(projection_config, storage.clone(), storage.clone())?;
 
     let canonical = MockEthProvider::new();
     let block_1 = add_empty_block(&canonical, 1, 1);
@@ -91,7 +91,8 @@ fn checkpoint_handoff_uses_real_rocksdb_for_behind_exact_and_ahead() -> Result<(
     drop(storage);
 
     let storage = Arc::new(RocksDbStorage::open(&path)?);
-    let reopened = OffchainDataProjection::open(projection_config, storage.clone(), storage)?;
+    let reopened =
+        outbe_offchain_data::open_projection(projection_config, storage.clone(), storage)?;
     let ahead = reopened
         .state()
         .checkpoint

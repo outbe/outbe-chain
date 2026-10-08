@@ -21,7 +21,7 @@ pub(super) fn verify_present_projection_structure(
     use outbe_compressed_entities::{
         CeAuditLimits, CeAuditWork, CeDomain, IdPageRequest, MAX_ID_PAGE_LIMIT,
     };
-    use outbe_nod::NodRepositoryReader;
+
     use outbe_offchain_storage::partitioned::adapters::RocksPartitionReadView;
     use outbe_offchain_storage::{PartitionedStorage, StorageReaderHandle};
     use outbe_tribute::{RetainedTributeReader, TributeRepositoryReader};
@@ -48,7 +48,7 @@ pub(super) fn verify_present_projection_structure(
         CeAuditLimits::default(),
     )?;
     let tribute = TributeRepositoryReader::new(reader.clone());
-    let nod = NodRepositoryReader::new(reader.clone());
+    let nod = outbe_nod::nod_reader(reader.clone());
     tribute.audit_indexes(&work)?;
     nod.audit_indexes(&work)?;
     nod.audit_partition_locations(&work)?;

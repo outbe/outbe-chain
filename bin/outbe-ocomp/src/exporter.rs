@@ -17,8 +17,8 @@ use std::collections::VecDeque;
 
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{
-    body_commitment, decode_tribute_v1, AuthenticatedTributePartition, CanonicalBodyError,
-    IdPageRequest, TributeBodyV1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    body_commitment, AuthenticatedTributePartition, CanonicalBodyError, IdPageRequest,
+    TributeBodyV1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_offchain_data::{
     read_projection_state, ProjectionConfig, ProjectionError, ProjectionState,
@@ -187,6 +187,57 @@ impl AuthenticatedTributeStream<'_, '_> {
         }
         self.previous_id = Some(candidate.tribute_id);
 
+        let (stored, record, recomputed) = self.authenticate_candidate(candidate)?;
+
+        // The exact original ciphertext commitment has been authenticated above.
+        let body = outbe_tribute::canonical_body(&record.calculation_view()?);
+
+        self.record_count = self
+            .record_count
+            .checked_add(1)
+            .ok_or(FinalizedTributeError::CountOverflow)?;
+        if self.record_count > self.expected_count {
+            return Err(FinalizedTributeError::CountMismatch {
+                expected: self.expected_count,
+                actual: self.record_count,
+            });
+        }
+        self.nominal_total = self
+            .nominal_total
+            .checked_add(body.nominal_amount_minor)
+            .ok_or(FinalizedTributeError::NominalOverflow)?;
+        if self.nominal_total > self.expected_nominal_total {
+            return Err(FinalizedTributeError::NominalMismatch {
+                expected: self.expected_nominal_total,
+                actual: self.nominal_total,
+            });
+        }
+        let body_len = u64::try_from(stored.payload().len())
+            .map_err(|_| FinalizedTributeError::BodyBytesOverflow)?;
+        self.exact_body_bytes = self
+            .exact_body_bytes
+            .checked_add(body_len)
+            .ok_or(FinalizedTributeError::BodyBytesOverflow)?;
+
+        Ok(Some(AuthenticatedTributeRecord {
+            tribute_id: candidate.tribute_id,
+            commitment: recomputed,
+            canonical_body: stored.payload().to_vec(),
+            body,
+        }))
+    }
+
+    fn authenticate_candidate(
+        &self,
+        candidate: BodyCandidate,
+    ) -> Result<
+        (
+            outbe_compressed_entities::StoredBody,
+            outbe_tribute::TributeRecord,
+            B256,
+        ),
+        FinalizedTributeError,
+    > {
         let authenticated_commitment = match self.authority {
             TributeCommitmentAuthority::Authenticated(partition) => Some(B256::from(
                 *partition
@@ -223,14 +274,11 @@ impl AuthenticatedTributeStream<'_, '_> {
             (None, None) => self.current_reader.get_stored_body(candidate.tribute_id)?,
         }
         .ok_or(FinalizedTributeError::MissingBody(candidate.tribute_id))?;
-        if stored.schema_version() != BODY_SCHEMA_V1 {
-            return Err(FinalizedTributeError::UnsupportedBodySchema {
-                tribute_id: candidate.tribute_id,
-                actual: stored.schema_version(),
-            });
-        }
-        let body = decode_tribute_v1(stored.payload())?;
-        if body.tribute_id != candidate.tribute_id || body.worldwide_day != self.pin.worldwide_day {
+        let record =
+            outbe_tribute::record::decode_payload(stored.schema_version(), stored.payload())?;
+        if record.tribute_id != candidate.tribute_id
+            || record.worldwide_day != self.pin.worldwide_day
+        {
             return Err(FinalizedTributeError::BodyIdentityMismatch(
                 candidate.tribute_id,
             ));
@@ -238,7 +286,7 @@ impl AuthenticatedTributeStream<'_, '_> {
         let recomputed = B256::from(
             *body_commitment(
                 ACTIVE_COMMITMENT_SCHEME,
-                BODY_SCHEMA_V1,
+                stored.schema_version(),
                 candidate.tribute_id,
                 stored.payload(),
             )?
@@ -254,39 +302,7 @@ impl AuthenticatedTributeStream<'_, '_> {
             ));
         }
 
-        self.record_count = self
-            .record_count
-            .checked_add(1)
-            .ok_or(FinalizedTributeError::CountOverflow)?;
-        if self.record_count > self.expected_count {
-            return Err(FinalizedTributeError::CountMismatch {
-                expected: self.expected_count,
-                actual: self.record_count,
-            });
-        }
-        self.nominal_total = self
-            .nominal_total
-            .checked_add(body.nominal_amount_minor)
-            .ok_or(FinalizedTributeError::NominalOverflow)?;
-        if self.nominal_total > self.expected_nominal_total {
-            return Err(FinalizedTributeError::NominalMismatch {
-                expected: self.expected_nominal_total,
-                actual: self.nominal_total,
-            });
-        }
-        let body_len = u64::try_from(stored.payload().len())
-            .map_err(|_| FinalizedTributeError::BodyBytesOverflow)?;
-        self.exact_body_bytes = self
-            .exact_body_bytes
-            .checked_add(body_len)
-            .ok_or(FinalizedTributeError::BodyBytesOverflow)?;
-
-        Ok(Some(AuthenticatedTributeRecord {
-            tribute_id: candidate.tribute_id,
-            commitment: recomputed,
-            canonical_body: stored.payload().to_vec(),
-            body,
-        }))
+        Ok((stored, record, recomputed))
     }
 
     pub fn finish(self) -> Result<TributeStreamSummary, FinalizedTributeError> {
@@ -516,6 +532,8 @@ fn split_page_budget(page_limit: usize) -> Result<(usize, usize), FinalizedTribu
 
 #[derive(Debug, Error)]
 pub enum FinalizedTributeError {
+    #[error("private Tribute amount read failed: {0}")]
+    PrivateTribute(#[from] outbe_tee::TransportError),
     #[error(transparent)]
     Projection(#[from] ProjectionError),
     #[error(transparent)]

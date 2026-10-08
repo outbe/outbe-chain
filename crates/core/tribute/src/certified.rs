@@ -76,7 +76,12 @@ pub fn prepare_certified_partition_retirement(
     if !current.profile_ready
         || !current.is_sealed
         || current.source_generation != input.input_binding.source_generation
-        || current.sealed_collection_root != input.input_binding.sealed_collection_root
+    {
+        return Err(revert(
+            "certified Tribute input differs from the sealed generation",
+        ));
+    }
+    if current.sealed_collection_root != input.input_binding.sealed_collection_root
         || current.tribute_count != input.input_binding.exact_count
         || current.tribute_nominal_total_minor != input.input_binding.exact_nominal_total
     {
@@ -164,10 +169,10 @@ pub fn retire_prepared_certified_partition(
             ));
         }
 
-        let mut admission = tribute
-            .day_pre_admission
-            .get(day)?
-            .ok_or_else(|| revert("certified Tribute pre-admission record is absent"))?;
+        if !tribute.day_pre_admission.exists(day)? {
+            return Err(revert("certified Tribute pre-admission record is absent"));
+        }
+        let mut admission = tribute.read_day_pre_admission(day)?;
         if admission.source_generation != input.input_binding.source_generation {
             return Err(revert(
                 "certified Tribute source generation changed during activation",
@@ -184,7 +189,7 @@ pub fn retire_prepared_certified_partition(
                 sourceGeneration: input.input_binding.source_generation,
                 sealedCollectionRoot: input.input_binding.sealed_collection_root,
                 consumedCount: input.consumed_count,
-                consumedNominalTotalMinor: input.consumed_nominal_total,
+                consumedNominalTotalMinor: tribute.encrypted_day_nominal(day, true)?.into(),
                 retiredGeneration: input.retired_generation,
                 stateEventDigest: state_event_digest,
             }
@@ -209,7 +214,10 @@ fn validate_input(
     if input.input_binding.sealed_collection_root.is_zero()
         || input.input_binding.exact_count == 0
         || input.input_binding.source_generation != 0
-        || input.consumed_count != input.input_binding.exact_count
+    {
+        return Err(revert("invalid certified Tribute retirement aggregate"));
+    }
+    if input.consumed_count != input.input_binding.exact_count
         || input.consumed_nominal_total != input.input_binding.exact_nominal_total
         || input.retired_generation != 1
     {
@@ -264,17 +272,26 @@ mod tests {
 
     #[derive(Debug)]
     struct PartitionTree {
-        parent_root: B256,
+        snapshot: SyntheticPartitionSnapshot,
+    }
+
+    #[derive(Debug)]
+    struct SyntheticPartitionSnapshot {
+        block_hash: B256,
+        root: B256,
+        partition: PartitionRef,
         mode: ParentMode,
+        leaf: Option<outbe_compressed_entities::Commitment>,
+        seal_error: &'static str,
     }
 
     impl AuthenticatedParentTree for PartitionTree {
         fn parent_block_hash(&self) -> B256 {
-            B256::repeat_byte(90)
+            self.snapshot.block_hash
         }
 
         fn parent_root(&self) -> B256 {
-            self.parent_root
+            self.snapshot.root
         }
 
         fn read_leaf_verified(
@@ -282,7 +299,7 @@ mod tests {
             _entity: EntityRef,
             _expected_parent_root: B256,
         ) -> Result<Option<outbe_compressed_entities::Commitment>> {
-            Ok(None)
+            Ok(self.snapshot.leaf)
         }
 
         fn partition_present_verified(
@@ -290,14 +307,12 @@ mod tests {
             partition: PartitionRef,
             expected_parent_root: B256,
         ) -> Result<bool> {
-            if expected_parent_root != self.parent_root
-                || partition != PartitionRef::TributeWwd(WorldwideDay::new(20_260_725))
-            {
+            if expected_parent_root != self.snapshot.root || partition != self.snapshot.partition {
                 return Err(PrecompileError::Fatal(
                     "test parent partition binding mismatch".into(),
                 ));
             }
-            match self.mode {
+            match self.snapshot.mode {
                 ParentMode::Present => Ok(true),
                 ParentMode::Absent => Ok(false),
                 ParentMode::Failure => Err(PrecompileError::Fatal(
@@ -312,29 +327,53 @@ mod tests {
             _mutations: &[FinalLeafMutation],
             _retirements: &[PartitionRef],
         ) -> Result<ProvisionalTreeBatch> {
-            Err(PrecompileError::Fatal(
-                "test does not seal the synthetic parent".into(),
-            ))
+            Err(PrecompileError::Fatal(self.snapshot.seal_error.into()))
         }
     }
 
     struct ActivationTestProvider {
-        inner: HashMapStorageProvider,
+        authority: ActivationStorage,
+    }
+
+    /// Owns the storage adapter and the active lease for the same fixture.
+    struct ActivationStorage {
+        storage: HashMapStorageProvider,
         active_call: Option<B256>,
+    }
+
+    impl std::ops::Deref for ActivationTestProvider {
+        type Target = HashMapStorageProvider;
+
+        fn deref(&self) -> &Self::Target {
+            &self.authority.storage
+        }
+    }
+
+    impl std::ops::DerefMut for ActivationTestProvider {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.authority.storage
+        }
     }
 
     impl ActivationTestProvider {
         fn new() -> Self {
             Self {
-                inner: HashMapStorageProvider::new(1),
-                active_call: None,
+                authority: ActivationStorage {
+                    storage: HashMapStorageProvider::new(1),
+                    active_call: None,
+                },
             }
         }
     }
 
     impl PrecompileStorageProvider for ActivationTestProvider {
         fn begin_lysis_activation_frame(&mut self, activation_call_id: B256) -> Result<()> {
-            if self.active_call.replace(activation_call_id).is_some() {
+            if self
+                .authority
+                .active_call
+                .replace(activation_call_id)
+                .is_some()
+            {
                 return Err(PrecompileError::Fatal(
                     "test activation lease is already active".into(),
                 ));
@@ -347,7 +386,7 @@ mod tests {
             activation_call_id: B256,
             _completed: bool,
         ) -> Result<()> {
-            if self.active_call.take() != Some(activation_call_id) {
+            if self.authority.active_call.take() != Some(activation_call_id) {
                 return Err(PrecompileError::Fatal(
                     "test activation lease identity mismatch".into(),
                 ));
@@ -356,110 +395,110 @@ mod tests {
         }
 
         fn chain_id(&self) -> u64 {
-            self.inner.chain_id()
+            self.authority.storage.chain_id()
         }
 
         fn genesis_hash(&self) -> B256 {
-            self.inner.genesis_hash()
+            self.authority.storage.genesis_hash()
         }
 
         fn timestamp(&self) -> U256 {
-            self.inner.timestamp()
+            self.authority.storage.timestamp()
         }
 
         fn set_block_timestamp(&mut self, timestamp: U256) {
-            self.inner.set_block_timestamp(timestamp);
+            self.authority.storage.set_block_timestamp(timestamp);
         }
 
         fn beneficiary(&self) -> Address {
-            self.inner.beneficiary()
+            self.authority.storage.beneficiary()
         }
 
         fn block_number(&self) -> u64 {
-            self.inner.block_number()
+            self.authority.storage.block_number()
         }
 
         fn canonical_block_hash(&mut self, number: u64) -> Result<Option<B256>> {
-            self.inner.canonical_block_hash(number)
+            self.authority.storage.canonical_block_hash(number)
         }
 
         fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
-            self.inner.set_code(address, code)
+            self.authority.storage.set_code(address, code)
         }
 
         fn account_info(&mut self, address: Address) -> Result<AccountInfo> {
-            self.inner.account_info(address)
+            self.authority.storage.account_info(address)
         }
 
         fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
-            self.inner.sload(address, key)
+            self.authority.storage.sload(address, key)
         }
 
         fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
-            self.inner.tload(address, key)
+            self.authority.storage.tload(address, key)
         }
 
         fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-            self.inner.sstore(address, key, value)
+            self.authority.storage.sstore(address, key, value)
         }
 
         fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-            self.inner.tstore(address, key, value)
+            self.authority.storage.tstore(address, key, value)
         }
 
         fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
-            self.inner.emit_event(address, event)
+            self.authority.storage.emit_event(address, event)
         }
 
         fn deduct_gas(&mut self, gas: u64) -> Result<()> {
-            self.inner.deduct_gas(gas)
+            self.authority.storage.deduct_gas(gas)
         }
 
         fn refund_gas(&mut self, gas: i64) {
-            self.inner.refund_gas(gas);
+            self.authority.storage.refund_gas(gas);
         }
 
         fn gas_used(&self) -> u64 {
-            self.inner.gas_used()
+            self.authority.storage.gas_used()
         }
 
         fn gas_refunded(&self) -> i64 {
-            self.inner.gas_refunded()
+            self.authority.storage.gas_refunded()
         }
 
         fn is_static(&self) -> bool {
-            self.inner.is_static()
+            self.authority.storage.is_static()
         }
 
         fn checkpoint(&mut self) -> JournalCheckpoint {
-            self.inner.checkpoint()
+            self.authority.storage.checkpoint()
         }
 
         fn checkpoint_commit(&mut self) {
-            self.inner.checkpoint_commit();
+            self.authority.storage.checkpoint_commit();
         }
 
         fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
-            self.inner.checkpoint_revert(checkpoint);
+            self.authority.storage.checkpoint_revert(checkpoint);
         }
 
         fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
-            self.inner.transfer_balance(from, to, amount)
+            self.authority.storage.transfer_balance(from, to, amount)
         }
 
         fn increase_balance(&mut self, address: Address, amount: U256) -> Result<()> {
-            self.inner.increase_balance(address, amount)
+            self.authority.storage.increase_balance(address, amount)
         }
 
         fn decrease_balance(&mut self, address: Address, amount: U256) -> Result<()> {
-            self.inner.decrease_balance(address, amount)
+            self.authority.storage.decrease_balance(address, amount)
         }
 
         fn sub_call(
             &mut self,
             input: SubCallInput,
         ) -> std::result::Result<SubCallOutput, SubCallError> {
-            self.inner.sub_call(input)
+            self.authority.storage.sub_call(input)
         }
     }
 
@@ -471,12 +510,22 @@ mod tests {
     impl Fixture {
         fn new(expected: &CertifiedTributeRetirementV1, mode: ParentMode) -> Self {
             let parent_root = B256::repeat_byte(80);
-            let scope = ExecutionScope::with_parent_tree(
-                Arc::new(PartitionTree { parent_root, mode }),
+            let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
+                Arc::new(PartitionTree {
+                    snapshot: SyntheticPartitionSnapshot {
+                        block_hash: B256::repeat_byte(90),
+                        root: parent_root,
+                        partition: PartitionRef::TributeWwd(WorldwideDay::new(20_260_725)),
+                        mode,
+                        leaf: None,
+                        seal_error: "test does not seal the synthetic parent",
+                    },
+                }),
                 CeWorkConfig::new(0, 0, u64::MAX),
             );
             let mut provider = ActivationTestProvider::new();
             StorageHandle::enter(&mut provider, |storage| {
+                let _enclave = crate::enclave_client::test_enclave::scope();
                 storage
                     .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
                     .unwrap();
@@ -502,6 +551,16 @@ mod tests {
                 totals.is_sealed = true;
                 totals.tribute_count = expected.input_binding.exact_count;
                 totals.tribute_nominal_total_minor = expected.input_binding.exact_nominal_total;
+                tribute
+                    .apply_day_amount(
+                        day,
+                        outbe_tee::tribute_day::TributeDayOperationV2::AdjustTransient {
+                            nominal_amount_minor: totals.tribute_nominal_total_minor,
+                            add: true,
+                        },
+                        B256::repeat_byte(0x31),
+                    )
+                    .unwrap();
                 tribute.store_day_totals(&totals).unwrap();
 
                 let mut admission = DayPreAdmission::with_key(day);
@@ -519,6 +578,7 @@ mod tests {
 
         fn run(&mut self, input: &CertifiedTributeRetirementV1) -> Result<TributeReceiptV1> {
             StorageHandle::enter(&mut self.provider, |storage| {
+                let _enclave = crate::enclave_client::test_enclave::scope();
                 storage.with_lysis_activation_frame(
                     input.binding.activation_call_id,
                     |capability| {
@@ -541,6 +601,7 @@ mod tests {
 
         fn state(&mut self, day: WorldwideDay) -> (u64, u32, U256, bool, u64) {
             StorageHandle::enter(&mut self.provider, |storage| {
+                let _enclave = crate::enclave_client::test_enclave::scope();
                 let tribute = TributeContract::new(storage);
                 let generation = tribute
                     .pre_admission_projection(day)
@@ -611,7 +672,7 @@ mod tests {
             .unwrap()
             .is_zero());
 
-        let events = fixture.provider.inner.get_ordered_events();
+        let events = fixture.provider.get_ordered_events();
         assert_eq!(events.len(), 2);
         ITribute::TributePartitionRetired::decode_log(&events[0]).unwrap();
         let certified = ITribute::CertifiedTributePartitionRetired::decode_log(&events[1]).unwrap();
@@ -626,8 +687,14 @@ mod tests {
             input.input_binding.sealed_collection_root
         );
         assert_eq!(certified.data.consumedCount, input.consumed_count);
+        let encrypted: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2 =
+            postcard::from_bytes(&certified.data.consumedNominalTotalMinor).unwrap();
         assert_eq!(
-            certified.data.consumedNominalTotalMinor,
+            outbe_tee_enclave::tribute_day::read_day_amount(
+                &crate::enclave_client::test_enclave::NETWORK_SECRET,
+                &encrypted
+            )
+            .unwrap(),
             input.consumed_nominal_total
         );
         assert_eq!(certified.data.retiredGeneration, 1);
@@ -663,7 +730,7 @@ mod tests {
                 fixture.state(WorldwideDay::new(expected.input_binding.wwd)),
                 before
             );
-            assert!(fixture.provider.inner.get_ordered_events().is_empty());
+            assert!(fixture.provider.get_ordered_events().is_empty());
         }
     }
 
@@ -678,7 +745,7 @@ mod tests {
                 fixture.state(WorldwideDay::new(input.input_binding.wwd)),
                 before
             );
-            assert!(fixture.provider.inner.get_ordered_events().is_empty());
+            assert!(fixture.provider.get_ordered_events().is_empty());
         }
     }
 
@@ -686,9 +753,9 @@ mod tests {
     fn every_storage_and_event_failure_rolls_back_and_allows_exact_retry() {
         let input = input(24);
         let mut probe = Fixture::new(&input, ParentMode::Present);
-        probe.provider.inner.fail_after_mutation_at(usize::MAX);
+        probe.provider.fail_after_mutation_at(usize::MAX);
         probe.run(&input).unwrap();
-        let mutation_count = probe.provider.inner.clear_mutation_failure();
+        let mutation_count = probe.provider.clear_mutation_failure();
         assert!(
             mutation_count >= 2,
             "certified retirement must include storage and event mutations"
@@ -698,22 +765,19 @@ mod tests {
             let mut fixture = Fixture::new(&input, ParentMode::Present);
             let day = WorldwideDay::new(input.input_binding.wwd);
             let before_state = fixture.state(day);
-            let before_storage = fixture.provider.inner.storage.clone();
-            fixture.provider.inner.fail_after_mutation_at(operation);
+            let before_storage = fixture.provider.storage.clone();
+            fixture.provider.fail_after_mutation_at(operation);
 
             assert!(fixture.run(&input).is_err());
-            assert_eq!(
-                fixture.provider.inner.clear_mutation_failure(),
-                operation + 1
-            );
+            assert_eq!(fixture.provider.clear_mutation_failure(), operation + 1);
             assert_eq!(fixture.state(day), before_state);
-            assert_eq!(fixture.provider.inner.storage, before_storage);
-            assert!(fixture.provider.inner.get_ordered_events().is_empty());
+            assert_eq!(fixture.provider.storage, before_storage);
+            assert!(fixture.provider.get_ordered_events().is_empty());
 
             let receipt = fixture.run(&input).unwrap();
             assert_eq!(receipt.consumed_count, input.consumed_count);
             assert_eq!(fixture.state(day).4, 1);
-            assert_eq!(fixture.provider.inner.get_ordered_events().len(), 2);
+            assert_eq!(fixture.provider.get_ordered_events().len(), 2);
         }
     }
 
@@ -721,21 +785,18 @@ mod tests {
     fn caught_late_failure_or_wrong_phase_cannot_skip_the_tribute_cursor() {
         let input = input(25);
         let mut probe = Fixture::new(&input, ParentMode::Present);
-        probe.provider.inner.fail_after_mutation_at(usize::MAX);
+        probe.provider.fail_after_mutation_at(usize::MAX);
         probe.run(&input).unwrap();
         let final_mutation = probe
             .provider
-            .inner
             .clear_mutation_failure()
             .checked_sub(1)
             .expect("certified retirement must mutate state");
 
         let mut late_failure = Fixture::new(&input, ParentMode::Present);
-        late_failure
-            .provider
-            .inner
-            .fail_after_mutation_at(final_mutation);
+        late_failure.provider.fail_after_mutation_at(final_mutation);
         let receipt = StorageHandle::enter(&mut late_failure.provider, |storage| {
+            let _enclave = crate::enclave_client::test_enclave::scope();
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
                 capability.authorize_contributor_installation()?;
@@ -761,10 +822,11 @@ mod tests {
         })
         .unwrap();
         assert_eq!(receipt.consumed_count, input.consumed_count);
-        assert_eq!(late_failure.provider.inner.get_ordered_events().len(), 2);
+        assert_eq!(late_failure.provider.get_ordered_events().len(), 2);
 
         let mut wrong_phase = Fixture::new(&input, ParentMode::Present);
         let receipt = StorageHandle::enter(&mut wrong_phase.provider, |storage| {
+            let _enclave = crate::enclave_client::test_enclave::scope();
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
                 assert!(retire_certified_partition(
@@ -790,7 +852,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(receipt.consumed_count, input.consumed_count);
-        assert_eq!(wrong_phase.provider.inner.get_ordered_events().len(), 2);
+        assert_eq!(wrong_phase.provider.get_ordered_events().len(), 2);
     }
 
     #[test]
@@ -799,14 +861,14 @@ mod tests {
         let mut fixture = Fixture::new(&input, ParentMode::Present);
         fixture.run(&input).unwrap();
         let state = fixture.state(WorldwideDay::new(input.input_binding.wwd));
-        let events = fixture.provider.inner.get_ordered_events().to_vec();
+        let events = fixture.provider.get_ordered_events().to_vec();
 
         assert!(fixture.run(&input).is_err());
         assert_eq!(
             fixture.state(WorldwideDay::new(input.input_binding.wwd)),
             state
         );
-        assert_eq!(fixture.provider.inner.get_ordered_events(), events);
+        assert_eq!(fixture.provider.get_ordered_events(), events);
     }
 
     #[test]
@@ -814,6 +876,7 @@ mod tests {
         let input = input(27);
         let mut fixture = Fixture::new(&input, ParentMode::Present);
         StorageHandle::enter(&mut fixture.provider, |storage| {
+            let _enclave = crate::enclave_client::test_enclave::scope();
             let mut tribute = TributeContract::new(storage);
             assert!(tribute
                 .consume_lysis_partition(
@@ -836,6 +899,6 @@ mod tests {
         assert_eq!(nominal, input.input_binding.exact_nominal_total);
         assert!(is_sealed);
         assert_eq!(generation, 0);
-        assert!(fixture.provider.inner.get_ordered_events().is_empty());
+        assert!(fixture.provider.get_ordered_events().is_empty());
     }
 }

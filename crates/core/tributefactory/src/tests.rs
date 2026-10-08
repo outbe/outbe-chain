@@ -157,7 +157,7 @@ mod l2_zk_gate {
                 .register_network(L2_CHAIN_ID, caller(), &public)
                 .unwrap();
 
-            let scope = ExecutionScope::new();
+            let scope = ExecutionScope::default();
             let mut factory = TributeFactoryContract::new(storage.clone());
 
             // The factory rejects a missing signature before oracle/metadosis/enclave work.
@@ -242,7 +242,7 @@ mod l2_zk_gate {
             registry
                 .register_network(L2_CHAIN_ID, caller(), &public)
                 .unwrap();
-            let scope = ExecutionScope::new();
+            let scope = ExecutionScope::default();
 
             let mut factory = TributeFactoryContract::new(storage.clone());
             let missing = factory
@@ -264,7 +264,7 @@ mod l2_zk_gate {
     fn unregistered_chains_cannot_offer() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
-            let scope = ExecutionScope::new();
+            let scope = ExecutionScope::default();
 
             // An unregistered chain must fail before any enclave work.
             let mut factory = TributeFactoryContract::new(storage.clone());
@@ -289,7 +289,7 @@ mod l2_zk_gate {
     fn host_rejects_an_invalid_calendar_day_before_the_enclave() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
-            let scope = ExecutionScope::new();
+            let scope = ExecutionScope::default();
             let mut bad_day = signed_gate_offer(storage.clone());
             bad_day.worldwide_day = 20250230u32.into(); // February 30th
 
@@ -314,7 +314,7 @@ mod l2_zk_gate {
     fn host_rejects_a_non_offering_day_before_pricing() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
-            let scope = ExecutionScope::new();
+            let scope = ExecutionScope::default();
             let mut unpriced = signed_gate_offer(storage.clone());
             unpriced.tribute_currency = 999; // never registered
 
@@ -598,7 +598,7 @@ fn assert_real_zk_offer_with_key_source(
         );
     }
     provider.set_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_DAY) + 43_200));
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
         let mut registry = L2RegistryContract::new(storage.clone());
@@ -653,7 +653,7 @@ fn assert_real_zk_offer_with_key_source(
     provider.storage = before_offer.clone();
     provider.fail_after_mutation_at(mutations - 1);
     StorageHandle::enter(&mut provider, |storage| {
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         begin_block(storage.clone(), &scope).unwrap();
         storage
             .with_checkpoint(|| {

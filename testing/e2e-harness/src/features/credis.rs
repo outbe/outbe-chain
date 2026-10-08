@@ -185,11 +185,13 @@ fn prepare(world: &mut World) {
             promisOpNonce: promis_nonce,
             gratisMac: outbe_tee_enclave::gratis::modify_mac(
                 &keys.modify,
-                user,
-                GratisOp::Mint,
-                INITIAL_GRATIS,
-                gratis_nonce,
-                chain,
+                &outbe_tee_enclave::gratis::ModifyOperation {
+                    account: user,
+                    op: GratisOp::Mint,
+                    amount: INITIAL_GRATIS,
+                    op_nonce: gratis_nonce,
+                    chain_id: chain,
+                },
             )
             .into(),
             gratisOpNonce: gratis_nonce,
@@ -314,11 +316,13 @@ fn pledge(world: &mut World) {
     .expect("pledge nonce");
     let mac = outbe_tee_enclave::gratis::modify_mac(
         &f.keys.modify,
-        f.user,
-        GratisOp::Pledge,
-        reservation.gratisMinor,
-        nonce,
-        chain_id_b256(world),
+        &outbe_tee_enclave::gratis::ModifyOperation {
+            account: f.user,
+            op: GratisOp::Pledge,
+            amount: reservation.gratisMinor,
+            op_nonce: nonce,
+            chain_id: chain_id_b256(world),
+        },
     );
     let receipt = send(
         &url,

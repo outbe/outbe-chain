@@ -6,7 +6,6 @@
 //! arithmetic commitment.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_nod::NodContract;
 use outbe_ocomp_protocol::{
     hash_framed,
     input::InputManifestV1,
@@ -766,7 +765,7 @@ impl<'a> ResultChunkStreamV1<'a> {
                 ));
             }
             self.previous_tribute = Some(action.tribute_id);
-            if !NodContract::is_issuable_entry(action.entry_price_minor) {
+            if !outbe_nod::pricing::is_issuable_entry(action.entry_price_minor) {
                 return Err(LysisFinalizationErrorV1::Authority("Nod entry price bound"));
             }
             let record = action.encode_canonical_record(self.limits)?;

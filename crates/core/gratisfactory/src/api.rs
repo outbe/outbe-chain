@@ -23,3 +23,28 @@ pub fn mint(
 pub use crate::runtime::{
     burn_from_credis, collateral_of, pledge_of, return_from_credis, send_to_credis,
 };
+/// Mint the exact encrypted NOD entitlement and acquire its Fidelity cohort.
+pub fn mint_encrypted_nod(
+    storage: StorageHandle<'_>,
+    nod: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    auth: ModifyAuth,
+) -> Result<()> {
+    storage.with_checkpoint(|| {
+        let now = storage.timestamp()?.to::<u64>();
+        let section = outbe_fidelity::api::cohort_section(
+            storage.clone(),
+            nod.terms.owner,
+            outbe_fidelity::api::FidelityCohortOp::In,
+            now,
+        )?;
+        let outcome = outbe_gratis::api::mint_encrypted_nod(storage.clone(), nod, auth, section)?;
+        outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), nod.terms.owner, &outcome)
+    })
+}
+
+pub fn encrypted_balance(
+    storage: StorageHandle<'_>,
+    account: Address,
+) -> Result<alloy_primitives::Bytes> {
+    outbe_gratis::api::balance_ct(storage, account).map(Into::into)
+}

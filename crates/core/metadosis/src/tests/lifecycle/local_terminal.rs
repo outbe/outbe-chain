@@ -37,16 +37,17 @@ fn seed_local_terminal_fixture(provider: &mut HashMapStorageProvider, day: Local
             .total_supply
             .write(u64::from(tribute_count))
             .unwrap();
-        tribute
-            .day_totals
-            .create(&outbe_tribute::DayTotals {
+        outbe_tribute::enclave_client::test_enclave::seed_day_totals(
+            &mut tribute,
+            &outbe_tribute::DayTotals {
                 worldwide_day: wwd,
                 initialized: true,
                 tribute_count,
                 tribute_nominal_total_minor: tribute_nominal,
                 is_sealed: true,
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         let admission = tribute.pre_admission_projection(wwd).unwrap();
         assert!(admission.profile_ready);
         assert!(
@@ -439,7 +440,7 @@ fn empty_tribute_day_restores_outer_ce_checkpoint_after_late_parent_failure_then
         parent_root,
         calls: AtomicUsize::new(0),
     });
-    let scope = ExecutionScope::with_parent_tree(
+    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
         tree.clone(),
         outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
@@ -986,7 +987,7 @@ impl PersistentTree {
                 root,
             })
             .unwrap();
-        ExecutionScope::with_parent_tree(
+        outbe_compressed_entities::execution_scope::with_parent_tree(
             parent,
             outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
         )

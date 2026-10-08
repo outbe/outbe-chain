@@ -52,6 +52,8 @@ pub struct WorkerOutcome {
 
 #[derive(Debug, Error)]
 pub enum WorkerError {
+    #[error("private Tribute amount read failed: {0}")]
+    PrivateTribute(#[from] outbe_tee::TransportError),
     #[error(transparent)]
     Control(#[from] ControlError),
     #[error(transparent)]

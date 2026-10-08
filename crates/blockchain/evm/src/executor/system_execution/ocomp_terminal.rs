@@ -86,11 +86,7 @@ where
                 tx.input().clone(),
             )
         })
-        .map_err(|error| {
-            BlockExecutionError::msg(format!(
-                "terminal system tx execution failed at block {block_number}: {error}"
-            ))
-        })?;
+        .map_err(BlockExecutionError::other)?;
         if !result.result.is_success() {
             return Err(BlockExecutionError::msg(format!(
                 "critical terminal system tx did not succeed at block {block_number}: {:?}",

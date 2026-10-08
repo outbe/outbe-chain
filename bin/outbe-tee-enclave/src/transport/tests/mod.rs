@@ -4,6 +4,7 @@ use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 
 mod dkg;
 mod domain_requests;
+mod encrypted_tribute;
 mod fixtures;
 mod harness;
 mod offer_key;

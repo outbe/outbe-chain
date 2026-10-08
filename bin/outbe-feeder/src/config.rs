@@ -23,6 +23,12 @@ pub struct FeederConfig {
     /// Finalized EVM pool readers. They are independent of the destination Outbe RPC.
     #[serde(default)]
     pub dex_providers: Vec<crate::provider::dex::DexProviderConfig>,
+    /// On-chain feeds read from their on-chain feed contracts (Chainlink,
+    /// RedStone push; any `AggregatorV3Interface` contract). Each section is a
+    /// provider named by the operator, with its own EVM RPC.
+    #[serde(default)]
+    pub onchain_feeds:
+        std::collections::BTreeMap<String, crate::provider::onchain_feed::OnchainFeedConfig>,
     /// RedStone gateway access; only read when a source names `redstone`.
     pub redstone: Option<RedstoneConfig>,
     /// Health/status HTTP server configuration.
@@ -156,7 +162,6 @@ impl FeederConfig {
     const KNOWN_PROVIDERS: &'static [&'static str] = &[
         "mock",
         "pyth",
-        "chainlink",
         "binance",
         "kraken",
         "okx",
@@ -176,6 +181,7 @@ impl FeederConfig {
         self.validate_currency_pairs()?;
         self.validate_provider_endpoints()?;
         crate::provider::dex::validate_config(self)?;
+        crate::provider::onchain_feed::validate_config(self, Self::KNOWN_PROVIDERS)?;
         crate::provider::redstone::validate_config(self)
     }
 
@@ -233,14 +239,14 @@ impl FeederConfig {
                     pair.quote
                 ));
             }
-            Self::validate_pair_sources(pair)?;
+            self.validate_pair_sources(pair)?;
         }
         Ok(())
     }
 
     /// A pair names at least one source; each source is well-formed, uses a
     /// known provider and appears once.
-    fn validate_pair_sources(pair: &CurrencyPairConfig) -> Result<()> {
+    fn validate_pair_sources(&self, pair: &CurrencyPairConfig) -> Result<()> {
         if pair.sources.is_empty() {
             return Err(eyre::eyre!(
                 "currency pair {}/{} has no sources configured",
@@ -257,9 +263,11 @@ impl FeederConfig {
                     pair.quote
                 ));
             }
-            if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str()) {
+            if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str())
+                && !crate::provider::onchain_feed::is_section_name(self, &source.provider)
+            {
                 return Err(eyre::eyre!(
-                    "unknown provider '{}' for pair {}/{}. Known: {:?}",
+                    "unknown provider '{}' for pair {}/{}. Known: {:?} or an onchain_feeds section name",
                     source.provider,
                     pair.base,
                     pair.quote,
@@ -386,6 +394,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
+            onchain_feeds: Default::default(),
             redstone: None,
             health: None,
         }

@@ -19,7 +19,7 @@ fn exercise_transition_sequence(
     sequence: &[(MatrixMutation, bool)],
 ) {
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
     let mut expected: Option<BodyVersion> = None;
     let mut last_capability: Option<VerifiedBody> = None;
@@ -98,7 +98,7 @@ fn same_block_transition_matrix_is_overlay_first_and_single_touch() {
     let first = tribute(id, owner, 100);
     let second = tribute(id, owner, 200);
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -160,7 +160,7 @@ fn completed_seal_projection_is_unavailable_before_end_and_exact_after_end() {
         address!("7100000000000000000000000000000000000071"),
         100,
     );
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -219,7 +219,7 @@ fn same_leaf_aba_capability_remains_value_valid() {
     let owner = address!("2000000000000000000000000000000000000002");
     let body = tribute(entity(8, 2), owner, 100);
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -258,7 +258,7 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
         reference_currency: 840,
     };
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -418,7 +418,7 @@ fn stale_or_wrong_identity_capability_reverts_without_mutation() {
     let second = tribute(first.tribute_id, owner, 200);
     let other = tribute(entity(8, 24), owner, 300);
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -471,7 +471,7 @@ fn canonical_events_use_domain_emitters_and_survive_as_ordered_operations() {
     let first = tribute(id, owner, 100);
     let second = tribute(id, owner, 200);
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -504,7 +504,7 @@ fn canonical_events_use_domain_emitters_and_survive_as_ordered_operations() {
     assert_eq!(delete_event.previousCommitment, update_event.newCommitment);
 
     let nod = nod_item(entity(10, 4), owner);
-    let nod_scope = ExecutionScope::new();
+    let nod_scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         // Finish the previous scope first. Cleanup emits no event.
         end_block(storage.clone(), &scope).unwrap();
@@ -521,7 +521,7 @@ fn first_touch_lists_preserve_the_exact_deterministic_operation_order() {
     let owner = address!("7f00000000000000000000000000000000000007");
     let first = tribute(entity(24, 1), owner, 10);
     let second = tribute(entity(24, 2), owner, 20);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {

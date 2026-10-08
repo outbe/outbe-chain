@@ -9,8 +9,8 @@ mod facade;
 pub(crate) use codec::{hash_error, PoseidonCkbHasher};
 #[allow(unused_imports)]
 pub(crate) use facade::{
-    derive_tree_key, PoseidonSmt, SortedPoseidonRootReducer, TreeError, TreeKey, TreeLeaf,
-    TreeProof, TreeRoot,
+    derive_tree_key, PoseidonSmt, SortedNodeObserver, SortedPoseidonRootReducer, TreeError,
+    TreeKey, TreeLeaf, TreeProof, TreeRoot,
 };
 
 #[cfg(test)]

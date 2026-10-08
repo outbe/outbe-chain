@@ -143,7 +143,7 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::new()
+                OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
@@ -173,7 +173,7 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone())
+                crate::factory::evm_factory_with_body_readers(runtime_body_readers.clone())
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
@@ -203,7 +203,7 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::new()
+                OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
@@ -251,7 +251,7 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone())
+                crate::factory::evm_factory_with_body_readers(runtime_body_readers.clone())
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
@@ -287,7 +287,7 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::new()
+                OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
@@ -323,7 +323,7 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone())
+                crate::factory::evm_factory_with_body_readers(runtime_body_readers.clone())
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),

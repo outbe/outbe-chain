@@ -604,7 +604,7 @@ fn a_reservation_the_accumulator_cannot_cover_is_a_business_failure_and_takes_no
 
 #[test]
 fn activation_briefs_the_reserved_desis_limit_without_taking_it_again() {
-    let mut fixture = crate::fixture_kernel::ActivationFixture::new(20, 1_010, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
     let unused = fixture.result.unused_lysis_limit_minor;
     let accumulator = |fixture: &mut crate::fixture_kernel::ActivationFixture| {
         StorageHandle::enter(&mut fixture.provider, |storage| {

@@ -209,8 +209,8 @@ impl ConfigureEvm for OutbeEvmConfig {
             pending_tee_bootstrap: ctx.pending_tee_bootstrap.clone(),
             ocomp_lifecycle_active: self.ocomp_lifecycle_active_at(block_number),
         };
-        let runtime_body_readers = evm.runtime_body_readers().cloned();
-        let compressed_entities_scope = evm.execution_scope().clone();
+        let runtime_body_readers = evm.runtime_scope().body_readers().cloned();
+        let compressed_entities_scope = evm.runtime_scope().execution_scope().clone();
         if let Err(error) = self.configure_compressed_entities_scope(
             &compressed_entities_scope,
             block_number,

@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
-use outbe_primitives::erc::{ERC165_INTERFACE_ID, ERC20_INTERFACE_ID};
+use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::schema::Gratis;
@@ -33,18 +33,27 @@ pub fn dispatch(
         let gratis = Gratis::new(storage);
         use IGratis::IGratisCalls::*;
         match call {
-            name(_) => metadata::<IGratis::nameCall>(|| Ok(gratis.name().to_string())),
-            symbol(_) => metadata::<IGratis::symbolCall>(|| Ok(gratis.symbol().to_string())),
-            decimals(_) => metadata::<IGratis::decimalsCall>(|| Ok(gratis.decimals())),
-            totalSupply(_) => metadata::<IGratis::totalSupplyCall>(|| gratis.total_supply()),
-            pledgedTotalSupply(_) => {
-                metadata::<IGratis::pledgedTotalSupplyCall>(|| gratis.pledged_total_supply())
+            name(_) => metadata::<IGratis::nameCall>(|| Ok(crate::metadata::NAME.to_string())),
+            symbol(_) => {
+                metadata::<IGratis::symbolCall>(|| Ok(crate::metadata::SYMBOL.to_string()))
             }
+            decimals(_) => metadata::<IGratis::decimalsCall>(|| Ok(crate::metadata::DECIMALS)),
+            pledgedTotalSupply(_) => metadata::<IGratis::pledgedTotalSupplyCall>(|| {
+                crate::state::pledged_total_supply(&gratis)
+            }),
 
             // Confidential reads return ciphertext. Decrypt it client-side.
-            balanceOf(c) => view(c, |c| gratis.balance_ct_of(c.account).map(Bytes::from)),
-            pledgedOf(c) => view(c, |c| gratis.pledged_ct_of(c.account).map(Bytes::from)),
-            opNonceOf(c) => view(c, |c| gratis.op_nonce_of(c.account)),
+            balanceOf(c) => view(c, |c| {
+                crate::state::account(&gratis, c.account)
+                    .balance_ct()
+                    .map(Bytes::from)
+            }),
+            pledgedOf(c) => view(c, |c| {
+                crate::state::account(&gratis, c.account)
+                    .pledged_ct()
+                    .map(Bytes::from)
+            }),
+            opNonceOf(c) => view(c, |c| crate::state::account(&gratis, c.account).op_nonce()),
 
             // Non-transferable surface.
             allowance(c) => view(c, |_c| Ok(U256::ZERO)),
@@ -54,7 +63,7 @@ pub fn dispatch(
 
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
-                Ok(id == ERC165_INTERFACE_ID || id == ERC20_INTERFACE_ID)
+                Ok(id == ERC165_INTERFACE_ID)
             }),
         }
     })

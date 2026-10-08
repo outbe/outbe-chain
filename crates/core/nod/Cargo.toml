@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 outbe-common.workspace = true
+outbe-tee.workspace = true
 outbe-macros.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
@@ -20,7 +21,13 @@ serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
+outbe-tee-enclave = { workspace = true, optional = true }
+x25519-dalek = { workspace = true, optional = true }
+
 [dev-dependencies]
+outbe-nod = { path = ".", features = ["test-enclave"] }
+outbe-tee-enclave.workspace = true
+x25519-dalek.workspace = true
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 base64.workspace = true
@@ -31,6 +38,7 @@ tempfile.workspace = true
 [features]
 default = []
 test-utils = ["outbe-primitives/test-utils"]
+test-enclave = ["dep:outbe-tee-enclave", "dep:x25519-dalek"]
 # Shortens the DEV call notice to a real e2e wait. Never enabled in a release build.
 e2e-test = []
 

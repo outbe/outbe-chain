@@ -203,6 +203,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Submit an encrypted Tribute offer")
     ap.add_argument("--rpc", required=True, help="JSON-RPC endpoint URL")
     ap.add_argument("--private-key", required=True, help="signer private key (hex)")
+    ap.add_argument("--creator", help="Tribute owner address; defaults to signer")
+    ap.add_argument("--creator-public-key", required=True, type=hex32_arg,
+                    help="creator X25519 encryption public key (32-byte 0x-hex)")
     ap.add_argument("--day", type=int, default=None,
                     help="WorldwideDay (YYYYMMDD); auto-detect OFFERING if omitted")
     ap.add_argument(
@@ -245,8 +248,8 @@ def main() -> None:
 
     w3 = Web3(Web3.HTTPProvider(args.rpc))
     acct = Account.from_key(args.private_key)
-    creator = acct.address
-    print(f"signer: {creator}")
+    creator = Web3.to_checksum_address(args.creator) if args.creator else acct.address
+    print(f"signer: {acct.address}")
 
     # 1. offer key from the TeeRegistry
     reg = w3.eth.contract(address=TEE_REGISTRY_ADDR, abi=TEE_REGISTRY_ABI)
@@ -265,6 +268,7 @@ def main() -> None:
     #    worldwide_day + currency travel as cleartext ABI args, not in here.
     payload = {
         "creator": creator,
+        "creator_public_key": "0x" + args.creator_public_key.hex(),
         "tribute_draft_id": "0x" + args.tribute_draft_id.hex(),
         "amount_base": amount_base,
         "amount_micro": amount_micro,
@@ -297,9 +301,9 @@ def main() -> None:
         args.signature,
     ).build_transaction(
         {
-            "from": creator,
+            "from": acct.address,
             "value": 0,
-            "nonce": w3.eth.get_transaction_count(creator),
+            "nonce": w3.eth.get_transaction_count(acct.address),
             "gas": args.gas,  # estimateGas can't simulate the in-enclave decrypt
             "gasPrice": w3.eth.gas_price,
             "chainId": w3.eth.chain_id,

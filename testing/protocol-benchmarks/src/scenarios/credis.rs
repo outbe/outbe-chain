@@ -80,7 +80,16 @@ fn auth(op: GratisOp, amount: U256, nonce: u64) -> ModifyAuth {
     let modify_key = derive_modify_key(&gratis_enclave::state_key(), ALICE)
         .expect("benchmark Gratis modify key derives");
     ModifyAuth {
-        mac: modify_mac(&modify_key, ALICE, op, amount, nonce, chain_identity()),
+        mac: modify_mac(
+            &modify_key,
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account: ALICE,
+                op,
+                amount,
+                op_nonce: nonce,
+                chain_id: chain_identity(),
+            },
+        ),
         op_nonce: nonce,
     }
 }

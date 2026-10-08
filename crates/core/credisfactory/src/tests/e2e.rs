@@ -229,7 +229,7 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
             U256::ZERO
         );
         assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            view_balance(&storage, alice()) + view_pledged(&storage, alice()),
             pledge_cost()
         );
         assert_eq!(fidelity_of(&storage, alice()), fidelity);
@@ -299,7 +299,10 @@ fn forfeit_burns_only_remaining_position_backing_and_leaves_fidelity_untouched()
             pledge_cost()
         );
         assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            view_balance(&storage, alice())
+                + view_pledged(&storage, alice())
+                + view_balance(&storage, bob())
+                + view_pledged(&storage, bob()),
             pledge_cost()
         );
         assert_eq!(

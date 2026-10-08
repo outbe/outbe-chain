@@ -1,4 +1,5 @@
 use super::*;
+use outbe_offchain_data::runtime_body_readers;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ObservedWrite {
@@ -19,7 +20,7 @@ fn prepare_terminal_block() -> (
     let install = test_ocomp_fork_install(&chain_spec, &[(proposer, dummy_pubkey(0xA2))]);
     let config = OutbeEvmConfig::new_with_runtime_body_readers(
         chain_spec,
-        RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
+        runtime_body_readers(Arc::new(MemoryStorage::new())),
     )
     .with_evm_signer(signer)
     .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))

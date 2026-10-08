@@ -58,3 +58,24 @@ fn commit_drop(route: &DayDatabaseRoute, day: u32) -> Result<(), ProjectionError
     route.databases.directory().drop_tribute_day(day)?;
     Ok(())
 }
+
+pub(super) fn finish_shared_retirements(
+    enabled: bool,
+    retirements: &[DayRetirement],
+    mut batch: AtomicWriteBatch,
+    state: AtomicWriteBatch,
+) -> Result<AtomicWriteBatch, ProjectionError> {
+    if enabled {
+        for retirement in retirements {
+            let (day, mark) = match retirement {
+                DayRetirement::Drop(day) => (*day, TributeDayMark::Retired),
+                DayRetirement::Retain { day, lease } => (*day, TributeDayMark::Retained(*lease)),
+            };
+            batch.push(tribute_day_mark_operation(day, mark)?);
+            batch.retire_scope(outbe_tribute::partitioning::day_scope(day)?);
+        }
+    }
+    batch.extend(state.operations().iter().cloned());
+    batch.validate()?;
+    Ok(batch)
+}

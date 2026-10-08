@@ -191,7 +191,16 @@ fn gratis_auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> Modi
     let sk = outbe_gratis::enclave_client::test_enclave::state_key();
     let mk = outbe_tee_enclave::gratis::derive_modify_key(&sk, account).unwrap();
     ModifyAuth {
-        mac: outbe_tee_enclave::gratis::modify_mac(&mk, account, op, amount, nonce, chain_b256()),
+        mac: outbe_tee_enclave::gratis::modify_mac(
+            &mk,
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account,
+                op,
+                amount,
+                op_nonce: nonce,
+                chain_id: chain_b256(),
+            },
+        ),
         op_nonce: nonce,
     }
 }
@@ -252,8 +261,8 @@ fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         let minted = IPromisFactory::mineGratisCall::abi_decode_returns(&out).unwrap();
         assert_eq!(minted, amount);
 
-        // Promis fully burned. Gratis minted 1:1 to the account. The check decrypts
-        // both confidential balances. Total supplies are public.
+        // Promis fully burned; gratis minted 1:1 to the account (decrypt both
+        // confidential balances to check; Promis supply remains public).
         assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
         assert_eq!(
             promis_api::total_supply(storage.clone()).unwrap(),
@@ -261,7 +270,7 @@ fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         );
         assert_eq!(gratis_view_balance(&storage, alice()), amount);
         assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            gratis_view_balance(&storage, alice()) + view_balance(storage.clone(), alice()),
             amount
         );
 

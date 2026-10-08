@@ -160,10 +160,12 @@ fn submit_active_pending(world: &mut World) {
         &url,
         Address::repeat_byte(0x7b),
         key.trim(),
-        U256::from(1),
-        fixture.nonce,
-        fixture.gas_limit,
-        fixture.max_fee,
+        crate::internal::eth::PendingValue {
+            value: U256::from(1),
+            nonce: fixture.nonce,
+            gas_limit: fixture.gas_limit,
+            max_fee: fixture.max_fee,
+        },
     )
     .expect("admit full-block-gas transaction through the real ACTIVE validator RPC");
     assert_eq!(

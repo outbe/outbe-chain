@@ -373,7 +373,16 @@ pub fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
 pub fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth {
     let mk = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
     ModifyAuth {
-        mac: modify_mac(&mk, owner, op, amount, op_nonce, chain_b256()),
+        mac: modify_mac(
+            &mk,
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account: owner,
+                op,
+                amount,
+                op_nonce,
+                chain_id: chain_b256(),
+            },
+        ),
         op_nonce,
     }
 }

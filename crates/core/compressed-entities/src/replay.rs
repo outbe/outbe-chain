@@ -58,15 +58,31 @@ pub fn decode_canonical_body_event(
     let Some(signature) = data.topics().first().copied() else {
         return Ok(None);
     };
+    if emitter == TRIBUTE_ADDRESS {
+        return decode_tribute_event(signature, data);
+    }
+    if emitter == NOD_ADDRESS {
+        return decode_nod_event(signature, data);
+    }
+    Ok(None)
+}
 
-    if emitter == TRIBUTE_ADDRESS && signature == TributeBodyStored::SIGNATURE_HASH {
+fn decode_tribute_event(
+    signature: B256,
+    data: &LogData,
+) -> Result<Option<CanonicalBodyEvent>, ReplayEventError> {
+    if signature == TributeBodyStored::SIGNATURE_HASH {
         let event = TributeBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        validate_versions(event.commitmentSchemeVersion, event.schemaVersion)?;
+        validate_versions(event.commitmentSchemeVersion, event.schemaVersion, true)?;
         let id = WwdEntityId::from(event.tributeId);
-        let body = decode_tribute_v1(&event.canonicalPayload)
-            .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        if body.tribute_id != id {
+        let body_id = if event.schemaVersion == crate::TRIBUTE_BODY_SCHEMA_V2 {
+            crate::decode_tribute_v2(&event.canonicalPayload).map(|body| body.context.tribute_id)
+        } else {
+            decode_tribute_v1(&event.canonicalPayload).map(|body| body.tribute_id)
+        }
+        .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
+        if body_id != id {
             return Err(ReplayEventError::PayloadIdentityMismatch);
         }
         return stored_event(
@@ -74,10 +90,11 @@ pub fn decode_canonical_body_event(
             event.previousCommitment,
             event.newCommitment,
             &event.canonicalPayload,
+            event.schemaVersion,
         )
         .map(Some);
     }
-    if emitter == TRIBUTE_ADDRESS && signature == TributeBodyDeleted::SIGNATURE_HASH {
+    if signature == TributeBodyDeleted::SIGNATURE_HASH {
         let event = TributeBodyDeleted::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         return deleted_event(
@@ -86,14 +103,26 @@ pub fn decode_canonical_body_event(
         )
         .map(Some);
     }
-    if emitter == NOD_ADDRESS && signature == NodBodyStored::SIGNATURE_HASH {
+    Ok(None)
+}
+
+fn decode_nod_event(
+    signature: B256,
+    data: &LogData,
+) -> Result<Option<CanonicalBodyEvent>, ReplayEventError> {
+    if signature == NodBodyStored::SIGNATURE_HASH {
         let event = NodBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        validate_versions(event.commitmentSchemeVersion, event.schemaVersion)?;
+        validate_versions(event.commitmentSchemeVersion, event.schemaVersion, true)?;
         let id = WwdEntityId::from(event.nodId);
-        let body = decode_nod_item_v1(&event.canonicalPayload)
-            .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        if body.nod_id != id {
+        let body_id = if event.schemaVersion == crate::NOD_BODY_SCHEMA_V2 {
+            crate::decode_nod_item_v2(&event.canonicalPayload)
+                .map(|body| body.encrypted.terms.nod_id)
+        } else {
+            decode_nod_item_v1(&event.canonicalPayload).map(|body| body.nod_id)
+        }
+        .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
+        if body_id != id {
             return Err(ReplayEventError::PayloadIdentityMismatch);
         }
         return stored_event(
@@ -101,10 +130,11 @@ pub fn decode_canonical_body_event(
             event.previousCommitment,
             event.newCommitment,
             &event.canonicalPayload,
+            event.schemaVersion,
         )
         .map(Some);
     }
-    if emitter == NOD_ADDRESS && signature == NodBodyDeleted::SIGNATURE_HASH {
+    if signature == NodBodyDeleted::SIGNATURE_HASH {
         let event = NodBodyDeleted::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         return deleted_event(
@@ -113,10 +143,17 @@ pub fn decode_canonical_body_event(
         )
         .map(Some);
     }
-    if emitter == NOD_ADDRESS && signature == NodBucketBodyStored::SIGNATURE_HASH {
+    decode_nod_bucket_event(signature, data)
+}
+
+fn decode_nod_bucket_event(
+    signature: B256,
+    data: &LogData,
+) -> Result<Option<CanonicalBodyEvent>, ReplayEventError> {
+    if signature == NodBucketBodyStored::SIGNATURE_HASH {
         let event = NodBucketBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
-        validate_versions(event.commitmentSchemeVersion, event.schemaVersion)?;
+        validate_versions(event.commitmentSchemeVersion, event.schemaVersion, false)?;
         let id = WwdEntityId::from(event.bucketId);
         let body = decode_nod_bucket_v1(&event.canonicalPayload)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
@@ -128,10 +165,11 @@ pub fn decode_canonical_body_event(
             event.previousCommitment,
             event.newCommitment,
             &event.canonicalPayload,
+            event.schemaVersion,
         )
         .map(Some);
     }
-    if emitter == NOD_ADDRESS && signature == NodBucketBodyDeleted::SIGNATURE_HASH {
+    if signature == NodBucketBodyDeleted::SIGNATURE_HASH {
         let event = NodBucketBodyDeleted::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         return deleted_event(
@@ -140,7 +178,6 @@ pub fn decode_canonical_body_event(
         )
         .map(Some);
     }
-
     Ok(None)
 }
 
@@ -195,10 +232,11 @@ fn stored_event(
     previous: B256,
     advertised: B256,
     payload: &[u8],
+    schema: u32,
 ) -> Result<CanonicalBodyEvent, ReplayEventError> {
     let expected = body_commitment(
         ACTIVE_COMMITMENT_SCHEME,
-        BODY_SCHEMA_V1,
+        schema,
         entity.entity_id(),
         payload,
     )
@@ -224,11 +262,11 @@ fn deleted_event(
     })
 }
 
-fn validate_versions(scheme: u32, schema: u32) -> Result<(), ReplayEventError> {
+fn validate_versions(scheme: u32, schema: u32, tribute: bool) -> Result<(), ReplayEventError> {
     if scheme != ACTIVE_COMMITMENT_SCHEME {
         return Err(ReplayEventError::UnsupportedCommitmentScheme(scheme));
     }
-    if schema != BODY_SCHEMA_V1 {
+    if schema != BODY_SCHEMA_V1 && !(tribute && schema == crate::TRIBUTE_BODY_SCHEMA_V2) {
         return Err(ReplayEventError::UnsupportedBodySchema(schema));
     }
     Ok(())

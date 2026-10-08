@@ -1,4 +1,4 @@
-//! Day directories through the projection observer.
+//! Finalized projection through the legacy day-directory adapter.
 
 use std::sync::Arc;
 
@@ -8,8 +8,7 @@ use outbe_compressed_entities::{
     body_commitment, derive_poseidon_entity_id, encode_tribute_v1, ACTIVE_COMMITMENT_SCHEME,
     BODY_SCHEMA_V1,
 };
-use outbe_e2e_harness::world::projection::ProjectionFixture;
-use outbe_nod::{NodContract, NodItemState, NodRepositoryWriter};
+use outbe_nod::{NodItemState, NodRepositoryWriter};
 use outbe_offchain_data::{
     DayDatabaseRoute, FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection,
     ProjectionConfig, TributeRetentionSelector,
@@ -19,6 +18,7 @@ use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
     canonical_body, precompile::ITribute, RetainedTributePin, RetainedTributeWriter, TributeData,
+    TributeRepositoryReader,
 };
 
 struct Store {
@@ -39,15 +39,17 @@ fn projection(store: &Store, pin: Option<RetainedTributePin>) -> OffchainDataPro
         start_block: 5,
     };
     let mut projection = match pin {
-        Some(pin) => OffchainDataProjection::open_with_retention_selector(
+        Some(pin) => outbe_offchain_data::open_projection_with_retention_selector(
             config,
             store.shared.clone(),
             store.shared.clone(),
             Arc::new(FixedPin(pin)),
         )
         .unwrap(),
-        None => OffchainDataProjection::open(config, store.shared.clone(), store.shared.clone())
-            .unwrap(),
+        None => {
+            outbe_offchain_data::open_projection(config, store.shared.clone(), store.shared.clone())
+                .unwrap()
+        }
     };
     projection
         .set_day_route(DayDatabaseRoute {
@@ -129,17 +131,50 @@ fn tx(byte: u8) -> String {
     format!("{:#x}", B256::repeat_byte(byte))
 }
 
+fn reader(store: &Store) -> TributeRepositoryReader {
+    TributeRepositoryReader::with_days(
+        store.shared.clone(),
+        store.shared.clone(),
+        store.databases.clone(),
+    )
+}
+
+fn assert_projected(store: &Store, body: &TributeData, transaction: u8) {
+    let (record, metadata) = reader(store)
+        .get_with_metadata(body.tribute_id)
+        .unwrap()
+        .expect("projected Tribute");
+    assert_eq!(record.tribute_id, body.tribute_id);
+    assert_eq!(record.owner, body.owner);
+    assert_eq!(record.worldwide_day, body.worldwide_day);
+    assert_eq!(
+        metadata.unwrap().get("tx_hash"),
+        Some(tx(transaction).as_str())
+    );
+}
+
 fn nod(owner: Address, day: u32) -> NodItemState {
     let worldwide_day = WorldwideDay::new(day);
     let entry = U256::from(13u64);
     NodItemState {
         is_settled: false,
-        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
+        nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day).unwrap(),
         owner,
-        gratis_load_minor: U256::from(11u64),
+        encrypted: outbe_nod::test_support::encrypted_fixture(
+            &outbe_nod::NodIssueParams {
+                owner,
+                gratis_load_minor: U256::from(11u64),
+                worldwide_day,
+                league_id: 4,
+                entry_price_minor: entry,
+                issuance_currency: 840,
+                reference_currency: 840,
+            },
+            91,
+        ),
         worldwide_day,
         league_id: 4,
-        bucket_key: NodContract::bucket_key(worldwide_day, entry, 840),
+        bucket_key: outbe_nod::identity::bucket_key(worldwide_day, entry, 840),
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_752_534_000,
@@ -159,13 +194,10 @@ fn two_days_retire_the_first_and_keep_its_nod() {
     projection
         .project_block(&block(6, 0x45, vec![stored_log(&second)]))
         .unwrap();
-    NodRepositoryWriter::with_days(
-        store.shared.clone(),
-        store.shared.clone(),
-        store.databases.clone(),
-    )
-    .put_nod(&nod(Address::repeat_byte(0x11), 7))
-    .unwrap();
+    outbe_nod::nod_writer(store.shared.clone(), store.shared.clone())
+        .with_days(store.databases.clone())
+        .put_nod(&nod(Address::repeat_byte(0x11), 7))
+        .unwrap();
     projection
         .project_block(&block(
             7,
@@ -181,9 +213,8 @@ fn two_days_retire_the_first_and_keep_its_nod() {
     assert!(!store.databases.directory().tribute_day_path(7).exists());
     assert!(store.databases.directory().tribute_day_path(9).exists());
     assert!(store.databases.directory().nod_day_path(7).exists());
-    let observed = ProjectionFixture::observe_offchain_tribute(root.path(), &tx(0x45)).unwrap();
-    assert_eq!(observed.raw_id, second.tribute_id);
-    assert!(ProjectionFixture::observe_offchain_tribute(root.path(), &tx(0x44)).is_err());
+    assert_projected(&store, &second, 0x45);
+    assert!(reader(&store).get(first.tribute_id).unwrap().is_none());
 }
 
 #[test]
@@ -207,7 +238,7 @@ fn restart_with_drop_pending_finishes_the_directory() {
     let store = open(root.path());
     let _projector = projection(&store, None);
     assert!(!store.databases.directory().tribute_day_path(8).exists());
-    assert!(ProjectionFixture::observe_offchain_tribute(root.path(), &tx(0x47)).is_err());
+    assert!(reader(&store).get(body.tribute_id).unwrap().is_none());
 }
 
 #[test]
@@ -236,8 +267,7 @@ fn pinned_day_survives_until_lease_release() {
         ))
         .unwrap();
     assert!(store.databases.directory().tribute_day_path(7).exists());
-    let observed = ProjectionFixture::observe_offchain_tribute(root.path(), &tx(0x48)).unwrap();
-    assert_eq!(observed.raw_id, body.tribute_id);
+    assert_projected(&store, &body, 0x48);
 
     let released = RetainedTributeWriter::with_days(
         store.shared.clone(),
@@ -248,5 +278,5 @@ fn pinned_day_survives_until_lease_release() {
     .unwrap();
     assert!(released);
     assert!(!store.databases.directory().tribute_day_path(7).exists());
-    assert!(ProjectionFixture::observe_offchain_tribute(root.path(), &tx(0x48)).is_err());
+    assert!(reader(&store).get(body.tribute_id).unwrap().is_none());
 }

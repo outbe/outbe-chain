@@ -66,7 +66,7 @@ impl AuthenticatedParentTree for TributePartitionTree {
 
 pub(super) fn begin_activation_scope(provider: &mut HashMapStorageProvider) -> ExecutionScope {
     let parent_root = hash(80);
-    let scope = ExecutionScope::with_parent_tree(
+    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
         Arc::new(TributePartitionTree { parent_root }),
         CeWorkConfig::new(0, 0, u64::MAX),
     );

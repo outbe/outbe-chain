@@ -281,6 +281,9 @@ def main() -> None:
         default=[],
         help="Optional agent SRA address (repeatable)",
     )
+    parser.add_argument("--creator", help="Tribute owner address; defaults to sender")
+    parser.add_argument("--creator-public-key", required=True, type=hex32_arg,
+                        help="creator X25519 encryption public key (32-byte 0x-hex)")
     args = parser.parse_args()
 
     amount_base = canonical_amount_base(args.amount_base)
@@ -294,7 +297,8 @@ def main() -> None:
     # worldwide_day + currency are cleartext ABI args, not payload fields. The
     # draft id, amount and SU hashes are the ones the proof binds.
     payload = {
-        "creator": sender,
+        "creator": args.creator or sender,
+        "creator_public_key": "0x" + args.creator_public_key.hex(),
         "tribute_draft_id": "0x" + args.tribute_draft_id.hex(),
         "amount_base": amount_base,
         "amount_micro": amount_micro,

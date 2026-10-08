@@ -1,4 +1,5 @@
 use super::*;
+use outbe_offchain_data::runtime_body_readers;
 
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const REQUIRED_HEADROOM_BPS: u64 = 2_000;
@@ -79,7 +80,7 @@ fn run_capacity_cycle() -> (u64, Receipt, B256, B256, tempfile::TempDir) {
     evm_env.block_env.timestamp = U256::from(fire_at);
     let config = OutbeEvmConfig::new_with_runtime_body_readers(
         test_chain_spec(),
-        RuntimeBodyReaders::new(body_reader),
+        runtime_body_readers(body_reader),
     )
     .with_evm_signer(signer.clone())
     .with_compressed_tree_service(tree_service);

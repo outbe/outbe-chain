@@ -31,11 +31,8 @@ use outbe_tee::protocol::{
 
 use crate::confidential::FIDELITY;
 use crate::errors::{Result, TeeError};
-
-/// Cohort-ledger blob field tag folded into the nonce derivation. Tag 0 is safe
-/// here despite Gratis also using 0 for balances: the FIDELITY domain derives
-/// independent keys.
-pub const FIELD_COHORTS: u8 = 0;
+use crate::fidelity_cipher::{self, CohortTransition};
+use zeroize::Zeroizing;
 
 /// Interior header: `qualified_start(8) || active_count(4) || sold_count(4)`.
 const HEADER_LEN: usize = 16;
@@ -224,7 +221,8 @@ impl CohortState {
 }
 
 fn read_state(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<(u64, CohortState)> {
-    let (version, interior) = FIDELITY.read_blob(view_key, account, FIELD_COHORTS, blob)?;
+    let (version, interior) = fidelity_cipher::read_blob(view_key, account, blob)?;
+    let interior = Zeroizing::new(interior);
     Ok((version, CohortState::decode(&interior)?))
 }
 
@@ -242,7 +240,7 @@ pub fn apply_cohort_section(
     amount: U256,
     section: &FidelityOpSection,
 ) -> Result<FidelityOpOutcome> {
-    let view_key = FIDELITY.derive_view_key(state_key, account)?;
+    let view_key = Zeroizing::new(FIDELITY.account_keys.derive_view_key(state_key, account)?);
     let (version, mut state) = read_state(&view_key, account, &section.current_blob)?;
 
     let mut qualified_start_initialized = None;
@@ -267,13 +265,18 @@ pub fn apply_cohort_section(
     let new_blob = match section.op {
         // Probe never rewrites the ledger. An empty blob means "nothing to write".
         FidelityCohortOp::Probe => Vec::new(),
-        FidelityCohortOp::In | FidelityCohortOp::Out => FIDELITY.write_blob(
-            &view_key,
-            account,
-            FIELD_COHORTS,
-            version,
-            &state.encode_padded()?,
-        )?,
+        FidelityCohortOp::In | FidelityCohortOp::Out => {
+            let padded_state = Zeroizing::new(state.encode_padded()?);
+            fidelity_cipher::write_blob(
+                &view_key,
+                CohortTransition {
+                    account,
+                    previous_version: version,
+                    previous_blob: &section.current_blob,
+                    padded_state: &padded_state,
+                },
+            )?
+        }
     };
     Ok(FidelityOpOutcome {
         new_blob,
@@ -308,7 +311,11 @@ pub fn snapshot_leagues(
 ) -> Result<Vec<FidelityLeagueEntry>> {
     let mut leagues = Vec::with_capacity(req.entries.len());
     for entry in &req.entries {
-        let view_key = FIDELITY.derive_view_key(state_key, entry.owner)?;
+        let view_key = Zeroizing::new(
+            FIDELITY
+                .account_keys
+                .derive_view_key(state_key, entry.owner)?,
+        );
         let (_, state) = read_state(&view_key, entry.owner, &entry.cohort_blob)?;
         let (_, _, league) = state.evaluate(req.timestamp, req.first_qualified_start)?;
         leagues.push(FidelityLeagueEntry {
@@ -363,7 +370,11 @@ pub fn query_index(
         _ => return Err(err("owner signature does not control account")),
     }
 
-    let view_key = FIDELITY.derive_view_key(state_key, req.account)?;
+    let view_key = Zeroizing::new(
+        FIDELITY
+            .account_keys
+            .derive_view_key(state_key, req.account)?,
+    );
     let (_, state) = read_state(&view_key, req.account, &req.cohort_blob)?;
     let (rcfi, efficiency, league) =
         state.evaluate(req.query_timestamp, req.first_qualified_start)?;
@@ -416,6 +427,65 @@ mod tests {
     ///
     /// Regenerate only on an intentional, reviewed format change.
     #[test]
+    fn divergent_cohort_transitions_rederive_independent_keys() {
+        let key = state_key();
+        let initial = section(FidelityCohortOp::In, 1_000_000, 0, Vec::new());
+        let first = apply_cohort_section(&key, alice(), U256::from(1000), &initial).unwrap();
+        let base = section(
+            FidelityCohortOp::In,
+            1_000_000 + DAY,
+            1_000_000,
+            first.new_blob,
+        );
+        let one = apply_cohort_section(&key, alice(), U256::from(500), &base).unwrap();
+        let amount = apply_cohort_section(&key, alice(), U256::from(501), &base).unwrap();
+        let mut other_time = base.clone();
+        other_time.timestamp += 1;
+        let time = apply_cohort_section(&key, alice(), U256::from(500), &other_time).unwrap();
+        assert_eq!(
+            one,
+            apply_cohort_section(&key, alice(), U256::from(500), &base).unwrap()
+        );
+        assert_ne!(&one.new_blob[12..44], &amount.new_blob[12..44]);
+        assert_ne!(&one.new_blob[12..44], &time.new_blob[12..44]);
+        let view_key = FIDELITY
+            .account_keys
+            .derive_view_key(&key, alice())
+            .unwrap();
+        let (_, state) = read_state(&view_key, alice(), &one.new_blob).unwrap();
+        let plaintext = outbe_tee::fidelity_decrypt::decrypt_fidelity_cohorts(
+            &view_key,
+            alice(),
+            &one.new_blob,
+        )
+        .unwrap();
+        assert_eq!(CohortState::decode(&plaintext).unwrap(), state);
+        assert!(outbe_tee::fidelity_decrypt::decrypt_fidelity_cohorts(
+            &[9; 32],
+            alice(),
+            &one.new_blob
+        )
+        .is_err());
+        assert!(outbe_tee::fidelity_decrypt::decrypt_fidelity_cohorts(
+            &view_key,
+            Address::repeat_byte(9),
+            &one.new_blob
+        )
+        .is_err());
+        let standalone = apply_cohort_op(
+            &key,
+            &FidelityCohortRequest {
+                chain_id: CHAIN,
+                account: alice(),
+                amount: U256::from(500),
+                section: base,
+            },
+        )
+        .unwrap();
+        assert_eq!(standalone.outcome, one);
+    }
+
+    #[test]
     fn fidelity_known_answer_vectors() {
         let sk = state_key();
         let sk_hex = hex::encode(sk);
@@ -426,16 +496,21 @@ mod tests {
             Some(1_000_000)
         );
         state.cohort_out(U256::from(400u64), 1_000_000 + 30 * DAY);
-        let vk = FIDELITY.derive_view_key(&sk, alice()).unwrap();
-        let blob = FIDELITY
-            .write_blob(
-                &vk,
-                alice(),
-                FIELD_COHORTS,
-                0,
-                &state.encode_padded().unwrap(),
-            )
-            .unwrap();
+        let vk = FIDELITY.account_keys.derive_view_key(&sk, alice()).unwrap();
+        let blob = fidelity_cipher::write_blob(
+            &vk,
+            CohortTransition {
+                account: alice(),
+                previous_version: 0,
+                previous_blob: &[],
+                padded_state: &state.encode_padded().unwrap(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            outbe_tee::fidelity_decrypt::decrypt_fidelity_cohorts(&vk, alice(), &blob).unwrap(),
+            state.encode_padded().unwrap(),
+        );
         let blob_hex = hex::encode(&blob);
 
         let auth_hash = hex::encode(eip191_hash(&fidelity_query_auth_message(
@@ -453,20 +528,21 @@ mod tests {
         assert_eq!(
             blob_hex,
             concat!(
-                "0000000000000001bab8f027ea4c23fb2647e47a7b4c083f629c78edda01c85f",
-                "e843b5587fb6e44aed5bed96352c60681344985aaf0e97514903bc7c79e7b5bc",
-                "6d63f981f94440125954e08368b42f97227dc1b813ba02097de37864f1fa62e9",
-                "7dbbeac17ef19a6525b0ee10d4679359cfdd8020e557708ea0e4f1be1a78a979",
-                "dee60f7d476544a2c89ae0ed54adb2df4eeb447ca8cfe0e42a2b495038e30f27",
-                "a75924e982d4dd0c9a7829cb5e0e6b420b551099bb30c65d34694ede1da2d742",
-                "267eb65747ec2cb880377706faf005ab70dce63121528904a7bbbed3b74f91be",
-                "a62c94d792311aa1b2003dd8ffd0d733e947db6e1b1672a6caf5bebaf418d658",
-                "2f8a90efa82a7d77a92f3b378f2b5847a068f1f5310837580794834a51954a1f",
-                "e658c8c17ccf4a81f46401fbe1af7aa53915f60cfb8ab55c3da57e0a513c53ec",
-                "51bbabb4f08bc6459d13f92ff92174847ae2ad41af456d5103e6b980acd80896",
-                "ac8aad54a3cdb727d02bab5baea1428f9b5bcc97573f378a2c8d7f0b462bbdff",
-                "6559059dae38dfe5af446f1d8b6d073f4753417547095e62ac1fd8f22913509b",
-                "c0332ac01ae25ff9"
+                "0000000000000001464944324381fe9cc2c0e087ed60b82c37cbdb1821dfe17c",
+                "4f3a1570875a76ce753bf1f21be9c3d7e3a1fc51146b751746db0616605727fa",
+                "627bbea54b8141601b8c25eb9dde9cbabf9911bc890758648941811236274740",
+                "5e892991753017e6088bab46fa8951deec9f0efe8a0e27329e41d1ed5d1ed809",
+                "111ebe93bca28cc66257a3a4a2ed26ba94382f04ff69a05adcee47ee3f071388",
+                "f806d4ce2825264591dbe06c20c4fcd7075f32e0532e2dbf2c326208a451b7c1",
+                "3d2b16aeb10fbdf5c3087611d03a557854c6679ead00e6742a2381ca5b5557a9",
+                "2256017d56d9f999452188bd4b575ca25f7b7b186c8f1d8b207603e106e915bf",
+                "c97f7d85055e35adddd0abd297c18f06ab046e22b508bd0054d893d90197c8f3",
+                "7d5c71f4d4138da42e35cd43f7b17146d2cf1b7c5a46087606370ef2fa9c3fc1",
+                "57f2b7204d2bb2371ccc922f107d21e6e1c457debc4059ebc47f4e4fc1fa1ca7",
+                "9e8c6e200487e566b84fff95e90109bcc82e1cc0b447ebf793b2380be0337100",
+                "058a032f38f9fa7b64f96b7717c5173873569aa1ae839db34e83be1d1f4186fc",
+                "245193025d420632ec3052c395ce72f14d615c293f754b563623de06524d9350",
+                "41013754cc51e5ada1e91047",
             )
         );
         assert_eq!(
@@ -721,23 +797,16 @@ mod tests {
         sig65.to_vec()
     }
 
-    fn query_req(
-        chain_id: B256,
-        account: Address,
-        blob: Vec<u8>,
-        expiry: u64,
-        block_ts: u64,
-        sig: Vec<u8>,
-    ) -> FidelityQueryRequest {
+    fn query_req(chain_id: B256, account: Address, blob: Vec<u8>) -> FidelityQueryRequest {
         FidelityQueryRequest {
             chain_id,
             account,
             cohort_blob: blob,
             query_timestamp: 1_000_000 + 100 * DAY,
-            block_timestamp: block_ts,
+            block_timestamp: 1_500_000,
             first_qualified_start: 1_000_000,
-            expiry,
-            owner_sig: sig,
+            expiry: 2_000_000,
+            owner_sig: Vec::new(),
         }
     }
 
@@ -754,7 +823,8 @@ mod tests {
         .unwrap();
 
         let sig = query_sig(&signer, CHAIN, account, 2_000_000);
-        let req = query_req(CHAIN, account, minted.new_blob, 2_000_000, 1_500_000, sig);
+        let mut req = query_req(CHAIN, account, minted.new_blob);
+        req.owner_sig = sig;
         let out = query_index(&sk, CHAIN, &req).unwrap();
         // Sole holder, no sales -> top league, and rcfi > 0.
         assert_eq!(out.league, MAX_LEAGUE);
@@ -779,14 +849,8 @@ mod tests {
         let foreign_chain = B256::repeat_byte(0xEE);
         let sig = query_sig(&signer, foreign_chain, account, 2_000_000);
         // Host forwards the foreign chain_id it matches the signature to.
-        let req = query_req(
-            foreign_chain,
-            account,
-            minted.new_blob,
-            2_000_000,
-            1_500_000,
-            sig,
-        );
+        let mut req = query_req(foreign_chain, account, minted.new_blob);
+        req.owner_sig = sig;
         // Resident chain is CHAIN, not foreign_chain -> rejected before decrypt.
         assert!(query_index(&sk, CHAIN, &req).is_err());
     }
@@ -806,37 +870,20 @@ mod tests {
 
         // Wrong signer (other's key over account's message).
         let bad_signer = query_sig(&other, CHAIN, account, 2_000_000);
-        let req = query_req(
-            CHAIN,
-            account,
-            minted.new_blob.clone(),
-            2_000_000,
-            1_500_000,
-            bad_signer,
-        );
+        let mut req = query_req(CHAIN, account, minted.new_blob.clone());
+        req.owner_sig = bad_signer;
         assert!(query_index(&sk, CHAIN, &req).is_err());
 
         // Expired: expiry < block_timestamp.
         let good = query_sig(&signer, CHAIN, account, 1_000);
-        let req = query_req(
-            CHAIN,
-            account,
-            minted.new_blob.clone(),
-            1_000,
-            1_500_000,
-            good,
-        );
+        let mut req = query_req(CHAIN, account, minted.new_blob.clone());
+        req.owner_sig = good;
+        req.expiry = 1_000;
         assert!(query_index(&sk, CHAIN, &req).is_err());
 
         // Malformed signature length.
-        let req = query_req(
-            CHAIN,
-            account,
-            minted.new_blob,
-            2_000_000,
-            1_500_000,
-            vec![0u8; 10],
-        );
+        let mut req = query_req(CHAIN, account, minted.new_blob);
+        req.owner_sig = vec![0u8; 10];
         assert!(query_index(&sk, CHAIN, &req).is_err());
     }
 }

@@ -16,10 +16,9 @@ use alloy_primitives::B256;
 use rand_core::RngCore as _;
 use zeroize::Zeroizing;
 
-use crate::initialization::InitializationState;
 use crate::keys::EnclaveKeys;
 use crate::seal::EnclaveBootConfig;
-use crate::transport::{serve, serve_tcp};
+use crate::transport::{serve, serve_tcp, ServerContext};
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 
 /// Per-binary behavior knobs. The production binary uses [`RunOpts::prod`]. The
@@ -182,7 +181,7 @@ pub fn run(opts: RunOpts) -> i32 {
 
     #[cfg(feature = "mock")]
     let initialization = if opts.is_mock() {
-        InitializationState::development_for_network(
+        crate::initialization::factory::development_for_network(
             development_network_binding.expect("mock binding was required above"),
         )
     } else {
@@ -192,7 +191,7 @@ pub fn run(opts: RunOpts) -> i32 {
             );
             return 2;
         };
-        match InitializationState::production(boot, &keys) {
+        match crate::initialization::factory::production(boot, &keys) {
             Ok(state) => state,
             Err(error) => {
                 eprintln!("outbe-tee-enclave: initialization state failed: {error}");
@@ -209,7 +208,7 @@ pub fn run(opts: RunOpts) -> i32 {
             );
             return 2;
         };
-        match InitializationState::production(boot, &keys) {
+        match crate::initialization::factory::production(boot, &keys) {
             Ok(state) => state,
             Err(error) => {
                 eprintln!("outbe-tee-enclave: initialization state failed: {error}");
@@ -291,7 +290,16 @@ pub fn run(opts: RunOpts) -> i32 {
             "outbe-tee-enclave: listening on tcp://{socket} (attestation: {}; enclave identity: {identity_id})",
             attest.label()
         );
-        serve_tcp(&listener, keys, boot, offer_key, initialization, chain_id)
+        serve_tcp(
+            &listener,
+            ServerContext {
+                keys,
+                boot,
+                offer_key,
+                initialization,
+                chain_id,
+            },
+        )
     } else {
         // Fresh socket. UDS mode 0600 (owner-only), per plan section "Transport".
         let _ = std::fs::remove_file(&socket);
@@ -312,7 +320,16 @@ pub fn run(opts: RunOpts) -> i32 {
             "outbe-tee-enclave: listening on {socket} (attestation: {}; enclave identity: {identity_id})",
             attest.label()
         );
-        serve(&listener, keys, boot, offer_key, initialization, chain_id)
+        serve(
+            &listener,
+            ServerContext {
+                keys,
+                boot,
+                offer_key,
+                initialization,
+                chain_id,
+            },
+        )
     };
     if let Err(err) = result {
         eprintln!("outbe-tee-enclave: serve error: {err}");

@@ -1,3 +1,8 @@
+mod body;
+mod pagination;
+
+use body::{prepare_input, verify_stored};
+
 use std::collections::BTreeSet;
 
 use alloy_primitives::{Bytes, B256};
@@ -74,7 +79,7 @@ pub(crate) fn read(
     match pending {
         PendingWord::Set(commitment) => {
             charge_body_read(&storage, scope, pending_body.len())?;
-            let stored = StoredBody::decode(&pending_body)
+            let stored = crate::decode_stored_body(&pending_body)
                 .map_err(|error| fatal(format!("invalid pending StoredBody: {error}")))?;
             verify_stored(entity, stored, commitment, BodyOrigin::Overlay).map(Some)
         }
@@ -188,255 +193,14 @@ pub(crate) fn list(
     query: QueryRef,
     request: IdPageRequest,
 ) -> Result<VerifiedBodyPage> {
-    validate_page_request(query, request)?;
-    let state = State::new(storage.clone());
-    let mut added = BTreeSet::new();
-    let mut removed = BTreeSet::new();
-
-    for (record, status) in state.index_deltas()? {
-        scope.deduct_explicit_gas(&storage, INDEX_RECORD_SCAN_GAS)?;
-        if !record_matches_query(&record, query) {
-            continue;
-        }
-        if request.after.is_some_and(|after| record.entity_id <= after) {
-            continue;
-        }
-        match status {
-            DeltaStatus::Added => {
-                added.insert(record.entity_id);
-            }
-            DeltaStatus::Removed => {
-                removed.insert(record.entity_id);
-            }
-            DeltaStatus::NoChangeTouched => {}
-            DeltaStatus::NeverTouched => {
-                return Err(fatal("zero index delta escaped state validation"));
-            }
-        }
+    pagination::Pagination {
+        storage,
+        scope,
+        parent,
+        query,
+        request,
     }
-
-    let target =
-        usize::try_from(request.limit).map_err(|_| revert("page limit is not representable"))?;
-    let initial_after = request.after;
-    let mut parent_cursor = request.after;
-    let mut parent_seen = BTreeSet::new();
-    let mut observed_removed = BTreeSet::new();
-    let mut parent_exhausted: bool;
-
-    loop {
-        let page = parent
-            .list(
-                query,
-                IdPageRequest {
-                    after: parent_cursor,
-                    limit: request.limit,
-                },
-            )
-            .map_err(PrecompileError::from)?;
-        validate_parent_page(query, parent_cursor, request.limit, &page)?;
-        for id in &page.ids {
-            scope.deduct_explicit_gas(&storage, PARENT_ID_GAS)?;
-            if added.contains(id) {
-                return Err(PrecompileError::BodyReadCorruption(format!(
-                    "Added ID {id} already exists in finalized-parent index"
-                )));
-            }
-            if !parent_seen.insert(*id) {
-                return Err(PrecompileError::BodyReadCorruption(format!(
-                    "duplicate finalized-parent ID {id}"
-                )));
-            }
-            if removed.contains(id) {
-                observed_removed.insert(*id);
-            }
-        }
-        if let Some(last) = page.ids.last() {
-            let skipped_removed = removed.iter().any(|removed_id| {
-                initial_after.is_none_or(|after| *removed_id > after)
-                    && *removed_id <= *last
-                    && !observed_removed.contains(removed_id)
-            });
-            if skipped_removed {
-                return Err(PrecompileError::BodyReadCorruption(
-                    "Removed ID was skipped by the ordered finalized-parent index".into(),
-                ));
-            }
-        }
-
-        parent_exhausted = page.next_after.is_none();
-        if !parent_exhausted {
-            parent_cursor = page.next_after;
-        }
-
-        let candidates = merged_candidates(&parent_seen, &added, &removed);
-        let has_lookahead = candidates.len() > target;
-        let proof_reached = if has_lookahead {
-            let lookahead = candidates[target];
-            page.ids.last().is_some_and(|last| *last >= lookahead)
-        } else {
-            false
-        };
-        if parent_exhausted || proof_reached {
-            break;
-        }
-    }
-
-    if parent_exhausted {
-        let relevant_removed: BTreeSet<_> = removed
-            .iter()
-            .copied()
-            .filter(|id| initial_after.is_none_or(|after| *id > after))
-            .collect();
-        if observed_removed != relevant_removed {
-            return Err(PrecompileError::BodyReadCorruption(
-                "Removed ID is missing from finalized-parent index".into(),
-            ));
-        }
-    }
-
-    let candidates = merged_candidates(&parent_seen, &added, &removed);
-    let has_more = candidates.len() > target || !parent_exhausted;
-    let selected: Vec<_> = candidates.into_iter().take(target).collect();
-    let next_after = if has_more {
-        Some(*selected.last().ok_or_else(|| {
-            fatal("parent continuation or merged lookahead produced an empty result page")
-        })?)
-    } else {
-        None
-    };
-    let mut bodies = Vec::with_capacity(selected.len());
-    for id in selected {
-        let entity = entity_for_query(query, id);
-        let body = read(storage.clone(), scope, parent, entity)?.ok_or_else(|| {
-            PrecompileError::BodyReadCorruption(format!(
-                "listed compressed entity {id} is canonically absent"
-            ))
-        })?;
-        if !verified_matches_query(&body, query) {
-            return Err(PrecompileError::BodyReadCorruption(format!(
-                "listed compressed entity {id} violates query predicate"
-            )));
-        }
-        bodies.push(body);
-    }
-    Ok(VerifiedBodyPage::new(bodies, next_after))
-}
-
-fn prepare_input(input: BodyInput<'_>) -> Result<PreparedBody> {
-    match input {
-        BodyInput::Tribute(body) => prepare_tribute(body.clone()),
-        BodyInput::NodItem(body) => prepare_nod_item(body.clone()),
-        BodyInput::NodBucket(body) => prepare_nod_bucket(body.clone()),
-    }
-}
-
-fn prepare_tribute(body: TributeBodyV1) -> Result<PreparedBody> {
-    let payload = encode_tribute_v1(&body).map_err(input_error)?;
-    let stored_body = StoredBody::new_v1(payload.clone()).map_err(input_error)?;
-    let entity_id = body.tribute_id;
-    let commitment = calculate_commitment(entity_id, &payload)?;
-    let memberships = vec![
-        IndexRecord::owner(IndexKind::TributeByOwner, body.owner, entity_id),
-        IndexRecord::day(body.worldwide_day, entity_id),
-    ];
-    Ok(PreparedBody {
-        collection: Collection::Tribute,
-        entity_id,
-        stored_body,
-        commitment,
-        memberships,
-    })
-}
-
-fn prepare_nod_item(body: NodItemBodyV1) -> Result<PreparedBody> {
-    let payload = encode_nod_item_v1(&body).map_err(input_error)?;
-    let stored_body = StoredBody::new_v1(payload.clone()).map_err(input_error)?;
-    let entity_id = body.nod_id;
-    let commitment = calculate_commitment(entity_id, &payload)?;
-    let memberships = vec![
-        IndexRecord::owner(IndexKind::NodByOwner, body.owner, entity_id),
-        IndexRecord::nod_all(entity_id),
-    ];
-    Ok(PreparedBody {
-        collection: Collection::NodItem,
-        entity_id,
-        stored_body,
-        commitment,
-        memberships,
-    })
-}
-
-fn prepare_nod_bucket(body: NodBucketBodyV1) -> Result<PreparedBody> {
-    let payload = encode_nod_bucket_v1(&body).map_err(input_error)?;
-    let stored_body = StoredBody::new_v1(payload.clone()).map_err(input_error)?;
-    let entity_id = body.entity_id();
-    let commitment = calculate_commitment(entity_id, &payload)?;
-    Ok(PreparedBody {
-        collection: Collection::NodBucket,
-        entity_id,
-        stored_body,
-        commitment,
-        memberships: Vec::new(),
-    })
-}
-
-fn verify_stored(
-    entity: EntityRef,
-    stored_body: StoredBody,
-    expected: Commitment,
-    origin: BodyOrigin,
-) -> Result<VerifiedBody> {
-    if stored_body.schema_version() != BODY_SCHEMA_V1 {
-        return Err(origin.invalid(format!(
-            "unsupported stored body schema {}",
-            stored_body.schema_version()
-        )));
-    }
-    let payload = stored_body.payload();
-    let entity_id = entity.entity_id();
-    let (decoded_id, verified_payload) = match entity {
-        EntityRef::Tribute(_) => {
-            let body =
-                decode_tribute_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
-            (body.tribute_id, tribute_payload(body))
-        }
-        EntityRef::NodItem(_) => {
-            let body =
-                decode_nod_item_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
-            (body.nod_id, nod_item_payload(body))
-        }
-        EntityRef::NodBucket(_) => {
-            let body =
-                decode_nod_bucket_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
-            (body.entity_id(), nod_bucket_payload(body))
-        }
-    };
-    if decoded_id != entity_id {
-        return Err(origin.invalid(format!(
-            "body identity {decoded_id} does not match requested {entity_id}"
-        )));
-    }
-    let actual = body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, entity_id, payload)
-        .map_err(|error| origin.invalid(error.to_string()))?;
-    if actual != expected {
-        // Preserve the exact authenticated input, not a re-encoded replacement.
-        // Bodies are canonical on-chain event payloads, never enclave key material.
-        return Err(origin.invalid(format!(
-            "body commitment mismatch for {entity_id}; [CE_BODY_DIAGNOSTIC] entity={entity:?} origin={origin:?} scheme={ACTIVE_COMMITMENT_SCHEME} schema={} expected=0x{} actual=0x{} payload_len={} payload_hex={} stored_body_hex={} decoded={verified_payload:?}",
-            stored_body.schema_version(),
-            hex::encode(expected.as_bytes()),
-            hex::encode(actual.as_bytes()),
-            payload.len(),
-            hex::encode(payload),
-            hex::encode(stored_body.encode()),
-        )));
-    }
-    Ok(VerifiedBody {
-        entity,
-        commitment: expected,
-        stored_body,
-        payload: verified_payload,
-    })
+    .read()
 }
 
 fn calculate_commitment(entity_id: WwdEntityId, payload: &[u8]) -> Result<Commitment> {
@@ -456,7 +220,7 @@ fn current_commitment(
             scope.read_parent_leaf_verified(entity_from_parts(collection, entity_id), state.root()?)
         }
         PendingWord::Set(value) => {
-            let stored = StoredBody::decode(&body)
+            let stored = crate::decode_stored_body(&body)
                 .map_err(|error| fatal(format!("invalid pending StoredBody: {error}")))?;
             verify_stored(
                 entity_from_parts(collection, entity_id),
@@ -487,10 +251,22 @@ fn require_capability_current(
 
 fn memberships_for_verified(body: &VerifiedBody) -> Result<Vec<IndexRecord>> {
     let id = body.entity_id();
+    if let Some(tribute) = body.payload.as_encrypted_tribute() {
+        return Ok(vec![
+            IndexRecord::owner(IndexKind::TributeByOwner, tribute.context.owner, id),
+            IndexRecord::day(tribute.context.worldwide_day, id),
+        ]);
+    }
     if let Some(tribute) = body.payload.as_tribute() {
         return Ok(vec![
             IndexRecord::owner(IndexKind::TributeByOwner, tribute.owner, id),
             IndexRecord::day(tribute.worldwide_day, id),
+        ]);
+    }
+    if let Some(item) = body.payload.as_encrypted_nod_item() {
+        return Ok(vec![
+            IndexRecord::owner(IndexKind::NodByOwner, item.encrypted.terms.owner, id),
+            IndexRecord::nod_all(id),
         ]);
     }
     if let Some(item) = body.payload.as_nod_item() {
@@ -518,7 +294,7 @@ fn emit_stored(
         Collection::Tribute => TributeBodyStored {
             tributeId: id,
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
+            schemaVersion: body.stored_body.schema_version(),
             previousCommitment: previous,
             newCommitment: new_commitment,
             canonicalPayload: canonical_payload,
@@ -527,7 +303,7 @@ fn emit_stored(
         Collection::NodItem => NodBodyStored {
             nodId: id,
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
+            schemaVersion: body.stored_body.schema_version(),
             previousCommitment: previous,
             newCommitment: new_commitment,
             canonicalPayload: canonical_payload,
@@ -536,7 +312,7 @@ fn emit_stored(
         Collection::NodBucket => NodBucketBodyStored {
             bucketId: id,
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
+            schemaVersion: body.stored_body.schema_version(),
             previousCommitment: previous,
             newCommitment: new_commitment,
             canonicalPayload: canonical_payload,
@@ -585,114 +361,6 @@ fn emit_deleted(
         ),
     };
     storage.emit_event(emitter, event)
-}
-
-fn validate_page_request(query: QueryRef, request: IdPageRequest) -> Result<()> {
-    if request.limit == 0 || request.limit > MAX_ID_PAGE_LIMIT {
-        return Err(revert(format!(
-            "page limit must be in 1..={MAX_ID_PAGE_LIMIT}"
-        )));
-    }
-    if let (QueryRef::TributeByDay(day), Some(after)) = (query, request.after) {
-        if after.worldwide_day() != day {
-            return Err(revert("TributeByDay cursor has the wrong day prefix"));
-        }
-    }
-    Ok(())
-}
-
-fn validate_parent_page(
-    query: QueryRef,
-    after: Option<WwdEntityId>,
-    limit: u32,
-    page: &crate::IdPage,
-) -> Result<()> {
-    if page.ids.len() > limit as usize {
-        return Err(PrecompileError::BodyReadCorruption(
-            "parent page exceeds requested limit".into(),
-        ));
-    }
-    let mut previous = after;
-    for id in &page.ids {
-        if previous.is_some_and(|value| *id <= value) {
-            return Err(PrecompileError::BodyReadCorruption(
-                "parent IDs are not strictly ascending after the cursor".into(),
-            ));
-        }
-        if let QueryRef::TributeByDay(day) = query {
-            if id.worldwide_day() != day {
-                return Err(PrecompileError::BodyReadCorruption(
-                    "parent TributeByDay ID has the wrong day prefix".into(),
-                ));
-            }
-        }
-        previous = Some(*id);
-    }
-    match page.next_after {
-        Some(next) if page.ids.last().copied() != Some(next) => {
-            Err(PrecompileError::BodyReadCorruption(
-                "parent next_after must equal its last returned ID".into(),
-            ))
-        }
-        Some(_) if page.ids.is_empty() => Err(PrecompileError::BodyReadCorruption(
-            "empty parent page cannot advertise a continuation".into(),
-        )),
-        _ => Ok(()),
-    }
-}
-
-fn merged_candidates(
-    parent: &BTreeSet<WwdEntityId>,
-    added: &BTreeSet<WwdEntityId>,
-    removed: &BTreeSet<WwdEntityId>,
-) -> Vec<WwdEntityId> {
-    parent
-        .difference(removed)
-        .copied()
-        .chain(added.iter().copied())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn record_matches_query(record: &IndexRecord, query: QueryRef) -> bool {
-    match query {
-        QueryRef::TributeByOwner(owner) => {
-            record.kind == IndexKind::TributeByOwner && record.partition == owner.as_slice()
-        }
-        QueryRef::TributeByDay(day) => {
-            record.kind == IndexKind::TributeByDay && record.partition == day.value().to_be_bytes()
-        }
-        QueryRef::NodByOwner(owner) => {
-            record.kind == IndexKind::NodByOwner && record.partition == owner.as_slice()
-        }
-        QueryRef::NodAll => record.kind == IndexKind::NodAll && record.partition.is_empty(),
-    }
-}
-
-fn verified_matches_query(body: &VerifiedBody, query: QueryRef) -> bool {
-    match query {
-        QueryRef::TributeByOwner(owner) => body
-            .payload()
-            .as_tribute()
-            .is_some_and(|tribute| tribute.owner == owner),
-        QueryRef::TributeByDay(day) => body
-            .payload()
-            .as_tribute()
-            .is_some_and(|tribute| tribute.worldwide_day == day),
-        QueryRef::NodByOwner(owner) => body
-            .payload()
-            .as_nod_item()
-            .is_some_and(|item| item.owner == owner),
-        QueryRef::NodAll => body.payload().as_nod_item().is_some(),
-    }
-}
-
-fn entity_for_query(query: QueryRef, id: WwdEntityId) -> EntityRef {
-    match query {
-        QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => EntityRef::Tribute(id),
-        QueryRef::NodByOwner(_) | QueryRef::NodAll => EntityRef::NodItem(id),
-    }
 }
 
 const fn entity_from_parts(collection: Collection, id: WwdEntityId) -> EntityRef {

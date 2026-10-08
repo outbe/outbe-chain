@@ -1,3 +1,4 @@
+use outbe_offchain_data::runtime_body_readers;
 mod carrier_admission;
 mod size_budget;
 mod stages;
@@ -25,7 +26,6 @@ use outbe_evm::{
     OutbeEvmSigner,
 };
 use outbe_metadosis::test_support::ForkInstallScenario;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, REWARDS_ADDRESS},
@@ -347,7 +347,7 @@ fn build_active_payload_case(
     let evm_config = OutbeEvmConfig::new_with_bridge_and_runtime_body_readers(
         chain_spec.clone(),
         bridge,
-        RuntimeBodyReaders::new(body_storage),
+        runtime_body_readers(body_storage),
     )
     .with_evm_signer(signer);
     let parent = Arc::new(SealedHeader::seal_slow(OutbeHeader::new(

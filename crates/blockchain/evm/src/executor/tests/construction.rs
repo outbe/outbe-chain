@@ -1,4 +1,5 @@
 use super::*;
+use outbe_offchain_data::runtime_body_readers;
 
 #[test]
 fn executor_construction_scopes_read_budget_to_import_and_proposal() {
@@ -16,14 +17,14 @@ fn executor_construction_scopes_read_budget_to_import_and_proposal() {
         for with_budget in [false, true] {
             let config = OutbeEvmConfig::new_with_runtime_body_readers(
                 test_chain_spec(),
-                RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
+                runtime_body_readers(Arc::new(MemoryStorage::new())),
             );
             let mut state = State::builder()
                 .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
                 .with_bundle_update()
                 .build();
             let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
-            let readers = evm.runtime_body_readers().unwrap().clone();
+            let readers = evm.runtime_scope().body_readers().unwrap().clone();
             let budget = ExecutionReadBudget::new();
             let mut ctx = execution_ctx(None, Bytes::new());
             ctx.execution_read_budget = with_budget.then(|| budget.clone());

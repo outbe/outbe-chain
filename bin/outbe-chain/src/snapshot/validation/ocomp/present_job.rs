@@ -240,8 +240,13 @@ pub(super) fn verify_present_job(
                 ))
             })?;
             let admissions = AdmissionCatalogReader::open_existing(&admission_path, &cas, schema)?;
-            let audit =
-                LocalLysisPlanAuditV1::open_read_only(&admissions, inputs, &cas, &bundle, &schema)?;
+            let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
+                &admissions,
+                inputs,
+                &cas,
+                &bundle,
+                &schema,
+            )?;
             validate_present_manifest(audit.manifest(), &job, &bundle)?;
             if let Some(result) = result_binding {
                 compare_surviving_result_binding(

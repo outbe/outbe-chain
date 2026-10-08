@@ -86,7 +86,7 @@ impl AuthenticatedParentTree for RecordingTree {
 
 #[test]
 fn configuring_factory_is_observed_by_an_existing_scope_clone() {
-    let lifecycle_scope = Arc::new(ExecutionScope::new());
+    let lifecycle_scope = Arc::new(ExecutionScope::default());
     let precompile_scope = Arc::clone(&lifecycle_scope);
     let factory = Arc::new(RecordingFactory::new());
     let parent = ExactParentIdentity {
@@ -117,7 +117,7 @@ fn finalized_rpc_scope_reads_without_opening_mutation_lifecycle() {
     let factory = Arc::new(RecordingFactory::new());
     let block_hash = B256::repeat_byte(0x42);
     let root = B256::repeat_byte(0x92);
-    let scope = ExecutionScope::for_finalized_rpc(
+    let scope = crate::execution_scope::for_finalized_rpc(
         factory.clone(),
         ACTIVE_COMMITMENT_SCHEME,
         42,
@@ -149,7 +149,7 @@ fn finalized_rpc_scope_reads_without_opening_mutation_lifecycle() {
 fn block_configuration_replaces_finalized_rpc_fallback() {
     let fallback = Arc::new(RecordingFactory::new());
     let execution = Arc::new(RecordingFactory::new());
-    let scope = ExecutionScope::for_finalized_rpc(
+    let scope = crate::execution_scope::for_finalized_rpc(
         fallback,
         ACTIVE_COMMITMENT_SCHEME,
         10,
@@ -187,7 +187,7 @@ fn factory_tree_identity_mismatch_is_corruption_not_readiness() {
         }
     }
 
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     scope
         .configure_parent_tree_factory(
             Arc::new(WrongRootFactory),

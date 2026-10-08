@@ -163,7 +163,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             assert_eq!(view_balance(&storage, alice()), collateral);
             assert_eq!(view_balance(&storage, bob()), U256::ZERO);
             assert_eq!(
-                outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+                view_balance(&storage, alice()) + view_pledged(&storage, alice()),
                 collateral
             );
             assert_eq!(
@@ -344,7 +344,7 @@ fn a_position_settled_at_the_deadline_is_never_voided() {
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
         assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            view_balance(&storage, alice()) + view_pledged(&storage, alice()),
             pledge_cost() * U256::from(2u64)
         );
         assert_eq!(unallocated(&storage), U256::ZERO);
@@ -549,7 +549,7 @@ fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source()
                 CredisState::Called
             );
         }
-        let supply = outbe_gratis::api::total_supply(storage.clone()).unwrap();
+        let supply = view_balance(&storage, alice()) + view_pledged(&storage, alice());
         advance_to(&storage, deadline + 1);
         finalize_through(&storage, deadline + 1);
         assert_eq!(scan(&storage, deadline + 1), 1);
@@ -564,7 +564,7 @@ fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source()
         assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
         assert_eq!(view_balance(&storage, bob()), U256::ZERO);
         assert_eq!(
-            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            view_balance(&storage, alice()) + view_pledged(&storage, alice()),
             supply - half
         );
         assert_eq!(unallocated(&storage), half);

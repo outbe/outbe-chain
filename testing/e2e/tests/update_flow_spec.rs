@@ -5,11 +5,11 @@
 
 use alloy_primitives::{address, Address, Log, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
+use outbe_offchain_data::runtime_body_readers;
 
 use outbe_compressed_entities::{begin_block, end_block, ExecutionScope};
 use outbe_evm::executor::run_outbe_pre_execution_hooks_with_readers;
 use outbe_evm::handlers;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, UPDATE_ADDRESS};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -163,8 +163,8 @@ fn run_pre_execution_hooks(storage: StorageHandle, block_number: u64) {
         .set_block_timestamp(U256::from(block_number))
         .expect("set block timestamp");
     let ctx = block_ctx(storage, block_number);
-    let readers = RuntimeBodyReaders::new(std::sync::Arc::new(MemoryStorage::new()));
-    let scope = ExecutionScope::new();
+    let readers = runtime_body_readers(std::sync::Arc::new(MemoryStorage::new()));
+    let scope = ExecutionScope::default();
     begin_block(ctx.storage.clone(), &scope).expect("body lifecycle should begin cleanly");
     run_outbe_pre_execution_hooks_with_readers(&ctx, None, &readers, &scope)
         .expect("pre-exec hooks should succeed");

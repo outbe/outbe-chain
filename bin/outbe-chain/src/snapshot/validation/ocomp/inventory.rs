@@ -475,7 +475,7 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                     &cas,
                     limits,
                 )?;
-                let audit = LocalLysisPlanAuditV1::open_read_only(
+                let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
                     &admissions,
                     &inputs,
                     &cas,

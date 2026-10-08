@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
-use outbe_nod::NodContract;
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{TributeContract, TributeData};
 
@@ -28,7 +27,7 @@ pub(super) fn issue_sealed_tribute(
             scope,
             parent,
             &TributeData {
-                tribute_id: NodContract::generate_nod_id(owner, wwd).unwrap(),
+                tribute_id: outbe_nod::identity::generate_nod_id(owner, wwd).unwrap(),
                 owner,
                 worldwide_day: wwd,
                 issuance_amount_minor: nominal,

@@ -8252,6 +8252,7 @@ dependencies = [
  "outbe-metadosis",
  "outbe-nod",
  "outbe-node",
+ "outbe-nodfactory",
  "outbe-ocomp",
  "outbe-ocomp-protocol",
  "outbe-ocompregistry",
@@ -8595,6 +8596,7 @@ dependencies = [
  "time",
  "tokio",
  "walkdir",
+ "x25519-dalek 2.0.1",
  "xshell",
 ]
 
@@ -8748,6 +8750,7 @@ dependencies = [
  "outbe-zerofee",
  "outbe-zk-backend",
  "outbe-zk-canonical",
+ "parking_lot",
  "proptest",
  "rand 0.10.2",
  "rand_core 0.10.1",
@@ -8768,6 +8771,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 
@@ -9112,16 +9116,20 @@ dependencies = [
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-macros",
+ "outbe-nod",
  "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+ "x25519-dalek 2.0.1",
 ]
 
 [[package]]
@@ -9218,12 +9226,17 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
+ "outbe-tribute",
  "outbe-validatorset",
  "outbe-vaultrouter",
+ "postcard",
  "revm",
+ "tempfile",
  "thiserror 2.0.18",
+ "x25519-dalek 2.0.1",
 ]
 
 [[package]]
@@ -9262,9 +9275,12 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-tribute",
  "outbe-validatorset",
  "outbe-zerofee",
+ "postcard",
  "rand 0.10.2",
  "reqwest 0.12.28",
  "reth-chainspec",
@@ -9346,6 +9362,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -9827,6 +9845,7 @@ dependencies = [
  "k256 0.13.4",
  "libc",
  "metrics",
+ "outbe-ocomp-protocol",
  "outbe-primitives",
  "pem",
  "postcard",
@@ -9865,6 +9884,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
+ "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-fidelity-math",
  "outbe-ocomp-protocol",
@@ -9873,6 +9893,7 @@ dependencies = [
  "outbe-protocol",
  "outbe-protocol-derive",
  "outbe-tee",
+ "postcard",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
@@ -9918,8 +9939,13 @@ dependencies = [
  "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
+ "outbe-tribute",
+ "postcard",
  "revm",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -9935,6 +9961,7 @@ dependencies = [
  "commonware-codec",
  "commonware-cryptography",
  "commonware-math",
+ "ed25519-dalek",
  "eyre",
  "hex",
  "outbe-agentreward",

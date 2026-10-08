@@ -332,15 +332,17 @@ impl TeeRegistry<'_> {
                 ));
             }
             let result = outbe_tee::verify_dcap_registration_and_seal_v1(
-                        evidence,
-                        &policy_bytes,
-                        consensus_timestamp,
-                        node_signature,
-                        enclave_signature,
-                        offer_public.0,
-                        self.key_epoch()?,
-                        self.tribute_offer_epoch()?,
-                    )
+                outbe_tee::RegistrationVerificationRequest {
+                    evidence,
+                    policy: &policy_bytes,
+                    block_timestamp: consensus_timestamp,
+                    node_signature,
+                    enclave_signature,
+                    expected_tribute_offer_public: offer_public.0,
+                    key_epoch: self.key_epoch()?,
+                    tribute_offer_epoch: self.tribute_offer_epoch()?,
+                },
+            )
                     .map_err(|error| {
                         PrecompileError::Fatal(format!(
                             "purpose-bound DCAP onboarding verifier is unavailable or unauthenticated: {error}"

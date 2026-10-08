@@ -5,7 +5,7 @@ fn outer_checkpoint_reverts_commitment_overlay_indexes_and_event_together() {
     let owner = address!("4000000000000000000000000000000000000004");
     let body = tribute(entity(11, 5), owner, 100);
     let parent = MemoryParent::default();
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -113,7 +113,7 @@ fn exercise_every_fault_boundary(
     mutation: FaultMutation,
 ) {
     let mut baseline = HashMapStorageProvider::new(1);
-    let baseline_scope = ExecutionScope::new();
+    let baseline_scope = ExecutionScope::default();
     let capability = prepare_fault_mutation(&mut baseline, &baseline_scope, original, mutation);
     baseline.clear_mutation_failure();
     StorageHandle::enter(&mut baseline, |storage| {
@@ -133,7 +133,7 @@ fn exercise_every_fault_boundary(
     for position in [FaultPosition::Before, FaultPosition::After] {
         for failure_at in 0..mutation_operations {
             let mut provider = HashMapStorageProvider::new(1);
-            let scope = ExecutionScope::new();
+            let scope = ExecutionScope::default();
             let capability = prepare_fault_mutation(&mut provider, &scope, original, mutation);
             let storage_before = provider.storage.clone();
             let events_before = provider.get_ordered_events().to_vec();

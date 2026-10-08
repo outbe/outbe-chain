@@ -10,7 +10,7 @@ use alloy_primitives::{Address, U256};
 
 use crate::{
     abi::{
-        decode_materialize_certified_nods_calldata, MATERIALIZE_CERTIFIED_NODS_SELECTOR,
+        decode_protected_materialize_certified_nods_calldata, MATERIALIZE_CERTIFIED_NODS_SELECTOR,
         METADOSIS_ADDRESS, NOD_FACTORY_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR,
     },
     vote::{decode_submit_lysis_result_prefix, ResultVotePrefixV1},
@@ -98,6 +98,35 @@ pub fn classify_ocomp_system_carrier(
     if !is_vote && !is_materialization {
         return Ok(None);
     }
+    validate_carrier_envelope(&tx)?;
+    let calldata_limit = if is_vote {
+        MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES
+    } else {
+        68 + ((limits.codec.max_body_bytes + 31) & !31)
+    };
+    if tx.input.len() > calldata_limit {
+        return Err(OcompSystemCarrierError::CalldataTooLarge {
+            actual: tx.input.len(),
+            limit: calldata_limit,
+        });
+    }
+    if is_vote {
+        let prefix = decode_submit_lysis_result_prefix(tx.input, limits)
+            .map_err(OcompSystemCarrierError::MalformedVote)?;
+        Ok(Some(OcompSystemCarrierCandidate::ResultVote { prefix }))
+    } else {
+        let batch = decode_protected_materialize_certified_nods_calldata(tx.input, limits)
+            .map_err(OcompSystemCarrierError::MalformedMaterialization)?;
+        Ok(Some(OcompSystemCarrierCandidate::NodMaterialization {
+            queue_sequence: batch.queue_sequence,
+            first_nod_ordinal: batch.first_nod_ordinal,
+        }))
+    }
+}
+
+fn validate_carrier_envelope(
+    tx: &OcompSystemCarrierView<'_>,
+) -> Result<(), OcompSystemCarrierError> {
     if !tx.is_eip1559 {
         return Err(OcompSystemCarrierError::NotEip1559);
     }
@@ -119,27 +148,5 @@ pub fn classify_ocomp_system_carrier(
             expected: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
         });
     }
-    let calldata_limit = if is_vote {
-        MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES
-    } else {
-        68 + ((limits.codec.max_body_bytes + crate::codec::OCB1_HEADER_LEN + 31) & !31)
-    };
-    if tx.input.len() > calldata_limit {
-        return Err(OcompSystemCarrierError::CalldataTooLarge {
-            actual: tx.input.len(),
-            limit: calldata_limit,
-        });
-    }
-    if is_vote {
-        let prefix = decode_submit_lysis_result_prefix(tx.input, limits)
-            .map_err(OcompSystemCarrierError::MalformedVote)?;
-        Ok(Some(OcompSystemCarrierCandidate::ResultVote { prefix }))
-    } else {
-        let batch = decode_materialize_certified_nods_calldata(tx.input, limits)
-            .map_err(OcompSystemCarrierError::MalformedMaterialization)?;
-        Ok(Some(OcompSystemCarrierCandidate::NodMaterialization {
-            queue_sequence: batch.queue_sequence,
-            first_nod_ordinal: batch.first_nod_ordinal,
-        }))
-    }
+    Ok(())
 }

@@ -14,18 +14,25 @@ use std::sync::{
 
 #[derive(Debug)]
 pub(super) struct FixedPartitionTree {
-    parent_root: B256,
+    parent: SyntheticParent,
     pub(super) partition_root: B256,
     leaf_reads: AtomicUsize,
 }
 
+#[derive(Debug)]
+struct SyntheticParent {
+    block_hash: B256,
+    root: B256,
+    seal_error: &'static str,
+}
+
 impl AuthenticatedParentTree for FixedPartitionTree {
     fn parent_block_hash(&self) -> B256 {
-        B256::ZERO
+        self.parent.block_hash
     }
 
     fn parent_root(&self) -> B256 {
-        self.parent_root
+        self.parent.root
     }
 
     fn read_leaf_verified(
@@ -33,7 +40,7 @@ impl AuthenticatedParentTree for FixedPartitionTree {
         _entity: EntityRef,
         expected_parent_root: B256,
     ) -> Result<Option<Commitment>> {
-        if expected_parent_root != self.parent_root {
+        if expected_parent_root != self.parent.root {
             return Err(PrecompileError::Fatal(
                 "fixed partition parent-root mismatch".into(),
             ));
@@ -57,7 +64,7 @@ impl AuthenticatedParentTree for FixedPartitionTree {
         partition: PartitionRef,
         expected_parent_root: B256,
     ) -> Result<Option<B256>> {
-        if expected_parent_root != self.parent_root
+        if expected_parent_root != self.parent.root
             || !matches!(partition, PartitionRef::TributeWwd(_))
         {
             return Err(PrecompileError::Fatal(
@@ -73,9 +80,7 @@ impl AuthenticatedParentTree for FixedPartitionTree {
         _mutations: &[FinalLeafMutation],
         _retirements: &[PartitionRef],
     ) -> Result<ProvisionalTreeBatch> {
-        Err(PrecompileError::Fatal(
-            "capacity test does not close its synthetic parent tree".into(),
-        ))
+        Err(PrecompileError::Fatal(self.parent.seal_error.into()))
     }
 }
 
@@ -123,11 +128,10 @@ fn seed_empty_waiting_candidate(
         .unwrap();
     tribute
         .day_totals
-        .create(&outbe_tribute::DayTotals {
+        .create(&outbe_tribute::day_schema::StoredDayTotals {
             worldwide_day: wwd,
             initialized: true,
             tribute_count: 0,
-            tribute_nominal_total_minor: U256::ZERO,
             is_sealed: true,
         })
         .unwrap();
@@ -193,16 +197,17 @@ fn seed_capacity_fixture_with_victim_state(
         }
         let victim = outbe_primitives::time::WorldwideDay::new(2099_1231);
         let scheduled = seed_day(&storage, victim, victim_state, U256::from(100));
-        tribute
-            .day_totals
-            .create(&outbe_tribute::DayTotals {
+        outbe_tribute::enclave_client::test_enclave::seed_day_totals(
+            &mut tribute,
+            &outbe_tribute::DayTotals {
                 worldwide_day: victim,
                 initialized: true,
                 tribute_count,
                 tribute_nominal_total_minor: tribute_nominal,
                 is_sealed: victim_state != status::OFFERING,
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         tribute
             .total_supply
             .write(u64::from(tribute_count))
@@ -215,7 +220,7 @@ fn seed_capacity_fixture_with_victim_state(
 }
 
 fn begin_empty_scope(provider: &mut HashMapStorageProvider) -> ExecutionScope {
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
     StorageHandle::enter(provider, |storage| {
         storage
@@ -238,11 +243,18 @@ pub(super) fn begin_fixed_partition_scope(
 ) -> (ExecutionScope, Arc<FixedPartitionTree>) {
     let parent_root = outbe_compressed_entities::sealed_root(B256::repeat_byte(0x71)).unwrap();
     let tree = Arc::new(FixedPartitionTree {
-        parent_root,
+        parent: SyntheticParent {
+            block_hash: B256::ZERO,
+            root: parent_root,
+            seal_error: "capacity test does not close its synthetic parent tree",
+        },
         partition_root: B256::repeat_byte(0x72),
         leaf_reads: AtomicUsize::new(0),
     });
-    let scope = ExecutionScope::with_parent_tree(tree.clone(), CeWorkConfig::new(0, 0, u64::MAX));
+    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
+        tree.clone(),
+        CeWorkConfig::new(0, 0, u64::MAX),
+    );
     StorageHandle::enter(provider, |storage| {
         storage
             .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
@@ -289,7 +301,7 @@ fn derived_caps_are_bound_to_production_phase_and_tick_cadence() {
 
 #[test]
 fn validated_snapshot_rejects_a_pending_fsm_missing_from_the_live_scheduler() {
-    let mut fixture = crate::fixture_kernel::ActivationFixture::new_voting(30, 3_000, false);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(30, 3_000, false);
     StorageHandle::enter(&mut fixture.provider, |storage| {
         crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage.clone()).unwrap();
         MetadosisContract::new(storage.clone())
@@ -495,11 +507,10 @@ fn multiple_due_candidates_advance_exactly_one_per_tick_in_protocol_order() {
             ));
             tribute
                 .day_totals
-                .create(&outbe_tribute::DayTotals {
+                .create(&outbe_tribute::day_schema::StoredDayTotals {
                     worldwide_day: candidate,
                     initialized: true,
                     tribute_count: 0,
-                    tribute_nominal_total_minor: U256::ZERO,
                     is_sealed: true,
                 })
                 .unwrap();
@@ -820,7 +831,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
 
 #[test]
 fn additional_ready_day_preserves_real_pending_ocomp_job_and_indexes_byte_for_byte() {
-    let mut fixture = crate::fixture_kernel::ActivationFixture::new_voting(50, 5_000, true);
+    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(50, 5_000, true);
     let pending = crate::fixture_kernel::TEST_WWD;
     let ready = outbe_primitives::time::WorldwideDay::new(2026_0724);
     let victim = outbe_primitives::time::WorldwideDay::new(2026_0725);
@@ -831,11 +842,10 @@ fn additional_ready_day_preserves_real_pending_ocomp_job_and_indexes_byte_for_by
         let scheduled = seed_day(&storage, victim, status::WAITING, U256::from(100));
         TributeContract::new(storage)
             .day_totals
-            .create(&outbe_tribute::DayTotals {
+            .create(&outbe_tribute::day_schema::StoredDayTotals {
                 worldwide_day: victim,
                 initialized: true,
                 tribute_count: 0,
-                tribute_nominal_total_minor: U256::ZERO,
                 is_sealed: true,
             })
             .unwrap();

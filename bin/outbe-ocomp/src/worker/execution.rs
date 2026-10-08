@@ -202,14 +202,7 @@ pub(crate) fn execute_unit(
 ) -> Result<UnitArtifactV1, WorkerError> {
     require_lease_active(authority.cancelled)?;
     match spec.phase {
-        UnitPhase::Enumerate => execute_enumerate_unit(
-            spec,
-            authority.manifest,
-            authority.input_chunks,
-            authority.producer_artifacts,
-            authority.limits,
-            authority.cancelled,
-        ),
+        UnitPhase::Enumerate => execute_enumerate_unit(spec, authority),
         UnitPhase::FidelityMap => execute_fidelity_map_unit(spec, authority),
         UnitPhase::FixedReduce => execute_fixed_reduce_unit(spec, authority),
         UnitPhase::AmountMap => execute_amount_map_unit(spec, authority),

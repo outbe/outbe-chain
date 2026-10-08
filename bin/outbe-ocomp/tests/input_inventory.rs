@@ -10,8 +10,8 @@ use outbe_compressed_entities::{
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_ocomp::input_inventory::{
-    SealedTributeInventory, TributeInventoryBuilder, TributeInventoryRecordV1,
-    TributeInventorySubjectV1, TributeInventoryWorkConfig,
+    TributeInventoryBuilder, TributeInventoryRecordV1, TributeInventorySubjectV1,
+    TributeInventoryWorkConfig,
 };
 use outbe_ocomp_protocol::input::CheckpointIdentityV1;
 use outbe_primitives::time::WorldwideDay;
@@ -99,6 +99,155 @@ fn tiny_work() -> TributeInventoryWorkConfig {
     }
 }
 
+fn encrypted_record() -> TributeInventoryRecordV1 {
+    use outbe_primitives::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+    let (day, records, _) = fixture_records(1);
+    let original = &records[0];
+    let body = outbe_tee_enclave::tribute_encryption::encrypt_tribute(
+        &outbe_tribute::enclave_client::test_enclave::NETWORK_SECRET,
+        &outbe_tee_enclave::crypto::x25519_public(&[0x77; 32]),
+        TributeContextV2 {
+            chain_id: 1,
+            tribute_id: original.tribute_id,
+            owner: original.owner,
+            worldwide_day: day,
+            issuance_currency: 840,
+            reference_currency: original.reference_iso,
+            tribute_price_minor: U256::from(2),
+            exclude_from_intex_issuance: false,
+            offer_input_hash: B256::repeat_byte(0x78),
+        },
+        &TributeAmountsV2 {
+            issuance_amount_minor: U256::from(1),
+            nominal_amount_minor: U256::from(1),
+        },
+    )
+    .unwrap();
+    let canonical_body = outbe_compressed_entities::encode_tribute_v2(&body).unwrap();
+    let commitment = body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2,
+        original.tribute_id,
+        &canonical_body,
+    )
+    .unwrap();
+    TributeInventoryRecordV1 {
+        commitment,
+        canonical_body,
+        ..original.clone()
+    }
+}
+
+#[test]
+fn encrypted_inventory_authenticates_ciphertext_then_reads_private_amounts_and_preserves_bytes() {
+    let record = encrypted_record();
+    let day = record.tribute_id.worldwide_day();
+    let root =
+        tribute_partition_root_from_leaves(day, [(record.tribute_id, record.commitment)]).unwrap();
+    let directory = support::tempdir().unwrap();
+    let authority = subject(day, 1, root);
+    let mut builder =
+        TributeInventoryBuilder::create(directory.path(), authority.clone(), tiny_work()).unwrap();
+    outbe_tribute::enclave_client::test_enclave::uninstall();
+    let mut invalid = record.clone();
+    invalid.commitment =
+        outbe_compressed_entities::Commitment::try_from(U256::from(1).to_be_bytes::<32>()).unwrap();
+    assert!(matches!(
+        builder.push(invalid),
+        Err(
+            outbe_ocomp::input_inventory::TributeInventoryError::Authority(
+                "canonical Tribute body commitment"
+            )
+        )
+    ));
+    assert!(matches!(
+        builder.push(record.clone()),
+        Err(outbe_ocomp::input_inventory::TributeInventoryError::PrivateTribute(_))
+    ));
+    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
+    let mut wrong_total = record.clone();
+    wrong_total.nominal_amount_minor += U256::from(1);
+    assert!(matches!(
+        builder.push(wrong_total),
+        Err(
+            outbe_ocomp::input_inventory::TributeInventoryError::Authority(
+                "private Tribute nominal amount"
+            )
+        )
+    ));
+    builder.push(record.clone()).unwrap();
+    let inventory = builder.finish().unwrap();
+    let mut spool = inventory.tribute_bodies().unwrap();
+    assert_eq!(
+        spool.next_body(1_048_576).unwrap().unwrap(),
+        record.canonical_body
+    );
+    assert!(spool.next_body(1_048_576).unwrap().is_none());
+    drop(inventory);
+
+    let reopened =
+        outbe_ocomp::input_inventory::open_sealed_inventory(directory.path(), authority).unwrap();
+    let archive = reopened.source_proofs().unwrap();
+    let proof = archive.proof(record.tribute_id).unwrap();
+    let stored_body = outbe_compressed_entities::StoredBody::new(
+        outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2,
+        record.canonical_body.clone(),
+    )
+    .unwrap()
+    .encode();
+    outbe_compressed_entities::verify_body_in_collection(
+        root,
+        outbe_compressed_entities::CeDomain::Tribute,
+        record.tribute_id,
+        &stored_body,
+        &proof,
+    )
+    .unwrap();
+    let mut substituted = stored_body;
+    *substituted.last_mut().unwrap() ^= 1;
+    assert!(outbe_compressed_entities::verify_body_in_collection(
+        root,
+        outbe_compressed_entities::CeDomain::Tribute,
+        record.tribute_id,
+        &substituted,
+        &proof,
+    )
+    .is_err());
+}
+
+#[test]
+fn frozen_inventory_retains_membership_proofs_across_external_sort_and_restart() {
+    let (day, records, root) = fixture_records(33);
+    let directory = support::tempdir().unwrap();
+    let authority = subject(day, records.len() as u32, root);
+    let mut builder =
+        TributeInventoryBuilder::create(directory.path(), authority.clone(), tiny_work()).unwrap();
+    for record in records.iter().cloned() {
+        builder.push(record).unwrap();
+    }
+    drop(builder.finish().unwrap());
+    let inventory =
+        outbe_ocomp::input_inventory::open_sealed_inventory(directory.path(), authority).unwrap();
+    let archive = inventory.source_proofs().unwrap();
+    for record in records {
+        let stored = outbe_compressed_entities::StoredBody::new(
+            outbe_compressed_entities::BODY_SCHEMA_V1,
+            record.canonical_body,
+        )
+        .unwrap()
+        .encode();
+        let proof = archive.proof(record.tribute_id).unwrap();
+        outbe_compressed_entities::verify_body_in_collection(
+            root,
+            outbe_compressed_entities::CeDomain::Tribute,
+            record.tribute_id,
+            &stored,
+            &proof,
+        )
+        .unwrap();
+    }
+}
+
 #[test]
 #[ignore = "capacity coverage: run with mise run e2e-capacity"]
 fn inventory_streams_4097_bodies_and_disk_sorts_unique_owners() {
@@ -140,7 +289,8 @@ fn inventory_streams_4097_bodies_and_disk_sorts_unique_owners() {
     assert!(bodies.next_body(1_048_576).unwrap().is_none());
     drop(inventory);
 
-    let reopened = SealedTributeInventory::open(&inventory_root, authority).unwrap();
+    let reopened =
+        outbe_ocomp::input_inventory::open_sealed_inventory(&inventory_root, authority).unwrap();
     assert_eq!(reopened.unique_owner_count(), 4_097);
 }
 
@@ -218,7 +368,9 @@ fn sealed_inventory_rejects_a_substituted_finalized_checkpoint() {
 
     let mut substituted = authority.clone();
     substituted.checkpoint.finalized_block_number += 1;
-    assert!(SealedTributeInventory::open(&inventory_root, substituted).is_err());
+    assert!(
+        outbe_ocomp::input_inventory::open_sealed_inventory(&inventory_root, substituted).is_err()
+    );
 }
 
 #[test]
@@ -237,5 +389,7 @@ fn sealed_inventory_detects_body_spool_corruption() {
     let mut bytes = fs::read(&spool).unwrap();
     *bytes.last_mut().unwrap() ^= 1;
     fs::write(spool, bytes).unwrap();
-    assert!(SealedTributeInventory::open(&inventory_root, authority).is_err());
+    assert!(
+        outbe_ocomp::input_inventory::open_sealed_inventory(&inventory_root, authority).is_err()
+    );
 }

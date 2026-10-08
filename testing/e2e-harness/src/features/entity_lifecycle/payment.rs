@@ -4,7 +4,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 
-use super::chain::{finalized_checkpoint, verify_checkpoint};
+use super::chain::{finalized_checkpoint, settlement_read, verify_checkpoint};
 use super::entity::{Item, Payer, Target, Terms};
 use super::markets::{coen_rate, currency};
 use crate::features::settlement::{assert_mined_success, fund_and_approve};
@@ -65,12 +65,16 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
             }
         }
         Item::Nod(id) => {
-            let quote = eth::read_call(
-                &url,
-                addresses::NOD_FACTORY_ADDR,
-                &eth::INodFactory::quoteSettlementCall { nodId: *id, asset },
-            )
-            .unwrap_or_else(|| panic!("Nod {id} does not quote a payment in {asset}"));
+            let quote = settlement_read(|| {
+                eth::read_call_result(
+                    &url,
+                    addresses::NOD_FACTORY_ADDR,
+                    &eth::INodFactory::quoteSettlementCall { nodId: *id, asset },
+                )
+            })
+            .unwrap_or_else(|error| {
+                panic!("Nod {id} does not quote a payment in {asset}: {error}")
+            });
             Quote {
                 currency: quote.settlementCurrency,
                 payable: quote.paymentMinor,
@@ -130,11 +134,13 @@ pub(crate) fn pay(world: &World, target: &Target, payer: Payer, iso: u16, terms:
     let outcome = loop {
         fund_and_approve(
             world,
-            vault.asset,
-            &payer_key,
-            payer_address,
-            factory(target),
-            quoted.payable,
+            crate::features::settlement::SettlementFunding {
+                asset: vault.asset,
+                owner_key: &payer_key,
+                owner: payer_address,
+                spender: factory(target),
+                amount: quoted.payable,
+            },
         );
         let outcome = settle_erc20(&url, target, &payer_key, vault.asset, quoted.snapshot);
         if outcome.success {

@@ -799,7 +799,7 @@ fn metadosis_semantic_receipt_without_settled_cycle_marker_is_fatal_before_effec
         let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
         let parent_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
         let parent = TributeRepositoryReader::new(parent_storage);
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         assert!(matches!(
             crate::handler::run_emission_limit_daily(&ctx, &scope, &parent),
             Err(outbe_primitives::error::PrecompileError::Fatal(_))

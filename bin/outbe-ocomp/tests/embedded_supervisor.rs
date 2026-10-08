@@ -7,7 +7,6 @@ use outbe_ocomp::{
     control::{poc_schema_limits, EndpointIdentity},
     embedded_runtime::{
         EmbeddedNodePolicyV1, EmbeddedOcompBundleConfigV1, EmbeddedOcompDomainConfigV1,
-        EmbeddedOcompDomainV1,
     },
     inbox::WorkerInboxLimits,
     supervisor_job::{SupervisorJobRunnerConfigV1, SupervisorJobRunnerV1},
@@ -32,7 +31,7 @@ fn fresh_full_node_domain_creates_its_node_local_storage_parent() {
     let worker_address = "127.0.0.1:0".parse().unwrap();
     let domain_root = temporary.path().join("domain-v1");
 
-    let domain = EmbeddedOcompDomainV1::open(EmbeddedOcompDomainConfigV1 {
+    let domain = outbe_ocomp::embedded_runtime::open_embedded_domain(EmbeddedOcompDomainConfigV1 {
         domain_root: domain_root.clone(),
         registry_generation: 1,
         bundles: vec![EmbeddedOcompBundleConfigV1 {
@@ -81,7 +80,7 @@ fn one_embedded_domain_opens_distinct_worker_lanes_for_two_bundles() {
         boot_nonce: B256::repeat_byte(0x52),
         protocol_bundle_hash,
     };
-    let domain = EmbeddedOcompDomainV1::open(EmbeddedOcompDomainConfigV1 {
+    let domain = outbe_ocomp::embedded_runtime::open_embedded_domain(EmbeddedOcompDomainConfigV1 {
         domain_root: temporary.path().join("domain-v1"),
         registry_generation: 1,
         bundles: vec![

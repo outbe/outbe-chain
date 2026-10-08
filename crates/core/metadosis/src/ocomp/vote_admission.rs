@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn valid_full_vote_identifies_the_historical_validator() {
-        let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
         let vote = fixture.signed_result_vote(1);
         let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
 
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn invalid_inner_signature_is_permanent_carrier_invalidity() {
-        let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
         let mut vote = fixture.signed_result_vote(1);
         vote.signature_rs[0] ^= 1;
         let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn unauthorized_outer_signer_is_permanent_carrier_invalidity() {
-        let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
         let admission = signed_carrier_admission(&mut fixture, Address::repeat_byte(0xEE), 14);
 
         assert!(matches!(
@@ -469,7 +469,7 @@ mod tests {
 
     #[test]
     fn pre_open_vote_is_not_peer_invalidity() {
-        let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
         let vote = fixture.signed_result_vote(1);
         let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
 
@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     fn pre_open_vote_still_requires_an_authorized_outer_signer() {
-        let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
         let admission = signed_carrier_admission(&mut fixture, Address::repeat_byte(0xEE), 11);
 
         assert!(matches!(
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn due_open_window_is_distinct_from_a_closed_deadline() {
-        let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
         let vote = fixture.signed_result_vote(1);
         let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
         let deadline = StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn backend_read_failure_is_not_carrier_invalidity() {
-        let fixture = ActivationFixture::new_voting(14, 1_010, true);
+        let fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
         let vote = fixture.signed_result_vote(1);
         let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
         let mut provider = ReadOnlyStorageProvider::new_with_block_context(
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn response_index_pointing_to_missing_job_is_committed_state_corruption() {
-        let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
         let vote = fixture.signed_result_vote(1);
         let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
         StorageHandle::enter(&mut fixture.provider, |storage| {
@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn closed_window_preserves_the_deadline_receipt_route() {
-        let mut fixture = ActivationFixture::new_voting(14, 1_010, true);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(14, 1_010, true);
         let vote = fixture.signed_result_vote(1);
         let calldata = encode_submit_lysis_result_calldata(&vote, &fixture.limits).unwrap();
         let deadline = StorageHandle::enter(&mut fixture.provider, |storage| {

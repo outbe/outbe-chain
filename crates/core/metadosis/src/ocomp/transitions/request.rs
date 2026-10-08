@@ -202,12 +202,11 @@ fn validate_request_binding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixture_kernel::ActivationFixture;
     use outbe_primitives::storage::StorageHandle;
 
     #[test]
     fn request_binding_accepts_retained_receipt_nonce_and_rejects_future_nonce() {
-        let mut fixture = ActivationFixture::new(14, 1000, false);
+        let mut fixture = crate::fixture_kernel::ActivationScenario::build(14, 1000, false);
         StorageHandle::enter(&mut fixture.provider, |storage| {
             let contract = MetadosisContract::new(storage);
             let mut intent = contract

@@ -194,7 +194,7 @@ pub(super) fn with_execution_scope(
     )?;
     let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
     let parent = TributeRepositoryReader::new(storage);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     let lifecycle = CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
     <CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
     let result = f(&scope, &parent);

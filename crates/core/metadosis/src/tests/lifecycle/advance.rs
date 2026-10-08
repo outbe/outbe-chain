@@ -74,7 +74,7 @@ fn normal_advance_command_rolls_back_every_mutation_and_retries_with_ordered_edg
 
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
     let offering_entry = seed_forming_day_for_advance(&mut probe, wwd);
-    let probe_scope = ExecutionScope::new();
+    let probe_scope = ExecutionScope::default();
     let ce_before_probe = probe_scope.ce_work_checkpoint().unwrap();
     probe.fail_after_mutation_at(usize::MAX);
     run_advance_command(&mut probe, &probe_scope, block_number, offering_entry).unwrap();
@@ -89,7 +89,7 @@ fn normal_advance_command_rolls_back_every_mutation_and_retries_with_ordered_edg
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         let offering_entry = seed_forming_day_for_advance(&mut provider, wwd);
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         let storage_before = provider.storage.clone();
         let events_before = provider.events.clone();
         let ordered_before = provider.get_ordered_events().to_vec();
@@ -145,7 +145,7 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
         partition_root: B256::repeat_byte(0x82),
         calls: AtomicUsize::new(0),
     });
-    let scope = ExecutionScope::with_parent_tree(
+    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
         tree.clone(),
         outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
     );
@@ -257,7 +257,7 @@ fn advance_active_worldwide_days_advances_status_without_creating_or_settling() 
                 BlockContext::empty_for_tests(block_number, timestamp, CHAIN_ID),
                 storage.clone(),
             );
-            let scope = ExecutionScope::new();
+            let scope = ExecutionScope::default();
             crate::commands::advance_active_worldwide_days(&ctx, &scope).unwrap();
         };
 
@@ -344,6 +344,7 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
         2,
     );
     outbe_fidelity::enclave_client::test_enclave::install();
+    outbe_tribute::enclave_client::test_enclave::install();
     let contract_addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
 
     StorageHandle::enter(&mut storage, |storage| {

@@ -2,15 +2,16 @@
 
 use std::time::Duration;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::U256;
 use cucumber::{given, then, when};
-use outbe_primitives::addresses::ORACLE_ADDRESS;
 
-use super::chain::{finalized_checkpoint, head_time, poll_until, verify_checkpoint};
+use super::chain::{finalized_checkpoint, poll_until, verify_checkpoint};
 use crate::env::environment;
 use crate::internal::eth;
 use crate::world::settlement_currency::{self, SettlementCurrency};
 use crate::world::World;
+
+mod pricing_window;
 
 alloy_sol_types::sol! {
     interface ISettlementTokenDecimals {
@@ -33,16 +34,6 @@ const DEPLOY_FUNDING_COEN: u64 = 100;
 /// A pricing window closes on a whole hour. The margin lands the committee inside the next one.
 const WINDOW_CLOSE_MARGIN_SECS: u64 = 60;
 const WINDOW_CLOSE_TIMEOUT: Duration = Duration::from_secs(300);
-/// The clock catch-up and at least ten feeder rounds outlast one window close on a loaded host.
-const COVERED_HOUR_TIMEOUT: Duration = Duration::from_secs(900);
-/// The trailing span a finalized pricing window averages over.
-const PRICE_WINDOW_SECS: u64 = 8 * 3_600;
-/// Snapshots the covered hour holds at least, per currency.
-const COVERED_HOUR_MIN_SNAPSHOTS: u64 = 10;
-/// Rounds the committee may still add before it stops, counted as uncovered.
-const COVERED_HOUR_TAIL_ROUNDS: u64 = 2;
-/// Snapshots the history read scans for one currency, newest first.
-const SNAPSHOT_HISTORY_SCAN: u32 = 1_024;
 
 /// Choose the scenario's markets before its genesis is written: a tagged scenario gets a
 /// COEN/MYR pair in genesis and on every feeder.
@@ -200,195 +191,38 @@ pub(crate) fn assert_currency_routes(world: &World, currency: SettlementCurrency
     );
 }
 
-/// Close a pricing window that only the running feeders voted in, and wait until it
-/// prices each of `currencies`.
-///
-/// A window counts every block it holds against its feeder coverage, and the blocks
-/// before the feeders started carry no vote. The committee first moves to a fresh hour
-/// past the window that still holds them, lets the feeders vote through most of that
-/// hour's rounds, then moves past it.
+/// Close a feeder-covered window and verify each currency on all validators.
 pub(crate) fn close_price_window(world: &mut World, currencies: &[u16]) {
-    let head = head_time(world);
-    // One spare hour keeps the blocks made while the committee stops out of the window too.
-    let covered_hour = head - head % 3_600 + 3_600 + PRICE_WINDOW_SECS;
-    cover_hour(world, covered_hour, currencies);
-    let target = covered_hour + 3_600 + WINDOW_CLOSE_MARGIN_SECS;
-    let (_, _, _, pending) =
-        crate::features::ocomp::restart_committee_at_logical_time(world, target);
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    let mut price_ready = pending.is_none();
-    poll_until(
-        WINDOW_CLOSE_TIMEOUT,
-        || format!("the closed pricing window never priced COEN in {currencies:?}"),
-        || {
-            // The committee has just restarted, so a head read may briefly fail.
-            let time_ready = world
-                .rpc
-                .latest_block_timestamp(port)
-                .is_some_and(|now| now >= target);
-            price_ready = price_ready
-                || pending.as_ref().is_some_and(|pending| {
-                    crate::features::price_oracle::observe_pending_publication(world, pending)
-                });
-            time_ready
-                && price_ready
-                && currencies.iter().all(|&currency| {
-                    window_vwap(&url, currency).is_some_and(|vwap| !vwap.is_zero())
-                })
-        },
-    );
-}
-
-/// Restart the committee inside `covered_hour` and wait until each of `currencies` has a
-/// snapshot in two thirds of the rounds, counted as the Oracle counts them for the hour
-/// and for the window.
-fn cover_hour(world: &mut World, covered_hour: u64, currencies: &[u16]) {
-    let (_, _, first_block, pending) = crate::features::ocomp::restart_committee_at_logical_time(
-        world,
-        covered_hour + WINDOW_CLOSE_MARGIN_SECS,
-    );
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    if let Some(pending) = &pending {
+    pricing_window::prepare_fresh_hour(world).expect("fresh feeder pricing hour");
+    for attempt in 0..3 {
+        let cutoff = pricing_window::wait_for_coverage(world, currencies)
+            .expect("pinned public pricing coverage observations");
+        let target = cutoff + WINDOW_CLOSE_MARGIN_SECS;
+        let (_, _, _, pending) =
+            crate::features::ocomp::restart_committee_at_logical_time(world, target);
+        let port = world.validators.primary_port();
+        let mut publication_ready = pending.is_none();
         poll_until(
             WINDOW_CLOSE_TIMEOUT,
-            || "the feeders never voted again after the committee moved".into(),
-            || crate::features::price_oracle::observe_pending_publication(world, pending),
+            || format!("pricing restart did not publish after cutoff {cutoff}"),
+            || {
+                publication_ready = publication_ready
+                    || pending.as_ref().is_some_and(|pending| {
+                        crate::features::price_oracle::observe_pending_publication(world, pending)
+                    });
+                world
+                    .rpc
+                    .latest_block_timestamp(port)
+                    .is_some_and(|time| time >= target)
+                    && publication_ready
+            },
         );
-    }
-    let vote_period = world
-        .rpc
-        .oracle_vote_period(port)
-        .expect("Oracle vote period")
-        .max(1);
-    // The chain closes the clock gap one hour per block, so the hour's blocks come later.
-    poll_until(
-        COVERED_HOUR_TIMEOUT,
-        || format!("the committee never reached the covered hour {covered_hour}"),
-        || {
-            world
-                .rpc
-                .latest_block_timestamp(port)
-                .is_some_and(|now| now >= covered_hour)
-        },
-    );
-    let window_start = covered_hour + 3_600 - PRICE_WINDOW_SECS;
-    let window_first = first_block_at(world, port, first_block, window_start);
-    let hour_first = first_block_at(world, port, window_first, covered_hour);
-    let observed = std::cell::RefCell::new(Vec::new());
-    poll_until(
-        COVERED_HOUR_TIMEOUT,
-        || {
-            format!(
-                "the feeders never voted in two thirds of the covered hour's rounds: {:?}",
-                observed.borrow()
-            )
-        },
-        || {
-            let Some(head) = eth::block_number(&url) else {
-                return false;
-            };
-            let end = head + COVERED_HOUR_TAIL_ROUNDS * vote_period;
-            let coverage = currencies
-                .iter()
-                .map(|&currency| {
-                    let snapshots = hour_snapshots(&url, currency, covered_hour);
-                    let covered = snapshots >= COVERED_HOUR_MIN_SNAPSHOTS
-                        && covers(snapshots, hour_first, end, vote_period)
-                        && covers(snapshots, window_first, end, vote_period);
-                    (currency, snapshots, covered)
-                })
-                .collect::<Vec<_>>();
-            let ready = coverage.iter().all(|(_, _, covered)| *covered);
-            *observed.borrow_mut() = coverage;
-            ready
-        },
-    );
-}
-
-/// The Oracle's coverage rule: snapshots in two thirds of the rounds between two blocks.
-fn covers(snapshots: u64, first_block: u64, end_block: u64, vote_period: u64) -> bool {
-    let possible = end_block.saturating_sub(first_block) / vote_period;
-    snapshots.saturating_mul(3) >= possible.saturating_mul(2)
-}
-
-/// The first block at or after `timestamp`, scanning up from `from`.
-fn first_block_at(world: &World, port: u16, from: u64, timestamp: u64) -> u64 {
-    let url = world.rpc.url(port);
-    let head = eth::block_number(&url).expect("committee head");
-    (from..=head)
-        .find(|&block| {
-            world
-                .rpc
-                .block_timestamp(port, block)
-                .is_some_and(|time| time >= timestamp)
-        })
-        .unwrap_or_else(|| panic!("no block reached {timestamp} by head {head}"))
-}
-
-/// COEN snapshots in `currency` the Oracle recorded during the hour from `hour`.
-fn hour_snapshots(url: &str, currency: u16, hour: u64) -> u64 {
-    let history = eth::read_call(
-        url,
-        ORACLE_ADDRESS,
-        &eth::IOracle::getPriceSnapshotHistoryCall {
-            base: Address::ZERO,
-            quote: outbe_primitives::asset_type::currency_address(currency),
-            count: SNAPSHOT_HISTORY_SCAN,
-        },
-    )
-    .expect("Oracle snapshot history");
-    history
-        .timestamps
-        .iter()
-        .filter(|&&time| (hour..hour + 3_600).contains(&time))
-        .count() as u64
-}
-
-/// The finalized pricing-window VWAP of COEN in `currency` at the current snapshot.
-pub(crate) fn window_vwap(url: &str, currency: u16) -> Option<U256> {
-    let snapshot = eth::read_call(url, ORACLE_ADDRESS, &eth::IOracle::getVwapSnapshotIdCall {})?;
-    eth::read_call(
-        url,
-        ORACLE_ADDRESS,
-        &eth::IOracle::getFinalizedWindowVwapCall {
-            currency,
-            snapshotId: snapshot,
-        },
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::covers;
-
-    /// Feeders publish, skip rounds, then recover: the hour stays open until the
-    /// snapshots catch up with the rounds again.
-    #[test]
-    fn a_skipped_stretch_holds_the_hour_until_the_feeders_recover() {
-        let (first, vote_period) = (100, 4);
-        let mut snapshots = 0;
-        let mut head = first;
-        let mut decisions = Vec::new();
-        for voted in [true; 10].into_iter().chain([false; 10]).chain([true; 30]) {
-            head += vote_period;
-            snapshots += u64::from(voted);
-            decisions.push(covers(snapshots, first, head, vote_period));
+        if pricing_window::closed_window_is_priced(world, currencies)
+            .expect("closed production Oracle prices")
+        {
+            return;
         }
-        assert!(decisions[..10].iter().all(|covered| *covered));
-        assert!(!decisions[19]);
-        assert!(decisions[49]);
-        let first_recovered = decisions[20..].iter().position(|covered| *covered).unwrap();
-        assert!(
-            first_recovered > 0,
-            "one recovered round cannot repay the skipped stretch"
-        );
+        eprintln!("pricing_window evidence=insufficient_closed_coverage cutoff={cutoff} attempt={attempt}");
     }
-
-    #[test]
-    fn the_rule_matches_the_oracle_threshold() {
-        assert!(covers(2, 0, 12, 4));
-        assert!(!covers(1, 0, 12, 4));
-    }
+    panic!("three closed pricing windows failed coverage for {currencies:?}");
 }

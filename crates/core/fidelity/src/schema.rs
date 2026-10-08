@@ -7,11 +7,12 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///
 /// The per-owner cohort ledger (the Gratis movement history) is **ciphertext at
 /// rest**: the enclave is the only party that decrypts it. Cohorts are stored as
-/// one AEAD blob per owner: `version(8, big-endian) || ciphertext`. This is the
-/// same self-versioning shape Gratis uses for balances. The version feeds the
-/// deterministic nonce, so an overwrite never reuses a `(key, nonce)` pair.
-/// RCFI/league are never computed on-chain from this blob. The enclave produces
-/// them (cohort ops, the per-WWD league snapshot, and signed queries).
+/// one AEAD blob per owner (`version(8) || FID2 || keyed binding(32) || ciphertext`).
+/// The binding commits to the exact predecessor and padded cohort state under
+/// the account view key. Independent derived AEAD keys separate divergent writes
+/// from the same predecessor; an identical retry returns identical ciphertext.
+/// RCFI/league are never computed on-chain from this blob; they are produced by
+/// the enclave (cohort ops, the per-WWD league snapshot, and signed queries).
 ///
 /// The only plaintext scalar is `first_qualified_start`: the earliest
 /// `qualified_start` across all accounts. It anchors the synthetic-max RCFI
@@ -21,8 +22,8 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 /// chain-wide minimum.
 #[contract(addr = FIDELITY_ADDRESS)]
 pub struct FidelityContract {
-    // slot 0: encrypted per-owner cohort ledger blob (`version(8) || AEAD-ct`).
-    // Empty when the owner has no cohort history.
+    // slot 0: encrypted per-owner cohort ledger blob (`version(8) || FID2 || binding(32) || AEAD-ct`);
+    // empty when the owner has no cohort history.
     pub cohorts_ct: Mapping<Address, StorageBytes>,
     // slot 1: earliest qualified_start across all accounts. 0 = none qualified.
     pub first_qualified_start: Slot<u64>,

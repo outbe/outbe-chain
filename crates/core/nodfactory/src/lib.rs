@@ -1,10 +1,9 @@
 //! NodFactory precompile crate.
 //!
-//! Owns Nod issuance through certified generation installation and proof-backed materialization.
-//! It also owns the user-triggered `settleNod` and `mineGratis` ABI methods. Persistent Nod
-//! entity state lives in the Nod entity store at
-//! [`outbe_primitives::addresses::NOD_ADDRESS`]. NodFactory carries no storage
-//! of its own.
+//! Owns encrypted Nod materialization and
+//! the user-triggered `settleNod` and `mineGratis` ABI methods. Persistent Nod entity state
+//! lives in the Nod entity store at [`outbe_primitives::addresses::NOD_ADDRESS`];
+//! NodFactory carries no storage of its own.
 
 pub mod api;
 pub mod certified;
@@ -17,3 +16,6 @@ pub mod sol_ext;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_support;

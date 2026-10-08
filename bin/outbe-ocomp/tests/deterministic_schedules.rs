@@ -26,7 +26,7 @@ use outbe_ocomp::{
     },
     input_ref_catalog::VerifiedInputChunkRefCatalog,
     lysis_finalization::finalize_verified_lysis_v1,
-    lysis_plan_audit::{ExactLysisPlanError, LocalLysisPlanAuditV1, LysisPlanAuditStepV1},
+    lysis_plan_audit::{ExactLysisPlanError, LysisPlanAuditStepV1},
     lysis_result_catalog::{ExactLysisResultCatalogCursorV1, LysisResultCatalogStepV1},
     lysis_scheduler::admit_reported_lysis_unit_v1,
     supervisor::DiscoveryRecord,
@@ -203,9 +203,13 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
     let cas = FilesystemCas::open(&cas_root, CasWriterRole::Supervisor, CAS_LIMITS)
         .expect("open deterministic CAS");
     let published = publish_input_artifact_set(
-        &cas,
+        outbe_ocomp::input_artifacts::InputArtifactContext {
+            cas: &cas,
+            bundle: &bundle,
+            limits,
+            list_limits,
+        },
         &input_ref_root,
-        &bundle,
         InputArtifactContents {
             identity: InputArtifactIdentity {
                 job_id,
@@ -228,8 +232,6 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
             fidelity_openings,
             oracle_opening: oracle_opening.expect("one deterministic Oracle opening"),
         },
-        &limits,
-        list_limits,
     )
     .expect("publish deterministic input artifacts");
     let manifest = InputManifestV1::decode_canonical(
@@ -338,7 +340,7 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
 
     while completed.iter().any(|done| !done) {
         let mut ready = {
-            let audit = LocalLysisPlanAuditV1::open(
+            let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
                 &admissions,
                 &input_refs,
                 &reader,
@@ -488,7 +490,7 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
             completed[ordinal as usize] = true;
 
             if !missing_shard_exercised {
-                let incomplete = LocalLysisPlanAuditV1::open(
+                let incomplete = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
                     &admissions,
                     &input_refs,
                     &reader,
@@ -531,9 +533,14 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
         limits,
     )
     .expect("restart journal-before-finalize admissions");
-    let audit =
-        LocalLysisPlanAuditV1::open(&admissions, &input_refs, &reader, &pinned_bundle, &limits)
-            .expect("cold-open complete deterministic audit");
+    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
+        &admissions,
+        &input_refs,
+        &reader,
+        &pinned_bundle,
+        &limits,
+    )
+    .expect("cold-open complete deterministic audit");
     let summary_bytes = audit
         .audit_cursor()
         .expect("open complete deterministic audit cursor")

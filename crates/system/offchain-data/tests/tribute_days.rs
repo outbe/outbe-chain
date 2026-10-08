@@ -6,7 +6,7 @@ use outbe_compressed_entities::{
     body_commitment, derive_poseidon_entity_id, encode_tribute_v1, ACTIVE_COMMITMENT_SCHEME,
     BODY_SCHEMA_V1,
 };
-use outbe_nod::{NodContract, NodItemState, NodRepositoryWriter};
+use outbe_nod::NodItemState;
 use outbe_offchain_data::{
     DayDatabaseRoute, FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection,
     ProjectionConfig, ProjectionError, TributeRetentionSelector, PROJECTION_STATE_KEY,
@@ -41,7 +41,7 @@ fn open() -> Store {
 }
 
 fn projection(store: &Store, start: u64) -> OffchainDataProjection {
-    let mut projection = OffchainDataProjection::open(
+    let mut projection = outbe_offchain_data::open_projection(
         ProjectionConfig {
             chain_id: 91,
             genesis_hash: B256::repeat_byte(0x91),
@@ -62,7 +62,7 @@ fn projection(store: &Store, start: u64) -> OffchainDataProjection {
 }
 
 fn projection_with_pin(store: &Store, pin: RetainedTributePin) -> OffchainDataProjection {
-    let mut projection = OffchainDataProjection::open_with_retention_selector(
+    let mut projection = outbe_offchain_data::open_projection_with_retention_selector(
         ProjectionConfig {
             chain_id: 91,
             genesis_hash: B256::repeat_byte(0x91),
@@ -164,18 +164,21 @@ fn block(number: u64, logs: Vec<FinalizedLog>) -> FinalizedBlock {
 fn nod(owner: Address, day: u32) -> NodItemState {
     let worldwide_day = WorldwideDay::new(day);
     let entry = U256::from(13u64);
-    NodItemState {
-        is_settled: false,
-        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
-        owner,
-        gratis_load_minor: U256::from(11u64),
-        worldwide_day,
-        league_id: 4,
-        bucket_key: NodContract::bucket_key(worldwide_day, entry, 840),
-        issuance_currency: 840,
-        reference_currency: 840,
-        issued_at: 1_752_534_000,
-    }
+    outbe_nod::test_support::item(
+        outbe_nod::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day).unwrap(),
+            owner,
+            gratis_load_minor: U256::from(11u64),
+            worldwide_day,
+            league_id: 4,
+            bucket_key: outbe_nod::identity::bucket_key(worldwide_day, entry, 840),
+            issuance_currency: 840,
+            reference_currency: 840,
+            issued_at: 1_752_534_000,
+        },
+        U256::from(5),
+    )
 }
 
 #[test]
@@ -187,13 +190,10 @@ fn retirement_drops_tribute_day_and_keeps_nod_day() {
     projection
         .project_block(&block(5, vec![stored_log(&body)]))
         .unwrap();
-    NodRepositoryWriter::with_days(
-        store.shared.clone(),
-        store.shared.clone(),
-        store.databases.clone(),
-    )
-    .put_nod(&nod(owner, 7))
-    .unwrap();
+    outbe_nod::nod_writer(store.shared.clone(), store.shared.clone())
+        .with_days(store.databases.clone())
+        .put_nod(&nod(owner, 7))
+        .unwrap();
 
     projection
         .project_block(&block(6, vec![retired_log(7, 0)]))
@@ -280,7 +280,7 @@ fn open_sweeps_drop_pending_directory() {
     write_tribute_day_mark(store.shared.as_ref(), 7, TributeDayMark::DropPending).unwrap();
     assert!(store.databases.directory().tribute_day_path(7).exists());
 
-    let mut restarted = OffchainDataProjection::open(
+    let mut restarted = outbe_offchain_data::open_projection(
         ProjectionConfig {
             chain_id: 91,
             genesis_hash: B256::repeat_byte(0x91),
@@ -411,7 +411,7 @@ fn certified_event_alone_does_not_drop() {
             sourceGeneration: 1,
             sealedCollectionRoot: B256::repeat_byte(0x45),
             consumedCount: 0,
-            consumedNominalTotalMinor: U256::ZERO,
+            consumedNominalTotalMinor: Vec::new().into(),
             retiredGeneration: 2,
             stateEventDigest: B256::repeat_byte(0x46),
         }

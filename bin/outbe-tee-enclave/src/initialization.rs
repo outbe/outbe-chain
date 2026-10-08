@@ -6,6 +6,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
+use rand_core::RngCore as _;
 
 use outbe_primitives::tee_attestation_v1::{
     AttestationMode, EnclaveInitializationManifestV1, RegistrationIntentV1,
@@ -13,12 +14,17 @@ use outbe_primitives::tee_attestation_v1::{
 };
 use outbe_primitives::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
-use rand_core::RngCore as _;
 
 use crate::keys::EnclaveKeys;
 use crate::seal::{EnclaveBootConfig, SealHeader, SEAL_FORMAT};
 
+pub mod factory;
+mod remote_session;
+pub use remote_session::RemoteSessionAuthorization;
+
 const MAX_PENDING_REMOTE_SESSIONS_V1: usize = 64;
+#[cfg(test)]
+pub(crate) mod test_support;
 #[cfg(not(feature = "mock"))]
 const TRUSTED_NETWORK_DESCRIPTOR_PATH: &str = "/opt/outbe/sgx/network-descriptor-v1.bin";
 
@@ -99,210 +105,6 @@ pub struct InitializationState {
 }
 
 impl InitializationState {
-    pub fn production(boot: Arc<EnclaveBootConfig>, keys: &EnclaveKeys) -> Result<Self, String> {
-        let mut challenge = [0u8; 32];
-        rand_core::OsRng.fill_bytes(&mut challenge);
-        if crate::transport::sealing_key().is_none() {
-            return Err("production initialization requires an SGX sealing key".to_string());
-        }
-        let attestation = crate::gramine::attestation_type();
-        #[cfg(all(not(feature = "mock"), feature = "production-dcap-release"))]
-        let trusted_network_descriptor = match &attestation {
-            crate::gramine::AttestationType::Dcap => Some(load_trusted_network_descriptor_v1()?),
-            other => {
-                return Err(format!(
-                    "production DCAP release refuses runtime attestation {}",
-                    other.label()
-                ));
-            }
-        };
-        #[cfg(all(not(feature = "mock"), not(feature = "production-dcap-release")))]
-        let trusted_network_descriptor = match &attestation {
-            crate::gramine::AttestationType::Dcap
-            | crate::gramine::AttestationType::SgxNoAttest => {
-                Some(load_trusted_network_descriptor_v1()?)
-            }
-            _ => None,
-        };
-        #[cfg(feature = "mock")]
-        let trusted_network_descriptor = None;
-        #[cfg(not(feature = "mock"))]
-        if let Some(descriptor) = trusted_network_descriptor.as_ref() {
-            let chain_id = u64::try_from(alloy_primitives::U256::from_be_bytes(
-                descriptor.network_binding.chain_id,
-            ))
-            .map_err(|_| "measured consensus chain id does not fit u64".to_owned())?;
-            outbe_consensus::config::init_consensus_chain_id(chain_id)
-                .map_err(|error| format!("bind measured consensus chain id: {error}"))?;
-        }
-        Self::production_with_challenge_and_attestation_inner(
-            boot,
-            keys,
-            challenge,
-            attestation,
-            trusted_network_descriptor,
-        )
-    }
-
-    /// Separate process-harness seam: production protocol, software sealing.
-    #[cfg(feature = "local-e2e")]
-    pub fn local_e2e(
-        boot: Arc<EnclaveBootConfig>,
-        keys: &EnclaveKeys,
-        descriptor: TrustedNetworkDescriptorV1,
-    ) -> Result<Self, String> {
-        if !crate::local_e2e::configured() {
-            return Err("E2E sealing is not configured".into());
-        }
-        let mut challenge = [0; 32];
-        rand_core::OsRng.fill_bytes(&mut challenge);
-        Self::production_with_challenge_and_attestation_inner(
-            boot,
-            keys,
-            challenge,
-            crate::gramine::AttestationType::SgxNoAttest,
-            Some(descriptor),
-        )
-    }
-
-    #[cfg(test)]
-    fn production_with_challenge(
-        boot: Arc<EnclaveBootConfig>,
-        keys: &EnclaveKeys,
-        challenge: [u8; 32],
-    ) -> Result<Self, String> {
-        Self::production_with_challenge_and_attestation_inner(
-            boot,
-            keys,
-            challenge,
-            crate::gramine::AttestationType::Dcap,
-            None,
-        )
-    }
-
-    fn production_with_challenge_and_attestation_inner(
-        boot: Arc<EnclaveBootConfig>,
-        keys: &EnclaveKeys,
-        challenge: [u8; 32],
-        attestation: crate::gramine::AttestationType,
-        trusted_network_descriptor: Option<TrustedNetworkDescriptorV1>,
-    ) -> Result<Self, String> {
-        if challenge == [0; 32] {
-            return Err("initialization challenge must be nonzero".to_string());
-        }
-        let restored = restore_manifest(&boot, keys)?;
-        let state = Self {
-            mode: InitializationMode::Production,
-            gramine_direct_dev_evidence_allowed: matches!(
-                &attestation,
-                crate::gramine::AttestationType::SgxNoAttest
-            ),
-            attestation,
-            challenge,
-            boot: Some(boot),
-            trusted_network_descriptor,
-            mock_network_binding: None,
-            stored: Mutex::new(restored.map(|manifest| StoredInitialization {
-                manifest,
-                loaded_from_seal: true,
-            })),
-            remote_sessions: Mutex::new(BTreeMap::new()),
-            remote_admission_generation: std::sync::atomic::AtomicU64::new(0),
-        };
-        if let Some(manifest) = state.manifest()? {
-            state.validate_network_binding(&manifest)?;
-        }
-        Ok(state)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn production_with_challenge_and_attestation(
-        boot: Arc<EnclaveBootConfig>,
-        keys: &EnclaveKeys,
-        challenge: [u8; 32],
-        attestation: crate::gramine::AttestationType,
-    ) -> Result<Self, String> {
-        Self::production_with_challenge_and_attestation_inner(
-            boot,
-            keys,
-            challenge,
-            attestation,
-            None,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn production_with_trusted_network_descriptor(
-        boot: Arc<EnclaveBootConfig>,
-        keys: &EnclaveKeys,
-        challenge: [u8; 32],
-        trusted_network_descriptor: TrustedNetworkDescriptorV1,
-    ) -> Result<Self, String> {
-        Self::production_with_challenge_and_attestation_inner(
-            boot,
-            keys,
-            challenge,
-            crate::gramine::AttestationType::Dcap,
-            Some(trusted_network_descriptor),
-        )
-    }
-
-    /// Hardware-free production-session state for cross-crate integration
-    /// tests. This seam is absent unless the enclave is built with `mock`.
-    #[cfg(feature = "mock")]
-    pub fn production_with_synthetic_dcap_for_test(
-        boot: Arc<EnclaveBootConfig>,
-        keys: &EnclaveKeys,
-    ) -> Result<Self, String> {
-        let mut challenge = [0_u8; 32];
-        rand_core::OsRng.fill_bytes(&mut challenge);
-        Self::production_with_challenge_and_attestation_inner(
-            boot,
-            keys,
-            challenge,
-            crate::gramine::AttestationType::Dcap,
-            None,
-        )
-    }
-
-    /// Separate dev/mock behavior. It never creates a production authorization
-    /// claim and is selected only by the required-feature mock binary or tests.
-    pub fn development() -> Self {
-        Self {
-            mode: InitializationMode::Development,
-            attestation: crate::gramine::AttestationType::Unavailable,
-            gramine_direct_dev_evidence_allowed: true,
-            challenge: [0xDD; 32],
-            boot: None,
-            trusted_network_descriptor: None,
-            mock_network_binding: None,
-            stored: Mutex::new(None),
-            remote_sessions: Mutex::new(BTreeMap::new()),
-            remote_admission_generation: std::sync::atomic::AtomicU64::new(0),
-        }
-    }
-
-    /// Hardware-free transport tests still exercise the exact network-bound DKG
-    /// protocol. This constructor exists only in mock builds and cannot create a
-    /// production authorization or sealed state.
-    #[cfg(feature = "mock")]
-    pub fn development_for_network(
-        network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
-    ) -> Self {
-        Self {
-            mode: InitializationMode::Development,
-            attestation: crate::gramine::AttestationType::Unavailable,
-            gramine_direct_dev_evidence_allowed: true,
-            challenge: [0xDD; 32],
-            boot: None,
-            trusted_network_descriptor: None,
-            mock_network_binding: Some(network_binding),
-            stored: Mutex::new(None),
-            remote_sessions: Mutex::new(BTreeMap::new()),
-            remote_admission_generation: std::sync::atomic::AtomicU64::new(0),
-        }
-    }
-
     pub fn mode(&self) -> InitializationMode {
         self.mode
     }
@@ -477,35 +279,17 @@ impl InitializationState {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn authorize_remote_session(
         &self,
-        ticket_id: B256,
-        initiator_static_x25519: [u8; 32],
-        responder_static_x25519: [u8; 32],
-        deadline: u64,
-        finalized_block_hash: B256,
+        authorization: RemoteSessionAuthorization,
         keys: &EnclaveKeys,
     ) -> Result<(), String> {
-        self.authorize_remote_session_at_generation(
-            ticket_id,
-            initiator_static_x25519,
-            responder_static_x25519,
-            deadline,
-            finalized_block_hash,
-            0,
-            keys,
-        )
+        self.authorize_remote_session_at_generation(authorization, 0, keys)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn authorize_remote_session_at_generation(
         &self,
-        ticket_id: B256,
-        initiator_static_x25519: [u8; 32],
-        responder_static_x25519: [u8; 32],
-        deadline: u64,
-        finalized_block_hash: B256,
+        authorization: RemoteSessionAuthorization,
         generation: u64,
         keys: &EnclaveKeys,
     ) -> Result<(), String> {
@@ -514,20 +298,15 @@ impl InitializationState {
                 "remote session authorization requires initialized production state".into(),
             );
         }
-        if ticket_id.is_zero()
-            || initiator_static_x25519 == [0; 32]
-            || responder_static_x25519 == [0; 32]
-            || finalized_block_hash.is_zero()
-        {
-            return Err("remote session authorization is malformed".into());
-        }
-        if responder_static_x25519 != keys.noise_public() {
-            return Err("remote session targets another Noise responder".into());
-        }
+        authorization.validate_responder(keys)?;
         let now = unix_time_seconds().map_err(str::to_owned)?;
-        if deadline <= now {
-            return Err("remote session authorization is expired".into());
-        }
+        authorization.ensure_live_at(now)?;
+        let RemoteSessionAuthorization {
+            ticket_id,
+            initiator_static_x25519,
+            deadline,
+            ..
+        } = authorization;
         let mut sessions = self
             .remote_sessions
             .lock()
@@ -744,7 +523,23 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
             CommandClass::KeylessOnboardingArtifact
         }
+        #[cfg(feature = "e2e-test")]
+        EnclaveRequest::CreateNodForTestV2 { .. } => CommandClass::Ready,
+        #[cfg(not(feature = "e2e-test"))]
+        EnclaveRequest::CreateNodForTestV2 { .. } => CommandClass::Never,
         EnclaveRequest::ProcessTributeOfferBatch { .. }
+        | EnclaveRequest::PrepareEncryptedNodsV2 { .. }
+        | EnclaveRequest::OpenEncryptedNodsV2 { .. }
+        | EnclaveRequest::MineEncryptedNodV2 { .. }
+        | EnclaveRequest::ReadNodAmountV2 { .. }
+        | EnclaveRequest::NodTransferChunkV2 { .. }
+        | EnclaveRequest::ExecuteNodTransferV2 { .. }
+        | EnclaveRequest::ReadNodTransferV2 { .. }
+        | EnclaveRequest::DiscardNodTransferV2 { .. }
+        | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }
+        | EnclaveRequest::ReadTributeAmountsV2 { .. }
+        | EnclaveRequest::ApplyTributeDayOpV2 { .. }
+        | EnclaveRequest::ReadTributeDayAmountV2 { .. }
         | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
@@ -903,7 +698,10 @@ fn restore_manifest(
         || keys
             .sealed_network_binding()
             .is_some_and(|binding| binding != manifest.network_binding())
-        || manifest.recipient_x25519 != keys.tribute_offer_public()
+    {
+        return Err("sealed node authorization does not match this enclave identity".to_string());
+    }
+    if manifest.recipient_x25519 != keys.tribute_offer_public()
         || manifest.attestation_ed25519 != keys.attestation_pub()
         || manifest.noise_responder_x25519 != keys.noise_public()
     {
@@ -991,7 +789,7 @@ mod tests {
             dcap_root.path().to_path_buf(),
             0,
         ));
-        let no_attest = InitializationState::production_with_challenge_and_attestation(
+        let no_attest = crate::initialization::factory::production_with_challenge_and_attestation(
             dcap_boot,
             &keys,
             [0x41; 32],
@@ -1011,7 +809,7 @@ mod tests {
 
         let mainnet_chain = U256::from(outbe_primitives::chain::MAINNET_CHAIN_ID).to_be_bytes();
         let mainnet_root = tempfile::tempdir().unwrap();
-        let mainnet = InitializationState::production_with_challenge_and_attestation(
+        let mainnet = crate::initialization::factory::production_with_challenge_and_attestation(
             Arc::new(EnclaveBootConfig::new(
                 mainnet_chain,
                 mainnet_root.path().to_path_buf(),
@@ -1052,7 +850,7 @@ mod tests {
             network_binding: manifest.network_binding(),
             genesis_consensus_keys: vec![[0x61; 48]],
         };
-        let state = InitializationState::production_with_trusted_network_descriptor(
+        let state = crate::initialization::factory::production_with_trusted_network_descriptor(
             boot,
             &keys,
             challenge,
@@ -1088,7 +886,7 @@ mod tests {
         ));
         let keys = EnclaveKeys::new([0x71; 32], Some([0x72; 32])).unwrap();
         let challenge = [0x73; 32];
-        let state = InitializationState::production_with_challenge_and_attestation(
+        let state = crate::initialization::factory::production_with_challenge_and_attestation(
             boot.clone(),
             &keys,
             challenge,
@@ -1122,8 +920,12 @@ mod tests {
         ));
         let keys = EnclaveKeys::new([7; 32], Some([1; 32])).unwrap();
         let challenge = [0x41; 32];
-        let state =
-            InitializationState::production_with_challenge(boot.clone(), &keys, challenge).unwrap();
+        let state = crate::initialization::factory::production_with_challenge(
+            boot.clone(),
+            &keys,
+            challenge,
+        )
+        .unwrap();
         let (manifest, signature) = signed_manifest(&keys, challenge);
         let pending = state
             .prepare(&manifest.encode_canonical().unwrap(), &signature, &keys)
@@ -1156,7 +958,8 @@ mod tests {
             .contains("already initialized"));
 
         let restored =
-            InitializationState::production_with_challenge(boot, &keys, [0x99; 32]).unwrap();
+            crate::initialization::factory::production_with_challenge(boot, &keys, [0x99; 32])
+                .unwrap();
         assert_eq!(restored.manifest().unwrap(), Some(manifest));
         assert!(matches!(
             restored.initialized_response().unwrap(),
@@ -1177,7 +980,8 @@ mod tests {
         ));
         let keys = EnclaveKeys::new([7; 32], Some([1; 32])).unwrap();
         let state =
-            InitializationState::production_with_challenge(boot, &keys, [0x41; 32]).unwrap();
+            crate::initialization::factory::production_with_challenge(boot, &keys, [0x41; 32])
+                .unwrap();
         let (mut manifest, _) = signed_manifest(&keys, [0x41; 32]);
         manifest.initialization_challenge[0] ^= 1;
         let (_, signature) = signed_manifest(&keys, [0x41; 32]);
@@ -1221,7 +1025,8 @@ mod tests {
         ));
         let keys = EnclaveKeys::new([7; 32], Some([1; 32])).unwrap();
         let state =
-            InitializationState::production_with_challenge(boot, &keys, [0x41; 32]).unwrap();
+            crate::initialization::factory::production_with_challenge(boot, &keys, [0x41; 32])
+                .unwrap();
         let (manifest, signature) = signed_manifest(&keys, [0x41; 32]);
         let pending = state
             .prepare(&manifest.encode_canonical().unwrap(), &signature, &keys)
@@ -1256,12 +1061,14 @@ mod tests {
             + 60;
         assert!(state
             .authorize_remote_session(
-                B256::repeat_byte(0x76),
-                [0x77; 32],
-                [0x78; 32],
-                deadline,
-                B256::repeat_byte(0x79),
-                &keys,
+                crate::initialization::RemoteSessionAuthorization {
+                    ticket_id: B256::repeat_byte(0x76),
+                    initiator_static_x25519: [0x77; 32],
+                    responder_static_x25519: [0x78; 32],
+                    deadline,
+                    finalized_block_hash: B256::repeat_byte(0x79)
+                },
+                &keys
             )
             .unwrap_err()
             .contains("targets another Noise responder"));
@@ -1269,23 +1076,27 @@ mod tests {
         for index in 0..MAX_PENDING_REMOTE_SESSIONS_V1 {
             state
                 .authorize_remote_session(
-                    B256::from([u8::try_from(index + 1).unwrap(); 32]),
-                    [0x77; 32],
-                    keys.noise_public(),
-                    deadline,
-                    B256::repeat_byte(0x79),
+                    crate::initialization::RemoteSessionAuthorization {
+                        ticket_id: B256::from([u8::try_from(index + 1).unwrap(); 32]),
+                        initiator_static_x25519: [0x77; 32],
+                        responder_static_x25519: keys.noise_public(),
+                        deadline,
+                        finalized_block_hash: B256::repeat_byte(0x79),
+                    },
                     &keys,
                 )
                 .unwrap();
         }
         assert!(state
             .authorize_remote_session(
-                B256::repeat_byte(0xF0),
-                [0x77; 32],
-                keys.noise_public(),
-                deadline,
-                B256::repeat_byte(0x79),
-                &keys,
+                crate::initialization::RemoteSessionAuthorization {
+                    ticket_id: B256::repeat_byte(0xF0),
+                    initiator_static_x25519: [0x77; 32],
+                    responder_static_x25519: keys.noise_public(),
+                    deadline,
+                    finalized_block_hash: B256::repeat_byte(0x79)
+                },
+                &keys
             )
             .unwrap_err()
             .contains("capacity reached"));
@@ -1301,7 +1112,8 @@ mod tests {
             0,
         ));
         let state =
-            InitializationState::production_with_challenge(boot, &keys, [0x41; 32]).unwrap();
+            crate::initialization::factory::production_with_challenge(boot, &keys, [0x41; 32])
+                .unwrap();
         let (manifest, signature) = signed_manifest(&keys, [0x41; 32]);
         let pending = state
             .prepare(&manifest.encode_canonical().unwrap(), &signature, &keys)
@@ -1312,11 +1124,13 @@ mod tests {
         for id in [ticket, pending_ticket] {
             state
                 .authorize_remote_session(
-                    id,
-                    [3; 32],
-                    keys.noise_public(),
-                    u64::MAX,
-                    B256::repeat_byte(4),
+                    crate::initialization::RemoteSessionAuthorization {
+                        ticket_id: id,
+                        initiator_static_x25519: [3; 32],
+                        responder_static_x25519: keys.noise_public(),
+                        deadline: u64::MAX,
+                        finalized_block_hash: B256::repeat_byte(4),
+                    },
                     &keys,
                 )
                 .unwrap();
@@ -1328,21 +1142,25 @@ mod tests {
         assert!(state.take_remote_session(pending_ticket).is_err());
         assert!(state
             .authorize_remote_session(
-                ticket,
-                [3; 32],
-                keys.noise_public(),
-                u64::MAX,
-                B256::repeat_byte(4),
+                crate::initialization::RemoteSessionAuthorization {
+                    ticket_id: ticket,
+                    initiator_static_x25519: [3; 32],
+                    responder_static_x25519: keys.noise_public(),
+                    deadline: u64::MAX,
+                    finalized_block_hash: B256::repeat_byte(4)
+                },
                 &keys
             )
             .is_err());
         state
             .authorize_remote_session_at_generation(
-                ticket,
-                [3; 32],
-                keys.noise_public(),
-                u64::MAX,
-                B256::repeat_byte(4),
+                crate::initialization::RemoteSessionAuthorization {
+                    ticket_id: ticket,
+                    initiator_static_x25519: [3; 32],
+                    responder_static_x25519: keys.noise_public(),
+                    deadline: u64::MAX,
+                    finalized_block_hash: B256::repeat_byte(4),
+                },
                 50,
                 &keys,
             )
@@ -1365,7 +1183,8 @@ mod tests {
         ));
         let keys = EnclaveKeys::new([7; 32], Some([1; 32])).unwrap();
         let state =
-            InitializationState::production_with_challenge(boot, &keys, [0x41; 32]).unwrap();
+            crate::initialization::factory::production_with_challenge(boot, &keys, [0x41; 32])
+                .unwrap();
         let (manifest, signature) = signed_manifest(&keys, [0x41; 32]);
         let pending = state
             .prepare(&manifest.encode_canonical().unwrap(), &signature, &keys)
@@ -1423,7 +1242,7 @@ mod tests {
         let replacement_root = tempfile::tempdir().unwrap();
         let first_keys = EnclaveKeys::new([7; 32], Some([1; 32])).unwrap();
         let replacement_keys = EnclaveKeys::new([8; 32], Some([2; 32])).unwrap();
-        let first_state = InitializationState::production_with_challenge(
+        let first_state = crate::initialization::factory::production_with_challenge(
             Arc::new(EnclaveBootConfig::new(
                 test_chain_id(),
                 first_root.path().to_path_buf(),
@@ -1433,7 +1252,7 @@ mod tests {
             [0x41; 32],
         )
         .unwrap();
-        let replacement_state = InitializationState::production_with_challenge(
+        let replacement_state = crate::initialization::factory::production_with_challenge(
             Arc::new(EnclaveBootConfig::new(
                 test_chain_id(),
                 replacement_root.path().to_path_buf(),
@@ -1490,23 +1309,13 @@ mod tests {
         ));
 
         let intent = RegistrationIntentV1 {
-            chain_id: replacement_manifest.chain_id,
-            genesis_hash: replacement_manifest.genesis_hash,
             operation: AttestationOperationV1::ReplaceEnclaveBinding,
-            attestation_mode: AttestationMode::DcapRequired,
-            policy_hash: B256::repeat_byte(0x21),
-            node_id: replacement_manifest.node_id.clone(),
-            enclave_id: replacement_manifest.enclave_id().unwrap(),
-            binding_id: B256::repeat_byte(0x44),
             binding_version: 2,
             registration_version: 1,
-            renewal_nonce: 0,
-            transition_nonce: 0,
-            requested_valid_until: 7_200,
-            recipient_x25519: replacement_manifest.recipient_x25519,
-            attestation_ed25519: replacement_manifest.attestation_ed25519,
-            noise_responder_x25519: replacement_manifest.noise_responder_x25519,
             node_host_authorization_hash: first_manifest.node_host_authorization_hash().unwrap(),
+            ..crate::initialization::test_support::registration_intent_for_manifest(
+                &replacement_manifest,
+            )
         };
         assert_eq!(
             replacement_state

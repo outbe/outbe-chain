@@ -11,6 +11,6 @@ pub fn fresh_environment(self_address: Address, spec: SpecId) -> SubCallEnvironm
         outer_is_static: false,
         spec,
         runtime_body_readers: None,
-        execution_scope: Arc::new(ExecutionScope::new()),
+        execution_scope: Arc::new(ExecutionScope::default()),
     }
 }

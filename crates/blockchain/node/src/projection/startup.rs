@@ -56,13 +56,15 @@ pub(super) fn prepare_projection_attempt(
         .ownership
         .preflight(|reader, writer| {
             match selector.as_ref() {
-                Some(selector) => OffchainDataProjection::open_with_retention_selector(
+                Some(selector) => outbe_offchain_data::open_projection_with_retention_selector(
                     projection_config,
                     reader,
                     writer.clone(),
                     Arc::clone(selector),
                 ),
-                None => OffchainDataProjection::open(projection_config, reader, writer.clone()),
+                None => {
+                    outbe_offchain_data::open_projection(projection_config, reader, writer.clone())
+                }
             }
             .map_err(PrepareProjectionError::Projection)?;
             writer
@@ -92,13 +94,17 @@ pub(super) fn open_logical_projection(
 > {
     let overlay = Arc::new(PendingOverlayStorage::new(durable_reader, durable_writer));
     let mut projector = match selector {
-        Some(selector) => OffchainDataProjection::open_with_retention_selector(
+        Some(selector) => outbe_offchain_data::open_projection_with_retention_selector(
             projection_config,
             overlay.clone(),
             overlay.clone(),
             selector,
         )?,
-        None => OffchainDataProjection::open(projection_config, overlay.clone(), overlay.clone())?,
+        None => outbe_offchain_data::open_projection(
+            projection_config,
+            overlay.clone(),
+            overlay.clone(),
+        )?,
     };
     projector.enable_partition_retirement();
     Ok((overlay, projector))

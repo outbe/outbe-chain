@@ -1,8 +1,8 @@
 //! Tribute commands.
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use eyre::Result;
 use outbe_primitives::time::WorldwideDay;
 use outbe_zk_canonical::{noir::L2_CIRCUITS_REGISTRY, L2CircuitVersion};
@@ -71,51 +71,60 @@ pub enum TributeCmd {
     /// Encrypts to the DKG-derived offer key registered in the TeeRegistry and
     /// sends `offerTribute`. Requires `--private-key` and the ZK offer inputs
     /// (`--zk-proof`, `--zk-merkle-root`, `--signature`).
-    Offer {
-        /// WorldwideDay (must be in OFFERING status), e.g. 20241220
-        worldwide_day: WorldwideDay,
-        /// Issuance amount in whole units (`amount_base`)
-        #[arg(long, default_value = "100", value_parser = canonical_amount_base)]
-        amount: String,
-        /// Six-decimal raw remainder (`amount_micro`, 0..999999)
-        #[arg(long, default_value = "0", value_parser = canonical_amount_micro)]
-        amount_micro: String,
-        /// ISO 4217 currency code (840 = USD)
-        #[arg(long, default_value_t = 840)]
-        currency: u16,
-        /// Exclude the resulting Tribute from Intex issuance
-        #[arg(long, default_value_t = false)]
-        exclude_from_intex_issuance: bool,
-        /// L2 zkMerkleRoot bytes (`0x`-hex).
-        #[arg(long)]
-        zk_merkle_root: String,
-        /// Combined Tribute proof bytes (`0x`-hex), including its four public
-        /// inputs. Verifies under the circuit version enabled for `--l2-chain-id`.
-        #[arg(long, value_parser = parse_zk_proof)]
-        zk_proof: Bytes,
-        /// Registered L2 chain id selecting the Tribute circuit. Required.
-        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
-        l2_chain_id: u32,
-        /// Circuit version. Defaults to the latest enabled version for the selected L2.
-        #[arg(
-            long,
-            required = false,
-            default_value_ifs = circuit_version_defaults(),
-            value_parser = clap::builder::NonEmptyStringValueParser::new(),
-        )]
-        circuit_version: String,
-        /// Exact 32-byte TributeDraft id (`0x`-hex) used to construct
-        /// `nft_hash` and `binding_hash`.
-        #[arg(long)]
-        tribute_draft_id: String,
-        /// Exact 32-byte SpendingUnit hash (`0x`-hex) included in the TributeDraft.
-        #[arg(long)]
-        su_hash: String,
-        /// BLS MinSig signature (compressed G1, 48 bytes, `0x`-hex) over `--zk-merkle-root`
-        /// produced with the network key registered in the L2Registry.
-        #[arg(long)]
-        signature: String,
-    },
+    Offer(Box<TributeOfferArgs>),
+}
+
+#[derive(Args)]
+pub struct TributeOfferArgs {
+    /// WorldwideDay (must be in OFFERING status), e.g. 20241220
+    worldwide_day: WorldwideDay,
+    /// Issuance amount in whole units (`amount_base`)
+    #[arg(long, default_value = "100", value_parser = canonical_amount_base)]
+    amount: String,
+    /// Six-decimal raw remainder (`amount_micro`, 0..999999)
+    #[arg(long, default_value = "0", value_parser = canonical_amount_micro)]
+    amount_micro: String,
+    /// ISO 4217 currency code (840 = USD)
+    #[arg(long, default_value_t = 840)]
+    currency: u16,
+    /// Exclude the resulting Tribute from Intex issuance
+    #[arg(long, default_value_t = false)]
+    exclude_from_intex_issuance: bool,
+    /// L2 zkMerkleRoot bytes (`0x`-hex).
+    #[arg(long)]
+    zk_merkle_root: String,
+    /// Combined Tribute proof bytes (`0x`-hex), including its four public
+    /// inputs. Verifies under the circuit version enabled for `--l2-chain-id`.
+    #[arg(long, value_parser = parse_zk_proof)]
+    zk_proof: Bytes,
+    /// Registered L2 chain id selecting the Tribute circuit. Required.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    l2_chain_id: u32,
+    /// Circuit version. Defaults to the latest enabled version for the selected L2.
+    #[arg(
+        long,
+        required = false,
+        default_value_ifs = circuit_version_defaults(),
+        value_parser = clap::builder::NonEmptyStringValueParser::new(),
+    )]
+    circuit_version: String,
+    /// Exact 32-byte TributeDraft id (`0x`-hex) used to construct
+    /// `nft_hash` and `binding_hash`.
+    #[arg(long)]
+    tribute_draft_id: String,
+    /// Exact 32-byte SpendingUnit hash (`0x`-hex) included in the TributeDraft.
+    #[arg(long)]
+    su_hash: String,
+    /// BLS MinSig signature (compressed G1, 48 bytes, `0x`-hex) over `--zk-merkle-root`
+    /// produced with the network key registered in the L2Registry.
+    #[arg(long)]
+    signature: String,
+    /// Tribute owner from the encrypted payload; defaults to the transaction signer.
+    #[arg(long)]
+    creator: Option<Address>,
+    /// Owner's 32-byte X25519 public key for local amount decryption.
+    #[arg(long)]
+    creator_public_key: B256,
 }
 
 impl TributeCmd {
@@ -127,38 +136,7 @@ impl TributeCmd {
             Self::ByDay { worldwide_day } => by_day(client, worldwide_day).await,
             Self::Supply => supply(client).await,
             Self::Owner { token_id } => owner(client, token_id).await,
-            Self::Offer {
-                worldwide_day,
-                amount,
-                amount_micro,
-                currency,
-                exclude_from_intex_issuance,
-                zk_merkle_root,
-                zk_proof,
-                l2_chain_id,
-                circuit_version,
-                tribute_draft_id,
-                su_hash,
-                signature,
-            } => {
-                offer(
-                    client,
-                    private_key,
-                    worldwide_day,
-                    amount,
-                    amount_micro,
-                    currency,
-                    exclude_from_intex_issuance,
-                    &zk_merkle_root,
-                    zk_proof,
-                    l2_chain_id,
-                    circuit_version,
-                    &tribute_draft_id,
-                    &su_hash,
-                    &signature,
-                )
-                .await
-            }
+            Self::Offer(args) => offer(client, private_key, *args).await,
         }
     }
 }
@@ -240,7 +218,7 @@ async fn day_totals(client: &(impl Rpc + Sync), worldwide_day: WorldwideDay) -> 
 
     println!("WorldwideDay:           {}", worldwide_day);
     println!("Tribute Count:          {}", ret.tributeCount);
-    println!("Nominal Amount Minor:   {}", ret.tributeNominalTotalMinor);
+    println!("Encrypted Nominal:      {}", ret.tributeNominalTotalMinor);
     println!("Sealed:                 {}", ret.isSealed);
     Ok(())
 }
@@ -292,25 +270,30 @@ async fn owner(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
 async fn offer(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
-    worldwide_day: WorldwideDay,
-    amount_base: String,
-    amount_micro: String,
-    currency: u16,
-    exclude_from_intex_issuance: bool,
-    zk_merkle_root: &str,
-    zk_proof: Bytes,
-    l2_chain_id: u32,
-    circuit_version: String,
-    tribute_draft_id: &str,
-    su_hash: &str,
-    signature: &str,
+    args: TributeOfferArgs,
 ) -> Result<()> {
+    let TributeOfferArgs {
+        worldwide_day,
+        amount: amount_base,
+        amount_micro,
+        currency,
+        exclude_from_intex_issuance,
+        zk_merkle_root,
+        zk_proof,
+        l2_chain_id,
+        circuit_version,
+        tribute_draft_id,
+        su_hash,
+        signature,
+        creator,
+        creator_public_key,
+    } = args;
     let signer = crate::commands::require_signer(private_key)?;
-    let creator = signer.address();
-    let zk_merkle_root = decode_hex_bytes(zk_merkle_root, "--zk-merkle-root")?;
-    let signature = decode_hex_bytes(signature, "--signature")?;
-    let tribute_draft_id = offer_hex32(tribute_draft_id, "--tribute-draft-id")?;
-    let su_hash = offer_hex32(su_hash, "--su-hash")?;
+    let creator = creator.unwrap_or_else(|| signer.address());
+    let zk_merkle_root = decode_hex_bytes(&zk_merkle_root, "--zk-merkle-root")?;
+    let signature = decode_hex_bytes(&signature, "--signature")?;
+    let tribute_draft_id = offer_hex32(&tribute_draft_id, "--tribute-draft-id")?;
+    let su_hash = offer_hex32(&su_hash, "--su-hash")?;
 
     // 1. Read the DKG-derived offer public key from the TeeRegistry (0xEE0A).
     let bootstrapped = {
@@ -347,6 +330,7 @@ async fn offer(
     // (it drives gem/intex qualification), not the pricing key.
     let payload = serde_json::json!({
         "creator": format!("{creator:?}"),
+        "creator_public_key": format!("{creator_public_key:#x}"),
         "tribute_draft_id": tribute_draft_id,
         "amount_base": amount_base,
         "amount_micro": amount_micro,
@@ -497,7 +481,7 @@ mod tests {
     fn tribute_mock() -> MockRpc {
         let owner = address!("0x1111111111111111111111111111111111111111");
         let token_uri = "data:application/json;utf8,{\"name\":\"Tribute 170\",\"attributes\":[{\"trait_type\":\"worldwide_day\",\"value\":20241220}]}".to_string();
-        let day_totals = (2u32, U256::from(500u64), true).into();
+        let day_totals = (2u32, Bytes::from(vec![0x53; 56]), true).into();
         let token_ids = vec![sample_token_id()];
 
         let mut map = HashMap::new();
@@ -547,7 +531,7 @@ mod tests {
 
         let result = fetch_day_totals(&mock, 20241220u32.into()).await.unwrap();
         assert_eq!(result.tributeCount, 2);
-        assert_eq!(result.tributeNominalTotalMinor, U256::from(500u64));
+        assert_eq!(result.tributeNominalTotalMinor, Bytes::from(vec![0x53; 56]));
         assert!(result.isSealed);
     }
 
@@ -581,8 +565,10 @@ mod tests {
         assert_eq!(offer_hex32(&value, "--su-hash").unwrap(), value);
     }
 
-    /// Required proof inputs, in `flag, value` pairs. The L2 is selected below.
-    const REQUIRED_OFFER_FLAGS: [&str; 10] = [
+    /// Required proof inputs, in `flag, value` pairs; the L2 is selected below.
+    const REQUIRED_OFFER_FLAGS: [&str; 12] = [
+        "--creator-public-key",
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
         "--zk-proof",
         "0x01",
         "--zk-merkle-root",
@@ -610,6 +596,7 @@ mod tests {
     #[test]
     fn offer_cli_requires_the_zk_offer_inputs() {
         for missing in [
+            "--creator-public-key",
             "--zk-proof",
             "--zk-merkle-root",
             "--signature",
@@ -643,14 +630,14 @@ mod tests {
             ),
         ] {
             let parsed = TributeHarness::try_parse_from(offer_argv(&extra)).unwrap();
-            let TributeCmd::Offer {
+            let TributeCmd::Offer(args) = parsed.command else {
+                panic!("expected offer command");
+            };
+            let TributeOfferArgs {
                 l2_chain_id,
                 circuit_version,
                 ..
-            } = parsed.command
-            else {
-                panic!("expected offer command");
-            };
+            } = *args;
             assert_eq!(l2_chain_id, expected_chain);
             assert_eq!(circuit_version, expected_version);
         }

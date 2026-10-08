@@ -375,10 +375,12 @@ where
                     }
                     LocalVoteEligibilityV1::Eligible if !job.vote_started => {
                         self.domain.spawn_validator_vote(
-                            job.record.clone(),
-                            job.generation,
-                            result_digest,
-                            canonical_result,
+                            outbe_ocomp::embedded_runtime::EmbeddedVoteRequestV1 {
+                                record: job.record.clone(),
+                                generation: job.generation,
+                                result_digest,
+                                canonical_result,
+                            },
                             Arc::clone(&job.cancelled),
                             self.vote_tx.clone(),
                         )?;

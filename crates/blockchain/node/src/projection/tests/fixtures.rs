@@ -29,7 +29,8 @@ pub(super) fn initialized_runtime(start_block: u64) -> Mutex<ProjectionRuntime> 
         start_block,
     };
     let projector =
-        OffchainDataProjection::open(projection_config, reader.clone(), writer.clone()).unwrap();
+        outbe_offchain_data::open_projection(projection_config, reader.clone(), writer.clone())
+            .unwrap();
     let (readiness_publisher, _readiness) = outbe_offchain_data::projection_readiness(
         outbe_offchain_data::ProjectionCheckpoint {
             block_number: 0,

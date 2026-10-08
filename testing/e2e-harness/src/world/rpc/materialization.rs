@@ -24,7 +24,7 @@ impl Rpc {
             .ok_or_else(|| eyre!("derive first capacity owner"))?
             .parse::<Address>()
             .wrap_err("parse first capacity owner")?;
-        let nod_id = outbe_nod::NodContract::generate_nod_id(
+        let nod_id = outbe_nod::identity::generate_nod_id(
             owner,
             WorldwideDay::new(generation.worldwide_day),
         )?;
@@ -208,13 +208,19 @@ impl Rpc {
             self.chain_id(port)
                 .ok_or_else(|| eyre!("read chain ID for mineGratis"))?,
         ));
+        let public = self
+            .tribute_network_public_key(port)
+            .ok_or_else(|| eyre!("network encryption public key"))?;
+        let gratis_load = crate::internal::nod_keys::decrypt_with_public(&body, &public);
         let mac = outbe_tee_enclave::gratis::modify_mac(
             &modify_key,
-            owner,
-            outbe_tee::protocol::GratisOp::Mint,
-            body.gratisLoadMinor,
-            op_nonce,
-            chain_id,
+            &outbe_tee_enclave::gratis::ModifyOperation {
+                account: owner,
+                op: outbe_tee::protocol::GratisOp::Mint,
+                amount: gratis_load,
+                op_nonce,
+                chain_id,
+            },
         );
         let transaction_hash = eth::send_call(
             &self.url(port),

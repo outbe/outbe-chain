@@ -28,36 +28,39 @@ const NOW: u64 = 1_752_534_000;
 
 fn item(owner: Address) -> NodItemState {
     let worldwide_day = WorldwideDay::new(20_260_715);
-    NodItemState {
-        is_settled: false,
-        nod_id: NodContract::generate_nod_id(owner, worldwide_day).unwrap(),
-        owner,
-        gratis_load_minor: U256::from(11),
-        worldwide_day,
-        league_id: 4,
-        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(5), 978),
-        issuance_currency: 840,
-        reference_currency: 978,
-        // Midnight of the last UTC day closed at `NOW`, so a bucket issued in
-        // these fixtures can qualify on that day's VWAP.
-        issued_at: date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
-    }
+    crate::test_support::item(
+        crate::test_support::NodItemFixture {
+            is_settled: false,
+            nod_id: crate::identity::generate_nod_id(owner, worldwide_day).unwrap(),
+            owner,
+            gratis_load_minor: U256::from(11),
+            worldwide_day,
+            league_id: 4,
+            bucket_key: crate::identity::bucket_key(worldwide_day, U256::from(5), 978),
+            issuance_currency: 840,
+            reference_currency: 978,
+            // Midnight of the last UTC day closed at `NOW`, so a bucket issued in
+            // these fixtures can qualify on that day's VWAP.
+            issued_at: date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
+        },
+        U256::from(5),
+    )
 }
 
 #[test]
 fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
     assert_eq!(
-        NodContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        crate::pricing::price_to_bin(U256::from(1_000_000u64)).unwrap(),
         REAL_ID_SHIFT as u32
     );
 }
 
 #[test]
 fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let body = item(Address::repeat_byte(0x66));
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
@@ -78,8 +81,11 @@ fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
 fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
     let body = item(Address::repeat_byte(0x33));
     let encoded = body.nod_id.to_string();
-    assert_eq!(NodContract::parse_nod_id(&encoded).unwrap(), body.nod_id);
-    assert!(NodContract::parse_nod_id(&encoded[..62]).is_err());
+    assert_eq!(
+        crate::identity::parse_nod_id(&encoded).unwrap(),
+        body.nod_id
+    );
+    assert!(crate::identity::parse_nod_id(&encoded[..62]).is_err());
 
     // The ABI carries the identity as one word, so a wrong-width id is no
     // longer representable. The round trip through `uint256` is total. The old
@@ -91,12 +97,12 @@ fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
 
 #[test]
 fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let first = item(Address::repeat_byte(0x71));
     let second = item(Address::repeat_byte(0x72));
     let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
@@ -140,7 +146,7 @@ fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
         assert_eq!(nod.bucket_nod_count.read(&first.bucket_key).unwrap(), 1);
         assert_eq!(
             nod.bucket_nods
-                .read(&NodContract::bucket_nod_key(first.bucket_key, 0))
+                .read(&crate::index_keys::bucket_nod_key(first.bucket_key, 0))
                 .unwrap(),
             second.nod_id
         );
@@ -206,12 +212,12 @@ fn entry_price_openings_follow_the_schema() {
 
 #[test]
 fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let first = item(Address::repeat_byte(0x73));
     let second = item(Address::repeat_byte(0x74));
     let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
@@ -346,8 +352,8 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         next_nod_ordinal: 129,
         last_progress_height: 4_096,
     };
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let scope = ExecutionScope::new();
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -428,8 +434,8 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
 #[test]
 fn absent_certified_generation_has_an_explicit_public_abi_result() {
     let worldwide_day = WorldwideDay::new(20_260_727);
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let scope = ExecutionScope::new();
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
+    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -501,9 +507,10 @@ fn seed_bucket_issued(
     let entry = U256::from(5);
     let mut body = item(issuance.owner);
     body.reference_currency = issuance.reference_currency;
+    crate::test_support::set_terms(&mut body);
     body.issued_at = issuance.issued_at;
     body.bucket_key =
-        NodContract::bucket_key(body.worldwide_day, entry, issuance.reference_currency);
+        crate::identity::bucket_key(body.worldwide_day, entry, issuance.reference_currency);
     api::add_nod(storage, scope, parent, &body, entry).unwrap();
     WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
 }
@@ -536,9 +543,9 @@ fn is_qualified(
 /// A currency whose COEN pair was never registered qualifies nothing, without an error.
 #[test]
 fn an_unregistered_reference_pair_qualifies_nothing() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
@@ -554,9 +561,9 @@ fn an_unregistered_reference_pair_qualifies_nothing() {
 /// A registered pair without a daily VWAP qualifies nothing either.
 #[test]
 fn a_registered_reference_pair_with_no_daily_vwap_qualifies_nothing() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
@@ -577,9 +584,9 @@ fn a_registered_reference_pair_with_no_daily_vwap_qualifies_nothing() {
 /// One unpriced currency does not hold back another.
 #[test]
 fn a_priced_currency_still_qualifies_when_a_sibling_currency_is_unpriced() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
@@ -610,9 +617,9 @@ fn qualification_requires_a_finalized_day_above_the_floor_and_stays() {
         (6, false, 14, false), // Wait for Oracle finalization.
         (6, true, 1, true),    // A low live rate cannot prevent qualification.
     ] {
-        let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+        let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
         let mut provider = HashMapStorageProvider::new(1);
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         StorageHandle::enter(&mut provider, |storage| {
             seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
             begin_block(storage.clone(), &scope).unwrap();
@@ -678,9 +685,9 @@ fn the_issue_day_qualifies_only_for_a_nod_issued_at_midnight() {
     let closed = previous_date_key(timestamp_to_date_key(NOW));
     let midnight = date_key_to_utc_timestamp(closed);
     for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
-        let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+        let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
         let mut provider = HashMapStorageProvider::new(1);
-        let scope = ExecutionScope::new();
+        let scope = ExecutionScope::default();
         StorageHandle::enter(&mut provider, |storage| {
             seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
             begin_block(storage.clone(), &scope).unwrap();
@@ -721,9 +728,9 @@ fn a_delayed_issuance_does_not_qualify_on_pre_issuance_days() {
         previous_date_key(timestamp_to_date_key(NOW)) < first_full_day(issued_at),
         "the fixture must evaluate a day the bucket has not held in full"
     );
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
@@ -754,9 +761,9 @@ fn a_delayed_issuance_does_not_qualify_on_pre_issuance_days() {
 fn a_bucket_qualifies_on_its_first_full_day_after_skipping_earlier_closes() {
     let issued_at = NOW;
     let full = first_full_day(issued_at);
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
@@ -787,9 +794,9 @@ fn a_bucket_qualifies_on_its_first_full_day_after_skipping_earlier_closes() {
 /// A bucket in a currency without a priced pair is never qualified by another currency's rate.
 #[test]
 fn a_bucket_in_an_unlisted_currency_stays_unqualified_and_intact() {
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
+    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();

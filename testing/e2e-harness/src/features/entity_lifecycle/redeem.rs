@@ -110,11 +110,13 @@ fn authorization(
             let op = if mint { GratisOp::Mint } else { GratisOp::Burn };
             let mac = outbe_tee_enclave::gratis::modify_mac(
                 &keys.modify,
-                owner,
-                op,
-                amount,
-                nonce,
-                chain_id,
+                &outbe_tee_enclave::gratis::ModifyOperation {
+                    account: owner,
+                    op,
+                    amount,
+                    op_nonce: nonce,
+                    chain_id,
+                },
             );
             (B256::from(mac), nonce)
         }

@@ -258,6 +258,13 @@ pub fn settle_nod(
         .with_checkpoint(|| nod.record_nod_settled(scope, item, bucket))
 }
 
+/// Internal arithmetic boundary; public bodies and projections retain ciphertext.
+pub fn calculation_amount(item: &NodItemState) -> Result<U256> {
+    crate::enclave_client::read_amount(&item.encrypted).map_err(|error| {
+        outbe_primitives::error::PrecompileError::Fatal(format!("NOD amount read failed: {error}"))
+    })
+}
+
 #[cfg(test)]
 mod cost_tests {
     use super::settlement_cost_minor;
