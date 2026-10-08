@@ -38,27 +38,30 @@ struct GemExpiry<'storage> {
 }
 
 /// A called bucket's members are its unpaid gems: a settled one has left it.
-impl ExpiryHandler<U256> for GemExpiry<'_> {
+impl ExpiryHandler<B256> for GemExpiry<'_> {
     type Member = U256;
 
-    fn due(&mut self, entry: U256) -> Result<Due> {
-        Ok(match self.gem.called_bucket(entry)? {
-            Some(bucket) if self.gem.bucket_gem_count.read(&bucket)? != 0 => Due::Expire,
-            _ => Due::Drop,
-        })
+    fn due(&mut self, bucket: B256) -> Result<Due> {
+        let called = self.gem.bucket_called_at.read(&bucket)? != 0;
+        Ok(
+            match called && self.gem.bucket_gem_count.read(&bucket)? != 0 {
+                true => Due::Expire,
+                false => Due::Drop,
+            },
+        )
     }
 
-    fn member_count(&self, entry: U256) -> Result<u32> {
-        self.gem.bucket_gem_count.read(&entry_bucket(entry))
+    fn member_count(&self, bucket: B256) -> Result<u32> {
+        self.gem.bucket_gem_count.read(&bucket)
     }
 
-    fn member_at(&self, entry: U256, index: u32) -> Result<U256> {
+    fn member_at(&self, bucket: B256, index: u32) -> Result<U256> {
         self.gem
             .bucket_gems
-            .read(&GemContract::bucket_member_key(entry_bucket(entry), index))
+            .read(&GemContract::bucket_member_key(bucket, index))
     }
 
-    fn expire_member(&mut self, _entry: U256, gem_id: U256) -> Result<()> {
+    fn expire_member(&mut self, _bucket: B256, gem_id: U256) -> Result<()> {
         if !self.gem.forfeit(gem_id, self.now)? {
             return Err(GemError::InvalidState.into());
         }
@@ -66,16 +69,11 @@ impl ExpiryHandler<U256> for GemExpiry<'_> {
         Ok(())
     }
 
-    fn deferred(&mut self, entry: U256, retry_at: u64) -> Result<()> {
-        let bucket = entry_bucket(entry);
+    fn deferred(&mut self, bucket: B256, retry_at: u64) -> Result<()> {
         tracing::warn!(target: "outbe::gem", %bucket, retry_at, "expiry sweep: bucket deferred");
         self.gem.emit(ExpiryDeferred {
             bucketKey: bucket,
             retryAt: retry_at,
         })
     }
-}
-
-fn entry_bucket(entry: U256) -> B256 {
-    B256::from(entry.to_be_bytes::<32>())
 }

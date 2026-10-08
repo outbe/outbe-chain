@@ -169,31 +169,30 @@ pub struct GemContract {
     #[attribute(order = 5)]
     pub gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    // --- Retired per-gem call-price bins, superseded by the bucket bins; kept for the layout.
+    // --- Retired per-gem call-price bins, kept for the layout the genesis seeder pins.
     #[attribute(order = 11)]
-    pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
+    pub retired_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
 
     #[attribute(order = 12)]
-    pub call_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub retired_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     #[attribute(order = 13)]
-    pub call_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub retired_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     #[attribute(order = 14)]
-    pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    pub retired_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     #[attribute(order = 15)]
-    pub call_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub retired_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     /// Currency the unfinished call sweep resumes at.
     #[attribute(order = 16)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     #[attribute(order = 17)]
-    pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
+    pub retired_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // --- Called buckets, and gems called before buckets, queued by the hour their notice
-    // period closes in. Price drives calling and only time drives expiry, so the two
+    // --- Called buckets, queued by the hour their notice period closes in. Price drives calling and only time drives expiry, so the two
     // stages stay separate.
     #[attribute(order = 20)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
@@ -201,12 +200,12 @@ pub struct GemContract {
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Queue entry -> `(hour << 32) | slot`. 0 = not queued.
+    /// Bucket key -> `(hour << 32) | slot`. 0 = not queued.
     #[attribute(order = 23)]
-    pub called_bucket_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
+    pub called_bucket_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     /// Held off the record so the head check costs no record load.
     #[attribute(order = 24)]
-    pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
+    pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     /// UTC day an unfinished call sweep is pinned to, so its later slices decide
     /// against the prices it opened with. 0 = none in flight. A date key is never 0.
@@ -227,10 +226,9 @@ pub struct GemContract {
     pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 29)]
     pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(hour_be32 ++ slot_be32)` -> queue entry: a called bucket's key, or a
-    /// gem id.
+    /// `keccak256(hour_be32 ++ slot_be32)` -> a called bucket's key.
     #[attribute(order = 30)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 31)]
     pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 32)]

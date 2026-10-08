@@ -1,4 +1,4 @@
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::address_pair::AddressPair;
@@ -876,8 +876,8 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
     with_storage(|storage| {
         let live = mature_gem(storage);
         let mut gem = GemContract::new(storage.clone());
-        // A slot pointing at a gem that is not there: forfeit errors every run.
-        let ghost = U256::from(0xdeadu64);
+        // A slot naming a bucket that is not there.
+        let ghost = B256::repeat_byte(0xde);
         let deadline = T_NOW + 7 * 86_400;
         gem.push_called(ghost, deadline).unwrap();
         call_gem(storage, live, T_NOW);
@@ -899,13 +899,13 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
     });
 }
 
-/// Same for a due entry whose gem is no longer Called: it burns nothing.
+/// Same for a due bucket that was never called: it burns nothing.
 #[test]
 fn a_due_entry_that_cannot_burn_credits_nothing() {
     with_storage(|storage| {
         let gem_id = mature_gem(storage);
         let mut gem = GemContract::new(storage.clone());
-        gem.push_called(gem_id, T_NOW).unwrap();
+        gem.push_called(bucket_of(storage, gem_id), T_NOW).unwrap();
 
         let ctx = block_ctx_at(
             storage,
@@ -948,7 +948,7 @@ fn a_settled_gem_is_never_forfeited() {
 
         assert!(!gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
         assert_eq!(unallocated(storage), U256::ZERO);
-        let entry = crate::state::bucket_entry(bucket);
+        let entry = bucket;
         assert_eq!(gem.called_bucket_slot.read(&entry).unwrap(), 0);
     });
 }
@@ -1256,7 +1256,7 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
         let deadline = T_NOW + 7 * 86_400;
         let bucket = GemContract::deadline_hour(deadline);
 
-        let entry = crate::state::bucket_entry(bucket_of(storage, gem_id));
+        let entry = bucket_of(storage, gem_id);
         gem.called_deadline
             .write(&entry, deadline + 400 * 86_400)
             .unwrap();
@@ -1507,7 +1507,7 @@ fn settling_one_gem_of_a_called_bucket_leaves_the_rest_called() {
         assert_eq!(settled.state, GemState::Settled as u8);
         assert_eq!(settled.called_at, T_NOW);
         assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
-        let entry = crate::state::bucket_entry(bucket_of(storage, gems[1]));
+        let entry = bucket_of(storage, gems[1]);
         assert_ne!(
             GemContract::new(storage.clone())
                 .called_bucket_slot

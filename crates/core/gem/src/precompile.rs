@@ -50,12 +50,12 @@ fn requeue_called_gem(
     deadline: u64,
 ) -> Result<()> {
     let mut gem = GemContract::new(storage);
-    let entry = crate::state::bucket_entry(gem.gem_bucket.read(&gem_id)?);
-    if gem.called_deadline.read(&entry)? == 0 {
+    let bucket = gem.gem_bucket.read(&gem_id)?;
+    if gem.called_deadline.read(&bucket)? == 0 {
         return Err(GemError::InvalidState.into());
     }
-    gem.remove_called(entry)?;
-    gem.push_called(entry, deadline)
+    gem.remove_called(bucket)?;
+    gem.push_called(bucket, deadline)
 }
 
 pub fn dispatch(

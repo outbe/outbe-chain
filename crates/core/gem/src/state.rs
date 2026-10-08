@@ -131,7 +131,6 @@ impl GemContract<'_> {
     pub(crate) fn burn(&mut self, item: &GemData) -> Result<()> {
         self.gem_items.delete(item.gem_id)?;
 
-        self.remove_called(item.gem_id)?;
         self.leave_bucket(item.gem_id)?;
 
         let idx = self.gem_index.read(&item.gem_id)?;
@@ -169,7 +168,6 @@ impl GemContract<'_> {
         }
         // Read through the bucket, so a called member keeps its `called_at` once settled.
         let mut item = self.get_gem(gem_id)?.ok_or(GemError::GemNotFound)?;
-        self.remove_called(gem_id)?;
         self.leave_bucket(gem_id)?;
         item.settled_at = self.storage.timestamp()?.to::<u64>();
         item.state = new_state as u8;
@@ -177,12 +175,12 @@ impl GemContract<'_> {
         self.emit(IGem::MetadataUpdate { _tokenId: gem_id })
     }
 
-    pub(crate) fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
-        expiry_queue::push(&ExpiryHours(self), gem_id, deadline)
+    pub(crate) fn push_called(&mut self, bucket: B256, deadline: u64) -> Result<()> {
+        expiry_queue::push(&ExpiryHours(self), bucket, deadline)
     }
 
-    pub(crate) fn remove_called(&mut self, gem_id: U256) -> Result<()> {
-        expiry_queue::remove(&ExpiryHours(self), gem_id)
+    pub(crate) fn remove_called(&mut self, bucket: B256) -> Result<()> {
+        expiry_queue::remove(&ExpiryHours(self), bucket)
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
@@ -197,7 +195,7 @@ impl GemContract<'_> {
     }
 
     #[cfg(test)]
-    pub(crate) fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<U256>> {
+    pub(crate) fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<B256>> {
         expiry_queue::entry_at(&ExpiryHours(self), day, slot)
     }
 
@@ -344,7 +342,7 @@ impl GemContract<'_> {
         self.remove_bucket_bin(bucket, terms)?;
         self.bucket_called_at.write(&bucket, now)?;
         let deadline = now + u64::from(terms.call_notice_period_seconds);
-        self.push_called(bucket_entry(bucket), deadline)?;
+        self.push_called(bucket, deadline)?;
         self.emit(IGem::GemBucketCalled {
             bucketKey: bucket,
             calledAt: now,
@@ -352,16 +350,10 @@ impl GemContract<'_> {
         })
     }
 
-    /// The called bucket that an expiry-queue entry stands for, while it is called.
-    pub(crate) fn called_bucket(&self, entry: U256) -> Result<Option<B256>> {
-        let bucket = B256::from(entry.to_be_bytes::<32>());
-        Ok((self.bucket_called_at.read(&bucket)? != 0).then_some(bucket))
-    }
-
     fn close_bucket(&mut self, bucket: B256) -> Result<()> {
         let terms = self.read_bucket_terms(bucket)?;
         self.remove_bucket_bin(bucket, &terms)?;
-        self.remove_called(bucket_entry(bucket))?;
+        self.remove_called(bucket)?;
         self.bucket_start_day.clear(&bucket)?;
         self.bucket_currency.clear(&bucket)?;
         self.bucket_call_price_minor.clear(&bucket)?;
@@ -398,10 +390,10 @@ impl GemContract<'_> {
     }
 }
 
-/// Called buckets and Called gems, queued by the hour their notice period closes in.
+/// Called buckets, queued by the hour their notice period closes in.
 pub(crate) struct ExpiryHours<'a, 'storage>(pub(crate) &'a GemContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(ExpiryHours<U256> {
+outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
@@ -427,11 +419,6 @@ outbe_primitives::impl_call_bins!(BucketBins<B256> {
     cursor: bucket_scan_cursor,
     failed: call_scan_failed_day,
 });
-
-/// A called bucket's entry in the expiry queue, which otherwise holds gem ids.
-pub(crate) fn bucket_entry(bucket: B256) -> U256 {
-    U256::from_be_bytes(bucket.0)
-}
 
 /// A broken on-chain index is the same on every node, so it reverts: the sweep then
 /// defers the entry instead of failing every block.
