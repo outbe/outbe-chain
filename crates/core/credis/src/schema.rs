@@ -235,7 +235,7 @@ pub struct CredisContract {
     #[attribute(order = 17)]
     pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 18)]
-    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     /// Lowest `call_threshold_seconds` of at least a day ever opened in a reference
     /// currency. With the widest window it bounds the call prices the scan visits.

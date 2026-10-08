@@ -52,7 +52,8 @@ pub trait ExpiryQueueStore<'storage>: BinTreeStorage {
     fn entry_slot(&self) -> &Map<'storage, Self::Entry, u64>;
     fn entry_deadline(&self) -> &Map<'storage, Self::Entry, u64>;
     fn sweep_bucket(&self) -> &Value<'storage, u32>;
-    fn sweep_cursor(&self) -> &Value<'storage, u32>;
+    /// [`pack_cursor`] of where the held walk resumes.
+    fn sweep_cursor(&self) -> &Value<'storage, u64>;
 }
 
 /// Hour since the epoch that a deadline falls in.
@@ -69,6 +70,16 @@ pub const fn pack_slot(bucket: u32, slot: u32) -> u64 {
 }
 
 pub const fn unpack_slot(packed: u64) -> (u32, u32) {
+    ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
+}
+
+/// The slot a held walk resumes at, and the member below which its entry resumes. Every
+/// member from that index up already failed in this pass. 0 means from the top.
+pub const fn pack_cursor(slot: u32, member: u32) -> u64 {
+    ((slot as u64) << 32) | member as u64
+}
+
+pub const fn unpack_cursor(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
 }
 
@@ -184,8 +195,8 @@ pub fn retire_bucket<'s, Q: ExpiryQueueStore<'s>>(queue: &Q, bucket: u32) -> Res
 enum Step {
     /// The walk moves to the next slot.
     Done,
-    /// The walk ends here and resumes at this slot.
-    Hold,
+    /// The walk ends here and resumes at this slot, below this member.
+    Hold(u32),
 }
 
 /// What a right makes of a due entry.
@@ -201,8 +212,9 @@ pub enum Due {
 
 /// A right's handling of its due entries. The queue owns the policy: each member
 /// expires in its own checkpoint, a failure classified as deterministic leaves the
-/// member in place and defers the entry, running out of gas resumes on the entry
-/// next block, and anything node-local fails the block.
+/// member in place and defers the entry once every member was tried, running out of
+/// budget or gas resumes on the entry next block below the members already tried,
+/// and anything node-local fails the block.
 pub trait ExpiryHandler<E> {
     type Member: Copy;
 
@@ -271,14 +283,14 @@ where
     /// Returns false when the bucket still needs another block's budget.
     fn bucket(&mut self, bucket: u32) -> Result<bool> {
         let len = self.queue.bucket_len().read(&bucket)?;
-        let slot = self.walk_slots(bucket, len)?;
+        let (slot, member) = self.walk_slots(bucket, len)?;
         // The last live entry left and retired the bucket, cursor included.
         if self.queue.bucket_live().read(&bucket)? == 0 {
             return Ok(true);
         }
         if slot < len {
             self.queue.sweep_bucket().write(bucket)?;
-            self.queue.sweep_cursor().write(slot)?;
+            self.queue.sweep_cursor().write(pack_cursor(slot, member))?;
             return Ok(false);
         }
         self.queue.sweep_bucket().write(0)?;
@@ -292,16 +304,17 @@ where
         Ok(true)
     }
 
-    /// Walks the bucket from its cursor. Returns the slot the walk stopped at.
-    fn walk_slots(&mut self, bucket: u32, len: u32) -> Result<u32> {
-        let mut slot = match self.queue.sweep_bucket().read()? == bucket {
-            true => self.queue.sweep_cursor().read()?.min(len),
-            false => 0,
+    /// Walks the bucket from its cursor. Returns the slot the walk stopped at, and the
+    /// member its entry resumes below.
+    fn walk_slots(&mut self, bucket: u32, len: u32) -> Result<(u32, u32)> {
+        let (mut slot, mut member) = match self.queue.sweep_bucket().read()? == bucket {
+            true => unpack_cursor(self.queue.sweep_cursor().read()?),
+            false => (0, 0),
         };
         while slot < len && self.budget.visit() {
-            match self.visit(bucket, slot)? {
+            match self.visit(bucket, slot, member)? {
                 None => slot += 1,
-                Some(Step::Hold) => break,
+                Some(Step::Hold(held)) => return Ok((slot, held)),
                 Some(Step::Done) => {
                     slot += 1;
                     if self.queue.bucket_live().read(&bucket)? == 0 {
@@ -309,21 +322,22 @@ where
                     }
                 }
             }
+            member = 0;
         }
-        Ok(slot)
+        Ok((slot, 0))
     }
 
     /// Expires the slot's entry if it is due. `None` means the slot was vacant or not due.
-    fn visit(&mut self, bucket: u32, slot: u32) -> Result<Option<Step>> {
+    fn visit(&mut self, bucket: u32, slot: u32, member: u32) -> Result<Option<Step>> {
         match entry_at(self.queue, bucket, slot)? {
             Some(entry) if self.now > self.queue.entry_deadline().read(&entry)? => {
-                self.expire(entry).map(Some)
+                self.expire(entry, member).map(Some)
             }
             _ => Ok(None),
         }
     }
 
-    fn expire(&mut self, entry: Q::Entry) -> Result<Step> {
+    fn expire(&mut self, entry: Q::Entry, resume: u32) -> Result<Step> {
         match self.handler.due(entry)? {
             Due::Expire => {}
             Due::Drop => {
@@ -336,12 +350,16 @@ where
             }
         }
         // From the last member down, so a member that swap-removes itself only moves
-        // one already tried.
-        let mut index = self.handler.member_count(entry)?;
-        let mut failed: u32 = 0;
+        // one already tried, and the members from `index` up are the ones that failed.
+        let count = self.handler.member_count(entry)?;
+        let mut index = match resume {
+            0 => count,
+            held => held.min(count),
+        };
+        let mut failed = count - index;
         while index > 0 {
             if !self.handler.charge(self.budget) {
-                return Ok(Step::Hold);
+                return Ok(Step::Hold(index));
             }
             index -= 1;
             let member = self.handler.member_at(entry, index)?;
@@ -351,7 +369,7 @@ where
                 .with_checkpoint(|| handler.expire_member(entry, member));
             match decide(outcome, |error| self.handler.classify(error))? {
                 Decided::Done(()) => {}
-                Decided::Stopped => return Ok(Step::Hold),
+                Decided::Stopped => return Ok(Step::Hold(index + 1)),
                 Decided::Skipped(error) => {
                     tracing::warn!(target: "outbe::expiry", error = ?error, "expiry sweep: member left for a later hour");
                     failed += 1;
@@ -434,7 +452,7 @@ macro_rules! impl_expiry_queue {
             fn sweep_bucket(&self) -> &$crate::storage::dsl::Value<'s, u32> {
                 &self.0.$sweep_bucket
             }
-            fn sweep_cursor(&self) -> &$crate::storage::dsl::Value<'s, u32> {
+            fn sweep_cursor(&self) -> &$crate::storage::dsl::Value<'s, u64> {
                 &self.0.$cursor
             }
         }
@@ -460,7 +478,7 @@ mod tests {
         slot: Map<'s, U256, u64>,
         deadline: Map<'s, U256, u64>,
         sweep_bucket: Value<'s, u32>,
-        cursor: Value<'s, u32>,
+        cursor: Value<'s, u64>,
     }
 
     impl<'s> Columns<'s> {
@@ -652,7 +670,7 @@ mod tests {
             );
             assert_eq!(handler.expired, vec![id(1), id(2)]);
             assert_eq!(queue.sweep_bucket().read().unwrap(), 10);
-            assert_eq!(queue.sweep_cursor().read().unwrap(), 2);
+            assert_eq!(queue.sweep_cursor().read().unwrap(), pack_cursor(2, 0));
 
             run(
                 queue,
@@ -678,7 +696,7 @@ mod tests {
             run(queue, storage, 12 * HOUR, &mut budget, &mut handler);
             assert_eq!(handler.expired, vec![id(1)]);
             assert_eq!(queue.sweep_bucket().read().unwrap(), 10);
-            assert_eq!(queue.sweep_cursor().read().unwrap(), 1);
+            assert_eq!(queue.sweep_cursor().read().unwrap(), pack_cursor(1, 1));
 
             handler.out_of_gas_on.clear();
             run(queue, storage, 12 * HOUR, &mut budget, &mut handler);
@@ -705,6 +723,93 @@ mod tests {
             assert_eq!(handler.deferred, vec![(id(1), 14 * HOUR)]);
             assert_eq!(first_bucket(queue).unwrap(), Some(13));
             assert_eq!(queue.entry_deadline().read(&id(1)).unwrap(), 10 * HOUR + 5);
+        });
+    }
+
+    /// One entry whose members swap-remove themselves as they expire, as a right's do.
+    struct Members {
+        members: Vec<u64>,
+        failing: Vec<u64>,
+        expired: Vec<u64>,
+        deferred: u32,
+    }
+
+    impl ExpiryHandler<U256> for Members {
+        type Member = u32;
+
+        fn due(&mut self, _entry: U256) -> Result<Due> {
+            Ok(match self.members.is_empty() {
+                true => Due::Drop,
+                false => Due::Expire,
+            })
+        }
+
+        fn member_count(&self, _entry: U256) -> Result<u32> {
+            Ok(self.members.len() as u32)
+        }
+
+        fn member_at(&self, _entry: U256, index: u32) -> Result<u32> {
+            Ok(index)
+        }
+
+        fn expire_member(&mut self, _entry: U256, index: u32) -> Result<()> {
+            let member = self.members[index as usize];
+            if self.failing.contains(&member) {
+                return Err(PrecompileError::Revert("refused".into()));
+            }
+            self.members.swap_remove(index as usize);
+            self.expired.push(member);
+            Ok(())
+        }
+
+        fn deferred(&mut self, _entry: U256, _retry_at: u64) -> Result<()> {
+            self.deferred += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn failed_members_wider_than_the_budget_are_tried_once_per_pass() {
+        with_queue(|queue, storage| {
+            push(queue, id(1), 10 * HOUR).unwrap();
+            let mut handler = Members {
+                members: (0..10).collect(),
+                failing: vec![7, 8, 9],
+                expired: Vec::new(),
+                deferred: 0,
+            };
+            for _ in 0..4 {
+                sweep(
+                    queue,
+                    storage,
+                    11 * HOUR,
+                    &mut SweepBudget::new(10, 2, 0),
+                    &mut handler,
+                )
+                .unwrap();
+            }
+            assert_eq!(
+                handler.expired.len(),
+                5,
+                "each block gets past the failed members"
+            );
+            assert_eq!(handler.deferred, 0);
+
+            sweep(
+                queue,
+                storage,
+                11 * HOUR,
+                &mut SweepBudget::new(10, 2, 0),
+                &mut handler,
+            )
+            .unwrap();
+            assert_eq!(handler.expired.len(), 7);
+            assert_eq!(
+                handler.deferred, 1,
+                "the pass ends and defers the failed members"
+            );
+            assert_eq!(first_bucket(queue).unwrap(), Some(12));
+            assert_eq!(queue.sweep_cursor().read().unwrap(), 0);
         });
     }
 

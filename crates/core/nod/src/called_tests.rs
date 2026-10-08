@@ -1258,6 +1258,45 @@ fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
     });
 }
 
+/// Failing members outnumber a block's forfeit budget. Each block still gets past them,
+/// and the pass ends by deferring the bucket rather than holding the queue on it.
+#[test]
+fn failing_members_over_the_forfeit_budget_do_not_hold_the_queue() {
+    harness(|storage, scope, parent| {
+        let specs: Vec<(u8, u64, bool)> = (0..SWEEP_BODY_WRITES_PER_BLOCK as u8 + 3)
+            .map(|n| (0x60 + n, 5 + u64::from(n), false))
+            .collect();
+        let (bucket_key, items) = arm_lapsed(storage, scope, parent, &specs);
+        let nod = NodContract::new(storage.clone());
+        // The top member slots name Nods with no body, each reverting on its own.
+        for index in 3..specs.len() as u32 {
+            let ghost = WwdEntityId::from_day_and_digest(
+                items[0].worldwide_day,
+                B256::repeat_byte(index as u8),
+            );
+            nod.bucket_nods
+                .write(&NodContract::bucket_nod_key(bucket_key, index), ghost)
+                .unwrap();
+        }
+
+        let past = START + 30 * DAY + NOTICE + HOUR;
+        let ctx = block_at(storage, past);
+        assert_eq!(
+            crate::called::sweep_expired(&ctx, scope, parent).unwrap(),
+            0
+        );
+        assert_eq!(
+            crate::called::sweep_expired(&ctx, scope, parent).unwrap(),
+            3
+        );
+        assert_eq!(reserve(storage), U256::from(5u64 + 6 + 7));
+        let (hour, _) = outbe_primitives::expiry_queue::unpack_slot(
+            nod.called_bucket_slot.read(&bucket_key).unwrap(),
+        );
+        assert_eq!(hour, outbe_primitives::expiry_queue::bucket_of(past) + 1);
+    });
+}
+
 #[test]
 fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfeits() {
     harness(|storage, scope, parent| {

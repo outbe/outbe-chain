@@ -234,7 +234,7 @@ pub struct GemContract {
     #[attribute(order = 31)]
     pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 32)]
-    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     /// Day a currency's window price failed to index, so the rest of that day's
     /// slices skip it instead of re-reading a window they cannot use.

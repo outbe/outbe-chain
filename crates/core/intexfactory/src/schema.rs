@@ -132,7 +132,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 40)]
     pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 41)]
-    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 42)]
     pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
     /// Where the parked-message sweep resumes: every index below it is sent or empty.

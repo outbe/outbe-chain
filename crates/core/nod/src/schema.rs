@@ -403,7 +403,7 @@ pub struct NodContract {
     #[attribute(order = 79)]
     pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 80)]
-    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     /// Lowest sealed `call_threshold_seconds` of at least a day per reference currency.
     /// With the widest window it bounds the call prices the scan visits.
