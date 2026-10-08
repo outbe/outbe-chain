@@ -2,18 +2,18 @@ use std::collections::BTreeSet;
 
 use alloy_primitives::B256;
 use outbe_oracle::api::get_all_reference_currencies;
-use outbe_oracle::call_sweep::{self, Decided};
+use outbe_oracle::call_sweep;
 use outbe_oracle::call_window::{CallWindow, CallWindows};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    call_bins::{self, Visit},
+    call_bins,
     call_breach::{BreachTerms, ScanTerms},
     error::Result,
     sweep_budget::SweepBudget,
     time::first_full_day,
 };
 
-use super::{materializing, sweep_failure};
+use super::{materializing, NodCallSweep};
 use crate::{api, precompile::INod, schema::NodContract, state::CallBins};
 
 /// One currency's call walk: its trailing VWAP window, and the highest bin a
@@ -24,43 +24,35 @@ pub(crate) struct CurrencyScan<'w> {
     pub(crate) ceiling: u32,
 }
 
-/// Returns the buckets called and whether every currency was walked.
-pub(super) fn call_arm(
+/// Walks every currency's bins up to its window's ceiling. Returns the buckets
+/// called and whether every currency was walked.
+pub(super) fn call_slice(
     ctx: &BlockRuntimeContext,
-    nod: &mut NodContract<'_>,
-    windows: &mut CallWindows,
-    budget: &mut SweepBudget,
+    nod: &NodContract<'_>,
+    pinned_day: u32,
     called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
-    let pinned_day = windows.last_day();
     let currencies = get_all_reference_currencies(ctx)?;
     let params = crate::config::read_from(nod, ctx.block.chain_id)?;
-    let cursor = NodContract::new(ctx.storage.clone());
+    let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
+    let mut budget = SweepBudget::per_block();
+    let mut caller = NodContract::new(ctx.storage.clone());
     let mut called: u32 = 0;
     let finished = call_bins::walk_currencies(
         &currencies,
-        &cursor.call_currency_cursor,
-        budget,
+        &nod.call_currency_cursor,
+        &mut budget,
         |iso_code, budget| {
-            if nod.call_scan_failed_day.read(&iso_code)? == pinned_day
-                || !call_bins::pending(&CallBins(nod, iso_code))?
-            {
-                return Ok(true);
-            }
-            let window = windows.window(&ctx.storage, iso_code, || {
-                scan_terms(nod, iso_code, &params)
-            })?;
             let skipped = || {
                 NodContract::new(ctx.storage.clone()).emit(INod::CallScanSkipped {
                     referenceCurrency: iso_code,
                     utcDay: pinned_day,
                 })
             };
-            let Some(ceiling) = call_sweep::ceiling_bin(
-                window,
-                &nod.call_scan_failed_day,
-                iso_code,
-                pinned_day,
+            let Some((window, ceiling)) = call_sweep::currency_ceiling(
+                &CallBins(nod, iso_code),
+                &mut windows,
+                || scan_terms(nod, iso_code, &params),
                 skipped,
             )?
             else {
@@ -71,7 +63,7 @@ pub(super) fn call_arm(
                 window,
                 ceiling,
             };
-            let (calls, finished) = call_currency(ctx, nod, scan, budget, called_days)?;
+            let (calls, finished) = call_currency(ctx, &mut caller, scan, budget, called_days)?;
             called = called.saturating_add(calls);
             Ok(finished)
         },
@@ -107,38 +99,36 @@ pub(crate) fn call_currency(
         window,
         ceiling,
     } = scan;
-    let now = ctx.block.timestamp;
     let index = NodContract::new(ctx.storage.clone());
     let mut called: u32 = 0;
     let finished = call_bins::walk(
         &CallBins(&index, iso_code),
         ceiling,
         budget,
-        |bucket_key, budget| match try_call(ctx, nod, window, bucket_key, now)? {
-            Some(true) => {
-                budget.write();
-                called = called.saturating_add(1);
+        |bucket_key, budget| {
+            call_sweep::call_entry::<NodCallSweep>(&ctx.storage, budget, bucket_key, || {
+                if !call_bucket(nod, window, bucket_key, ctx.block.timestamp)? {
+                    return Ok(0);
+                }
+                called += 1;
                 called_days.insert(nod.bucket_worldwide_day.read(&bucket_key)?.value());
-                Ok(Visit::Next)
-            }
-            Some(false) => Ok(Visit::Next),
-            None => Ok(Visit::Stop),
+                Ok(1)
+            })
         },
     )?;
     Ok((called, finished))
 }
 
-/// Whether the bucket was called, or `None` when the gas ran out before it.
-fn try_call(
-    ctx: &BlockRuntimeContext,
+/// Calls the bucket if the window breached its sealed terms. Returns whether it did.
+fn call_bucket(
     nod: &mut NodContract<'_>,
     window: &CallWindow,
     bucket_key: B256,
     now: u64,
-) -> Result<Option<bool>> {
+) -> Result<bool> {
     if nod.bucket_nod_count.read(&bucket_key)? == 0 || nod.bucket_called_at.read(&bucket_key)? != 0
     {
-        return Ok(Some(false));
+        return Ok(false);
     }
     let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
     let terms = nod.read_call_terms(bucket_key)?;
@@ -148,23 +138,11 @@ fn try_call(
         threshold_seconds: terms.call_threshold_seconds,
         start_day: first_full_day(issued_at),
     });
-    if !breached {
-        return Ok(Some(false));
+    if !breached || materializing(nod, bucket_key)? {
+        return Ok(false);
     }
-    if materializing(nod, bucket_key)? {
-        return Ok(Some(false));
-    }
-    let outcome = ctx
-        .storage
-        .with_checkpoint(|| mark_called(nod, bucket_key, now, terms.call_notice_period_seconds));
-    match call_sweep::decide(outcome, sweep_failure)? {
-        Decided::Done(()) => Ok(Some(true)),
-        Decided::Stopped => Ok(None),
-        Decided::Skipped(error) => {
-            tracing::warn!(target: "outbe::nod", %bucket_key, error = ?error, "call scan: skipping bucket");
-            Ok(Some(false))
-        }
-    }
+    mark_called(nod, bucket_key, now, terms.call_notice_period_seconds)?;
+    Ok(true)
 }
 
 /// Stamps the call and opens the settlement window the bucket sealed.

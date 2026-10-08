@@ -378,4 +378,5 @@ outbe_primitives::impl_call_bins!(CallBins<u64> {
     at: call_bin_groups,
     slot: call_group_slot,
     cursor: call_scan_cursor,
+    failed: call_scan_failed_day,
 });

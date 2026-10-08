@@ -81,6 +81,8 @@ pub trait CallBinStore<'storage>: BinTreeStorage {
     fn entry_slot(&self) -> &Map<'storage, Self::Entry, u64>;
     /// Currency -> [`pack_cursor`] of the walk in flight.
     fn scan_cursor(&self) -> &Map<'storage, u16, u64>;
+    /// Currency -> the pinned day its window price fit no bin.
+    fn failed_day(&self) -> &Map<'storage, u16, u32>;
 }
 
 fn corrupt(message: &str) -> PrecompileError {
@@ -273,7 +275,8 @@ macro_rules! impl_call_bins {
         count: $count:ident,
         at: $at:ident,
         slot: $slot:ident,
-        cursor: $cursor:ident $(,)?
+        cursor: $cursor:ident,
+        failed: $failed:ident $(,)?
     }) => {
         $crate::impl_bin_tree_storage!($adapter scoped by $crate::call_bins::scoped {
             root: $root,
@@ -297,6 +300,9 @@ macro_rules! impl_call_bins {
             }
             fn scan_cursor(&self) -> &$crate::storage::dsl::Map<'s, u16, u64> {
                 &self.0.$cursor
+            }
+            fn failed_day(&self) -> &$crate::storage::dsl::Map<'s, u16, u32> {
+                &self.0.$failed
             }
         }
     };

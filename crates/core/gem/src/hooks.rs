@@ -1,16 +1,12 @@
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use outbe_oracle::{
     api::get_all_reference_currencies,
-    call_sweep::{self, CallSweep, Decided, CALL_SWEEP},
+    call_sweep::{self, CallSweep, CALL_SWEEP},
     call_window::{CallWindow, CallWindows},
 };
 use outbe_primitives::{
-    block::BlockRuntimeContext,
-    call_bins::{self, Visit},
-    call_breach::ScanTerms,
-    daily_sweep::PinnedDay,
-    error::{PrecompileError, Result},
-    sweep_budget::SweepBudget,
+    block::BlockRuntimeContext, call_bins, call_breach::ScanTerms, daily_sweep::PinnedDay,
+    error::Result, storage::dsl::Value, sweep_budget::SweepBudget,
 };
 
 use crate::config::GemParams;
@@ -69,6 +65,11 @@ impl<'storage> GemCallSweep<'storage> {
 impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
     const CONSUMER: &'static str = "gem";
 
+    type Bins<'a>
+        = BucketBins<'a, 'storage>
+    where
+        Self: 'a;
+
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.gem.call_sweep_day,
@@ -76,21 +77,12 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
         }
     }
 
-    fn has_work(&self, ctx: &BlockRuntimeContext) -> Result<bool> {
-        for iso_code in get_all_reference_currencies(ctx)? {
-            if !self.gem.bucket_bin_tree_root.read(&iso_code)?.is_zero() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+    fn bins(&self, reference_currency: u16) -> BucketBins<'_, 'storage> {
+        BucketBins(&self.gem, reference_currency)
     }
 
-    fn reset_cursors(&self, ctx: &BlockRuntimeContext) -> Result<()> {
-        self.gem.call_currency_cursor.write(0)?;
-        for iso_code in get_all_reference_currencies(ctx)? {
-            self.gem.bucket_scan_cursor.write(&iso_code, 0)?;
-        }
-        Ok(())
+    fn currency_cursor(&self) -> &Value<'storage, u32> {
+        &self.gem.call_currency_cursor
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
@@ -103,21 +95,32 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
         let currencies = get_all_reference_currencies(ctx)?;
-        let mut slice = CallSlice {
-            ctx,
-            gem: GemContract::new(ctx.storage.clone()),
-            pinned_day,
-            params: crate::config::read_from(&self.gem, ctx.block.chain_id)?,
-            windows: CallWindows::new(pinned_day),
-        };
+        let params = crate::config::read_from(&self.gem, ctx.block.chain_id)?;
+        let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
         let mut budget = SweepBudget::per_block();
         let mut called: u32 = 0;
+        let gem = &self.gem;
         let finished = call_bins::walk_currencies(
             &currencies,
-            &self.gem.call_currency_cursor,
+            &gem.call_currency_cursor,
             &mut budget,
             |iso_code, budget| {
-                let (calls, finished) = slice.scan_currency(iso_code, budget)?;
+                let skipped = || {
+                    GemContract::new(ctx.storage.clone()).emit(CallScanSkipped {
+                        referenceCurrency: iso_code,
+                        utcDay: pinned_day,
+                    })
+                };
+                let Some((window, ceiling)) = call_sweep::currency_ceiling(
+                    &BucketBins(gem, iso_code),
+                    &mut windows,
+                    || scan_terms(gem, iso_code, &params),
+                    skipped,
+                )?
+                else {
+                    return Ok(true);
+                };
+                let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, budget)?;
                 called = called.saturating_add(calls);
                 Ok(finished)
             },
@@ -130,48 +133,6 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
             })?;
         }
         Ok((called, finished))
-    }
-}
-
-/// Prices pinned to one day's call sweep.
-struct CallSlice<'a, 'storage> {
-    ctx: &'a BlockRuntimeContext<'storage>,
-    gem: GemContract<'storage>,
-    pinned_day: u32,
-    params: GemParams,
-    windows: CallWindows,
-}
-
-impl CallSlice<'_, '_> {
-    fn scan_currency(&mut self, iso_code: u16, budget: &mut SweepBudget) -> Result<(u32, bool)> {
-        // A currency this day's pass could not price is settled for the day.
-        if self.gem.call_scan_failed_day.read(&iso_code)? == self.pinned_day {
-            return Ok((0, true));
-        }
-        if !call_bins::pending(&BucketBins(&self.gem, iso_code))? {
-            return Ok((0, true));
-        }
-        let (gem, params, ctx, pinned_day) = (&self.gem, &self.params, self.ctx, self.pinned_day);
-        let window = self
-            .windows
-            .window(&ctx.storage, iso_code, || scan_terms(gem, iso_code, params))?;
-        let skipped = || {
-            GemContract::new(ctx.storage.clone()).emit(CallScanSkipped {
-                referenceCurrency: iso_code,
-                utcDay: pinned_day,
-            })
-        };
-        let Some(ceiling) = call_sweep::ceiling_bin(
-            window,
-            &gem.call_scan_failed_day,
-            iso_code,
-            pinned_day,
-            skipped,
-        )?
-        else {
-            return Ok((0, true));
-        };
-        call_currency(ctx, iso_code, window, ceiling, budget)
     }
 }
 
@@ -202,36 +163,14 @@ pub(crate) fn call_currency(
         &BucketBins(&index, iso_code),
         ceiling,
         budget,
-        |bucket, budget| match call_bucket(ctx, &mut gem, window, bucket)? {
-            Some(true) => {
-                budget.write();
-                called = called.saturating_add(1);
-                Ok(Visit::Next)
-            }
-            Some(false) => Ok(Visit::Next),
-            None => Ok(Visit::Stop),
+        |bucket, budget| {
+            call_sweep::call_entry::<GemCallSweep>(&ctx.storage, budget, bucket, || {
+                let calls =
+                    u32::from(gem.trigger_bucket_call(window, bucket, ctx.block.timestamp)?);
+                called += calls;
+                Ok(calls)
+            })
         },
     )?;
     Ok((called, finished))
-}
-
-/// Whether the bucket was called, or `None` when the gas ran out before it. A
-/// deterministic failure rolls back only this bucket. A node-local one fails the block.
-fn call_bucket(
-    ctx: &BlockRuntimeContext,
-    gem: &mut GemContract<'_>,
-    window: &CallWindow,
-    bucket: B256,
-) -> Result<Option<bool>> {
-    let outcome = ctx
-        .storage
-        .with_checkpoint(|| gem.trigger_bucket_call(window, bucket, ctx.block.timestamp));
-    match call_sweep::decide(outcome, PrecompileError::sweep_failure)? {
-        Decided::Done(called) => Ok(Some(called)),
-        Decided::Stopped => Ok(None),
-        Decided::Skipped(error) => {
-            tracing::warn!(target: "outbe::gem", %bucket, error = ?error, "call scan: skipping bucket");
-            Ok(Some(false))
-        }
-    }
 }

@@ -425,6 +425,7 @@ outbe_primitives::impl_call_bins!(BucketBins<B256> {
     at: bucket_bin_at,
     slot: bucket_bin_slot,
     cursor: bucket_scan_cursor,
+    failed: call_scan_failed_day,
 });
 
 /// A called bucket's entry in the expiry queue, which otherwise holds gem ids.

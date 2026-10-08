@@ -26,19 +26,15 @@ mod forfeits;
 use std::collections::BTreeSet;
 
 use alloy_primitives::B256;
-use outbe_oracle::{
-    api::get_all_reference_currencies,
-    call_sweep::{self, CallSweep, CALL_SWEEP},
-    call_window::CallWindows,
-};
+use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     daily_sweep::PinnedDay,
     error::{PrecompileError, Result, SweepFailure},
-    sweep_budget::SweepBudget,
+    storage::dsl::Value,
 };
 
-use crate::{precompile::INod, schema::NodContract};
+use crate::{precompile::INod, schema::NodContract, state::CallBins};
 
 pub(crate) use forfeits::sweep_expired;
 
@@ -86,6 +82,11 @@ impl<'storage> NodCallSweep<'storage> {
 impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     const CONSUMER: &'static str = "nod";
 
+    type Bins<'a>
+        = CallBins<'a, 'storage>
+    where
+        Self: 'a;
+
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.nod.call_sweep_day,
@@ -93,21 +94,16 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
         }
     }
 
-    fn has_work(&self, ctx: &BlockRuntimeContext) -> Result<bool> {
-        for iso_code in get_all_reference_currencies(ctx)? {
-            if !self.nod.call_bin_tree_root.read(&iso_code)?.is_zero() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+    fn bins(&self, reference_currency: u16) -> CallBins<'_, 'storage> {
+        CallBins(&self.nod, reference_currency)
     }
 
-    fn reset_cursors(&self, ctx: &BlockRuntimeContext) -> Result<()> {
-        self.nod.call_currency_cursor.write(0)?;
-        for iso_code in get_all_reference_currencies(ctx)? {
-            self.nod.call_bin_cursor.write(&iso_code, 0)?;
-        }
-        Ok(())
+    fn currency_cursor(&self) -> &Value<'storage, u32> {
+        &self.nod.call_currency_cursor
+    }
+
+    fn classify(error: &PrecompileError) -> SweepFailure {
+        sweep_failure(error)
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
@@ -119,16 +115,8 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
-        let mut budget = SweepBudget::per_block();
         let mut called_days = BTreeSet::new();
-        let mut windows = CallWindows::new(pinned_day);
-        let (called, finished) = calls::call_arm(
-            ctx,
-            &mut self.nod,
-            &mut windows,
-            &mut budget,
-            &mut called_days,
-        )?;
+        let (called, finished) = calls::call_slice(ctx, &self.nod, pinned_day, &mut called_days)?;
         self.nod.emit_days_metadata_update(&called_days)?;
         Ok((called, finished))
     }

@@ -62,14 +62,16 @@ impl CallWindow {
 }
 
 /// The windows one slice reads, at most one per currency.
-pub struct CallWindows {
+pub struct CallWindows<'storage> {
+    storage: StorageHandle<'storage>,
     last_day: u32,
     cache: Vec<(u16, CallWindow)>,
 }
 
-impl CallWindows {
-    pub fn new(last_day: u32) -> Self {
+impl<'storage> CallWindows<'storage> {
+    pub fn new(storage: StorageHandle<'storage>, last_day: u32) -> Self {
         Self {
+            storage,
             last_day,
             cache: Vec::new(),
         }
@@ -82,7 +84,6 @@ impl CallWindows {
 
     pub fn window(
         &mut self,
-        storage: &StorageHandle<'_>,
         reference_currency: u16,
         terms: impl FnOnce() -> Result<ScanTerms>,
     ) -> Result<&CallWindow> {
@@ -94,7 +95,7 @@ impl CallWindows {
             Some(index) => index,
             None => {
                 let window =
-                    CallWindow::load(storage, reference_currency, self.last_day, terms()?)?;
+                    CallWindow::load(&self.storage, reference_currency, self.last_day, terms()?)?;
                 self.cache.push((reference_currency, window));
                 self.cache.len() - 1
             }

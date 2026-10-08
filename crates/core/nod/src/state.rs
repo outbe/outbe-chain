@@ -655,6 +655,7 @@ outbe_primitives::impl_call_bins!(CallBins<B256> {
     at: call_bin_buckets,
     slot: call_bucket_bin,
     cursor: call_bin_cursor,
+    failed: call_scan_failed_day,
 });
 
 /// Called buckets, queued by the hour their notice period closes in.

@@ -13,22 +13,21 @@
 //! every position anchored to it. Every run recomputes the count from oracle
 //! history and does not carry it. Mirrors the Gem, Intex and Nod call sweeps.
 
-use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 
 use outbe_credis::constants::{CALL_THRESHOLD, CALL_WINDOW};
 use outbe_credis::{CallBins, CredisContract, CredisState, Position};
 use outbe_oracle::api::get_all_reference_currencies;
-use outbe_oracle::call_sweep::{self, CallSweep, Decided, CALL_SWEEP};
+use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
 use outbe_oracle::call_window::{CallWindow, CallWindows};
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
-    call_bins::{self, Visit},
+    call_bins,
     call_breach::{BreachTerms, ScanTerms},
     daily_sweep::PinnedDay,
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
+    error::Result,
+    storage::{dsl::Value, StorageHandle},
     sweep_budget::SweepBudget,
     time::first_full_day,
 };
@@ -85,6 +84,11 @@ impl<'storage> CredisCallSweep<'storage> {
 impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
     const CONSUMER: &'static str = "credis";
 
+    type Bins<'a>
+        = CallBins<'a, 'storage>
+    where
+        Self: 'a;
+
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.factory.call_sweep_day,
@@ -92,21 +96,12 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
         }
     }
 
-    fn has_work(&self, ctx: &BlockRuntimeContext) -> Result<bool> {
-        for iso_code in get_all_reference_currencies(ctx)? {
-            if !self.credis.call_bin_tree_root.read(&iso_code)?.is_zero() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+    fn bins(&self, reference_currency: u16) -> CallBins<'_, 'storage> {
+        CallBins(&self.credis, reference_currency)
     }
 
-    fn reset_cursors(&self, ctx: &BlockRuntimeContext) -> Result<()> {
-        self.factory.call_currency_cursor.write(0)?;
-        for iso_code in get_all_reference_currencies(ctx)? {
-            self.credis.call_bin_cursor.write(&iso_code, 0)?;
-        }
-        Ok(())
+    fn currency_cursor(&self) -> &Value<'storage, u32> {
+        &self.factory.call_currency_cursor
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
@@ -122,109 +117,56 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
         let currencies = get_all_reference_currencies(ctx)?;
-        let mut slice = CallSlice {
-            ctx,
-            pinned_day,
-            index: CredisContract::new(ctx.storage.clone()),
-            credis: CredisContract::new(ctx.storage.clone()),
-            windows: CallWindows::new(pinned_day),
-            called: 0,
-        };
+        let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
         let mut budget = SweepBudget::per_block();
+        let mut caller = CredisContract::new(ctx.storage.clone());
+        let mut called: u32 = 0;
+        let index = &self.credis;
         let finished = call_bins::walk_currencies(
             &currencies,
             &self.factory.call_currency_cursor,
             &mut budget,
-            |iso_code, budget| slice.currency(iso_code, budget),
+            |iso_code, budget| {
+                let bins = CallBins(index, iso_code);
+                let skipped = || {
+                    emit(
+                        &ctx.storage,
+                        &CallScanSkipped {
+                            referenceCurrency: iso_code,
+                            utcDay: pinned_day,
+                        },
+                    )
+                };
+                let Some((window, ceiling)) = call_sweep::currency_ceiling(
+                    &bins,
+                    &mut windows,
+                    || scan_terms(index, iso_code),
+                    skipped,
+                )?
+                else {
+                    return Ok(true);
+                };
+                call_bins::walk(&bins, ceiling, budget, |position_id, budget| {
+                    call_sweep::call_entry::<Self>(&ctx.storage, budget, position_id, || {
+                        let position = caller.get_position(position_id)?;
+                        let calls = u32::from(call_if_breached(
+                            &mut caller,
+                            window,
+                            &position,
+                            ctx.block.timestamp,
+                        )?);
+                        called += calls;
+                        Ok(calls)
+                    })
+                })
+            },
         )?;
-        Ok((slice.called, finished))
+        Ok((called, finished))
     }
 }
 
 fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result<()> {
     storage.emit_event(CREDIS_FACTORY_ADDRESS, SolEvent::encode_log_data(event))
-}
-
-/// One block's slice of the pass.
-struct CallSlice<'a, 'storage> {
-    ctx: &'a BlockRuntimeContext<'storage>,
-    pinned_day: u32,
-    index: CredisContract<'storage>,
-    credis: CredisContract<'storage>,
-    windows: CallWindows,
-    called: u32,
-}
-
-impl CallSlice<'_, '_> {
-    /// Walks one currency's bins up to its window's ceiling. Returns whether it ended.
-    fn currency(&mut self, iso_code: u16, budget: &mut SweepBudget) -> Result<bool> {
-        let (ctx, pinned_day, index) = (self.ctx, self.pinned_day, &self.index);
-        if index.call_scan_failed_day.read(&iso_code)? == pinned_day
-            || !call_bins::pending(&CallBins(index, iso_code))?
-        {
-            return Ok(true);
-        }
-        let window = self
-            .windows
-            .window(&ctx.storage, iso_code, || scan_terms(index, iso_code))?;
-        let skipped = || {
-            emit(
-                &ctx.storage,
-                &CallScanSkipped {
-                    referenceCurrency: iso_code,
-                    utcDay: pinned_day,
-                },
-            )
-        };
-        let Some(ceiling) = call_sweep::ceiling_bin(
-            window,
-            &index.call_scan_failed_day,
-            iso_code,
-            pinned_day,
-            skipped,
-        )?
-        else {
-            return Ok(true);
-        };
-        let (credis, mutated) = (&mut self.credis, &mut self.called);
-        call_bins::walk(
-            &CallBins(index, iso_code),
-            ceiling,
-            budget,
-            |position_id, budget| match visit(ctx, credis, window, position_id)? {
-                Some(true) => {
-                    budget.write();
-                    *mutated = mutated.saturating_add(1);
-                    Ok(Visit::Next)
-                }
-                Some(false) => Ok(Visit::Next),
-                None => Ok(Visit::Stop),
-            },
-        )
-    }
-}
-
-/// Whether the position was called, or `None` when the gas ran out before it. A
-/// deterministic error is isolated to this position. A node-local error fails the block.
-fn visit(
-    ctx: &BlockRuntimeContext,
-    credis: &mut CredisContract<'_>,
-    window: &CallWindow,
-    position_id: U256,
-) -> Result<Option<bool>> {
-    let now = ctx.block.timestamp;
-    let outcome = ctx.storage.with_checkpoint(|| {
-        let position = credis.get_position(position_id)?;
-        call_if_breached(credis, window, &position, now)
-    });
-    match call_sweep::decide(outcome, PrecompileError::sweep_failure)? {
-        Decided::Done(called) => Ok(Some(called)),
-        Decided::Stopped => Ok(None),
-        Decided::Skipped(error) => {
-            tracing::warn!(target: "outbe::credisfactory", %position_id, error = ?error, "credis scan: skipping position");
-            Ok(Some(false))
-        }
-    }
 }
 
 /// Calls an Open position whose breach window filled. Returns whether it moved.

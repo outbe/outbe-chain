@@ -9,15 +9,15 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::api::get_all_reference_currencies;
-use outbe_oracle::call_sweep::{self, CallSweep, Decided, CALL_SWEEP};
-use outbe_oracle::call_window::CallWindows;
+use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
+use outbe_oracle::call_window::{CallWindow, CallWindows};
 use outbe_primitives::daily_sweep::PinnedDay;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins::{self, Visit},
-    error::{PrecompileError, Result, SweepFailure},
-    storage::StorageHandle,
+    error::{Result, SweepFailure},
+    storage::{dsl::Value, StorageHandle},
     sweep_budget::SweepBudget,
 };
 
@@ -64,6 +64,11 @@ impl<'storage> IntexCallSweep<'storage> {
 impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
     const CONSUMER: &'static str = "intexfactory";
 
+    type Bins<'a>
+        = CallBins<'a, 'storage>
+    where
+        Self: 'a;
+
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
             current: &self.factory.call_sweep_day,
@@ -71,21 +76,12 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
         }
     }
 
-    fn has_work(&self, ctx: &BlockRuntimeContext) -> Result<bool> {
-        for iso_code in get_all_reference_currencies(ctx)? {
-            if !self.factory.call_bin_tree_root.read(&iso_code)?.is_zero() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+    fn bins(&self, reference_currency: u16) -> CallBins<'_, 'storage> {
+        CallBins(&self.factory, reference_currency)
     }
 
-    fn reset_cursors(&self, ctx: &BlockRuntimeContext) -> Result<()> {
-        self.factory.call_currency_cursor.write(0)?;
-        for iso_code in get_all_reference_currencies(ctx)? {
-            self.factory.call_scan_cursor.write(&iso_code, 0)?;
-        }
-        Ok(())
+    fn currency_cursor(&self) -> &Value<'storage, u32> {
+        &self.factory.call_currency_cursor
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
@@ -102,21 +98,40 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
         let currencies = get_all_reference_currencies(ctx)?;
         let params = crate::config::read_from(&self.factory, ctx.block.chain_id)?;
-        let mut windows = CallWindows::new(pinned_day);
+        let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
         let mut budget = SweepBudget::per_block();
+        let index = &self.factory;
         let mut called: u32 = 0;
         let finished = call_bins::walk_currencies(
             &currencies,
-            &self.factory.call_currency_cursor,
+            &index.call_currency_cursor,
             &mut budget,
             |iso_code, budget| {
-                let scan = CurrencyScan {
-                    ctx,
-                    iso_code,
-                    pinned_day,
-                    params: &params,
+                let skipped = || {
+                    crate::runtime::emit_event(
+                        &ctx.storage,
+                        crate::precompile::IIntexFactory::CallScanSkipped {
+                            referenceCurrency: iso_code,
+                            utcDay: pinned_day,
+                        },
+                    )
                 };
-                let (calls, finished) = scan.walk(&mut windows, budget)?;
+                let Some((window, ceiling)) = call_sweep::currency_ceiling(
+                    &CallBins(index, iso_code),
+                    &mut windows,
+                    || {
+                        index.scan_call_terms(
+                            iso_code,
+                            params.call_window_seconds,
+                            params.call_threshold_seconds,
+                        )
+                    },
+                    skipped,
+                )?
+                else {
+                    return Ok(true);
+                };
+                let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, budget)?;
                 called = called.saturating_add(calls);
                 Ok(finished)
             },
@@ -125,93 +140,40 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
     }
 }
 
-/// One currency's walk of its call-price bins against the pinned day.
-struct CurrencyScan<'a, 'storage> {
-    ctx: &'a BlockRuntimeContext<'storage>,
+/// Walks one currency's bins up to `ceiling`, calling each breached group whole.
+/// Returns the series called and whether the eligible range was walked to the end.
+fn call_currency(
+    ctx: &BlockRuntimeContext,
     iso_code: u16,
-    pinned_day: u32,
-    params: &'a crate::config::IntexParams,
-}
-
-impl CurrencyScan<'_, '_> {
-    /// Returns the calls made and whether its eligible range was walked to the end.
-    fn walk(&self, windows: &mut CallWindows, budget: &mut SweepBudget) -> Result<(u32, bool)> {
-        let (ctx, iso_code, pinned_day) = (self.ctx, self.iso_code, self.pinned_day);
-        let index = IntexFactoryContract::new(ctx.storage.clone());
-        if index.call_scan_failed_day.read(&iso_code)? == pinned_day
-            || !call_bins::pending(&CallBins(&index, iso_code))?
-        {
-            return Ok((0, true));
-        }
-        // Use the widest terms ever issued here, not the live profile. A series keeps the
-        // terms it was issued with, and a narrowed profile must not hide it from the search.
-        let window = windows.window(&ctx.storage, iso_code, || {
-            index.scan_call_terms(
-                iso_code,
-                self.params.call_window_seconds,
-                self.params.call_threshold_seconds,
-            )
-        })?;
-        let skipped = || {
-            crate::runtime::emit_event(
-                &ctx.storage,
-                crate::precompile::IIntexFactory::CallScanSkipped {
-                    referenceCurrency: iso_code,
-                    utcDay: pinned_day,
-                },
-            )
-        };
-        let Some(ceiling) = call_sweep::ceiling_bin(
-            window,
-            &index.call_scan_failed_day,
-            iso_code,
-            pinned_day,
-            skipped,
-        )?
-        else {
-            return Ok((0, true));
-        };
-        let mut factory = IntexFactoryContract::new(ctx.storage.clone());
-        let mut called: u32 = 0;
-        let finished = call_bins::walk(
-            &CallBins(&index, iso_code),
-            ceiling,
-            budget,
-            |group, budget| {
-                let (_, worldwide_day) = IntexFactoryContract::unscoped(group);
-                let group = factory.call_bin_group(iso_code, worldwide_day)?;
-                if !budget.fits_writes(group.members.len() as u32) {
-                    return Ok(Visit::Stop);
-                }
-                // A deterministic failure rolls back the group's checkpoint and skips it.
-                // A node-local one fails the block.
-                let outcome = ctx.storage.with_checkpoint(|| {
-                    try_call_group(
-                        GroupCall {
-                            storage: &ctx.storage,
-                            factory: &mut factory,
-                        },
-                        &group,
-                        window,
-                        ctx.block.timestamp,
-                    )
-                });
-                match call_sweep::decide(outcome, PrecompileError::sweep_failure)? {
-                    Decided::Done(applied) => {
-                        budget.admit_writes(applied);
-                        called = called.saturating_add(applied);
-                        Ok(Visit::Next)
-                    }
-                    Decided::Stopped => Ok(Visit::Stop),
-                    Decided::Skipped(error) => {
-                        tracing::warn!(target: "outbe::intexfactory", iso_code, worldwide_day = %worldwide_day, error = ?error, "call scan: skipping group");
-                        Ok(Visit::Next)
-                    }
-                }
-            },
-        )?;
-        Ok((called, finished))
-    }
+    window: &CallWindow,
+    ceiling: u32,
+    budget: &mut SweepBudget,
+) -> Result<(u32, bool)> {
+    let index = IntexFactoryContract::new(ctx.storage.clone());
+    let mut factory = IntexFactoryContract::new(ctx.storage.clone());
+    let mut called: u32 = 0;
+    let finished = call_bins::walk(
+        &CallBins(&index, iso_code),
+        ceiling,
+        budget,
+        |key, budget| {
+            let (_, worldwide_day) = IntexFactoryContract::unscoped(key);
+            let group = factory.call_bin_group(iso_code, worldwide_day)?;
+            if !budget.fits_writes(group.members.len() as u32) {
+                return Ok(Visit::Stop);
+            }
+            call_sweep::call_entry::<IntexCallSweep>(&ctx.storage, budget, key, || {
+                let call = GroupCall {
+                    storage: &ctx.storage,
+                    factory: &mut factory,
+                };
+                let applied = try_call_group(call, &group, window, ctx.block.timestamp)?;
+                called += applied;
+                Ok(applied)
+            })
+        },
+    )?;
+    Ok((called, finished))
 }
 
 /// One message per group, split only where the wire's cap forces it. `called_at`
