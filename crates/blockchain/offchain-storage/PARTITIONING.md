@@ -11,15 +11,14 @@ backends. An additional datasource implements these ports without changing the e
 | Projection state | Shared | `system/shared/` | `system__shared__` |
 | Tribute live bodies and indexes | WWD | `tribute/wwd/<wwd>/` | `tribute__wwd_<wwd>__` |
 | Tribute lifecycle and retained bodies | Shared | `tribute/shared/` | `tribute__shared__` |
-| Nod items and owner index | Unsigned 160-bit owner address modulo 32 | `nod/nod-shards/<0..31>/` | `nod__nod_shards_<0..31>__` |
-| Nod buckets and locator | Shared | `nod/shared/` | `nod__shared__` |
+| Nod items | Unsigned NOD ID modulo 256 | `nod/nod-shards/<0..255>/` | `nod__nod_shards_<0..255>__` |
+| Nod buckets and owner index | Shared | `nod/shared/` | `nod__shared__` |
 
-`nod_locations` maps a complete Nod ID to a four-byte big-endian shard number. Changing an
-owner deletes the old primary and owner index, writes the new primary and owner index, and
-replaces this locator in the same finalized batch. Point reads resolve the locator. Owner
-queries select one shard; global scans merge ascending IDs from independently enumerated
-physical partitions. The locator audit compares both complete populations and verifies
-physical placement against the body owner. A missing primary selected by a locator is corruption.
+Point reads calculate the shard from the NOD ID. They do not use a locator. The shared owner
+index stores ordered `owner || nod_id` memberships and returns bounded pages of IDs. Changing
+an owner replaces the membership and writes the body in the same finalized batch. The body
+stays in its ID-derived shard. Global scans merge ascending IDs from independently enumerated
+physical partitions. The audit checks ID-derived placement and exact owner-index membership.
 
 Partition scans keep the existing `StorageReader::scan_prefix` interface. A single routed
 partition serves the requested page with one datasource scan. Multiple partitions use an
@@ -49,7 +48,8 @@ RocksDB removes the selected directory; MongoDB clears only that scope's collect
 transaction. With a pin the projector preserves exact bodies and metadata in `tribute/shared`
 before retiring the live partition. Nod survives retirement of its original WWD.
 
-Projection schema 3 requires fresh storage. Scoped adapters reject the former root/shared,
+Projection schema 4 requires fresh storage. The projector rejects earlier schema versions,
+including the owner-sharded NOD layout. Scoped adapters reject the former root/shared,
 `tribute-days`, `nod-days`, and flat MongoDB entity collection layouts. They perform no migration.
 The primitive flat adapters remain available for low-level storage tests and isolated consumers;
 production entity consumers explicitly inject the domain routing registry.

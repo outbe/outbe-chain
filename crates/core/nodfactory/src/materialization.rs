@@ -4,8 +4,8 @@ use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_chain_constants::NodMaterializationProfileV1;
 #[cfg(any(test, feature = "test-utils"))]
-use outbe_compressed_entities::WwdEntityId;
-use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, ParentBodySource};
+use outbe_compressed_entities::{ExecutionReaders, WwdEntityId};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_nod::NodContract;
 #[cfg(any(test, feature = "test-utils"))]
 use outbe_nod::NodIssueParams;
@@ -13,9 +13,10 @@ use outbe_nod::NodIssueParams;
 use outbe_ocomp_protocol::nod_materialization::{
     verify_nod_materialization_batch, NodMaterializationBatchV1,
 };
+#[cfg(any(test, feature = "test-utils"))]
+use outbe_ocomp_protocol::result::NodActionV1;
 use outbe_ocomp_protocol::{
     nod_materialization::{NodMaterializationHeadV1, ProtectedNodMaterializationV2},
-    result::NodActionV1,
     SchemaLimits,
 };
 use outbe_primitives::time::WorldwideDay;
@@ -234,11 +235,8 @@ pub(crate) fn materialize_protected_after_attempt(
         })?
         .issued_at;
     for body in &encrypted {
-        runtime::issue_nod_at(storage, scope, parent, body, issued_at).map_err(|error| {
-            if matches!(&error, PrecompileError::Revert(reason) if reason == &NodFactoryError::NodAlreadyExists.to_string()) {
-                NodFactoryError::DuplicateMaterializedNod.into()
-            } else { error }
-        })?;
+        runtime::issue_nod_at(storage, scope, parent, body, issued_at)
+            .map_err(duplicate_materialized_nod)?;
     }
     finish_materialization(storage, &head, encrypted.len())
 }
@@ -373,6 +371,7 @@ fn finish_materialization(
     })
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 fn require_derived_nod_ids(actions: &[NodActionV1], worldwide_day: WorldwideDay) -> Result<()> {
     for action in actions {
         let derived_nod_id = NodContract::generate_nod_id(action.owner, worldwide_day)?;

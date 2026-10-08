@@ -2,7 +2,9 @@
 use super::support::*;
 use alloy_primitives::{Address, B256};
 use outbe_nod::NodRepositoryReader;
-use outbe_offchain_data::{entity_partition_routing, FinalizedBlock, OffchainDataProjection};
+use outbe_offchain_data::{
+    entity_partition_routing, FinalizedBlock, FinalizedLog, OffchainDataProjection,
+};
 use outbe_offchain_storage::partitioned::adapters::{
     MemoryPartitionDataSource, RocksPartitionDataSource, RocksPartitionReadView,
 };
@@ -13,6 +15,14 @@ use outbe_primitives::{
 };
 use outbe_tribute::{RetainedTributePin, RetainedTributeReader, TributeRepositoryReader};
 use std::sync::Arc;
+
+fn stored_entities(owner: Address, day: u32) -> Vec<FinalizedLog> {
+    let id = poseidon_entity(owner, day);
+    vec![
+        log(0, TRIBUTE_ADDRESS, tribute_stored(id, owner, day)),
+        log(1, NOD_ADDRESS, nod_stored(id, owner, B256::repeat_byte(2))),
+    ]
+}
 
 fn exercise(source: Arc<dyn PartitionDataSource>, retained: bool) {
     let storage = Arc::new(PartitionedStorage::new(
@@ -43,18 +53,7 @@ fn exercise(source: Arc<dyn PartitionDataSource>, retained: bool) {
         .project_block(&FinalizedBlock {
             number: 10,
             hash: B256::repeat_byte(10),
-            receipts: vec![receipt(
-                0,
-                11,
-                vec![
-                    log(0, TRIBUTE_ADDRESS, tribute_stored(tribute_id, owner, day)),
-                    log(
-                        1,
-                        NOD_ADDRESS,
-                        nod_stored(nod_id, owner, B256::repeat_byte(2)),
-                    ),
-                ],
-            )],
+            receipts: vec![receipt(0, 11, stored_entities(owner, day))],
         })
         .unwrap();
     let tribute = TributeRepositoryReader::new(storage.clone());
@@ -113,7 +112,12 @@ fn finalized_rocks_retirement_removes_only_tribute_folder_and_snapshot_opens_eve
             retained,
         );
         assert!(!root.path().join("tribute/wwd/20260715").exists());
-        assert!(root.path().join("nod/nod-shards/17/CURRENT").is_file());
+        let nod_id = poseidon_entity(Address::repeat_byte(17), 20260715);
+        let shard = outbe_nod::partitioning::item_shard(nod_id);
+        assert!(root
+            .path()
+            .join(format!("nod/nod-shards/{shard}/CURRENT"))
+            .is_file());
         assert!(root.path().join("system/shared/CURRENT").is_file());
         let scratch = tempfile::tempdir().unwrap();
         let reader = Arc::new(PartitionedStorage::read_only(

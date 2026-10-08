@@ -6,7 +6,7 @@ use outbe_compressed_entities::{encode_tribute_v1, StoredBody};
 use outbe_offchain_data::{
     read_projection_state, FinalizedBlock, OffchainDataProjection, ProjectionConfig,
     ProjectionError, ProjectionOutcome, ProjectionSource, ProjectionState, PROJECTION_STATE_KEY,
-    PROJECTION_STATE_NAMESPACE,
+    PROJECTION_STATE_NAMESPACE, STORAGE_SCHEMA_VERSION,
 };
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, PendingOverlayStorage,
@@ -34,12 +34,18 @@ fn projection_state_can_be_read_without_a_writer_capability() {
 }
 
 #[test]
-fn pre_ocomp_projection_schema_cannot_open_the_retained_namespace_layout() {
+fn previous_projection_schemas_cannot_open_the_id_sharded_nod_layout() {
+    for version in 1..STORAGE_SCHEMA_VERSION {
+        reject_previous_projection_schema(version);
+    }
+}
+
+fn reject_previous_projection_schema(version: u32) {
     let storage = Arc::new(MemoryStorage::new());
     let legacy = ProjectionState {
         chain_id: 91,
         genesis_hash: B256::repeat_byte(0x91),
-        storage_schema_version: 1,
+        storage_schema_version: version,
         start_block: 7,
         checkpoint: None,
     };
@@ -52,11 +58,18 @@ fn pre_ocomp_projection_schema_cannot_open_the_retained_namespace_layout() {
         .unwrap();
 
     assert!(matches!(
+        read_projection_state(config(7), storage.clone()),
+        Err(ProjectionError::ProjectionSchemaMismatch {
+            expected: 4,
+            actual
+        }) if actual == version
+    ));
+    assert!(matches!(
         OffchainDataProjection::open(config(7), storage.clone(), storage),
         Err(ProjectionError::ProjectionSchemaMismatch {
-            expected: 3,
-            actual: 1
-        })
+            expected: 4,
+            actual
+        }) if actual == version
     ));
 }
 

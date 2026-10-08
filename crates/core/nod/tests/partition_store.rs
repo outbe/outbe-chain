@@ -27,18 +27,22 @@ fn item(owner: Address, day: u32) -> NodItemState {
     )
 }
 
+fn routing() -> Arc<RoutingRegistry> {
+    let mut routing = RoutingRegistry::new(Arc::new(SharedRouting(
+        StorageScope::shared("system").unwrap(),
+    )));
+    outbe_nod::partitioning::register(&mut routing).unwrap();
+    Arc::new(routing)
+}
+
 #[test]
-fn repository_moves_between_owner_shards_and_keeps_global_identity_order() {
+fn repository_updates_owner_index_and_keeps_global_identity_order() {
     let source = Arc::new(MemoryPartitionDataSource::new());
     exercise_repository(source);
 }
 
 fn exercise_repository(source: Arc<dyn outbe_offchain_storage::PartitionDataSource>) {
-    let mut routing = RoutingRegistry::new(Arc::new(SharedRouting(
-        StorageScope::shared("system").unwrap(),
-    )));
-    outbe_nod::partitioning::register(&mut routing).unwrap();
-    let storage = Arc::new(PartitionedStorage::new(source, Arc::new(routing)));
+    let storage = Arc::new(PartitionedStorage::new(source, routing()));
     let writer = NodRepositoryWriter::new(storage.clone(), storage.clone());
     let reader = NodRepositoryReader::new(storage);
     let owner = Address::repeat_byte(17);
@@ -103,45 +107,7 @@ fn exercise_repository(source: Arc<dyn outbe_offchain_storage::PartitionDataSour
 }
 
 #[test]
-fn audit_rejects_a_missing_or_wrong_location() {
-    use outbe_compressed_entities::{CeAuditLimits, CeAuditWork};
-    use outbe_offchain_storage::{Key, Namespace, StorageWriter, Value};
-    let source = Arc::new(MemoryPartitionDataSource::new());
-    let mut routing = RoutingRegistry::new(Arc::new(SharedRouting(
-        StorageScope::shared("system").unwrap(),
-    )));
-    outbe_nod::partitioning::register(&mut routing).unwrap();
-    let storage = Arc::new(PartitionedStorage::new(source, Arc::new(routing)));
-    let writer = NodRepositoryWriter::new(storage.clone(), storage.clone());
-    let reader = NodRepositoryReader::new(storage.clone());
-    let nod = item(Address::repeat_byte(17), 7);
-    writer.put_nod(&nod).unwrap();
-    let scratch = tempfile::tempdir().unwrap();
-    let work = CeAuditWork::create(
-        scratch.path().join("audit"),
-        CeAuditLimits {
-            records_per_run: 2,
-            merge_fan_in: 2,
-        },
-    )
-    .unwrap();
-    reader.audit_partition_locations(&work).unwrap();
-    let namespace = Namespace::new(outbe_nod::partitioning::NOD_LOCATIONS_NAMESPACE).unwrap();
-    let key = Key::new(nod.nod_id.as_slice().to_vec()).unwrap();
-    storage
-        .put(
-            namespace.clone(),
-            &key,
-            &Value::new(31u32.to_be_bytes().to_vec()).unwrap(),
-        )
-        .unwrap();
-    assert!(reader.audit_partition_locations(&work).is_err());
-    storage.delete(namespace, &key).unwrap();
-    assert!(reader.audit_partition_locations(&work).is_err());
-}
-
-#[test]
-fn rocks_repository_moves_and_reopens_all_owner_partitions() {
+fn rocks_repository_reopens_id_shards_and_shared_owner_index() {
     use outbe_offchain_storage::partitioned::adapters::{
         RocksPartitionDataSource, RocksPartitionReadView,
     };
@@ -153,15 +119,32 @@ fn rocks_repository_moves_and_reopens_all_owner_partitions() {
     let source = Arc::new(RocksPartitionReadView::open(root.path(), scratch.path()).unwrap());
     // Scratch must be outside the primary root, and each test owns its own path.
     assert!(!source.list_scopes("nod").unwrap().is_empty());
-    assert!(root.path().join("nod/nod-shards/17/CURRENT").is_file());
-    assert!(root.path().join("nod/nod-shards/31/CURRENT").is_file());
+    assert!(root.path().join("nod/nod-shards/7/CURRENT").is_file());
+    assert!(root.path().join("nod/nod-shards/9/CURRENT").is_file());
     assert!(root.path().join("nod/shared/CURRENT").is_file());
     assert!(!root.path().join("nod-days").exists());
+    let reader =
+        NodRepositoryReader::new(Arc::new(PartitionedStorage::read_only(source, routing())));
+    let expected = item(Address::repeat_byte(17), 9);
+    assert_eq!(reader.get(expected.nod_id).unwrap(), Some(expected.clone()));
+    assert_eq!(
+        reader
+            .list_ids_by_owner(
+                expected.owner,
+                IdPageRequest {
+                    after: None,
+                    limit: 10
+                }
+            )
+            .unwrap()
+            .ids,
+        vec![expected.nod_id]
+    );
 }
 
 #[test]
 #[ignore = "requires OUTBE_TEST_MONGODB_URI"]
-fn mongo_repository_moves_atomically_between_owner_collections() {
+fn mongo_repository_updates_owner_index_across_id_collections() {
     use outbe_offchain_storage::partitioned::adapters::MongoPartitionDataSource;
     use outbe_offchain_storage::{MongoStorage, MongoStorageConfig};
     let uri = std::env::var("OUTBE_TEST_MONGODB_URI").unwrap();
@@ -181,8 +164,12 @@ fn mongo_repository_moves_atomically_between_owner_collections() {
         .list_collection_names()
         .run()
         .unwrap();
-    assert!(names.contains(&"nod__shared__nod_locations".to_owned()));
-    assert!(names.contains(&"nod__nod_shards_17__nods".to_owned()));
+    assert!(names.contains(&"nod__shared__nods_by_owner".to_owned()));
+    assert!(!names.contains(&"nod__shared__nod_locations".to_owned()));
+    assert!(names.contains(&"nod__nod_shards_9__nods".to_owned()));
     assert!(!names.contains(&"nods".to_owned()));
     client.database(&database).drop().run().unwrap();
 }
+
+#[path = "partition_store/id_shards.rs"]
+mod id_shards;
