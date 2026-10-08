@@ -5,9 +5,11 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins,
     daily_sweep::{PinnedDay, Scheduled},
-    error::{PrecompileError, Result, SweepFailure},
+    error::Result,
     storage::dsl::Map,
 };
+
+pub use outbe_primitives::error::{decide, Decided};
 
 use crate::call_window::CallWindow;
 use crate::schema::OracleContract;
@@ -106,29 +108,5 @@ pub fn ceiling_bin(
             skipped()?;
             Ok(None)
         }
-    }
-}
-
-/// What deciding one entry came to.
-pub enum Decided<T> {
-    Done(T),
-    /// A deterministic failure, rolled back with the entry.
-    Skipped(PrecompileError),
-    /// The gas ran out before the entry: the walk resumes on it next block.
-    Stopped,
-}
-
-/// Sorts a decision's error: a node-local one fails the block.
-pub fn decide<T>(
-    outcome: Result<T>,
-    classify: impl Fn(&PrecompileError) -> SweepFailure,
-) -> Result<Decided<T>> {
-    match outcome {
-        Ok(value) => Ok(Decided::Done(value)),
-        Err(error) => match classify(&error) {
-            SweepFailure::Propagate => Err(error),
-            SweepFailure::Stop => Ok(Decided::Stopped),
-            SweepFailure::Skip => Ok(Decided::Skipped(error)),
-        },
     }
 }

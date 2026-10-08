@@ -5,9 +5,8 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use super::{
-    api, begin_block_at, block_ctx_at, burn_settled, call_before_buckets, call_gem,
-    callable_gem_of, gem_state, mature_gem, priced_window, sample_params, seed_currency,
-    unallocated, with_storage, ALICE, T_NOW,
+    api, begin_block_at, block_ctx_at, call_gem, callable_gem_of, gem_state, mature_gem,
+    priced_window, seed_currency, unallocated, with_storage, T_NOW,
 };
 use crate::hooks::{run_call_slice, scan_and_call};
 use crate::precompile::IGem;
@@ -27,44 +26,6 @@ fn expiry_waits_until_the_deadline_hour_has_closed() {
         begin_block_at(storage, hour_end);
         assert!(api::get_gem(storage, gem_id).unwrap().is_none());
         assert_eq!(unallocated(storage), U256::from(1_000_000));
-    });
-}
-
-#[test]
-fn empty_expiry_slots_spend_budget_and_legacy_gems_resume_next_block() {
-    with_storage(|storage| {
-        GemContract::new(storage.clone())
-            .config_profile
-            .write(crate::config::PROFILE_PROD)
-            .unwrap();
-        let mut gems = Vec::new();
-        for load in 1..=65u64 {
-            let mut params = sample_params(ALICE);
-            params.promis_load_minor = U256::from(load);
-            let gem_id = api::add_gem(storage, params).unwrap();
-            call_before_buckets(storage, gem_id, T_NOW);
-            gems.push(gem_id);
-        }
-        // Keep the hour live while making its first slot empty.
-        burn_settled(storage, gems[0]);
-        let now = GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * 86_400));
-
-        begin_block_at(storage, now);
-        assert!(gems[1..64]
-            .iter()
-            .all(|id| api::get_gem(storage, *id).unwrap().is_none()));
-        assert_eq!(gem_state(storage, gems[64]), GemState::Called as u8);
-        assert_eq!(unallocated(storage), U256::from(2_079));
-
-        begin_block_at(storage, now + 1);
-        assert!(api::get_gem(storage, gems[64]).unwrap().is_none());
-        assert_eq!(unallocated(storage), U256::from(2_144));
-        assert_eq!(
-            GemContract::new(storage.clone())
-                .first_expiry_day()
-                .unwrap(),
-            None
-        );
     });
 }
 

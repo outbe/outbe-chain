@@ -607,6 +607,25 @@
   },
   {
     "type": "event",
+    "name": "ExpiryDeferred",
+    "inputs": [
+      {
+        "name": "bucketKey",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "retryAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MetadataUpdate",
     "inputs": [
       {

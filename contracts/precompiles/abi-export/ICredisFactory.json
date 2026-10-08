@@ -122,6 +122,25 @@
   },
   {
     "type": "event",
+    "name": "ExpiryDeferred",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "retryAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SweepDaySkipped",
     "inputs": [
       {

@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_intex::SeriesId;
 use outbe_primitives::call_bins;
 use outbe_primitives::call_breach::{self, ScanTerms};
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::expiry_queue;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
@@ -181,23 +181,12 @@ impl IntexFactoryContract<'_> {
         expiry_queue::place(&ExpiryHours(self), key, Self::deadline_bucket(deadline))
     }
 
-    /// Move a group the sweep could not finish into a later bucket. Its members
-    /// and deadline do not change. Only the place where the sweep next finds it changes.
-    pub(crate) fn defer_called_group(
-        &mut self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-        day: u32,
-    ) -> Result<()> {
-        let key = Self::scoped(reference_currency, worldwide_day.value());
-        expiry_queue::retarget(&ExpiryHours(self), key, day)
-    }
-
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
     pub(crate) const fn deadline_bucket(deadline: u64) -> u32 {
         expiry_queue::bucket_of(deadline)
     }
 
+    #[cfg(test)]
     pub(crate) const fn bucket_end(day: u32) -> u64 {
         expiry_queue::bucket_end(day)
     }
@@ -212,27 +201,8 @@ impl IntexFactoryContract<'_> {
         expiry_queue::first_bucket(&ExpiryHours(self))
     }
 
-    pub(crate) fn called_group(
-        &self,
-        reference_currency: u16,
-        worldwide_day: WorldwideDay,
-    ) -> Result<Group> {
-        let key = Self::scoped(reference_currency, worldwide_day.value());
-        let count = self.called_group_count.read(&key)?;
-        let mut members = Vec::with_capacity(count as usize);
-        for index in 0..count {
-            members.push(SeriesId::from_word(self.called_group_members.read(
-                &Self::group_member_key(reference_currency, worldwide_day, index),
-            )?));
-        }
-        Ok(Group {
-            iso_code: reference_currency,
-            worldwide_day,
-            members,
-        })
-    }
-
     /// Drop an expired group and free the bucket slot it says it waits in.
+    #[cfg(feature = "e2e-test")]
     pub(crate) fn remove_called_group(
         &mut self,
         reference_currency: u16,
@@ -251,30 +221,43 @@ impl IntexFactoryContract<'_> {
         expiry_queue::remove(&ExpiryHours(self), key)
     }
 
-    /// Keep only `members` in a called group, so a re-walk never meets a series whose
-    /// load already went back to the pool.
-    pub(crate) fn retain_called_group(
+    /// The `index`-th member of a called group.
+    pub(crate) fn called_member(
+        &self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+        index: u32,
+    ) -> Result<SeriesId> {
+        Ok(SeriesId::from_word(self.called_group_members.read(
+            &Self::group_member_key(reference_currency, worldwide_day, index),
+        )?))
+    }
+
+    /// Swap-removes the `index`-th member of a called group, so a re-walk never meets a
+    /// series whose load already went back to the pool.
+    pub(crate) fn remove_called_member(
         &mut self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
-        members: &[SeriesId],
+        index: u32,
     ) -> Result<()> {
         let key = Self::scoped(reference_currency, worldwide_day.value());
-        let count = self.called_group_count.read(&key)?;
-        for (index, series_id) in members.iter().enumerate() {
+        let last = self
+            .called_group_count
+            .read(&key)?
+            .checked_sub(1)
+            .filter(|last| index <= *last)
+            .ok_or_else(|| PrecompileError::Revert("called group member out of range".into()))?;
+        let last_key = Self::group_member_key(reference_currency, worldwide_day, last);
+        if index != last {
+            let moved = self.called_group_members.read(&last_key)?;
             self.called_group_members.write(
-                &Self::group_member_key(reference_currency, worldwide_day, index as u32),
-                series_id.to_word(),
+                &Self::group_member_key(reference_currency, worldwide_day, index),
+                moved,
             )?;
         }
-        for index in members.len() as u32..count {
-            self.called_group_members.clear(&Self::group_member_key(
-                reference_currency,
-                worldwide_day,
-                index,
-            ))?;
-        }
-        self.called_group_count.write(&key, members.len() as u32)
+        self.called_group_members.clear(&last_key)?;
+        self.called_group_count.write(&key, last)
     }
 }
 

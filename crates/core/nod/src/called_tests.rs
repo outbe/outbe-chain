@@ -251,6 +251,8 @@ fn try_forfeit(
     bucket_key: B256,
     budget: u32,
 ) -> outbe_primitives::error::Result<u32> {
+    use outbe_primitives::error::SweepFailure;
+    // Burns from the last member down, each in its own checkpoint, as the sweep does.
     storage.with_checkpoint(|| {
         let mut nod = NodContract::new(storage.clone());
         let bodies = crate::called::Bodies {
@@ -258,7 +260,24 @@ fn try_forfeit(
             scope,
             parent,
         };
-        crate::called::forfeit_members(&bodies, &mut nod, bucket_key, budget)
+        let mut burned = 0;
+        while burned < budget {
+            let Some(last) = nod.bucket_nod_count.read(&bucket_key)?.checked_sub(1) else {
+                break;
+            };
+            let nod_id = nod
+                .bucket_nods
+                .read(&NodContract::bucket_nod_key(bucket_key, last))?;
+            let burn = storage.with_checkpoint(|| {
+                crate::called::forfeit_member(&bodies, &mut nod, bucket_key, nod_id)
+            });
+            match burn {
+                Ok(()) => burned += 1,
+                Err(error) if crate::called::sweep_failure(&error) == SweepFailure::Stop => break,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(burned)
     })
 }
 

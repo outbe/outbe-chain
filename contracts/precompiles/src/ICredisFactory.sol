@@ -8,6 +8,8 @@ interface ICredisFactory {
     /// A reference currency was left out of one day's Call scan because its window
     /// price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+    /// A void that failed left the position queued until `retryAt`.
+    event ExpiryDeferred(uint256 indexed positionId, uint64 retryAt);
 
     /// Consume a note for the complete stored reservation. The caller must be its CCA.
     /// msg.value exactly matches reserved Gratis collateral in native COEN units.

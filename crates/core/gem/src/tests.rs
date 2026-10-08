@@ -1264,16 +1264,11 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
         let ctx = block_ctx_at(storage, GemContract::hour_end(bucket));
         crate::hooks::continue_sweeps(&ctx).unwrap();
 
-        let retry = GemContract::deadline_hour(GemContract::hour_end(bucket)) + 1;
+        let retry = GemContract::deadline_hour(deadline + 400 * 86_400);
         assert_eq!(
             gem.first_expiry_day().unwrap(),
             Some(retry),
-            "the bucket leaves the tree instead of blocking every later one"
-        );
-        assert_eq!(
-            gem.called_deadline.read(&entry).unwrap(),
-            deadline,
-            "and its called bucket waits at its own deadline again"
+            "the bucket moves to its deadline's hour instead of blocking every later one"
         );
 
         let ctx = block_ctx_at(storage, GemContract::hour_end(retry));
@@ -1282,21 +1277,9 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
     });
 }
 
-/// Calls a gem the way it was called before buckets: on its own record, queued by id.
-fn call_before_buckets(storage: &StorageHandle, gem_id: U256, at: u64) {
-    let mut gem = GemContract::new(storage.clone());
-    gem.leave_bucket(gem_id).unwrap();
-    let mut item = gem.gem_items.get(gem_id).unwrap().unwrap();
-    item.state = GemState::Called as u8;
-    item.called_at = at;
-    gem.gem_items.update(&item).unwrap();
-    gem.push_called(gem_id, at + u64::from(item.call_notice_period_seconds))
-        .unwrap();
-}
-
-/// Arms a mature gem with `call`, fails its first forfeit, and checks it moved to the
+/// Calls a mature gem, fails its first forfeit, and checks its bucket moved to the
 /// next hour and burned there with its credit. Returns the provider for its events.
-fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStorageProvider, U256) {
+fn forfeit_fails_once() -> (HashMapStorageProvider, U256) {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::from(T_NOW));
     let (gem_id, load, retry) = StorageHandle::enter(&mut provider, |storage| {
@@ -1305,7 +1288,7 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
             .unwrap()
             .unwrap()
             .promis_load_minor;
-        call(&storage, gem_id, T_NOW);
+        call_gem(&storage, gem_id, T_NOW);
         let hour = GemContract::deadline_hour(T_NOW + 7 * 86_400);
         // The credit overflows, so the forfeit reverts as a whole.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
@@ -1340,23 +1323,19 @@ fn forfeit_fails_once(call: fn(&StorageHandle, U256, u64)) -> (HashMapStoragePro
     (provider, gem_id)
 }
 
-/// A bucket member whose forfeit fails is not lost: it moves to the next hour on its
-/// own, then burns.
+/// A gem whose forfeit fails is not lost: its bucket moves to the next hour with it,
+/// and it burns there.
 #[test]
-fn a_bucket_member_whose_forfeit_fails_is_queued_on_its_own_and_burned_later() {
+fn a_bucket_whose_member_fails_to_burn_is_deferred_and_burned_later() {
     use alloy_sol_types::SolEvent;
 
-    let (provider, gem_id) = forfeit_fails_once(call_gem);
-    let events = provider.get_events(outbe_primitives::addresses::GEM_ADDRESS);
-    let deferred: Vec<U256> = events
+    let (provider, _) = forfeit_fails_once();
+    let deferred = provider
+        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
         .iter()
-        .filter_map(|log| IGem::GemExpiryDeferred::decode_log_data(log).ok())
-        .map(|event| event.gemId)
-        .collect();
-    assert_eq!(deferred, vec![gem_id]);
-    assert!(!events
-        .iter()
-        .any(|log| IGem::GemBucketExpiryDeferred::decode_log_data(log).is_ok()));
+        .filter(|log| IGem::ExpiryDeferred::decode_log_data(log).is_ok())
+        .count();
+    assert_eq!(deferred, 1);
 }
 
 /// Unix time of the first block past the deadline of a bucket called at `T_NOW`.
@@ -1372,7 +1351,7 @@ fn begin_block_at(storage: &StorageHandle, ts: u64) {
     crate::hooks::continue_sweeps(&block_ctx_at(storage, ts)).unwrap();
 }
 
-/// One member that cannot burn leaves its bucket. The others burn on time.
+/// One member that cannot burn stays in its bucket, deferred. The others burn on time.
 #[test]
 fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
     with_storage(|storage| {
@@ -1390,7 +1369,10 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
         begin_block_at(storage, now);
         assert!(api::get_gem(storage, gems[0]).unwrap().is_none(), "burned");
         assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
-        assert!(bucket_of(storage, gems[1]).is_zero(), "queued on its own");
+        assert!(
+            !bucket_of(storage, gems[1]).is_zero(),
+            "it stays in its bucket"
+        );
 
         limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         begin_block_at(
@@ -1413,18 +1395,19 @@ fn a_broken_bucket_index_defers_the_bucket_and_keeps_blocks_going() {
     let bucket = StorageHandle::enter(&mut provider, |storage| {
         let gems = alice_gems(&storage, &[1, 2]);
         call_gem(&storage, gems[0], T_NOW);
+        let bucket = bucket_of(&storage, gems[0]);
         GemContract::new(storage.clone())
             .bucket_gem_index
             .write(&gems[1], 7)
             .unwrap();
         begin_block_at(&storage, first_due_block(&storage, gems[0]));
         assert_eq!(gem_state(&storage, gems[1]), GemState::Called as u8);
-        bucket_of(&storage, gems[0])
+        bucket
     });
     let deferred: Vec<_> = provider
         .get_events(outbe_primitives::addresses::GEM_ADDRESS)
         .iter()
-        .filter_map(|log| IGem::GemBucketExpiryDeferred::decode_log_data(log).ok())
+        .filter_map(|log| IGem::ExpiryDeferred::decode_log_data(log).ok())
         .map(|event| event.bucketKey)
         .collect();
     assert_eq!(deferred, vec![bucket]);
@@ -1472,21 +1455,6 @@ fn a_call_slice_refreshes_all_metadata_once() {
         .filter(|log| IGem::GemBucketCalled::decode_log_data(log).is_ok())
         .count();
     assert_eq!(called, 3);
-}
-
-/// A gem called before buckets still drains through the queue, deferral included.
-#[test]
-fn a_gem_called_before_buckets_is_deferred_and_burned_later() {
-    use alloy_sol_types::SolEvent;
-
-    let (provider, gem_id) = forfeit_fails_once(call_before_buckets);
-    let deferred: Vec<U256> = provider
-        .get_events(outbe_primitives::addresses::GEM_ADDRESS)
-        .iter()
-        .filter_map(|log| IGem::GemExpiryDeferred::decode_log_data(log).ok())
-        .map(|event| event.gemId)
-        .collect();
-    assert_eq!(deferred, vec![gem_id]);
 }
 
 /// A called bucket wider than one block's budget burns over several blocks, then

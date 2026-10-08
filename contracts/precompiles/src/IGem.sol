@@ -71,11 +71,9 @@ interface IGem {
     event GemBucketCalled(bytes32 indexed bucketKey, uint64 calledAt, uint64 settlementDeadline);
     /// @notice Called gem forfeit-burned after its notice period lapsed.
     event GemExpired(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
-    /// @notice A due Called gem was not forfeited. The expiry sweep tries it again at `retryAt`.
-    event GemExpiryDeferred(uint256 indexed gemId, uint64 retryAt);
     /// @notice A due Called bucket was not fully forfeited. The expiry sweep tries its
     ///         remaining gems again at `retryAt`.
-    event GemBucketExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
+    event ExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
     /// @notice A reference currency was left out of one day's Call scan because its
     ///         window price could not be indexed. The next daily pass tries it again.
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);

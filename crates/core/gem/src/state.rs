@@ -181,49 +181,17 @@ impl GemContract<'_> {
         expiry_queue::push(&ExpiryHours(self), gem_id, deadline)
     }
 
-    /// Put a called bucket or Called gem back in the queue at its own deadline, never
-    /// before the next hour. An entry that is neither leaves the queue instead.
-    pub(crate) fn requeue_or_drop(&mut self, entry: U256, now: u64) -> Result<bool> {
-        let bucket = self.called_bucket(entry)?;
-        let deadline = match bucket {
-            Some(bucket) => Some(self.bucket_deadline(bucket)?),
-            None => self
-                .gem_items
-                .get(entry)?
-                .filter(|item| item.state == GemState::Called as u8)
-                .map(|item| item.called_at + u64::from(item.call_notice_period_seconds)),
-        };
-        self.remove_called(entry)?;
-        let Some(deadline) = deadline else {
-            return Ok(false);
-        };
-        let day = Self::deadline_hour(deadline).max(Self::deadline_hour(now) + 1);
-        let queue = ExpiryHours(self);
-        expiry_queue::place(&queue, entry, day)?;
-        queue.0.called_deadline.write(&entry, deadline)?;
-        let retry_at = Self::hour_end(day);
-        match bucket {
-            Some(bucket) => self.emit(IGem::GemBucketExpiryDeferred {
-                bucketKey: bucket,
-                retryAt: retry_at,
-            })?,
-            None => self.emit(IGem::GemExpiryDeferred {
-                gemId: entry,
-                retryAt: retry_at,
-            })?,
-        }
-        Ok(true)
-    }
-
     pub(crate) fn remove_called(&mut self, gem_id: U256) -> Result<()> {
         expiry_queue::remove(&ExpiryHours(self), gem_id)
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
+    #[cfg(test)]
     pub(crate) const fn deadline_hour(deadline: u64) -> u32 {
         expiry_queue::bucket_of(deadline)
     }
 
+    #[cfg(test)]
     pub(crate) const fn hour_end(day: u32) -> u64 {
         expiry_queue::bucket_end(day)
     }
@@ -384,33 +352,10 @@ impl GemContract<'_> {
         })
     }
 
-    /// Take a member out of its called bucket and queue it on its own, as a Called gem,
-    /// no earlier than the next hour. One gem that cannot burn must not block the rest.
-    pub(crate) fn detach_called_member(&mut self, gem_id: U256, now: u64) -> Result<()> {
-        let bucket = self.gem_bucket.read(&gem_id)?;
-        let called_at = self.bucket_called_at.read(&bucket)?;
-        if called_at == 0 {
-            return Err(GemError::InvalidState.into());
-        }
-        let mut item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        self.leave_bucket(gem_id)?;
-        item.state = GemState::Called as u8;
-        item.called_at = called_at;
-        self.gem_items.update(&item)?;
-        self.requeue_or_drop(gem_id, now)?;
-        Ok(())
-    }
-
-    /// The called bucket that an expiry-queue entry stands for. Returns `None` for a gem id.
+    /// The called bucket that an expiry-queue entry stands for, while it is called.
     pub(crate) fn called_bucket(&self, entry: U256) -> Result<Option<B256>> {
         let bucket = B256::from(entry.to_be_bytes::<32>());
         Ok((self.bucket_called_at.read(&bucket)? != 0).then_some(bucket))
-    }
-
-    /// Settlement deadline of a called bucket.
-    pub(crate) fn bucket_deadline(&self, bucket: B256) -> Result<u64> {
-        Ok(self.bucket_called_at.read(&bucket)?
-            + u64::from(self.bucket_call_notice_period_seconds.read(&bucket)?))
     }
 
     fn close_bucket(&mut self, bucket: B256) -> Result<()> {

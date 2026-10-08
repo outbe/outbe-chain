@@ -45,7 +45,7 @@ pub(crate) use forfeits::sweep_expired;
 #[cfg(test)]
 pub(crate) use calls::{call_currency, CurrencyScan};
 #[cfg(test)]
-pub(crate) use forfeits::{forfeit_members, Bodies};
+pub(crate) use forfeits::{forfeit_member, Bodies};
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 ///

@@ -1,13 +1,17 @@
 //! Voids the called positions whose settlement window lapsed, earliest deadline first.
 
 use alloy_primitives::U256;
+use alloy_sol_types::SolEvent;
 use outbe_credis::{CredisContract, CredisState, ExpiryHours};
 use outbe_primitives::{
+    addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
-    expiry_queue::{self, ExpiryHandler, Step},
+    expiry_queue::{self, Due, ExpiryHandler},
+    sweep_budget::SweepBudget,
 };
 
+use crate::precompile::ICredisFactory::ExpiryDeferred;
 use crate::runtime;
 
 /// Max queue steps per block. Each void makes a blocking TEE round-trip.
@@ -15,12 +19,20 @@ pub(crate) const MAX_CREDIS_VOIDS_PER_BLOCK: u32 = 64;
 
 /// Runs from CycleTick every block. Returns the number of positions voided.
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let queue = CredisContract::new(ctx.storage.clone());
     let mut expiry = CredisExpiry {
         ctx,
         credis: CredisContract::new(ctx.storage.clone()),
         voided: 0,
     };
-    expiry.run(MAX_CREDIS_VOIDS_PER_BLOCK)?;
+    let mut budget = SweepBudget::new(MAX_CREDIS_VOIDS_PER_BLOCK, MAX_CREDIS_VOIDS_PER_BLOCK, 0);
+    expiry_queue::sweep(
+        &ExpiryHours(&queue),
+        &ctx.storage,
+        ctx.block.timestamp,
+        &mut budget,
+        &mut expiry,
+    )?;
     Ok(expiry.voided)
 }
 
@@ -30,36 +42,44 @@ struct CredisExpiry<'a, 'storage> {
     voided: u32,
 }
 
+/// A position is its own and only member.
 impl ExpiryHandler<U256> for CredisExpiry<'_, '_> {
-    fn expire(&mut self, position_id: U256, budget: &mut u32) -> Result<Step> {
-        *budget -= 1;
-        if !self.voidable(position_id)? {
-            expiry_queue::remove(&ExpiryHours(&self.credis), position_id)?;
-            return Ok(Step::Done);
-        }
-        match runtime::void_position(self.ctx.storage.clone(), position_id) {
-            Ok(()) => {
-                self.voided = self.voided.saturating_add(1);
-                Ok(Step::Done)
-            }
-            Err(error) => match void_failure(&error) {
-                SweepFailure::Propagate => Err(error),
-                SweepFailure::Stop => Ok(Step::Hold),
-                SweepFailure::Skip => {
-                    tracing::warn!(target: "outbe::credisfactory", %position_id, error = ?error, "expiry sweep: void failed, retrying next hour");
-                    self.defer(position_id)?;
-                    Ok(Step::Done)
-                }
-            },
-        }
+    type Member = U256;
+
+    fn due(&mut self, position_id: U256) -> Result<Due> {
+        let position = self.credis.get_position(position_id)?;
+        let voidable = position.lifecycle_state()? == CredisState::Called
+            && !position.outstanding_principal_minor.is_zero();
+        Ok(if voidable { Due::Expire } else { Due::Drop })
     }
 
-    fn retire_leftover(&mut self, position_id: U256) -> Result<()> {
-        if !self.voidable(position_id)? {
-            return expiry_queue::remove(&ExpiryHours(&self.credis), position_id);
-        }
-        tracing::warn!(target: "outbe::credisfactory", %position_id, "expiry sweep: hour outlived itself, retrying next hour");
-        self.defer(position_id)
+    fn member_count(&self, _position_id: U256) -> Result<u32> {
+        Ok(1)
+    }
+
+    fn member_at(&self, position_id: U256, _index: u32) -> Result<U256> {
+        Ok(position_id)
+    }
+
+    fn expire_member(&mut self, position_id: U256, _member: U256) -> Result<()> {
+        runtime::void_position(self.ctx.storage.clone(), position_id)?;
+        self.voided = self.voided.saturating_add(1);
+        Ok(())
+    }
+
+    fn classify(&self, error: &PrecompileError) -> SweepFailure {
+        void_failure(error)
+    }
+
+    fn deferred(&mut self, position_id: U256, retry_at: u64) -> Result<()> {
+        tracing::warn!(target: "outbe::credisfactory", %position_id, retry_at, "expiry sweep: void deferred");
+        self.ctx.storage.emit_event(
+            CREDIS_FACTORY_ADDRESS,
+            SolEvent::encode_log_data(&ExpiryDeferred {
+                positionId: position_id,
+                retryAt: retry_at,
+            }),
+        )
     }
 }
 
@@ -70,24 +90,5 @@ pub(crate) fn void_failure(error: &PrecompileError) -> SweepFailure {
     match error {
         PrecompileError::Fatal(_) => SweepFailure::Propagate,
         other => other.sweep_failure(),
-    }
-}
-
-impl CredisExpiry<'_, '_> {
-    fn run(&mut self, mut budget: u32) -> Result<()> {
-        let queue = CredisContract::new(self.ctx.storage.clone());
-        let now = self.ctx.block.timestamp;
-        expiry_queue::sweep(&ExpiryHours(&queue), now, &mut budget, self)
-    }
-
-    fn defer(&self, position_id: U256) -> Result<()> {
-        let next = expiry_queue::bucket_of(self.ctx.block.timestamp).saturating_add(1);
-        expiry_queue::retarget(&ExpiryHours(&self.credis), position_id, next)
-    }
-
-    fn voidable(&self, position_id: U256) -> Result<bool> {
-        let position = self.credis.get_position(position_id)?;
-        Ok(position.lifecycle_state()? == CredisState::Called
-            && !position.outstanding_principal_minor.is_zero())
     }
 }

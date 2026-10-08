@@ -124,6 +124,30 @@ impl PrecompileError {
     }
 }
 
+/// What deciding one sweep item came to.
+pub enum Decided<T> {
+    Done(T),
+    /// A deterministic failure, rolled back with the item.
+    Skipped(PrecompileError),
+    /// The gas ran out before the item: the sweep resumes on it next block.
+    Stopped,
+}
+
+/// Sorts a sweep item's error: a node-local one fails the block.
+pub fn decide<T>(
+    outcome: Result<T>,
+    classify: impl Fn(&PrecompileError) -> SweepFailure,
+) -> Result<Decided<T>> {
+    match outcome {
+        Ok(value) => Ok(Decided::Done(value)),
+        Err(error) => match classify(&error) {
+            SweepFailure::Propagate => Err(error),
+            SweepFailure::Stop => Ok(Decided::Stopped),
+            SweepFailure::Skip => Ok(Decided::Skipped(error)),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{PrecompileError, SweepFailure};
