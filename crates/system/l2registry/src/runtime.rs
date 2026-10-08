@@ -18,9 +18,9 @@ sol! {
     }
 }
 
-// Prepaid budget for the external getter, including a proxy's storage reads.
-// Unbounded forwarding is unsafe: the native subcall driver does not cap or
-// charge the child against the precompile's remaining gas.
+// Explicit cap for the external getter, including a proxy's storage reads.
+// The provider reserves and settles child gas against the remaining parent
+// budget; this cap must not also be charged as a separate prepayment.
 const INBOX_KEY_READ_GAS: u64 = 100_000;
 
 impl L2RegistryContract<'_> {
@@ -168,7 +168,6 @@ impl L2RegistryContract<'_> {
                 .map_err(|_| L2RegistryError::InvalidPublicKey.into());
         }
 
-        self.storage.deduct_gas(INBOX_KEY_READ_GAS)?;
         let response = match self.storage.try_staticcall_with_gas(
             self.inbox_address(record)?,
             IDaInbox::groupPubKeyCall {}.abi_encode().into(),

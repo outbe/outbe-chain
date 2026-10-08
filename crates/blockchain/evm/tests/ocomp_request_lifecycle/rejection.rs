@@ -5,6 +5,36 @@
 use super::*;
 
 pub(crate) fn run() {
+    let rejected_input = SystemTxInputV2::CycleTick
+        .encode()
+        .expect("cycle tick input encodes");
+    let rejected_gas_limit = 21_000
+        + rejected_input
+            .iter()
+            .map(|byte| if *byte == 0 { 4 } else { 16 })
+            .sum::<u64>()
+        + outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS
+        + 50;
+    run_call(
+        outbe_primitives::addresses::STAKING_ADDRESS,
+        rejected_gas_limit,
+        rejected_input,
+    );
+}
+
+pub(crate) fn run_child_halt() {
+    run_call(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        250_000,
+        outbe_vaultrouter::api::IVaultRouter::sharesBalanceCall {
+            vault: BURNER_ADDRESS,
+        }
+        .abi_encode()
+        .into(),
+    );
+}
+
+fn run_call(target: Address, rejected_gas_limit: u64, rejected_input: Bytes) {
     let (
         environment,
         VotingOpenState {
@@ -17,20 +47,10 @@ pub(crate) fn run() {
         },
     ) = super::request::open_voting().into_successor_parts();
     let fixture = environment.fixture(&prepared.tree_service);
-    let rejected_input = SystemTxInputV2::CycleTick
-        .encode()
-        .expect("cycle tick input encodes");
-    let rejected_gas_limit = 21_000
-        + rejected_input
-            .iter()
-            .map(|byte| if *byte == 0 { 4 } else { 16 })
-            .sum::<u64>()
-        + outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS
-        + 50;
     let rejected = pooled_user_call(
         saturated_user_secret(),
         0,
-        outbe_primitives::addresses::STAKING_ADDRESS,
+        target,
         rejected_gas_limit,
         rejected_input,
     );

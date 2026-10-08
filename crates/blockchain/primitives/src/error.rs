@@ -1,6 +1,6 @@
 use alloy_primitives::Bytes;
 
-use crate::storage::SubCallError;
+use crate::storage::{ChildHaltKind, SubCallError};
 
 /// Precompile error types.
 ///
@@ -56,10 +56,12 @@ pub enum PrecompileError {
     #[error("revert with bytes: {0}")]
     RevertBytes(Bytes),
 
-    /// Sub-call failure: a child-frame halt, or a provider-level sub-call
-    /// error such as `NotAvailable`.
+    /// Provider-level sub-call error, such as `NotAvailable` or database failure.
     #[error("sub-call error: {0}")]
     SubCall(SubCallError),
+    /// Settled, deterministic child VM halt. The enclosing wrapper reverts.
+    #[error("child VM halted: {0:?}")]
+    ChildHalt(ChildHaltKind),
 
     /// Operation is not supported by this provider.
     #[error("unsupported operation")]
@@ -75,7 +77,13 @@ pub type Result<T> = std::result::Result<T, PrecompileError>;
 
 impl From<SubCallError> for PrecompileError {
     fn from(value: SubCallError) -> Self {
-        PrecompileError::SubCall(value)
+        match value {
+            SubCallError::ParentOutOfGas => Self::OutOfGas,
+            other => match other.child_halt_kind() {
+                Some(kind) => Self::ChildHalt(kind),
+                None => Self::SubCall(other),
+            },
+        }
     }
 }
 
@@ -106,6 +114,7 @@ impl PrecompileError {
             | Self::WriteProtection
             | Self::Revert(_)
             | Self::RevertBytes(_)
+            | Self::ChildHalt(_)
             | Self::SubCall(_)
             | Self::Unsupported
             | Self::Fatal(_) => false,

@@ -27,7 +27,7 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::{
         MetadosisMutationEntitlements, MetadosisMutationPurposeTag, PrecompileStorageProvider,
-        SubCallError, SubCallInput, SubCallOutput,
+        SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
     },
 };
 use revm::{
@@ -45,6 +45,10 @@ use std::{cell::RefCell, sync::Arc};
 use crate::{gas::SubcallGasMeter, precompiles::OcompActivationBlockMeter, sub_call};
 use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
+
+#[cfg(test)]
+#[path = "subcall_tests.rs"]
+mod subcall_tests;
 
 thread_local! {
     /// Per-thread reentrancy stack. It records the outbe precompile addresses
@@ -123,6 +127,8 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub ctx: &'a mut EthEvmContext<DB>,
     /// Per-call gas meter (mirrors `revm::Gas`).
     pub gas: SubcallGasMeter,
+    /// Admission OOG cannot be caught by a domain `try_call` handler.
+    pub(crate) subcall_out_of_gas: bool,
     /// STATICCALL flag forwarded from the outer dispatcher.
     pub is_static: bool,
     /// Address of the outbe precompile the dispatcher is currently running.
@@ -273,6 +279,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
         Self {
             ctx,
             gas,
+            subcall_out_of_gas: false,
             is_static: config.is_static,
             self_address: config.self_address,
             reentrancy_stack: config.reentrancy_stack,
@@ -300,6 +307,16 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
         entitlements: MetadosisMutationEntitlements,
     ) {
         self.dispatch_frames.metadosis = MetadosisMutationFrameState::new(entitlements);
+    }
+
+    fn charge_subcall(&mut self, cost: u64) -> std::result::Result<(), SubCallError> {
+        if self.gas.record_regular_cost(cost) {
+            Ok(())
+        } else {
+            self.subcall_out_of_gas = true;
+            self.gas.inner_mut().spend_all();
+            Err(SubCallError::ParentOutOfGas)
+        }
     }
 }
 
@@ -529,9 +546,77 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
 
     fn sub_call(
         &mut self,
-        input: SubCallInput,
+        mut input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
-        sub_call::run_with_ocomp_context(
+        use revm::{
+            context_interface::host::LoadError,
+            interpreter::instructions::{contract::load_account_delegated, gas_table_spec},
+        };
+        self.abort_bridge.check_subcall()?;
+        // The Outbe precompile boundary currently has a single gas pool. Fail
+        // closed rather than discarding an EIP-8037 reservoir/state-gas charge.
+        if self.ctx.cfg().is_amsterdam_eip8037_enabled() {
+            return Err(SubCallError::Fatal(
+                "Outbe subcalls do not support EIP-8037".into(),
+            ));
+        }
+        let is_static = self.is_static || input.is_static;
+        if is_static && !input.value.is_zero() {
+            return Ok(SubCallOutput {
+                status: SubCallStatus::Halt(SubCallError::StateChangeDuringStaticCall),
+                returndata: Default::default(),
+                gas_used: 0,
+                gas_refunded: 0,
+            });
+        }
+        // Price the same account/delegation/value access as the pinned CALL
+        // implementation, before computing EIP-150's cap. This explicit-budget
+        // API intentionally does not add CALL's automatic value stipend.
+        let opcode = if is_static { 0xfa } else { 0xf1 };
+        self.charge_subcall(u64::from(gas_table_spec(self.spec)[opcode]))?;
+        let transfers_value = !input.value.is_zero();
+        if transfers_value {
+            self.charge_subcall(self.ctx.cfg().gas_params().transfer_value_cost())?;
+        }
+        let (cost, state_cost, code, hash) = match load_account_delegated(
+            self.ctx,
+            self.spec,
+            self.gas.remaining(),
+            input.target,
+            transfers_value,
+            !is_static,
+        ) {
+            Ok(loaded) => loaded,
+            Err(LoadError::ColdLoadSkipped) => {
+                self.charge_subcall(u64::MAX)?;
+                return Err(SubCallError::ParentOutOfGas);
+            }
+            Err(LoadError::DBError) => {
+                return Err(SubCallError::DatabaseError(format!(
+                    "{:?}",
+                    self.ctx.error()
+                )));
+            }
+        };
+        if state_cost != 0 {
+            return Err(SubCallError::Fatal(
+                "unsupported subcall state-gas charge".into(),
+            ));
+        }
+        self.charge_subcall(cost)?;
+        let remaining = self.gas.remaining();
+        let cap = if self.spec.is_enabled_in(SpecId::TANGERINE) {
+            self.ctx
+                .cfg()
+                .gas_params()
+                .call_stipend_reduction(remaining)
+        } else {
+            remaining
+        };
+        input.gas_limit = input.gas_limit.min(cap);
+        let allowance = input.gas_limit;
+        self.charge_subcall(allowance)?;
+        let outcome = sub_call::run_frame(
             self.ctx,
             sub_call::SubCallContext {
                 self_address: self.self_address,
@@ -550,7 +635,21 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                 activation_meter: self.ocomp_activation_block_meter.clone(),
             },
             input,
-        )
+            Some((hash, code)),
+        );
+        match outcome {
+            Ok(outcome) => sub_call::settle_outcome(outcome, self.gas.inner_mut()),
+            Err(error @ SubCallError::DepthLimitExceeded) => {
+                self.gas.erase_cost(allowance);
+                Ok(SubCallOutput {
+                    status: SubCallStatus::Halt(error),
+                    returndata: Default::default(),
+                    gas_used: 0,
+                    gas_refunded: 0,
+                })
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 

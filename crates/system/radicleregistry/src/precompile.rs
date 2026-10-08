@@ -27,9 +27,9 @@ pub fn dispatch(
         IRadicleRegistry::IRadicleRegistryCalls::abi_decode,
         |call| {
             use IRadicleRegistry::IRadicleRegistryCalls::*;
-            let mut registry = RadicleRegistry::new(storage);
+            let mut registry = RadicleRegistry::new(storage.clone());
             match call {
-                registerRepository(call) => mutate_void(call, caller, |sender, call| {
+                registerRepository(call) => mutate_void(&storage, call, caller, |sender, call| {
                     registry
                         .register_repository(call.repoId, sender)
                         .map(|_| ())

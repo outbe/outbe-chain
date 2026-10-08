@@ -335,7 +335,7 @@ impl<'storage> StorageHandle<'storage> {
     ///
     /// Maps `SubCallStatus::Success -> Ok(bytes)`,
     /// `Revert(bytes) -> Err(RevertBytes(bytes))`,
-    /// `Halt(err) -> Err(SubCall(err))`.
+    /// `Halt(err) -> Err(ChildHalt(kind))` for VM failures; provider errors stay fatal.
     pub fn call(
         &self,
         target: Address,
@@ -454,7 +454,7 @@ fn subcall_status_to_bytes(output: SubCallOutput) -> std::result::Result<Bytes, 
     match output.status {
         SubCallStatus::Success => Ok(output.returndata),
         SubCallStatus::Revert(bytes) => Err(PrecompileError::RevertBytes(bytes)),
-        SubCallStatus::Halt(err) => Err(PrecompileError::SubCall(err)),
+        SubCallStatus::Halt(err) => Err(err.into()),
     }
 }
 

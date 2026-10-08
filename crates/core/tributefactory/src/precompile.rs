@@ -47,8 +47,8 @@ pub fn dispatch(
         |call| {
             use ITributeFactory::ITributeFactoryCalls::*;
             match call {
-                offerTribute(c) => mutate(c, caller, |sender, c| {
-                    let mut factory = TributeFactoryContract::new(storage);
+                offerTribute(c) => mutate(&storage, c, caller, |sender, c| {
+                    let mut factory = TributeFactoryContract::new(storage.clone());
                     factory
                         .offer_tribute(
                             scope,

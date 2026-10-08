@@ -34,7 +34,7 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     dispatch_call(data, IOracle::IOracleCalls::abi_decode, |call| {
-        let mut oracle = OracleContract::new(storage);
+        let mut oracle = OracleContract::new(storage.clone());
         use IOracle::IOracleCalls::*;
         match call {
             getExchangeRate(c) => view(c, |c| oracle.get_exchange_rate(c.base, c.quote)),
@@ -127,7 +127,7 @@ pub fn dispatch(
                 let base = c.base;
                 let quote = c.quote;
                 let rate = c.rate;
-                mutate_void(c, caller, |sender, c| {
+                mutate_void(&storage, c, caller, |sender, c| {
                     // Block number and timestamp are available on the storage handle.
                     // Bootstrap writes still store 0 for both.
                     // Tally overwrites them with real values.
@@ -149,7 +149,7 @@ pub fn dispatch(
             delegateFeederConsent(c) => {
                 reject_value(&value)?;
                 let feeder = c.feeder;
-                mutate_void(c, caller, |sender, c| {
+                mutate_void(&storage, c, caller, |sender, c| {
                     oracle.delegate_feeder(sender, c.feeder)?;
                     let event = IOracle::FeederDelegated {
                         validator: sender,
@@ -165,7 +165,7 @@ pub fn dispatch(
                 reject_value(&value)?;
                 let base = c.base;
                 let quote = c.quote;
-                mutate_void(c, caller, |sender, c| {
+                mutate_void(&storage, c, caller, |sender, c| {
                     oracle.deactivate_vote_target(sender, c.base, c.quote)?;
                     let event = IOracle::VoteTargetDeactivated { base, quote };
                     let _ = oracle
@@ -178,7 +178,7 @@ pub fn dispatch(
                 reject_value(&value)?;
                 let base = c.base;
                 let quote = c.quote;
-                mutate_void(c, caller, |sender, c| {
+                mutate_void(&storage, c, caller, |sender, c| {
                     oracle.activate_vote_target(sender, c.base, c.quote)?;
                     let event = IOracle::VoteTargetActivated { base, quote };
                     let _ = oracle
@@ -339,7 +339,7 @@ pub fn dispatch(
             submitVote(c) => {
                 reject_value(&value)?;
                 let tuple_count = c.tuples.len() as u32;
-                mutate_void(c, caller, |sender, c| {
+                mutate_void(&storage, c, caller, |sender, c| {
                     let tuples: Vec<_> = c
                         .tuples
                         .iter()

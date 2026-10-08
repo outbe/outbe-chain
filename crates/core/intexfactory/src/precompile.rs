@@ -83,18 +83,22 @@ fn requeue_called_group(
 #[cfg(feature = "e2e-test")]
 fn dispatch_test_arming(storage: &StorageHandle<'_>, data: &[u8]) -> Result<Option<Bytes>> {
     if let Ok(call) = IIntexFactoryTestArming::seedDayVwapsForTestCall::abi_decode(data) {
+        outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
         seed_day_vwaps_for_test(storage, call)?;
         return Ok(Some(Bytes::new()));
     }
     if let Ok(call) = IIntexFactoryTestArming::issueForTestCall::abi_decode(data) {
+        outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
         issue_for_test(storage, call)?;
         return Ok(Some(Bytes::new()));
     }
     if let Ok(call) = IIntexFactoryTestArming::closeCallNoticeForTestCall::abi_decode(data) {
+        outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
         requeue_called_group(storage, call.isoCode, call.worldwideDay, call.deadline)?;
         return Ok(Some(Bytes::new()));
     }
     if let Ok(call) = IIntexFactoryTestArming::armProceedsForTestCall::abi_decode(data) {
+        outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
         outbe_intex::api::arm_proceeds(
             storage,
             call.worldwideDay.into(),
@@ -202,7 +206,7 @@ pub fn dispatch(
         |call| {
             use IIntexFactory::IIntexFactoryCalls::*;
             match call {
-                settleIntex(c) => mutate_void(c, caller, |sender, c| {
+                settleIntex(c) => mutate_void(&storage, c, caller, |sender, c| {
                     runtime::settle_intex(
                         &storage,
                         SeriesId::from(c.seriesId),
@@ -243,7 +247,7 @@ pub fn dispatch(
                 // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
                 // has the protocol's leading zero bytes. `seq` is the on-chain
                 // per-(series, owner) counter.
-                minePromis(c) => mutate(c, caller, |_sender, c| {
+                minePromis(c) => mutate(&storage, c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
@@ -261,8 +265,13 @@ pub fn dispatch(
                 }),
                 // The only payable selector: credits auction proceeds (msg.value)
                 // from the source chain into the day's pot.
-                distribute(c) => {
-                    mutate_void_payable(c, PAYABLE_SELECTORS, caller, value, |sender, c, val| {
+                distribute(c) => mutate_void_payable(
+                    &storage,
+                    c,
+                    PAYABLE_SELECTORS,
+                    caller,
+                    value,
+                    |sender, c, val| {
                         runtime::distribute(
                             &storage,
                             sender,
@@ -270,11 +279,11 @@ pub fn dispatch(
                             c.srcChainId,
                             val,
                         )
-                    })
-                }
+                    },
+                ),
                 // Permissionless: the merkle proof is the authorization, so the
                 // sender is irrelevant to the outcome.
-                payContributorBatch(c) => mutate_void(c, caller, |_sender, c| {
+                payContributorBatch(c) => mutate_void(&storage, c, caller, |_sender, c| {
                     runtime::pay_contributor_batch(
                         &storage,
                         c.worldwideDay,

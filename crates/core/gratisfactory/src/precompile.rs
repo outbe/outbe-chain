@@ -33,7 +33,7 @@ pub fn dispatch(
         |call| {
             use IGratisFactory::IGratisFactoryCalls::*;
             match call {
-                pledgeGratis(c) => mutate_void(c, caller, |sender, c| {
+                pledgeGratis(c) => mutate_void(&storage, c, caller, |sender, c| {
                     runtime::pledge_gratis(
                         storage.clone(),
                         sender,
@@ -44,7 +44,7 @@ pub fn dispatch(
                         },
                     )
                 }),
-                cancelPledge(c) => mutate_void(c, caller, |sender, c| {
+                cancelPledge(c) => mutate_void(&storage, c, caller, |sender, c| {
                     runtime::cancel_pledge(storage.clone(), sender, c.reservationId)
                 }),
                 collateralOf(c) => view(c, |c| {
@@ -61,7 +61,7 @@ pub fn dispatch(
                         gratisMinor: pledge.gratis_minor,
                     })
                 }),
-                mineCoen(c) => mutate(c, caller, |sender, c| {
+                mineCoen(c) => mutate(&storage, c, caller, |sender, c| {
                     let auth = ModifyAuth {
                         mac: c.mac.0,
                         op_nonce: c.opNonce,

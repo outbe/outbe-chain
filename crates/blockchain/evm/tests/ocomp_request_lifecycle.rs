@@ -18,6 +18,11 @@ fn real_payload_builder_continues_after_rejected_user_precompile_call() {
 }
 
 #[test]
+fn real_payload_builder_includes_child_halt_and_next_tx_with_identical_replay() {
+    lifecycle::rejection::run_child_halt();
+}
+
+#[test]
 fn real_payload_builder_skips_carrier_with_invalid_inner_vote_signature() {
     lifecycle::carrier_skip::run();
 }

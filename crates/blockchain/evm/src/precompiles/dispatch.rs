@@ -4,7 +4,7 @@ use super::{
         is_protocol_cycle_call, metadosis_mutation_entitlements, MetadosisMutationCall,
         ResultVoteCall,
     },
-    outcome::map_outbe_precompile_result,
+    outcome::map_outbe_precompile_result_with_refund,
     value_policy::{classify_boundary_value, BoundaryValue},
     ExecutionAbortBridge, OcompActivationBlockMeter,
 };
@@ -67,6 +67,7 @@ struct CallAdmission {
 struct DispatchOutcome {
     result: DomainResult<Bytes>,
     actual_gas: u64,
+    refund: i64,
 }
 
 /// Dispatch one outbe precompile call with full context access.
@@ -218,6 +219,7 @@ impl DispatchCall<'_> {
         DB::Error: Debug,
     {
         let mut actual_gas = self.base_gas;
+        let mut refund = 0;
         // Keep admission failures typed and retain the guard through execution
         // and gas settlement. Reporting and REVM translation happen afterwards.
         let result = (|| -> DomainResult<Bytes> {
@@ -243,7 +245,24 @@ impl DispatchCall<'_> {
             let mut provider =
                 CtxStorageProvider::new(ctx, gas_meter, self.provider_config(runtime, &admission));
             // A failing probe or command must still settle consumed provider gas.
-            let result = self.dispatch_with_provider(&mut provider, runtime, &admission);
+            let mut result = self.dispatch_with_provider(&mut provider, runtime, &admission);
+            if provider.subcall_out_of_gas {
+                // A handler cannot catch parent OOG and report success/revert.
+                // Preserve any subsequent infrastructure failure: it must still
+                // abort execution instead of becoming a user receipt.
+                result = match result {
+                    Ok(_)
+                    | Err(
+                        PrecompileError::OutOfGas
+                        | PrecompileError::Revert(_)
+                        | PrecompileError::RevertBytes(_)
+                        | PrecompileError::ChildHalt(_)
+                        | PrecompileError::WriteProtection
+                        | PrecompileError::BodyReadCorruption(_),
+                    ) => Err(PrecompileError::OutOfGas),
+                    other => other,
+                };
+            }
             if result.is_ok() && admission.result_vote == ResultVoteCall::Entitled {
                 let block_number = self.block_number;
                 let caller = self.inputs.caller;
@@ -254,6 +273,9 @@ impl DispatchCall<'_> {
             }
             let storage_gas = gas_budget.saturating_sub(provider.gas.remaining());
             actual_gas = base_gas + storage_gas;
+            if result.is_ok() {
+                refund = provider.gas.refunded();
+            }
             tracing::debug!(
                 target: "outbe::precompile::gas",
                 ?address,
@@ -265,7 +287,11 @@ impl DispatchCall<'_> {
             );
             result
         })();
-        DispatchOutcome { result, actual_gas }
+        DispatchOutcome {
+            result,
+            actual_gas,
+            refund,
+        }
     }
 
     fn dispatch_with_provider<DB>(
@@ -351,10 +377,14 @@ fn translate_outcome(
             readers.report_precompile_error(error);
         }
     }
-    match map_outbe_precompile_result(outcome.result, outcome.actual_gas) {
+    match map_outbe_precompile_result_with_refund(
+        outcome.result,
+        outcome.actual_gas,
+        outcome.refund,
+    ) {
         Ok(output) => Ok(precompile_output_to_interpreter_result(output, gas_limit)),
         // `map_outbe_precompile_result` returns `Err` only as a revm `Fatal`.
-        // `SubCall`, `Unsupported`, and every outbe variant without an explicit
+        // Provider `SubCall`, `Unsupported`, and every outbe variant without an explicit
         // arm reach this fatal string channel.
         Err(other) => Err(other.to_string()),
     }

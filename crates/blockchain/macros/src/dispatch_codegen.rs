@@ -195,7 +195,7 @@ fn emit_dispatch(
                 data,
                 <#interface_ident::#calls_ident as ::alloy_sol_types::SolInterface>::abi_decode,
                 |call| {
-                    let mut contract = #contract_name::new(storage);
+                    let mut contract = #contract_name::new(storage.clone());
                     let _ = caller;
                     let _ = value;
                     use #interface_ident::#calls_ident::*;
@@ -231,6 +231,7 @@ fn build_match_arm(m: &DispatchMethod) -> syn::Result<TokenStream2> {
             if m.returns_unit {
                 quote! {
                     #variant(c) => ::outbe_primitives::dispatch::mutate_void(
+                        &storage,
                         c,
                         caller,
                         |sender, c| contract.#rust_name(sender, #(#field_accesses),*),
@@ -239,6 +240,7 @@ fn build_match_arm(m: &DispatchMethod) -> syn::Result<TokenStream2> {
             } else {
                 quote! {
                     #variant(c) => ::outbe_primitives::dispatch::mutate(
+                        &storage,
                         c,
                         caller,
                         |sender, c| contract.#rust_name(sender, #(#field_accesses),*),
@@ -258,6 +260,7 @@ fn build_match_arm(m: &DispatchMethod) -> syn::Result<TokenStream2> {
             }
             quote! {
                 #variant(c) => ::outbe_primitives::dispatch::mutate_void_payable(
+                    &storage,
                     c,
                     self::PAYABLE_SELECTORS,
                     caller,

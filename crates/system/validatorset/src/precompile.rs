@@ -25,7 +25,7 @@ pub fn dispatch(
         data,
         IValidatorSet::IValidatorSetCalls::abi_decode,
         |call| {
-            let mut vs = crate::schema::ValidatorSet::new(storage);
+            let mut vs = crate::schema::ValidatorSet::new(storage.clone());
             use IValidatorSet::IValidatorSetCalls::*;
             match call {
                 getValidators(_) => metadata::<IValidatorSet::getValidatorsCall>(|| {
@@ -127,11 +127,11 @@ pub fn dispatch(
                 getEpochStartBlock(_) => metadata::<IValidatorSet::getEpochStartBlockCall>(|| {
                     vs.epoch_start_block.read()
                 }),
-                setDelegate(c) => mutate_void(c, caller, |sender, c| {
+                setDelegate(c) => mutate_void(&storage, c, caller, |sender, c| {
                     let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
                     vs.set_delegate(sender, role, c.delegate)
                 }),
-                revokeDelegate(c) => mutate_void(c, caller, |sender, c| {
+                revokeDelegate(c) => mutate_void(&storage, c, caller, |sender, c| {
                     let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
                     vs.revoke_delegate(sender, role)
                 }),
@@ -149,7 +149,7 @@ pub fn dispatch(
                 validatorByRadicleNodeId(c) => {
                     view(c, |c| vs.validator_by_radicle_node_id(c.nodeId))
                 }
-                registerValidator(c) => mutate_void(c, caller, |sender, c| {
+                registerValidator(c) => mutate_void(&storage, c, caller, |sender, c| {
                     if c.consensusPubkey.len() != 48 {
                         return Err(PrecompileError::Revert(
                             "consensus pubkey must be 48 bytes".into(),
@@ -175,7 +175,7 @@ pub fn dispatch(
                         Some(sig),
                     )
                 }),
-                setP2pAddress(c) => mutate_void(c, caller, |sender, c| {
+                setP2pAddress(c) => mutate_void(&storage, c, caller, |sender, c| {
                     vs.set_p2p_address(sender, c.validatorAddress, c.version, &c.encoded)
                 }),
                 getP2pAddress(c) => view(c, |c| {
@@ -184,10 +184,10 @@ pub fn dispatch(
                         .unwrap_or((0, Vec::new()));
                     Ok((version, Bytes::from(encoded)).into())
                 }),
-                deactivateValidator(c) => mutate_void(c, caller, |sender, c| {
+                deactivateValidator(c) => mutate_void(&storage, c, caller, |sender, c| {
                     vs.deactivate_validator(sender, c.validatorAddress)
                 }),
-                confirmValidatorReady(c) => mutate_void(c, caller, |sender, c| {
+                confirmValidatorReady(c) => mutate_void(&storage, c, caller, |sender, c| {
                     vs.confirm_validator_ready(sender, &c.registration)
                 }),
             }

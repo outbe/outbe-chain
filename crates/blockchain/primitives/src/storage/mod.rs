@@ -37,8 +37,8 @@ use crate::error::Result;
 
 /// Input to a sub-call dispatched from a Rust precompile.
 ///
-/// The sub-call driver (`outbe_evm::sub_call::run_with_ocomp_context`)
-/// consumes this input.
+/// `CtxStorageProvider` prices and caps this input against its parent meter,
+/// then executes and settles a child through `outbe_evm::sub_call`.
 #[derive(Debug, Clone)]
 pub struct SubCallInput {
     /// Target contract address.
@@ -114,6 +114,9 @@ pub enum SubCallError {
     /// Child frame ran out of gas.
     #[error("out of gas")]
     OutOfGas,
+    /// Admission exhausted the enclosing precompile's gas, before a child could run.
+    #[error("parent out of gas")]
+    ParentOutOfGas,
     /// Call stack would exceed `CALL_STACK_LIMIT` (1024).
     #[error("depth limit exceeded")]
     DepthLimitExceeded,
@@ -133,6 +136,68 @@ pub enum SubCallError {
     /// Child frame halted with a revm halt reason.
     #[error("evm halt: {0:?}")]
     EvmHalt(HaltReason),
+}
+
+/// Stable protocol codes for `SubCallHalted(uint8)`. These are deliberately
+/// independent of revm's enum discriminants and diagnostic strings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ChildHaltKind {
+    OutOfGas = 1,
+    DepthLimit = 2,
+    StaticViolation = 3,
+    InvalidTarget = 4,
+    NotActivated = 5,
+    OutOfFunds = 6,
+    InvalidOpcode = 7,
+    InvalidJump = 8,
+    StackUnderflow = 9,
+    StackOverflow = 10,
+    MemoryBounds = 11,
+    CreateFailure = 12,
+    PrecompileFailure = 13,
+    ArithmeticOverflow = 14,
+}
+
+impl SubCallError {
+    /// Only deterministic child VM failures have a receipt-facing code.
+    pub fn child_halt_kind(&self) -> Option<ChildHaltKind> {
+        use ChildHaltKind as K;
+        Some(match self {
+            Self::OutOfGas => K::OutOfGas,
+            Self::DepthLimitExceeded => K::DepthLimit,
+            Self::StaticContextViolation | Self::StateChangeDuringStaticCall => K::StaticViolation,
+            Self::InvalidTarget => K::InvalidTarget,
+            Self::NotActivated => K::NotActivated,
+            Self::EvmHalt(reason) => match reason {
+                HaltReason::OutOfGas(_) => K::OutOfGas,
+                HaltReason::OpcodeNotFound | HaltReason::InvalidFEOpcode => K::InvalidOpcode,
+                HaltReason::InvalidJump => K::InvalidJump,
+                HaltReason::NotActivated => K::NotActivated,
+                HaltReason::StackUnderflow => K::StackUnderflow,
+                HaltReason::StackOverflow => K::StackOverflow,
+                HaltReason::OutOfOffset => K::MemoryBounds,
+                HaltReason::CreateCollision
+                | HaltReason::NonceOverflow
+                | HaltReason::CreateContractSizeLimit
+                | HaltReason::CreateContractStartingWithEF
+                | HaltReason::CreateInitCodeSizeLimit => K::CreateFailure,
+                HaltReason::PrecompileError | HaltReason::PrecompileErrorWithContext(_) => {
+                    K::PrecompileFailure
+                }
+                HaltReason::OverflowPayment => K::ArithmeticOverflow,
+                HaltReason::StateChangeDuringStaticCall
+                | HaltReason::CallNotAllowedInsideStatic => K::StaticViolation,
+                HaltReason::OutOfFunds => K::OutOfFunds,
+                HaltReason::CallTooDeep => K::DepthLimit,
+            },
+            Self::NotAvailable
+            | Self::ProviderBorrowed
+            | Self::DatabaseError(_)
+            | Self::Fatal(_)
+            | Self::ParentOutOfGas => return None,
+        })
+    }
 }
 
 /// RAII guard for atomic state mutation batching.
@@ -358,7 +423,7 @@ pub trait PrecompileStorageProvider {
     ///
     /// Default body returns [`SubCallError::NotAvailable`]. Concrete providers
     /// wired to the sub-call driver override it with a real implementation that
-    /// routes through `outbe_evm::sub_call::run_with_ocomp_context`. Test / read-only / block-level
+    /// prices, executes and settles the child against the parent's gas meter. Test / read-only / block-level
     /// providers may keep the default.
     fn sub_call(
         &mut self,

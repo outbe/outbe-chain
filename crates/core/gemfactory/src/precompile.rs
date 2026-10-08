@@ -33,7 +33,7 @@ pub fn dispatch(
     dispatch_call(data, IGemFactory::IGemFactoryCalls::abi_decode, |call| {
         use IGemFactory::IGemFactoryCalls::*;
         match call {
-            issueGemPosition(c) => mutate(c, caller, |sender, c| {
+            issueGemPosition(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::issue_gem_position(
                     &storage,
                     sender,
@@ -41,7 +41,7 @@ pub fn dispatch(
                     c.units,
                 )
             }),
-            issueGem(c) => mutate(c, caller, |sender, c| {
+            issueGem(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::issue_merchant_gem(
                     &storage,
                     sender,
@@ -50,10 +50,10 @@ pub fn dispatch(
                     c.promisLoadMinor,
                 )
             }),
-            settleGem(c) => mutate_void(c, caller, |sender, c| {
+            settleGem(c) => mutate_void(&storage, c, caller, |sender, c| {
                 runtime::settle_gem(&storage, sender, c.gemId, c.asset, c.snapshotId)
             }),
-            minePromis(c) => mutate(c, caller, |_sender, c| {
+            minePromis(c) => mutate(&storage, c, caller, |_sender, c| {
                 let auth = outbe_promisfactory::api::ModifyAuth {
                     mac: c.mac.0,
                     op_nonce: c.opNonce,

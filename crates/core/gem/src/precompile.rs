@@ -69,6 +69,7 @@ pub fn dispatch(
     if let Ok(call) =
         <IGemTestArming::backdateGemForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
     {
+        outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
         let mut gem = GemContract::new(storage.clone());
         let mut item = gem
             .gem_items
@@ -87,6 +88,7 @@ pub fn dispatch(
     if let Ok(call) =
         <IGemTestArming::closeCallNoticeForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
     {
+        outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
         requeue_called_gem(storage.clone(), call.gemId, call.deadline)?;
         return Ok(Bytes::new());
     }

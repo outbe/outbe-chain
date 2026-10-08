@@ -25,12 +25,12 @@ pub fn dispatch(
     reject_value(&value)?;
     dispatch_call(data, IL2Registry::IL2RegistryCalls::abi_decode, |call| {
         use IL2Registry::IL2RegistryCalls::*;
-        let mut registry = L2RegistryContract::new(storage);
+        let mut registry = L2RegistryContract::new(storage.clone());
         match call {
-            removeNetwork(c) => mutate_void(c, caller, |sender, c| {
+            removeNetwork(c) => mutate_void(&storage, c, caller, |sender, c| {
                 registry.remove_network(sender, c.chainId)
             }),
-            updatePublicKey(c) => mutate_void(c, caller, |sender, c| {
+            updatePublicKey(c) => mutate_void(&storage, c, caller, |sender, c| {
                 registry.update_public_key(sender, c.chainId, &c.publicKey)
             }),
             getNetwork(c) => view(c, |c| {

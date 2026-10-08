@@ -34,12 +34,12 @@ pub fn dispatch(
         |call| {
             use IStablecoinPolicyRegistry::IStablecoinPolicyRegistryCalls::*;
 
-            let mut registry = StablecoinPolicyRegistryContract::new(storage);
+            let mut registry = StablecoinPolicyRegistryContract::new(storage.clone());
             match call {
-                createPolicy(call) => mutate(call, caller, |actor, call| {
+                createPolicy(call) => mutate(&storage, call, caller, |actor, call| {
                     registry.create_policy(actor, call.policyType, call.admin)
                 }),
-                createDirectionalPolicy(call) => mutate(call, caller, |actor, call| {
+                createDirectionalPolicy(call) => mutate(&storage, call, caller, |actor, call| {
                     registry.create_directional_policy(
                         actor,
                         call.admin,
@@ -48,21 +48,27 @@ pub fn dispatch(
                         call.mintPolicyId,
                     )
                 }),
-                addMembers(call) => mutate_void(call, caller, |actor, call| {
+                addMembers(call) => mutate_void(&storage, call, caller, |actor, call| {
                     registry.add_members(call.policyId, actor, &call.accounts)
                 }),
-                removeMembers(call) => mutate_void(call, caller, |actor, call| {
+                removeMembers(call) => mutate_void(&storage, call, caller, |actor, call| {
                     registry.remove_members(call.policyId, actor, &call.accounts)
                 }),
-                beginPolicyAdminTransfer(call) => mutate_void(call, caller, |actor, call| {
-                    registry.begin_policy_admin_transfer(call.policyId, actor, call.candidate)
-                }),
-                cancelPolicyAdminTransfer(call) => mutate_void(call, caller, |actor, call| {
-                    registry.cancel_policy_admin_transfer(call.policyId, actor)
-                }),
-                acceptPolicyAdminTransfer(call) => mutate_void(call, caller, |actor, call| {
-                    registry.accept_policy_admin_transfer(call.policyId, actor)
-                }),
+                beginPolicyAdminTransfer(call) => {
+                    mutate_void(&storage, call, caller, |actor, call| {
+                        registry.begin_policy_admin_transfer(call.policyId, actor, call.candidate)
+                    })
+                }
+                cancelPolicyAdminTransfer(call) => {
+                    mutate_void(&storage, call, caller, |actor, call| {
+                        registry.cancel_policy_admin_transfer(call.policyId, actor)
+                    })
+                }
+                acceptPolicyAdminTransfer(call) => {
+                    mutate_void(&storage, call, caller, |actor, call| {
+                        registry.accept_policy_admin_transfer(call.policyId, actor)
+                    })
+                }
                 policyExists(call) => view(call, |call| registry.policy_exists(call.policyId)),
                 policyType(call) => view(call, |call| {
                     registry

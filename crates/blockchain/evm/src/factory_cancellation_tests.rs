@@ -238,6 +238,62 @@ fn cancelled_read_preserves_its_type_through_real_evm_calls() {
 }
 
 #[test]
+fn cancelled_read_stays_typed_through_rust_child_and_nested_precompile() {
+    use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
+    use outbe_vaultrouter::api::IVaultRouter;
+    let (mut evm, calldata, owner) = fixture();
+    let trampoline = Address::repeat_byte(0xab);
+    // The VaultRouter Rust precompile calls this contract, which ignores its
+    // balanceOf calldata and calls Nod.ownerOf to perform the body read.
+    let len = u8::try_from(calldata.len()).unwrap();
+    let mut code = vec![
+        0x60, len, 0x60, 0, 0x60, 0, 0x39, 0x60, 0, 0x60, 0, 0x60, len, 0x60, 0, 0x73,
+    ];
+    code.extend_from_slice(NOD_ADDRESS.as_slice());
+    code.extend_from_slice(&[0x63, 0, 0x0f, 0x42, 0x40, 0xfa, 0]);
+    code[3] = u8::try_from(code.len()).unwrap();
+    code.extend_from_slice(&calldata);
+    let code = revm::state::Bytecode::new_raw(code.into());
+    evm.inner.ctx.journaled_state.database.insert_account_info(
+        trampoline,
+        revm::state::AccountInfo {
+            code_hash: code.hash_slow(),
+            code: Some(code),
+            ..Default::default()
+        },
+    );
+    let budget = ExecutionReadBudget::new();
+    let guard = evm
+        .runtime_scope()
+        .body_readers()
+        .unwrap()
+        .enter_execution_budget(budget.clone());
+    budget.cancel();
+    let result = evm.transact_raw(
+        TxEnv::builder()
+            .caller(owner)
+            .kind(TxKind::Call(VAULT_ROUTER_ADDRESS))
+            .data(
+                IVaultRouter::sharesBalanceCall { vault: trampoline }
+                    .abi_encode()
+                    .into(),
+            )
+            .gas_limit(1_000_000)
+            .build_fill(),
+    );
+    let error = result.expect_err("cancelled nested read must abort execution, without a receipt");
+    let cancelled =
+        ExecutionReadCancelled::find(&error).expect("nested cancellation retains its type");
+    assert!(cancelled.budget.same_request(&budget));
+    drop(guard);
+    assert!(evm
+        .transact_system_call(owner, Address::repeat_byte(0x77), Bytes::new())
+        .unwrap()
+        .result
+        .is_success());
+}
+
+#[test]
 fn fresh_execution_fork_reads_the_same_body_after_another_execution_cancels() {
     let (mut cancelled, calldata, owner) = fixture();
     let budget = ExecutionReadBudget::new();
