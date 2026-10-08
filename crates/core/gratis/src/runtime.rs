@@ -213,10 +213,16 @@ pub(crate) fn pledge_with_fidelity(
     storage.with_checkpoint(|| {
         let gratis = Gratis::new(storage.clone());
         check_op_nonce(&gratis, caller, auth.op_nonce)?;
+        let next_nonce = auth.op_nonce.checked_add(1);
         let mut req = base_request(GratisOp::Pledge, chain_id_b256(&storage)?, caller, amount);
         req.modify_auth = auth;
         req.fidelity = Some(fidelity);
         let result = apply_collateral_op(&storage, req)?;
+        if next_nonce != Some(result.next_op_nonce) {
+            return Err(PrecompileError::Fatal(
+                "enclave returned a wrong op nonce".into(),
+            ));
+        }
         gratis.set_op_nonce(caller, result.next_op_nonce)?;
         let pledged = gratis
             .pledged_total_supply()?
@@ -227,21 +233,27 @@ pub(crate) fn pledge_with_fidelity(
     })
 }
 
-/// Run an op over both of the account's blobs and store the results. The caller
-/// authorizes it and owns the aggregate bookkeeping.
+/// Run a collateral op over the blobs it changes and store the results. The
+/// caller authorizes it and owns the aggregate bookkeeping.
 fn apply_collateral_op(
     storage: &StorageHandle<'_>,
     mut req: GratisOpRequest,
 ) -> Result<GratisOpResult> {
     let gratis = Gratis::new(storage.clone());
     let (account, amount) = (req.account, req.amount);
-    req.current_balance = gratis.balance_ct_of(account)?;
+    let moves_balance = !matches!(req.op, GratisOp::BurnPledged);
+    if moves_balance {
+        req.current_balance = gratis.balance_ct_of(account)?;
+    }
     req.current_pledged = gratis.pledged_ct_of(account)?;
     let _scope = outbe_tee::call_context::ContextScope::from_storage(storage)?;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
-    if result.event_amount != amount {
-        return Err(PrecompileError::Fatal("collateral amount mismatch".into()));
+    if result.event_amount != amount
+        || result.new_pledged.is_empty()
+        || result.new_balance.is_empty() == moves_balance
+    {
+        return Err(PrecompileError::Fatal("collateral result mismatch".into()));
     }
     write_account_blobs(&gratis, account, &result)?;
     Ok(result)
