@@ -12,7 +12,7 @@ use super::{
     config::{DexMarketConfig, DexProviderConfig},
     math,
     pool::Decimals,
-    rpc::{quantity, Block, Rpc},
+    rpc::{quantity, Block, Log, Rpc},
 };
 use crate::provider::{Provider, TickerPrice};
 
@@ -31,7 +31,7 @@ pub(crate) struct DexProvider {
     name: String,
     markets: HashMap<String, Arc<RwLock<Option<Snapshot>>>>,
     tasks: Vec<JoinHandle<()>>,
-    max_finalized_age_secs: u64,
+    max_block_age_secs: u64,
 }
 
 impl DexProvider {
@@ -52,7 +52,7 @@ impl DexProvider {
                     match worker.refresh().await {
                         Ok((block, ticker)) => {
                             tracing::debug!(provider = %worker.config.name, market = %worker.market.key(),
-                                block = block.number, hash = %block.hash, "DEX finalized snapshot ready");
+                                block = block.number, hash = %block.hash, "DEX snapshot ready");
                             *state.write().await = Some(Snapshot { ticker, block_timestamp: block.timestamp, acquired_at });
                         }
                         Err(error) => {
@@ -69,7 +69,7 @@ impl DexProvider {
             name: config.name.clone(),
             markets,
             tasks,
-            max_finalized_age_secs: config.max_finalized_age_secs,
+            max_block_age_secs: config.max_block_age_secs,
         })
     }
 }
@@ -99,8 +99,7 @@ impl Provider for DexProvider {
                 if let Some(snapshot) = state.read().await.as_ref() {
                     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
                     if snapshot.acquired_at.elapsed() <= SNAPSHOT_TTL
-                        && now.saturating_sub(snapshot.block_timestamp)
-                            <= self.max_finalized_age_secs
+                        && now.saturating_sub(snapshot.block_timestamp) <= self.max_block_age_secs
                     {
                         tickers.insert(key, snapshot.ticker.clone());
                     }
@@ -139,12 +138,22 @@ impl MarketWorker {
             self.rpc.chain_id().await? == self.config.chain_id,
             "DEX RPC chain ID mismatch"
         );
-        let head = self.rpc.block("finalized").await?;
+        // Read `confirmations` blocks behind the head, not the finalized tag:
+        // finality on Ethereum lags ~13 minutes and moves once per epoch,
+        // while a few confirmations already rule out ordinary reorgs.
+        let latest = self.rpc.block("latest").await?;
+        let head = if self.config.confirmations == 0 {
+            latest
+        } else {
+            self.rpc
+                .block_at(latest.number.saturating_sub(self.config.confirmations))
+                .await?
+        };
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         ensure!(
             head.timestamp <= now.saturating_add(30)
-                && now.saturating_sub(head.timestamp) <= self.config.max_finalized_age_secs,
-            "DEX finalized block is stale or in the future"
+                && now.saturating_sub(head.timestamp) <= self.config.max_block_age_secs,
+            "DEX block is stale or in the future"
         );
         if let Some(cursor) = &self.cursor {
             let canonical = self.rpc.block_at(cursor.number).await?;
@@ -152,7 +161,7 @@ impl MarketWorker {
                 self.cursor = None;
                 self.volumes.clear();
                 self.decimals = None;
-                return Err(eyre!("DEX finalized history changed; rebuilding volume"));
+                return Err(eyre!("DEX chain history changed; rebuilding volume"));
             }
         }
         let decimals = match self.decimals {
@@ -168,7 +177,7 @@ impl MarketWorker {
         self.collect_volume(&head).await?;
         ensure!(
             self.rpc.block_at(head.number).await? == head,
-            "DEX finalized block changed during collection"
+            "DEX block changed during collection"
         );
         let cutoff = head.timestamp.saturating_sub(WINDOW_SECS);
         self.volumes.retain(|_, (timestamp, _)| *timestamp > cutoff);
@@ -217,49 +226,12 @@ impl MarketWorker {
                 }
                 Err(error) => return Err(error),
             };
-            let mut seen = BTreeMap::new();
-            let mut buckets: BTreeMap<u64, (u64, U256)> = BTreeMap::new();
-            let mut blocks: BTreeMap<u64, Block> = BTreeMap::new();
             let end = self.rpc.block_at(to).await?;
             ensure!(
                 end.timestamp <= head.timestamp,
-                "DEX log range extends past finalized time"
+                "DEX log range extends past the head time"
             );
-            blocks.insert(to, end.clone());
-            for log in logs {
-                let number = quantity(&log.block_number)?;
-                let index = quantity(&log.log_index)?;
-                ensure!(
-                    (from..=to).contains(&number),
-                    "DEX log outside requested range"
-                );
-                let amount = self.market.swap_volume(&log)?;
-                // A block's log index is globally unique, including singleton
-                // managers. Identical duplicates are harmless; conflicts fail.
-                let identity = (log.block_hash, index);
-                let value = (log.transaction_hash, log.data.clone(), log.topics.clone());
-                if let Some(previous) = seen.insert(identity, value.clone()) {
-                    ensure!(previous == value, "conflicting duplicate DEX log");
-                    continue;
-                }
-                if let std::collections::btree_map::Entry::Vacant(entry) = blocks.entry(number) {
-                    entry.insert(self.rpc.block_at(number).await?);
-                }
-                let block = blocks
-                    .get(&number)
-                    .ok_or_else(|| eyre!("missing DEX log block"))?;
-                ensure!(
-                    block.hash == log.block_hash && block.timestamp <= head.timestamp,
-                    "DEX log is not in the canonical finalized history"
-                );
-                let bucket = buckets
-                    .entry(number)
-                    .or_insert((block.timestamp, U256::ZERO));
-                bucket.1 = bucket
-                    .1
-                    .checked_add(amount)
-                    .ok_or_else(|| eyre!("DEX block volume overflow"))?;
-            }
+            let buckets = self.bucket_chunk(logs, from, &end, head).await?;
             // Commit only after validating the entire chunk. Retried requests
             // never append a partially processed chunk or count its logs twice.
             self.volumes.extend(buckets);
@@ -272,6 +244,57 @@ impl MarketWorker {
         }
         Ok(())
     }
+
+    /// Validates one chunk of Swap logs in `[from, end.number]` against the
+    /// canonical chain and sums the base-token amount per block.
+    async fn bucket_chunk(
+        &self,
+        logs: Vec<Log>,
+        from: u64,
+        end: &Block,
+        head: &Block,
+    ) -> Result<BTreeMap<u64, (u64, U256)>> {
+        let to = end.number;
+        let mut seen = BTreeMap::new();
+        let mut buckets: BTreeMap<u64, (u64, U256)> = BTreeMap::new();
+        let mut blocks: BTreeMap<u64, Block> = BTreeMap::new();
+        blocks.insert(to, end.clone());
+        for log in logs {
+            let number = quantity(&log.block_number)?;
+            let index = quantity(&log.log_index)?;
+            ensure!(
+                (from..=to).contains(&number),
+                "DEX log outside requested range"
+            );
+            let amount = self.market.swap_volume(&log)?;
+            // A block's log index is globally unique, including singleton
+            // managers. Identical duplicates are harmless; conflicts fail.
+            let identity = (log.block_hash, index);
+            let value = (log.transaction_hash, log.data.clone(), log.topics.clone());
+            if let Some(previous) = seen.insert(identity, value.clone()) {
+                ensure!(previous == value, "conflicting duplicate DEX log");
+                continue;
+            }
+            if let std::collections::btree_map::Entry::Vacant(entry) = blocks.entry(number) {
+                entry.insert(self.rpc.block_at(number).await?);
+            }
+            let block = blocks
+                .get(&number)
+                .ok_or_else(|| eyre!("missing DEX log block"))?;
+            ensure!(
+                block.hash == log.block_hash && block.timestamp <= head.timestamp,
+                "DEX log is not in the canonical history"
+            );
+            let bucket = buckets
+                .entry(number)
+                .or_insert((block.timestamp, U256::ZERO));
+            bucket.1 = bucket
+                .1
+                .checked_add(amount)
+                .ok_or_else(|| eyre!("DEX block volume overflow"))?;
+        }
+        Ok(buckets)
+    }
 }
 
 #[cfg(test)]
@@ -280,7 +303,7 @@ mod tests {
     use crate::fixed::FixedValue;
 
     #[tokio::test]
-    async fn ticker_cache_expires_from_acquisition_and_finalized_block_time() {
+    async fn ticker_cache_expires_from_acquisition_and_block_time() {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -297,7 +320,7 @@ mod tests {
             name: "uniswap".into(),
             markets: HashMap::from([("COEN/USDC".into(), state.clone())]),
             tasks: vec![],
-            max_finalized_age_secs: 1800,
+            max_block_age_secs: 1800,
         };
         let pairs = [("COEN".into(), "USDC".into())];
         assert_eq!(provider.get_ticker_prices(&pairs).await.unwrap().len(), 1);
