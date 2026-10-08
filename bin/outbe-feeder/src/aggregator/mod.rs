@@ -445,7 +445,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
-            external_oracles: vec![],
+            onchain_feeds: Default::default(),
             redstone: None,
             health: None,
         }

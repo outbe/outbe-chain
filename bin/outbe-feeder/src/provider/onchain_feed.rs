@@ -1,9 +1,9 @@
-//! External oracles read from their on-chain feed contracts: Chainlink Data
+//! Price feeds read from another oracle's on-chain contract: Chainlink Data
 //! Feeds, RedStone push feeds, and any other vendor whose contract exposes
 //! Chainlink's `AggregatorV3Interface` (`latestRoundData`, `decimals`,
 //! `description`).
 //!
-//! Every `[[external_oracles]]` section is one provider instance whose `name`
+//! Every `[onchain_feeds.<name>]` table is one provider instance; `<name>`
 //! is the provider name used in `currency_pairs.sources`, so one feeder can
 //! hold the same market from several vendors as separate sources.
 //!
@@ -17,7 +17,7 @@ use alloy_sol_types::sol;
 use async_trait::async_trait;
 use eyre::{ensure, eyre, Result};
 use serde::Deserialize;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -43,23 +43,23 @@ sol! {
 pub(crate) const MAX_FEED_AGE_SECS: u64 = 90_000;
 const MAX_FUTURE_SECS: u64 = 60;
 
-/// One provider instance: a vendor label, an EVM network and its feeds.
+/// One provider instance: an EVM network and its feeds, keyed in the config
+/// by the provider name used in `currency_pairs.sources`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ExternalOracleConfig {
-    /// Provider name referenced by `currency_pairs.sources`, e.g. `chainlink`
-    /// or `redstone_push`; must not collide with a built-in provider name.
-    pub name: String,
+pub(crate) struct OnchainFeedConfig {
     pub chain_id: u64,
     pub rpc_endpoint: String,
-    pub feeds: Vec<FeedConfig>,
+    /// Feeds keyed by `BASE/QUOTE`, e.g. `"ETH/840"`.
+    pub feeds: BTreeMap<String, FeedConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FeedConfig {
-    pub base: String,
-    pub quote: String,
+    /// `BASE/QUOTE`, filled from the table key.
+    #[serde(skip)]
+    pub key: String,
     /// Feed contract (the vendor's proxy address); it must implement
     /// Chainlink's `AggregatorV3Interface`. The implementation behind a proxy
     /// may rotate.
@@ -69,120 +69,85 @@ pub(crate) struct FeedConfig {
     pub description: String,
 }
 
-impl FeedConfig {
-    fn key(&self) -> String {
-        format!("{}/{}", self.base, self.quote)
-    }
-}
-
-impl ExternalOracleConfig {
-    pub fn validate(&self) -> Result<()> {
+impl OnchainFeedConfig {
+    pub fn validate(&self, name: &str) -> Result<()> {
         ensure!(
-            !self.name.trim().is_empty() && !self.name.contains(char::is_whitespace),
-            "external_oracle provider name must be a single non-empty word"
+            !name.trim().is_empty() && !name.contains(char::is_whitespace),
+            "onchain_feed provider name must be a single non-empty word"
         );
-        ensure!(
-            self.chain_id > 0,
-            "external_oracle chain_id must be positive"
-        );
+        ensure!(self.chain_id > 0, "onchain_feed chain_id must be positive");
         let url = reqwest::Url::parse(&self.rpc_endpoint)
-            .map_err(|_| eyre!("invalid external_oracle RPC URL"))?;
+            .map_err(|_| eyre!("invalid onchain_feed RPC URL"))?;
         ensure!(
             matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
-            "external_oracle RPC requires HTTP(S)"
+            "onchain_feed RPC requires HTTP(S)"
         );
         ensure!(
             !self.feeds.is_empty(),
-            "external_oracle provider has no feeds"
+            "onchain_feed provider {name} has no feeds"
         );
-        let mut keys = BTreeSet::new();
         let mut addresses = BTreeSet::new();
-        for feed in &self.feeds {
+        for (key, feed) in &self.feeds {
             ensure!(
-                !feed.base.trim().is_empty() && !feed.quote.trim().is_empty(),
-                "external_oracle feed has an empty market asset"
+                key.split_once('/').is_some_and(
+                    |(base, quote)| !base.trim().is_empty() && !quote.trim().is_empty()
+                ),
+                "onchain_feed feed key {key:?} in provider {name} must be BASE/QUOTE"
             );
             ensure!(
                 !feed.contract.is_zero(),
-                "external_oracle feed {} has no contract address",
-                feed.key()
+                "onchain_feed feed {key} in provider {name} has no contract address"
             );
             ensure!(
                 !feed.description.trim().is_empty(),
-                "external_oracle feed {} has no description",
-                feed.key()
-            );
-            ensure!(
-                keys.insert(feed.key()),
-                "duplicate feed {} in external_oracle provider {}",
-                feed.key(),
-                self.name
+                "onchain_feed feed {key} in provider {name} has no description"
             );
             ensure!(
                 addresses.insert(feed.contract),
-                "contract {} configured twice in external_oracle provider {}",
-                feed.contract,
-                self.name
+                "contract {} configured twice in onchain_feed provider {name}",
+                feed.contract
             );
         }
         Ok(())
     }
 }
 
-/// Validates `[[external_oracles]]` sections and the sources that
+/// Validates `[onchain_feeds.<name>]` tables and the sources that
 /// reference them by name. Built-in provider names are reserved.
 pub(crate) fn validate_config(config: &FeederConfig, builtin: &[&str]) -> Result<()> {
-    let mut names = BTreeSet::new();
-    for section in &config.external_oracles {
-        section.validate()?;
+    for (name, section) in &config.onchain_feeds {
+        section.validate(name)?;
         ensure!(
-            !builtin.contains(&section.name.as_str()),
-            "external_oracle provider name '{}' is a built-in provider",
-            section.name
+            !builtin.contains(&name.as_str()),
+            "onchain_feed provider name '{name}' is a built-in provider"
         );
         ensure!(
-            names.insert(section.name.as_str()),
-            "duplicate external_oracle provider '{}'",
-            section.name
-        );
-        ensure!(
-            !config
-                .provider_endpoints
-                .iter()
-                .any(|e| e.name == section.name),
-            "configure external_oracle RPC in external_oracles, not provider_endpoints"
+            !config.provider_endpoints.iter().any(|e| &e.name == name),
+            "configure onchain_feed RPC in onchain_feeds, not provider_endpoints"
         );
     }
     for pair in &config.currency_pairs {
         for source in &pair.sources {
-            let Some(section) = config
-                .external_oracles
-                .iter()
-                .find(|s| s.name == source.provider)
-            else {
+            let Some(section) = config.onchain_feeds.get(&source.provider) else {
                 continue;
             };
+            let key = format!("{}/{}", source.base, source.quote);
             ensure!(
-                section
-                    .feeds
-                    .iter()
-                    .any(|f| f.base == source.base && f.quote == source.quote),
-                "missing feed {}/{} in external_oracle provider {}",
-                source.base,
-                source.quote,
-                section.name
+                section.feeds.contains_key(&key),
+                "missing feed {key} in onchain_feed provider {}",
+                source.provider
             );
         }
     }
     Ok(())
 }
 
-/// Whether `name` is an `[[external_oracles]]` section.
+/// Whether `name` is an `[onchain_feeds.<name>]` table.
 pub(crate) fn is_section_name(config: &FeederConfig, name: &str) -> bool {
-    config.external_oracles.iter().any(|s| s.name == name)
+    config.onchain_feeds.contains_key(name)
 }
 
-pub(crate) struct ExternalOracleProvider {
+pub(crate) struct OnchainFeedProvider {
     name: String,
     rpc: Rpc,
     chain_id: u64,
@@ -193,17 +158,21 @@ pub(crate) struct ExternalOracleProvider {
     decimals: RwLock<HashMap<String, u8>>,
 }
 
-impl ExternalOracleProvider {
-    pub fn new(section: &ExternalOracleConfig) -> Result<Self> {
-        section.validate()?;
+impl OnchainFeedProvider {
+    pub fn new(name: &str, section: &OnchainFeedConfig) -> Result<Self> {
+        section.validate(name)?;
         Ok(Self {
-            name: section.name.clone(),
+            name: name.to_owned(),
             rpc: Rpc::new(&section.rpc_endpoint)?,
             chain_id: section.chain_id,
             feeds: section
                 .feeds
                 .iter()
-                .map(|feed| (feed.key(), feed.clone()))
+                .map(|(key, feed)| {
+                    let mut feed = feed.clone();
+                    feed.key = key.clone();
+                    (key.clone(), feed)
+                })
                 .collect(),
             chain_verified: AtomicBool::new(false),
             decimals: RwLock::new(HashMap::new()),
@@ -224,7 +193,7 @@ impl ExternalOracleProvider {
     }
 
     async fn feed_decimals(&self, feed: &FeedConfig) -> Result<u8> {
-        if let Some(decimals) = self.decimals.read().await.get(&feed.key()) {
+        if let Some(decimals) = self.decimals.read().await.get(&feed.key) {
             return Ok(*decimals);
         }
         let description = self
@@ -234,7 +203,7 @@ impl ExternalOracleProvider {
         ensure!(
             description == feed.description,
             "feed {} description is {description:?}, expected {:?}",
-            feed.key(),
+            feed.key.clone(),
             feed.description
         );
         let decimals = self
@@ -242,7 +211,10 @@ impl ExternalOracleProvider {
             .call_latest(feed.contract, AggregatorV3::decimalsCall {})
             .await?;
         ensure!(decimals <= 77, "unsupported feed decimals (>77)");
-        self.decimals.write().await.insert(feed.key(), decimals);
+        self.decimals
+            .write()
+            .await
+            .insert(feed.key.clone(), decimals);
         Ok(decimals)
     }
 
@@ -268,7 +240,7 @@ impl ExternalOracleProvider {
 }
 
 #[async_trait]
-impl Provider for ExternalOracleProvider {
+impl Provider for OnchainFeedProvider {
     fn name(&self) -> &str {
         &self.name
     }
@@ -286,17 +258,14 @@ impl Provider for ExternalOracleProvider {
             };
             match self.read_feed(feed, now).await {
                 Ok(price) => {
-                    if let Some(ticker) = checked_ticker(
-                        "external_oracle",
-                        &key,
-                        Some(price),
-                        VolumeInput::Unavailable,
-                    ) {
+                    if let Some(ticker) =
+                        checked_ticker("onchain_feed", &key, Some(price), VolumeInput::Unavailable)
+                    {
                         tickers.insert(key, ticker);
                     }
                 }
                 Err(error) => {
-                    tracing::warn!(provider = %self.name, feed = %key, error = %error, "external_oracle feed skipped");
+                    tracing::warn!(provider = %self.name, feed = %key, error = %error, "onchain_feed feed skipped");
                 }
             }
         }
@@ -389,25 +358,27 @@ mod tests {
         }
     }
 
-    fn config(endpoint: &str) -> ExternalOracleConfig {
-        ExternalOracleConfig {
-            name: "chainlink".into(),
-            chain_id: 1,
-            rpc_endpoint: endpoint.to_owned(),
-            feeds: vec![FeedConfig {
-                base: "ETH".into(),
-                quote: "840".into(),
-                contract: AGGREGATOR,
-                description: "ETH / USD".into(),
-            }],
+    fn feed(contract: Address, description: &str) -> FeedConfig {
+        FeedConfig {
+            key: String::new(),
+            contract,
+            description: description.into(),
         }
     }
 
-    async fn fresh_provider() -> (Arc<Fixture>, test_server::Server, ExternalOracleProvider) {
+    fn config(endpoint: &str) -> OnchainFeedConfig {
+        OnchainFeedConfig {
+            chain_id: 1,
+            rpc_endpoint: endpoint.to_owned(),
+            feeds: BTreeMap::from([("ETH/840".to_owned(), feed(AGGREGATOR, "ETH / USD"))]),
+        }
+    }
+
+    async fn fresh_provider() -> (Arc<Fixture>, test_server::Server, OnchainFeedProvider) {
         let fixture = Arc::new(Fixture::default());
         let state = Arc::clone(&fixture);
         let server = test_server::start(Arc::new(move |request| state.response(request))).await;
-        let provider = ExternalOracleProvider::new(&config(&server.endpoint)).unwrap();
+        let provider = OnchainFeedProvider::new("chainlink", &config(&server.endpoint)).unwrap();
         (fixture, server, provider)
     }
 
@@ -482,16 +453,24 @@ mod tests {
 
     #[test]
     fn config_validation_and_source_routing() {
-        assert!(config("http://localhost:8545").validate().is_ok());
+        assert!(config("http://localhost:8545")
+            .validate("chainlink")
+            .is_ok());
         let mut bad = config("http://localhost:8545");
-        bad.feeds[0].description.clear();
-        assert!(bad.validate().is_err());
+        bad.feeds.get_mut("ETH/840").unwrap().description.clear();
+        assert!(bad.validate("chainlink").is_err());
         let mut bad = config("http://localhost:8545");
-        bad.feeds.push(bad.feeds[0].clone());
-        assert!(bad.validate().is_err(), "duplicate feed in one section");
+        bad.feeds
+            .insert("BTC/840".into(), feed(AGGREGATOR, "BTC / USD"));
+        assert!(bad.validate("chainlink").is_err(), "contract used twice");
+        let mut bad = config("http://localhost:8545");
+        bad.feeds
+            .insert("ETH840".into(), feed(Address::repeat_byte(2), "x"));
+        assert!(bad.validate("chainlink").is_err(), "key without a slash");
         let mut bad = config("ws://localhost:8545");
         bad.feeds.clear();
-        assert!(bad.validate().is_err());
+        assert!(bad.validate("chainlink").is_err());
+        assert!(config("http://localhost:8545").validate("").is_err());
 
         let mut feeder: FeederConfig = toml::from_str(
             r#"
@@ -518,16 +497,22 @@ mod tests {
             "source without a matching section"
         );
         feeder
-            .external_oracles
-            .push(config("http://localhost:8545"));
+            .onchain_feeds
+            .insert("chainlink".into(), config("http://localhost:8545"));
         feeder.validate().unwrap();
 
         // The same market from a second vendor is a second source.
         let mut redstone = config("http://localhost:8545");
-        redstone.name = "redstone_push".into();
-        redstone.feeds[0].contract = address!("0x67F6838e58859d612E4ddF04dA396d6DABB66Dc4");
-        redstone.feeds[0].description = "RedStone Price Feed for ETH".into();
-        feeder.external_oracles.push(redstone);
+        redstone.feeds.insert(
+            "ETH/840".into(),
+            feed(
+                address!("0x67F6838e58859d612E4ddF04dA396d6DABB66Dc4"),
+                "RedStone Price Feed for ETH",
+            ),
+        );
+        feeder
+            .onchain_feeds
+            .insert("redstone_push".into(), redstone);
         feeder.currency_pairs[0]
             .sources
             .push(crate::config::CurrencyPairSource {
@@ -541,12 +526,16 @@ mod tests {
         names.sort_unstable();
         assert_eq!(names, ["chainlink", "redstone_push"]);
 
-        feeder.external_oracles[1].name = "chainlink".into();
-        assert!(feeder.validate().is_err(), "duplicate section name");
-        feeder.external_oracles[1].name = "binance".into();
+        let section = feeder.onchain_feeds.remove("redstone_push").unwrap();
+        feeder
+            .onchain_feeds
+            .insert("binance".into(), section.clone());
         assert!(feeder.validate().is_err(), "built-in name is reserved");
-        feeder.external_oracles[1].name = "redstone_push".into();
-        feeder.external_oracles[1].feeds[0].quote = "USD".into();
+        feeder.onchain_feeds.remove("binance");
+        let mut moved = section;
+        let eth = moved.feeds.remove("ETH/840").unwrap();
+        moved.feeds.insert("ETH/USD".into(), eth);
+        feeder.onchain_feeds.insert("redstone_push".into(), moved);
         assert!(feeder.validate().is_err(), "source without matching feed");
     }
 
@@ -556,19 +545,21 @@ mod tests {
     #[ignore]
     async fn live_mainnet_feeds() {
         let mut cfg = config("https://ethereum-rpc.publicnode.com");
-        cfg.feeds.push(FeedConfig {
-            base: "USDC".into(),
-            quote: "840".into(),
-            contract: address!("0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6"),
-            description: "USDC / USD".into(),
-        });
-        cfg.feeds.push(FeedConfig {
-            base: "BTC".into(),
-            quote: "840".into(),
-            contract: address!("0xAB7f623fb2F6fea6601D4350FA0E2290663C28Fc"),
-            description: "RedStone Price Feed for BTC".into(),
-        });
-        let provider = ExternalOracleProvider::new(&cfg).unwrap();
+        cfg.feeds.insert(
+            "USDC/840".into(),
+            feed(
+                address!("0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6"),
+                "USDC / USD",
+            ),
+        );
+        cfg.feeds.insert(
+            "BTC/840".into(),
+            feed(
+                address!("0xAB7f623fb2F6fea6601D4350FA0E2290663C28Fc"),
+                "RedStone Price Feed for BTC",
+            ),
+        );
+        let provider = OnchainFeedProvider::new("mixed", &cfg).unwrap();
         let pairs = vec![
             ("ETH".into(), "840".into()),
             ("USDC".into(), "840".into()),

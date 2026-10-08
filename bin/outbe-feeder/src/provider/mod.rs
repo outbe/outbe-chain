@@ -4,7 +4,6 @@ pub mod binance;
 pub mod coinbase;
 pub(crate) mod dex;
 pub(crate) mod evm_rpc;
-pub mod external_oracle;
 pub mod gate;
 pub mod huobi;
 pub mod kraken;
@@ -12,6 +11,7 @@ pub mod mexc;
 pub mod mock;
 pub mod mock_http;
 pub mod okx;
+pub mod onchain_feed;
 pub mod pyth;
 pub mod redstone;
 #[cfg(test)]
@@ -223,15 +223,11 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                     .ok_or_else(|| eyre!("provider {name} requires a [[dex_providers]] entry"))?,
             )?),
             other => {
-                let Some(section) = config
-                    .external_oracles
-                    .iter()
-                    .find(|section| section.name == other)
-                else {
+                let Some(section) = config.onchain_feeds.get(other) else {
                     tracing::warn!(provider = other, "unknown provider, skipping");
                     continue;
                 };
-                Box::new(external_oracle::ExternalOracleProvider::new(section)?)
+                Box::new(onchain_feed::OnchainFeedProvider::new(other, section)?)
             }
         };
         let configured_pairs = config

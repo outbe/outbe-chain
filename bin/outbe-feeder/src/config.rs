@@ -23,11 +23,12 @@ pub struct FeederConfig {
     /// Finalized EVM pool readers. They are independent of the destination Outbe RPC.
     #[serde(default)]
     pub dex_providers: Vec<crate::provider::dex::DexProviderConfig>,
-    /// External oracles read from their on-chain feed contracts (Chainlink,
+    /// On-chain feeds read from their on-chain feed contracts (Chainlink,
     /// RedStone push; any `AggregatorV3Interface` contract). Each section is a
     /// provider named by the operator, with its own EVM RPC.
     #[serde(default)]
-    pub external_oracles: Vec<crate::provider::external_oracle::ExternalOracleConfig>,
+    pub onchain_feeds:
+        std::collections::BTreeMap<String, crate::provider::onchain_feed::OnchainFeedConfig>,
     /// RedStone gateway access; only read when a source names `redstone`.
     pub redstone: Option<RedstoneConfig>,
     /// Health/status HTTP server configuration.
@@ -180,7 +181,7 @@ impl FeederConfig {
         self.validate_currency_pairs()?;
         self.validate_provider_endpoints()?;
         crate::provider::dex::validate_config(self)?;
-        crate::provider::external_oracle::validate_config(self, Self::KNOWN_PROVIDERS)?;
+        crate::provider::onchain_feed::validate_config(self, Self::KNOWN_PROVIDERS)?;
         crate::provider::redstone::validate_config(self)
     }
 
@@ -263,10 +264,10 @@ impl FeederConfig {
                 ));
             }
             if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str())
-                && !crate::provider::external_oracle::is_section_name(self, &source.provider)
+                && !crate::provider::onchain_feed::is_section_name(self, &source.provider)
             {
                 return Err(eyre::eyre!(
-                    "unknown provider '{}' for pair {}/{}. Known: {:?} or an external_oracles section name",
+                    "unknown provider '{}' for pair {}/{}. Known: {:?} or an onchain_feeds section name",
                     source.provider,
                     pair.base,
                     pair.quote,
@@ -393,7 +394,7 @@ mod tests {
             deviation_thresholds: vec![],
             provider_endpoints: vec![],
             dex_providers: vec![],
-            external_oracles: vec![],
+            onchain_feeds: Default::default(),
             redstone: None,
             health: None,
         }

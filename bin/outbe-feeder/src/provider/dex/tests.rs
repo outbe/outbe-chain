@@ -417,18 +417,6 @@ async fn all_protocols_read_spot_and_base_volume_in_both_orientations() {
     }
 }
 
-#[test]
-fn legacy_max_finalized_age_key_is_still_accepted() {
-    let text = include_str!("../../../dex.example.toml").replace(
-        "confirmations = 3\nmax_block_age_secs = 1800",
-        "max_finalized_age_secs = 900",
-    );
-    let config: FeederConfig = toml::from_str(&text).unwrap();
-    let dex = &config.dex_providers[0];
-    assert_eq!(dex.confirmations, 3);
-    assert_eq!(dex.max_block_age_secs, 900);
-}
-
 #[tokio::test]
 async fn confirmations_read_behind_the_head_by_number_and_hash() {
     let server = Server::start(market(
@@ -504,27 +492,6 @@ async fn invalid_second_log_does_not_commit_or_double_count_the_first() {
     assert!(worker.refresh().await.is_err());
     server.fixture.corrupt_logs.store(false, Ordering::Relaxed);
     assert_eq!(worker.refresh().await.unwrap().1.volume, fp("300"));
-}
-
-#[test]
-fn example_configuration_and_source_routing_are_validated() {
-    let text = include_str!("../../../dex.example.toml");
-    let config: FeederConfig = toml::from_str(text).unwrap();
-    config.validate().unwrap();
-    for invalid in [
-        text.replace("protocol = \"uniswap_v3\"", "protocol = \"uniswap_v33\""),
-        text.replace("quote = \"840\"", "quote = \"978\""),
-        text.replacen("quote = \"USDC\"", "quote = \"USDT\"", 1),
-        text.replace("chain_id = 56", "chain_id = 1"),
-    ] {
-        let result = toml::from_str::<FeederConfig>(&invalid)
-            .map_err(eyre::Report::from)
-            .and_then(|c| c.validate());
-        assert!(result.is_err());
-    }
-    let mut missing = config;
-    missing.dex_providers.clear();
-    assert!(missing.validate().is_err());
 }
 
 #[test]

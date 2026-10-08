@@ -58,6 +58,16 @@ provider = "redstone"
 base = "USDC"
 quote = "840"
 
+# A market read from an on-chain feed contract; see [onchain_feeds] below.
+[[currency_pairs]]
+base = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"   # WETH
+quote = "840"
+
+[[currency_pairs.sources]]
+provider = "chainlink"
+base = "ETH"
+quote = "840"
+
 [[provider_endpoints]]
 name = "mock_http"
 rest = "https://prc.testnet.outbe.net"
@@ -65,6 +75,17 @@ rest = "https://prc.testnet.outbe.net"
 # RedStone gateway access, one key per validator.
 [redstone]
 api_key = "REPLACE_WITH_REDSTONE_API_KEY"
+
+# Another oracle's on-chain feed contracts (Chainlink AggregatorV3 interface).
+# The table name is the provider name for currency_pairs.sources; feeds are
+# keyed by BASE/QUOTE.
+[onchain_feeds.chainlink]
+chain_id = 1
+rpc_endpoint = "https://ethereum-rpc.example.invalid"
+
+[onchain_feeds.chainlink.feeds."ETH/840"]
+contract = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
+description = "ETH / USD"
 
 # Optional exchange WebSocket override. Omit it to use the exchange default.
 [[provider_endpoints]]
@@ -101,7 +122,8 @@ threshold = "2.0"
 | `redstone.api_key` | only `redstone` sources | RedStone authenticated-gateway key, one per validator |
 | `redstone.gateway` | no | RedStone gateway URL override |
 | `dex_providers` | only DEX sources | Explicit RPC, network and pool configuration; see [DEX providers](#dex-providers) |
-| `external_oracles[].name` | only external-oracle sources | Provider name for `currency_pairs.sources`; one section per vendor and network, see [External oracles](#external-oracles) |
+| `onchain_feeds.<name>` | only on-chain feed sources | One table per vendor and network; `<name>` is the provider name for `currency_pairs.sources`, see [On-chain feeds](#on-chain-feeds) |
+| `onchain_feeds.<name>.feeds."BASE/QUOTE"` | with the table | `contract` and expected `description` of one feed |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
 
@@ -113,7 +135,7 @@ At startup, the feeder validates:
 - `validator_address` is a valid 20-byte hex address
 - Each on-chain pair has at least 1 external source market
 - ISO markets use `COEN/ISO`; reverse `ISO/COEN` configuration is rejected
-- All provider names are known: `mock`, `mock_http`, `pyth`, `redstone`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`, or the `name` of an `[[external_oracles]]` section
+- All provider names are known: `mock`, `mock_http`, `pyth`, `redstone`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`, or a table name under `[onchain_feeds]`
 - WebSocket endpoints are only accepted for streaming exchange providers
 - Provider endpoint names are unique
 
@@ -132,7 +154,7 @@ volume-weighted mean rounded down.
 | `mock` | Working | Hardcoded COEN=1.0, ETH=2500.0 |
 | `mock_http` | Working | Configured REST endpoint compatible with the migrated Cosmos test price server |
 | `pyth` | Working | Pyth Hermes REST API for supported BTC/ETH feeds |
-| `<external_oracles[].name>` | Implemented | Another oracle's on-chain feed contract (Chainlink, RedStone push; Chainlink `AggregatorV3Interface`) read over EVM JSON-RPC at `latest`; name chosen in config |
+| `<onchain_feeds.name>` | Implemented | Another oracle's on-chain feed contract (Chainlink, RedStone push; Chainlink `AggregatorV3Interface`) read over EVM JSON-RPC at `latest`; name chosen in config |
 | `redstone` | Implemented | RedStone authenticated gateway: USD-quoted feeds, median of the 3 registered signers closest to the median |
 | `binance` | Working | Binance WebSocket ticker/candle streams with REST bootstrap fallback |
 | `kraken` | Working | Kraken WebSocket ticker/candle streams with REST bootstrap fallback |
@@ -170,66 +192,33 @@ values closest to the median, and publishes their median. Packages older than
 signatures are not verified; the gateway is trusted like Pyth Hermes.
 RedStone lists no COEN feed. See the configuration example above for the
 `[redstone]` section and a `redstone` source.
-### External oracles
+### On-chain feeds
 
-`[[external_oracles]]` sections read price feeds from another oracle's on-chain
-contract: Chainlink Data Feeds, RedStone push feeds, and any vendor whose feed
-contract exposes Chainlink's `AggregatorV3Interface` (`latestRoundData()`,
-`decimals()`, `description()`). Each section is one provider instance; its
-`name` is the provider name used in `currency_pairs.sources`, so a feeder can
-hold the same market from several vendors as separate sources and let the
-deviation filter and source mean work across them. Reads are `eth_call`
-against the `latest` block: rounds are signed by the vendor network, so no
-finality wait applies; freshness comes from the round's `updatedAt`. Feeds
-report no volume, so the observation weighs one unit in the source mean.
+`[onchain_feeds.<name>]` tables read price feeds from another oracle's
+on-chain contract: Chainlink Data Feeds, RedStone push feeds, and any vendor
+whose feed contract exposes Chainlink's `AggregatorV3Interface`
+(`latestRoundData()`, `decimals()`, `description()`). Each table is one
+provider instance and `<name>` is the provider name used in
+`currency_pairs.sources`, so a feeder can hold the same market from several
+vendors as separate sources and let the deviation filter and source mean work
+across them. Feeds are keyed by `BASE/QUOTE`; a source whose provider is a
+table name must match a feed key. See the configuration example above.
 
-```toml
-[[currency_pairs.sources]]
-provider = "chainlink"
-base = "ETH"
-quote = "840"
-
-[[currency_pairs.sources]]
-provider = "redstone_push"
-base = "ETH"
-quote = "840"
-
-[[external_oracles]]
-name = "chainlink"
-chain_id = 1
-rpc_endpoint = "https://ethereum-rpc.example.invalid"
-
-[[external_oracles.feeds]]
-base = "ETH"
-quote = "840"
-contract = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
-description = "ETH / USD"
-
-[[external_oracles]]
-name = "redstone_push"
-chain_id = 1
-rpc_endpoint = "https://ethereum-rpc.example.invalid"
-
-[[external_oracles.feeds]]
-base = "ETH"
-quote = "840"
-contract = "0x67F6838e58859d612E4ddF04dA396d6DABB66Dc4"
-description = "RedStone Price Feed for ETH"
-```
-
-Section names are unique and may not reuse a built-in provider name; feed
-keys and contract addresses are unique within a section. A source whose
-provider is a section name must match a `feeds` entry by `base`/`quote`. Take
-`contract` (the proxy address) and `description` from the vendor registry:
+Table names may not reuse a built-in provider name; contract addresses are
+unique within a table. Take `contract` (the proxy address) and `description`
+from the vendor registry:
 [docs.chain.link](https://docs.chain.link/data-feeds/price-feeds/addresses) or
-[app.redstone.finance](https://app.redstone.finance/). On first use the feeder
-verifies `eth_chainId`, reads `description()` and rejects a feed whose text
-differs from the configured one, then caches `decimals()`. Each vote reads
-`latestRoundData()` per feed. A round is skipped when `answer` is not
-positive, `updatedAt` is in the future, or it is older than 25 hours: the
-longest documented heartbeat at either vendor is 24 hours, so a round older
-than that means the relayer stopped. Neither vendor lists a COEN feed today; a
-COEN push feed, once deployed, is configured here like any other.
+[app.redstone.finance](https://app.redstone.finance/). Reads are `eth_call`
+against the `latest` block: rounds are signed by the vendor network, so no
+finality wait applies; freshness comes from the round's `updatedAt`. On first
+use the feeder verifies `eth_chainId`, reads `description()` and rejects a
+feed whose text differs from the configured one, then caches `decimals()`.
+Each vote reads `latestRoundData()` per feed. A round is skipped when `answer`
+is not positive, `updatedAt` is in the future, or it is older than 25 hours:
+the longest documented heartbeat at either vendor is 24 hours, so a round
+older than that means the relayer stopped. Feeds report no volume, so the
+observation weighs one unit in the source mean. Neither vendor lists a COEN
+feed today; a COEN push feed, once deployed, is configured here like any other.
 
 ### DEX providers
 
@@ -242,11 +231,10 @@ or depeg correction. The rate is the core AMM price before fees, slippage or
 hook-specific trade adjustments. Nonzero hooks are supported; volume describes
 core `Swap` balance deltas, not additional hook transfers or router turnover.
 
-Start with [dex.example.toml](dex.example.toml). Replace the illustrative token
-and pool addresses, RPC URLs, destination chain settings and signing account
-before running it. COEN pool deployment and live-chain validation are separate
-from this example. Existing configurations continue to work without a
-`dex_providers` section.
+Replace the illustrative token and pool addresses, RPC URLs, destination chain
+settings and signing account before running it. COEN pool deployment and
+live-chain validation are separate from this example. Existing configurations
+continue to work without a `dex_providers` section.
 
 Each `[[dex_providers]]` contains:
 
