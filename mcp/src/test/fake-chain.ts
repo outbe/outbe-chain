@@ -24,7 +24,7 @@ export interface SentTransaction {
   hash: Hex;
 }
 
-type Result = unknown | ((args: readonly unknown[]) => unknown);
+type Result = unknown | ((args: readonly unknown[], chainId: number) => unknown);
 
 interface Registered {
   address?: Address;
@@ -193,7 +193,7 @@ export class FakeChain {
         this.reads.push(`getLogs(${JSON.stringify(params[0])})`);
         return this.logs;
       case "eth_call":
-        return this.call(params[0] as { to: Address; data: Hex });
+        return this.call(chainId, params[0] as { to: Address; data: Hex });
       case "eth_sendRawTransaction":
         return this.send(chainId, params[0] as Hex);
       case "eth_getTransactionReceipt":
@@ -233,7 +233,7 @@ export class FakeChain {
     throw new RpcError(3, `execution reverted: unknown selector ${selector} at ${target}`);
   }
 
-  private call({ to, data }: { to: Address; data: Hex }): Hex {
+  private call(chainId: number, { to, data }: { to: Address; data: Hex }): Hex {
     if (!this.knows(to, data)) {
       this.reads.push(`${getAddress(to)}.${data.slice(0, 10)}`);
       return "0x";
@@ -250,7 +250,7 @@ export class FakeChain {
       override === undefined
         ? sampleResult(fn)
         : typeof override === "function"
-          ? (override as (args: readonly unknown[]) => unknown)(args ?? [])
+          ? (override as (args: readonly unknown[], chainId: number) => unknown)(args ?? [], chainId)
           : override;
     return encodeFunctionResult({ abi: [fn], functionName: fn.name, result } as never);
   }

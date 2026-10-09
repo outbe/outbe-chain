@@ -41,19 +41,22 @@ export async function loadOrder(
     }
   }
   const seen = new Set<number>();
+  const unread: string[] = [];
   for (const n of candidates) {
     if (seen.has(n.chainId)) continue;
     seen.add(n.chainId);
-    const raw = await n.client.readContract({
-      address: router,
-      abi: ROUTER_ABI,
-      functionName: "openOrders",
-      args: [orderId],
-    });
+    let raw: Hex;
+    try {
+      raw = await n.client.readContract({ address: router, abi: ROUTER_ABI, functionName: "openOrders", args: [orderId] });
+    } catch {
+      unread.push(n.name);
+      continue;
+    }
     if (raw && raw !== "0x") {
       const [, orderBytes] = decodeAbiParameters([{ type: "bytes32" }, { type: "bytes" }], raw) as [Hex, Hex];
       return { origin: n, order: decodeOrderData(orderBytes), originData: orderBytes };
     }
   }
-  throw new Error(`order not found: ${orderId}`);
+  const skipped = unread.length > 0 ? `; could not read ${unread.join(", ")}` : "";
+  throw new Error(`order not found: ${orderId}${skipped}`);
 }

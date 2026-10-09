@@ -49,3 +49,21 @@ test("an order to an unknown chain reports its destination as unknown instead of
     await harness.close();
   }
 });
+
+test("an order is still found on outbe when the hinted chain cannot answer", async () => {
+  const harness = await startHarness((chain) => {
+    chain.register(ROUTER_ABI, DEFAULT_ROUTER);
+    chain.reply("openOrders", (_args: readonly unknown[], chainId: number) => {
+      if (chainId === 97) throw new Error("router not deployed");
+      return openOrder(54_322_345);
+    });
+    chain.reply("orderStatus", stringToHex("OPENED", { size: 32 }));
+  });
+  try {
+    const { isError, text } = await harness.call("intent_order_track", { order_id: ORDER_ID, chain: "bsc-testnet" });
+    assert(!isError, text);
+    assert.equal(JSON.parse(text).originNetwork, "outbe-testnet");
+  } finally {
+    await harness.close();
+  }
+});
