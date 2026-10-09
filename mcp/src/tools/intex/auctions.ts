@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { formatUnits } from "viem";
 import { z } from "zod";
-import { OUTBE_NETWORK, TARGET_NETWORK } from "../../net/chains.js";
+import { OUTBE_NETWORK } from "../../net/chains.js";
 import { networkName } from "../schemas.js";
 import { handler, ok } from "../util.js";
 import { AUCTION_ABI, DESIS_ABI, ORIGIN_ROUTER_ABI } from "../../intex/registry.js";
@@ -15,7 +15,7 @@ import type { IntexDeps } from "./deps.js";
 
 /** Auction discovery and per-chain fan-in. */
 export function registerAuctionTools(server: McpServer, deps: IntexDeps): void {
-  const { resolveNetwork, whoever, paymentMeta } = deps;
+  const { resolveNetwork, whoever, paymentMeta, target } = deps;
   server.tool(
     "auctions_active",
     "Active Intex auctions and their stage. Auction ids are worldwide days (yyyymmdd); probes a date window " +
@@ -28,7 +28,7 @@ export function registerAuctionTools(server: McpServer, deps: IntexDeps): void {
       to_date: z.number().int().optional().describe("window end yyyymmdd (default today+2)"),
     },
     handler(async ({ network, include_all, from_date, to_date }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const today = todayYmd();
       const from = from_date ?? ymdShift(today, -DEFAULT_DAYS_BACK);
       const to = to_date ?? ymdShift(today, DEFAULT_DAYS_AHEAD);
@@ -47,7 +47,7 @@ export function registerAuctionTools(server: McpServer, deps: IntexDeps): void {
       "does NOT mean there are no participants.",
     { worldwideDay: worldwideDayArg, network: networkName.optional() },
     handler(async ({ worldwideDay, network }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const [stage, info, meta] = await Promise.all([
         auctionStageOf(n, worldwideDay),
         n.client.readContract({ address: addr(n, "auction"), abi: AUCTION_ABI, functionName: "getAuctionInfo", args: [worldwideDay] }),
@@ -166,7 +166,7 @@ export function registerAuctionTools(server: McpServer, deps: IntexDeps): void {
       "reports what auction_claim_refund pays and from when. Pass worldwideDay to check just one.",
     { account: accountArg, worldwideDay: worldwideDayArg.optional(), network: networkName.optional() },
     handler(async ({ account, worldwideDay, network }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const who = whoever(account);
       const targets = await bidDays(n, worldwideDay);
       const bids = await Promise.all(targets.map((wwd) => bidStatus(n, who, wwd)));

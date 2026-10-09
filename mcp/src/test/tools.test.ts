@@ -73,7 +73,6 @@ const INTEX_ABIS: [Abi, Parameters<typeof intexAddress>[1]][] = [
   [DESIS_ABI, "desis"],
   [VAULT_ROUTER_ABI, "vaultRouter"],
   [ORIGIN_ROUTER_ABI, "originRouter"],
-  [ERC20_ABI, "paymentToken"],
 ];
 
 type Case = [tool: string, args?: Record<string, unknown>];
@@ -254,6 +253,7 @@ test("every MCP tool keeps its surface and its output against a fixed chain", as
     chain.reply("tributeOfferPublicKey", 9n);
     chain.seed(HASH, 54_322_345, OTHER, "0x1234");
     chain.reply("openOrders", ORDER);
+    chain.reply("targets", [97, 54_322_345]);
     chain.reply("orderStatus", stringToHex("OPENED", { size: 32 }));
     for (const name of ["totalSeries", "getPairCount"]) chain.reply(name, 3n);
   });

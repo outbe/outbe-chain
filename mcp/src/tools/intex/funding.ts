@@ -1,26 +1,25 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { encodeFunctionData, formatUnits, maxUint256, parseUnits } from "viem";
 import { z } from "zod";
-import { TARGET_NETWORK } from "../../net/chains.js";
 import { requireAccount } from "../../net/tx.js";
 import { networkName, waitFlag } from "../schemas.js";
 import { handler, ok } from "../util.js";
 import { ERC20_ABI } from "../../intex/registry.js";
-import { addr } from "../../intex/reads.js";
+import { addr, escrowPaymentToken } from "../../intex/reads.js";
 import { accountArg } from "./args.js";
 import type { IntexDeps } from "./deps.js";
 
 /** The payment token allowance for the escrow. */
 export function registerFundingTools(server: McpServer, deps: IntexDeps): void {
-  const { ctx, resolveNetwork, whoever, submit, paymentMeta } = deps;
+  const { ctx, whoever, submit, paymentMeta, target } = deps;
   server.tool(
     "intex_payment_allowance",
     "Payment-token allowance granted to the EscrowAdapter and the account's balance, with token decimals/symbol.",
     { account: accountArg, network: networkName.optional() },
     handler(async ({ account, network }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const who = whoever(account);
-      const token = addr(n, "paymentToken");
+      const token = await escrowPaymentToken(n);
       const escrow = addr(n, "escrow");
       const [allowance, balance, decimals, symbol] = (await Promise.all([
         n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [who, escrow] }),
@@ -51,11 +50,11 @@ export function registerFundingTools(server: McpServer, deps: IntexDeps): void {
       wait: waitFlag,
     },
     handler(async ({ amount, max, network, wait }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       requireAccount(ctx);
       if (!max && amount === undefined) throw new Error('pass amount (e.g. "100") or max=true');
       const value = max ? maxUint256 : parseUnits(amount as string, (await paymentMeta(n)).decimals);
-      const token = addr(n, "paymentToken");
+      const token = await escrowPaymentToken(n);
       const escrow = addr(n, "escrow");
       const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [escrow, value] });
       const receipt = await submit(n, token, data, 0n, wait);

@@ -1,5 +1,4 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { TARGET_NETWORK } from "../../net/chains.js";
 import { networkName } from "../schemas.js";
 import { handler, ok } from "../util.js";
 import { holding } from "../../intex/holdings.js";
@@ -10,7 +9,7 @@ import type { IntexDeps } from "./deps.js";
 
 /** Intex NFT holdings on any network. */
 export function registerHoldingsTools(server: McpServer, deps: IntexDeps): void {
-  const { resolveNetwork, whoever } = deps;
+  const { whoever, target } = deps;
   server.tool(
     "intex_holdings_by_owner",
     "Intex NFT holdings for an address: owned token ids, balances, decoded status (Issued/Settled), and " +
@@ -20,7 +19,7 @@ export function registerHoldingsTools(server: McpServer, deps: IntexDeps): void 
       "it over with intex_bridge_send before the deadline shown here.",
     { account: accountArg, network: networkName.optional() },
     handler(async ({ account, network }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const who = whoever(account);
       const [tokenIds, balances] = await ownedWithBalances(n, who);
       const holdings = await Promise.all(tokenIds.map((tokenId, i) => holding(n, tokenId, balances[i])));
@@ -35,7 +34,7 @@ export function registerHoldingsTools(server: McpServer, deps: IntexDeps): void 
       "bridged over before the series settlementDeadline (intex_series_info shows it).",
     { series: seriesArg, account: accountArg, network: networkName.optional() },
     handler(async ({ series, account, network }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const who = whoever(account);
       const [issued, settled] = (await n.client.readContract({
         address: addr(n, "nft"),

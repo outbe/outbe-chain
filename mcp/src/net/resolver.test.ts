@@ -25,7 +25,7 @@ test("another chain is reached through its OUTBE_RPC_<chainId>", async () => {
   try {
     const { isError, text } = await harness.call("intex_series_info", { series: "20260212-TRY-U", network: "11155111" });
     assert(isError);
-    assert.match(text, /Intex "intex" is not configured on "chain-11155111"/);
+    assert.match(text, /Intex "intex" is not configured on "sepolia"/);
     const missing = await harness.call("intex_series_info", { series: "20260212-TRY-U", network: "8453" });
     assert.match(missing.text, /no RPC for chain 8453; set OUTBE_RPC_8453/);
   } finally {

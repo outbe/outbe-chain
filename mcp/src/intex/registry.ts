@@ -1,4 +1,5 @@
 import { type Abi, type Address, getAddress } from "viem";
+import { loadConfig } from "../config.js";
 import IDesisJson from "../../../contracts/precompiles/abi-export/IDesis.json";
 import IIntexJson from "../../../contracts/precompiles/abi-export/IIntex.json";
 import IIntexFactoryJson from "../../../contracts/precompiles/abi-export/IIntexFactory.json";
@@ -33,7 +34,6 @@ const abiOf = (json: unknown): Abi =>
 export interface IntexAddresses {
   auction?: Address;
   escrow?: Address;
-  paymentToken?: Address;
   nft?: Address;
   nftBridge?: Address;
   intex?: Address;
@@ -47,8 +47,8 @@ export interface IntexAddresses {
 const a = (s: string): Address => getAddress(s);
 
 // The app contracts are CREATE3 proxies (salt "outbe-intex:<Name>:v5.0.0"), so
-// each one shares a single address on every chain. Only the wCOEN payment token
-// is a per-chain deployment. Networks gate availability, addresses do not.
+// each one shares a single address on every chain. Which chains run them is the
+// origin router's target list; the payment token is the escrow's own.
 const APP = {
   auction: a("0x66F0377e4dCbf4df50134eAf147b2B305AE86813"),
   escrow: a("0x917dBD5EeEEc541BB25397F8d38D266d2E88ae19"),
@@ -65,15 +65,6 @@ const OUTBE_ONLY = {
   vaultRouter: a("0x0000000000000000000000000000000000001017"),
   // CREATE3 proxy, salt "outbe-intex:OriginRouter:v5.0.0".
   originRouter: a("0x3439ebc6732ECA3F11125F4c1160C1cdd2C47Dc8"),
-};
-
-/** Networks where the auction/escrow pair is live. The NFT pair runs on the origin
- *  and every target; enabling a new target = adding it here + its wCOEN below. */
-const AUCTION_LIVE = new Set(["bsc-testnet"]);
-
-/** WCOEN - the auction's 18-decimal wrapped native payment token, per chain. */
-const PAYMENT_TOKEN: Record<string, Address> = {
-  "bsc-testnet": a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
 };
 
 /** Block the NFT pair was deployed at, per network. The tools read holdings from transfer logs,
@@ -99,20 +90,11 @@ export class NotConfiguredError extends Error {}
 /** Resolve a contract address for a network, or throw a clear error. */
 export function intexAddress(network: IntexChain, key: keyof IntexAddresses): Address {
   let addr: Address | undefined;
-  switch (key) {
-    case "auction":
-    case "escrow":
-      addr = AUCTION_LIVE.has(network.name) ? APP[key] : undefined;
-      break;
-    case "nft":
-    case "nftBridge":
-      addr = network.isOutbe || AUCTION_LIVE.has(network.name) ? APP[key] : undefined;
-      break;
-    case "paymentToken":
-      addr = PAYMENT_TOKEN[network.name];
-      break;
-    default:
-      addr = network.isOutbe ? OUTBE_ONLY[key] : undefined;
+  if (key in APP) {
+    addr = APP[key as keyof typeof APP];
+  } else if (network.isOutbe) {
+    const override = key === "originRouter" ? loadConfig().intexOriginRouter : undefined;
+    addr = override ? getAddress(override) : OUTBE_ONLY[key as keyof typeof OUTBE_ONLY];
   }
   if (!addr) {
     throw new NotConfiguredError(`Intex "${key}" is not configured on "${network.name}"`);

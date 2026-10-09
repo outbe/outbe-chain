@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AUCTION_ABI, ERC20_ABI, ESCROW_ABI, intexAddress } from "../intex/registry.js";
+import { AUCTION_ABI, ERC20_ABI, ESCROW_ABI, ORIGIN_ROUTER_ABI, intexAddress } from "../intex/registry.js";
 import type { FakeChain } from "../test/fake-chain.js";
 import { startHarness } from "../test/harness.js";
 
@@ -10,6 +10,8 @@ const COMMIT = { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency
 async function commit(prepare: (chain: FakeChain) => void) {
   const harness = await startHarness((chain) => {
     chain.register(AUCTION_ABI, intexAddress(BSC, "auction"));
+    chain.register(ORIGIN_ROUTER_ABI, intexAddress({ name: "outbe-testnet", isOutbe: true }, "originRouter"));
+    chain.reply("targets", [97]);
     chain.register(ESCROW_ABI, intexAddress(BSC, "escrow"));
     chain.register(ERC20_ABI);
     chain.reply("allowance", 0n);

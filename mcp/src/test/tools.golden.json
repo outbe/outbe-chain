@@ -1178,7 +1178,7 @@
         "properties": {
           "origin": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "destination": {
             "$ref": "#/properties/origin"
@@ -1296,7 +1296,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1317,7 +1317,7 @@
         "properties": {
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "additionalProperties": false,
@@ -1339,7 +1339,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "additionalProperties": false,
@@ -1365,7 +1365,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1386,7 +1386,7 @@
         "properties": {
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "include_all": {
             "type": "boolean"
@@ -1419,7 +1419,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1444,7 +1444,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1473,7 +1473,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "additionalProperties": false,
@@ -1513,7 +1513,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1564,7 +1564,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1597,7 +1597,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1630,7 +1630,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1663,7 +1663,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1692,7 +1692,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "additionalProperties": false,
@@ -1718,7 +1718,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1752,7 +1752,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1786,7 +1786,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1828,7 +1828,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1863,7 +1863,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1892,7 +1892,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1922,7 +1922,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet, sepolia or a chain id (outbe is the connected node)"
           }
         },
         "additionalProperties": false,
@@ -3690,7 +3690,7 @@
         "amount_in": "1"
       },
       "isError": true,
-      "output": "error: unknown network \"mars\"; use outbe, outbe-testnet, bsc-testnet or a chain id",
+      "output": "error: unknown network \"mars\"; use outbe, outbe-testnet, bsc-testnet, sepolia or a chain id",
       "sent": []
     },
     {
@@ -5577,7 +5577,7 @@
         "bidRate": "800000",
         "locked": "40000000000",
         "autoApprove": {
-          "txHash": "0x3c332bc219d982a256d578447eaa233812975068f7a340f5c09703aa5b8b5b32",
+          "txHash": "0x2ad7d003233177e686e710bf469892c9fbc1e39ebc0766bc436e4894e5825bc4",
           "amount": "4000000000000"
         },
         "note": "Reveal locks 40000000000 text (2 x strike x 0.8) in escrow. Allowance was short, so the escrow was approved for 40000000000 text first, then the bid was revealed. The 0.03 text entry bond returns within the same transaction (released before the bid lock, so it can fund the bid).",
@@ -5589,7 +5589,7 @@
       "sent": [
         {
           "chainId": 97,
-          "to": "0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c",
+          "to": "0x1111111111111111111111111111111111111111",
           "function": "approve",
           "args": [
             "0x917dBD5EeEEc541BB25397F8d38D266d2E88ae19",
@@ -5597,7 +5597,7 @@
           ],
           "value": "0",
           "gas": "130000",
-          "hash": "0x3c332bc219d982a256d578447eaa233812975068f7a340f5c09703aa5b8b5b32"
+          "hash": "0x2ad7d003233177e686e710bf469892c9fbc1e39ebc0766bc436e4894e5825bc4"
         },
         {
           "chainId": 97,
@@ -5727,7 +5727,7 @@
         "network": "bsc-testnet",
         "account": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
         "token": {
-          "address": "0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c",
+          "address": "0x1111111111111111111111111111111111111111",
           "symbol": "text",
           "decimals": 2
         },
@@ -5751,10 +5751,10 @@
       "isError": false,
       "output": {
         "network": "bsc-testnet",
-        "token": "0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c",
+        "token": "0x1111111111111111111111111111111111111111",
         "escrow": "0x917dBD5EeEEc541BB25397F8d38D266d2E88ae19",
         "approved": "100",
-        "txHash": "0xf21f34ede609d460edf95c790966a9c7735fb753ef30c3bfad4e5afde16baff8",
+        "txHash": "0x4230d552ffff3c17c9a88d1cd4ba2d2047440b7ead46125baf4bd152fd687e04",
         "status": "success",
         "blockNumber": "100",
         "gasUsed": "21000"
@@ -5762,7 +5762,7 @@
       "sent": [
         {
           "chainId": 97,
-          "to": "0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c",
+          "to": "0x1111111111111111111111111111111111111111",
           "function": "approve",
           "args": [
             "0x917dBD5EeEEc541BB25397F8d38D266d2E88ae19",
@@ -5770,7 +5770,7 @@
           ],
           "value": "0",
           "gas": "130000",
-          "hash": "0xf21f34ede609d460edf95c790966a9c7735fb753ef30c3bfad4e5afde16baff8"
+          "hash": "0x4230d552ffff3c17c9a88d1cd4ba2d2047440b7ead46125baf4bd152fd687e04"
         }
       ]
     },
@@ -5783,16 +5783,16 @@
       "isError": false,
       "output": {
         "network": "bsc-testnet",
-        "token": "0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c",
+        "token": "0x1111111111111111111111111111111111111111",
         "escrow": "0x917dBD5EeEEc541BB25397F8d38D266d2E88ae19",
         "approved": "max",
-        "txHash": "0x8992ca016821be5858de4637d3866f20b76c1e1355bca0452df17c14fa57ccc8",
+        "txHash": "0xc06b8552dae7bda946cdca0bedceb3d448c539853b40996a8ba110cf81e2a4d1",
         "status": "submitted"
       },
       "sent": [
         {
           "chainId": 97,
-          "to": "0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c",
+          "to": "0x1111111111111111111111111111111111111111",
           "function": "approve",
           "args": [
             "0x917dBD5EeEEc541BB25397F8d38D266d2E88ae19",
@@ -5800,7 +5800,7 @@
           ],
           "value": "0",
           "gas": "130000",
-          "hash": "0x8992ca016821be5858de4637d3866f20b76c1e1355bca0452df17c14fa57ccc8"
+          "hash": "0xc06b8552dae7bda946cdca0bedceb3d448c539853b40996a8ba110cf81e2a4d1"
         }
       ]
     },
@@ -5971,7 +5971,7 @@
         "network": "solana"
       },
       "isError": true,
-      "output": "error: unknown network \"solana\"; use outbe, outbe-testnet, bsc-testnet or a chain id",
+      "output": "error: unknown network \"solana\"; use outbe, outbe-testnet, bsc-testnet, sepolia or a chain id",
       "sent": []
     },
     {

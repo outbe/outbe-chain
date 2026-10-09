@@ -10,6 +10,7 @@ export interface KnownChain {
 export const KNOWN_CHAINS: KnownChain[] = [
   { name: "outbe-testnet", chainId: 54_322_345 },
   { name: "bsc-testnet", chainId: 97, rpc: "https://bsc-testnet-rpc.publicnode.com" },
+  { name: "sepolia", chainId: 11_155_111, rpc: "https://ethereum-sepolia-rpc.publicnode.com" },
 ];
 
 /** The Outbe chain the server is connected to, whatever its chain id. */

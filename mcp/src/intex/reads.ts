@@ -3,6 +3,7 @@ import {
   type Address,
   BaseError,
   ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
   type Hex,
   getAbiItem,
   getAddress,
@@ -12,10 +13,12 @@ import { type DecodedDataUri, parseDataUri } from "../format.js";
 import type { Network } from "../net/resolver.js";
 import {
   AUCTION_ABI,
+  ESCROW_ABI,
   FACTORY_ABI,
   INTEX_ABI,
   type IntexAddresses,
   NFT_ABI,
+  ORIGIN_ROUTER_ABI,
   VAULT_ROUTER_ABI,
   bridgeDstChainId,
   NotConfiguredError,
@@ -207,4 +210,29 @@ export async function bridgeSendParam(n: Network, series: Hex, units: bigint, re
     tokenId: ids[0], // issued token id
     units,
   };
+}
+
+/** Chain ids the origin router fans auctions out to, read from the connected Outbe node. */
+export async function intexTargets(outbe: Network): Promise<number[]> {
+  const router = addr(outbe, "originRouter");
+  try {
+    const targets = (await outbe.client.readContract({
+      address: router,
+      abi: ORIGIN_ROUTER_ABI,
+      functionName: "targets",
+    })) as readonly number[];
+    return targets.map(Number);
+  } catch (error) {
+    if (!isRevert(error) && !(error instanceof ContractFunctionZeroDataError)) throw error;
+    throw new Error(`no Intex origin router answers at ${router} on ${outbe.name}; set OUTBE_INTEX_ORIGIN_ROUTER`);
+  }
+}
+
+/** The token a target's escrow takes bids in. */
+export async function escrowPaymentToken(n: Network): Promise<Address> {
+  return (await n.client.readContract({
+    address: addr(n, "escrow"),
+    abi: ESCROW_ABI,
+    functionName: "paymentToken",
+  })) as Address;
 }

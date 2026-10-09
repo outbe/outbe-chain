@@ -1,6 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { type Account, type Hex, encodeFunctionData, formatUnits, getAddress } from "viem";
-import { TARGET_NETWORK } from "../../net/chains.js";
 import type { Network } from "../../net/resolver.js";
 import { requireAccount } from "../../net/tx.js";
 import { networkName, waitFlag } from "../schemas.js";
@@ -38,7 +37,7 @@ async function signReveal(n: Network, account: Account, bid: Bid): Promise<Hex> 
 
 /** Sealed bid commit, reveal and the escrow claims. */
 export function registerBidTools(server: McpServer, deps: IntexDeps): void {
-  const { ctx, resolveNetwork, submit, paymentMeta } = deps;
+  const { ctx, submit, paymentMeta, target } = deps;
   server.tool(
     "auction_bid_commit",
     "Commit a sealed Intex bid: signs the EIP-712 RevealBid and submits keccak256(signature) as the commit " +
@@ -57,7 +56,7 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       wait: waitFlag,
     },
     handler(async ({ worldwideDay, units, rate, issuanceCurrency, referenceCurrency, network, wait }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const account = requireAccount(ctx);
       const bidRate = toBidRate(rate);
 
@@ -72,10 +71,10 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       let autoApprove: { txHash: Hex; amount: string } | null = null;
       let note = "No entry bond on this worldwideDay; nothing is locked at commit.";
       if (bond > 0n) {
-        const { decimals: dec, symbol } = await paymentMeta(n);
+        const { token, decimals: dec, symbol } = await paymentMeta(n);
         const bondHuman = formatUnits(bond, dec);
         const approval = await ensureAllowance(ctx, n, {
-          token: addr(n, "paymentToken"),
+          token,
           spender: addr(n, "escrow"),
           amount: bond,
         });
@@ -125,7 +124,7 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       wait: waitFlag,
     },
     handler(async ({ worldwideDay, units, rate, issuanceCurrency, referenceCurrency, network, wait }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const account = requireAccount(ctx);
       const { decimals: dec, symbol } = await paymentMeta(n);
       const bidRate = toBidRate(rate);
@@ -142,7 +141,7 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       const lockAmount = wcoenLockAmount(BigInt(units), strike, bidRate);
       const lockHuman = formatUnits(lockAmount, dec);
       const approval = await ensureAllowance(ctx, n, {
-        token: addr(n, "paymentToken"),
+        token: (await paymentMeta(n)).token,
         spender: addr(n, "escrow"),
         amount: lockAmount,
       });
@@ -181,7 +180,7 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
     "Cancel a committed bid for a worldwide day before the reveal stage. Requires OUTBE_PRIVATE_KEY.",
     { worldwideDay: worldwideDayArg, network: networkName.optional(), wait: waitFlag },
     handler(async ({ worldwideDay, network, wait }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       requireAccount(ctx);
       const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "cancelCommit", args: [worldwideDay] });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
@@ -196,7 +195,7 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       "24 hours past revealEnd. Requires OUTBE_PRIVATE_KEY.",
     { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkName.optional(), wait: waitFlag },
     handler(async ({ worldwideDay, bidder, network, wait }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const account = requireAccount(ctx);
       const who = bidder ? getAddress(bidder) : account.address;
       const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "claimCommitBond", args: [worldwideDay, who] });
@@ -214,7 +213,7 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       "OUTBE_PRIVATE_KEY.",
     { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkName.optional(), wait: waitFlag },
     handler(async ({ worldwideDay, bidder, network, wait }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const account = requireAccount(ctx);
       const who = bidder ? getAddress(bidder) : account.address;
       const data = encodeFunctionData({ abi: ESCROW_ABI, functionName: "claimRefund", args: [worldwideDay, who] });

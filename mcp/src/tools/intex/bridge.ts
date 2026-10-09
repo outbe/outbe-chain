@@ -1,7 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { encodeFunctionData, getAddress } from "viem";
 import { formatNativeAmount } from "../../chain.js";
-import { TARGET_NETWORK } from "../../net/chains.js";
 import { requireAccount } from "../../net/tx.js";
 import { networkName, waitFlag } from "../schemas.js";
 import { handler, ok } from "../util.js";
@@ -12,7 +11,7 @@ import type { IntexDeps } from "./deps.js";
 
 /** Bridging an Intex NFT towards outbe. */
 export function registerBridgeTools(server: McpServer, deps: IntexDeps): void {
-  const { ctx, resolveNetwork, whoever, submit } = deps;
+  const { ctx, whoever, submit, target } = deps;
   server.tool(
     "intex_bridge_quote",
     "Bridge native fee to move an Intex NFT from BSC to outbe. Bridging is owner-initiated at every stage: " +
@@ -20,7 +19,7 @@ export function registerBridgeTools(server: McpServer, deps: IntexDeps): void {
       "its settlementDeadline (read it with intex_series_info).",
     { series: seriesArg, units: unitsArg, recipient: recipientArg, network: networkName.optional() },
     handler(async ({ series, units, recipient, network }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const to = recipient ? getAddress(recipient) : whoever();
       const sp = await bridgeSendParam(n, series, BigInt(units), to);
       const fee = (await n.client.readContract({
@@ -50,7 +49,7 @@ export function registerBridgeTools(server: McpServer, deps: IntexDeps): void {
       "you pay in the source chain's native token. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, units: unitsArg, recipient: recipientArg, network: networkName.optional(), wait: waitFlag },
     handler(async ({ series, units, recipient, network, wait }) => {
-      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const n = await target(network);
       const account = requireAccount(ctx);
       const bridge = addr(n, "nftBridge");
       const to = recipient ? getAddress(recipient) : account.address;
