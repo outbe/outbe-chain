@@ -4,7 +4,7 @@
 //!
 //! A Credis moves `Issued -> Called` when the COEN price in its REFERENCE currency
 //! sat strictly above the call price on `call_threshold_seconds` of the trailing
-//! `call_window_seconds`. Both terms are sealed onto the Credis at opening. The
+//! `call_window_seconds`. Both terms are sealed onto the Credis at issuance. The
 //! issuance currency the Credis is denominated in never enters the threshold.
 //!
 //! The breach rule needs no per-Credis streak state. The daily series is
@@ -153,7 +153,7 @@ fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result<()> {
     storage.emit_event(CREDIS_FACTORY_ADDRESS, SolEvent::encode_log_data(event))
 }
 
-/// Calls an Open Credis whose breach window filled. Returns whether it moved.
+/// Calls an Issued Credis whose breach window filled. Returns whether it moved.
 fn call_if_breached(
     credis: &mut CredisContract<'_>,
     window: &CallWindow,

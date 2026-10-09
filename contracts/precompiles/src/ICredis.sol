@@ -10,7 +10,8 @@ interface ICredis {
     // are never emitted.
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
-    /// ERC-4906: emitted when a Credis is called, on every settlement, and when it is forfeited.
+    /// ERC-4906: emitted when a Credis is called, on every settlement, and when the forfeit
+    ///         sweep forfeits it. A lapsed Credis reads Forfeited before that event.
     event MetadataUpdate(uint256 _tokenId);
     /// ERC-4906, declared for the standard's shape only: never emitted.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
@@ -93,17 +94,18 @@ interface ICredis {
         uint256 principalMinor;
         /// P_out - decreases with each settlement; 0 once Settled or Forfeited.
         uint256 outstandingPrincipalMinor;
-        /// G - the pledged Gratis, valued 1:1 against principal at the reservation quote rate.
+        /// G - the pledged Gratis: principal priced at the reservation's eight-hour VWAP.
         uint256 gratisMinor;
         /// The share of G still locked; 0 once Settled or Forfeited.
         uint256 outstandingGratisMinor;
-        /// r - the annual policy rate of the issuance currency, scale 1e6, fixed at opening.
+        /// r - the annual policy rate of the issuance currency, scale 1e6, fixed at issuance.
         uint256 policyRate;
         /// Entry price in the issuance currency, scale 1e6, fixed by the reservation.
         uint256 entryPriceMinor;
         /// Issuance timestamp.
         uint64 issuedAt;
-        /// Anchor of the interest day count: origination until the first settlement.
+        /// Anchor of the interest day count: issuance, advanced by the whole days each
+        /// settlement charges. It may differ from the last settlement's time.
         uint64 lastSettledAt;
         /// See {State}. Read-time: a Called Credis past its settlement deadline reads
         /// Forfeited, with its outcome, before the forfeit sweep reaches it.
@@ -144,8 +146,9 @@ interface ICredis {
 
     /// @notice Interest accrued on the outstanding principal since the last
     ///         settlement (simple, ACT/365), evaluated at the current block
-    ///         timestamp. This is the next payment's interest delta and the
-    ///         minimum acceptable payment. Lifetime interest collected is
+    ///         timestamp. While the Credis is settleable, this is the next payment's
+    ///         interest delta and the minimum acceptable payment; 0 once it reads
+    ///         Settled or Forfeited. Lifetime interest collected is
     ///         {interestPaidMinor}.
     function interestAccruedMinor(uint256 credisId) external view returns (uint256);
 

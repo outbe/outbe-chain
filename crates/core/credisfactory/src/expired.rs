@@ -47,9 +47,9 @@ impl ExpiryHandler<U256> for CredisExpiry<'_, '_> {
         let Some(record) = self.credis.records.get(credis_id)? else {
             return Ok(Due::Drop);
         };
-        let voidable = record.lifecycle_state()? == CredisState::Called
+        let forfeitable = record.lifecycle_state()? == CredisState::Called
             && !record.outstanding_principal_minor.is_zero();
-        Ok(if voidable { Due::Expire } else { Due::Drop })
+        Ok(if forfeitable { Due::Expire } else { Due::Drop })
     }
 
     fn member_count(&self, _credis_id: U256) -> Result<u32> {

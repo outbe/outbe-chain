@@ -26,7 +26,7 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
     Ok(timestamp_to_date_key(timestamp))
 }
 
-/// Terms captured when a Credis opens. Grouped rather than passed positionally
+/// Terms captured when a Credis is issued. Grouped rather than passed positionally
 /// so a mis-ordered `U256` cannot silently swap principal for collateral.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueCredisParams {
@@ -89,8 +89,8 @@ pub fn calc_call_price(price: U256) -> Result<U256> {
 
 /// Timestamp after which a called Credis's remainder may be forfeited.
 ///
-/// Reads the notice period sealed onto the Credis at opening, so retuning the
-/// constant cannot move the deadline of a Credis that is already live.
+/// Reads the notice period sealed onto the Credis at issuance, so switching the
+/// profile cannot move the deadline of a Credis that is already live.
 pub fn settlement_deadline(record: &Credis) -> u64 {
     record
         .called_at
@@ -183,7 +183,7 @@ impl CredisContract<'_> {
         Ok(numerator / denominator)
     }
 
-    /// Opens a Credis and returns its derived
+    /// Issues a Credis and returns its derived
     /// `credis_id = keccak256(cca || owner || asset || block_number)`.
     ///
     /// This function seals everything the Credis will ever need:
@@ -270,7 +270,7 @@ impl CredisContract<'_> {
         })
     }
 
-    /// Calls an open Credis, opening the settlement window. Settlement terms
+    /// Calls an Issued Credis, opening the settlement window. Settlement terms
     /// are unchanged throughout it. Idempotent: an already-called Credis
     /// returns `false` without moving its deadline.
     ///
@@ -298,7 +298,7 @@ impl CredisContract<'_> {
 
     /// Applies a settlement of `amount`: interest first, principal second.
     ///
-    /// Any payer may settle any open or called Credis. The released collateral
+    /// Any payer may settle any Issued or Called Credis. The released collateral
     /// is owed to the pledger recorded on the Credis. Thus a payer can never
     /// redirect value to themselves.
     ///

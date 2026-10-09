@@ -1,7 +1,7 @@
-//! Genesis-selectable profile for the call terms a Credis seals: `PROD` (real
-//! timings) and `DEV` (short timings). An unset `config_profile` byte resolves by
-//! network, so only mainnet runs PROD. The call price stays a constant: the
-//! requirements fix it at 1.64 times the anchor.
+//! Profile for the call terms a Credis seals: `PROD` (real timings) and `DEV`
+//! (short timings), picked by the `config_profile` byte. Genesis leaves it unset,
+//! which resolves by network, so only mainnet runs PROD. The call price stays a
+//! constant: the requirements fix it at 1.64 times the anchor.
 
 use outbe_primitives::chain::is_mainnet;
 use outbe_primitives::error::{PrecompileError, Result};

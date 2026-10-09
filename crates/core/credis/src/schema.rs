@@ -39,7 +39,7 @@ impl CredisState {
 
 /// Credis record. Keyed by `keccak256(cca || owner || asset || block_number)`.
 ///
-/// Every term, both currency codes included, is sealed at opening and never
+/// Every term, both currency codes included, is sealed at issuance and never
 /// changes afterwards. Only `outstanding_principal_minor`, `outstanding_gratis_minor`,
 /// `interest_paid_minor`, `last_settled_at`, `called_at` and `state` move over the
 /// Credis's life.
@@ -49,7 +49,7 @@ pub struct Credis {
     #[key]
     pub credis_id: U256,
 
-    /// The card bundle the loan was disbursed to.
+    /// The smart account the Credis was issued to.
     #[attribute(order = 0)]
     pub owner: Address,
 
@@ -62,7 +62,7 @@ pub struct Credis {
     #[attribute(order = 2)]
     pub asset: Address,
 
-    /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at opening.
+    /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at issuance.
     /// Denominates the Credis and keys its policy rate. It is NOT the call
     /// threshold anchor. See [`Self::reference_currency`].
     #[attribute(order = 3)]
@@ -82,8 +82,8 @@ pub struct Credis {
     #[attribute(order = 6)]
     pub outstanding_principal_minor: U256,
 
-    /// `G` - pledged Gratis, valued 1:1 against principal at the pledge quote
-    /// rate (COEN/`issuance_currency`, sealed into the ticket). Fixed.
+    /// `G` - pledged Gratis: principal priced at the reservation's eight-hour
+    /// COEN/`issuance_currency` VWAP. Fixed.
     #[attribute(order = 7)]
     pub gratis_minor: U256,
 
@@ -93,7 +93,7 @@ pub struct Credis {
     pub outstanding_gratis_minor: U256,
 
     /// `r` - the currency's annual official policy rate (scale `1e6`) times the
-    /// policy-rate factor, pinned at opening for the Credis's life.
+    /// policy-rate factor, pinned at issuance for the Credis's life.
     #[attribute(order = 9)]
     pub policy_rate: U256,
 
@@ -138,7 +138,7 @@ pub struct Credis {
 
     /// Call Notice Period in seconds: a called Credis whose remainder is
     /// still outstanding at `called_at + call_notice_period_seconds` is forfeited.
-    /// Snapshot of the protocol constant at opening.
+    /// Sealed from the parameter profile at issuance.
     #[attribute(order = 17, default = 0)]
     pub call_notice_period_seconds: u32,
 
@@ -147,14 +147,14 @@ pub struct Credis {
     #[attribute(order = 18, default = 0)]
     pub call_rate: u16,
 
-    /// Call-trigger evaluation window in seconds (snapshot of the protocol
-    /// constant at opening). This is the trailing span the daily scan reads for
+    /// Call-trigger evaluation window in seconds, sealed from the parameter
+    /// profile at issuance. This is the trailing span the daily scan reads for
     /// Call Price breaches. Divided by 86400 to get the day count.
     #[attribute(order = 19, default = 0)]
     pub call_window_seconds: u32,
 
-    /// Breach threshold in seconds (snapshot of the protocol constant at
-    /// opening). Divided by 86400 to get the required breach-day count.
+    /// Breach threshold in seconds, sealed from the parameter profile at
+    /// issuance. Divided by 86400 to get the required breach-day count.
     #[attribute(order = 20, default = 0)]
     pub call_threshold_seconds: u32,
 
@@ -179,7 +179,7 @@ impl Credis {
 
 /// EVM storage layout for the Credis contract.
 ///
-/// `address_position_*` and `total_credis` / `credis_id_at_index` provide
+/// `owner_credis_*` and `total_credis` / `credis_id_at_index` provide
 /// dense, no-`Vec` enumeration in the same shape as `outbe-nod`'s owner index
 /// (`crates/core/nod/src/schema.rs`). Slot assignment is macro-generated: a
 /// `Map<K, V>` over a record reserves `V::SLOTS` top-level slots, so the
@@ -240,7 +240,7 @@ pub struct CredisContract {
     #[attribute(order = 19)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Open Credis by call price, one trie per reference currency. A call takes
+    // Issued Credis by call price, one trie per reference currency. A call takes
     // the Credis out, so the daily scan visits only what can still be called.
     #[attribute(order = 20)]
     pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
@@ -272,7 +272,7 @@ pub struct CredisContract {
     #[attribute(order = 30)]
     pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// Genesis profile selector (0 = by network, 1 = dev, 2 = prod). See `crate::config`.
+    /// Profile selector (0 = by network, 1 = dev, 2 = prod). See `crate::config`.
     #[attribute(order = 31)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 }

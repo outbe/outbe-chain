@@ -92,10 +92,10 @@ impl CredisContract<'_> {
     }
 
     // ---------------------------------------------------------------------
-    // Call-price index (Open Credis only)
+    // Call-price index (Issued Credis only)
     // ---------------------------------------------------------------------
 
-    /// Puts an Open Credis in the bin of its sealed call price.
+    /// Puts an Issued Credis in the bin of its sealed call price.
     pub(crate) fn index_for_call(&mut self, record: &Credis) -> Result<()> {
         let bin = call_bins::price_to_bin(record.call_price_minor)?;
         call_bins::insert(
@@ -140,7 +140,7 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<U256> {
     cursor: expiry_cursor,
 });
 
-/// One reference currency's Open Credis, by call price.
+/// One reference currency's Issued Credis, by call price.
 pub struct CallBins<'a, 'storage>(pub &'a CredisContract<'storage>, pub u16);
 
 outbe_primitives::impl_call_bins!(CallBins<U256> {

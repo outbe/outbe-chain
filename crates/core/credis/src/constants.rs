@@ -3,8 +3,8 @@
 pub const TOKEN_NAME: &str = "Credis";
 pub const TOKEN_SYMBOL: &str = "CREDIS";
 pub const TOKEN_DESCRIPTION: &str = concat!(
-    "Credis is a Credis on the Outbe network, owned by a smart account and backed by pledged ",
-    "Gratis. Its owner repays it directly in the original asset, interest first, and each repayment ",
+    "Credis is a soul-bound right on the Outbe network, held by a smart account and backed by ",
+    "pledged Gratis. Its owner settles it in the original asset, interest first, and each settlement ",
     "returns pledged Gratis in proportion to the principal it covers. A called Credis must be ",
     "settled by its settlement deadline, otherwise it is forfeited."
 );
@@ -32,26 +32,21 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 /// `CALL_WINDOW` / `CALL_THRESHOLD` pair.
 pub const CALL_THRESHOLD_DAYS: u32 = 21;
 
-/// [`CALL_LOOKBACK_DAYS`] in seconds. This is the encoding that
-/// `Credis::call_window_seconds` seals at opening, matching
-/// `GemData::call_window_seconds`.
+/// [`CALL_LOOKBACK_DAYS`] in seconds: the PROD `call_window_seconds`.
 pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
 
-/// [`CALL_THRESHOLD_DAYS`] in seconds. This is the encoding that
-/// `Credis::call_threshold_seconds` seals at opening, matching
-/// `GemData::call_threshold_seconds`.
+/// [`CALL_THRESHOLD_DAYS`] in seconds: the PROD `call_threshold_seconds`.
 pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECS_PER_DAY;
 
-/// Settlement window that the call opens, in seconds. The name describes what it
-/// is and the `Credis::call_notice_period_seconds` field it seals. It does not
-/// name the window that it is not.
+/// Settlement window that the call opens, in seconds: the PROD
+/// `call_notice_period_seconds`.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
 
 /// Day count convention for interest accrual: simple, ACT/365.
 pub const DAYS_PER_YEAR: u64 = 365;
 
 /// Basis-point multiplier applied to the currency's official policy rate when
-/// pinning a Credis's `policy_rate` at opening. 10_000 bp = x1.
+/// pinning a Credis's `policy_rate` at issuance. 10_000 bp = x1.
 // TODO: confirm the policy-rate factor before launch. Section 10 lists it as TBD and proposes 1.
 // A governance-settable parameter is the upgrade path if it needs retuning
 // without a redeploy.
