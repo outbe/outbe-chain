@@ -213,6 +213,9 @@ export function proposalStatusCode(name: ProposalStatusName): number {
   return PROPOSAL_STATUS.indexOf(name);
 }
 
+// Validator status codes (crates/system/validatorset/src/runtime/mod.rs::status).
+export const VALIDATOR_STATUS = ["REGISTERED", "PENDING", "ACTIVE", "EXITING", "UNBONDING", "INACTIVE", "JAILED"] as const;
+
 // Gem lifecycle state (crates/core/gem/src/schema.rs::GemState); Forfeited is derived on read.
 export const GEM_STATE = ["Issued", "Qualified", "Called", "Settled", "Forfeited"] as const;
 
@@ -235,6 +238,9 @@ export function statusName(v: number): string {
 }
 export function dayTypeName(v: number): string {
   return DAY_TYPE[v] ?? `UNKNOWN(${v})`;
+}
+export function validatorStatusName(v: number): string {
+  return VALIDATOR_STATUS[v] ?? `UNKNOWN(${v})`;
 }
 export function gemStateName(v: number): string {
   return GEM_STATE[v] ?? `UNKNOWN(${v})`;

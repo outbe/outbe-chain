@@ -2785,7 +2785,7 @@
         },
         "status": {
           "code": 2,
-          "name": "OFFERING"
+          "name": "ACTIVE"
         },
         "slashCount": "1760000000",
         "missedBlocks": "1760000000",
@@ -9132,7 +9132,7 @@
         },
         "status": {
           "code": 2,
-          "name": "OFFERING"
+          "name": "ACTIVE"
         },
         "slashCount": "1760000000",
         "missedBlocks": "1760000000",
@@ -9167,7 +9167,7 @@
         },
         "status": {
           "code": 2,
-          "name": "OFFERING"
+          "name": "ACTIVE"
         },
         "slashCount": "1760000000",
         "missedBlocks": "1760000000",

@@ -6,6 +6,7 @@ import {
   gemStateName,
   proposalStatusName,
   statusName,
+  validatorStatusName,
 } from "../registry.js";
 import { parseDataUri } from "./datauri.js";
 
@@ -83,9 +84,11 @@ function toIso(epoch: bigint | number): string {
   return new Date(sec * 1000).toISOString();
 }
 
-/** A bare `status` byte means the WorldwideDay lifecycle except inside a governance proposal. */
+/** A bare `status` byte is a proposal's or a validator's where its owner says so, else a WorldwideDay's. */
 function statusLabel(s: Scalar): (v: number) => string {
-  return /\bIGovernance\./.test(s.context.enclosingTupleType ?? "") ? proposalStatusName : statusName;
+  if (/\bIGovernance\./.test(s.context.enclosingTupleType ?? "")) return proposalStatusName;
+  if (s.context.contractName === "validatorset") return validatorStatusName;
+  return statusName;
 }
 
 /** Names a `state` code by the contract whose struct carries it. Any other keeps the bare code. */
