@@ -358,7 +358,7 @@
     },
     {
       "name": "promis_balance",
-      "description": "Promis balance for an account (in COEN).",
+      "description": "Encrypted Promis balance; decrypt it locally with the account's Promis view key.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1893,7 +1893,7 @@
     },
     {
       "name": "intex_promis_balance",
-      "description": "Promis balance for an address on outbe.",
+      "description": "Encrypted Promis balance for an address on outbe; decrypt it locally with the account's Promis view key.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2577,7 +2577,10 @@
         "account": "0x2222222222222222222222222222222222222222"
       },
       "isError": false,
-      "output": "0x1234",
+      "output": {
+        "account": "0x2222222222222222222222222222222222222222",
+        "balance": "0x1234"
+      },
       "sent": []
     },
     {
@@ -5923,10 +5926,7 @@
       "output": {
         "network": "outbe-testnet",
         "account": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "balance": {
-          "raw": "32",
-          "value": "0.000032"
-        }
+        "balance": "0x1234"
       },
       "sent": []
     },

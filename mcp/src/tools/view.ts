@@ -176,9 +176,9 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "promis_balance",
-    "Promis balance for an account (in COEN).",
+    "Encrypted Promis balance; decrypt it locally with the account's Promis view key.",
     { account: address },
-    handler(async ({ account }) => ok(await view(ctx, "promis", "balanceOf", [account]))),
+    handler(async ({ account }) => ok({ account, balance: await view(ctx, "promis", "balanceOf", [account]) })),
   );
 
   // Per-account fidelity index is now encrypted and owner-signature-gated, so a

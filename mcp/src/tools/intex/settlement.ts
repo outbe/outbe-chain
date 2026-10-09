@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { PRECOMPILE_ABI } from "../../abi.js";
 import { type Hex, encodeFunctionData, formatUnits, getAddress } from "viem";
 import { z } from "zod";
 import { OUTBE_NETWORK } from "../../net/chains.js";
@@ -164,18 +165,18 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
 
   server.tool(
     "intex_promis_balance",
-    "Promis balance for an address on outbe.",
+    "Encrypted Promis balance for an address on outbe; decrypt it locally with the account's Promis view key.",
     { account: accountArg, network: networkName.optional() },
     handler(async ({ account, network }) => {
       const n = await resolveNetwork(network ?? OUTBE_NETWORK);
       const who = whoever(account);
-      const bal = (await n.client.readContract({
+      const balance = (await n.client.readContract({
         address: addr(n, "promis"),
-        abi: ERC20_ABI,
+        abi: PRECOMPILE_ABI.IPromis,
         functionName: "balanceOf",
         args: [who],
-      })) as bigint;
-      return ok({ network: n.name, account: who, balance: { raw: bal.toString(), value: formatUnits(bal, 6) } });
+      })) as Hex;
+      return ok({ network: n.name, account: who, balance });
     }),
   );
 }
