@@ -30,7 +30,7 @@ export interface IntexDeps {
   submit(n: Network, to: Address, data: Hex, value: bigint, wait?: boolean): Promise<Submitted>;
   /** The payment token's address, decimals and symbol, cached per network. */
   paymentMeta(n: Network): Promise<PaymentMeta>;
-  /** Resolves `spec` (default the target network) and checks the origin router fans out to it. */
+  /** Resolves `spec` (default: the remote target, bsc-testnet when served) and checks the origin router serves it. */
   target(spec?: string): Promise<Network>;
   /** Where a bridge from `n` lands: `spec`, else outbe, else the one other Intex chain. */
   bridgeDestination(n: Network, spec?: string): Promise<number>;
@@ -69,6 +69,16 @@ function intexChainsReader(ctx: Ctx): () => Promise<number[]> {
   };
 }
 
+/** The remote target Intex tools read when no network is named. */
+function defaultTargetOf(ctx: Ctx, chainIds: number[]): number {
+  const remote = chainIds.filter((id) => id !== ctx.chain.id);
+  const preferred = chainIdOf(TARGET_NETWORK, ctx);
+  if (remote.length === 0) return ctx.chain.id;
+  if (remote.length === 1) return remote[0];
+  if (remote.includes(preferred)) return preferred;
+  throw new Error(`pass network: the origin router serves chains ${remote.join(", ")}`);
+}
+
 function bridgeDestinationOf(ctx: Ctx, n: Network, peers: number[], spec?: string): number {
   let destination: number | undefined = ctx.chain.id;
   if (spec !== undefined) destination = chainIdOf(spec, ctx);
@@ -100,8 +110,8 @@ export function intexDeps(ctx: Ctx): IntexDeps {
     },
     paymentMeta: paymentMetaReader(),
     async target(spec) {
-      const n = await resolveNetwork(spec ?? TARGET_NETWORK);
       const chainIds = await intexChains();
+      const n = await resolveNetwork(spec ?? String(defaultTargetOf(ctx, chainIds)));
       if (!chainIds.includes(n.chainId)) {
         throw new Error(`${n.name} is not an Intex target; the origin router serves chains ${chainIds.join(", ")}`);
       }

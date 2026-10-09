@@ -76,3 +76,26 @@ test("an origin router address without a contract is named instead of a decode e
     await harness.close();
   }
 });
+
+test("intex tools default to the remote target the origin router serves", async () => {
+  const defaultNetwork = async (targets: number[]) => {
+    const harness = await startHarness(
+      (chain) => {
+        chain.register(AUCTION_ABI);
+        chain.register(ORIGIN_ROUTER_ABI, intexAddress({ name: "outbe-testnet", isOutbe: true }, "originRouter"));
+        chain.reply("targets", targets);
+      },
+      { env: { OUTBE_RPC_11155111: "https://sepolia.example" } },
+    );
+    try {
+      const { isError, text } = await harness.call("auctions_active", WINDOW);
+      return isError ? text : JSON.parse(text).network;
+    } finally {
+      await harness.close();
+    }
+  };
+  assert.equal(await defaultNetwork([97, 11_155_111, 54_322_345]), "bsc-testnet");
+  assert.equal(await defaultNetwork([11_155_111, 54_322_345]), "sepolia");
+  assert.equal(await defaultNetwork([54_322_345]), "outbe-testnet");
+  assert.match(await defaultNetwork([11_155_111, 8453]), /pass network: the origin router serves chains 11155111, 8453/);
+});
