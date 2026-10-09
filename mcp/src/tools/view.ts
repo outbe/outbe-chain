@@ -5,6 +5,7 @@ import { listProposals } from "../governance.js";
 import { pairTable } from "../oracle/pairs.js";
 import type { Ctx } from "../chain.js";
 import { CONTRACTS, OFFERING_STATUS, PROPOSAL_STATUS } from "../registry.js";
+import { ownedTokenIds } from "../read.js";
 import { handler, ok, view } from "./util.js";
 
 const wwd = z.number().int().describe("WorldwideDay as YYYYMMDD, e.g. 20260601");
@@ -85,12 +86,8 @@ function registerEntityViews(server: McpServer, ctx: Ctx): void {
       "enumerates balanceOf -> tokenOfOwnerByIndex).",
     { owner: address },
     handler(async ({ owner }) => {
-      const balance = Number(await view(ctx, "nod", "balanceOf", [owner]));
-      const ids: unknown[] = [];
-      for (let i = 0; i < balance; i++) {
-        ids.push(await view(ctx, "nod", "tokenOfOwnerByIndex", [owner, i]));
-      }
-      return ok({ owner, count: balance, nodIds: ids });
+      const ids = await ownedTokenIds(ctx, "nod", owner);
+      return ok({ owner, count: ids.length, nodIds: ids.map(String) });
     }),
   );
 
@@ -144,13 +141,9 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
       "so this enumerates balanceOf -> tokenOfOwnerByIndex -> getGemStatus).",
     { owner: address },
     handler(async ({ owner }) => {
-      const balance = Number(await view(ctx, "gem", "balanceOf", [owner]));
-      const gems: unknown[] = [];
-      for (let i = 0; i < balance; i++) {
-        const tokenId = await view(ctx, "gem", "tokenOfOwnerByIndex", [owner, i]);
-        gems.push(await view(ctx, "gem", "getGemStatus", [BigInt(tokenId as string)]));
-      }
-      return ok({ owner, count: balance, gems });
+      const ids = await ownedTokenIds(ctx, "gem", owner);
+      const gems = await Promise.all(ids.map((id) => view(ctx, "gem", "getGemStatus", [id])));
+      return ok({ owner, count: ids.length, gems });
     }),
   );
 

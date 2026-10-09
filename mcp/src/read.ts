@@ -24,3 +24,21 @@ export async function view(
   }
   return humanizeReturn(fn, result, formatContext);
 }
+
+/** A view's raw `uint` result as a number: counts drive loops, so they skip formatting. */
+export async function readCount(ctx: Ctx, contract: string, method: string, args: unknown[] = []): Promise<number> {
+  const { result } = await readView(ctx, resolveContract(contract), method, args);
+  return Number(result as bigint);
+}
+
+/** Token ids `owner` holds on an enumerable NFT precompile, read in parallel. */
+export async function ownedTokenIds(ctx: Ctx, contract: string, owner: string): Promise<bigint[]> {
+  const entry = resolveContract(contract);
+  const balance = await readCount(ctx, contract, "balanceOf", [owner]);
+  return Promise.all(
+    Array.from({ length: balance }, async (_, index) => {
+      const { result } = await readView(ctx, entry, "tokenOfOwnerByIndex", [owner, index]);
+      return result as bigint;
+    }),
+  );
+}
