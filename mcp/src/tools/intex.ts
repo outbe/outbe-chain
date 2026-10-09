@@ -3,10 +3,7 @@ import {
   type AbiEvent,
   type Account,
   type Address,
-  type Chain,
   type Hex,
-  type PublicClient,
-  type WalletClient,
   encodeFunctionData,
   formatUnits,
   getAbiItem,
@@ -16,7 +13,10 @@ import {
   parseUnits,
 } from "viem";
 import { z } from "zod";
-import { type Ctx, createCtx, formatNativeAmount } from "../chain.js";
+import { type Ctx, formatNativeAmount } from "../chain.js";
+import { NETWORKS, OUTBE_NETWORK, TARGET_NETWORK } from "../net/chains.js";
+import { type Network, networkResolver } from "../net/resolver.js";
+import { receiptSummary, requireAccount, sendCall, waitForReceipt } from "../net/tx.js";
 import { type DecodedDataUri, parseDataUri } from "../format.js";
 import { loadConfig } from "../config.js";
 import { handler, ok } from "./util.js";
@@ -27,10 +27,8 @@ import {
   ESCROW_ABI,
   FACTORY_ABI,
   type IntexAddresses,
-  NETWORKS,
   NFT_ABI,
   NFT_BRIDGE_ABI,
-  OUTBE,
   INTEX_ABI,
   ORIGIN_ROUTER_ABI,
   VAULT_ROUTER_ABI,
@@ -53,14 +51,6 @@ import { POW_DIFFICULTY, grindNonce } from "../intex/pow.js";
  *
  * Read tools work without a key. Signing tools require OUTBE_PRIVATE_KEY.
  */
-
-interface Network {
-  name: string;
-  chainId: number;
-  chain: Chain;
-  client: PublicClient;
-  wallet?: WalletClient;
-}
 
 const SCALE_1E6 = 1_000_000n;
 const NATIVE_UNITS_PER_PROTOCOL_UNIT = 1_000_000_000_000n;
@@ -106,27 +96,7 @@ function ymdRange(from: number, to: number): number[] {
 
 export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   const pk = loadConfig().privateKey;
-  const netCache = new Map<string, Network>();
-
-  async function resolveNetwork(spec: string): Promise<Network> {
-    const s = spec.trim().toLowerCase();
-    const def = NETWORKS.find((d) => d.name.toLowerCase() === s || String(d.chainId) === s);
-    if (!def) {
-      throw new Error(`unknown network "${spec}"; supported: ${NETWORKS.map((d) => d.name).join(", ")}`);
-    }
-    const cached = netCache.get(def.name);
-    if (cached) return cached;
-    const c = def.chainId === ctx.chain.id ? ctx : await createCtx(def.rpc, pk);
-    const n: Network = {
-      name: def.name,
-      chainId: c.chain.id,
-      chain: c.chain,
-      client: c.publicClient,
-      wallet: c.walletClient,
-    };
-    netCache.set(def.name, n);
-    return n;
-  }
+  const resolveNetwork = networkResolver(ctx, pk);
 
   /** The address arg or the configured signer. Throws if neither is available. */
   function whoever(explicit?: string): Address {
@@ -190,31 +160,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     return [heldIds, heldBalances];
   }
 
-  function requireAccount(): Account {
-    if (!ctx.account) {
-      throw new Error("signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env");
-    }
-    return ctx.account;
-  }
-
-  async function estimateGas(n: Network, to: Address, data: Hex, value: bigint): Promise<bigint> {
-    const est = await n.client.estimateGas({ account: ctx.account?.address, to, data, value });
-    return (est * 130n) / 100n;
-  }
-
-  async function send(n: Network, to: Address, data: Hex, value: bigint, gas: bigint): Promise<Hex> {
-    const account = requireAccount();
-    if (!n.wallet) throw new Error(`no signer for ${n.name}`);
-    return n.wallet.sendTransaction({ account, chain: n.chain, to, data, value, gas });
-  }
-
   /** Submit a tx and, unless wait===false, wait for and summarize its receipt. */
   async function submit(n: Network, to: Address, data: Hex, value: bigint, wait?: boolean) {
-    const gas = await estimateGas(n, to, data, value);
-    const hash = await send(n, to, data, value, gas);
+    const hash = await sendCall(ctx, n, { to, data, value });
     if (wait === false) return { txHash: hash, status: "submitted" as const };
-    const r = await n.client.waitForTransactionReceipt({ hash, timeout: 180_000 });
-    return { txHash: hash, status: r.status, blockNumber: r.blockNumber.toString(), gasUsed: r.gasUsed.toString() };
+    return { txHash: hash, ...receiptSummary(await waitForReceipt(n, hash)) };
   }
 
   // A bid is a RATE: the fraction of the protocol-6 per-Intex PROMIS load that
@@ -356,7 +306,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "and how the issued units split into active, settled, exercised, sent to the Gem Factory and forfeited.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? OUTBE_NETWORK);
       const d = (await n.client.readContract({
         address: addr(n, "intex"),
         abi: INTEX_ABI,
@@ -411,7 +361,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Enumerate series ids that exist in the outbe Intex (dense enumeration).",
     { network: networkArg.optional() },
     handler(async ({ network }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? OUTBE_NETWORK);
       const total = Number(
         (await n.client.readContract({
           address: addr(n, "intex"),
@@ -443,7 +393,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "it over with intex_bridge_send before the deadline shown here.",
     { account: accountArg, network: networkArg.optional() },
     handler(async ({ account, network }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
       const who = whoever(account);
       const [tokenIds, balances] = await ownedWithBalances(n, who);
       const holdings = await Promise.all(
@@ -469,7 +419,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             const settlementDeadline =
               Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callTrigger.callNoticePeriod) : 0;
             // Only outbe has the factory that derives it.
-            const qualified = n.name === OUTBE ? await seriesQualified(n, seriesHex) : undefined;
+            const qualified = n.name === OUTBE_NETWORK ? await seriesQualified(n, seriesHex) : undefined;
             return {
               ...base,
               series: fromSeriesId(seriesHex),
@@ -495,7 +445,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "bridged over before the series settlementDeadline (intex_series_info shows it).",
     { series: seriesArg, account: accountArg, network: networkArg.optional() },
     handler(async ({ series, account, network }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
       const who = whoever(account);
       const [issued, settled] = (await n.client.readContract({
         address: addr(n, "nft"),
@@ -552,7 +502,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       to_date: z.number().int().optional().describe("window end yyyymmdd (default today+2)"),
     },
     handler(async ({ network, include_all, from_date, to_date }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
       const today = todayYmd();
       const from = from_date ?? ymdShift(today, -DEFAULT_DAYS_BACK);
       const to = to_date ?? ymdShift(today, DEFAULT_DAYS_AHEAD);
@@ -571,7 +521,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "does NOT mean there are no participants.",
     { worldwideDay: worldwideDayArg, network: networkArg.optional() },
     handler(async ({ worldwideDay, network }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
       const [stage, info, meta] = await Promise.all([
         auctionStageOf(n, worldwideDay),
         n.client.readContract({ address: addr(n, "auction"), abi: AUCTION_ABI, functionName: "getAuctionInfo", args: [worldwideDay] }),
@@ -651,7 +601,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "and its bidders reclaim locally (see auction_bids_by_owner on that chain).",
     { worldwideDay: worldwideDayArg, network: networkArg.optional() },
     handler(async ({ worldwideDay, network }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? OUTBE_NETWORK);
       const desis = addr(n, "desis");
       const chains = (await n.client.readContract({
         address: addr(n, "originRouter"),
@@ -690,7 +640,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "reports what auction_claim_refund pays and from when. Pass worldwideDay to check just one.",
     { account: accountArg, worldwideDay: worldwideDayArg.optional(), network: networkArg.optional() },
     handler(async ({ account, worldwideDay, network }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
       const who = whoever(account);
       let targets: number[];
       if (worldwideDay !== undefined) {
@@ -802,8 +752,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       wait: waitArg,
     },
     handler(async ({ worldwideDay, units, rate, issuanceCurrency, referenceCurrency, network, wait }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
-      const account = requireAccount();
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const account = requireAccount(ctx);
       const bidRate = toBidRate(rate);
 
       // Entry bond: the escrow pulls it inside commitBid, so cover the allowance first.
@@ -885,8 +835,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       wait: waitArg,
     },
     handler(async ({ worldwideDay, units, rate, issuanceCurrency, referenceCurrency, network, wait }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
-      const account = requireAccount();
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const account = requireAccount(ctx);
       const { decimals: dec, symbol } = await paymentMeta(n);
       const bidRate = toBidRate(rate);
 
@@ -955,8 +905,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Cancel a committed bid for a worldwide day before the reveal stage. Requires OUTBE_PRIVATE_KEY.",
     { worldwideDay: worldwideDayArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ worldwideDay, network, wait }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
-      requireAccount();
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      requireAccount(ctx);
       const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "cancelCommit", args: [worldwideDay] });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
       return ok({ network: n.name, worldwideDay, ...receipt });
@@ -970,8 +920,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "24 hours past revealEnd. Requires OUTBE_PRIVATE_KEY.",
     { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ worldwideDay, bidder, network, wait }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
-      const account = requireAccount();
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const account = requireAccount(ctx);
       const who = bidder ? getAddress(bidder) : account.address;
       const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "claimCommitBond", args: [worldwideDay, who] });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
@@ -988,8 +938,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "OUTBE_PRIVATE_KEY.",
     { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ worldwideDay, bidder, network, wait }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
-      const account = requireAccount();
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const account = requireAccount(ctx);
       const who = bidder ? getAddress(bidder) : account.address;
       const data = encodeFunctionData({ abi: ESCROW_ABI, functionName: "claimRefund", args: [worldwideDay, who] });
       const receipt = await submit(n, addr(n, "escrow"), data, 0n, wait);
@@ -1003,7 +953,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Payment-token allowance granted to the EscrowAdapter and the account's balance, with token decimals/symbol.",
     { account: accountArg, network: networkArg.optional() },
     handler(async ({ account, network }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
       const who = whoever(account);
       const token = addr(n, "paymentToken");
       const escrow = addr(n, "escrow");
@@ -1036,8 +986,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       wait: waitArg,
     },
     handler(async ({ amount, max, network, wait }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
-      requireAccount();
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      requireAccount(ctx);
       if (!max && amount === undefined) throw new Error('pass amount (e.g. "100") or max=true');
       const value = max ? maxUint256 : parseUnits(amount as string, (await paymentMeta(n)).decimals);
       const token = addr(n, "paymentToken");
@@ -1073,7 +1023,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "its settlementDeadline (read it with intex_series_info).",
     { series: seriesArg, units: unitsArg, recipient: recipientArg, network: networkArg.optional() },
     handler(async ({ series, units, recipient, network }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
       const to = recipient ? getAddress(recipient) : whoever();
       const sp = await buildSendParam(n, series, BigInt(units), to);
       const fee = (await n.client.readContract({
@@ -1103,8 +1053,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "you pay in the source chain's native token. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, units: unitsArg, recipient: recipientArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, units, recipient, network, wait }) => {
-      const n = await resolveNetwork(network ?? "bsc-testnet");
-      const account = requireAccount();
+      const n = await resolveNetwork(network ?? TARGET_NETWORK);
+      const account = requireAccount(ctx);
       const bridge = addr(n, "nftBridge");
       const to = recipient ? getAddress(recipient) : account.address;
       const sp = await buildSendParam(n, series, BigInt(units), to);
@@ -1150,8 +1100,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       wait: waitArg,
     },
     handler(async ({ series, units, token, owner, network, wait }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
-      const account = requireAccount();
+      const n = await resolveNetwork(network ?? OUTBE_NETWORK);
+      const account = requireAccount(ctx);
       const holder = owner ? getAddress(owner) : account.address;
       const asset = getAddress(token);
       const quantity = BigInt(units);
@@ -1204,7 +1154,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "or quote again.",
     { series: seriesArg, units: z.number().int().positive().optional(), network: networkArg.optional() },
     handler(async ({ series, units, network }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? OUTBE_NETWORK);
       const quoted = BigInt(units ?? 1);
       const tokens = await settlementTokens(n, series);
       const priced = await Promise.all(
@@ -1243,8 +1193,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "first). The proof-of-work nonce is computed locally; you give only series and units. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, units: unitsArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, units, network, wait }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
-      const account = requireAccount();
+      const n = await resolveNetwork(network ?? OUTBE_NETWORK);
+      const account = requireAccount(ctx);
       const owner = account.address;
       const amt = BigInt(units);
       const sd = (await n.client.readContract({
@@ -1281,7 +1231,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Promis balance for an address on outbe.",
     { account: accountArg, network: networkArg.optional() },
     handler(async ({ account, network }) => {
-      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const n = await resolveNetwork(network ?? OUTBE_NETWORK);
       const who = whoever(account);
       const bal = (await n.client.readContract({
         address: addr(n, "promis"),

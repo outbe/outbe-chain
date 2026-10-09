@@ -1,11 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
-  type Account,
   type Address,
-  type Chain,
   type Hex,
-  type PublicClient,
-  type WalletClient,
   decodeAbiParameters,
   encodeAbiParameters,
   encodeFunctionData,
@@ -16,14 +12,16 @@ import {
   parseUnits,
 } from "viem";
 import { z } from "zod";
-import { type Ctx, createCtx, formatNativeAmount } from "../chain.js";
+import { type Ctx, formatNativeAmount } from "../chain.js";
+import { NETWORKS } from "../net/chains.js";
+import { type Network, networkResolver } from "../net/resolver.js";
+import { receiptSummary, requireAccount, sendCall, waitForReceipt } from "../net/tx.js";
 import { loadConfig } from "../config.js";
 import { handler, ok } from "./util.js";
 import {
   DEFAULT_FILL_DEADLINE_SECONDS,
   DEFAULT_ROUTER,
   ERC20_ABI,
-  NETWORKS,
   ROUTER_ABI,
 } from "../intent/registry.js";
 import {
@@ -49,66 +47,12 @@ import { resolveToken } from "../intent/tokens.js";
  * Env (optional): OUTBE_INTENT_ROUTER (router address override).
  */
 
-/** A resolved network: a thin view over a chain `Ctx` (see ../chain.ts). */
-interface Network {
-  name: string;
-  chainId: number;
-  chain: Chain;
-  client: PublicClient;
-  wallet?: WalletClient;
-  nativeSymbol: string;
-}
-
 export function registerIntentTools(server: McpServer, ctx: Ctx): void {
   const config = loadConfig();
   const router = getAddress(config.intentRouter ?? DEFAULT_ROUTER);
   const pk = config.privateKey;
 
-  // --- network resolution (reuses root createCtx, cached per network) --------
-  const toNet = (name: string, c: Ctx): Network => ({
-    name,
-    chainId: c.chain.id,
-    chain: c.chain,
-    client: c.publicClient,
-    wallet: c.walletClient,
-    nativeSymbol: c.chain.nativeCurrency.symbol,
-  });
-  const netCache = new Map<string, Network>();
-
-  // Resolve a network from the NETWORKS table by name or chain id. When the chain
-  // id matches, reuse the connected ctx (its client/wallet). Otherwise open a
-  // fresh client via createCtx. The model normalizes language to a known name.
-  async function resolveNetwork(spec: string): Promise<Network> {
-    const s = spec.trim().toLowerCase();
-    const def = NETWORKS.find((d) => d.name.toLowerCase() === s || String(d.chainId) === s);
-    if (!def) {
-      throw new Error(`unknown network "${spec}"; supported: ${NETWORKS.map((d) => d.name).join(", ")}`);
-    }
-    const cached = netCache.get(def.name);
-    if (cached) return cached;
-    const c = def.chainId === ctx.chain.id ? ctx : await createCtx(def.rpc, pk);
-    const n = toNet(def.name, c);
-    netCache.set(def.name, n);
-    return n;
-  }
-
-  function requireAccount(): Account {
-    if (!ctx.account) {
-      throw new Error("signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env");
-    }
-    return ctx.account;
-  }
-
-  async function send(n: Network, to: Address, data: Hex, value: bigint, gas: bigint): Promise<Hex> {
-    const account = requireAccount();
-    if (!n.wallet) throw new Error(`no signer for ${n.name}`);
-    return n.wallet.sendTransaction({ account, chain: n.chain, to, data, value, gas });
-  }
-
-  async function estimateGas(n: Network, to: Address, data: Hex, value: bigint): Promise<bigint> {
-    const est = await n.client.estimateGas({ account: ctx.account?.address, to, data, value });
-    return (est * 130n) / 100n;
-  }
+  const resolveNetwork = networkResolver(ctx, pk);
 
   async function readDecimals(n: Network, token: Address): Promise<number> {
     if (isNative(token)) return n.chain.nativeCurrency.decimals;
@@ -188,7 +132,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       wait: z.boolean().optional().describe("wait for the receipt (default true)"),
     },
     handler(async (a) => {
-      const account = requireAccount();
+      const account = requireAccount(ctx);
       const user = account.address;
       const originNet = await resolveNetwork(a.origin);
       const destNet = await resolveNetwork(a.destination);
@@ -215,9 +159,8 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
         })) as bigint;
         if (allowance < amountIn) {
           const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [router, amountIn] });
-          const gas = await estimateGas(originNet, input.address, data, 0n);
-          approveTx = await send(originNet, input.address, data, 0n, gas);
-          await originNet.client.waitForTransactionReceipt({ hash: approveTx, timeout: 180_000 });
+          approveTx = await sendCall(ctx, originNet, { to: input.address, data, value: 0n });
+          await waitForReceipt(originNet, approveTx);
         }
       }
 
@@ -243,8 +186,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
         args: [{ fillDeadline, orderDataType: ORDER_DATA_TYPE_HASH, orderData: encodeOrderData(orderData) }],
       });
       const value = native ? amountIn : 0n;
-      const gas = await estimateGas(originNet, router, data, value);
-      const hash = await send(originNet, router, data, value, gas);
+      const hash = await sendCall(ctx, originNet, { to: router, data, value });
 
       const meta = {
         orderId,
@@ -264,8 +206,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       };
       if (a.wait === false) return ok({ ...meta, status: "submitted" });
 
-      const r = await originNet.client.waitForTransactionReceipt({ hash, timeout: 180_000 });
-      return ok({ ...meta, status: r.status, blockNumber: r.blockNumber.toString(), gasUsed: r.gasUsed.toString() });
+      return ok({ ...meta, ...receiptSummary(await waitForReceipt(originNet, hash)) });
     }),
   );
 
@@ -363,7 +304,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       wait: z.boolean().optional(),
     },
     handler(async (a) => {
-      requireAccount();
+      requireAccount(ctx);
       const orderId = a.order_id as Hex;
       const hint = await resolveNetwork(a.chain);
       const { origin, order, originData } = await loadOrder(orderId, hint);
@@ -408,8 +349,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
         functionName: "refund",
         args: [[{ fillDeadline: order.fillDeadline, orderDataType: ORDER_DATA_TYPE_HASH, orderData: originData }]],
       });
-      const gas = await estimateGas(destNet, router, data, value);
-      const hash = await send(destNet, router, data, value, gas);
+      const hash = await sendCall(ctx, destNet, { to: router, data, value });
 
       const meta = {
         orderId,
@@ -421,8 +361,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       };
       if (a.wait === false) return ok({ ...meta, status: "submitted" });
 
-      const r = await destNet.client.waitForTransactionReceipt({ hash, timeout: 180_000 });
-      return ok({ ...meta, status: r.status, blockNumber: r.blockNumber.toString(), gasUsed: r.gasUsed.toString() });
+      return ok({ ...meta, ...receiptSummary(await waitForReceipt(destNet, hash)) });
     }),
   );
 }

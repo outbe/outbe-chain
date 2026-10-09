@@ -89,7 +89,7 @@ interface Write {
 /** Send a curated write and optionally wait for the receipt. */
 async function submit(ctx: Ctx, { contract, method, args, gas = GAS_DEFAULT, wait = true, value = 0n }: Write) {
   const entry = resolveContract(contract);
-  const hash = await sendTx(ctx, entry, method, args, gas, value);
+  const hash = await sendTx(ctx, { entry, method, args, gas, value });
   if (!wait) return ok({ txHash: hash, contract, method, status: "submitted" });
   const r = await ctx.publicClient.waitForTransactionReceipt({ hash, timeout: 180_000 });
   return ok({
@@ -229,7 +229,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         ];
 
         const factory = resolveContract("tributefactory");
-        const hash = await sendTx(ctx, factory, "offerTribute", args, GAS_OFFER);
+        const hash = await sendTx(ctx, { entry: factory, method: "offerTribute", args, gas: GAS_OFFER });
         const meta = {
           txHash: hash,
           offerKey: bytesToHex(offerPub),

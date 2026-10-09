@@ -1,4 +1,5 @@
 import { type Abi, type Address, getAddress } from "viem";
+import { OUTBE_NETWORK } from "../net/chains.js";
 import IDesisJson from "../../../contracts/precompiles/abi-export/IDesis.json";
 import IIntexJson from "../../../contracts/precompiles/abi-export/IIntex.json";
 import IIntexFactoryJson from "../../../contracts/precompiles/abi-export/IIntexFactory.json";
@@ -30,18 +31,6 @@ const abiOf = (json: unknown): Abi =>
  * concrete artifact.
  */
 
-export interface NetworkDef {
-  name: string;
-  chainId: number;
-  rpc: string;
-}
-
-/** Supported networks. `outbe-testnet` reuses the connected ctx when ids match. */
-export const NETWORKS: NetworkDef[] = [
-  { name: "bsc-testnet", chainId: 97, rpc: "https://bsc-testnet-rpc.publicnode.com" },
-  { name: "outbe-testnet", chainId: 54322345, rpc: "https://rpc.testnet.outbe.net" },
-];
-
 /** Per-network Intex contract addresses. Empty until deployed on that network. */
 export interface IntexAddresses {
   auction?: Address;
@@ -58,8 +47,6 @@ export interface IntexAddresses {
 }
 
 const a = (s: string): Address => getAddress(s);
-
-export const OUTBE = "outbe-testnet";
 
 // The app contracts are CREATE3 proxies (salt "outbe-intex:<Name>:v5.0.0"), so
 // each one shares a single address on every chain. Only the wCOEN payment token
@@ -112,13 +99,13 @@ export function intexAddress(network: string, key: keyof IntexAddresses): Addres
       break;
     case "nft":
     case "nftBridge":
-      addr = network === OUTBE || AUCTION_LIVE.has(network) ? APP[key] : undefined;
+      addr = network === OUTBE_NETWORK || AUCTION_LIVE.has(network) ? APP[key] : undefined;
       break;
     case "paymentToken":
       addr = PAYMENT_TOKEN[network];
       break;
     default:
-      addr = network === OUTBE ? OUTBE_ONLY[key] : undefined;
+      addr = network === OUTBE_NETWORK ? OUTBE_ONLY[key] : undefined;
   }
   if (!addr) {
     throw new Error(`Intex "${key}" is not configured on "${network}"`);
