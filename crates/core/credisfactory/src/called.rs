@@ -1,21 +1,21 @@
-//! Daily price-path scan: calls positions off the Oracle's finalized per-UTC-day
+//! Daily price-path scan: calls Credis off the Oracle's finalized per-UTC-day
 //! VWAPs. The Cycle daily trigger schedules the closed UTC day, and every CycleTick
 //! walks a slice of it.
 //!
-//! A position moves `Open -> Called` when the COEN price in its REFERENCE currency
+//! A Credis moves `Issued -> Called` when the COEN price in its REFERENCE currency
 //! sat strictly above the call price on `call_threshold_seconds` of the trailing
-//! `call_window_seconds`. Both terms are sealed onto the position at opening. The
-//! issuance currency the position is denominated in never enters the threshold.
+//! `call_window_seconds`. Both terms are sealed onto the Credis at issuance. The
+//! issuance currency the Credis is denominated in never enters the threshold.
 //!
-//! The breach rule needs no per-position streak state. The daily series is
+//! The breach rule needs no per-Credis streak state. The daily series is
 //! global per currency, so one trailing window per reference currency decides
-//! every position anchored to it. Every run recomputes the count from oracle
+//! every Credis anchored to it. Every run recomputes the count from oracle
 //! history and does not carry it. Mirrors the Gem, Intex and Nod call sweeps.
 
 use alloy_sol_types::SolEvent;
 
-use outbe_credis::constants::{CALL_THRESHOLD, CALL_WINDOW};
-use outbe_credis::{CallBins, CredisContract, CredisState, Position};
+use outbe_credis::config::CredisParams;
+use outbe_credis::{CallBins, Credis, CredisContract, CredisState};
 use outbe_oracle::api::get_all_reference_currencies;
 use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
 use outbe_oracle::call_window::{CallWindow, CallWindows};
@@ -39,7 +39,7 @@ pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
-/// positions called.
+/// Credis called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let mut sweep = CredisCallSweep::new(ctx);
     call_sweep::schedule(ctx, &mut sweep)?;
@@ -47,7 +47,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 }
 
 /// Walks the next slice of the day in flight, pinned to the day it opened on so
-/// later blocks decide against the same prices. Returns the positions called.
+/// later blocks decide against the same prices. Returns the Credis called.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut CredisCallSweep::new(ctx))
 }
@@ -100,6 +100,7 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
         let currencies = get_all_reference_currencies(ctx)?;
+        let live = outbe_credis::config::read(&ctx.storage)?;
         let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
         let mut budget = SweepBudget::per_block();
         let mut caller = CredisContract::new(ctx.storage.clone());
@@ -123,19 +124,19 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
                 let Some((window, ceiling)) = call_sweep::currency_ceiling(
                     &bins,
                     &mut windows,
-                    || scan_terms(index, iso_code),
+                    || scan_terms(index, iso_code, &live),
                     skipped,
                 )?
                 else {
                     return Ok(true);
                 };
-                call_bins::walk(&bins, ceiling, budget, |position_id, budget| {
-                    call_sweep::call_entry::<Self>(&ctx.storage, budget, position_id, || {
-                        let position = caller.get_position(position_id)?;
+                call_bins::walk(&bins, ceiling, budget, |credis_id, budget| {
+                    call_sweep::call_entry::<Self>(&ctx.storage, budget, credis_id, || {
+                        let record = caller.get_credis(credis_id)?;
                         let calls = u32::from(call_if_breached(
                             &mut caller,
                             window,
-                            &position,
+                            &record,
                             ctx.block.timestamp,
                         )?);
                         called += calls;
@@ -152,30 +153,34 @@ fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result<()> {
     storage.emit_event(CREDIS_FACTORY_ADDRESS, SolEvent::encode_log_data(event))
 }
 
-/// Calls an Open position whose breach window filled. Returns whether it moved.
+/// Calls an Issued Credis whose breach window filled. Returns whether it moved.
 fn call_if_breached(
     credis: &mut CredisContract<'_>,
     window: &CallWindow,
-    position: &Position,
+    record: &Credis,
     now: u64,
 ) -> Result<bool> {
-    Ok(position.lifecycle_state()? == CredisState::Open
+    Ok(record.lifecycle_state()? == CredisState::Issued
         && window.breached(&BreachTerms {
-            call_price: position.call_price_minor,
-            window_seconds: position.call_window_seconds,
-            threshold_seconds: position.call_threshold_seconds,
-            start_day: first_full_day(position.issued_at),
+            call_price: record.call_price_minor,
+            window_seconds: record.call_window_seconds,
+            threshold_seconds: record.call_threshold_seconds,
+            start_day: first_full_day(record.issued_at),
         })
-        && credis.mark_called(position.position_id, now)?)
+        && credis.mark_called(record.credis_id, now)?)
 }
 
-/// The constants are the live terms: the next position is opened with them.
-fn scan_terms(credis: &CredisContract<'_>, reference_currency: u16) -> Result<ScanTerms> {
+/// The live profile is the terms the next Credis is issued with.
+fn scan_terms(
+    credis: &CredisContract<'_>,
+    reference_currency: u16,
+    live: &CredisParams,
+) -> Result<ScanTerms> {
     outbe_primitives::call_breach::scan_terms(
         &credis.max_call_window_seconds,
         &credis.min_call_threshold_seconds,
         reference_currency,
-        CALL_WINDOW,
-        CALL_THRESHOLD,
+        live.call_window_seconds,
+        live.call_threshold_seconds,
     )
 }

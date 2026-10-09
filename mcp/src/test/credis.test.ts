@@ -6,7 +6,7 @@ import type { FakeChain } from "./fake-chain.js";
 import { SIGNER, startHarness } from "./harness.js";
 
 const vaultRouter = resolveContract("vaultrouter");
-const gratisFactory = resolveContract("gratisfactory");
+const credisFactory = resolveContract("credisfactory");
 
 async function call(tool: string, args: Record<string, unknown>, prepare: (chain: FakeChain) => void = () => {}) {
   const harness = await startHarness((chain) => {
@@ -34,24 +34,29 @@ test("credis_reserve returns the reservation id its event carries", async () => 
   );
   const { out } = await call(
     "credis_reserve",
-    { smart_account: SIGNER, source: SIGNER, asset: SIGNER, amount: "300", reference_currency: 840 },
+    { smart_account: SIGNER, source: SIGNER, asset: SIGNER, amount: "300" },
     (chain) => chain.receiptLogs("reserveStables", [{ address: vaultRouter.address, topics: topics as Hex[], data }]),
   );
   assert.equal(out.reservationId, "41");
 });
 
-test("credis_issue stakes the reserved collateral and returns the position id", async () => {
+test("credis_issue stakes the reserved collateral and returns the Credis id", async () => {
   const topics = encodeEventTopics({
-    abi: gratisFactory.abi,
-    eventName: "PledgeSentToCredis",
-    args: { reservationId: 41n, positionId: 77n },
+    abi: credisFactory.abi,
+    eventName: "CredisIssued",
+    args: { credisId: 77n, owner: SIGNER, cca: SIGNER },
   });
-  const { out, sent } = await call("credis_issue", { reservation_id: "41" }, (chain) => {
+  const data = encodeAbiParameters(
+    [{ type: "address" }, { type: "uint256" }, { type: "uint256" }],
+    [SIGNER, 300n, 500_000n],
+  );
+  const { out, sent } = await call("credis_issue", { reservation_id: "41", reference_currency: 978 }, (chain) => {
     chain.reply("pledgeOf", [SIGNER, 500_000n]);
     chain.reply("reservationOf", { ...sampleReservation(), gratisMinor: 500_000n });
-    chain.receiptLogs("issueCredis", [{ address: gratisFactory.address, topics: topics as Hex[], data: "0x" }]);
+    chain.receiptLogs("issueCredis", [{ address: credisFactory.address, topics: topics as Hex[], data }]);
   });
-  assert.equal(out.positionId, "77");
+  assert.equal(out.credisId, "77");
+  assert.deepEqual(sent.at(-1)?.args, [41n, 978]);
   assert.equal(sent.at(-1)?.value, "500000000000000000");
 });
 
@@ -61,7 +66,7 @@ test("credis_issue refuses a reservation nobody pledged", async () => {
     chain.reply("pledgeOf", [zeroAddress, 0n]);
   });
   try {
-    const { text, isError } = await harness.call("credis_issue", { reservation_id: "41" });
+    const { text, isError } = await harness.call("credis_issue", { reservation_id: "41", reference_currency: 840 });
     assert(isError);
     assert.match(text, /reservation 41 has no pledge; pledge it with gratis_pledge first/);
     assert.equal(harness.chain.sent.length, 0);
@@ -82,11 +87,8 @@ function sampleReservation() {
     snapshotId: 1n,
     entryPriceMinor: 2_000_000n,
     valuationPriceMinor: 2_000_000n,
-    policyRate: 43_000n,
     issuanceCurrency: 840,
     assetDecimals: 6,
-    referenceCurrency: 840,
-    callAnchorPriceMinor: 2_000_000n,
     source: SIGNER,
   };
 }

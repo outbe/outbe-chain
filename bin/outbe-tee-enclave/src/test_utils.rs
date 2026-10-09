@@ -17,18 +17,20 @@ pub struct SequentialTestServerContext<'a> {
     pub initialization: &'a InitializationState,
 }
 
+type TestConnectionHandler = fn(
+    UnixStream,
+    &EnclaveKeys,
+    &SharedTributeOfferKey,
+    Option<&EnclaveBootConfig>,
+    &InitializationState,
+) -> Result<(), TransportError>;
+
 /// Serve a fixed number of connections with the caller's resident key slot.
 pub fn serve_sequential_unix_connections(
     listener: UnixListener,
     context: SequentialTestServerContext<'_>,
     connections: usize,
-    serve: fn(
-        UnixStream,
-        &EnclaveKeys,
-        &SharedTributeOfferKey,
-        Option<&EnclaveBootConfig>,
-        &InitializationState,
-    ) -> Result<(), TransportError>,
+    serve: TestConnectionHandler,
 ) {
     for _ in 0..connections {
         let (stream, _) = listener.accept().unwrap();

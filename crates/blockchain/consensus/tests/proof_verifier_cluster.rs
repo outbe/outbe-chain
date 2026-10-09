@@ -766,10 +766,11 @@ fn certified_notarization_proof_rejected_for_non_parent_ancestor() {
 #[test]
 fn parent_randomness_is_independent_of_vote_kind_and_signer_subset() {
     use commonware_cryptography::{Hasher as _, Sha256};
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
-    let (_, _, seed_message) = proposal_bytes(parent_hash);
+    let (_, _, seed_message) =
+        finalize_messages(FINALIZED_EPOCH, FINALIZED_VIEW, PARENT_VIEW, parent_hash);
     // Independent protocol oracle: derive from the raw threshold signature,
     // without invoking the production VrfProof helper or proof fingerprint.
     let signature = sign_message::<MinSig>(

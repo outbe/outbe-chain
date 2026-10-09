@@ -128,7 +128,7 @@ const TOOLS: Case[] = [
   ["gem_position_get", { id: "7" }],
   ["gem_settle_quote", { id: "7", asset: OTHER }],
   ["gems_by_owner", { owner: OTHER }],
-  ["credis_position_get", { id: "7" }],
+  ["credis_get", { id: "7" }],
   ["gratis_balance", { account: OTHER }],
   ["promis_balance", { account: OTHER }],
   ["fidelity_max_index", { timestamp: 1_760_000_000 }],
@@ -151,11 +151,11 @@ const TOOLS: Case[] = [
   ["oip_list", { status: "Approved", offset: 1, limit: 2 }],
   ["oip_list", { author: OTHER, status: "Approved" }],
   ["gip_list", { status: "Draft" }],
-  ["credis_reserve", { smart_account: OTHER, source: SIGNER, asset: OTHER, amount: "2000000", reference_currency: 978 }],
+  ["credis_reserve", { smart_account: OTHER, source: SIGNER, asset: OTHER, amount: "2000000" }],
   ["gratis_pledge", { reservation_id: "1", mac: HASH, op_nonce: "3" }],
   ["gratis_cancel_pledge", { reservation_id: "1" }],
-  ["credis_issue", { reservation_id: "1", stake: "1" }],
-  ["credis_settle", { position_id: "7", amount: "500000" }],
+  ["credis_issue", { reservation_id: "1", reference_currency: 978, stake: "1" }],
+  ["credis_settle", { credis_id: "7", amount: "500000" }],
   [
     "tribute_offer",
     {

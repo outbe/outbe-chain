@@ -198,13 +198,13 @@ fn incremental_registration_exit_and_reregistration_preserve_history() {
             ICcaRegistry::State::Bonding
         );
         assert!(api::require_active_cca(&storage, ALICE).is_err());
-        assert!(runtime::position_opened(&storage, ALICE, DAY, U256::ONE).is_err());
+        assert!(runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).is_err());
         bond(&storage, ALICE, U256::ONE);
         assert!(api::is_active(&storage, ALICE).unwrap());
         api::require_active_cca(&storage, ALICE).unwrap();
         assert!(runtime::claim_unbonded(storage.clone(), ALICE).is_err());
         bond(&storage, ALICE, U256::from(7));
-        runtime::position_opened(&storage, ALICE, DAY, U256::from(100)).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::from(100)).unwrap();
         runtime::unbond(storage.clone(), ALICE).unwrap();
         let record = api::get_cca(&storage, ALICE).unwrap();
         assert_eq!(record.cca, ALICE);
@@ -275,23 +275,23 @@ fn partial_registration_can_exit_and_rejected_calls_do_not_mutate() {
 }
 
 #[test]
-fn void_subtracts_only_burned_gratis_even_after_exit() {
+fn forfeit_subtracts_only_burned_gratis_even_after_exit() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
-        runtime::position_opened(&storage, ALICE, DAY, U256::from(100)).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::from(100)).unwrap();
         runtime::unbond(storage.clone(), ALICE).unwrap();
-        runtime::position_voided(&storage, ALICE, DAY, U256::from(50)).unwrap();
-        runtime::position_voided(&storage, ALICE, DAY, U256::ZERO).unwrap();
+        runtime::credis_forfeited(&storage, ALICE, DAY, U256::from(50)).unwrap();
+        runtime::credis_forfeited(&storage, ALICE, DAY, U256::ZERO).unwrap();
         assert_eq!(
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::from(50)
         );
-        runtime::position_voided(&storage, ALICE, DAY, U256::from(51)).unwrap();
+        runtime::credis_forfeited(&storage, ALICE, DAY, U256::from(51)).unwrap();
         assert_eq!(
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::ZERO
         );
-        runtime::position_voided(&storage, ALICE, DAY, U256::ONE).unwrap();
+        runtime::credis_forfeited(&storage, ALICE, DAY, U256::ONE).unwrap();
         assert_eq!(
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::ZERO
@@ -303,7 +303,7 @@ fn void_subtracts_only_burned_gratis_even_after_exit() {
 fn failed_unbond_claim_preserves_record_and_balance() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
-        runtime::position_opened(&storage, ALICE, DAY, U256::ONE).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).unwrap();
         let balance = storage.balance(CCA_REGISTRY_ADDRESS).unwrap();
         storage
             .decrease_balance(CCA_REGISTRY_ADDRESS, balance)
@@ -409,19 +409,19 @@ fn deficits_offset_later_openings_only_in_the_same_cca_day() {
         let next = 20231116;
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
-        runtime::position_opened(&storage, ALICE, DAY, U256::from(20)).unwrap();
-        runtime::position_voided(&storage, ALICE, DAY, U256::from(50)).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::from(20)).unwrap();
+        runtime::credis_forfeited(&storage, ALICE, DAY, U256::from(50)).unwrap();
         for amount in [10, 20] {
-            runtime::position_opened(&storage, ALICE, DAY, U256::from(amount)).unwrap();
+            runtime::credis_issued(&storage, ALICE, DAY, U256::from(amount)).unwrap();
             assert_eq!(
                 api::reward_weight(&storage, ALICE, DAY).unwrap(),
                 U256::ZERO
             );
         }
-        runtime::position_opened(&storage, ALICE, DAY, U256::from(15)).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::from(15)).unwrap();
         // Reordering the same day's credits and debits gives the same net weight.
-        runtime::position_opened(&storage, BOB, DAY, U256::from(65)).unwrap();
-        runtime::position_voided(&storage, BOB, DAY, U256::from(50)).unwrap();
+        runtime::credis_issued(&storage, BOB, DAY, U256::from(65)).unwrap();
+        runtime::credis_forfeited(&storage, BOB, DAY, U256::from(50)).unwrap();
         assert_eq!(
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::from(15)
@@ -430,8 +430,8 @@ fn deficits_offset_later_openings_only_in_the_same_cca_day() {
             api::reward_weight(&storage, BOB, DAY).unwrap(),
             U256::from(15)
         );
-        runtime::position_voided(&storage, ALICE, DAY, U256::from(25)).unwrap();
-        runtime::position_opened(&storage, ALICE, next, U256::from(7)).unwrap();
+        runtime::credis_forfeited(&storage, ALICE, DAY, U256::from(25)).unwrap();
+        runtime::credis_issued(&storage, ALICE, next, U256::from(7)).unwrap();
         assert_eq!(
             api::reward_weight(&storage, ALICE, next).unwrap(),
             U256::from(7)
@@ -451,8 +451,8 @@ fn deficits_offset_later_openings_only_in_the_same_cca_day() {
 fn deficit_overflow_rolls_back_and_full_range_can_be_offset() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
-        runtime::position_voided(&storage, ALICE, DAY, U256::MAX).unwrap();
-        assert!(runtime::position_voided(&storage, ALICE, DAY, U256::ONE).is_err());
+        runtime::credis_forfeited(&storage, ALICE, DAY, U256::MAX).unwrap();
+        assert!(runtime::credis_forfeited(&storage, ALICE, DAY, U256::ONE).is_err());
         let contract = CcaContract::new(storage.clone());
         let key = address_day_key(ALICE, DAY);
         assert_eq!(
@@ -463,7 +463,7 @@ fn deficit_overflow_rolls_back_and_full_range_can_be_offset() {
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::ZERO
         );
-        runtime::position_opened(&storage, ALICE, DAY, U256::MAX).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::MAX).unwrap();
         assert_eq!(
             contract.gratis_deficits_per_utc_day.read(&key).unwrap(),
             U256::ZERO
@@ -472,7 +472,7 @@ fn deficit_overflow_rolls_back_and_full_range_can_be_offset() {
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::ZERO
         );
-        runtime::position_opened(&storage, ALICE, DAY, U256::ONE).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).unwrap();
         assert_eq!(api::reward_weight(&storage, ALICE, DAY).unwrap(), U256::ONE);
     });
 }

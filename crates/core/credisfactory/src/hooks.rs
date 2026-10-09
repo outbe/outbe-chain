@@ -2,7 +2,7 @@
 
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
-/// Voids the called positions whose settlement window lapsed.
+/// Forfeits the called Credis whose settlement window lapsed.
 pub fn sweep_forfeits(ctx: &BlockRuntimeContext) -> Result<()> {
     crate::expired::sweep_expired(ctx)?;
     Ok(())

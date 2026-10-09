@@ -1,6 +1,6 @@
-//! Shared registry queries and trusted position-accounting entrypoints.
+//! Shared registry queries and trusted Credis-accounting entrypoints.
 pub use crate::precompile::ICcaRegistry;
-pub use crate::runtime::{position_opened, position_voided};
+pub use crate::runtime::{credis_forfeited, credis_issued};
 use crate::{
     constants::MAX_ACTIVE_CCAS,
     errors::CcaError,

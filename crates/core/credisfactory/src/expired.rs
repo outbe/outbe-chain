@@ -1,4 +1,4 @@
-//! Voids the called positions whose settlement window lapsed, earliest deadline first.
+//! Forfeits the called Credis whose settlement window lapsed, earliest deadline first.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
@@ -14,13 +14,13 @@ use outbe_primitives::{
 use crate::precompile::ICredisFactory::ExpiryDeferred;
 use crate::runtime;
 
-/// Runs from CycleTick every block. Returns the number of positions voided.
+/// Runs from CycleTick every block. Returns the number of Credis forfeited.
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut expiry = CredisExpiry {
         ctx,
         credis: CredisContract::new(ctx.storage.clone()),
-        voided: 0,
+        forfeited: 0,
     };
     let mut budget = SweepBudget::per_block();
     expiry_queue::sweep(
@@ -30,52 +30,52 @@ pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         &mut budget,
         &mut expiry,
     )?;
-    Ok(expiry.voided)
+    Ok(expiry.forfeited)
 }
 
 struct CredisExpiry<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     credis: CredisContract<'storage>,
-    voided: u32,
+    forfeited: u32,
 }
 
-/// A position is its own and only member.
+/// A Credis is its own and only member.
 impl ExpiryHandler<U256> for CredisExpiry<'_, '_> {
     type Member = U256;
 
-    fn due(&mut self, position_id: U256) -> Result<Due> {
-        let Some(position) = self.credis.positions.get(position_id)? else {
+    fn due(&mut self, credis_id: U256) -> Result<Due> {
+        let Some(record) = self.credis.records.get(credis_id)? else {
             return Ok(Due::Drop);
         };
-        let voidable = position.lifecycle_state()? == CredisState::Called
-            && !position.outstanding_principal_minor.is_zero();
-        Ok(if voidable { Due::Expire } else { Due::Drop })
+        let forfeitable = record.lifecycle_state()? == CredisState::Called
+            && !record.outstanding_principal_minor.is_zero();
+        Ok(if forfeitable { Due::Expire } else { Due::Drop })
     }
 
-    fn member_count(&self, _position_id: U256) -> Result<u32> {
+    fn member_count(&self, _credis_id: U256) -> Result<u32> {
         Ok(1)
     }
 
-    fn member_at(&self, position_id: U256, _index: u32) -> Result<U256> {
-        Ok(position_id)
+    fn member_at(&self, credis_id: U256, _index: u32) -> Result<U256> {
+        Ok(credis_id)
     }
 
-    fn expire_member(&mut self, position_id: U256, _member: U256) -> Result<()> {
-        runtime::void_position(self.ctx.storage.clone(), position_id)?;
-        self.voided = self.voided.saturating_add(1);
+    fn expire_member(&mut self, credis_id: U256, _member: U256) -> Result<()> {
+        runtime::forfeit_credis(self.ctx.storage.clone(), credis_id)?;
+        self.forfeited = self.forfeited.saturating_add(1);
         Ok(())
     }
 
     fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        void_failure(error)
+        forfeit_failure(error)
     }
 
-    fn deferred(&mut self, position_id: U256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::credisfactory", %position_id, retry_at, "expiry sweep: void deferred");
+    fn deferred(&mut self, credis_id: U256, retry_at: u64) -> Result<()> {
+        tracing::warn!(target: "outbe::credisfactory", %credis_id, retry_at, "expiry sweep: forfeit deferred");
         self.ctx.storage.emit_event(
             CREDIS_FACTORY_ADDRESS,
             SolEvent::encode_log_data(&ExpiryDeferred {
-                positionId: position_id,
+                credisId: credis_id,
                 retryAt: retry_at,
             }),
         )
@@ -83,9 +83,9 @@ impl ExpiryHandler<U256> for CredisExpiry<'_, '_> {
 }
 
 /// The Gratis enclave client reports its own outage and a deterministic Gratis failure
-/// alike as `Fatal`. Until they part, a `Fatal` void fails the block: skipping an
+/// alike as `Fatal`. Until they part, a `Fatal` forfeit fails the block: skipping an
 /// outage would fork the chain silently.
-pub(crate) fn void_failure(error: &PrecompileError) -> SweepFailure {
+pub(crate) fn forfeit_failure(error: &PrecompileError) -> SweepFailure {
     match error {
         PrecompileError::Fatal(_) => SweepFailure::Propagate,
         other => other.sweep_failure(),

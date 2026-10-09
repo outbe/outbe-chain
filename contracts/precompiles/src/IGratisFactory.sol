@@ -7,7 +7,7 @@ interface IGratisFactory {
         uint64 opNonce;
     }
     event GratisPledged(uint256 indexed reservationId, address indexed source, uint256 gratisMinor);
-    event PledgeSentToCredis(uint256 indexed reservationId, uint256 indexed positionId);
+    event PledgeSentToCredis(uint256 indexed reservationId, uint256 indexed credisId);
     event PledgeCancelled(uint256 indexed reservationId, address indexed source, uint256 gratisMinor);
     event CoenMined(address indexed sender, uint256 coenMinor);
     /// Pledge the reservation's Gratis from the caller's liquid balance. The caller
@@ -17,8 +17,8 @@ interface IGratisFactory {
     function cancelPledge(uint256 reservationId) external;
     /// The unused pledge for `reservationId`. Zeros when there is none.
     function pledgeOf(uint256 reservationId) external view returns (address source, uint256 gratisMinor);
-    /// Gratis still backing Credis `positionId`. Zeros once it has been fully returned or burned.
-    function collateralOf(uint256 positionId) external view returns (address source, uint256 remainingMinor);
+    /// Gratis still backing Credis `credisId`. Zeros once it has been fully returned or burned.
+    function collateralOf(uint256 credisId) external view returns (address source, uint256 remainingMinor);
     function mineCoen(uint256 gratisMinor, bytes32 mac, uint64 opNonce) external returns (uint256 coenMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

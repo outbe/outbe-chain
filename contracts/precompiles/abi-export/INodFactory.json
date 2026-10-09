@@ -57,9 +57,9 @@
     ],
     "outputs": [
       {
-        "name": "gratisMinor",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "encryptedBalance",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "stateMutability": "nonpayable"
@@ -229,10 +229,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "gratisLoadMinor",
-        "type": "uint256",
+        "name": "encryptedGratisAmount",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -254,10 +254,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "gratisLoadMinor",
-        "type": "uint256",
+        "name": "encryptedGratisAmount",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -297,10 +297,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "gratisLoadMinor",
-        "type": "uint256",
+        "name": "encryptedGratisAmount",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
       },
       {
         "name": "entryPriceMinor",

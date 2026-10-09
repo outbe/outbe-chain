@@ -117,7 +117,7 @@ pub fn claim_unbonded(storage: StorageHandle<'_>, caller: Address) -> Result<()>
 }
 
 /// Trusted Rust entrypoint. Credis calls it once with the current UTC reward day key (YYYYMMDD).
-pub fn position_opened(
+pub fn credis_issued(
     storage: &StorageHandle<'_>,
     cca: Address,
     day: u32,
@@ -142,9 +142,9 @@ pub fn position_opened(
     })
 }
 
-/// Subtract burned collateral from the void-day bucket, even after exit.
+/// Subtract burned collateral from the forfeit-day bucket, even after exit.
 /// Excess burns offset later same-day openings. Prior days and accrued rewards stay unchanged.
-pub fn position_voided(
+pub fn credis_forfeited(
     storage: &StorageHandle<'_>,
     cca: Address,
     day: u32,

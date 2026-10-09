@@ -3,7 +3,8 @@ use alloy_sol_types::{sol, SolInterface};
 
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::{
-    ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
+    ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
+    ERC721_METADATA_INTERFACE_ID,
 };
 use outbe_primitives::error::Result;
 
@@ -16,9 +17,10 @@ use crate::schema::CredisContract;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-const SUPPORTED_INTERFACES: [[u8; 4]; 4] = [
+const SUPPORTED_INTERFACES: [[u8; 4]; 5] = [
     ERC165_INTERFACE_ID,
     ERC721_INTERFACE_ID,
+    ERC721_ENUMERABLE_INTERFACE_ID,
     ERC721_METADATA_INTERFACE_ID,
     ERC4906_INTERFACE_ID,
 ];
@@ -32,6 +34,10 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
+    #[cfg(feature = "e2e-test")]
+    if let Some(result) = crate::test_arming::dispatch(&storage, data) {
+        return result;
+    }
     dispatch_call(data, ICredis::ICredisCalls::abi_decode, |call| {
         let contract = CredisContract::new(storage.clone());
         use ICredis::ICredisCalls::*;
@@ -39,18 +45,18 @@ pub fn dispatch(
             name(_) => metadata::<ICredis::nameCall>(|| Ok(TOKEN_NAME.to_string())),
             symbol(_) => metadata::<ICredis::symbolCall>(|| Ok(TOKEN_SYMBOL.to_string())),
             tokenURI(c) => view(c, |c| {
-                let position = contract.get_position(c.positionId)?;
+                let record = contract.get_credis(c.credisId)?;
                 let now = contract.storage.timestamp()?.to::<u64>();
-                crate::metadata::token_uri(&position, now)
+                crate::metadata::token_uri(&record, now)
             }),
-            totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_positions()?))),
-            getPosition(c) => view(c, |c| {
-                let position = contract.get_position(c.positionId)?;
-                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
+            totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_credis()?))),
+            getCredis(c) => view(c, |c| {
+                let record = contract.get_credis(c.credisId)?;
+                abi_credis(&record, contract.storage.timestamp()?.to::<u64>())
             }),
             ownerOf(c) => view(c, |c| {
-                let position = contract.get_position(c.positionId)?;
-                Ok(position.smart_account)
+                let record = contract.get_credis(c.credisId)?;
+                Ok(record.owner)
             }),
             transferFrom(_)
             | safeTransferFrom_0(_)
@@ -59,31 +65,28 @@ pub fn dispatch(
             | setApprovalForAll(_) => Err(CredisError::NonTransferable.into()),
             getApproved(c) => view(c, |_| Ok(Address::ZERO)),
             isApprovedForAll(c) => view(c, |_| Ok(false)),
-            positionByIndex(c) => view(c, |c| {
+            credisExists(c) => view(c, |c| contract.credis_exists(c.credisId)),
+            tokenByIndex(c) => view(c, |c| {
                 let index = u64::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
-                let position = contract.position_at(index)?;
-                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
+                contract.token_by_index(index)
             }),
-            balanceOf(c) => view(c, |c| {
-                Ok(U256::from(contract.position_count_of(c.smartAccount)?))
-            }),
-            positionOfAddressByIndex(c) => view(c, |c| {
+            balanceOf(c) => view(c, |c| Ok(U256::from(contract.credis_count_of(c.owner)?))),
+            tokenOfOwnerByIndex(c) => view(c, |c| {
                 let index = u32::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
-                let position = contract.position_of_address_at(c.smartAccount, index)?;
-                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
+                contract.token_of_owner_by_index(c.owner, index)
             }),
-            hasCalledPosition(c) => view(c, |c| contract.has_called_position(c.smartAccount)),
             interestAccruedMinor(c) => view(c, |c| {
-                let position = contract.get_position(c.positionId)?;
+                let record = contract.get_credis(c.credisId)?;
                 let timestamp = contract.storage.timestamp()?.to::<u64>();
-                CredisContract::accrued_interest(&position, timestamp)
+                CredisContract::accrued_interest(&record, timestamp)
             }),
             interestPaidMinor(c) => view(c, |c| {
-                Ok(contract.get_position(c.positionId)?.interest_paid_minor)
+                Ok(contract.get_credis(c.credisId)?.interest_paid_minor)
             }),
             credisPrincipalAndOutstandingOf(c) => view(c, |c| {
+                let now = contract.storage.timestamp()?.to::<u64>();
                 let (principal, outstanding) =
-                    contract.principal_and_outstanding_of(c.smartAccount)?;
+                    contract.principal_and_outstanding_of(c.owner, now)?;
                 Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
                     principalMinor: principal,
                     outstandingPrincipalMinor: outstanding,
@@ -96,35 +99,44 @@ pub fn dispatch(
     })
 }
 
-fn abi_position(p: &crate::schema::Position, now: u64) -> Result<ICredis::Position> {
-    Ok(ICredis::Position {
-        positionId: p.position_id,
-        smartAccount: p.smart_account,
+fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
+    let outcome = crate::runtime::outcome(p, now)?;
+    Ok(ICredis::Credis {
+        credisId: p.credis_id,
+        owner: p.owner,
         cca: p.cca,
         asset: p.asset,
         issuanceCurrency: p.issuance_currency,
         referenceCurrency: p.reference_currency,
         source: p.source,
         principalMinor: p.principal_minor,
-        outstandingPrincipalMinor: p.outstanding_principal_minor,
+        outstandingPrincipalMinor: outcome.outstanding_principal_minor,
         gratisMinor: p.gratis_minor,
-        outstandingGratisMinor: p.outstanding_gratis_minor,
+        outstandingGratisMinor: outcome.outstanding_gratis_minor,
         policyRate: p.policy_rate,
         entryPriceMinor: p.entry_price_minor,
-        callPriceMinor: p.call_price_minor,
         issuedAt: p.issued_at,
         lastSettledAt: p.last_settled_at,
-        calledAt: p.called_at,
         state: crate::runtime::effective_state(p, now)? as u8,
-        callAnchorPriceMinor: p.call_anchor_price_minor,
         interestPaidMinor: p.interest_paid_minor,
-        settlementDeadline: if p.called_at == 0 {
-            0
-        } else {
-            crate::runtime::settlement_deadline(p)
+        call: ICredis::CallTerms {
+            callAnchorPriceMinor: p.call_anchor_price_minor,
+            callPriceMinor: p.call_price_minor,
+            callWindow: p.call_window_seconds,
+            callThreshold: p.call_threshold_seconds,
+            callNoticePeriod: p.call_notice_period_seconds,
+            calledAt: p.called_at,
+            settlementDeadline: if p.called_at == 0 {
+                0
+            } else {
+                crate::runtime::settlement_deadline(p)
+            },
         },
-        callNoticePeriod: p.call_notice_period_seconds,
-        callWindow: p.call_window_seconds,
-        callThreshold: p.call_threshold_seconds,
+        outcome: ICredis::Outcome {
+            principalPaidMinor: outcome.principal_paid_minor,
+            principalWrittenOffMinor: outcome.principal_written_off_minor,
+            gratisReturnedMinor: outcome.gratis_returned_minor,
+            gratisBurnedMinor: outcome.gratis_burned_minor,
+        },
     })
 }

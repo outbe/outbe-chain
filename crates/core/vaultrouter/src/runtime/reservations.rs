@@ -24,7 +24,6 @@ pub(crate) fn reserve_stables(
         source,
         asset,
         amount,
-        referenceCurrency: reference_currency,
     } = call;
     storage.with_checkpoint(|| {
         outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
@@ -41,7 +40,7 @@ pub(crate) fn reserve_stables(
             .ok_or(VaultRouterError::TimestampOverflow)?;
         let vault = first_vault(&storage, asset)?;
         ensure_shares_cover(&storage, vault, amount)?;
-        let mut terms = crate::reservation::quote(&storage, asset, amount, reference_currency)?;
+        let mut terms = crate::reservation::quote(&storage, asset, amount)?;
 
         let contract = VaultRouterContract::new(storage.clone());
         let nonce = contract

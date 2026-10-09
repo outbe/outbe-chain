@@ -34,16 +34,10 @@ pub struct LiquidityReservation {
     pub entry_price_minor: U256,
     #[attribute(order = 9)]
     pub valuation_price_minor: U256,
-    #[attribute(order = 10)]
-    pub policy_rate: U256,
     #[attribute(order = 11)]
     pub issuance_currency: u16,
     #[attribute(order = 12)]
     pub asset_decimals: u8,
-    #[attribute(order = 13)]
-    pub reference_currency: u16,
-    #[attribute(order = 14)]
-    pub call_anchor_price_minor: U256,
     #[attribute(order = 15)]
     pub source: Address,
 }
@@ -191,11 +185,8 @@ impl From<LiquidityReservation> for crate::api::IVaultRouter::LiquidityReservati
             snapshotId: r.snapshot_id,
             entryPriceMinor: r.entry_price_minor,
             valuationPriceMinor: r.valuation_price_minor,
-            policyRate: r.policy_rate,
             issuanceCurrency: r.issuance_currency,
             assetDecimals: r.asset_decimals,
-            referenceCurrency: r.reference_currency,
-            callAnchorPriceMinor: r.call_anchor_price_minor,
             source: r.source,
         }
     }

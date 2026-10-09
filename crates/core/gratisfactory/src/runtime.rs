@@ -100,12 +100,12 @@ pub fn cancel_pledge(
     })
 }
 
-/// Turn the reservation's pledge into the collateral of the Credis position it
+/// Turn the reservation's pledge into the collateral of the Credis it
 /// now backs. The Gratis stays in the source's pledged balance.
 pub fn send_to_credis(
     storage: &StorageHandle<'_>,
     reservation_id: U256,
-    position_id: U256,
+    credis_id: U256,
     source: Address,
     gratis_minor: U256,
 ) -> Result<()> {
@@ -114,12 +114,12 @@ pub fn send_to_credis(
         return Err(GratisFactoryError::PledgeMismatch.into());
     }
     let contract = GratisFactoryContract::new(storage.clone());
-    if contract.collateral.exists(position_id)? {
+    if contract.collateral.exists(credis_id)? {
         return Err(CollateralError::Exists.into());
     }
     contract.pledges.delete(reservation_id)?;
     contract.collateral.create(&CollateralAllocation {
-        position_id,
+        credis_id,
         source,
         remaining_minor: gratis_minor,
     })?;
@@ -127,71 +127,60 @@ pub fn send_to_credis(
         GRATIS_FACTORY_ADDRESS,
         IGratisFactory::PledgeSentToCredis {
             reservationId: reservation_id,
-            positionId: position_id,
+            credisId: credis_id,
         }
         .encode_log_data(),
     )
 }
 
-/// Return collateral released by a repayment of `position_id` to its source's
+/// Return collateral released by a repayment of `credis_id` to its source's
 /// liquid balance.
 pub fn return_from_credis(
     storage: &StorageHandle<'_>,
-    position_id: U256,
+    credis_id: U256,
     amount: U256,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
-        let source = draw_collateral(storage, position_id, amount)?;
+        let source = draw_collateral(storage, credis_id, amount)?;
         gratis::release_pledged(storage, source, amount)
     })
 }
 
-/// Burn the collateral of a defaulted `position_id` from its source's pledged balance.
-pub fn burn_from_credis(
-    storage: &StorageHandle<'_>,
-    position_id: U256,
-    amount: U256,
-) -> Result<()> {
+/// Burn the collateral of a defaulted `credis_id` from its source's pledged balance.
+pub fn burn_from_credis(storage: &StorageHandle<'_>, credis_id: U256, amount: U256) -> Result<()> {
     storage.with_checkpoint(|| {
-        let source = draw_collateral(storage, position_id, amount)?;
+        let source = draw_collateral(storage, credis_id, amount)?;
         gratis::burn_pledged(storage, source, amount)
     })
 }
 
-/// Take `amount` from the position's collateral and close it at zero. Returns
+/// Take `amount` from the Credis's collateral and close it at zero. Returns
 /// the source whose pledged balance backs it.
-fn draw_collateral(
-    storage: &StorageHandle<'_>,
-    position_id: U256,
-    amount: U256,
-) -> Result<Address> {
+fn draw_collateral(storage: &StorageHandle<'_>, credis_id: U256, amount: U256) -> Result<Address> {
     let contract = GratisFactoryContract::new(storage.clone());
     let mut collateral = contract
         .collateral
-        .get(position_id)?
+        .get(credis_id)?
         .ok_or(CollateralError::NotFound)?;
     collateral.remaining_minor = collateral
         .remaining_minor
         .checked_sub(amount)
         .ok_or(CollateralError::Exceeded)?;
     if collateral.remaining_minor.is_zero() {
-        contract.collateral.delete(position_id)?;
+        contract.collateral.delete(credis_id)?;
     } else {
         contract.collateral.update(&collateral)?;
     }
     Ok(collateral.source)
 }
 
-/// The collateral backing `position_id`, or zeros once it has closed.
-pub fn collateral_of(
-    storage: &StorageHandle<'_>,
-    position_id: U256,
-) -> Result<CollateralAllocation> {
+/// The collateral backing `credis_id`, or zeros once it has closed.
+pub fn collateral_of(storage: &StorageHandle<'_>, credis_id: U256) -> Result<CollateralAllocation> {
     Ok(GratisFactoryContract::new(storage.clone())
         .collateral
-        .get(position_id)?
+        .get(credis_id)?
         .unwrap_or(CollateralAllocation {
-            position_id,
+            credis_id,
             ..Default::default()
         }))
 }

@@ -79,7 +79,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   credis: {
     address: A("0x000000000000000000000000000000000000100A"),
-    note: "Credis positions",
+    note: "Credis",
     abi: ABI.ICredis,
   },
 
@@ -219,8 +219,8 @@ export const VALIDATOR_STATUS = ["REGISTERED", "PENDING", "ACTIVE", "EXITING", "
 // Gem lifecycle state (crates/core/gem/src/schema.rs::GemState); Forfeited is derived on read.
 export const GEM_STATE = ["Issued", "Qualified", "Called", "Settled", "Forfeited"] as const;
 
-// Credis position state (crates/core/credis/src/schema.rs::CredisState).
-export const CREDIS_STATE = ["Open", "Called", "Settled", "Void"] as const;
+// Credis state (crates/core/credis/src/schema.rs::CredisState).
+export const CREDIS_STATE = ["Issued", "Called", "Settled", "Forfeited"] as const;
 
 // ISO 4217 numeric -> symbol. Chain currently accepts 840 (USD) only. The rest
 // are convenience labels for display.
