@@ -41,6 +41,7 @@ Feature: Consensus and Node Resilience (B8, B20, R7, R11, R13, S14)
     Given a fresh localnet with a 6-block voting window
     And the committee has reached a usable height
     When an active validator experiences downtime while consensus advances
+    Then the surviving quorum finalizes the successor proposal past the stopped validator
     And the successor block contains empty V2 missed-proposers metadata in phase 1 accounting
     And the committee continues producing and finalizing blocks without progress stall
 
