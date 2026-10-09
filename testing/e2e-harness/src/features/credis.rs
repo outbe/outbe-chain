@@ -144,11 +144,13 @@ fn prepare(world: &mut World) {
             nonce: find_mining_pow_nonce(outbe_common::pow::MiningDomain::Gem, gem, user),
             mac: outbe_tee_enclave::promis::modify_mac(
                 &promis_keys.modify,
-                user,
-                PromisOp::Mint,
-                INITIAL_GRATIS,
-                promis_nonce,
-                chain,
+                &outbe_tee_enclave::promis::ModifyOperation {
+                    account: user,
+                    op: PromisOp::Mint,
+                    amount: INITIAL_GRATIS,
+                    op_nonce: promis_nonce,
+                    chain_id: chain,
+                },
             )
             .into(),
             opNonce: promis_nonce,
@@ -175,11 +177,13 @@ fn prepare(world: &mut World) {
             promisMinor: INITIAL_GRATIS,
             promisMac: outbe_tee_enclave::promis::modify_mac(
                 &promis_keys.modify,
-                user,
-                PromisOp::Burn,
-                INITIAL_GRATIS,
-                promis_nonce,
-                chain,
+                &outbe_tee_enclave::promis::ModifyOperation {
+                    account: user,
+                    op: PromisOp::Burn,
+                    amount: INITIAL_GRATIS,
+                    op_nonce: promis_nonce,
+                    chain_id: chain,
+                },
             )
             .into(),
             promisOpNonce: promis_nonce,

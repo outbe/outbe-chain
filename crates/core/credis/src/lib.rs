@@ -2,6 +2,7 @@ pub mod constants;
 pub mod errors;
 mod metadata;
 pub mod precompile;
+mod queries;
 pub mod runtime;
 pub mod schema;
 pub(crate) mod state;

@@ -1,3 +1,4 @@
+use alloy_primitives::U256;
 use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISION};
 use outbe_primitives::error::Result;
 
@@ -16,6 +17,31 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
     };
     let accrued_interest = CredisContract::accrued_interest(position, now)?;
 
+    let rows = card_rows(position, lifecycle, accrued_interest);
+    let traits = card_traits(position, &state, lifecycle, accrued_interest);
+
+    let id = nft_card::short_id(position.position_id);
+    let title = TOKEN_NAME.to_ascii_uppercase();
+    let card = Card {
+        title: &title,
+        subtitle: &id,
+        state,
+        rows,
+    };
+    Ok(nft_card::token_uri(
+        &format!("{TOKEN_NAME} {id}"),
+        TOKEN_DESCRIPTION,
+        &card,
+        &traits,
+    ))
+}
+
+/// The rows the card image shows.
+fn card_rows(
+    position: &Position,
+    lifecycle: CredisState,
+    accrued_interest: U256,
+) -> Vec<(&'static str, String)> {
     let mut rows = vec![
         (
             "Principal",
@@ -42,6 +68,22 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
             nft_card::amount_grouped(position.call_price_minor, PRICE_PRECISION),
         ),
     ];
+    if lifecycle == CredisState::Called {
+        rows.push((
+            "Settlement Deadline",
+            nft_card::timestamp_utc(settlement_deadline(position)),
+        ));
+    }
+    rows
+}
+
+/// The attributes the metadata lists.
+fn card_traits(
+    position: &Position,
+    state: &nft_card::State,
+    lifecycle: CredisState,
+    accrued_interest: U256,
+) -> Vec<Trait> {
     let mut traits = vec![
         Trait::text("State", state.label),
         Trait::amount("Principal", position.principal_minor, AMOUNT_PRECISION),
@@ -72,24 +114,11 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
         Trait::date("Issued At", position.issued_at),
     ];
     if lifecycle == CredisState::Called {
-        let deadline = settlement_deadline(position);
-        rows.push(("Settlement Deadline", nft_card::timestamp_utc(deadline)));
         traits.push(Trait::date("Called At", position.called_at));
-        traits.push(Trait::date("Settlement Deadline", deadline));
+        traits.push(Trait::date(
+            "Settlement Deadline",
+            settlement_deadline(position),
+        ));
     }
-
-    let id = nft_card::short_id(position.position_id);
-    let title = TOKEN_NAME.to_ascii_uppercase();
-    let card = Card {
-        title: &title,
-        subtitle: &id,
-        state,
-        rows,
-    };
-    Ok(nft_card::token_uri(
-        &format!("{TOKEN_NAME} {id}"),
-        TOKEN_DESCRIPTION,
-        &card,
-        &traits,
-    ))
+    traits
 }

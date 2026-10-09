@@ -115,6 +115,48 @@ pub fn issue_credis(
     })
 }
 
+/// Pull `amount` of `asset` from `payer` and deposit it into the VaultRouter.
+fn collect_payment(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    payer: Address,
+    amount: U256,
+) -> Result<()> {
+    let returned = storage.call(
+        asset,
+        U256::ZERO,
+        IERC20::transferFromCall {
+            from: payer,
+            to: CREDIS_FACTORY_ADDRESS,
+            amount,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    if !returned.is_empty()
+        && IERC20::transferFromCall::abi_decode_returns_validate(&returned) != Ok(true)
+    {
+        return Err(revert("ERC20 transfer failed"));
+    }
+    let returned = storage.call(
+        asset,
+        U256::ZERO,
+        IERC20::approveCall {
+            spender: VAULT_ROUTER_ADDRESS,
+            amount,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    if !returned.is_empty()
+        && IERC20::approveCall::abi_decode_returns_validate(&returned) != Ok(true)
+    {
+        return Err(revert("ERC20 approval failed"));
+    }
+    outbe_vaultrouter::api::deposit(storage, asset, amount)?;
+    Ok(())
+}
+
 /// Collect payment first, then return the released collateral to the source's
 /// liquid balance. No Fidelity mutation.
 pub fn settle(
@@ -142,38 +184,7 @@ pub fn settle(
         }
         let paid = settlement.total_paid;
         if !paid.is_zero() {
-            let returned = storage.call(
-                settlement.asset,
-                U256::ZERO,
-                IERC20::transferFromCall {
-                    from: caller,
-                    to: CREDIS_FACTORY_ADDRESS,
-                    amount: paid,
-                }
-                .abi_encode()
-                .into(),
-            )?;
-            if !returned.is_empty()
-                && IERC20::transferFromCall::abi_decode_returns_validate(&returned) != Ok(true)
-            {
-                return Err(revert("ERC20 transfer failed"));
-            }
-            let returned = storage.call(
-                settlement.asset,
-                U256::ZERO,
-                IERC20::approveCall {
-                    spender: VAULT_ROUTER_ADDRESS,
-                    amount: paid,
-                }
-                .abi_encode()
-                .into(),
-            )?;
-            if !returned.is_empty()
-                && IERC20::approveCall::abi_decode_returns_validate(&returned) != Ok(true)
-            {
-                return Err(revert("ERC20 approval failed"));
-            }
-            outbe_vaultrouter::api::deposit(&storage, settlement.asset, paid)?;
+            collect_payment(&storage, settlement.asset, caller, paid)?;
         }
         if credis.get_position(position_id)? != after {
             return Err(revert("Credis changed during payment"));

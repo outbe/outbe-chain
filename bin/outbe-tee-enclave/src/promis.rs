@@ -33,26 +33,21 @@ pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 
     PROMIS.account_keys.derive_modify_key(state_key, account)
 }
 
+/// The account operation covered by a Promis authorization.
+pub type ModifyOperation = crate::confidential::ModifyOperation<PromisOp>;
+
 /// `HMAC-SHA256(modify_key, preimage)` - the write authorization the client sends
 /// and the enclave re-checks. See [`crate::confidential::ModifyDomain::modify_mac`].
-pub fn modify_mac(
-    modify_key: &[u8; 32],
-    account: Address,
-    op: PromisOp,
-    amount: U256,
-    op_nonce: u64,
-    chain_id: B256,
-) -> [u8; 32] {
-    PROMIS.authorization.modify_mac(
-        modify_key,
-        &crate::confidential::ModifyAuthorization {
-            account,
-            op_tag: op as u8,
-            amount,
-            op_nonce,
-            chain_id,
-        },
-    )
+pub fn modify_mac(modify_key: &[u8; 32], operation: &ModifyOperation) -> [u8; 32] {
+    PROMIS
+        .authorization
+        .modify_mac(modify_key, &operation.authorization())
+}
+
+fn verify_modify_auth(modify_key: &[u8; 32], operation: &ModifyOperation, mac: &[u8; 32]) -> bool {
+    PROMIS
+        .authorization
+        .verify_modify_auth(modify_key, &operation.authorization(), mac)
 }
 
 /// Client-side helper: decrypt an account's Promis balance blob with its view key
@@ -110,17 +105,14 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
     let modify_key = PROMIS
         .account_keys
         .derive_modify_key(state_key, req.account)?;
-    if !PROMIS.authorization.verify_modify_auth(
-        &modify_key,
-        &crate::confidential::ModifyAuthorization {
-            account: req.account,
-            op_tag: req.op as u8,
-            amount: req.amount,
-            op_nonce: req.modify_auth.op_nonce,
-            chain_id: req.chain_id,
-        },
-        &req.modify_auth.mac,
-    ) {
+    let operation = ModifyOperation {
+        account: req.account,
+        op: req.op,
+        amount: req.amount,
+        op_nonce: req.modify_auth.op_nonce,
+        chain_id: req.chain_id,
+    };
+    if !verify_modify_auth(&modify_key, &operation, &req.modify_auth.mac) {
         return Ok(reject("invalid modify authorization"));
     }
 
