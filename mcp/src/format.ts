@@ -11,3 +11,8 @@ export function bigintReplacer(_key: string, value: unknown): unknown {
 export function toJson(value: unknown): string {
   return JSON.stringify(value, bigintReplacer, 2);
 }
+
+/** The JSON-safe copy MCP output carries: bigints become decimal strings. */
+export function plainJson(value: unknown): unknown {
+  return JSON.parse(toJson(value));
+}

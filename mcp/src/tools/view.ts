@@ -1,33 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { address } from "./schemas.js";
-import { rememberMarkets } from "../oracle/markets.js";
+import { annotateProposal, listProposals } from "../governance.js";
+import { pairTable } from "../oracle/pairs.js";
 import type { Ctx } from "../chain.js";
-import {
-  CONTRACTS,
-  PROPOSAL_STATUS,
-  type ProposalStatusName,
-  proposalStatusCode,
-  proposalStatusName,
-} from "../registry.js";
+import { CONTRACTS, OFFERING_STATUS, PROPOSAL_STATUS } from "../registry.js";
 import { handler, ok, view } from "./util.js";
 
 const wwd = z.number().int().describe("WorldwideDay as YYYYMMDD, e.g. 20260601");
-
-/**
- * Normalise the proposal status.
- *
- * `format.ts` already renders `status` as `{code, name}` for `IGovernance.*`
- * structs. This function only backfills the name when a caller gives a raw code.
- */
-function annotateProposal(p: unknown): Record<string, unknown> {
-  const r = { ...(p as Record<string, unknown>) };
-  if (typeof r.status === "number" || typeof r.status === "bigint") {
-    const code = Number(r.status);
-    r.status = { code, name: proposalStatusName(code) };
-  }
-  return r;
-}
 
 function registerEntityViews(server: McpServer, ctx: Ctx): void {
   // --- generic escape hatch: any view method of any precompile ---------------
@@ -248,7 +228,7 @@ function registerMarketViews(server: McpServer, ctx: Ctx): void {
     "WorldwideDays currently in OFFERING status (the days a tribute offer can target).",
     {},
     handler(async () => {
-      const wwds = (await view(ctx, "metadosis", "getWorldwideDaysByStatus", [2])) as {
+      const wwds = (await view(ctx, "metadosis", "getWorldwideDaysByStatus", [OFFERING_STATUS])) as {
         wwds: { wwd: number; date: string }[];
       };
       return ok(wwds);
@@ -270,33 +250,7 @@ function registerMarketViews(server: McpServer, ctx: Ctx): void {
     "All oracle price pairs (index, base, quote, the decimals each side is quoted in, active).",
     {},
     handler(async () => {
-      // The oracle enumerates its registry by index rather than returning the
-      // whole table, so this tool assembles the table.
-      const count = Number(await view(ctx, "oracle", "getPairCount", []));
-      const indices = Array.from({ length: count }, (_, i) => i + 1);
-      const pairs = await Promise.all(
-        indices.map(async (index) => {
-          const pair = (await view(ctx, "oracle", "getPairByIndex", [index])) as {
-            base: string;
-            quote: string;
-            baseScale: number;
-            quoteScale: number;
-          };
-          const active = await view(ctx, "oracle", "isVoteTarget", [pair.base, pair.quote]);
-          return {
-            index,
-            base: pair.base,
-            quote: pair.quote,
-            baseScale: Number(pair.baseScale),
-            quoteScale: Number(pair.quoteScale),
-            active,
-          };
-        }),
-      );
-      rememberMarkets(
-        ctx.chain.id,
-        pairs.map((p) => [p.base, p.quote, p.baseScale, p.quoteScale] as const),
-      );
+      const pairs = await pairTable(ctx);
       return ok(pairs);
     }),
   );
@@ -419,37 +373,13 @@ function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
     limit: z.number().int().min(1).max(1000).optional().describe("page size (default 100, max 1000)"),
   };
 
-  async function listProposals(
-    kind: "Oip" | "Gip",
-    args: { author?: string; status?: ProposalStatusName; offset?: number; limit?: number },
-  ): Promise<{ total: number; offset: number; limit: number; items: unknown[] }> {
-    const { author, status } = args;
-    if ((author === undefined) === (status === undefined)) {
-      throw new Error(
-        `provide exactly one of \`author\` or \`status\` (${PROPOSAL_STATUS.join("|")})`,
-      );
-    }
-    const offset = args.offset ?? 0;
-    const limit = args.limit ?? 100;
-    const byAuthor = author !== undefined;
-    const suffix = byAuthor ? "ByAuthor" : "ByStatus";
-    const key = byAuthor ? author : proposalStatusCode(status as ProposalStatusName);
-    const [metas, total] = await Promise.all([
-      view(ctx, "governance", `get${kind}s${suffix}`, [key, offset, limit]) as Promise<
-        unknown[]
-      >,
-      view(ctx, "governance", `${kind.toLowerCase()}Count${suffix}`, [key]),
-    ]);
-    return { total: Number(total), offset, limit, items: metas.map(annotateProposal) };
-  }
-
   server.tool(
     "oip_list",
     "List OIPs by index, paginated (metadata only - omits the full text). Give `author` " +
       "(their OIPs) or `status` (a proposal status name), plus optional `offset`/`limit`.",
     listFilter,
     handler(async (args) => {
-      const { total, offset, limit, items } = await listProposals("Oip", args);
+      const { total, offset, limit, items } = await listProposals(ctx, "Oip", args);
       return ok({ total, offset, limit, oips: items });
     }),
   );
@@ -460,7 +390,7 @@ function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
       "(their GIPs) or `status` (a proposal status name), plus optional `offset`/`limit`.",
     listFilter,
     handler(async (args) => {
-      const { total, offset, limit, items } = await listProposals("Gip", args);
+      const { total, offset, limit, items } = await listProposals(ctx, "Gip", args);
       return ok({ total, offset, limit, gips: items });
     }),
   );

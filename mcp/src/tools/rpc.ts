@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Ctx } from "../chain.js";
-import { toJson } from "../format.js";
+import { plainJson } from "../format.js";
 import { handler, ok } from "./util.js";
 
 export function registerRpcTools(server: McpServer, ctx: Ctx): void {
@@ -34,9 +34,9 @@ export function registerRpcTools(server: McpServer, ctx: Ctx): void {
     handler(async ({ block }) => {
       const b =
         block === undefined || block === "latest" || block === "finalized" || block === "pending"
-          ? await ctx.publicClient.getBlock({ blockTag: (block as any) ?? "latest" })
+          ? await ctx.publicClient.getBlock({ blockTag: block ?? "latest" })
           : await ctx.publicClient.getBlock({ blockNumber: BigInt(block) });
-      return ok(JSON.parse(toJson(b)));
+      return ok(plainJson(b));
     }),
   );
 
@@ -46,7 +46,7 @@ export function registerRpcTools(server: McpServer, ctx: Ctx): void {
     { hash: z.string() },
     handler(async ({ hash }) => {
       const tx = await ctx.publicClient.getTransaction({ hash: hash as `0x${string}` });
-      return ok(JSON.parse(toJson(tx)));
+      return ok(plainJson(tx));
     }),
   );
 
@@ -58,7 +58,7 @@ export function registerRpcTools(server: McpServer, ctx: Ctx): void {
       const r = await ctx.publicClient.getTransactionReceipt({
         hash: hash as `0x${string}`,
       });
-      return ok(JSON.parse(toJson(r)));
+      return ok(plainJson(r));
     }),
   );
 }
