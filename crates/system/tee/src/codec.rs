@@ -279,21 +279,58 @@ mod tests {
             status: Box::new(crate::protocol::EnclaveHealthStatusV1 {
                 uptime_s: 7,
                 offer_key_ready: true,
-                heap_current_bytes: 1024,
-                heap_peak_bytes: 4096,
-                requests_total: 10,
-                requests_errored: 1,
-                requests_denied: 2,
-                class_initialized: 3,
-                class_founding_keyless: 0,
-                class_keyless_onboarding: 0,
-                class_ready: 4,
-                class_dev_source_seal: 0,
-                class_dev_recipient_ingest: 0,
+                heap: crate::protocol::EnclaveHeapUsageV1 {
+                    current_bytes: 1024,
+                    peak_bytes: 4096,
+                },
+                requests: crate::protocol::EnclaveRequestCountsV1 {
+                    total: 10,
+                    errored: 1,
+                    denied: 2,
+                },
+                classes: crate::protocol::EnclaveRequestClassCountsV1 {
+                    initialized: 3,
+                    founding_keyless: 0,
+                    keyless_onboarding: 0,
+                    ready: 4,
+                    dev_source_seal: 0,
+                    dev_recipient_ingest: 0,
+                },
             }),
         };
         let bytes = encode_response(&resp).unwrap();
         assert_eq!(decode_response(&bytes).unwrap(), resp);
+    }
+
+    #[test]
+    fn health_status_wire_bytes_stay_fixed() {
+        let resp = crate::protocol::EnclaveResponse::HealthStatus {
+            status: Box::new(crate::protocol::EnclaveHealthStatusV1 {
+                uptime_s: 7,
+                offer_key_ready: true,
+                heap: crate::protocol::EnclaveHeapUsageV1 {
+                    current_bytes: 1024,
+                    peak_bytes: 4096,
+                },
+                requests: crate::protocol::EnclaveRequestCountsV1 {
+                    total: 10,
+                    errored: 1,
+                    denied: 2,
+                },
+                classes: crate::protocol::EnclaveRequestClassCountsV1 {
+                    initialized: 3,
+                    founding_keyless: 5,
+                    keyless_onboarding: 6,
+                    ready: 4,
+                    dev_source_seal: 8,
+                    dev_recipient_ingest: 9,
+                },
+            }),
+        };
+        assert_eq!(
+            encode_response(&resp).unwrap(),
+            [31, 7, 1, 128, 8, 128, 32, 10, 1, 2, 3, 5, 6, 4, 8, 9]
+        );
     }
 
     #[test]

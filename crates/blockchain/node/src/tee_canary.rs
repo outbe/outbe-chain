@@ -192,10 +192,10 @@ fn apply_tick(
 }
 
 fn publish_health_gauges(status: &EnclaveHealthStatusV1) {
-    gauge!("outbe_tee_heap_bytes", "kind" => "current").set(status.heap_current_bytes as f64);
-    gauge!("outbe_tee_heap_bytes", "kind" => "peak").set(status.heap_peak_bytes as f64);
+    gauge!("outbe_tee_heap_bytes", "kind" => "current").set(status.heap.current_bytes as f64);
+    gauge!("outbe_tee_heap_bytes", "kind" => "peak").set(status.heap.peak_bytes as f64);
     gauge!("outbe_tee_enclave_uptime_seconds").set(status.uptime_s as f64);
-    gauge!("outbe_tee_requests_errored_total").set(status.requests_errored as f64);
+    gauge!("outbe_tee_requests_errored_total").set(status.requests.errored as f64);
 }
 
 fn unix_now_ms() -> Option<u64> {
