@@ -35,3 +35,24 @@ test("a reverted approval stops the call that would spend it", async () => {
   assert.match(text, /approve 0x[0-9a-f]{64} for 0x[0-9a-fA-F]{40} reverted/);
   assert.deepEqual(sent, ["approve"]);
 });
+
+test("an unreadable token decimals fails the order instead of assuming 18", async () => {
+  const harness = await startHarness((chain) => {
+    chain.register(ERC20_ABI);
+    chain.revert("decimals");
+  });
+  try {
+    const { isError, text } = await harness.call("intent_order_open", {
+      origin: "bsc-testnet",
+      destination: "outbe-testnet",
+      input_token: "USD",
+      output_token: "USD",
+      amount_in: "1",
+    });
+    assert(isError);
+    assert.match(text, /cannot read the decimals of 0x[0-9a-fA-F]{40} on bsc-testnet/);
+    assert.equal(harness.chain.sent.length, 0);
+  } finally {
+    await harness.close();
+  }
+});

@@ -1,4 +1,4 @@
-import { type Abi, type Address, type Hex, encodeFunctionData } from "viem";
+import { type Abi, type Address, type Hex, encodeFunctionData, getAddress, zeroAddress } from "viem";
 import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
 import type { Ctx } from "../chain.js";
 import type { Network } from "./resolver.js";
@@ -30,4 +30,14 @@ export async function ensureAllowance(ctx: Ctx, n: Network, { token, spender, am
   const receipt = await waitForReceipt(n, hash);
   if (receipt.status !== "success") throw new Error(`approve ${hash} for ${spender} reverted`);
   return hash;
+}
+
+/** A token's decimals; the native token's when `token` is the zero address. */
+export async function readDecimals(n: Network, token: Address): Promise<number> {
+  if (getAddress(token) === zeroAddress) return n.chain.nativeCurrency.decimals;
+  try {
+    return Number(await n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }));
+  } catch (error) {
+    throw new Error(`cannot read the decimals of ${token} on ${n.name}: ${(error as Error).message.split("\n")[0]}`);
+  }
 }

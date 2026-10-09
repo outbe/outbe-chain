@@ -14,7 +14,7 @@ import { type Ctx, formatNativeAmount } from "../chain.js";
 import { type Network, type NetworkResolver, networkResolver } from "../net/resolver.js";
 import { receiptSummary, requireAccount, sendCall, waitForReceipt } from "../net/tx.js";
 import { loadConfig } from "../config.js";
-import { ensureAllowance } from "../net/erc20.js";
+import { ensureAllowance, readDecimals } from "../net/erc20.js";
 import { handler, ok } from "./util.js";
 import {
   DEFAULT_FILL_DEADLINE_SECONDS,
@@ -32,7 +32,7 @@ import {
   statusLabel,
 } from "../intent/format.js";
 import { derivePhase, refundPayload } from "../intent/order.js";
-import { loadOrder, readDecimals, tokenBalance } from "../intent/reads.js";
+import { loadOrder, tokenBalance } from "../intent/reads.js";
 import { resolveToken } from "../intent/tokens.js";
 
 /** Intent order tools: open a cross-chain order, track its lifecycle, refund an expired one. */

@@ -2,18 +2,9 @@ import { type Address, type Hex, decodeAbiParameters, formatUnits } from "viem";
 import { formatNativeAmount } from "../chain.js";
 import { NETWORKS } from "../net/chains.js";
 import type { Network, NetworkResolver } from "../net/resolver.js";
+import { readDecimals } from "../net/erc20.js";
 import { type OrderData, decodeOrderData, isNative } from "./format.js";
 import { ERC20_ABI, ROUTER_ABI } from "./registry.js";
-
-export async function readDecimals(n: Network, token: Address): Promise<number> {
-  if (isNative(token)) return n.chain.nativeCurrency.decimals;
-  try {
-    const d = await n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" });
-    return Number(d);
-  } catch {
-    return 18;
-  }
-}
 
 /** Current balance of `account` for `token` on a network (native or ERC20). */
 export async function tokenBalance(n: Network, token: Address, account: Address) {
