@@ -255,11 +255,11 @@ pub(crate) fn enclave_health_info(
         heap_current_bytes: snapshot
             .enclave
             .as_ref()
-            .map(|status| status.heap_current_bytes),
+            .map(|status| status.heap.current_bytes),
         heap_peak_bytes: snapshot
             .enclave
             .as_ref()
-            .map(|status| status.heap_peak_bytes),
+            .map(|status| status.heap.peak_bytes),
         health_probe_supported: snapshot.health_probe_supported,
     }
 }
@@ -1015,17 +1015,23 @@ mod tests {
             enclave: Some(outbe_tee::protocol::EnclaveHealthStatusV1 {
                 uptime_s: 77,
                 offer_key_ready: true,
-                heap_current_bytes: 1024,
-                heap_peak_bytes: 4096,
-                requests_total: 10,
-                requests_errored: 0,
-                requests_denied: 0,
-                class_initialized: 2,
-                class_founding_keyless: 0,
-                class_keyless_onboarding: 0,
-                class_ready: 8,
-                class_dev_source_seal: 0,
-                class_dev_recipient_ingest: 0,
+                heap: outbe_tee::protocol::EnclaveHeapUsageV1 {
+                    current_bytes: 1024,
+                    peak_bytes: 4096,
+                },
+                requests: outbe_tee::protocol::EnclaveRequestCountsV1 {
+                    total: 10,
+                    errored: 0,
+                    denied: 0,
+                },
+                classes: outbe_tee::protocol::EnclaveRequestClassCountsV1 {
+                    initialized: 2,
+                    founding_keyless: 0,
+                    keyless_onboarding: 0,
+                    ready: 8,
+                    dev_source_seal: 0,
+                    dev_recipient_ingest: 0,
+                },
             }),
         });
         let info = super::enclave_health_info(&channel.snapshot(), 1_000_000);
