@@ -88,6 +88,88 @@ pub struct Void {
     pub unpaid_share: U256,
 }
 
+/// The record a new position starts from.
+fn opened_position(params: &OpenPositionParams, position_id: U256) -> Result<Position> {
+    Ok(Position {
+        position_id,
+        smart_account: params.smart_account,
+        cca: params.cca,
+        asset: params.asset,
+        issuance_currency: params.issuance_currency,
+        reference_currency: params.reference_currency,
+        source: params.source,
+        principal_minor: params.principal_minor,
+        outstanding_principal_minor: params.principal_minor,
+        gratis_minor: params.gratis_minor,
+        outstanding_gratis_minor: params.gratis_minor,
+        policy_rate: params.policy_rate,
+        entry_price_minor: params.entry_price_minor,
+        call_price_minor: calc_call_price(params.call_anchor_price_minor)?,
+        issued_at: params.issued_at,
+        last_settled_at: params.issued_at,
+        called_at: 0,
+        state: CredisState::Open as u8,
+        call_notice_period_seconds: CALL_NOTICE_PERIOD,
+        call_rate: CALL_RATE_PCT,
+        call_window_seconds: CALL_WINDOW,
+        call_threshold_seconds: CALL_THRESHOLD,
+        call_anchor_price_minor: params.call_anchor_price_minor,
+        interest_paid_minor: U256::ZERO,
+    })
+}
+
+/// Collateral freed by repaying `principal_paid`.
+fn collateral_release(position: &Position, principal_paid: U256) -> Result<U256> {
+    if principal_paid == position.outstanding_principal_minor {
+        return Ok(position.outstanding_gratis_minor);
+    }
+    Ok(position
+        .gratis_minor
+        .checked_mul(principal_paid)
+        .ok_or(CredisError::ArithmeticOverflow)?
+        .div_ceil(position.principal_minor)
+        .min(position.outstanding_gratis_minor))
+}
+
+impl Position {
+    /// Books a repayment onto the position. Returns whether it closed the position.
+    fn record_payment(
+        &mut self,
+        days: u64,
+        interest: U256,
+        principal_paid: U256,
+        gratis_returned_minor: U256,
+    ) -> Result<bool> {
+        self.outstanding_principal_minor = self
+            .outstanding_principal_minor
+            .checked_sub(principal_paid)
+            .ok_or(CredisError::ArithmeticOverflow)?;
+        self.outstanding_gratis_minor = self
+            .outstanding_gratis_minor
+            .checked_sub(gratis_returned_minor)
+            .ok_or(CredisError::ArithmeticOverflow)?;
+        // Accrual restarts on the reduced principal. No unpaid interest ever
+        // carries between settlements. The anchor advances by the whole days
+        // actually charged, never to `now`. Settling on a sub-day boundary must
+        // not discard the remainder. Otherwise, repeated dust settlements just
+        // under 24h apart would hold `days` at zero and evade the coupon entirely.
+        self.last_settled_at = self
+            .last_settled_at
+            .saturating_add(days.saturating_mul(SECONDS_PER_DAY));
+        // Sum of successful interest deltas. Every revert path returns above this write.
+        self.interest_paid_minor = self
+            .interest_paid_minor
+            .checked_add(interest)
+            .ok_or(CredisError::ArithmeticOverflow)?;
+
+        let closed = self.outstanding_principal_minor.is_zero();
+        if closed {
+            self.state = CredisState::Settled as u8;
+        }
+        Ok(closed)
+    }
+}
+
 /// `price x (100 + rate_pct) / 100`.
 pub fn calc_call_price(price: U256) -> Result<U256> {
     price
@@ -188,32 +270,7 @@ impl CredisContract<'_> {
                 return Err(CredisError::PositionAlreadyExists.into());
             }
 
-            let position = Position {
-                position_id,
-                smart_account: params.smart_account,
-                cca: params.cca,
-                asset: params.asset,
-                issuance_currency: params.issuance_currency,
-                reference_currency: params.reference_currency,
-                source: params.source,
-                principal_minor: params.principal_minor,
-                outstanding_principal_minor: params.principal_minor,
-                gratis_minor: params.gratis_minor,
-                outstanding_gratis_minor: params.gratis_minor,
-                policy_rate: params.policy_rate,
-                entry_price_minor: params.entry_price_minor,
-                call_price_minor: calc_call_price(params.call_anchor_price_minor)?,
-                issued_at: params.issued_at,
-                last_settled_at: params.issued_at,
-                called_at: 0,
-                state: CredisState::Open as u8,
-                call_notice_period_seconds: CALL_NOTICE_PERIOD,
-                call_rate: CALL_RATE_PCT,
-                call_window_seconds: CALL_WINDOW,
-                call_threshold_seconds: CALL_THRESHOLD,
-                call_anchor_price_minor: params.call_anchor_price_minor,
-                interest_paid_minor: U256::ZERO,
-            };
+            let position = opened_position(&params, position_id)?;
             outbe_ccaregistry::api::position_opened(
                 &self.storage,
                 params.cca,
@@ -304,71 +361,16 @@ impl CredisContract<'_> {
 
         // C34 favors the user on each partial. Repeated ceilings can exhaust
         // collateral before principal, so cap every return at the remainder.
-        let gratis_returned_minor = if principal_paid == position.outstanding_principal_minor {
-            position.outstanding_gratis_minor
-        } else {
-            position
-                .gratis_minor
-                .checked_mul(principal_paid)
-                .ok_or(CredisError::ArithmeticOverflow)?
-                .div_ceil(position.principal_minor)
-                .min(position.outstanding_gratis_minor)
-        };
+        let gratis_returned_minor = collateral_release(&position, principal_paid)?;
 
-        position.outstanding_principal_minor = position
-            .outstanding_principal_minor
-            .checked_sub(principal_paid)
-            .ok_or(CredisError::ArithmeticOverflow)?;
-        position.outstanding_gratis_minor = position
-            .outstanding_gratis_minor
-            .checked_sub(gratis_returned_minor)
-            .ok_or(CredisError::ArithmeticOverflow)?;
-        // Accrual restarts on the reduced principal. No unpaid interest ever
-        // carries between settlements. The anchor advances by the whole days
-        // actually charged, never to `now`. Settling on a sub-day boundary must
-        // not discard the remainder. Otherwise, repeated dust settlements just
-        // under 24h apart would hold `days` at zero and evade the coupon entirely.
-        position.last_settled_at = position
-            .last_settled_at
-            .saturating_add(days.saturating_mul(SECONDS_PER_DAY));
-        // Sum of successful interest deltas. Every revert path returns above this write.
-        position.interest_paid_minor = position
-            .interest_paid_minor
-            .checked_add(interest)
-            .ok_or(CredisError::ArithmeticOverflow)?;
-
-        let closed = position.outstanding_principal_minor.is_zero();
-        if closed {
-            position.state = CredisState::Settled as u8;
-        }
+        let closed =
+            position.record_payment(days, interest, principal_paid, gratis_returned_minor)?;
         self.update_position_record(&position)?;
         if closed {
-            // Terminal: leave the call index, and release the owner's call
-            // block if this settlement resolved a called position.
-            self.unindex_for_call(&position)?;
-            if state_before == CredisState::Called {
-                self.drop_called_count(position.smart_account)?;
-                self.unqueue_called(position_id)?;
-            }
+            self.close_repaid(&position, state_before)?;
         }
 
-        self.emit(ICredis::SettlementApplied {
-            positionId: position_id,
-            interestMinor: interest,
-            principalPaidMinor: principal_paid,
-            gratisReturnedMinor: gratis_returned_minor,
-            outstandingPrincipalMinor: position.outstanding_principal_minor,
-        })?;
-        if closed {
-            self.emit(ICredis::PositionSettled {
-                positionId: position_id,
-            })?;
-        }
-        self.emit(ICredis::MetadataUpdate {
-            _tokenId: position_id,
-        })?;
-
-        Ok(Settlement {
+        let settlement = Settlement {
             interest,
             principal_paid,
             total_paid: interest
@@ -379,7 +381,39 @@ impl CredisContract<'_> {
             smart_account: position.smart_account,
             cca: position.cca,
             closed,
+        };
+        self.announce_settlement(&position, &settlement)?;
+        Ok(settlement)
+    }
+
+    fn announce_settlement(&mut self, position: &Position, settlement: &Settlement) -> Result<()> {
+        let position_id = position.position_id;
+        self.emit(ICredis::SettlementApplied {
+            positionId: position_id,
+            interestMinor: settlement.interest,
+            principalPaidMinor: settlement.principal_paid,
+            gratisReturnedMinor: settlement.gratis_returned_minor,
+            outstandingPrincipalMinor: position.outstanding_principal_minor,
+        })?;
+        if settlement.closed {
+            self.emit(ICredis::PositionSettled {
+                positionId: position_id,
+            })?;
+        }
+        self.emit(ICredis::MetadataUpdate {
+            _tokenId: position_id,
         })
+    }
+
+    /// Terminal: leaves the call index, and releases the owner's call block if
+    /// the repayment resolved a called position.
+    fn close_repaid(&mut self, position: &Position, state_before: CredisState) -> Result<()> {
+        self.unindex_for_call(position)?;
+        if state_before == CredisState::Called {
+            self.drop_called_count(position.smart_account)?;
+            self.unqueue_called(position.position_id)?;
+        }
+        Ok(())
     }
 
     /// Voids the remainder of a called position whose settlement window has
