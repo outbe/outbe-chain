@@ -1,11 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createCtx } from "./chain.js";
-import { registerIntentTools } from "./tools/intent.js";
-import { registerIntexTools } from "./tools/intex.js";
-import { registerRpcTools } from "./tools/rpc.js";
-import { registerSignTools } from "./tools/sign.js";
-import { registerViewTools } from "./tools/view.js";
+import { registerTools } from "./tools/index.js";
 
 const DEFAULT_RPC = "https://rpc.testnet.outbe.net";
 
@@ -26,11 +22,7 @@ async function main(): Promise<void> {
   );
 
   const server = new McpServer({ name: "outbe-mcp", version: "0.1.0" });
-  registerRpcTools(server, ctx);
-  registerViewTools(server, ctx);
-  registerSignTools(server, ctx);
-  registerIntentTools(server, ctx);
-  registerIntexTools(server, ctx);
+  registerTools(server, ctx);
 
   await server.connect(new StdioServerTransport());
 }
