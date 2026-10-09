@@ -22,6 +22,13 @@ pub struct PrecompileOutput {
     pub gas_used: u64,
 }
 
+/// Call authority and value policy supplied by a payable precompile route.
+pub struct PayableCallContext<'a> {
+    pub selectors: &'a [[u8; 4]],
+    pub sender: Address,
+    pub value: U256,
+}
+
 /// Dispatches ABI-encoded calldata through a decoder and handler.
 ///
 /// 1. Validates calldata length (>= 4 bytes for selector)
@@ -189,21 +196,19 @@ where
 pub fn mutate_void_payable<T: SolCall>(
     storage: &StorageHandle<'_>,
     call: T,
-    payable_selectors: &[[u8; 4]],
-    sender: Address,
-    value: U256,
+    context: PayableCallContext<'_>,
     f: impl FnOnce(Address, T, U256) -> Result<()>,
 ) -> Result<Bytes>
 where
     T::Return: From<()>,
 {
-    typed::mutate(storage, call, sender, |sender, call| {
-        if !value.is_zero() && !payable_selectors.contains(&T::SELECTOR) {
+    typed::mutate(storage, call, context.sender, |sender, call| {
+        if !context.value.is_zero() && !context.selectors.contains(&T::SELECTOR) {
             return Err(PrecompileError::Revert(
                 "payable selector is not declared in PAYABLE_SELECTORS".into(),
             ));
         }
-        f(sender, call, value)
+        f(sender, call, context.value)
     })
 }
 
@@ -217,18 +222,16 @@ where
 pub fn mutate_payable<T: SolCall>(
     storage: &StorageHandle<'_>,
     call: T,
-    payable_selectors: &[[u8; 4]],
-    sender: Address,
-    value: U256,
+    context: PayableCallContext<'_>,
     f: impl FnOnce(Address, T, U256) -> Result<T::Return>,
 ) -> Result<Bytes> {
-    typed::mutate(storage, call, sender, |sender, call| {
-        if !value.is_zero() && !payable_selectors.contains(&T::SELECTOR) {
+    typed::mutate(storage, call, context.sender, |sender, call| {
+        if !context.value.is_zero() && !context.selectors.contains(&T::SELECTOR) {
             return Err(PrecompileError::Revert(
                 "payable selector is not declared in PAYABLE_SELECTORS".into(),
             ));
         }
-        f(sender, call, value)
+        f(sender, call, context.value)
     })
 }
 
@@ -311,7 +314,7 @@ mod payable_witness_tests {
     use alloy_primitives::{Address, U256};
     use alloy_sol_types::{sol, SolCall};
 
-    use super::mutate_void_payable;
+    use super::{mutate_void_payable, PayableCallContext};
     use crate::error::PrecompileError;
     use crate::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
@@ -336,9 +339,11 @@ mod payable_witness_tests {
         let refused = mutate_void_payable(
             &storage,
             call,
-            &[],
-            Address::ZERO,
-            U256::from(1u64),
+            PayableCallContext {
+                selectors: &[],
+                sender: Address::ZERO,
+                value: U256::from(1u64),
+            },
             |_, _, _| panic!("handler must not run for an undeclared selector"),
         );
         assert!(matches!(refused, Err(PrecompileError::Revert(_))));
@@ -384,9 +389,11 @@ mod payable_witness_tests {
         mutate_void_payable(
             &storage,
             call,
-            &[IWitness::fundCall::SELECTOR],
-            Address::ZERO,
-            U256::from(7u64),
+            PayableCallContext {
+                selectors: &[IWitness::fundCall::SELECTOR],
+                sender: Address::ZERO,
+                value: U256::from(7u64),
+            },
             |_, _, value| {
                 seen = value;
                 Ok(())
@@ -413,17 +420,21 @@ mod payable_witness_tests {
             mutate_payable(
                 &storage,
                 IWitness::fundCall { amount: U256::ZERO },
-                &[],
-                a,
-                U256::ZERO,
+                PayableCallContext {
+                    selectors: &[],
+                    sender: a,
+                    value: U256::ZERO,
+                },
                 |_, _, _| panic!("static handler entered"),
             ),
             mutate_void_payable(
                 &storage,
                 IWitness::fundCall { amount: U256::ZERO },
-                &[],
-                a,
-                U256::ZERO,
+                PayableCallContext {
+                    selectors: &[],
+                    sender: a,
+                    value: U256::ZERO,
+                },
                 |_, _, _| panic!("static handler entered"),
             ),
         ];

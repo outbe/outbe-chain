@@ -108,7 +108,8 @@ fn certified_notarized_parent_does_not_block_proposal() {
             ParentParticipationProof::CertifiedNotarization,
         ))
         .unwrap();
-    let selector = ParentProofSelector::new(store);
+    let selector =
+        ParentProofSelector::new(store, outbe_consensus::config::DEFAULT_PROPOSAL_TIMEOUT);
 
     let start = Instant::now();
     // The non-wait selector treats a certified-notarization record as
@@ -160,7 +161,8 @@ fn finalized_parent_uses_finalization_proof_when_available() {
     store
         .put_finalization(record(7, hash, ParentParticipationProof::Finalization))
         .unwrap();
-    let selector = ParentProofSelector::new(store);
+    let selector =
+        ParentProofSelector::new(store, outbe_consensus::config::DEFAULT_PROPOSAL_TIMEOUT);
 
     let result = selector.select_direct_parent_proof(0, 0, 7, hash).unwrap();
     assert_eq!(result.proof_kind(), ParentParticipationProof::Finalization);
@@ -172,7 +174,8 @@ fn missing_direct_parent_proof_does_not_wait_for_future_finalization() {
     // `await_parent_cert` polled until timeout (terminal-view halt root
     // cause). The new selector is synchronous.
     let store = FinalizedParentCertStore::new();
-    let selector = ParentProofSelector::new(store);
+    let selector =
+        ParentProofSelector::new(store, outbe_consensus::config::DEFAULT_PROPOSAL_TIMEOUT);
 
     let start = Instant::now();
     let result = selector.select_direct_parent_proof(0, 0, 42, B256::with_last_byte(0xCC));

@@ -291,17 +291,15 @@ where
                 ))
             })?
         };
-        let Some(snapshot) = snapshot else {
-            return Err(BlockExecutionError::Internal(
-                InternalBlockExecutionError::Other(
-                    format!(
-                        "Phase 1 pre-exec: missing committee snapshot for epoch={} key={}",
-                        metadata_for_verify.finalized_epoch, snapshot_key
-                    )
-                    .into(),
-                ),
-            ));
-        };
+        let snapshot = snapshot.ok_or_else(|| {
+            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                format!(
+                    "Phase 1 pre-exec: missing committee snapshot for epoch={} key={}",
+                    metadata_for_verify.finalized_epoch, snapshot_key
+                )
+                .into(),
+            ))
+        })?;
 
         let verified = verify_v2_proof(
             &metadata_for_verify,

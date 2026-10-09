@@ -126,6 +126,32 @@ fn resolution(
     }
 }
 
+fn assert_finality_proof_not_delivered(signer: &Committee, proof: AncestorFinalityProof) {
+    let recorder = Recorder::new([]);
+    let delivered = Arc::clone(&recorder.deliveries);
+    futures::executor::block_on(
+        resolution(
+            signer,
+            None,
+            Source {
+                block: None,
+                proof: Some(proof),
+                reads: Arc::default(),
+            },
+        )
+        .resolve(
+            request(
+                Key::Finalized {
+                    height: Height::new(2),
+                },
+                Height::new(2),
+            ),
+            recorder,
+        ),
+    );
+    assert!(delivered.lock().unwrap().is_empty());
+}
+
 #[test]
 fn local_block_keeps_ack_receiver_alive_until_response_or_cancellation() {
     let signer = committee(110);
@@ -299,29 +325,7 @@ fn invalid_ancestor_chain_never_reaches_marshal_delivery() {
     };
     let mut corrupt = proof;
     corrupt.ancestors[0] = records[0].block.clone();
-    let recorder = Recorder::new([]);
-    let delivered = Arc::clone(&recorder.deliveries);
-    futures::executor::block_on(
-        resolution(
-            &signer,
-            None,
-            Source {
-                block: None,
-                proof: Some(corrupt),
-                reads: Arc::default(),
-            },
-        )
-        .resolve(
-            request(
-                Key::Finalized {
-                    height: Height::new(2),
-                },
-                Height::new(2),
-            ),
-            recorder,
-        ),
-    );
-    assert!(delivered.lock().unwrap().is_empty());
+    assert_finality_proof_not_delivered(&signer, corrupt);
 }
 
 #[test]
@@ -389,29 +393,7 @@ fn proof_bundle_above_the_aggregate_cap_is_dropped_before_authentication() {
             .map(|record| record.block.clone())
             .collect(),
     };
-    let recorder = Recorder::new([]);
-    let delivered = Arc::clone(&recorder.deliveries);
-    futures::executor::block_on(
-        resolution(
-            &signer,
-            None,
-            Source {
-                block: None,
-                proof: Some(proof),
-                reads: Arc::default(),
-            },
-        )
-        .resolve(
-            request(
-                Key::Finalized {
-                    height: Height::new(2),
-                },
-                Height::new(2),
-            ),
-            recorder,
-        ),
-    );
-    assert!(delivered.lock().unwrap().is_empty());
+    assert_finality_proof_not_delivered(&signer, proof);
 }
 
 #[derive(Clone)]

@@ -1,5 +1,33 @@
 use super::*;
 
+fn escrow_two_member_fee(
+    ctx: &BlockRuntimeContext<'_>,
+    block_hash: B256,
+    epoch: u64,
+    committee_set_hash: B256,
+    credited_voter: Address,
+) {
+    let fee = U256::from(2_000u64);
+    ctx.storage
+        .increase_balance(outbe_primitives::addresses::REWARDS_ADDRESS, fee)
+        .unwrap();
+    outbe_rewards::late_settlement::escrow_block_fee(
+        ctx,
+        &outbe_rewards::late_settlement::FinalizedBlockBinding {
+            number: 10,
+            hash: block_hash,
+            committee_size: 2,
+            epoch,
+            view: 0,
+            parent_view: 0,
+            committee_set_hash,
+        },
+        fee,
+        &[credited_voter],
+    )
+    .unwrap();
+}
+
 /// Phase 7b glue: `run_late_finalize_credits` at block `N+K` closes the
 /// matured window. It pays the escrowed voters, marks `fee_settled`, and routes
 /// the unpaid residue through the active-profile carry-over sink.
@@ -134,27 +162,7 @@ fn window_close_records_miss_for_absent_committee_voter_only() {
 
         let ctx = runtime_ctx(storage);
         // Escrow block 10: committee of 2. Only V0 credited at k=0 (V1 absent).
-        ctx.storage
-            .increase_balance(
-                outbe_primitives::addresses::REWARDS_ADDRESS,
-                U256::from(2_000u64),
-            )
-            .unwrap();
-        outbe_rewards::late_settlement::escrow_block_fee(
-            &ctx,
-            &outbe_rewards::late_settlement::FinalizedBlockBinding {
-                number: 10,
-                hash: fb_hash,
-                committee_size: 2,
-                epoch,
-                view: 0,
-                parent_view: 0,
-                committee_set_hash: csh,
-            },
-            U256::from(2_000u64),
-            &[V0],
-        )
-        .unwrap();
+        escrow_two_member_fee(&ctx, fb_hash, epoch, csh, V0);
 
         // Close block 10's window: the absentee pass runs before settle.
         run_late_finalize_credits(&ctx, &LateFinalizeCreditsArtifact::default()).unwrap();
@@ -333,27 +341,7 @@ fn window_close_miss_survives_epoch_boundary_reset() {
         outbe_validatorset::write_committee_snapshot(storage.clone(), epoch, &snapshot).unwrap();
 
         let ctx = runtime_ctx(storage);
-        ctx.storage
-            .increase_balance(
-                outbe_primitives::addresses::REWARDS_ADDRESS,
-                U256::from(2_000u64),
-            )
-            .unwrap();
-        outbe_rewards::late_settlement::escrow_block_fee(
-            &ctx,
-            &outbe_rewards::late_settlement::FinalizedBlockBinding {
-                number: 10,
-                hash: fb_hash,
-                committee_size: 2,
-                epoch,
-                view: 0,
-                parent_view: 0,
-                committee_set_hash: csh,
-            },
-            U256::from(2_000u64),
-            &[A],
-        )
-        .unwrap();
+        escrow_two_member_fee(&ctx, fb_hash, epoch, csh, A);
 
         // B carries 5 misses accumulated earlier in the epoch.
         {

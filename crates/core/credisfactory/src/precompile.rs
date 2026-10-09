@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 
 use outbe_primitives::dispatch::{
-    dispatch_call, mutate, mutate_payable, reject_value_unless_payable, view,
+    dispatch_call, mutate, mutate_payable, reject_value_unless_payable, view, PayableCallContext,
 };
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
@@ -37,9 +37,11 @@ pub fn dispatch(
                 issueCredis(c) => mutate_payable(
                     &storage,
                     c,
-                    PAYABLE_SELECTORS,
-                    caller,
-                    value,
+                    PayableCallContext {
+                        selectors: PAYABLE_SELECTORS,
+                        sender: caller,
+                        value,
+                    },
                     |sender, c, val| {
                         let (position_id, principal_minor) =
                             runtime::issue_credis(storage.clone(), sender, c.reservationId, val)?;

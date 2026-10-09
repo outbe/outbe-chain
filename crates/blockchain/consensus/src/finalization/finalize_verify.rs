@@ -176,13 +176,11 @@ impl FinalizeVerifyActor {
             return;
         }
         let view = finalize.proposal.view().get();
-        if epoch.get().saturating_add(1) < self.newest_epoch {
-            return;
-        }
-        if self
-            .highest_views
-            .get(&epoch.get())
-            .is_some_and(|highest| view < highest.saturating_sub(OBSERVED_RETAIN_VIEWS))
+        if epoch.get().saturating_add(1) < self.newest_epoch
+            || self
+                .highest_views
+                .get(&epoch.get())
+                .is_some_and(|highest| view < highest.saturating_sub(OBSERVED_RETAIN_VIEWS))
         {
             return;
         }
@@ -192,6 +190,10 @@ impl FinalizeVerifyActor {
                 .increment(1);
             return;
         }
+        self.admit_verified_vote(epoch, view, finalize);
+    }
+
+    fn admit_verified_vote(&mut self, epoch: Epoch, view: u64, finalize: Vote) {
         // Only authenticated votes advance retention watermarks.
         self.newest_epoch = self.newest_epoch.max(epoch.get());
         let highest = self.highest_views.entry(epoch.get()).or_default();

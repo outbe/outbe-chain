@@ -64,8 +64,8 @@ pub use client::{
 pub use client_global::{
     generate_dcap_quote_v1, install_authorized_enclave_client, install_enclave_client,
     is_enclave_configured, prepare_gramine_direct_dev_onboarding_artifact_v1,
-    resident_offer_public_key_state_v1, resident_offer_public_key_v1, try_with_enclave,
-    verify_dcap_evidence_v1, verify_dcap_registration_and_seal_v1, InstallError,
+    resident_offer_public_key_state_v1, resident_offer_public_key_v1, try_account_query,
+    try_with_enclave, verify_dcap_evidence_v1, verify_dcap_registration_and_seal_v1, InstallError,
     RegistrationVerificationRequest, RuntimeEnclaveClient,
 };
 #[cfg(feature = "native-dcap")]

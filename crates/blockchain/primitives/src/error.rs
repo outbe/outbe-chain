@@ -105,43 +105,38 @@ impl PrecompileError {
     /// Convert domain errors at one boundary, following Tempo's precompile error model.
     /// Execution failures return Revert/Halt; infrastructure failures return Fatal.
     pub fn into_precompile_result(self, gas: u64) -> PrecompileResult {
-        let bytes = match self {
-            Self::OutOfGas => {
-                return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0));
-            }
-            Self::WriteProtection => {
-                return Ok(PrecompileOutput::halt(
-                    PrecompileHalt::other_static("state change during static call"),
-                    0,
-                ));
-            }
-            Self::Halt(reason) => return Ok(PrecompileOutput::halt(reason, 0)),
-            Self::Revert(message) => Revert::from(message).abi_encode().into(),
-            error @ Self::BodyReadCorruption(_) => {
-                Revert::from(error.to_string()).abi_encode().into()
-            }
-            Self::RevertBytes(bytes) => bytes,
-            Self::SubCall(error) => {
-                return Err(revm::precompile::PrecompileError::Fatal(format!(
-                    "sub-call error: {error:?}"
-                )));
-            }
-            Self::Unsupported => {
-                return Err(revm::precompile::PrecompileError::Fatal(
-                    "precompile reported Unsupported".into(),
-                ));
-            }
+        match self {
+            Self::OutOfGas => Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0)),
+            Self::WriteProtection => Ok(PrecompileOutput::halt(
+                PrecompileHalt::other_static("state change during static call"),
+                0,
+            )),
+            Self::Halt(reason) => Ok(PrecompileOutput::halt(reason, 0)),
+            Self::Revert(message) => Ok(PrecompileOutput::revert(
+                gas,
+                Revert::from(message).abi_encode().into(),
+                0,
+            )),
+            error @ Self::BodyReadCorruption(_) => Ok(PrecompileOutput::revert(
+                gas,
+                Revert::from(error.to_string()).abi_encode().into(),
+                0,
+            )),
+            Self::RevertBytes(bytes) => Ok(PrecompileOutput::revert(gas, bytes, 0)),
+            Self::SubCall(error) => Err(revm::precompile::PrecompileError::Fatal(format!(
+                "sub-call error: {error:?}"
+            ))),
+            Self::Unsupported => Err(revm::precompile::PrecompileError::Fatal(
+                "precompile reported Unsupported".into(),
+            )),
             error @ (Self::Storage(_)
             | Self::BodyReadUnavailable(_)
             | Self::BodyReadRequestDeadline
             | Self::TreeUnavailable(_)
             | Self::TransactionCeWorkLimitExceeded
             | Self::BlockCeWorkCapacityExhausted
-            | Self::Fatal(_)) => {
-                return Err(revm::precompile::PrecompileError::Fatal(error.to_string()));
-            }
-        };
-        Ok(PrecompileOutput::revert(gas, bytes, 0))
+            | Self::Fatal(_)) => Err(revm::precompile::PrecompileError::Fatal(error.to_string())),
+        }
     }
 }
 

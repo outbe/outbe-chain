@@ -1,5 +1,6 @@
 //! Block acquisition, proof authentication and awaited marshal deliveries.
 use super::*;
+use crate::follow::upstream::AncestorFinalityProof;
 use bytes::Bytes;
 use commonware_codec::Encode as _;
 use commonware_resolver::Consumer;
@@ -150,40 +151,53 @@ impl<F: FinalizedSource, L: LocalBlockSource> FetchResolution<F, L> {
             warn!(%key, %error, "failed to authenticate follower finality proof; dropping fetch");
             return None;
         }
-        let mut buf = Vec::with_capacity(anchor_size);
-        buf.extend_from_slice(certified.finalization.encode().as_ref());
-        buf.extend_from_slice(certified.block.encode().as_ref());
-        if proof.ancestors.is_empty() {
-            return Some(Fetched::Value(buf.into()));
-        }
-        let mut delivery = MarshalDelivery { handler, span };
-        let certified_height = Height::new(certified.block.number());
+        deliver_finalized(&proof, anchor_size, span, handler).await
+    }
+}
+
+async fn deliver_finalized<C>(
+    proof: &AncestorFinalityProof,
+    anchor_size: usize,
+    span: &tracing::Span,
+    handler: &mut C,
+) -> Option<Fetched>
+where
+    C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = bool>,
+{
+    let certified = &proof.certified;
+    let mut buf = Vec::with_capacity(anchor_size);
+    buf.extend_from_slice(certified.finalization.encode().as_ref());
+    buf.extend_from_slice(certified.block.encode().as_ref());
+    if proof.ancestors.is_empty() {
+        return Some(Fetched::Value(buf.into()));
+    }
+    let mut delivery = MarshalDelivery { handler, span };
+    let certified_height = Height::new(certified.block.number());
+    if !delivery
+        .at_height(
+            Key::Finalized {
+                height: certified_height,
+            },
+            certified_height,
+            buf.into(),
+        )
+        .await
+    {
+        return None;
+    }
+    for block in proof.ancestors.iter().rev() {
         if !delivery
             .at_height(
-                Key::Finalized {
-                    height: certified_height,
-                },
-                certified_height,
-                buf.into(),
+                Key::Block(block.digest()),
+                Height::new(block.number()),
+                block.encode(),
             )
             .await
         {
             return None;
         }
-        for block in proof.ancestors.iter().rev() {
-            if !delivery
-                .at_height(
-                    Key::Block(block.digest()),
-                    Height::new(block.number()),
-                    block.encode(),
-                )
-                .await
-            {
-                return None;
-            }
-        }
-        Some(Fetched::Delivered)
     }
+    Some(Fetched::Delivered)
 }
 /// Checks every delivery of a finality-proof bundle and the bundle total
 /// against their encoded-byte caps.

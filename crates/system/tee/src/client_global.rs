@@ -4,9 +4,9 @@
 //! write-once initialization. The separate dev/mock path may install the
 //! development [`EnclaveClient`]. Both expose only requests and the
 //! manifest/quote-bound attestation key needed by runtime consumers. The
-//! offer-decrypt and key-delivery paths reach the single connection through
-//! [`try_with_enclave`]. TEE transport infrastructure lives here rather than in a
-//! business module.
+//! Execution requests use [`try_with_enclave`]. Account-key RPC queries and
+//! canary probes use separate authenticated connections. TEE transport
+//! infrastructure lives here rather than in a business module.
 //!
 //! Determinism: the enclave returns byte-identical output across validators (same
 //! resident keys), so routing a request through this global does not affect
@@ -73,11 +73,12 @@ pub enum InstallError {
     Probe(#[from] TransportError),
 }
 
-/// Installed atomically so canary and execution always share the same pinned
-/// identity, but never the same connection or lock.
+/// Installed atomically so all lanes share one pinned identity, but each lane
+/// has its own connection and lock.
 pub(crate) struct EnclaveSessions {
     execution: Mutex<EnclaveSession>,
     canary: Mutex<EnclaveSession>,
+    account_queries: Mutex<EnclaveSession>,
     attestation_pub: [u8; 32],
 }
 
@@ -86,6 +87,7 @@ impl EnclaveSessions {
         Self {
             attestation_pub: session.attestation_pub(),
             canary: Mutex::new(session.fork_connection()),
+            account_queries: Mutex::new(session.fork_connection()),
             execution: Mutex::new(session),
         }
     }
@@ -110,6 +112,18 @@ impl EnclaveSessions {
             ));
         }
         with_session(&self.canary, |session| session.request(request))
+    }
+
+    pub(crate) fn account_query_request(
+        &self,
+        request: &EnclaveRequest,
+    ) -> Result<EnclaveResponse, TransportError> {
+        if !matches!(request, EnclaveRequest::DeriveAccountKeys { .. }) {
+            return Err(TransportError::EnclaveError(
+                "request is not permitted on the account-query connection".into(),
+            ));
+        }
+        with_session(&self.account_queries, |session| session.request(request))
     }
 }
 
@@ -151,19 +165,18 @@ pub fn install_authorized_enclave_client(
 /// interrupted request's connection once, and the next request reconnects cleanly
 /// (poison no longer masquerades as "not configured").
 ///
-/// TODO(tee-perf): every enclave call serializes on this single Mutex-guarded
-/// blocking connection. This includes consensus-path ops (gratis/promis,
-/// begin-block sweeps, per-WWD snapshot batches) and read-only queries (e.g.
-/// eth_call fidelity index with signed auth). A request that times out (30s),
-/// reconnects and retries can hold the connection for two timeout windows. A
-/// query storm on an RPC node can stall block execution behind it. Future
-/// optimization, one or both of:
-/// - split read-only traffic onto a separate enclave connection (or a small
-///   pool).
-/// - rate-limit query-path calls so consensus-path requests never queue behind
-///   them.
+/// Consensus requests share this connection. Account-key RPC queries use a
+/// separate authenticated connection so they cannot queue ahead of execution.
 pub fn try_with_enclave<R>(f: impl FnOnce(&mut EnclaveSession) -> R) -> Option<R> {
     Some(ENCLAVE_SESSION.get()?.with_execution(f))
+}
+
+/// Run the authorized account-key RPC query on its own connection.
+/// The request allowlist prevents state-changing operations on this lane.
+pub fn try_account_query(
+    request: &EnclaveRequest,
+) -> Option<Result<EnclaveResponse, TransportError>> {
+    Some(ENCLAVE_SESSION.get()?.account_query_request(request))
 }
 
 /// Run only the canary's existing read-only probes on its own authenticated

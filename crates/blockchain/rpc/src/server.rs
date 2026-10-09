@@ -467,13 +467,11 @@ where
         // Off-chain key delivery through the process-global enclave client (no state).
         // Pass `owner_sig` to the enclave so that the enclave enforces ownership in its
         // own trust domain, not ours.
-        let response = outbe_tee::try_with_enclave(|client| {
-            client.request(&EnclaveRequest::DeriveAccountKeys {
-                ledger,
-                account,
-                requester_ephemeral_pubkey: ephemeral_pubkey.0,
-                owner_sig: sig65.to_vec(),
-            })
+        let response = outbe_tee::try_account_query(&EnclaveRequest::DeriveAccountKeys {
+            ledger,
+            account,
+            requester_ephemeral_pubkey: ephemeral_pubkey.0,
+            owner_sig: sig65.to_vec(),
         })
         .ok_or_else(|| internal_err("tee enclave not configured".to_string()))?
         .map_err(|e| internal_err(format!("enclave DeriveAccountKeys failed: {e}")))?;

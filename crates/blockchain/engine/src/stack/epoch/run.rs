@@ -746,6 +746,7 @@ where
         block_cache: finalization_block_cache.clone(),
         finalization_selector: outbe_consensus::finalization::selection::ParentProofSelector::new(
             finalized_parent_cert_store.clone(),
+            bt.leader_timeout,
         ),
         payload_resolve_time: std::time::Duration::from_millis(args.payload_resolve_time_ms),
         min_block_time: bt.min_block_time,

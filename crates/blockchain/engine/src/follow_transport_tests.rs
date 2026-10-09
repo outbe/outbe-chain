@@ -43,41 +43,14 @@ fn serve(stream: TcpStream, script: fn(&str) -> Reply, seen: &Methods) {
         return;
     };
     let mut reader = BufReader::new(stream);
-    loop {
-        let mut length = 0usize;
-        loop {
-            let mut line = String::new();
-            if reader.read_line(&mut line).unwrap_or(0) == 0 {
-                return;
-            }
-            let line = line.trim_end();
-            if line.is_empty() {
-                break;
-            }
-            if let Some(value) = line
-                .to_ascii_lowercase()
-                .strip_prefix("content-length:")
-                .map(str::trim)
-                .and_then(|value| value.parse().ok())
-            {
-                length = value;
-            }
-        }
-        let mut body = vec![0; length];
-        if reader.read_exact(&mut body).is_err() {
-            return;
-        }
-        let request: serde_json::Value = match serde_json::from_slice(&body) {
-            Ok(request) => request,
-            Err(_) => return,
-        };
+    while let Some(request) = read_request(&mut reader) {
         let method = request["method"].as_str().unwrap_or_default().to_string();
         seen.lock().expect("methods lock").push(method.clone());
         let id = request["id"].clone();
         let response = match script(&method) {
             Reply::Hang => {
                 std::thread::sleep(Duration::from_secs(5));
-                return;
+                break;
             }
             Reply::Error(code) => serde_json::json!({
                 "jsonrpc": "2.0",
@@ -87,16 +60,44 @@ fn serve(stream: TcpStream, script: fn(&str) -> Reply, seen: &Methods) {
             .to_string(),
             Reply::Result(result) => format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{result}}}"#),
         };
-        let head = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
-            response.len()
-        );
-        if writer.write_all(head.as_bytes()).is_err()
-            || writer.write_all(response.as_bytes()).is_err()
-        {
-            return;
+        if write_response(&mut writer, &response).is_err() {
+            break;
         }
     }
+}
+
+fn read_request(reader: &mut BufReader<TcpStream>) -> Option<serde_json::Value> {
+    let mut length = 0usize;
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        if let Some(value) = line
+            .to_ascii_lowercase()
+            .strip_prefix("content-length:")
+            .map(str::trim)
+            .and_then(|value| value.parse().ok())
+        {
+            length = value;
+        }
+    }
+    let mut body = vec![0; length];
+    reader.read_exact(&mut body).ok()?;
+    serde_json::from_slice(&body).ok()
+}
+
+fn write_response(writer: &mut TcpStream, response: &str) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+        response.len()
+    );
+    writer.write_all(head.as_bytes())?;
+    writer.write_all(response.as_bytes())
 }
 
 fn client(url: &str, request_timeout: Duration) -> UpstreamRpcClient {
