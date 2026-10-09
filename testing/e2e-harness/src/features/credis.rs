@@ -230,9 +230,6 @@ fn pledge_window_closes(world: &mut World) {
 #[when("the CCA reserves 300 stablecoins for the user's smart account")]
 fn reserve(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
-    // Reuse Intex's E2E-only history fixture; live current prices come from the feeder.
-    test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, 1, U256::from(1_000_000))
-        .expect("previous closed USD VWAP");
     let f = world.state.credis.as_ref().expect("fixture");
     assert_eq!(
         eth::read_call(
@@ -250,7 +247,6 @@ fn reserve(world: &mut World) {
         VAULT_ROUTER_ADDRESS,
         &f.cca_key,
         &eth::IVaultRouter::reserveStablesCall {
-            referenceCurrency: USD,
             smartAccount: f.account,
             source: f.user,
             asset: f.currency.asset,
@@ -352,6 +348,10 @@ fn pledge(world: &mut World) {
 #[when("the CCA issues Credis against the pledge and reservation")]
 fn issue(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
+    // The call anchor is the previous closed USD day at issuance: reuse Intex's E2E-only
+    // history fixture. Live current prices come from the feeder.
+    test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, 1, U256::from(1_000_000))
+        .expect("previous closed USD VWAP");
     let f = world.state.credis.as_ref().expect("fixture");
     let stake = outbe_primitives::units::checked_protocol_to_native(f.gratis_minor)
         .expect("fixture stake fits native units");
@@ -361,6 +361,7 @@ fn issue(world: &mut World) {
         &f.cca_key,
         &ICredisFactory::issueCredisCall {
             reservationId: f.reservation,
+            referenceCurrency: USD,
         },
         Some(stake),
     );

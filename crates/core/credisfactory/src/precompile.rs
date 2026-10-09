@@ -43,8 +43,13 @@ pub fn dispatch(
                         value,
                     },
                     |sender, c, val| {
-                        let (credis_id, principal_minor) =
-                            runtime::issue_credis(storage.clone(), sender, c.reservationId, val)?;
+                        let (credis_id, principal_minor) = runtime::issue_credis(
+                            storage.clone(),
+                            sender,
+                            c.reservationId,
+                            c.referenceCurrency,
+                            val,
+                        )?;
                         Ok(ICredisFactory::issueCredisReturn {
                             credisId: credis_id,
                             principalMinor: principal_minor,

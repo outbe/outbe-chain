@@ -198,11 +198,8 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         snapshot_id: U256::from(17),
         entry_price_minor: U256::from(2_000_000),
         valuation_price_minor: U256::from(2_000_000),
-        policy_rate: U256::from(43_000),
         issuance_currency: 840,
         asset_decimals: 6,
-        reference_currency: 840,
-        call_anchor_price_minor: U256::from(2_000_000),
         source: OWNER,
     })?;
 
@@ -380,6 +377,7 @@ fn issue_cca_payout(
 )> {
     let issue = ICredisFactory::issueCredisCall {
         reservationId: U256::ONE,
+        referenceCurrency: 840,
     };
     let out = call!(
         evm,

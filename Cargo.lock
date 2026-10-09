@@ -10080,7 +10080,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
- "outbe-credis",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",

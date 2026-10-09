@@ -385,6 +385,8 @@ fn the_issuance_day_counts_only_for_a_credis_opened_at_midnight() {
             bootstrap(&storage, pledge_cost());
             let midnight = (CREATED_AT / DAY + 1) * DAY;
             advance_to(&storage, midnight + offset);
+            // Issuance reads the anchor from the day that just closed.
+            seed_previous_closed_day(&storage, REFERENCE_ISO, oracle_rate());
             let credis_id = open(&storage, 1);
 
             let at = midnight + u64::from(CALL_THRESHOLD_DAYS) * DAY;

@@ -185,11 +185,8 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             snapshot_id: U256::from(17),
             entry_price_minor: oracle_rate(),
             valuation_price_minor: oracle_rate(),
-            policy_rate: U256::from(43_000),
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
-            reference_currency: REFERENCE_ISO,
-            call_anchor_price_minor: oracle_rate(),
             source: ALICE,
         })
         .map_err(|error| error.to_string())?;
@@ -251,6 +248,7 @@ impl BenchmarkScenario for CredisScenario {
         let event_offset = provider.get_ordered_events().len();
         let calldata = ICredisFactory::issueCredisCall {
             reservationId: prepared.reservation_id,
+            referenceCurrency: REFERENCE_ISO,
         }
         .abi_encode();
 

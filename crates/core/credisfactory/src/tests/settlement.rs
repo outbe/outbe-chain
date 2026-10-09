@@ -120,7 +120,8 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             let stake = outbe_primitives::units::checked_protocol_to_native(collateral).unwrap();
             fund_stake(&storage, stake);
             let (id, disbursed) =
-                runtime::issue_credis(storage.clone(), cca(), reservation_id, stake).unwrap();
+                runtime::issue_credis(storage.clone(), cca(), reservation_id, REFERENCE_ISO, stake)
+                    .unwrap();
             assert_eq!(disbursed, principal);
             assert_eq!(view_pledged(&storage, alice()), collateral);
 
@@ -446,7 +447,8 @@ fn issue_credis_requires_the_stake_to_equal_the_collateral() {
             pledge_stake() - U256::ONE,
             pledge_stake() + U256::ONE,
         ] {
-            let err = runtime::issue_credis(storage.clone(), cca(), id, wrong).unwrap_err();
+            let err = runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, wrong)
+                .unwrap_err();
             assert!(err.to_string().contains("attached COEN"), "{wrong}: {err}");
         }
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
@@ -492,7 +494,10 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
         pledge(&storage, alice(), id, 1);
         let day = outbe_primitives::time::timestamp_to_date_key(CREATED_AT);
         // The unfunded stake transfer fails after the pledge was handed to Credis.
-        assert!(runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).is_err());
+        assert!(
+            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
+                .is_err()
+        );
         assert_eq!(
             outbe_gratisfactory::runtime::pledge_of(&storage, id)
                 .unwrap()
@@ -512,7 +517,8 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
         );
         fund_stake(&storage, pledge_stake());
         let (credis_id, _) =
-            runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
+            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
+                .unwrap();
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             pledge_cost()
@@ -525,7 +531,9 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
     });
     provider.set_block_number(BLOCK_NUMBER + 1);
     StorageHandle::enter(&mut provider, |storage| {
-        let err = runtime::issue_credis(storage.clone(), cca(), next, pledge_stake()).unwrap_err();
+        let err =
+            runtime::issue_credis(storage.clone(), cca(), next, REFERENCE_ISO, pledge_stake())
+                .unwrap_err();
         assert!(err.to_string().contains("CCA is not active"), "{err}");
         assert_eq!(
             record(&storage, credis_id).outstanding_principal_minor,
@@ -552,9 +560,10 @@ fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source()
         let unused = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), unused, 2);
         fund_stake(&storage, pledge_stake());
-        let credis_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
-            .unwrap()
-            .0;
+        let credis_id =
+            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
+                .unwrap()
+                .0;
         let half = pledge_cost() / U256::from(2u64);
         settle_principal(
             &storage,

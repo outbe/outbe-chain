@@ -6,12 +6,18 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
+use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
 use outbe_credis::{CredisContract, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
+use outbe_oracle::api::{
+    check_reference_currency_with_storage, coen_pair_index_opt, get_policy_rate, get_utc_day_vwap,
+};
+use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
     error::{PrecompileError, Result},
     storage::StorageHandle,
+    time::{previous_date_key, timestamp_to_date_key},
     units::checked_protocol_to_native,
 };
 use outbe_vaultrouter::LiquidityReservation;
@@ -61,16 +67,50 @@ fn ensure_asset_metadata(storage: &StorageHandle<'_>, r: &LiquidityReservation) 
     Ok(())
 }
 
+/// The previous closed UTC-day VWAP in `reference_currency` at `now`: the call anchor.
+fn call_anchor_at(storage: &StorageHandle<'_>, reference_currency: u16, now: u64) -> Result<U256> {
+    let day = previous_date_key(timestamp_to_date_key(now));
+    let finalized = OracleContract::new(storage.clone())
+        .utc_day_vwap_last_finalized
+        .read()?;
+    if finalized < day {
+        return Err(CredisFactoryError::PreviousDayVwapUnavailable.into());
+    }
+    let Some(index) = coen_pair_index_opt(storage.clone(), reference_currency)? else {
+        return Err(CredisFactoryError::PreviousDayVwapUnavailable.into());
+    };
+    match get_utc_day_vwap(storage.clone(), day, index)? {
+        Some(vwap) if !vwap.is_zero() => Ok(vwap),
+        _ => Err(CredisFactoryError::PreviousDayVwapUnavailable.into()),
+    }
+}
+
+/// The issuance currency's policy rate, scaled by the policy-rate factor.
+fn policy_rate_of(storage: &StorageHandle<'_>, issuance_currency: u16) -> Result<U256> {
+    get_policy_rate(storage.clone(), issuance_currency)?
+        .checked_mul(U256::from(POLICY_RATE_FACTOR_BP))
+        .map(|v| v / U256::from(BP_DEN))
+        .ok_or_else(|| revert("credis policy rate overflow"))
+}
+
+/// Issues a Credis on the reservation's pledge. The pledge terms come from the
+/// reservation; `reference_currency`, the call anchor and the policy rate are
+/// fixed here, at issuance.
 pub fn issue_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     reservation_id: U256,
+    reference_currency: u16,
     stake: U256,
 ) -> Result<(U256, U256)> {
     storage.with_checkpoint(|| {
         outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
         let (r, now) = live_reservation(&storage, caller, reservation_id)?;
         ensure_asset_metadata(&storage, &r)?;
+        // The call sweep walks only registered currencies.
+        check_reference_currency_with_storage(storage.clone(), reference_currency)?;
+        let policy_rate = policy_rate_of(&storage, r.issuance_currency)?;
+        let call_anchor_price_minor = call_anchor_at(&storage, reference_currency, now)?;
         let required = checked_protocol_to_native(r.gratis_minor)
             .ok_or_else(|| revert("COEN stake overflow"))?;
         if stake != required {
@@ -83,11 +123,11 @@ pub fn issue_credis(
             source: r.source,
             asset: r.asset,
             issuance_currency: r.issuance_currency,
-            reference_currency: r.reference_currency,
-            policy_rate: r.policy_rate,
+            reference_currency,
+            policy_rate,
             principal_minor: r.amount,
             entry_price_minor: r.entry_price_minor,
-            call_anchor_price_minor: r.call_anchor_price_minor,
+            call_anchor_price_minor,
             gratis_minor: r.gratis_minor,
             issued_at: now,
         })?;

@@ -7,6 +7,11 @@
         "name": "reservationId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [

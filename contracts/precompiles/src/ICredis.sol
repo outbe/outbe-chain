@@ -49,7 +49,7 @@ interface ICredis {
 
     /// Call terms, sealed at issuance in the reference currency.
     struct CallTerms {
-        /// Call anchor price, scale 1e6, fixed by the reservation.
+        /// Call anchor price, scale 1e6: the previous closed UTC-day VWAP at issuance.
         uint256 callAnchorPriceMinor;
         /// callAnchorPriceMinor * 1.64.
         uint256 callPriceMinor;

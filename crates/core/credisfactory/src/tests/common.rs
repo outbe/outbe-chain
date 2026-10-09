@@ -121,9 +121,15 @@ pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
     let reservation_id = seed_reservation(storage, who, who, pledge_stables());
     pledge(storage, who, reservation_id, nonce);
     fund_stake(storage, pledge_stake());
-    runtime::issue_credis(storage.clone(), cca(), reservation_id, pledge_stake())
-        .unwrap()
-        .0
+    runtime::issue_credis(
+        storage.clone(),
+        cca(),
+        reservation_id,
+        REFERENCE_ISO,
+        pledge_stake(),
+    )
+    .unwrap()
+    .0
 }
 
 /// Pledges the reservation's Gratis from `source` through the factory.
@@ -169,11 +175,8 @@ pub fn seed_reservation(
             snapshot_id: U256::from(17),
             entry_price_minor: oracle_rate(),
             valuation_price_minor: oracle_rate(),
-            policy_rate: policy_rate(),
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
-            reference_currency: REFERENCE_ISO,
-            call_anchor_price_minor: oracle_rate(),
             source,
         })
         .unwrap();
@@ -305,7 +308,7 @@ pub fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u
 
 /// Publishes `price` as the finalized VWAP of the UTC day closed at the
 /// storage clock, which is the day issuance reads.
-fn seed_previous_closed_day(storage: &StorageHandle<'_>, iso: u16, price: U256) {
+pub fn seed_previous_closed_day(storage: &StorageHandle<'_>, iso: u16, price: U256) {
     let day = last_closed_day(storage.timestamp().unwrap().to::<u64>());
     set_vwap_for(storage, iso, day, price);
 }

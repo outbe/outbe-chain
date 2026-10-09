@@ -39,8 +39,8 @@ pub struct IssueCredisParams {
     pub asset: Address,
     /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
-    /// ISO 4217 numeric code of the reference currency elected at origination
-    /// and fixed for the Credis's life.
+    /// ISO 4217 numeric code of the reference currency elected at issuance and
+    /// fixed for the Credis's life.
     pub reference_currency: u16,
     /// `r`, 1e6 scaled, already multiplied by the policy-rate factor.
     pub policy_rate: U256,

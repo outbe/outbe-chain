@@ -572,10 +572,10 @@ test("MCP Credis and pledge tools encode their calls against the registered ABIs
   const cases = [
     {
       tool: "credis_reserve",
-      args: { smart_account: smartAccount, source, asset, amount: "300", reference_currency: 840 },
+      args: { smart_account: smartAccount, source, asset, amount: "300" },
       contract: "vaultrouter",
       functionName: "reserveStables",
-      expected: [smartAccount, source, asset, 300n, 840],
+      expected: [smartAccount, source, asset, 300n],
       value: 0n,
     },
     {
@@ -596,10 +596,10 @@ test("MCP Credis and pledge tools encode their calls against the registered ABIs
     },
     {
       tool: "credis_issue",
-      args: { reservation_id: "7", stake: "1.5" },
+      args: { reservation_id: "7", reference_currency: 978, stake: "1.5" },
       contract: "credisfactory",
       functionName: "issueCredis",
-      expected: [7n],
+      expected: [7n, 978],
       value: 1_500_000_000_000_000_000n,
     },
     {
