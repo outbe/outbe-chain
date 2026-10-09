@@ -5,10 +5,6 @@ export function ok(value: unknown) {
   return { content: [{ type: "text" as const, text: toJson(value) }] };
 }
 
-export function okText(text: string) {
-  return { content: [{ type: "text" as const, text }] };
-}
-
 export function fail(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
   return { content: [{ type: "text" as const, text: `error: ${msg}` }], isError: true };

@@ -1,21 +1,6 @@
 import type { Ctx } from "./chain.js";
 import { view } from "./read.js";
-import { PROPOSAL_STATUS, type ProposalStatusName, proposalStatusCode, proposalStatusName } from "./registry.js";
-
-/**
- * Normalise the proposal status.
- *
- * `format.ts` already renders `status` as `{code, name}` for `IGovernance.*`
- * structs. This function only backfills the name when a caller gives a raw code.
- */
-export function annotateProposal(p: unknown): Record<string, unknown> {
-  const r = { ...(p as Record<string, unknown>) };
-  if (typeof r.status === "number" || typeof r.status === "bigint") {
-    const code = Number(r.status);
-    r.status = { code, name: proposalStatusName(code) };
-  }
-  return r;
-}
+import { PROPOSAL_STATUS, type ProposalStatusName, proposalStatusCode } from "./registry.js";
 
 export async function listProposals(
   ctx: Ctx,
@@ -39,5 +24,5 @@ export async function listProposals(
     >,
     view(ctx, "governance", `${kind.toLowerCase()}Count${suffix}`, [key]),
   ]);
-  return { total: Number(total), offset, limit, items: metas.map(annotateProposal) };
+  return { total: Number(total), offset, limit, items: metas };
 }

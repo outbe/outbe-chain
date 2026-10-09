@@ -9,7 +9,6 @@ export interface Network {
   chain: Chain;
   client: PublicClient;
   wallet?: WalletClient;
-  nativeSymbol: string;
 }
 
 export type NetworkResolver = (spec: string) => Promise<Network>;
@@ -32,7 +31,6 @@ export function networkResolver(ctx: Ctx, privateKey?: string): NetworkResolver 
       chain: c.chain,
       client: c.publicClient,
       wallet: c.walletClient,
-      nativeSymbol: c.chain.nativeCurrency.symbol,
     };
     cache.set(def.name, network);
     return network;

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { address } from "./schemas.js";
-import { annotateProposal, listProposals } from "../governance.js";
+import { listProposals } from "../governance.js";
 import { pairTable } from "../oracle/pairs.js";
 import type { Ctx } from "../chain.js";
 import { CONTRACTS, OFFERING_STATUS, PROPOSAL_STATUS } from "../registry.js";
@@ -346,7 +346,7 @@ function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
     "One Outbe Improvement Proposal by id: author, status, blocks, text hash, and full text.",
     { id: proposalId },
     handler(async ({ id }) =>
-      ok(annotateProposal(await view(ctx, "governance", "getOip", [BigInt(id)]))),
+      ok(await view(ctx, "governance", "getOip", [BigInt(id)])),
     ),
   );
 
@@ -355,7 +355,7 @@ function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
     "One Governance Improvement Proposal by id: author, status, blocks, text hash, and full text.",
     { id: proposalId },
     handler(async ({ id }) =>
-      ok(annotateProposal(await view(ctx, "governance", "getGip", [BigInt(id)]))),
+      ok(await view(ctx, "governance", "getGip", [BigInt(id)])),
     ),
   );
 

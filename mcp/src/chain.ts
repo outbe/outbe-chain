@@ -1,7 +1,6 @@
 import {
   type Abi,
   type AbiFunction,
-  type Address,
   type Chain,
   type Hex,
   type PublicClient,
@@ -155,27 +154,5 @@ export async function sendTx(ctx: Ctx, { entry, method, args: rawArgs, gas, valu
     data,
     gas,
     value,
-  });
-}
-
-/** Send pre-encoded calldata (used by tribute_offer). */
-export async function sendRaw(
-  ctx: Ctx,
-  to: Address,
-  data: Hex,
-  gas: bigint,
-): Promise<Hex> {
-  if (!ctx.walletClient || !ctx.account) {
-    throw new Error(
-      "signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env",
-    );
-  }
-  return ctx.walletClient.sendTransaction({
-    account: ctx.account,
-    chain: ctx.chain,
-    to,
-    data,
-    gas,
-    value: 0n,
   });
 }

@@ -8,8 +8,7 @@
     "outbe-mcp": "dist/index.js"
   },
   "files": [
-    "dist",
-    "README.md"
+    "dist"
   ],
   "engines": {
     "node": ">=18"
