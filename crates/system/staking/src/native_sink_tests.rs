@@ -5,50 +5,27 @@ use alloy_primitives::{address, Address, U256};
 use outbe_primitives::addresses::{
     METADOSIS_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS, STAKING_ADDRESS,
 };
-use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
-use outbe_validatorset::contract::ValidatorSet;
 
 use crate::contract::Staking;
+use crate::tests::{register_validator, seed_balance, with_staking};
 
-const CHAIN_ID: u64 = 1;
-const MIN_STAKE: u64 = 1_000;
 const STAKE: u64 = 10_000;
 const VALIDATOR: Address = address!("0x00000000000000000000000000000000000000a1");
 const OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
 
+/// A registered validator that staked `STAKE`, with the escrow holding it.
 fn with_staked_validator<R>(f: impl FnOnce(StorageHandle<'_>, &mut Staking<'_>) -> R) -> R {
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.set_block_number(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut staking = Staking::new(storage.clone());
-        staking
-            .config_min_stake
-            .write(U256::from(MIN_STAKE))
-            .unwrap();
-        staking.config_unbonding_period.write(3_600).unwrap();
-
-        let mut validators = ValidatorSet::new(storage.clone());
-        validators.config_owner.write(OWNER).unwrap();
-        validators.set_config_max_validators(100).unwrap();
-        let mut consensus_pubkey = [0u8; 48];
-        consensus_pubkey[..20].copy_from_slice(VALIDATOR.as_slice());
-        validators
-            .test_register_validator_without_pop(VALIDATOR, &consensus_pubkey)
-            .unwrap();
-
+    with_staking(|storage, staking| {
+        register_validator(storage.clone(), VALIDATOR);
         // The EVM moves msg.value into the staking escrow before `stake` runs.
-        storage
-            .set_balance(VALIDATOR, U256::from(1_000_000u64))
-            .unwrap();
-        storage
-            .set_balance(STAKING_ADDRESS, U256::from(STAKE))
-            .unwrap();
+        seed_balance(storage.clone(), VALIDATOR, 1_000_000);
+        seed_balance(storage.clone(), STAKING_ADDRESS, STAKE);
         staking
             .stake(VALIDATOR, VALIDATOR, U256::from(STAKE))
             .unwrap();
-        f(storage, &mut staking)
+        f(storage, staking)
     })
 }
 

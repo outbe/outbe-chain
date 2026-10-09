@@ -1,7 +1,9 @@
 use super::{registered_status, status};
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
-use crate::state_machine::{self, ValidatorHistory, ValidatorLifecycle};
+use crate::state_machine::{
+    self, Active, HistoryCounters, ValidatorHistory, ValidatorLifecycle, ValidatorState,
+};
 use alloy_primitives::Address;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
@@ -73,17 +75,13 @@ impl ValidatorSet<'_> {
         let lifecycle =
             ValidatorLifecycle::Exiting(state_machine::begin_exit(active, stake, height)?);
         let after = before.clone().with_lifecycle(lifecycle)?;
-        let guard = self.storage.checkpoint_guard();
-        self.persist_validator_state_delta(&before, &after)?;
-
         // Signal pending set change so consensus triggers DKG reshare to exclude
-        self.pending_set_change.write(true)?;
-
-        self.emit(IValidatorSet::ValidatorDeactivated {
-            validator: addr,
-            atHeight: height,
+        self.commit_set_change(&before, &after, |vs| {
+            vs.emit(IValidatorSet::ValidatorDeactivated {
+                validator: addr,
+                atHeight: height,
+            })
         })?;
-        guard.commit();
 
         crate::metrics::record_validator_status(addr, status::EXITING);
         crate::metrics::record_validator_deactivate(addr);
@@ -180,15 +178,12 @@ impl ValidatorSet<'_> {
         let block_number = self.storage.block_number()?;
         let next = ValidatorLifecycle::JailRetained(state_machine::jail(active, block_number)?);
         let after = before.clone().with_lifecycle(next)?;
-
-        let guard = self.storage.checkpoint_guard();
-        self.persist_validator_state_delta(&before, &after)?;
-        self.pending_set_change.write(true)?;
-        self.emit(IValidatorSet::ValidatorJailed {
-            validator: addr,
-            atHeight: block_number,
+        self.commit_set_change(&before, &after, |vs| {
+            vs.emit(IValidatorSet::ValidatorJailed {
+                validator: addr,
+                atHeight: block_number,
+            })
         })?;
-        guard.commit();
 
         crate::metrics::record_validator_status(addr, status::JAILED);
         crate::metrics::record_validator_tee_expiry(addr, "deadline_jailed");
@@ -222,81 +217,39 @@ impl ValidatorSet<'_> {
             return Err(PrecompileError::Revert("validator not registered".into()));
         }
         let current_status = registered_status(&lifecycle)?;
-        let block_number = self.storage.block_number()?;
-        let (target, target_label, action) = if jail {
-            (status::JAILED, "JAILED", "jail")
-        } else {
-            (status::EXITING, "EXITING", "force-exit")
+        let punishment = Punishment {
+            jail,
+            block_number: self.storage.block_number()?,
         };
-
         let history = before.history().copied().ok_or_else(|| {
             PrecompileError::Fatal("registered validator is missing history".into())
         })?;
-        let active = match lifecycle {
-            ValidatorLifecycle::Active(active) => active,
-            ValidatorLifecycle::JailRetained(_) | ValidatorLifecycle::Jail(_) if jail => {
-                return Ok(None)
-            }
-            ValidatorLifecycle::Exiting(_)
-            | ValidatorLifecycle::Unbonding(_)
-            | ValidatorLifecycle::Inactive(_) => return Ok(None),
-            _ => {
-                return Err(PrecompileError::Revert(format!(
-                    "cannot {action} validator with status {current_status}: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed"
-                )));
-            }
+        let Some(active) = punishable_active(lifecycle, punishment, current_status)? else {
+            return Ok(None);
         };
-        let stake = *before.stake().ok_or_else(|| {
-            PrecompileError::Fatal("active validator is missing stake projection".into())
-        })?;
-        let next = if jail {
-            ValidatorLifecycle::JailRetained(state_machine::jail(active, block_number)?)
-        } else {
-            ValidatorLifecycle::Exiting(state_machine::begin_exit(active, stake, block_number)?)
-        };
-        let next = state_machine::with_history(
-            next,
-            ValidatorHistory::new(
-                history.joined_at_height(),
-                Some(block_number),
-                history
-                    .slash_count()
-                    .checked_add(1)
-                    .ok_or_else(|| PrecompileError::Fatal("slash count overflow".into()))?,
-                history.missed_blocks(),
-                history.missed_votes(),
-                history.blocks_proposed(),
-            ),
-        )?;
-        let after = before.clone().with_lifecycle(next)?;
-        let guard = self.storage.checkpoint_guard();
-        self.persist_validator_state_delta(&before, &after)?;
+        let after = punished_state(&before, active, history, punishment)?;
+        self.commit_set_change(&before, &after, |vs| vs.emit_punishment(addr, punishment))?;
+        Ok(Some(punishment.deferred(addr)))
+    }
 
-        self.pending_set_change.write(true)?;
-        if jail {
-            self.emit(IValidatorSet::ValidatorJailed {
+    /// Emits the events of a committed punishment: `ValidatorJailed` for a
+    /// jail, else `ValidatorDeactivated` and then `ValidatorForcedExit`.
+    fn emit_punishment(&mut self, addr: Address, punishment: Punishment) -> Result<()> {
+        let block_number = punishment.block_number;
+        if punishment.jail {
+            return self.emit(IValidatorSet::ValidatorJailed {
                 validator: addr,
                 atHeight: block_number,
-            })?;
-        } else {
-            self.emit(IValidatorSet::ValidatorDeactivated {
-                validator: addr,
-                atHeight: block_number,
-            })?;
-            self.emit(IValidatorSet::ValidatorForcedExit {
-                validator: addr,
-                atHeight: block_number,
-            })?;
+            });
         }
-        guard.commit();
-
-        Ok(Some(DeferredValidatorPunishment {
-            addr,
-            target,
-            target_label,
-            jailed: jail,
-            block_number,
-        }))
+        self.emit(IValidatorSet::ValidatorDeactivated {
+            validator: addr,
+            atHeight: block_number,
+        })?;
+        self.emit(IValidatorSet::ValidatorForcedExit {
+            validator: addr,
+            atHeight: block_number,
+        })
     }
 
     /// Unjails a JAILED validator back to PENDING. Staking's `unjailValidator`
@@ -334,17 +287,13 @@ impl ValidatorSet<'_> {
         let after = before
             .clone()
             .with_lifecycle(ValidatorLifecycle::WaitingForReadiness(pending))?;
-        let guard = self.storage.checkpoint_guard();
-        self.persist_validator_state_delta(&before, &after)?;
-
         // Re-joining requires a fresh readiness confirmation before DKG.
-        self.pending_set_change.write(true)?;
-
-        self.emit(IValidatorSet::ValidatorUnjailed {
-            validator: addr,
-            atHeight: block_number,
+        self.commit_set_change(&before, &after, |vs| {
+            vs.emit(IValidatorSet::ValidatorUnjailed {
+                validator: addr,
+                atHeight: block_number,
+            })
         })?;
-        guard.commit();
 
         crate::metrics::record_validator_status(addr, status::PENDING);
         crate::metrics::record_pending_set_change(true);
@@ -355,4 +304,111 @@ impl ValidatorSet<'_> {
     pub fn unjail_cooldown_blocks(&self) -> Result<u64> {
         self.config_unjail_cooldown_blocks.read()
     }
+
+    /// Persists a lifecycle transition that changes the consensus set. One
+    /// checkpoint holds the changed fields, the raised set-change flag and the
+    /// events that `emit` writes.
+    fn commit_set_change(
+        &mut self,
+        before: &ValidatorState,
+        after: &ValidatorState,
+        emit: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(before, after)?;
+        self.pending_set_change.write(true)?;
+        emit(self)?;
+        guard.commit();
+        Ok(())
+    }
+}
+
+/// A punitive transition from ACTIVE: a jail or a forced exit at
+/// `block_number`.
+#[derive(Clone, Copy)]
+struct Punishment {
+    jail: bool,
+    block_number: u64,
+}
+
+impl Punishment {
+    /// The deferred observability of this committed punishment.
+    fn deferred(self, addr: Address) -> DeferredValidatorPunishment {
+        let (target, target_label) = if self.jail {
+            (status::JAILED, "JAILED")
+        } else {
+            (status::EXITING, "EXITING")
+        };
+        DeferredValidatorPunishment {
+            addr,
+            target,
+            target_label,
+            jailed: self.jail,
+            block_number: self.block_number,
+        }
+    }
+}
+
+/// The ACTIVE payload that a punishment transitions, or `None` when the
+/// lifecycle already left the committee and the punishment is a no-op.
+fn punishable_active(
+    lifecycle: ValidatorLifecycle,
+    punishment: Punishment,
+    current_status: u8,
+) -> Result<Option<Active>> {
+    match lifecycle {
+        ValidatorLifecycle::Active(active) => Ok(Some(active)),
+        ValidatorLifecycle::JailRetained(_) | ValidatorLifecycle::Jail(_) if punishment.jail => {
+            Ok(None)
+        }
+        ValidatorLifecycle::Exiting(_)
+        | ValidatorLifecycle::Unbonding(_)
+        | ValidatorLifecycle::Inactive(_) => Ok(None),
+        _ => {
+            let action = if punishment.jail {
+                "jail"
+            } else {
+                "force-exit"
+            };
+            Err(PrecompileError::Revert(format!(
+                "cannot {action} validator with status {current_status}: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed"
+            )))
+        }
+    }
+}
+
+/// The punished state of an ACTIVE validator: JAILED or EXITING at
+/// `block_number`, with one more slash and that deactivation height.
+fn punished_state(
+    before: &ValidatorState,
+    active: Active,
+    history: ValidatorHistory,
+    punishment: Punishment,
+) -> Result<ValidatorState> {
+    let block_number = punishment.block_number;
+    let stake = *before.stake().ok_or_else(|| {
+        PrecompileError::Fatal("active validator is missing stake projection".into())
+    })?;
+    let next = if punishment.jail {
+        ValidatorLifecycle::JailRetained(state_machine::jail(active, block_number)?)
+    } else {
+        ValidatorLifecycle::Exiting(state_machine::begin_exit(active, stake, block_number)?)
+    };
+    let next = state_machine::with_history(
+        next,
+        ValidatorHistory::new(
+            history.joined_at_height(),
+            Some(block_number),
+            HistoryCounters {
+                slash_count: history
+                    .slash_count()
+                    .checked_add(1)
+                    .ok_or_else(|| PrecompileError::Fatal("slash count overflow".into()))?,
+                missed_blocks: history.missed_blocks(),
+                missed_votes: history.missed_votes(),
+                blocks_proposed: history.blocks_proposed(),
+            },
+        ),
+    )?;
+    before.clone().with_lifecycle(next)
 }

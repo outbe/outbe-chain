@@ -1,22 +1,11 @@
 //! Submitted oracle prices and volumes stay inside a market-sized bound.
 
-use alloy_primitives::Address;
-
-use super::common::{
-    coen_iso, init_oracle, native_coen, register_validator, usd, with_storage, COEN, COEN_ISO_SCALE,
-};
-use crate::schema::OracleContract;
+use super::common::{coen_iso, register_voter, usd, with_coen840_oracle, COEN, COEN_ISO_SCALE};
 
 #[test]
 fn submit_vote_accepts_the_price_and_volume_ceiling() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(crate::types::AddressPair::new_coen_to(840))
-            .unwrap();
-        let validator = Address::new([0x11; 20]);
-        register_validator(storage, validator, native_coen(100));
+    with_coen840_oracle(|storage, oracle, _pair| {
+        let validator = register_voter(&storage);
 
         oracle
             .submit_vote(
@@ -35,14 +24,8 @@ fn submit_vote_accepts_the_price_and_volume_ceiling() {
 
 #[test]
 fn submit_vote_rejects_a_price_above_one_million() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(crate::types::AddressPair::new_coen_to(840))
-            .unwrap();
-        let validator = Address::new([0x11; 20]);
-        register_validator(storage, validator, native_coen(100));
+    with_coen840_oracle(|storage, oracle, _pair| {
+        let validator = register_voter(&storage);
 
         let err = oracle
             .submit_vote(
@@ -60,14 +43,8 @@ fn submit_vote_rejects_a_price_above_one_million() {
 
 #[test]
 fn submit_vote_rejects_a_volume_above_one_trillion() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(crate::types::AddressPair::new_coen_to(840))
-            .unwrap();
-        let validator = Address::new([0x11; 20]);
-        register_validator(storage, validator, native_coen(100));
+    with_coen840_oracle(|storage, oracle, _pair| {
+        let validator = register_voter(&storage);
 
         let err = oracle
             .submit_vote(

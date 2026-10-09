@@ -13,7 +13,7 @@ use outbe_primitives::{
 };
 use outbe_tribute::TributeContract;
 use outbe_validatorset::{
-    contract::ValidatorSet, runtime::status as validator_status, ValidatorHistory,
+    contract::ValidatorSet, runtime::status as validator_status, HistoryCounters, ValidatorHistory,
     ValidatorLifecycle,
 };
 
@@ -754,10 +754,12 @@ fn deadline_keeps_every_non_active_missing_status_unchanged() {
                         transitioned.joined_at_height,
                         (transitioned.deactivated_at_height != 0)
                             .then_some(transitioned.deactivated_at_height),
-                        7,
-                        transitioned.missed_blocks,
-                        transitioned.missed_votes,
-                        transitioned.blocks_proposed,
+                        HistoryCounters {
+                            slash_count: 7,
+                            missed_blocks: transitioned.missed_blocks,
+                            missed_votes: transitioned.missed_votes,
+                            blocks_proposed: transitioned.blocks_proposed,
+                        },
                     ),
                 )
                 .unwrap();

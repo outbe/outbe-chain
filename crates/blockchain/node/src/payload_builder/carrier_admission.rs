@@ -14,7 +14,6 @@
 
 use std::any::Any;
 
-use alloy_consensus::Transaction as _;
 use alloy_primitives::{Address, B256};
 use outbe_metadosis::api::{verify_result_vote_carrier, ResultVoteCarrierAdmission};
 use outbe_ocomp_protocol::{
@@ -22,6 +21,7 @@ use outbe_ocomp_protocol::{
     system_carrier::{
         classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierView,
     },
+    transaction_call::TransactionCallFields,
 };
 use outbe_primitives::{
     block::BlockContext,
@@ -109,12 +109,7 @@ pub(super) fn admit<DB: StateDB>(
     let limits = poc_schema_limits();
     let view = OcompSystemCarrierView {
         is_eip1559: tx.is_eip1559(),
-        to: tx.to(),
-        value: tx.value(),
-        input: tx.input().as_ref(),
-        gas_limit: tx.gas_limit(),
-        max_fee_per_gas: tx.max_fee_per_gas(),
-        max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+        call: TransactionCallFields::from_transaction(tx),
     };
     // This function checks only a well-formed result-vote envelope. Malformed
     // envelopes and NOD materialization keep their existing execution path.
@@ -135,7 +130,7 @@ pub(super) fn admit<DB: StateDB>(
     let mut provider = DirectStorageProvider::new(db, ctx);
     let admission = verify_result_vote_carrier(
         StorageHandle::new(&mut provider),
-        view.input,
+        view.call.input,
         signer,
         block.number,
         &limits,

@@ -64,9 +64,11 @@ impl VerifiedPlanSchedule<'_> {
         let canonical_spec = spec.encode_canonical(self.limits)?;
         let unit_membership_siblings = if spec.phase == UnitPhase::Enumerate {
             try_streaming_ordered_list_membership_proof(
-                ListKind::UnitSpecificationsArtifacts,
-                self.plan.primary_work_unit_count,
-                plan_ordinal,
+                outbe_ocomp_protocol::list::OrderedListProofTarget::new(
+                    ListKind::UnitSpecificationsArtifacts,
+                    self.plan.primary_work_unit_count,
+                    plan_ordinal,
+                ),
                 (0..self.plan.primary_work_unit_count).map(|ordinal| {
                     self.primary_spec_from_catalog(ordinal)?
                         .encode_canonical(self.limits)

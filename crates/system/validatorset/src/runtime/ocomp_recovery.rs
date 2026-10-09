@@ -92,10 +92,7 @@ impl ValidatorSet<'_> {
         let stake = StakeProjection::new(bonded, before.unbonding_end_hint());
         let lifecycle = state_machine::with_stake(before.lifecycle().clone(), stake)?;
         let after = before.clone().with_lifecycle(lifecycle)?;
-        let guard = self.storage.checkpoint_guard();
-        self.persist_validator_state_delta(&before, &after)?;
-        guard.commit();
-        Ok(())
+        self.commit_transition(&before, &after, false)
     }
 
     /// Returns the durable OCOMP recovery state for one validator.

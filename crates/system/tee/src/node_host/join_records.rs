@@ -1,4 +1,9 @@
-use super::codec_error;
+use super::journal_records::{
+    decode_relay_fields, decode_submission_payload, encode_relay_fields, encode_submission_fields,
+    validate_submission_evidence_length, validate_submission_frame, JournalRelayPayload,
+    JournalRelayValidation, JournalSubmissionErrors, JournalSubmissionPayload,
+    JournalSubmissionValidation, RelayMaterial,
+};
 use super::read_owned_bounded_file;
 use super::validate_finalized_join_admission_anchor;
 use super::MAX_REPLACEMENT_SUBMISSION_BYTES;
@@ -7,10 +12,9 @@ use crate::TransportError;
 use alloy_primitives::keccak256;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
-use outbe_primitives::tee_attestation_v1::AttestationEvidenceV1;
-
 use outbe_primitives::tee_attestation_v1::MAX_ATTESTATION_EVIDENCE_BYTES;
 
+use std::fmt;
 use std::path::Path;
 
 const COMMITTED_JOIN_SUBMISSION_VERSION_V1: u8 = 1;
@@ -24,6 +28,35 @@ const MAX_COMMITTED_JOIN_RELAY_BYTES: u64 = MAX_ATTESTATION_EVIDENCE_BYTES as u6
 const FINALIZED_JOIN_ADMISSION_ANCHOR_VERSION_V1: u8 = 1;
 
 const FINALIZED_JOIN_ADMISSION_ANCHOR_BYTES: u64 = 1 + (7 * 32) + 8 + 8;
+
+const COMMITTED_JOIN_SUBMISSION_VALIDATION: JournalSubmissionValidation =
+    JournalSubmissionValidation {
+        min_len: 154,
+        max_bytes: MAX_COMMITTED_JOIN_SUBMISSION_BYTES,
+        version: COMMITTED_JOIN_SUBMISSION_VERSION_V1,
+        framing_error: "committed join submission framing is invalid",
+        length_base: 154,
+        length_overflow_error: "committed join submission length overflow",
+        noncanonical_length_error: "committed join evidence length is non-canonical",
+        encode_evidence_length_error: "committed join evidence length overflow",
+        encode_allocation_error: "committed join submission allocation length overflow",
+        encode_cap_error: Some("committed join submission exceeds its fixed cap"),
+    };
+
+const COMMITTED_JOIN_RELAY_VALIDATION: JournalRelayValidation = JournalRelayValidation {
+    header_len: 109,
+    max_bytes: MAX_COMMITTED_JOIN_RELAY_BYTES,
+    version: COMMITTED_JOIN_RELAY_VERSION_V1,
+    encode_length_overflow_error: "committed join relay length overflow",
+    encode_cap_error: "committed join relay exceeds its fixed cap",
+    raw_len_offset: 105,
+    raw_len_error: "committed join relay length",
+    from_block_offset: Some(97),
+    from_block_error: "committed join from_block",
+    framing_error: "committed join relay framing is invalid",
+    raw_length_error: "committed join relay raw transaction length is invalid",
+    commitments_error: "committed join relay commitments are invalid",
+};
 
 /// Exact finalized checkpoint that allows a restarted validator to catch up
 /// without trusting its stale local Registry state. This is owner-only local
@@ -93,25 +126,55 @@ impl FinalizedJoinAdmissionAnchorV1 {
 
 /// Exact registration material durably bound to the already committed
 /// NodeHost enclave before its first registration transaction is constructed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CommittedJoinSubmissionV1 {
-    pub(super) registration_caller: Address,
-    pub(super) evidence: Vec<u8>,
-    pub(super) node_signature: [u8; 65],
-    pub(super) enclave_signature: [u8; 64],
+    registration_caller: Address,
+    payload: JournalSubmissionPayload,
 }
 
 /// Exact signed committed-join transaction persisted before its first relay.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CommittedJoinRelayV1 {
-    pub(super) submission_hash: B256,
-    pub(super) calldata_hash: B256,
-    pub(super) transaction_hash: B256,
-    pub(super) from_block: u64,
-    pub(super) raw_transaction: Vec<u8>,
+    payload: JournalRelayPayload,
+    from_block: u64,
+}
+
+impl fmt::Debug for CommittedJoinSubmissionV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommittedJoinSubmissionV1")
+            .field("registration_caller", &self.registration_caller)
+            .field("evidence", &self.payload.evidence)
+            .field("node_signature", &self.payload.node_signature)
+            .field("enclave_signature", &self.payload.enclave_signature)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CommittedJoinRelayV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommittedJoinRelayV1")
+            .field("submission_hash", &self.payload.submission_hash)
+            .field("calldata_hash", &self.payload.calldata_hash)
+            .field("transaction_hash", &self.payload.transaction_hash)
+            .field("from_block", &self.from_block)
+            .field("raw_transaction", &self.payload.raw_transaction)
+            .finish()
+    }
 }
 
 impl CommittedJoinSubmissionV1 {
+    pub(super) fn new(
+        registration_caller: Address,
+        evidence: Vec<u8>,
+        node_signature: [u8; 65],
+        enclave_signature: [u8; 64],
+    ) -> Self {
+        Self {
+            registration_caller,
+            payload: JournalSubmissionPayload::new(evidence, node_signature, enclave_signature),
+        }
+    }
+
     #[must_use]
     pub const fn registration_caller(&self) -> Address {
         self.registration_caller
@@ -119,17 +182,17 @@ impl CommittedJoinSubmissionV1 {
 
     #[must_use]
     pub fn evidence(&self) -> &[u8] {
-        &self.evidence
+        &self.payload.evidence
     }
 
     #[must_use]
     pub const fn node_signature(&self) -> &[u8; 65] {
-        &self.node_signature
+        &self.payload.node_signature
     }
 
     #[must_use]
     pub const fn enclave_signature(&self) -> &[u8; 64] {
-        &self.enclave_signature
+        &self.payload.enclave_signature
     }
 
     pub fn submission_hash(&self) -> Result<B256, TransportError> {
@@ -142,81 +205,67 @@ impl CommittedJoinSubmissionV1 {
                 "committed join registration caller is zero".into(),
             ));
         }
-        let evidence_len = u32::try_from(self.evidence.len())
-            .map_err(|_| TransportError::Codec("committed join evidence length overflow".into()))?;
-        let capacity = 154_usize.checked_add(self.evidence.len()).ok_or_else(|| {
-            TransportError::Codec("committed join submission allocation length overflow".into())
-        })?;
-        let mut out = Vec::with_capacity(capacity);
-        out.push(COMMITTED_JOIN_SUBMISSION_VERSION_V1);
-        out.extend_from_slice(self.registration_caller.as_slice());
-        out.extend_from_slice(&evidence_len.to_be_bytes());
-        out.extend_from_slice(&self.evidence);
-        out.extend_from_slice(&self.node_signature);
-        out.extend_from_slice(&self.enclave_signature);
-        if u64::try_from(out.len()).unwrap_or(u64::MAX) > MAX_COMMITTED_JOIN_SUBMISSION_BYTES {
-            return Err(TransportError::Codec(
-                "committed join submission exceeds its fixed cap".into(),
-            ));
-        }
-        Ok(out)
+        encode_submission_fields(
+            self.registration_caller.as_slice(),
+            &self.payload,
+            &COMMITTED_JOIN_SUBMISSION_VALIDATION,
+        )
     }
 
     fn decode_canonical(input: &[u8]) -> Result<Self, TransportError> {
-        if input.len() < 154
-            || u64::try_from(input.len()).unwrap_or(u64::MAX) > MAX_COMMITTED_JOIN_SUBMISSION_BYTES
-            || input[0] != COMMITTED_JOIN_SUBMISSION_VERSION_V1
-        {
-            return Err(TransportError::Codec(
-                "committed join submission framing is invalid".into(),
-            ));
-        }
+        validate_submission_frame(input, &COMMITTED_JOIN_SUBMISSION_VALIDATION)?;
         let evidence_len =
             usize::try_from(u32::from_be_bytes(input[21..25].try_into().map_err(
                 |_| TransportError::Codec("committed join evidence length".into()),
             )?))
             .map_err(|_| TransportError::Codec("committed join evidence length overflow".into()))?;
-        let expected_len = 154_usize.checked_add(evidence_len).ok_or_else(|| {
-            TransportError::Codec("committed join submission length overflow".into())
-        })?;
-        if evidence_len > MAX_ATTESTATION_EVIDENCE_BYTES || input.len() != expected_len {
-            return Err(TransportError::Codec(
-                "committed join evidence length is non-canonical".into(),
-            ));
-        }
+        validate_submission_evidence_length(
+            input.len(),
+            evidence_len,
+            &COMMITTED_JOIN_SUBMISSION_VALIDATION,
+        )?;
         let registration_caller = Address::from_slice(&input[1..21]);
         if registration_caller.is_zero() {
             return Err(TransportError::Codec(
                 "committed join registration caller is zero".into(),
             ));
         }
-        let evidence_end = 25 + evidence_len;
-        let evidence = input[25..evidence_end].to_vec();
-        AttestationEvidenceV1::decode_canonical(&evidence).map_err(codec_error)?;
-        let node_signature = input[evidence_end..evidence_end + 65]
-            .try_into()
-            .map_err(|_| TransportError::Codec("committed join node signature length".into()))?;
-        let enclave_signature = input[evidence_end + 65..]
-            .try_into()
-            .map_err(|_| TransportError::Codec("committed join enclave signature length".into()))?;
+        let payload = decode_submission_payload(
+            input,
+            25,
+            evidence_len,
+            JournalSubmissionErrors {
+                node_signature: "committed join node signature length",
+                enclave_signature: "committed join enclave signature length",
+            },
+        )?;
         Ok(Self {
             registration_caller,
-            evidence,
-            node_signature,
-            enclave_signature,
+            payload,
         })
     }
 }
 
 impl CommittedJoinRelayV1 {
+    pub(super) fn new(submission_hash: B256, from_block: u64, material: RelayMaterial) -> Self {
+        Self {
+            payload: JournalRelayPayload::new(submission_hash, material),
+            from_block,
+        }
+    }
+
+    pub(super) fn submission_hash(&self) -> B256 {
+        self.payload.submission_hash
+    }
+
     #[must_use]
     pub const fn calldata_hash(&self) -> B256 {
-        self.calldata_hash
+        self.payload.calldata_hash
     }
 
     #[must_use]
     pub const fn transaction_hash(&self) -> B256 {
-        self.transaction_hash
+        self.payload.transaction_hash
     }
 
     #[must_use]
@@ -226,66 +275,23 @@ impl CommittedJoinRelayV1 {
 
     #[must_use]
     pub fn raw_transaction(&self) -> &[u8] {
-        &self.raw_transaction
+        &self.payload.raw_transaction
     }
 
     pub(super) fn encode_canonical(&self) -> Result<Vec<u8>, TransportError> {
-        let raw_len = u32::try_from(self.raw_transaction.len())
-            .map_err(|_| TransportError::Codec("committed join relay length overflow".into()))?;
-        let mut out = Vec::with_capacity(109 + self.raw_transaction.len());
-        out.push(COMMITTED_JOIN_RELAY_VERSION_V1);
-        out.extend_from_slice(self.submission_hash.as_slice());
-        out.extend_from_slice(self.calldata_hash.as_slice());
-        out.extend_from_slice(self.transaction_hash.as_slice());
-        out.extend_from_slice(&self.from_block.to_be_bytes());
-        out.extend_from_slice(&raw_len.to_be_bytes());
-        out.extend_from_slice(&self.raw_transaction);
-        if u64::try_from(out.len()).unwrap_or(u64::MAX) > MAX_COMMITTED_JOIN_RELAY_BYTES {
-            return Err(TransportError::Codec(
-                "committed join relay exceeds its fixed cap".into(),
-            ));
-        }
-        Ok(out)
+        encode_relay_fields(
+            &self.payload,
+            Some(self.from_block),
+            &COMMITTED_JOIN_RELAY_VALIDATION,
+        )
     }
 
     fn decode_canonical(input: &[u8]) -> Result<Self, TransportError> {
-        if input.len() < 109
-            || u64::try_from(input.len()).unwrap_or(u64::MAX) > MAX_COMMITTED_JOIN_RELAY_BYTES
-            || input[0] != COMMITTED_JOIN_RELAY_VERSION_V1
-        {
-            return Err(TransportError::Codec(
-                "committed join relay framing is invalid".into(),
-            ));
-        }
-        let raw_len = u32::from_be_bytes(
-            input[105..109]
-                .try_into()
-                .map_err(|_| TransportError::Codec("committed join relay length".into()))?,
-        ) as usize;
-        if input.len() != 109 + raw_len || raw_len == 0 {
-            return Err(TransportError::Codec(
-                "committed join relay raw transaction length is invalid".into(),
-            ));
-        }
+        let fields = decode_relay_fields(input, &COMMITTED_JOIN_RELAY_VALIDATION)?;
         let relay = Self {
-            submission_hash: B256::from_slice(&input[1..33]),
-            calldata_hash: B256::from_slice(&input[33..65]),
-            transaction_hash: B256::from_slice(&input[65..97]),
-            from_block: u64::from_be_bytes(
-                input[97..105]
-                    .try_into()
-                    .map_err(|_| TransportError::Codec("committed join from_block".into()))?,
-            ),
-            raw_transaction: input[109..].to_vec(),
+            payload: fields.payload,
+            from_block: fields.from_block,
         };
-        if relay.submission_hash.is_zero()
-            || relay.calldata_hash.is_zero()
-            || relay.transaction_hash != keccak256(&relay.raw_transaction)
-        {
-            return Err(TransportError::Codec(
-                "committed join relay commitments are invalid".into(),
-            ));
-        }
         Ok(relay)
     }
 }

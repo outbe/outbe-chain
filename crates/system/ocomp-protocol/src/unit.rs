@@ -4,11 +4,11 @@ use crate::{
     codec::require_canonical_reencoding,
     common::BoundedBytes,
     error::ProtocolError,
-    hash::hash_framed,
+    hash::{framed_identity_hash, hash_framed},
     registry::HashDomain,
     schema::{
-        encode_nested_value, impl_top_level_codec, require, wire_enum_u8, wire_struct, NestedCodec,
-        SchemaLimits,
+        encode_nested_value, impl_nested_record_codec, impl_top_level_codec, require, wire_enum_u8,
+        wire_struct, NestedCodec, SchemaLimits,
     },
     CanonicalReader, CanonicalWriter,
 };
@@ -283,10 +283,7 @@ impl UnitSpecV1 {
         Ok(())
     }
 
-    pub fn unit_id(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_semantics(limits)?;
-        hash_framed(HashDomain::Unit, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(unit_id, Unit, validate_semantics(limits));
 
     pub fn interval_commitment(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
         let mut payload = vec![self.phase as u8];
@@ -354,28 +351,32 @@ impl UnitArtifactV1 {
         Ok(artifact)
     }
 
-    pub fn output_header(
+    fn decode_validated_output_header(
         &self,
         limits: &SchemaLimits,
-    ) -> Result<WorkOutputHeaderV1, ProtocolError> {
+    ) -> Result<(WorkOutputHeaderV1, usize), ProtocolError> {
         let mut reader = CanonicalReader::new(&self.canonical_output_bytes.0, limits.codec)?;
         let header = WorkOutputHeaderV1::decode_nested(&mut reader, limits)?;
         <WorkOutputHeaderV1 as NestedCodec>::validate(&header, limits)?;
         require_output_header_semantics(&header)?;
+        Ok((header, reader.offset()))
+    }
+
+    pub fn output_header(
+        &self,
+        limits: &SchemaLimits,
+    ) -> Result<WorkOutputHeaderV1, ProtocolError> {
+        let (header, header_len) = self.decode_validated_output_header(limits)?;
         let encoded_header = encode_nested_value(&header, limits)?;
         require_canonical_reencoding(
-            &self.canonical_output_bytes.0[..reader.offset()],
+            &self.canonical_output_bytes.0[..header_len],
             &encoded_header,
         )?;
         Ok(header)
     }
 
     pub fn phase_payload<'a>(&'a self, limits: &SchemaLimits) -> Result<&'a [u8], ProtocolError> {
-        let mut reader = CanonicalReader::new(&self.canonical_output_bytes.0, limits.codec)?;
-        let header = WorkOutputHeaderV1::decode_nested(&mut reader, limits)?;
-        <WorkOutputHeaderV1 as NestedCodec>::validate(&header, limits)?;
-        require_output_header_semantics(&header)?;
-        let payload_offset = reader.offset();
+        let (_, payload_offset) = self.decode_validated_output_header(limits)?;
         require(
             payload_offset < self.canonical_output_bytes.0.len(),
             "unit phase payload is non-empty",
@@ -383,16 +384,25 @@ impl UnitArtifactV1 {
         Ok(&self.canonical_output_bytes.0[payload_offset..])
     }
 
+    fn has_committed_identity(&self) -> bool {
+        !self.protocol_bundle_hash.is_zero() && !self.job_id.is_zero() && !self.unit_id.is_zero()
+    }
+
+    fn has_committed_input(&self) -> bool {
+        !self.interval_commitment.is_zero() && !self.input_root.is_zero()
+    }
+
+    fn has_committed_output(&self) -> bool {
+        !self.canonical_output_bytes.0.is_empty()
+            && !self.output_semantic_digest.is_zero()
+            && !self.coverage_or_permutation_commitment.is_zero()
+    }
+
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         require(
-            !self.protocol_bundle_hash.is_zero()
-                && !self.job_id.is_zero()
-                && !self.unit_id.is_zero()
-                && !self.interval_commitment.is_zero()
-                && !self.input_root.is_zero()
-                && !self.canonical_output_bytes.0.is_empty()
-                && !self.output_semantic_digest.is_zero()
-                && !self.coverage_or_permutation_commitment.is_zero(),
+            self.has_committed_identity()
+                && self.has_committed_input()
+                && self.has_committed_output(),
             "unit artifact committed fields",
         )?;
         let header = self.output_header(limits)?;
@@ -437,9 +447,7 @@ impl UnitArtifactV1 {
         )
     }
 
-    pub fn artifact_digest(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        hash_framed(HashDomain::UnitArtifact, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(artifact_digest, UnitArtifact);
 }
 
 fn require_output_header_semantics(header: &WorkOutputHeaderV1) -> Result<(), ProtocolError> {
@@ -458,34 +466,22 @@ fn validate_unit_artifact(
     artifact.validate_semantics(limits)
 }
 
+impl_nested_record_codec!(PlanCommitmentV1);
+
 impl PlanCommitmentV1 {
-    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
-        <Self as NestedCodec>::validate(self, limits)?;
-        let mut writer = CanonicalWriter::new(limits.codec);
-        self.encode_nested(&mut writer, limits)?;
-        Ok(writer.into_bytes())
+    fn has_committed_population(&self) -> bool {
+        self.tribute_count > 0 && self.wwd > 0 && !self.lysis_limit_minor.is_zero()
     }
 
-    pub fn decode_canonical_record(
-        encoded: &[u8],
-        limits: &SchemaLimits,
-    ) -> Result<Self, ProtocolError> {
-        let mut reader = CanonicalReader::new(encoded, limits.codec)?;
-        let plan = Self::decode_nested(&mut reader, limits)?;
-        reader.finish()?;
-        <Self as NestedCodec>::validate(&plan, limits)?;
-        require_canonical_reencoding(encoded, &plan.encode_canonical_record(limits)?)?;
-        Ok(plan)
+    fn has_committed_work_fields(&self) -> bool {
+        self.logical_evaluation_time > 0
+            && self.max_tributes_per_work_shard > 0
+            && !self.primary_work_unit_root.is_zero()
     }
 
     pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
         require(
-            self.tribute_count > 0
-                && self.wwd > 0
-                && !self.lysis_limit_minor.is_zero()
-                && self.logical_evaluation_time > 0
-                && self.max_tributes_per_work_shard > 0
-                && !self.primary_work_unit_root.is_zero(),
+            self.has_committed_population() && self.has_committed_work_fields(),
             "plan committed population",
         )?;
         let rounded = self

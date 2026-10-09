@@ -3,6 +3,7 @@ use crate::schema::ValidatorSet;
 use crate::state_machine::ValidatorLifecycle;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::Mapping;
 
 impl ValidatorSet<'_> {
     /// Records a block proposal by the given validator.
@@ -14,53 +15,17 @@ impl ValidatorSet<'_> {
                 "proposer is not a current consensus participant: {addr}"
             )));
         }
-        let proposed = self.val_blocks_proposed.read(&addr)?;
-        self.val_blocks_proposed.write(
-            &addr,
-            proposed
-                .checked_add(1)
-                .ok_or_else(|| PrecompileError::Fatal("blocks proposed overflow".into()))?,
-        )?;
-
-        Ok(())
+        increment_counter(&self.val_blocks_proposed, &addr, "blocks proposed overflow")
     }
 
     /// Records a missed block for the given validator.
     pub fn record_missed_block(&mut self, addr: Address) -> Result<()> {
-        let missed = self.val_missed_blocks.read(&addr)?;
-        self.val_missed_blocks.write(
-            &addr,
-            missed
-                .checked_add(1)
-                .ok_or_else(|| PrecompileError::Fatal("missed blocks overflow".into()))?,
-        )?;
-        Ok(())
+        increment_counter(&self.val_missed_blocks, &addr, "missed blocks overflow")
     }
 
     /// Records vote participation: increments `missed_votes` for each absent validator.
     pub fn record_participation(&mut self, voters: &[Address], absent: &[Address]) -> Result<()> {
-        for addr in voters {
-            if !self.is_consensus_participant(*addr)? {
-                return Err(PrecompileError::Revert(format!(
-                    "voter is not a current consensus participant: {addr}"
-                )));
-            }
-        }
-        for addr in absent {
-            if !self.is_consensus_participant(*addr)? {
-                return Err(PrecompileError::Revert(format!(
-                    "absent voter is not a current consensus participant: {addr}"
-                )));
-            }
-            let missed = self.val_missed_votes.read(addr)?;
-            self.val_missed_votes.write(
-                addr,
-                missed
-                    .checked_add(1)
-                    .ok_or_else(|| PrecompileError::Fatal("missed votes overflow".into()))?,
-            )?;
-        }
-        Ok(())
+        self.record_vote_participation(voters, absent, VotingCommittee::Current)
     }
 
     /// Records vote participation for a historical (finalized-parent) committee.
@@ -76,28 +41,37 @@ impl ValidatorSet<'_> {
         voters: &[Address],
         absent: &[Address],
     ) -> Result<()> {
+        self.record_vote_participation(voters, absent, VotingCommittee::Finalized)
+    }
+
+    /// Requires every voter, then every absent voter, to belong to `committee`.
+    /// Each absent voter is checked and then gets one more missed vote, in
+    /// order.
+    fn record_vote_participation(
+        &mut self,
+        voters: &[Address],
+        absent: &[Address],
+        committee: VotingCommittee,
+    ) -> Result<()> {
         for addr in voters {
-            if !self.is_validator(*addr)? {
-                return Err(PrecompileError::Revert(format!(
-                    "finalized voter is not a registered validator: {addr}"
-                )));
+            if !self.is_committee_member(committee, *addr)? {
+                return Err(PrecompileError::Revert(committee.voter_rejection(addr)));
             }
         }
         for addr in absent {
-            if !self.is_validator(*addr)? {
-                return Err(PrecompileError::Revert(format!(
-                    "finalized absent voter is not a registered validator: {addr}"
-                )));
+            if !self.is_committee_member(committee, *addr)? {
+                return Err(PrecompileError::Revert(committee.absent_rejection(addr)));
             }
-            let missed = self.val_missed_votes.read(addr)?;
-            self.val_missed_votes.write(
-                addr,
-                missed
-                    .checked_add(1)
-                    .ok_or_else(|| PrecompileError::Fatal("missed votes overflow".into()))?,
-            )?;
+            increment_counter(&self.val_missed_votes, addr, "missed votes overflow")?;
         }
         Ok(())
+    }
+
+    fn is_committee_member(&self, committee: VotingCommittee, addr: Address) -> Result<bool> {
+        match committee {
+            VotingCommittee::Current => self.is_consensus_participant(addr),
+            VotingCommittee::Finalized => self.is_validator(addr),
+        }
     }
 
     /// Resets ValidatorSet-owned per-epoch counters for the outgoing committee.
@@ -159,4 +133,48 @@ impl ValidatorSet<'_> {
         self.reset_epoch_counters()?;
         self.advance_epoch(timestamp, block_number)
     }
+}
+
+/// The committee that a vote-participation record describes.
+#[derive(Clone, Copy)]
+enum VotingCommittee {
+    /// The current consensus participants.
+    Current,
+    /// A finalized-parent committee, whose members must still be registered.
+    Finalized,
+}
+
+impl VotingCommittee {
+    fn voter_rejection(self, addr: &Address) -> String {
+        match self {
+            Self::Current => format!("voter is not a current consensus participant: {addr}"),
+            Self::Finalized => format!("finalized voter is not a registered validator: {addr}"),
+        }
+    }
+
+    fn absent_rejection(self, addr: &Address) -> String {
+        match self {
+            Self::Current => {
+                format!("absent voter is not a current consensus participant: {addr}")
+            }
+            Self::Finalized => {
+                format!("finalized absent voter is not a registered validator: {addr}")
+            }
+        }
+    }
+}
+
+/// Adds one to `counter[addr]`. An overflow fails with `overflow`.
+fn increment_counter(
+    counter: &Mapping<'_, Address, u64>,
+    addr: &Address,
+    overflow: &'static str,
+) -> Result<()> {
+    let value = counter.read(addr)?;
+    counter.write(
+        addr,
+        value
+            .checked_add(1)
+            .ok_or_else(|| PrecompileError::Fatal(overflow.into()))?,
+    )
 }

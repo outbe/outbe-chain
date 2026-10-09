@@ -24,8 +24,8 @@ mod tests;
 mod filesystem;
 use filesystem::{
     ensure_private_directory, path_exists, read_owned_bounded_file, remove_file_if_exists,
-    replace_bytes_atomically, write_bytes_once_or_exact, write_manifest_once, NodeHostPaths,
-    NodeHostStateLock,
+    replace_bytes_atomically, write_bytes_once_or_exact, write_manifest_once, BoundedRecordBytes,
+    NodeHostPaths, NodeHostStateLock,
 };
 pub use filesystem::{
     NODE_HOST_COMMITTED_JOIN_RELAY_V1, NODE_HOST_COMMITTED_JOIN_SUBMISSION_V1,
@@ -36,6 +36,10 @@ pub use filesystem::{
 
 #[cfg(test)]
 use filesystem::write_bytes_once;
+
+mod durable_submission;
+mod journal_records;
+mod locked_state;
 
 mod join_records;
 use join_records::{
@@ -62,8 +66,7 @@ pub use identity::{
     NodeHostIdentityV1,
 };
 use identity::{
-    read_manifest, sign_manifest, validate_identity, validate_manifest_identity,
-    MAX_INITIALIZATION_MANIFEST_BYTES,
+    read_manifest, validate_identity, validate_manifest_identity, MAX_INITIALIZATION_MANIFEST_BYTES,
 };
 
 mod committed_join;
@@ -77,7 +80,12 @@ use committed_join::{
     validate_finalized_join_admission_anchor,
 };
 
+pub use crate::finalized_admission::{
+    FinalizedAdmissionBeginInputV1, FinalizedAdmissionIngestInputV1,
+};
+
 mod replacement;
+mod replacement_binding;
 pub use replacement::{
     clear_expired_transition_submission_v1, construct_finalized_replacement_authorization_v1,
     load_replacement_candidate_relay, load_replacement_candidate_submission,

@@ -3,6 +3,32 @@
 use std::collections::BTreeSet;
 
 use outbe_primitives::chain::OutbeNetwork;
+use outbe_primitives::tee_attestation_v1::DcapCollateralKind;
+
+/// Exact capture file names and their consensus collateral kind, in evidence order.
+/// Host fixture assembly and the release harness must use the same mapping.
+pub const DCAP_COLLATERAL_COMPONENT_FILES: [(DcapCollateralKind, &str); 8] = [
+    (
+        DcapCollateralKind::PckCertificateChain,
+        "pck-certificate-chain.pem0",
+    ),
+    (DcapCollateralKind::PckCrl, "pck.crl.der"),
+    (
+        DcapCollateralKind::PckCrlIssuerChain,
+        "pck-crl-issuer-chain.pem",
+    ),
+    (DcapCollateralKind::RootCaCrl, "root-ca.crl.der"),
+    (DcapCollateralKind::TcbInfo, "tcb-info.json"),
+    (
+        DcapCollateralKind::TcbInfoIssuerChain,
+        "tcb-info-issuer-chain.pem",
+    ),
+    (DcapCollateralKind::QeIdentity, "qe-identity.json"),
+    (
+        DcapCollateralKind::QeIdentityIssuerChain,
+        "qe-identity-issuer-chain.pem",
+    ),
+];
 
 const COMMON_RELEASE_DCAP_ARTIFACT_PATHS: [&str; 17] = [
     "collateral/capture-provenance.json",

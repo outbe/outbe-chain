@@ -17,12 +17,16 @@ use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
 };
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::StorageHandle;
 
 use crate::{
     hooks::{activate_boundary_atomic, BoundaryActivationInputs},
     runtime::status,
     schema::ValidatorSet,
-    state::{CommitteeEntry, CommitteeSnapshot},
+    state::{
+        write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
+        COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
+    },
     state_machine::{self, StakeProjection, ValidatorHistory, ValidatorLifecycle},
     EpochSnapshot,
 };
@@ -55,6 +59,41 @@ fn test_ocomp_registration(
         PrecompileError::Fatal(format!("cannot derive test validator identity: {error}"))
     })?;
     let signing_key = test_ocomp_signing_key(identity)?;
+    test_signed_ocomp_registration(
+        validator,
+        consensus_pubkey,
+        &signing_key,
+        (chain_id, genesis_hash),
+    )
+    .map(|(_, encoded)| encoded)
+}
+
+/// The canonical OCOMP registration of `validator` for the chain
+/// `(chain_id, genesis_hash)`, signed with the test key whose secret scalar is
+/// `key_seed` in every byte. Returns the registration and its encoding.
+pub fn test_seeded_ocomp_registration(
+    validator: Address,
+    consensus_pubkey: &[u8; 48],
+    key_seed: u8,
+    chain: (u64, B256),
+) -> Result<(OcompKeyRegistrationV1, Vec<u8>)> {
+    let signing_key = SigningKey::from_bytes((&[key_seed; 32]).into())
+        .map_err(|error| PrecompileError::Fatal(format!("test OCOMP seed key: {error}")))?;
+    test_signed_ocomp_registration(validator, consensus_pubkey, &signing_key, chain)
+}
+
+/// A canonical OCOMP key registration of `validator` for the chain
+/// `(chain_id, genesis_hash)`, with a proof of possession by `signing_key`.
+/// Returns the registration and its canonical encoding.
+fn test_signed_ocomp_registration(
+    validator: Address,
+    consensus_pubkey: &[u8; 48],
+    signing_key: &SigningKey,
+    (chain_id, genesis_hash): (u64, B256),
+) -> Result<(OcompKeyRegistrationV1, Vec<u8>)> {
+    let identity = validator_identity_hash_v1(validator, consensus_pubkey).map_err(|error| {
+        PrecompileError::Fatal(format!("cannot derive test validator identity: {error}"))
+    })?;
     let mut registration = OcompKeyRegistrationV1 {
         core: OcompKeyRegistrationCoreV1 {
             chain_id,
@@ -85,9 +124,10 @@ fn test_ocomp_registration(
         .unwrap_or(signature)
         .to_bytes()
         .into();
-    registration
-        .encode_canonical(&limits)
-        .map_err(|error| PrecompileError::Fatal(format!("test OCOMP registration encode: {error}")))
+    let encoded = registration.encode_canonical(&limits).map_err(|error| {
+        PrecompileError::Fatal(format!("test OCOMP registration encode: {error}"))
+    })?;
+    Ok((registration, encoded))
 }
 
 /// Move one registered test validator through the real admission transitions,
@@ -210,9 +250,55 @@ impl ValidatorSet<'_> {
     pub fn activate_validator_via_boundary_for_test(&mut self, validator: Address) -> Result<B256> {
         activate_validator_via_boundary(self, validator)
     }
+
+    /// Promotes a PENDING (`WaitingForReadiness`) fixture through a boundary
+    /// and checks that it is ACTIVE afterwards.
+    pub fn promote_pending_validator_for_test(&mut self, validator: Address) -> Result<()> {
+        if !matches!(
+            self.validator_lifecycle(validator)?,
+            ValidatorLifecycle::WaitingForReadiness(_)
+        ) {
+            return Err(PrecompileError::Revert(format!(
+                "fixture {validator} is not PENDING before promotion"
+            )));
+        }
+        self.activate_validator_via_boundary_for_test(validator)?;
+        if !self.validator_lifecycle(validator)?.is_active_status() {
+            return Err(PrecompileError::Revert(format!(
+                "fixture {validator} is not ACTIVE after promotion"
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl ValidatorSet<'_> {
+    /// Sets `owner` as the registry owner, then allows 100 validators.
+    pub fn test_configure_registry(&mut self, owner: Address) -> Result<()> {
+        self.config_owner.write(owner)?;
+        self.set_config_max_validators(100)
+    }
+
+    /// Registers and activates each snapshot member that is not yet a
+    /// validator, in snapshot order. Then writes `snapshot` for every retained
+    /// epoch, so any test epoch resolves to this committee.
+    pub fn test_seed_committee_ring(
+        &mut self,
+        owner: Address,
+        snapshot: &CommitteeSnapshot,
+    ) -> Result<()> {
+        for member in &snapshot.committee {
+            if !self.is_validator(member.address)? {
+                self.register_validator(owner, member.address, &member.consensus_pubkey)?;
+                self.activate_validator_via_boundary_for_test(member.address)?;
+            }
+        }
+        for epoch in 0..COMMITTEE_SNAPSHOT_RETAIN_EPOCHS {
+            write_committee_snapshot(self.storage.clone(), epoch, snapshot)?;
+        }
+        Ok(())
+    }
+
     /// Registers a fixture through the explicit bootstrap-only no-PoP seam.
     ///
     /// The underlying registration path is unavailable in production builds.
@@ -224,6 +310,20 @@ impl ValidatorSet<'_> {
     ) -> Result<()> {
         let owner = self.config_owner.read()?;
         self.register_validator(owner, validator, consensus_pubkey)
+    }
+
+    /// Registers `validator` with `consensus_pubkey` through the no-PoP seam,
+    /// sets its bonded stake projection, then activates it through a boundary.
+    pub fn test_register_active_validator(
+        &mut self,
+        validator: Address,
+        consensus_pubkey: &[u8; 48],
+        bonded: U256,
+    ) -> Result<()> {
+        self.test_register_validator_without_pop(validator, consensus_pubkey)?;
+        self.test_set_stake_projection(validator, StakeProjection::new(bonded, None))?;
+        self.activate_validator_via_boundary_for_test(validator)?;
+        Ok(())
     }
 
     /// Moves a registered fixture through the canonical typed join path.
@@ -321,26 +421,47 @@ impl ValidatorSet<'_> {
         let after = before.clone().with_lifecycle(lifecycle)?;
         self.persist_validator_state_delta(&before, &after)
     }
+}
 
+/// Raw single-field storage writes that bypass the ValidatorSet lifecycle
+/// rules. Corruption tests and fixtures that need exact epoch or set-change
+/// metadata use them. A caller imports this trait to opt in, so every bypass of
+/// the typed transitions is visible at the call site.
+pub trait StorageOverrides {
     /// Replaces epoch metadata as one test fixture bundle.
-    pub fn test_set_epoch_snapshot(&mut self, epoch: EpochSnapshot) -> Result<()> {
+    fn test_set_epoch_snapshot(&mut self, epoch: EpochSnapshot) -> Result<()>;
+
+    fn test_set_pending_set_change(&mut self, pending: bool) -> Result<()>;
+
+    fn test_set_active_consensus_set_hash(&mut self, hash: B256) -> Result<()>;
+
+    /// Deliberately installs malformed P2P storage for a fail-closed corruption
+    /// test. Normal fixtures must use `set_p2p_address`.
+    fn test_corrupt_p2p_storage(
+        &mut self,
+        address: Address,
+        version: u8,
+        payload: &[u8],
+    ) -> Result<()>;
+}
+
+impl StorageOverrides for ValidatorSet<'_> {
+    fn test_set_epoch_snapshot(&mut self, epoch: EpochSnapshot) -> Result<()> {
         self.epoch_number.write(epoch.number)?;
         self.epoch_start_timestamp.write(epoch.start_timestamp)?;
         self.epoch_start_block.write(epoch.start_block)?;
         self.config_epoch_length_blocks.write(epoch.length_blocks)
     }
 
-    pub fn test_set_pending_set_change(&mut self, pending: bool) -> Result<()> {
+    fn test_set_pending_set_change(&mut self, pending: bool) -> Result<()> {
         self.pending_set_change.write(pending)
     }
 
-    pub fn test_set_active_consensus_set_hash(&mut self, hash: B256) -> Result<()> {
+    fn test_set_active_consensus_set_hash(&mut self, hash: B256) -> Result<()> {
         self.active_consensus_set_hash.write(hash)
     }
 
-    /// Deliberately installs malformed P2P storage for a fail-closed corruption
-    /// test. Normal fixtures must use `set_p2p_address`.
-    pub fn test_corrupt_p2p_storage(
+    fn test_corrupt_p2p_storage(
         &mut self,
         address: Address,
         version: u8,
@@ -351,6 +472,15 @@ impl ValidatorSet<'_> {
             .get_bytes(&address)
             .write(payload)
     }
+}
+
+/// Reads the lifecycle of `validator` through a new ValidatorSet view of
+/// `storage`.
+pub fn test_lifecycle_of(
+    storage: StorageHandle<'_>,
+    validator: Address,
+) -> Result<ValidatorLifecycle> {
+    ValidatorSet::new(storage).validator_lifecycle(validator)
 }
 
 /// Pin the committee snapshot schema independently to its storage ABI slots.

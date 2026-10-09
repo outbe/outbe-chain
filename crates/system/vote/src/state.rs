@@ -6,7 +6,7 @@ use tracing::warn;
 
 use crate::constants::MAX_PAGE_SIZE;
 use crate::errors::VoteError;
-use crate::schema::{BondSettlement, ProposalRecord, Vote, VoteRecord};
+use crate::schema::{decode_stored_u8, BondSettlement, ProposalRecord, Vote, VoteRecord};
 
 pub use crate::schema::ProposalStatus;
 
@@ -19,12 +19,10 @@ pub enum VoteKind {
 }
 
 impl VoteKind {
+    const VARIANTS: [Self; 2] = [Self::No, Self::Yes];
+
     pub fn from_u8(value: u8) -> std::result::Result<Self, VoteError> {
-        match value {
-            0 => Ok(Self::No),
-            1 => Ok(Self::Yes),
-            _ => Err(VoteError::InvalidVoteKind),
-        }
+        decode_stored_u8(value, &Self::VARIANTS, Self::to_u8).ok_or(VoteError::InvalidVoteKind)
     }
 
     pub const fn to_u8(self) -> u8 {
@@ -64,6 +62,47 @@ pub struct ProposalInfo {
     pub status: ProposalStatus,
     pub state: VoteTally,
     pub voters_count: u64,
+}
+
+/// Author-supplied fields of a new proposal.
+///
+/// The proposal record stores every field except `attached_value`. The bond
+/// record holds the escrowed part of `attached_value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProposalSubmission<'a> {
+    pub proposer: Address,
+    pub target_module: Address,
+    pub payload: &'a str,
+    /// Block height that creates the proposal.
+    pub created_height: u64,
+    /// Native value that the proposer sends with the proposal.
+    pub attached_value: U256,
+}
+
+impl<'a> ProposalSubmission<'a> {
+    /// Returns a submission with no attached value.
+    pub const fn new(
+        proposer: Address,
+        target_module: Address,
+        payload: &'a str,
+        created_height: u64,
+    ) -> Self {
+        Self {
+            proposer,
+            target_module,
+            payload,
+            created_height,
+            attached_value: U256::ZERO,
+        }
+    }
+
+    /// Returns this submission with `attached_value` as its native value.
+    pub const fn with_attached_value(self, attached_value: U256) -> Self {
+        Self {
+            attached_value,
+            ..self
+        }
+    }
 }
 
 /// Native bond accounting recorded on one proposal.
@@ -380,12 +419,11 @@ impl<'storage> Vote<'storage> {
         Ok(count)
     }
 
+    /// Allocates the next proposal id and writes the proposal record of
+    /// `submission`. A `Pending` proposal also enters the pending vector.
     pub fn write_proposal(
         &mut self,
-        proposer: Address,
-        target_module: Address,
-        payload: &str,
-        created_height: u64,
+        submission: &ProposalSubmission<'_>,
         voting_deadline_height: u64,
         status: ProposalStatus,
     ) -> Result<U256> {
@@ -394,10 +432,10 @@ impl<'storage> Vote<'storage> {
 
         let record = ProposalRecord {
             id: proposal_id,
-            proposer,
-            target_module,
-            payload: payload.to_string(),
-            created_height,
+            proposer: submission.proposer,
+            target_module: submission.target_module,
+            payload: submission.payload.to_string(),
+            created_height: submission.created_height,
             voting_deadline_height,
             status: status.to_u8(),
         };

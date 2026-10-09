@@ -4,9 +4,9 @@
 //! framework. A `UnitArtifactV1` embeds one root object. Bounded descendants
 //! are addressed by their verified CAS references.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 
-use alloy_primitives::{keccak256, Address, B256};
+use alloy_primitives::{Address, B256};
 
 use crate::{
     codec::{CanonicalReader, CanonicalWriter},
@@ -14,11 +14,11 @@ use crate::{
     error::ProtocolError,
     hash::hash_framed,
     list::StreamingOrderedListRoot,
-    registry::{HashDomain, ListKind, ObjectKind},
+    registry::{HashDomain, ListKind},
     result::ContributorActionV1,
     schema::{
-        encode_nested_value, impl_top_level_codec, require, wire_enum_u8, wire_struct, NestedCodec,
-        SchemaLimits,
+        encode_nested_value, impl_nested_record_codec, impl_top_level_codec, require, wire_enum_u8,
+        wire_struct, NestedCodec, SchemaLimits,
     },
     unit::CanonicalRunSpan,
 };
@@ -137,6 +137,50 @@ where
     })
 }
 
+enum ShufflePageRecords {
+    Owner(Vec<ContributorActionV1>),
+    Bucket(Vec<ShuffleBucketRecordV1>),
+}
+
+impl ShufflePageRecords {
+    fn into_verified(self) -> Vec<VerifiedShuffleRecordV1> {
+        match self {
+            Self::Owner(records) => records
+                .into_iter()
+                .map(VerifiedShuffleRecordV1::Owner)
+                .collect(),
+            Self::Bucket(records) => records
+                .into_iter()
+                .map(VerifiedShuffleRecordV1::Bucket)
+                .collect(),
+        }
+    }
+}
+
+struct ShufflePageSlice<'a> {
+    page_span: &'a ShufflePageSpanV1,
+    first_record_ordinal: u32,
+    record_count: u32,
+    page_ordinal: u32,
+}
+
+fn selected_shuffle_child(
+    left: ShuffleRunChildV1,
+    right: ShuffleRunChildV1,
+    page_ordinal: u32,
+) -> Result<ShuffleRunChildV1, ProtocolError> {
+    if page_ordinal >= left.page_span.start_page && page_ordinal < left.page_span.end_page {
+        Ok(left)
+    } else if page_ordinal >= right.page_span.start_page && page_ordinal < right.page_span.end_page
+    {
+        Ok(right)
+    } else {
+        Err(ProtocolError::InvalidInvariant(
+            "shuffle page child coverage",
+        ))
+    }
+}
+
 /// Opens one canonical 256-record page from an already admitted shuffle root.
 ///
 /// The lookup follows only the unique authenticated child path for
@@ -175,161 +219,38 @@ where
     let mut artifact = root;
     loop {
         require_shuffle_context(&context, &artifact, limits)?;
-        match artifact.payload {
+        let records = match artifact.payload {
             ShuffleRunPayloadV1::Node { left, right } => {
-                let expected = if page_ordinal >= left.page_span.start_page
-                    && page_ordinal < left.page_span.end_page
-                {
-                    left
-                } else if page_ordinal >= right.page_span.start_page
-                    && page_ordinal < right.page_span.end_page
-                {
-                    right
-                } else {
-                    return Err(ProtocolError::InvalidInvariant(
-                        "shuffle page child coverage",
-                    ));
-                };
+                let expected = selected_shuffle_child(left, right, page_ordinal)?;
                 artifact = resolve_shuffle_child(&context, &expected, limits, &mut resolver)?;
+                continue;
             }
             ShuffleRunPayloadV1::OwnerLeaf(records) => {
                 require(
                     context.kind == ShuffleRunKindV1::Owner,
                     "shuffle page owner kind",
                 )?;
-                require_shuffle_page_leaf(
-                    &context,
-                    &artifact.page_span,
-                    artifact.first_record_ordinal,
-                    artifact.record_count,
-                    page_ordinal,
-                )?;
-                return Ok(records
-                    .into_iter()
-                    .map(VerifiedShuffleRecordV1::Owner)
-                    .collect());
+                ShufflePageRecords::Owner(records)
             }
             ShuffleRunPayloadV1::BucketLeaf(records) => {
                 require(
                     context.kind == ShuffleRunKindV1::Bucket,
                     "shuffle page bucket kind",
                 )?;
-                require_shuffle_page_leaf(
-                    &context,
-                    &artifact.page_span,
-                    artifact.first_record_ordinal,
-                    artifact.record_count,
-                    page_ordinal,
-                )?;
-                return Ok(records
-                    .into_iter()
-                    .map(VerifiedShuffleRecordV1::Bucket)
-                    .collect());
+                ShufflePageRecords::Bucket(records)
             }
-        }
-    }
-}
-
-fn exact_shuffle_page_count(
-    kind: ShuffleRunKindV1,
-    record_count: u32,
-) -> Result<u32, ProtocolError> {
-    if record_count == 0 {
-        return if kind == ShuffleRunKindV1::Owner {
-            Ok(1)
-        } else {
-            Err(ProtocolError::InvalidInvariant(
-                "non-empty bucket shuffle run",
-            ))
         };
+        require_shuffle_page_leaf(
+            &context,
+            &ShufflePageSlice {
+                page_span: &artifact.page_span,
+                first_record_ordinal: artifact.first_record_ordinal,
+                record_count: artifact.record_count,
+                page_ordinal,
+            },
+        )?;
+        return Ok(records.into_verified());
     }
-    Ok(record_count.div_ceil(MAX_SHUFFLE_LEAF_RECORDS as u32))
-}
-
-fn require_shuffle_page_leaf(
-    context: &ShuffleRunContextV1,
-    page_span: &ShufflePageSpanV1,
-    first_record_ordinal: u32,
-    record_count: u32,
-    page_ordinal: u32,
-) -> Result<(), ProtocolError> {
-    let page_end = page_ordinal
-        .checked_add(1)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle requested page end",
-        })?;
-    let expected_first = page_ordinal
-        .checked_mul(MAX_SHUFFLE_LEAF_RECORDS as u32)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle requested first record",
-        })?;
-    let expected_end = if page_end == context.root_page_end {
-        context.root_record_count
-    } else {
-        page_end
-            .checked_mul(MAX_SHUFFLE_LEAF_RECORDS as u32)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "shuffle requested record end",
-            })?
-    };
-    require(
-        page_span.start_page == page_ordinal
-            && page_span.end_page == page_end
-            && first_record_ordinal == expected_first
-            && first_record_ordinal
-                .checked_add(record_count)
-                .is_some_and(|actual| actual == expected_end),
-        "shuffle exact page slice",
-    )
-}
-
-fn resolve_shuffle_child<R>(
-    context: &ShuffleRunContextV1,
-    expected: &ShuffleRunChildV1,
-    limits: &SchemaLimits,
-    resolver: &mut R,
-) -> Result<ShuffleRunArtifactV1, ProtocolError>
-where
-    R: FnMut(&CasObjectRefV1) -> Result<Vec<u8>, ProtocolError>,
-{
-    let bytes = resolver(&expected.artifact_ref)?;
-    let encoded_bytes = u64::try_from(bytes.len()).map_err(|_| ProtocolError::IntegerOverflow {
-        what: "shuffle child encoded bytes",
-    })?;
-    require(
-        encoded_bytes == expected.artifact_ref.encoded_bytes
-            && keccak256(&bytes) == expected.artifact_ref.transport_digest,
-        "shuffle child transport descriptor",
-    )?;
-    let child = ShuffleRunArtifactV1::decode_canonical(&bytes, limits)?;
-    require_shuffle_context(context, &child, limits)?;
-    require(
-        child.page_span == expected.page_span
-            && child.first_record_ordinal == expected.first_record_ordinal
-            && child.record_count == expected.record_count
-            && child.ordered_record_root == expected.ordered_record_root,
-        "shuffle child summary",
-    )?;
-    Ok(child)
-}
-
-fn require_shuffle_context(
-    context: &ShuffleRunContextV1,
-    artifact: &ShuffleRunArtifactV1,
-    limits: &SchemaLimits,
-) -> Result<(), ProtocolError> {
-    artifact.validate_semantics(limits)?;
-    require(
-        artifact.protocol_bundle_hash == context.protocol_bundle_hash
-            && artifact.job_id == context.job_id
-            && artifact.attempt == context.attempt
-            && artifact.unit_id == context.unit_id
-            && artifact.kind == context.kind
-            && artifact.run_span == context.run_span
-            && artifact.source_coverage_root == context.source_coverage_root
-            && artifact.source_coverage_count == context.source_coverage_count,
-        "shuffle descendant context",
-    )
 }
 
 pub fn merge_verified_shuffle_runs<L, R>(
@@ -350,347 +271,14 @@ where
     }
 }
 
-pub fn build_owner_shuffle_run<I, S>(
-    context: ShuffleRunBuildContextV1,
-    records: I,
-    limits: &SchemaLimits,
-    stage: S,
-) -> Result<ShuffleRunArtifactV1, ProtocolError>
-where
-    I: IntoIterator<Item = Result<ContributorActionV1, ProtocolError>>,
-    S: FnMut(&[u8]) -> Result<CasObjectRefV1, ProtocolError>,
-{
-    build_shuffle_run(
-        context,
-        ShuffleRunKindV1::Owner,
-        records
-            .into_iter()
-            .map(|record| record.map(VerifiedShuffleRecordV1::Owner)),
-        limits,
-        stage,
-    )
-}
-
-pub fn build_bucket_shuffle_run<I, S>(
-    context: ShuffleRunBuildContextV1,
-    records: I,
-    limits: &SchemaLimits,
-    stage: S,
-) -> Result<ShuffleRunArtifactV1, ProtocolError>
-where
-    I: IntoIterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>>,
-    S: FnMut(&[u8]) -> Result<CasObjectRefV1, ProtocolError>,
-{
-    build_shuffle_run(
-        context,
-        ShuffleRunKindV1::Bucket,
-        records
-            .into_iter()
-            .map(|record| record.map(VerifiedShuffleRecordV1::Bucket)),
-        limits,
-        stage,
-    )
-}
-
-struct BuiltShuffleSubtreeV1 {
-    artifact: ShuffleRunArtifactV1,
-    reference: CasObjectRefV1,
-}
-
-fn build_shuffle_run<I, S>(
-    context: ShuffleRunBuildContextV1,
-    kind: ShuffleRunKindV1,
-    records: I,
-    limits: &SchemaLimits,
-    mut stage: S,
-) -> Result<ShuffleRunArtifactV1, ProtocolError>
-where
-    I: IntoIterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
-    S: FnMut(&[u8]) -> Result<CasObjectRefV1, ProtocolError>,
-{
-    require_valid_run_span(&context.run_span)?;
-    require(
-        !context.protocol_bundle_hash.is_zero()
-            && !context.job_id.is_zero()
-            && !context.unit_id.is_zero()
-            && !context.source_coverage_root.is_zero()
-            && context.source_coverage_count > 0,
-        "shuffle build context",
-    )?;
-
-    let mut frontier: Vec<Option<BuiltShuffleSubtreeV1>> = Vec::new();
-    let mut page = Vec::with_capacity(MAX_SHUFFLE_LEAF_RECORDS);
-    let mut page_ordinal = 0_u32;
-    let mut first_record_ordinal = 0_u32;
-    let mut previous_owner = None;
-    let mut previous_bucket = None;
-
-    for record in records {
-        let record = record?;
-        validate_build_record(kind, &record, &mut previous_owner, &mut previous_bucket)?;
-        page.push(record);
-        if page.len() == MAX_SHUFFLE_LEAF_RECORDS {
-            let leaf = build_leaf(
-                &context,
-                kind,
-                page_ordinal,
-                first_record_ordinal,
-                core::mem::take(&mut page),
-                limits,
-                &mut stage,
-            )?;
-            push_subtree(&context, kind, leaf, &mut frontier, limits, &mut stage)?;
-            page_ordinal = page_ordinal
-                .checked_add(1)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "shuffle output page ordinal",
-                })?;
-            first_record_ordinal = first_record_ordinal
-                .checked_add(MAX_SHUFFLE_LEAF_RECORDS as u32)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "shuffle output record ordinal",
-                })?;
-            page = Vec::with_capacity(MAX_SHUFFLE_LEAF_RECORDS);
-        }
-    }
-
-    if !page.is_empty() || (first_record_ordinal == 0 && kind == ShuffleRunKindV1::Owner) {
-        let leaf = build_leaf(
-            &context,
-            kind,
-            page_ordinal,
-            first_record_ordinal,
-            page,
-            limits,
-            &mut stage,
-        )?;
-        push_subtree(&context, kind, leaf, &mut frontier, limits, &mut stage)?;
-    } else if first_record_ordinal == 0 {
-        return Err(ProtocolError::InvalidInvariant(
-            "non-empty bucket shuffle run",
-        ));
-    }
-
-    let mut root = None;
-    for subtree in frontier.into_iter().flatten() {
-        root = Some(match root {
-            None => subtree,
-            Some(right) => build_node(&context, kind, subtree, right, limits, &mut stage)?,
-        });
-    }
-    let root = root
-        .ok_or(ProtocolError::InvalidInvariant("shuffle output root"))?
-        .artifact;
-    root.validate_root_semantics(limits)?;
-    Ok(root)
-}
-
-fn validate_build_record(
-    kind: ShuffleRunKindV1,
-    record: &VerifiedShuffleRecordV1,
-    previous_owner: &mut Option<(Address, B256)>,
-    previous_bucket: &mut Option<(B256, u32)>,
-) -> Result<(), ProtocolError> {
-    match record {
-        VerifiedShuffleRecordV1::Owner(record) => {
-            require(kind == ShuffleRunKindV1::Owner, "shuffle build record kind")?;
-            let key = (record.owner, record.source_tribute_id);
-            require(
-                previous_owner.is_none_or(|previous| previous.0 < key.0)
-                    && previous_bucket.is_none(),
-                "global owner shuffle order",
-            )?;
-            *previous_owner = Some(key);
-        }
-        VerifiedShuffleRecordV1::Bucket(record) => {
-            require(
-                kind == ShuffleRunKindV1::Bucket,
-                "shuffle build record kind",
-            )?;
-            let key = (record.bucket_key, record.raw_ordinal);
-            require(
-                previous_bucket.is_none_or(|previous| previous < key) && previous_owner.is_none(),
-                "global bucket shuffle order",
-            )?;
-            *previous_bucket = Some(key);
-        }
-    }
-    Ok(())
-}
-
-fn build_leaf<S>(
-    context: &ShuffleRunBuildContextV1,
-    kind: ShuffleRunKindV1,
-    page_ordinal: u32,
-    first_record_ordinal: u32,
-    records: Vec<VerifiedShuffleRecordV1>,
-    limits: &SchemaLimits,
-    stage: &mut S,
-) -> Result<BuiltShuffleSubtreeV1, ProtocolError>
-where
-    S: FnMut(&[u8]) -> Result<CasObjectRefV1, ProtocolError>,
-{
-    let record_count =
-        u32::try_from(records.len()).map_err(|_| ProtocolError::IntegerOverflow {
-            what: "shuffle leaf record count",
-        })?;
-    let payload = match kind {
-        ShuffleRunKindV1::Owner => ShuffleRunPayloadV1::OwnerLeaf(
-            records
-                .into_iter()
-                .map(|record| match record {
-                    VerifiedShuffleRecordV1::Owner(record) => Ok(record),
-                    VerifiedShuffleRecordV1::Bucket(_) => Err(ProtocolError::InvalidInvariant(
-                        "shuffle build owner record",
-                    )),
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        ShuffleRunKindV1::Bucket => ShuffleRunPayloadV1::BucketLeaf(
-            records
-                .into_iter()
-                .map(|record| match record {
-                    VerifiedShuffleRecordV1::Bucket(record) => Ok(record),
-                    VerifiedShuffleRecordV1::Owner(_) => Err(ProtocolError::InvalidInvariant(
-                        "shuffle build bucket record",
-                    )),
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-    };
-    let artifact = ShuffleRunArtifactV1 {
-        protocol_bundle_hash: context.protocol_bundle_hash,
-        job_id: context.job_id,
-        attempt: context.attempt,
-        unit_id: context.unit_id,
-        kind,
-        run_span: context.run_span.clone(),
-        page_span: ShufflePageSpanV1 {
-            start_page: page_ordinal,
-            end_page: page_ordinal
-                .checked_add(1)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "shuffle leaf page span",
-                })?,
-        },
-        first_record_ordinal,
-        record_count,
-        source_coverage_root: context.source_coverage_root,
-        source_coverage_count: context.source_coverage_count,
-        ordered_record_root: B256::ZERO,
-        payload,
-    }
-    .with_recomputed_ordered_record_root(limits)?;
-    stage_artifact(artifact, limits, stage)
-}
-
-fn push_subtree<S>(
-    context: &ShuffleRunBuildContextV1,
-    kind: ShuffleRunKindV1,
-    mut subtree: BuiltShuffleSubtreeV1,
-    frontier: &mut Vec<Option<BuiltShuffleSubtreeV1>>,
-    limits: &SchemaLimits,
-    stage: &mut S,
-) -> Result<(), ProtocolError>
-where
-    S: FnMut(&[u8]) -> Result<CasObjectRefV1, ProtocolError>,
-{
-    let mut level = 0_usize;
-    loop {
-        if level == frontier.len() {
-            frontier.push(Some(subtree));
-            return Ok(());
-        }
-        let Some(left) = frontier[level].take() else {
-            frontier[level] = Some(subtree);
-            return Ok(());
-        };
-        subtree = build_node(context, kind, left, subtree, limits, stage)?;
-        level = level.checked_add(1).ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle builder frontier level",
-        })?;
-    }
-}
-
-fn build_node<S>(
-    context: &ShuffleRunBuildContextV1,
-    kind: ShuffleRunKindV1,
-    left: BuiltShuffleSubtreeV1,
-    right: BuiltShuffleSubtreeV1,
-    limits: &SchemaLimits,
-    stage: &mut S,
-) -> Result<BuiltShuffleSubtreeV1, ProtocolError>
-where
-    S: FnMut(&[u8]) -> Result<CasObjectRefV1, ProtocolError>,
-{
-    let page_span = ShufflePageSpanV1 {
-        start_page: left.artifact.page_span.start_page,
-        end_page: right.artifact.page_span.end_page,
-    };
-    let record_count = left
-        .artifact
-        .record_count
-        .checked_add(right.artifact.record_count)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle node output count",
-        })?;
-    let first_record_ordinal = left.artifact.first_record_ordinal;
-    let artifact = ShuffleRunArtifactV1 {
-        protocol_bundle_hash: context.protocol_bundle_hash,
-        job_id: context.job_id,
-        attempt: context.attempt,
-        unit_id: context.unit_id,
-        kind,
-        run_span: context.run_span.clone(),
-        page_span,
-        first_record_ordinal,
-        record_count,
-        source_coverage_root: context.source_coverage_root,
-        source_coverage_count: context.source_coverage_count,
-        ordered_record_root: B256::ZERO,
-        payload: ShuffleRunPayloadV1::Node {
-            left: child_summary(left),
-            right: child_summary(right),
-        },
-    }
-    .with_recomputed_ordered_record_root(limits)?;
-    stage_artifact(artifact, limits, stage)
-}
-
-fn child_summary(subtree: BuiltShuffleSubtreeV1) -> ShuffleRunChildV1 {
-    ShuffleRunChildV1 {
-        artifact_ref: subtree.reference,
-        page_span: subtree.artifact.page_span,
-        first_record_ordinal: subtree.artifact.first_record_ordinal,
-        record_count: subtree.artifact.record_count,
-        ordered_record_root: subtree.artifact.ordered_record_root,
-    }
-}
-
-fn stage_artifact<S>(
-    artifact: ShuffleRunArtifactV1,
-    limits: &SchemaLimits,
-    stage: &mut S,
-) -> Result<BuiltShuffleSubtreeV1, ProtocolError>
-where
-    S: FnMut(&[u8]) -> Result<CasObjectRefV1, ProtocolError>,
-{
-    let bytes = artifact.encode_canonical(limits)?;
-    let reference = stage(&bytes)?;
-    let encoded_bytes = u64::try_from(bytes.len()).map_err(|_| ProtocolError::IntegerOverflow {
-        what: "staged shuffle object bytes",
-    })?;
-    require(
-        reference.transport_digest == keccak256(&bytes)
-            && reference.encoded_bytes == encoded_bytes
-            && reference.expected_ocb1_kind == Some(ObjectKind::ShuffleRunArtifactV1.tag()),
-        "staged shuffle object descriptor",
-    )?;
-    Ok(BuiltShuffleSubtreeV1 {
-        artifact,
-        reference,
-    })
-}
+mod builder;
+mod verifier;
+pub use builder::{build_bucket_shuffle_run, build_owner_shuffle_run};
+use verifier::{
+    exact_shuffle_page_count, require_shuffle_context, require_shuffle_page_leaf,
+    require_valid_run_span, resolve_shuffle_child, validate_bucket_records, validate_child,
+    validate_owner_records, validate_shuffle_run_artifact,
+};
 
 impl<R> Iterator for VerifiedShuffleRunIterV1<'_, R>
 where
@@ -729,24 +317,38 @@ where
         if self.finished {
             return None;
         }
+        let side = match self.select_side() {
+            Ok(Some(side)) => side,
+            Ok(None) => return None,
+            Err(error) => {
+                self.finished = true;
+                return Some(Err(error));
+            }
+        };
+        let item = match side {
+            MergeSideV1::Left => self.left.next(),
+            MergeSideV1::Right => self.right.next(),
+        }?;
+        let result = item.and_then(|record| self.accept_record(record));
+        if result.is_err() {
+            self.finished = true;
+        }
+        Some(result)
+    }
+}
+
+impl<L, R> MergedVerifiedShuffleRunIterV1<L, R>
+where
+    L: Iterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
+    R: Iterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
+{
+    fn select_side(&mut self) -> Result<Option<MergeSideV1>, ProtocolError> {
         let side = match (self.left.peek(), self.right.peek()) {
             (Some(Err(_)), _) => MergeSideV1::Left,
             (_, Some(Err(_))) => MergeSideV1::Right,
             (Some(Ok(left)), Some(Ok(right))) => {
-                let left_key = match shuffle_record_key(self.kind, left) {
-                    Ok(key) => key,
-                    Err(error) => {
-                        self.finished = true;
-                        return Some(Err(error));
-                    }
-                };
-                let right_key = match shuffle_record_key(self.kind, right) {
-                    Ok(key) => key,
-                    Err(error) => {
-                        self.finished = true;
-                        return Some(Err(error));
-                    }
-                };
+                let left_key = shuffle_record_key(self.kind, left)?;
+                let right_key = shuffle_record_key(self.kind, right)?;
                 if left_key <= right_key {
                     MergeSideV1::Left
                 } else {
@@ -755,37 +357,26 @@ where
             }
             (Some(Ok(_)), None) => MergeSideV1::Left,
             (None, Some(Ok(_))) => MergeSideV1::Right,
-            (None, None) => return None,
+            (None, None) => return Ok(None),
         };
-        let item = match side {
-            MergeSideV1::Left => self.left.next(),
-            MergeSideV1::Right => self.right.next(),
-        }?;
-        let record = match item {
-            Ok(record) => record,
-            Err(error) => {
-                self.finished = true;
-                return Some(Err(error));
-            }
-        };
-        let key = match shuffle_record_key(self.kind, &record) {
-            Ok(key) => key,
-            Err(error) => {
-                self.finished = true;
-                return Some(Err(error));
-            }
-        };
+        Ok(Some(side))
+    }
+
+    fn accept_record(
+        &mut self,
+        record: VerifiedShuffleRecordV1,
+    ) -> Result<VerifiedShuffleRecordV1, ProtocolError> {
+        let key = shuffle_record_key(self.kind, &record)?;
         if self
             .previous_key
             .is_some_and(|previous| !strict_shuffle_key_order(previous, key))
         {
-            self.finished = true;
-            return Some(Err(ProtocolError::InvalidInvariant(
+            return Err(ProtocolError::InvalidInvariant(
                 "strict merged shuffle order",
-            )));
+            ));
         }
         self.previous_key = Some(key);
-        Some(Ok(record))
+        Ok(record)
     }
 }
 
@@ -868,41 +459,11 @@ where
         &mut self,
         expected: &ShuffleRunChildV1,
     ) -> Result<ShuffleRunArtifactV1, ProtocolError> {
-        let bytes = (self.resolver)(&expected.artifact_ref)?;
-        let encoded_bytes =
-            u64::try_from(bytes.len()).map_err(|_| ProtocolError::IntegerOverflow {
-                what: "shuffle child encoded bytes",
-            })?;
-        require(
-            encoded_bytes == expected.artifact_ref.encoded_bytes
-                && keccak256(&bytes) == expected.artifact_ref.transport_digest,
-            "shuffle child transport descriptor",
-        )?;
-        let child = ShuffleRunArtifactV1::decode_canonical(&bytes, self.limits)?;
-        self.require_context(&child)?;
-        require(
-            child.page_span == expected.page_span
-                && child.first_record_ordinal == expected.first_record_ordinal
-                && child.record_count == expected.record_count
-                && child.ordered_record_root == expected.ordered_record_root,
-            "shuffle child summary",
-        )?;
-        Ok(child)
+        resolve_shuffle_child(&self.context, expected, self.limits, &mut self.resolver)
     }
 
     fn require_context(&self, artifact: &ShuffleRunArtifactV1) -> Result<(), ProtocolError> {
-        artifact.validate_semantics(self.limits)?;
-        require(
-            artifact.protocol_bundle_hash == self.context.protocol_bundle_hash
-                && artifact.job_id == self.context.job_id
-                && artifact.attempt == self.context.attempt
-                && artifact.unit_id == self.context.unit_id
-                && artifact.kind == self.context.kind
-                && artifact.run_span == self.context.run_span
-                && artifact.source_coverage_root == self.context.source_coverage_root
-                && artifact.source_coverage_count == self.context.source_coverage_count,
-            "shuffle descendant context",
-        )
+        require_shuffle_context(&self.context, artifact, self.limits)
     }
 
     fn open_leaf(
@@ -1095,14 +656,7 @@ wire_struct! {
     }
 }
 
-impl ShuffleBucketRecordV1 {
-    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
-        <Self as NestedCodec>::validate(self, limits)?;
-        let mut writer = CanonicalWriter::new(limits.codec);
-        self.encode_nested(&mut writer, limits)?;
-        Ok(writer.into_bytes())
-    }
-}
+impl_nested_record_codec!(ShuffleBucketRecordV1, encode_only);
 
 wire_struct! {
     /// Authenticated summary of one child object. The referenced child repeats
@@ -1281,208 +835,6 @@ fn validate_page_span(
         span.start_page < span.end_page,
         "non-empty shuffle page span",
     )
-}
-
-fn require_valid_run_span(run_span: &CanonicalRunSpan) -> Result<(), ProtocolError> {
-    require(
-        run_span.start_run < run_span.end_run,
-        "non-empty shuffle run span",
-    )
-}
-
-fn validate_child(child: &ShuffleRunChildV1, _limits: &SchemaLimits) -> Result<(), ProtocolError> {
-    require(
-        !child.artifact_ref.transport_digest.is_zero()
-            && child.artifact_ref.encoded_bytes > 0
-            && child.artifact_ref.expected_ocb1_kind
-                == Some(ObjectKind::ShuffleRunArtifactV1.tag()),
-        "typed shuffle child CAS reference",
-    )?;
-    require(
-        !child.ordered_record_root.is_zero(),
-        "shuffle child ordered record root",
-    )?;
-    checked_record_end(child.first_record_ordinal, child.record_count)?;
-    Ok(())
-}
-
-fn validate_shuffle_run_artifact(
-    artifact: &ShuffleRunArtifactV1,
-    limits: &SchemaLimits,
-) -> Result<(), ProtocolError> {
-    require(
-        !artifact.protocol_bundle_hash.is_zero()
-            && !artifact.job_id.is_zero()
-            && !artifact.unit_id.is_zero(),
-        "shuffle artifact identity",
-    )?;
-    require_valid_run_span(&artifact.run_span)?;
-    require(
-        artifact.source_coverage_count > 0 && !artifact.source_coverage_root.is_zero(),
-        "shuffle source coverage",
-    )?;
-    require(
-        !artifact.ordered_record_root.is_zero(),
-        "shuffle ordered record root",
-    )?;
-    checked_record_end(artifact.first_record_ordinal, artifact.record_count)?;
-
-    let page_width = artifact
-        .page_span
-        .end_page
-        .checked_sub(artifact.page_span.start_page)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle page width",
-        })?;
-    match &artifact.payload {
-        ShuffleRunPayloadV1::OwnerLeaf(records) => {
-            require(
-                artifact.kind == ShuffleRunKindV1::Owner,
-                "shuffle payload kind binding",
-            )?;
-            validate_leaf_shape(artifact, page_width, records.len())
-        }
-        ShuffleRunPayloadV1::BucketLeaf(records) => {
-            require(
-                artifact.kind == ShuffleRunKindV1::Bucket,
-                "shuffle payload kind binding",
-            )?;
-            require(!records.is_empty(), "non-empty bucket shuffle leaf")?;
-            validate_leaf_shape(artifact, page_width, records.len())
-        }
-        ShuffleRunPayloadV1::Node { left, right } => {
-            require(page_width > 1, "shuffle node page width")?;
-            require(artifact.record_count > 0, "non-empty shuffle node")?;
-            if artifact.kind == ShuffleRunKindV1::Bucket {
-                require(
-                    artifact.record_count > 0 && left.record_count > 0 && right.record_count > 0,
-                    "non-empty bucket shuffle node",
-                )?;
-            }
-            require(
-                left.artifact_ref.transport_digest != right.artifact_ref.transport_digest,
-                "shuffle node distinct child objects",
-            )?;
-
-            let split = canonical_page_split(&artifact.page_span)?;
-            require(
-                left.page_span.start_page == artifact.page_span.start_page
-                    && left.page_span.end_page == split
-                    && right.page_span.start_page == split
-                    && right.page_span.end_page == artifact.page_span.end_page,
-                "shuffle node canonical page split",
-            )?;
-            let right_first = checked_record_end(left.first_record_ordinal, left.record_count)?;
-            require(
-                left.first_record_ordinal == artifact.first_record_ordinal
-                    && right.first_record_ordinal == right_first,
-                "shuffle node record adjacency",
-            )?;
-            let child_count = left.record_count.checked_add(right.record_count).ok_or(
-                ProtocolError::IntegerOverflow {
-                    what: "shuffle node record count",
-                },
-            )?;
-            require(
-                child_count == artifact.record_count,
-                "shuffle node record count",
-            )
-        }
-    }?;
-    require(
-        artifact.ordered_record_root == artifact.recompute_ordered_record_root(limits)?,
-        "shuffle ordered record root",
-    )
-}
-
-fn validate_leaf_shape(
-    artifact: &ShuffleRunArtifactV1,
-    page_width: u32,
-    actual_records: usize,
-) -> Result<(), ProtocolError> {
-    require(page_width == 1, "shuffle leaf page width")?;
-    require(
-        actual_records <= MAX_SHUFFLE_LEAF_RECORDS,
-        "shuffle leaf record cap",
-    )?;
-    require(
-        usize::try_from(artifact.record_count).ok() == Some(actual_records),
-        "shuffle leaf record count",
-    )
-}
-
-fn validate_owner_records(
-    records: &[ContributorActionV1],
-    limits: &SchemaLimits,
-) -> Result<(), ProtocolError> {
-    require(
-        records.len() <= limits.max_chunk_items && records.len() <= MAX_SHUFFLE_LEAF_RECORDS,
-        "shuffle leaf record cap",
-    )?;
-    for record in records {
-        record.validate(limits)?;
-    }
-    for pair in records.windows(2) {
-        require(
-            (pair[0].owner, pair[0].source_tribute_id) < (pair[1].owner, pair[1].source_tribute_id)
-                && pair[0].owner != pair[1].owner,
-            "owner shuffle records strictly ordered",
-        )?;
-    }
-    Ok(())
-}
-
-fn validate_bucket_records(
-    records: &[ShuffleBucketRecordV1],
-    limits: &SchemaLimits,
-) -> Result<(), ProtocolError> {
-    require(
-        records.len() <= limits.max_chunk_items && records.len() <= MAX_SHUFFLE_LEAF_RECORDS,
-        "shuffle leaf record cap",
-    )?;
-    let mut raw_ordinals = BTreeSet::new();
-    let mut tribute_ids = BTreeSet::new();
-    let mut nod_ids = BTreeSet::new();
-    for record in records {
-        record.validate(limits)?;
-        require(
-            raw_ordinals.insert(record.raw_ordinal)
-                && tribute_ids.insert(record.tribute_id)
-                && nod_ids.insert(record.nod_id),
-            "unique bucket shuffle records",
-        )?;
-    }
-    for pair in records.windows(2) {
-        require(
-            (pair[0].bucket_key, pair[0].raw_ordinal) < (pair[1].bucket_key, pair[1].raw_ordinal),
-            "bucket shuffle records strictly ordered",
-        )?;
-    }
-    Ok(())
-}
-
-fn canonical_page_split(span: &ShufflePageSpanV1) -> Result<u32, ProtocolError> {
-    let width =
-        span.end_page
-            .checked_sub(span.start_page)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "shuffle page width",
-            })?;
-    require(width > 1, "shuffle node page width")?;
-    let left_width = 1_u32 << (31 - (width - 1).leading_zeros());
-    span.start_page
-        .checked_add(left_width)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle page split",
-        })
-}
-
-fn checked_record_end(start: u32, count: u32) -> Result<u32, ProtocolError> {
-    start
-        .checked_add(count)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle record interval",
-        })
 }
 
 fn ordered_leaf_root(

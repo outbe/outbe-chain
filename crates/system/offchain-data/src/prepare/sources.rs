@@ -12,36 +12,44 @@ pub(super) fn decode_receipts(
 ) -> Result<DecodedReceipts<'_>, ProjectionError> {
     let mut decoded_receipts = Vec::with_capacity(block.receipts.len());
     for receipt in &block.receipts {
-        let mut events = Vec::new();
-        for log in &receipt.logs {
-            let Some(signature) = log.data.topics().first().copied() else {
-                continue;
-            };
-            let source = ProjectionSource {
-                block_number: block.number,
-                block_hash: block.hash,
-                tx_hash: receipt.tx_hash,
-                transaction_index: receipt.transaction_index,
-                log_index: log.log_index,
-                emitter: log.emitter,
-                event_signature: signature,
-            };
-            let recognized = is_projection_pair(log.emitter, signature);
-            if !receipt.success {
-                if recognized {
-                    return Err(ProjectionError::ProjectionLogInFailedReceipt(Box::new(
-                        source,
-                    )));
-                }
-                continue;
-            }
-            if let Some(event) = decode_event(source, &log.data)? {
-                events.push(event);
-            }
-        }
+        let events = decode_receipt(block, receipt)?;
         decoded_receipts.push((receipt, events));
     }
     Ok(decoded_receipts)
+}
+
+fn decode_receipt(
+    block: &FinalizedBlock,
+    receipt: &FinalizedReceipt,
+) -> Result<Vec<ProjectionEvent>, ProjectionError> {
+    let mut events = Vec::new();
+    for log in &receipt.logs {
+        let Some(signature) = log.data.topics().first().copied() else {
+            continue;
+        };
+        let source = ProjectionSource {
+            block_number: block.number,
+            block_hash: block.hash,
+            tx_hash: receipt.tx_hash,
+            transaction_index: receipt.transaction_index,
+            log_index: log.log_index,
+            emitter: log.emitter,
+            event_signature: signature,
+        };
+        let recognized = is_projection_pair(log.emitter, signature);
+        if !receipt.success {
+            if recognized {
+                return Err(ProjectionError::ProjectionLogInFailedReceipt(Box::new(
+                    source,
+                )));
+            }
+            continue;
+        }
+        if let Some(event) = decode_event(source, &log.data)? {
+            events.push(event);
+        }
+    }
+    Ok(events)
 }
 
 pub(super) struct ProjectionSessions {

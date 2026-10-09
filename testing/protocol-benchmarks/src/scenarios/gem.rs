@@ -97,9 +97,11 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
         storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        rate,
-        1,
-        T_NOW,
+        outbe_oracle::api::RateObservation {
+            rate,
+            block_number: 1,
+            timestamp: T_NOW,
+        },
     )
     .map_err(|error| error.to_string())?;
     let oracle = OracleContract::new(storage);

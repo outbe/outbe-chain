@@ -256,7 +256,7 @@ pub(super) fn snapshot_public_nod_proofs(
 ) -> eyre::Result<Vec<serde_json::Value>> {
     use alloy_sol_types::SolValue;
     use outbe_ocomp_protocol::{
-        list::streaming_ordered_list_membership_proof,
+        list::{streaming_ordered_list_membership_proof, OrderedListProofTarget},
         profile::poc_schema_limits,
         result::{ActiveNodSetV1, NodMembershipProofV1},
         ListKind,
@@ -302,9 +302,11 @@ pub(super) fn snapshot_public_nod_proofs(
             nod_ordinal: ordinal.try_into()?,
             action: action.clone(),
             membership_siblings: streaming_ordered_list_membership_proof(
-                ListKind::NodActions,
-                generation.nod_count,
-                ordinal.try_into()?,
+                OrderedListProofTarget::new(
+                    ListKind::NodActions,
+                    generation.nod_count,
+                    ordinal.try_into()?,
+                ),
                 &records,
                 limits.max_bounded_bytes,
             )?,

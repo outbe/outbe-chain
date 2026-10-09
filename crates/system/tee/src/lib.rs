@@ -11,6 +11,7 @@
 //! transport.
 
 pub mod balance_client;
+mod byte_cursor;
 pub mod call_context;
 pub mod canary;
 pub mod client;
@@ -33,12 +34,18 @@ pub mod nod_mine;
 pub mod nod_transport;
 pub mod node_host;
 pub mod offer_encrypt;
+mod owner_local_open;
 pub mod protocol;
 pub mod quote;
 pub mod release_dcap_artifacts;
 pub mod remote_session;
 pub mod session;
 pub mod tee_dkg;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+#[cfg(test)]
+#[path = "../../../../testing/fixtures/transition_key_ready.rs"]
+mod transition_key_ready;
 pub mod tribute_client;
 pub mod tribute_day;
 pub mod tribute_day_client;
@@ -74,7 +81,8 @@ pub use node_host::{
     persist_committed_join_submission, persist_finalized_join_admission_anchor,
     persist_replacement_candidate_relay, persist_replacement_candidate_submission,
     prepare_node_host_enclave_replacement_candidate, promote_replacement_candidate,
-    CommittedJoinRelayV1, CommittedJoinSubmissionV1, FinalizedJoinAdmissionAnchorV1,
+    CommittedJoinRelayV1, CommittedJoinSubmissionV1, FinalizedAdmissionBeginInputV1,
+    FinalizedAdmissionIngestInputV1, FinalizedJoinAdmissionAnchorV1,
     FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1, NodeHostIdentityV1,
     ReplacementCandidateEnclaveV1, ReplacementCandidateRelayV1, ReplacementCandidateSubmissionV1,
 };

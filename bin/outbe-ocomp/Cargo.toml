@@ -56,6 +56,7 @@ zeroize.workspace = true
 zeromq.workspace = true
 
 [dev-dependencies]
+outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-tee-enclave.workspace = true

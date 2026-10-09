@@ -1,7 +1,7 @@
 use alloy_primitives::Address;
 use outbe_ocomp_protocol::{
     state::{OcompJobRecordV1, OcompJobStatus},
-    vote::ResultVoteV1,
+    vote::{HistoricalVoteMember, ResultVoteV1, VoteWindow},
     SchemaLimits,
 };
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
@@ -140,12 +140,16 @@ fn verify_indexed_window(
     if let Err(error) = vote.verify_historical_member(
         &record.intent,
         finalized.job_id,
-        member_count,
-        member.key_epoch,
-        &member.ocomp_public_key_sec1,
-        inclusion_height,
-        finalized.open_height,
-        finalized.deadline_height,
+        HistoricalVoteMember {
+            member_count,
+            key_epoch: member.key_epoch,
+            ocomp_public_key_sec1: &member.ocomp_public_key_sec1,
+        },
+        VoteWindow {
+            inclusion_height,
+            open_height: finalized.open_height,
+            deadline_height: finalized.deadline_height,
+        },
         limits,
     ) {
         return Err(invalid_reason(format!("invalid result vote: {error}")));
@@ -223,12 +227,16 @@ fn verify_unmaterialized_window(
     if let Err(error) = vote.verify_historical_member(
         &record.intent,
         finalized.job_id,
-        member_count,
-        member.key_epoch,
-        &member.ocomp_public_key_sec1,
-        finalized.open_height,
-        finalized.open_height,
-        finalized.deadline_height,
+        HistoricalVoteMember {
+            member_count,
+            key_epoch: member.key_epoch,
+            ocomp_public_key_sec1: &member.ocomp_public_key_sec1,
+        },
+        VoteWindow {
+            inclusion_height: finalized.open_height,
+            open_height: finalized.open_height,
+            deadline_height: finalized.deadline_height,
+        },
         limits,
     ) {
         return invalid_reason(format!("invalid result vote: {error}"));

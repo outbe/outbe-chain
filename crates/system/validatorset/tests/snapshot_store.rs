@@ -8,26 +8,32 @@
 //! visible to readers.
 
 use alloy_primitives::{address, b256, Address, B256, U256};
-use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
-use outbe_ocomp_protocol::{
-    committee::{
-        validator_identity_hash_v1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
-    },
-    profile::poc_schema_limits,
-};
+use outbe_ocomp_protocol::committee::OcompKeyRegistrationV1;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::hooks::{activate_boundary_atomic, BoundaryActivationInputs};
-use outbe_validatorset::test_support::activate_validator_via_boundary;
+use outbe_validatorset::test_support::{
+    activate_validator_via_boundary, test_seeded_ocomp_registration,
+};
 use outbe_validatorset::{
     clear_committee_snapshot, committee_set_hash_v2, committee_snapshot_key,
     read_committee_snapshot, read_committee_snapshot_for_epoch, read_ocomp_snapshot_extension,
     read_ocomp_snapshot_extension_for_binding, read_ocomp_snapshot_member_at, snapshot_identity,
     write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
 };
+
+use commonware_cryptography::bls12381::dkg::feldman_desmedt::{Dealer, Info, Logs, Player, Reveal};
+use commonware_cryptography::bls12381::primitives::sharing::Mode;
+use commonware_cryptography::bls12381::primitives::variant::MinSig;
+use commonware_cryptography::bls12381::{Batch, PrivateKey, PublicKey};
+use commonware_cryptography::Signer as _;
+use commonware_math::algebra::Random;
+use commonware_parallel::Sequential;
+use commonware_utils::{ordered, N3f1, TryCollect as _};
+use rand_commonware::rngs::ChaCha20Rng;
+use rand_commonware::SeedableRng;
 
 const CHAIN_ID: u64 = 1;
 
@@ -45,44 +51,15 @@ fn admit_ocomp_key(
     vs.register_validator(owner, validator, consensus_pubkey)
         .unwrap();
     vs.mark_pending(validator).unwrap();
-    let (registration, encoded) = ocomp_registration(validator, consensus_pubkey, key_seed);
+    let (registration, encoded) = test_seeded_ocomp_registration(
+        validator,
+        consensus_pubkey,
+        key_seed,
+        (CHAIN_ID, B256::ZERO),
+    )
+    .unwrap();
     vs.confirm_validator_ready(validator, &encoded).unwrap();
     registration
-}
-
-fn ocomp_registration(
-    validator: Address,
-    consensus_pubkey: &[u8; 48],
-    key_seed: u8,
-) -> (OcompKeyRegistrationV1, Vec<u8>) {
-    let signing_key = SigningKey::from_bytes((&[key_seed; 32]).into()).unwrap();
-    let mut registration = OcompKeyRegistrationV1 {
-        core: OcompKeyRegistrationCoreV1 {
-            chain_id: CHAIN_ID,
-            genesis_hash: B256::ZERO,
-            validator_identity_hash: validator_identity_hash_v1(validator, consensus_pubkey)
-                .unwrap(),
-            ocomp_public_key_sec1: signing_key
-                .verifying_key()
-                .to_encoded_point(true)
-                .as_bytes()
-                .try_into()
-                .unwrap(),
-            key_epoch: POC_KEY_EPOCH,
-            allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-        },
-        proof_of_possession: [0; 64],
-    };
-    let limits = poc_schema_limits();
-    let digest = registration.proof_of_possession_digest(&limits).unwrap();
-    let signature: Signature = signing_key.sign_prehash(digest.as_slice()).unwrap();
-    registration.proof_of_possession = signature
-        .normalize_s()
-        .unwrap_or(signature)
-        .to_bytes()
-        .into();
-    let encoded = registration.encode_canonical(&limits).unwrap();
-    (registration, encoded)
 }
 
 /// Hand-rolled legacy `hash_active_set` (addresses-only). It is a verbatim copy of
@@ -268,7 +245,13 @@ fn committee_snapshot_exact_replay_survives_rejected_ocomp_key_replacement() {
             "byte-identical replay must be idempotent",
         );
 
-        let (_, replacement) = ocomp_registration(validator, &consensus_pubkey, 0x14);
+        let (_, replacement) = test_seeded_ocomp_registration(
+            validator,
+            &consensus_pubkey,
+            0x14,
+            (CHAIN_ID, B256::ZERO),
+        )
+        .unwrap();
         let error = vs
             .confirm_validator_ready(validator, &replacement)
             .expect_err("key_epoch 1 cannot replace the pinned OCOMP key");
@@ -846,59 +829,70 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
 // 9. Slot-39 bytes match real `commonware_codec::Encode(polynomial.public())`.
 // ---------------------------------------------------------------------------
 
-#[test]
-fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() {
-    use commonware_cryptography::bls12381::dkg::feldman_desmedt::{Dealer, Info, Player};
-    use commonware_cryptography::bls12381::primitives::sharing::Mode;
-    use commonware_cryptography::bls12381::primitives::variant::MinSig;
-    use commonware_cryptography::bls12381::{self, PrivateKey, PublicKey};
-    use commonware_cryptography::Signer as _;
-    use commonware_math::algebra::Random;
-    use commonware_parallel::Sequential;
-    use commonware_utils::{ordered, N3f1, TryCollect as _};
-    use rand_commonware::rngs::ChaCha20Rng;
-    use rand_commonware::SeedableRng;
-
-    // Use a stable arbitrary seed so the DKG fixture is deterministic.
-    let mut rng = ChaCha20Rng::seed_from_u64(277_u64);
-    let mut keys: Vec<bls12381::PrivateKey> = (0..3)
-        .map(|_| <PrivateKey as Random>::random(&mut rng))
+/// Three random BLS keys from `rng`, sorted by their encoded public keys.
+fn sorted_dkg_keys(rng: &mut ChaCha20Rng) -> Vec<PrivateKey> {
+    let mut keys: Vec<PrivateKey> = (0..3)
+        .map(|_| <PrivateKey as Random>::random(&mut *rng))
         .collect();
     keys.sort_by(|a, b| {
         commonware_codec::Encode::encode(&a.public_key())
             .cmp(&commonware_codec::Encode::encode(&b.public_key()))
     });
-    let participants: ordered::Set<PublicKey> =
-        keys.iter().map(|k| k.public_key()).try_collect().unwrap();
+    keys
+}
 
-    let info = Info::<MinSig, PublicKey>::new::<N3f1>(
+/// The round-0 DKG setup in which `keys` are both dealers and players.
+fn dkg_info(keys: &[PrivateKey]) -> Result<Info<MinSig, PublicKey>, String> {
+    let participants: ordered::Set<PublicKey> =
+        keys.iter()
+            .map(|k| k.public_key())
+            .try_collect()
+            .map_err(|error| format!("DKG participants: {error:?}"))?;
+    Info::<MinSig, PublicKey>::new::<N3f1>(
         b"snapshot-store-test",
         0,
         None,
         Mode::NonZeroCounter,
-        commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
+        Reveal::V1,
         participants.clone(),
-        participants.clone(),
+        participants,
     )
-    .unwrap();
+    .map_err(|error| format!("DKG info: {error:?}"))
+}
 
+/// The dealers and players of one DKG round.
+type DealtRound = (
+    Vec<Dealer<MinSig, PrivateKey>>,
+    Vec<Player<MinSig, PrivateKey>>,
+);
+
+/// Every dealer and player of `info` after each player acknowledged every
+/// dealing.
+fn dealt_round(
+    rng: &mut ChaCha20Rng,
+    info: &Info<MinSig, PublicKey>,
+    keys: &[PrivateKey],
+) -> Result<DealtRound, String> {
     let mut dealers = Vec::new();
     let mut pub_msgs = Vec::new();
     let mut all_priv_msgs = Vec::new();
-    for key in &keys {
+    for key in keys {
         let (dealer, pub_msg, priv_msgs) =
-            Dealer::<MinSig, PrivateKey>::start::<N3f1>(&mut rng, info.clone(), key.clone(), None)
-                .unwrap();
+            Dealer::<MinSig, PrivateKey>::start::<N3f1>(&mut *rng, info.clone(), key.clone(), None)
+                .map_err(|error| format!("DKG dealer: {error:?}"))?;
         dealers.push(dealer);
         pub_msgs.push(pub_msg);
         all_priv_msgs.push(priv_msgs);
     }
-    let mut players: Vec<Player<MinSig, PrivateKey>> = keys
-        .iter()
-        .map(|k| Player::new(info.clone(), k.clone()).unwrap())
-        .collect();
+    let mut players = Vec::with_capacity(keys.len());
+    for key in keys {
+        players.push(
+            Player::<MinSig, PrivateKey>::new(info.clone(), key.clone())
+                .map_err(|error| format!("DKG player: {error:?}"))?,
+        );
+    }
     outbe_consensus::test_harness::acknowledge_fixture_dealings(
-        &keys,
+        keys,
         outbe_consensus::test_harness::FixtureDealings {
             public_messages: &pub_msgs,
             private_messages: &all_priv_msgs,
@@ -906,6 +900,15 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
         &mut dealers,
         &mut players,
     );
+    Ok((dealers, players))
+}
+
+/// The 3 sorted DKG participant keys and the commonware encoding of the
+/// group public key of one deterministic real Feldman-Desmedt DKG run.
+fn real_dkg_group_public_key(rng: &mut ChaCha20Rng) -> Result<(Vec<PrivateKey>, Vec<u8>), String> {
+    let keys = sorted_dkg_keys(rng);
+    let info = dkg_info(&keys)?;
+    let (dealers, mut players) = dealt_round(rng, &info, &keys)?;
     let mut logs = std::collections::BTreeMap::new();
     for dealer in dealers {
         let signed_log = dealer.finalize::<N3f1>();
@@ -913,20 +916,23 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
             logs.insert(pk, log);
         }
     }
-    let mut dkg_logs = commonware_cryptography::bls12381::dkg::feldman_desmedt::Logs::<
-        MinSig,
-        PublicKey,
-        N3f1,
-    >::new(info.clone());
+    let mut dkg_logs = Logs::<MinSig, PublicKey, N3f1>::new(info.clone());
     for (dealer_pk, log) in logs {
         dkg_logs.record(dealer_pk, log);
     }
     let (output, _share) = players
         .remove(0)
-        .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(&mut rng, dkg_logs, &Sequential)
-        .unwrap();
-
+        .finalize::<N3f1, Batch>(&mut *rng, dkg_logs, &Sequential)
+        .map_err(|error| format!("DKG finalize: {error:?}"))?;
     let encoded_group_pk = commonware_codec::Encode::encode(output.public()).to_vec();
+    Ok((keys, encoded_group_pk))
+}
+
+#[test]
+fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() {
+    // Use a stable arbitrary seed so the DKG fixture is deterministic.
+    let mut rng = ChaCha20Rng::seed_from_u64(277_u64);
+    let (keys, encoded_group_pk) = real_dkg_group_public_key(&mut rng).unwrap();
     assert!(
         !encoded_group_pk.is_empty(),
         "polynomial.public() must encode to non-empty bytes",

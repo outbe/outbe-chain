@@ -1,3 +1,4 @@
+use super::tee_fixture::{initial_tee_policy, successor_tee_policy};
 use super::TEST_CHAIN_ID;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -7,9 +8,7 @@ use outbe_ocompregistry::{poc_schema_limits, OcompRegistry};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1, TeePolicyV1,
-};
+
 use outbe_teeregistry::TeeRegistry;
 
 use crate::api::get_active_version;
@@ -20,8 +19,8 @@ use crate::state::ScheduledUpdateInfo;
 use crate::ProtocolVersion;
 
 use super::{
-    block_ctx, min_activation, ocomp_authority, ocomp_successor, schedule_update, with_update,
-    with_update_provider, PV,
+    block_ctx, ocomp_authority, ocomp_successor, schedule_update, scheduled_status,
+    scheduled_update_provider, with_scheduled_update, PV,
 };
 
 static EMPTY_UPGRADE_HANDLER_REGISTRY: UpgradeHandlerRegistry = UpgradeHandlerRegistry::new(&[]);
@@ -92,57 +91,32 @@ static REPLAY_HANDLER_REGISTRY: UpgradeHandlerRegistry =
 static FAILING_HANDLER_REGISTRY: UpgradeHandlerRegistry =
     UpgradeHandlerRegistry::new(&[&FAILING_HANDLER]);
 
-fn update_tee_policy(
-    genesis_hash: B256,
-    policy_version: u64,
-    activation_height: u64,
-    predecessor_policy_hash: B256,
-    mrenclave: B256,
-) -> TeePolicyV1 {
-    TeePolicyV1 {
-        policy_version,
-        chain_id: U256::from(TEST_CHAIN_ID).to_be_bytes(),
-        genesis_hash,
-        activation_height,
-        predecessor_policy_hash,
-        attestation_mode: AttestationMode::DcapRequired,
-        intel_root_der_hash: B256::repeat_byte(0x61),
-        quote_version: 3,
-        tee_type: 0,
-        attestation_key_type: 2,
-        qe_vendor_id: [
-            0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f,
-            0x06, 0x07,
-        ],
-        certification_data_type: 5,
-        tcb_info_schema_version: 3,
-        qe_identity_schema_version: 2,
-        minimum_tcb_evaluation_data_number: 1,
-        accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
-        accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
-        minimum_lease: 3_600,
-        maximum_lease: 604_800,
-        collateral_margin: 3_600,
-        resource_schedule_hash: B256::repeat_byte(0x62),
-        measurement_rules: vec![TeeMeasurementRuleV1 {
-            mrenclave,
-            mrsigner: B256::repeat_byte(0x64),
-            isv_prod_id: 7,
-            minimum_isv_svn: 2,
-            admit_from_height: activation_height,
-            admit_until_height_exclusive: u64::MAX,
-        }],
-    }
+fn stage_policy_release(
+    provider: &mut HashMapStorageProvider,
+    proposal_id: U256,
+    current: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    successor: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+) {
+    StorageHandle::enter(provider, |storage| {
+        let mut registry = TeeRegistry::new(storage.clone());
+        registry.install_initial_policy_v1(current).unwrap();
+        registry
+            .stage_successor_policy_v1(proposal_id, successor)
+            .unwrap();
+        schedule_update(
+            &mut Update::new(storage),
+            proposal_id,
+            crate::ScheduleUpdatePayload::new(PV, successor.activation_height, "TEE release"),
+            1,
+        )
+        .unwrap();
+    });
 }
 
 #[test]
 fn activation_without_handler_succeeds() {
-    with_update(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation = min_activation(current);
+    with_scheduled_update(PV, |storage, update, activation| {
         let proposal_id = U256::from(1);
-        schedule_update(&mut update, proposal_id, PV, activation, "", current).unwrap();
 
         let ctx = block_ctx(storage.clone(), activation);
         update
@@ -150,11 +124,7 @@ fn activation_without_handler_succeeds() {
             .unwrap();
 
         assert_eq!(
-            update
-                .read_scheduled_update(proposal_id)
-                .unwrap()
-                .unwrap()
-                .status,
+            scheduled_status(update, proposal_id),
             ScheduledUpdateStatus::Activated
         );
         assert_eq!(get_active_version(storage).unwrap(), PV);
@@ -166,32 +136,11 @@ fn software_update_activation_promotes_its_staged_tee_policy() {
     let genesis_hash = B256::repeat_byte(0x60);
     let proposal_id = U256::from(11);
     let activation = 101;
-    let current = update_tee_policy(genesis_hash, 1, 1, B256::ZERO, B256::repeat_byte(0x65));
-    let successor = update_tee_policy(
-        genesis_hash,
-        2,
-        activation,
-        current.policy_hash().unwrap(),
-        B256::repeat_byte(0x66),
-    );
+    let current = initial_tee_policy(genesis_hash, B256::repeat_byte(0x65), 0x61);
+    let successor = successor_tee_policy(&current, activation, B256::repeat_byte(0x66), 0x61);
     let mut provider = HashMapStorageProvider::new_with_chain_identity(TEST_CHAIN_ID, genesis_hash);
     provider.set_block_number(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut registry = TeeRegistry::new(storage.clone());
-        registry.install_initial_policy_v1(&current).unwrap();
-        registry
-            .stage_successor_policy_v1(proposal_id, &successor)
-            .unwrap();
-        schedule_update(
-            &mut Update::new(storage),
-            proposal_id,
-            PV,
-            activation,
-            "TEE release",
-            1,
-        )
-        .unwrap();
-    });
+    stage_policy_release(&mut provider, proposal_id, &current, &successor);
 
     provider.set_block_number(activation);
     StorageHandle::enter(&mut provider, |storage| {
@@ -227,9 +176,7 @@ fn software_update_activation_promotes_ocomp_and_keeps_the_predecessor_readable(
         schedule_update(
             &mut Update::new(storage),
             proposal_id,
-            PV,
-            activation,
-            "OCOMP release",
+            crate::ScheduleUpdatePayload::new(PV, activation, "OCOMP release"),
             1,
         )
         .unwrap();
@@ -261,32 +208,11 @@ fn handler_failure_rolls_back_tee_policy_promotion_with_update_activation() {
     let genesis_hash = B256::repeat_byte(0x67);
     let proposal_id = U256::from(12);
     let activation = 101;
-    let current = update_tee_policy(genesis_hash, 1, 1, B256::ZERO, B256::repeat_byte(0x68));
-    let successor = update_tee_policy(
-        genesis_hash,
-        2,
-        activation,
-        current.policy_hash().unwrap(),
-        B256::repeat_byte(0x69),
-    );
+    let current = initial_tee_policy(genesis_hash, B256::repeat_byte(0x68), 0x61);
+    let successor = successor_tee_policy(&current, activation, B256::repeat_byte(0x69), 0x61);
     let mut provider = HashMapStorageProvider::new_with_chain_identity(TEST_CHAIN_ID, genesis_hash);
     provider.set_block_number(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut registry = TeeRegistry::new(storage.clone());
-        registry.install_initial_policy_v1(&current).unwrap();
-        registry
-            .stage_successor_policy_v1(proposal_id, &successor)
-            .unwrap();
-        schedule_update(
-            &mut Update::new(storage),
-            proposal_id,
-            PV,
-            activation,
-            "TEE release",
-            1,
-        )
-        .unwrap();
-    });
+    stage_policy_release(&mut provider, proposal_id, &current, &successor);
 
     provider.set_block_number(activation);
     StorageHandle::enter(&mut provider, |storage| {
@@ -320,14 +246,9 @@ fn activating_update_discards_staged_policy_owned_by_canceled_update() {
     let activating_proposal_id = U256::from(14);
     let staged_activation = 202;
     let activating_height = 101;
-    let current = update_tee_policy(genesis_hash, 1, 1, B256::ZERO, B256::repeat_byte(0x6b));
-    let successor = update_tee_policy(
-        genesis_hash,
-        2,
-        staged_activation,
-        current.policy_hash().unwrap(),
-        B256::repeat_byte(0x6c),
-    );
+    let current = initial_tee_policy(genesis_hash, B256::repeat_byte(0x6b), 0x61);
+    let successor =
+        successor_tee_policy(&current, staged_activation, B256::repeat_byte(0x6c), 0x61);
     let mut provider = HashMapStorageProvider::new_with_chain_identity(TEST_CHAIN_ID, genesis_hash);
     provider.set_block_number(1);
     StorageHandle::enter(&mut provider, |storage| {
@@ -340,18 +261,14 @@ fn activating_update_discards_staged_policy_owned_by_canceled_update() {
         schedule_update(
             &mut update,
             staged_proposal_id,
-            PV,
-            staged_activation,
-            "superseded TEE release",
+            crate::ScheduleUpdatePayload::new(PV, staged_activation, "superseded TEE release"),
             1,
         )
         .unwrap();
         schedule_update(
             &mut update,
             activating_proposal_id,
-            PV,
-            activating_height,
-            "selected release",
+            crate::ScheduleUpdatePayload::new(PV, activating_height, "selected release"),
             1,
         )
         .unwrap();
@@ -370,19 +287,11 @@ fn activating_update_discards_staged_policy_owned_by_canceled_update() {
 
         let update = Update::new(storage);
         assert_eq!(
-            update
-                .read_scheduled_update(activating_proposal_id)
-                .unwrap()
-                .unwrap()
-                .status,
+            scheduled_status(&update, activating_proposal_id),
             ScheduledUpdateStatus::Activated
         );
         assert_eq!(
-            update
-                .read_scheduled_update(staged_proposal_id)
-                .unwrap()
-                .unwrap()
-                .status,
+            scheduled_status(&update, staged_proposal_id),
             ScheduledUpdateStatus::Canceled
         );
     });
@@ -391,12 +300,8 @@ fn activating_update_discards_staged_policy_owned_by_canceled_update() {
 #[test]
 fn registered_handler_is_called_before_activation() {
     REGISTERED_HANDLER_CALLS.store(0, Ordering::SeqCst);
-    with_update(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation = min_activation(current);
+    with_scheduled_update(PV, |storage, update, activation| {
         let proposal_id = U256::from(1);
-        schedule_update(&mut update, proposal_id, PV, activation, "", current).unwrap();
 
         let ctx = block_ctx(storage.clone(), activation);
         update
@@ -405,11 +310,7 @@ fn registered_handler_is_called_before_activation() {
 
         assert_eq!(REGISTERED_HANDLER_CALLS.load(Ordering::SeqCst), 1);
         assert_eq!(
-            update
-                .read_scheduled_update(proposal_id)
-                .unwrap()
-                .unwrap()
-                .status,
+            scheduled_status(update, proposal_id),
             ScheduledUpdateStatus::Activated
         );
         assert_eq!(get_active_version(storage).unwrap(), PV);
@@ -418,12 +319,8 @@ fn registered_handler_is_called_before_activation() {
 
 #[test]
 fn handler_failure_is_fatal_and_leaves_update_unactivated() {
-    with_update(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation = min_activation(current);
+    with_scheduled_update(PV, |storage, update, activation| {
         let proposal_id = U256::from(1);
-        schedule_update(&mut update, proposal_id, PV, activation, "", current).unwrap();
 
         let ctx = block_ctx(storage.clone(), activation);
         let err = update
@@ -435,11 +332,7 @@ fn handler_failure_is_fatal_and_leaves_update_unactivated() {
         ));
 
         assert_eq!(
-            update
-                .read_scheduled_update(proposal_id)
-                .unwrap()
-                .unwrap()
-                .status,
+            scheduled_status(update, proposal_id),
             ScheduledUpdateStatus::Scheduled
         );
         assert_ne!(get_active_version(storage).unwrap(), PV);
@@ -449,13 +342,7 @@ fn handler_failure_is_fatal_and_leaves_update_unactivated() {
 #[test]
 fn activated_update_does_not_reinvoke_handler_on_replay() {
     REPLAY_HANDLER_CALLS.store(0, Ordering::SeqCst);
-    let provider = with_update_provider(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation = min_activation(current);
-        let proposal_id = U256::from(1);
-        schedule_update(&mut update, proposal_id, PV, activation, "", current).unwrap();
-
+    let provider = scheduled_update_provider(PV, "", |storage, update, activation| {
         let ctx = block_ctx(storage.clone(), activation);
         update
             .process_begin_block_with_handlers(&ctx, &REPLAY_HANDLER_REGISTRY)

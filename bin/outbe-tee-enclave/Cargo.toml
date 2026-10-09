@@ -121,6 +121,7 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 
 [dev-dependencies]
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 tempfile.workspace = true

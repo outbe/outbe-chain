@@ -20,13 +20,17 @@ pub mod lifecycle;
 pub mod precompile;
 pub mod schema;
 
+mod ism_sync;
+mod liveness;
+mod remote;
 mod runtime;
 mod sol_ext;
 
-pub use runtime::{
-    checkpoint_digest, consensus_threshold, validate_validators, RemoteCall, GRACE_BLOCKS,
-    LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
+pub use liveness::{
+    checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
 };
+pub use remote::RemoteCall;
+pub use runtime::{consensus_threshold, validate_validators, ControllerBootstrap};
 pub use schema::HyperlaneControllerContract;
 
 #[cfg(test)]

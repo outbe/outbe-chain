@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use eyre::{ensure, Context, Result};
 use outbe_ocomp_protocol::capacity::{
     CapacityBudgetV1, CapacityColdRunV1, CapacityEvidenceV1, CapacityHistoricalReplayBindingV1,
@@ -143,28 +143,7 @@ struct CapacityPublicObservationV1 {
 struct CapacityHistoricalReplayObservationV1 {
     recovery: CapacityHistoricalReplaySpanV1,
     recovered_result_digest: B256,
-    recovered_generation: CapacityRecoveredGenerationObservationV1,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CapacityRecoveredGenerationObservationV1 {
-    worldwide_day: u32,
-    generation: u64,
-    job_id: B256,
-    program_semantics_hash: B256,
-    nod_root: B256,
-    bucket_root: B256,
-    output_manifest_root: B256,
-    tribute_count: u32,
-    nod_count: u32,
-    bucket_count: u32,
-    nod_amount_total: U256,
-    lysis_allocation_minor: U256,
-    issued_at: u64,
-    result_evidence_hash: B256,
-    block_number: u64,
-    block_hash: B256,
+    recovered_generation: CapacityRecoveredGenerationBindingV1,
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,32 +282,7 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
                 replayed_block_count: historical_replay.recovery.replayed_block_count,
                 elapsed_micros: historical_replay.recovery.elapsed_micros,
                 recovered_result_digest: historical_replay.recovered_result_digest,
-                recovered_generation: CapacityRecoveredGenerationBindingV1 {
-                    worldwide_day: historical_replay.recovered_generation.worldwide_day,
-                    generation: historical_replay.recovered_generation.generation,
-                    job_id: historical_replay.recovered_generation.job_id,
-                    program_semantics_hash: historical_replay
-                        .recovered_generation
-                        .program_semantics_hash,
-                    nod_root: historical_replay.recovered_generation.nod_root,
-                    bucket_root: historical_replay.recovered_generation.bucket_root,
-                    output_manifest_root: historical_replay
-                        .recovered_generation
-                        .output_manifest_root,
-                    tribute_count: historical_replay.recovered_generation.tribute_count,
-                    nod_count: historical_replay.recovered_generation.nod_count,
-                    bucket_count: historical_replay.recovered_generation.bucket_count,
-                    nod_amount_total: historical_replay.recovered_generation.nod_amount_total,
-                    lysis_allocation_minor: historical_replay
-                        .recovered_generation
-                        .lysis_allocation_minor,
-                    issued_at: historical_replay.recovered_generation.issued_at,
-                    result_evidence_hash: historical_replay
-                        .recovered_generation
-                        .result_evidence_hash,
-                    block_number: historical_replay.recovered_generation.block_number,
-                    block_hash: historical_replay.recovered_generation.block_hash,
-                },
+                recovered_generation: historical_replay.recovered_generation,
             },
         },
         succeeded: true,
@@ -512,6 +466,7 @@ fn sha256(value: &[u8]) -> B256 {
 mod tests {
     use std::fs;
 
+    use alloy_primitives::U256;
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -645,6 +600,70 @@ mod tests {
         assert_eq!(run.binding.historical_replay.replayed_block_count, 44);
         assert_eq!(run.work.cpu_micros, 1);
         assert_eq!(run.work.finality_latency_micros, 11);
+
+        let generation = run.binding.historical_replay.recovered_generation.clone();
+        let binding_json = serde_json::to_string(&generation).unwrap();
+        let certified = crate::world::rpc::OcompCertifiedGenerationV1 {
+            worldwide_day: generation.worldwide_day,
+            generation: generation.generation,
+            job_id: generation.job_id,
+            program_semantics_hash: generation.program_semantics_hash,
+            nod_root: generation.nod_root,
+            bucket_root: generation.bucket_root,
+            output_manifest_root: generation.output_manifest_root,
+            tribute_count: generation.tribute_count,
+            nod_count: generation.nod_count,
+            bucket_count: generation.bucket_count,
+            nod_amount_total: generation.nod_amount_total,
+            lysis_allocation_minor: generation.lysis_allocation_minor,
+            issued_at: generation.issued_at,
+            result_evidence_hash: generation.result_evidence_hash,
+            block_number: generation.block_number,
+            block_hash: generation.block_hash,
+        };
+        assert_eq!(binding_json, serde_json::to_string(&certified).unwrap());
+        let ordered_fields = binding_json
+            .split(',')
+            .map(|field| field.trim_start_matches('{').split_once(':').unwrap().0)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered_fields,
+            [
+                r#""worldwide_day""#,
+                r#""generation""#,
+                r#""job_id""#,
+                r#""program_semantics_hash""#,
+                r#""nod_root""#,
+                r#""bucket_root""#,
+                r#""output_manifest_root""#,
+                r#""tribute_count""#,
+                r#""nod_count""#,
+                r#""bucket_count""#,
+                r#""nod_amount_total""#,
+                r#""lysis_allocation_minor""#,
+                r#""issued_at""#,
+                r#""result_evidence_hash""#,
+                r#""block_number""#,
+                r#""block_hash""#,
+            ]
+        );
+
+        let mut unknown_generation = scenario.clone();
+        unknown_generation["ocomp"]["public_path"]["capacity_historical_replay"]
+            ["recovered_generation"]["unexpected"] = json!(true);
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&unknown_generation).unwrap(),
+        )
+        .unwrap();
+        assert!(assemble_capacity_run(1, &path).is_err());
+
+        let mut wrong_generation = scenario.clone();
+        wrong_generation["ocomp"]["public_path"]["capacity_historical_replay"]
+            ["recovered_generation"]["job_id"] = json!(B256::repeat_byte(0xff));
+        fs::write(&path, serde_json::to_vec_pretty(&wrong_generation).unwrap()).unwrap();
+        assert!(assemble_capacity_run(1, &path).is_err());
+        fs::write(&path, serde_json::to_vec_pretty(&scenario).unwrap()).unwrap();
 
         let mut invented = run.clone();
         invented.binding.validator_block_processing[0].elapsed_micros += 1;

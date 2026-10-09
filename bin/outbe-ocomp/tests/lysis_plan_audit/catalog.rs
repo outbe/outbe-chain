@@ -1,4 +1,5 @@
 use super::*;
+use outbe_ocomp_protocol::list::OrderedListProofTarget;
 
 #[test]
 fn cold_restart_rejects_a_self_consistent_artifact_for_the_wrong_plan_spec() {
@@ -118,9 +119,7 @@ fn scheduler_prepares_manifest_bound_two_shard_worker_requests_after_cold_restar
             UnitSpecV1::decode_canonical(&request.canonical_unit_spec.0, &fixture.limits).unwrap();
         assert_eq!(spec.phase, UnitPhase::Enumerate);
         verify_ordered_list_membership(
-            ListKind::UnitSpecificationsArtifacts,
-            2,
-            ordinal,
+            OrderedListProofTarget::new(ListKind::UnitSpecificationsArtifacts, 2, ordinal),
             &request.canonical_unit_spec.0,
             &request.unit_membership_siblings,
             audit.plan().primary_work_unit_root,

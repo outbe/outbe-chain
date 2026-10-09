@@ -258,9 +258,11 @@ impl World {
                 storage.clone(),
                 Address::ZERO,
                 pair,
-                rate,
-                1,
-                storage.timestamp().unwrap().to::<u64>(),
+                outbe_oracle::api::RateObservation {
+                    rate,
+                    block_number: 1,
+                    timestamp: storage.timestamp().unwrap().to::<u64>(),
+                },
             )
             .unwrap();
         });

@@ -71,7 +71,7 @@ use outbe_primitives::{
 use outbe_stablecoin::StablecoinContract;
 use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};
 use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
-use outbe_validatorset::{ValidatorHistory, ValidatorLifecycle};
+use outbe_validatorset::{HistoryCounters, ValidatorHistory, ValidatorLifecycle};
 use outbe_vote::{
     constants::VOTING_WINDOW_BLOCKS,
     precompile::IVote,

@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256};
-use outbe_nod::NodPageRequest;
-use outbe_offchain_data::{DayDatabaseRoute, FinalizedBlock};
+use outbe_offchain_data::DayDatabaseRoute;
 use outbe_offchain_storage::{DayDatabases, Namespace, ScanRequest, StorageReader};
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_tribute::TributeRepositoryReader;
@@ -29,26 +28,23 @@ fn new_tribute_and_nod_land_in_their_day_databases() {
     let body = tribute_body(tribute_id, owner, 7);
     let nod_id = poseidon_entity(owner, 20260715);
     projection
-        .project_block(&FinalizedBlock {
-            number: 5,
-            hash: B256::repeat_byte(5),
-            receipts: vec![receipt(
-                0,
-                1,
-                vec![
-                    log(
-                        0,
-                        TRIBUTE_ADDRESS,
-                        tribute_stored_body_after(&body, B256::ZERO),
-                    ),
-                    log(
-                        1,
-                        NOD_ADDRESS,
-                        nod_stored(nod_id, owner, B256::repeat_byte(0xbc)),
-                    ),
-                ],
-            )],
-        })
+        .project_block(&single_receipt_block(
+            5,
+            5,
+            1,
+            vec![
+                log(
+                    0,
+                    TRIBUTE_ADDRESS,
+                    tribute_stored_body_after(&body, B256::ZERO),
+                ),
+                log(
+                    1,
+                    NOD_ADDRESS,
+                    nod_stored(nod_id, owner, B256::repeat_byte(0xbc)),
+                ),
+            ],
+        ))
         .unwrap();
 
     for name in [
@@ -82,40 +78,21 @@ fn new_tribute_and_nod_land_in_their_day_databases() {
 
     let nod_reader =
         outbe_nod::nod_reader(shared.clone()).with_days(shared.clone(), databases.clone());
-    let listed = nod_reader
-        .list_by_owner(
-            owner,
-            NodPageRequest {
-                after: None,
-                limit: 10,
-            },
-        )
-        .unwrap();
+    let listed = nod_reader.list_by_owner(owner, FIRST_NOD_PAGE).unwrap();
     assert_eq!(listed.records.len(), 1);
     assert_eq!(listed.records[0].nod_id, nod_id);
     assert_eq!(owner_day_count(shared.as_ref()), 1);
 
     let bucket_key = B256::repeat_byte(0xbc);
     projection
-        .project_block(&FinalizedBlock {
-            number: 6,
-            hash: B256::repeat_byte(6),
-            receipts: vec![receipt(
-                0,
-                2,
-                vec![log(0, NOD_ADDRESS, nod_deleted(nod_id, owner, bucket_key))],
-            )],
-        })
+        .project_block(&single_receipt_block(
+            6,
+            6,
+            2,
+            vec![log(0, NOD_ADDRESS, nod_deleted(nod_id, owner, bucket_key))],
+        ))
         .unwrap();
-    let listed = nod_reader
-        .list_by_owner(
-            owner,
-            NodPageRequest {
-                after: None,
-                limit: 10,
-            },
-        )
-        .unwrap();
+    let listed = nod_reader.list_by_owner(owner, FIRST_NOD_PAGE).unwrap();
     assert!(listed.records.is_empty());
     assert_eq!(owner_day_count(shared.as_ref()), 0);
 }

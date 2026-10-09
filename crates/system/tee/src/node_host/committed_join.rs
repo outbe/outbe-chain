@@ -1,5 +1,10 @@
 use super::codec_error;
-use super::ensure_private_directory;
+use super::durable_submission::{
+    verify_durable_submission, DurableSubmission, DurableSubmissionKind,
+};
+use super::filesystem::remove_file_and_sync_directory;
+use super::journal_records::{persist_exact_checkpoint, CheckedRelayInput, ExactCheckpoint};
+use super::locked_state::{lock_node_host_state, require_committed_node_host_state};
 use super::path_exists;
 use super::read_committed_join_relay;
 use super::read_committed_join_submission;
@@ -10,7 +15,6 @@ use super::read_replacement_submission;
 use super::reconcile_committed_join_state;
 use super::reconcile_finalized_join_admission_anchor;
 use super::reconcile_replacement_state;
-use super::remove_file_if_exists;
 use super::replace_bytes_atomically;
 use super::validate_durable_replacement_submission;
 use super::CommittedJoinRelayV1;
@@ -21,19 +25,66 @@ use super::NodeHostStateLock;
 
 use crate::NodeHostNoiseKey;
 use crate::TransportError;
-use alloy_primitives::keccak256;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::AttestationEvidenceV1;
-use outbe_primitives::tee_attestation_v1::AttestationOperationV1;
 
 use outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1;
 
 use outbe_primitives::tee_attestation_v1::RegistrationIntentV1;
 
-use std::fs::File;
-
 use std::path::Path;
+
+// The lock remains owned by this value through each caller's reads and writes.
+struct LockedJoinState {
+    paths: NodeHostPaths,
+    manifest: EnclaveInitializationManifestV1,
+    _state_lock: NodeHostStateLock,
+}
+
+fn locked_join_state(
+    node_data_dir: &Path,
+    load_manifest: impl FnOnce(
+        &NodeHostPaths,
+    ) -> Result<EnclaveInitializationManifestV1, TransportError>,
+) -> Result<LockedJoinState, TransportError> {
+    let (paths, state_lock) = lock_node_host_state(node_data_dir)?;
+    let manifest = load_manifest(&paths)?;
+    Ok(LockedJoinState {
+        paths,
+        manifest,
+        _state_lock: state_lock,
+    })
+}
+
+fn committed_submission_state(
+    node_data_dir: &Path,
+    missing_state_error: &'static str,
+) -> Result<LockedJoinState, TransportError> {
+    locked_join_state(node_data_dir, |paths| {
+        require_committed_node_host_state(paths, missing_state_error)?;
+        let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+        let manifest = read_manifest(&paths.manifest)?;
+        if manifest.node_host_noise_x25519 != node_host.public() {
+            return Err(TransportError::Codec(
+                "committed join manifest does not match the persistent NodeHost key".into(),
+            ));
+        }
+        reconcile_committed_join_state(paths, &manifest)?;
+        Ok(manifest)
+    })
+}
+
+fn finalized_anchor_state(node_data_dir: &Path) -> Result<LockedJoinState, TransportError> {
+    locked_join_state(node_data_dir, |paths| {
+        let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+        reconcile_replacement_state(paths, &node_host)?;
+        let manifest = read_manifest(&paths.manifest)?;
+        reconcile_committed_join_state(paths, &manifest)?;
+        reconcile_finalized_join_admission_anchor(paths)?;
+        Ok(manifest)
+    })
+}
 
 /// Persist exact canonical registration material for the already committed
 /// enclave. Exact replay is idempotent. The function rejects conflicting
@@ -45,74 +96,49 @@ pub fn persist_committed_join_submission(
     node_signature: &[u8; 65],
     enclave_signature: &[u8; 64],
 ) -> Result<CommittedJoinSubmissionV1, TransportError> {
-    let paths = NodeHostPaths::new(node_data_dir);
-    ensure_private_directory(&paths.root)?;
-    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
-    if !path_exists(&paths.manifest)? || !path_exists(&paths.noise_key)? {
-        return Err(TransportError::Codec(
-            "committed join submission requires committed NodeHost state".into(),
-        ));
-    }
-    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
-    let manifest = read_manifest(&paths.manifest)?;
-    if manifest.node_host_noise_x25519 != node_host.public() {
-        return Err(TransportError::Codec(
-            "committed join manifest does not match the persistent NodeHost key".into(),
-        ));
-    }
-    reconcile_committed_join_state(&paths, &manifest)?;
-    let submission = CommittedJoinSubmissionV1 {
-        registration_caller,
-        evidence: evidence.encode_canonical().map_err(codec_error)?,
-        node_signature: *node_signature,
-        enclave_signature: *enclave_signature,
-    };
-    validate_durable_committed_join_submission(&manifest, &submission)?;
-    let bytes = submission.encode_canonical()?;
-    if path_exists(&paths.committed_join_submission)? {
-        let durable = read_committed_join_submission(&paths.committed_join_submission)?;
-        if durable == submission {
-            return Ok(durable);
-        }
-        return Err(TransportError::Codec(
-            "committed join material conflicts with the durable submission".into(),
-        ));
-    }
-    replace_bytes_atomically(
-        &paths.committed_join_submission,
-        &paths.committed_join_submission_next,
-        &paths.committed_join_write_scratch,
-        &bytes,
-        &paths.root,
+    let state = committed_submission_state(
+        node_data_dir,
+        "committed join submission requires committed NodeHost state",
     )?;
-    Ok(submission)
+    let paths = &state.paths;
+    let manifest = &state.manifest;
+    let submission = CommittedJoinSubmissionV1::new(
+        registration_caller,
+        evidence.encode_canonical().map_err(codec_error)?,
+        *node_signature,
+        *enclave_signature,
+    );
+    validate_durable_committed_join_submission(manifest, &submission)?;
+    let bytes = submission.encode_canonical()?;
+    persist_exact_checkpoint(
+        ExactCheckpoint {
+            path: &paths.committed_join_submission,
+            next: &paths.committed_join_submission_next,
+            scratch: &paths.committed_join_write_scratch,
+            root: &paths.root,
+            read: read_committed_join_submission,
+            conflict_error: "committed join material conflicts with the durable submission",
+        },
+        submission,
+        &bytes,
+    )
 }
 
 /// Reload and revalidate exact committed-enclave registration material.
 pub fn load_committed_join_submission(
     node_data_dir: &Path,
 ) -> Result<Option<CommittedJoinSubmissionV1>, TransportError> {
-    let paths = NodeHostPaths::new(node_data_dir);
-    ensure_private_directory(&paths.root)?;
-    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
-    if !path_exists(&paths.manifest)? || !path_exists(&paths.noise_key)? {
-        return Err(TransportError::Codec(
-            "committed join submission reload requires committed NodeHost state".into(),
-        ));
-    }
-    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
-    let manifest = read_manifest(&paths.manifest)?;
-    if manifest.node_host_noise_x25519 != node_host.public() {
-        return Err(TransportError::Codec(
-            "committed join manifest does not match the persistent NodeHost key".into(),
-        ));
-    }
-    reconcile_committed_join_state(&paths, &manifest)?;
+    let state = committed_submission_state(
+        node_data_dir,
+        "committed join submission reload requires committed NodeHost state",
+    )?;
+    let paths = &state.paths;
+    let manifest = &state.manifest;
     if !path_exists(&paths.committed_join_submission)? {
         return Ok(None);
     }
     let submission = read_committed_join_submission(&paths.committed_join_submission)?;
-    validate_durable_committed_join_submission(&manifest, &submission)?;
+    validate_durable_committed_join_submission(manifest, &submission)?;
     Ok(Some(submission))
 }
 
@@ -124,9 +150,7 @@ pub fn persist_committed_join_relay(
     from_block: u64,
     raw_transaction: &[u8],
 ) -> Result<CommittedJoinRelayV1, TransportError> {
-    let paths = NodeHostPaths::new(node_data_dir);
-    ensure_private_directory(&paths.root)?;
-    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let (paths, _state_lock) = lock_node_host_state(node_data_dir)?;
     let manifest = read_manifest(&paths.manifest)?;
     reconcile_committed_join_state(&paths, &manifest)?;
     if !path_exists(&paths.committed_join_submission)? {
@@ -136,45 +160,35 @@ pub fn persist_committed_join_relay(
     }
     let submission = read_committed_join_submission(&paths.committed_join_submission)?;
     validate_durable_committed_join_submission(&manifest, &submission)?;
-    if calldata_hash.is_zero() || raw_transaction.is_empty() {
-        return Err(TransportError::Codec(
-            "committed join relay transaction is incomplete".into(),
-        ));
-    }
-    let relay = CommittedJoinRelayV1 {
-        submission_hash: submission.submission_hash()?,
+    let checked = CheckedRelayInput::new(
         calldata_hash,
-        transaction_hash: keccak256(raw_transaction),
-        from_block,
-        raw_transaction: raw_transaction.to_vec(),
-    };
-    let bytes = relay.encode_canonical()?;
-    if path_exists(&paths.committed_join_relay)? {
-        let durable = read_committed_join_relay(&paths.committed_join_relay)?;
-        if durable == relay {
-            return Ok(durable);
-        }
-        return Err(TransportError::Codec(
-            "committed join transaction conflicts with the durable relay checkpoint".into(),
-        ));
-    }
-    replace_bytes_atomically(
-        &paths.committed_join_relay,
-        &paths.committed_join_relay_next,
-        &paths.committed_join_write_scratch,
-        &bytes,
-        &paths.root,
+        raw_transaction,
+        "committed join relay transaction is incomplete",
     )?;
-    Ok(relay)
+    let submission_hash = submission.submission_hash()?;
+    let material = checked.into_material();
+    let relay = CommittedJoinRelayV1::new(submission_hash, from_block, material);
+    let bytes = relay.encode_canonical()?;
+    persist_exact_checkpoint(
+        ExactCheckpoint {
+            path: &paths.committed_join_relay,
+            next: &paths.committed_join_relay_next,
+            scratch: &paths.committed_join_write_scratch,
+            root: &paths.root,
+            read: read_committed_join_relay,
+            conflict_error:
+                "committed join transaction conflicts with the durable relay checkpoint",
+        },
+        relay,
+        &bytes,
+    )
 }
 
 /// Reload the byte-identical signed committed-join transaction after restart.
 pub fn load_committed_join_relay(
     node_data_dir: &Path,
 ) -> Result<Option<CommittedJoinRelayV1>, TransportError> {
-    let paths = NodeHostPaths::new(node_data_dir);
-    ensure_private_directory(&paths.root)?;
-    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let (paths, _state_lock) = lock_node_host_state(node_data_dir)?;
     let manifest = read_manifest(&paths.manifest)?;
     reconcile_committed_join_state(&paths, &manifest)?;
     if !path_exists(&paths.committed_join_relay)? {
@@ -183,7 +197,7 @@ pub fn load_committed_join_relay(
     let submission = read_committed_join_submission(&paths.committed_join_submission)?;
     validate_durable_committed_join_submission(&manifest, &submission)?;
     let relay = read_committed_join_relay(&paths.committed_join_relay)?;
-    if relay.submission_hash != submission.submission_hash()? {
+    if relay.submission_hash() != submission.submission_hash()? {
         return Err(TransportError::Codec(
             "committed join relay targets another durable submission".into(),
         ));
@@ -198,9 +212,7 @@ pub fn clear_committed_join_checkpoint(
     node_data_dir: &Path,
     expected_intent_hash: B256,
 ) -> Result<(), TransportError> {
-    let paths = NodeHostPaths::new(node_data_dir);
-    ensure_private_directory(&paths.root)?;
-    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let (paths, _state_lock) = lock_node_host_state(node_data_dir)?;
     let manifest = read_manifest(&paths.manifest)?;
     reconcile_committed_join_state(&paths, &manifest)?;
     if !path_exists(&paths.committed_join_submission)? {
@@ -213,10 +225,8 @@ pub fn clear_committed_join_checkpoint(
             "committed join checkpoint belongs to another intent".into(),
         ));
     }
-    remove_file_if_exists(&paths.committed_join_relay)?;
-    File::open(&paths.root)?.sync_all()?;
-    remove_file_if_exists(&paths.committed_join_submission)?;
-    File::open(&paths.root)?.sync_all()?;
+    remove_file_and_sync_directory(&paths.committed_join_relay, &paths.root)?;
+    remove_file_and_sync_directory(&paths.committed_join_submission, &paths.root)?;
     Ok(())
 }
 
@@ -229,22 +239,17 @@ pub fn persist_finalized_join_admission_anchor(
     anchor: FinalizedJoinAdmissionAnchorV1,
 ) -> Result<FinalizedJoinAdmissionAnchorV1, TransportError> {
     validate_finalized_join_admission_anchor(anchor)?;
-    let paths = NodeHostPaths::new(node_data_dir);
-    ensure_private_directory(&paths.root)?;
-    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
-    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
-    reconcile_replacement_state(&paths, &node_host)?;
-    let manifest = read_manifest(&paths.manifest)?;
-    reconcile_committed_join_state(&paths, &manifest)?;
-    reconcile_finalized_join_admission_anchor(&paths)?;
-    validate_anchor_against_local_state(&paths, &manifest, anchor)?;
-    if let Some(pending_intent_hash) = durable_join_intent_hash(&paths, &manifest)? {
+    let state = finalized_anchor_state(node_data_dir)?;
+    let paths = &state.paths;
+    let manifest = &state.manifest;
+    validate_anchor_against_local_state(paths, manifest, anchor)?;
+    if let Some(pending_intent_hash) = durable_join_intent_hash(paths, manifest)? {
         if pending_intent_hash != anchor.intent_hash {
             return Err(TransportError::Codec(
                 "finalized join admission anchor does not match the durable join intent".into(),
             ));
         }
-    } else if has_incomplete_join_checkpoint(&paths)? {
+    } else if has_incomplete_join_checkpoint(paths)? {
         return Err(TransportError::Codec(
             "unfinished join checkpoint is incomplete".into(),
         ));
@@ -272,17 +277,12 @@ pub fn persist_finalized_join_admission_anchor(
 pub fn load_finalized_join_admission_anchor(
     node_data_dir: &Path,
 ) -> Result<Option<FinalizedJoinAdmissionAnchorV1>, TransportError> {
-    let paths = NodeHostPaths::new(node_data_dir);
-    ensure_private_directory(&paths.root)?;
-    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
-    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
-    reconcile_replacement_state(&paths, &node_host)?;
-    let manifest = read_manifest(&paths.manifest)?;
-    reconcile_committed_join_state(&paths, &manifest)?;
-    reconcile_finalized_join_admission_anchor(&paths)?;
-    let pending_intent_hash = durable_join_intent_hash(&paths, &manifest)?;
+    let state = finalized_anchor_state(node_data_dir)?;
+    let paths = &state.paths;
+    let manifest = &state.manifest;
+    let pending_intent_hash = durable_join_intent_hash(paths, manifest)?;
     if !path_exists(&paths.finalized_join_admission_anchor)? {
-        if pending_intent_hash.is_some() || has_incomplete_join_checkpoint(&paths)? {
+        if pending_intent_hash.is_some() || has_incomplete_join_checkpoint(paths)? {
             return Err(TransportError::Codec(
                 "unfinished join has no finalized admission anchor".into(),
             ));
@@ -290,14 +290,14 @@ pub fn load_finalized_join_admission_anchor(
         return Ok(None);
     }
     let anchor = read_finalized_join_admission_anchor(&paths.finalized_join_admission_anchor)?;
-    validate_anchor_against_local_state(&paths, &manifest, anchor)?;
+    validate_anchor_against_local_state(paths, manifest, anchor)?;
     if let Some(intent_hash) = pending_intent_hash {
         if intent_hash != anchor.intent_hash {
             return Err(TransportError::Codec(
                 "unfinished join conflicts with the finalized admission anchor".into(),
             ));
         }
-    } else if has_incomplete_join_checkpoint(&paths)? {
+    } else if has_incomplete_join_checkpoint(paths)? {
         return Err(TransportError::Codec(
             "unfinished join checkpoint is incomplete".into(),
         ));
@@ -309,57 +309,45 @@ pub(super) fn validate_durable_committed_join_submission(
     manifest: &EnclaveInitializationManifestV1,
     submission: &CommittedJoinSubmissionV1,
 ) -> Result<RegistrationIntentV1, TransportError> {
-    let evidence =
-        AttestationEvidenceV1::decode_canonical(submission.evidence()).map_err(codec_error)?;
-    let intent = match evidence {
-        AttestationEvidenceV1::Dcap(value)
-            if value.intent.operation == AttestationOperationV1::RegisterEnclave =>
-        {
-            value.intent
-        }
-        AttestationEvidenceV1::GramineDirectDev(value)
-            if value.intent.operation == AttestationOperationV1::RegisterEnclave
-                && value.dev_signature == *submission.enclave_signature() =>
-        {
-            value.intent
-        }
-        AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
-            return Err(TransportError::Codec(
-                "committed join submission is not RegisterEnclave evidence".into(),
-            ));
-        }
-    };
-    manifest
-        .validate_intent_binding(&intent)
-        .map_err(codec_error)?;
-    if !intent.verify_node_signature(submission.node_signature())
-        || !intent.verify_enclave_signature(submission.enclave_signature())
-    {
-        return Err(TransportError::Codec(
-            "committed join submission proof of possession is invalid".into(),
-        ));
-    }
-    Ok(intent)
+    verify_durable_submission(
+        manifest,
+        DurableSubmission {
+            evidence: submission.evidence(),
+            node_signature: submission.node_signature(),
+            enclave_signature: submission.enclave_signature(),
+            kind: DurableSubmissionKind::CommittedJoin,
+        },
+    )
 }
 
 pub(super) fn validate_finalized_join_admission_anchor(
     anchor: FinalizedJoinAdmissionAnchorV1,
 ) -> Result<(), TransportError> {
-    if anchor.chain_id == [0; 32]
-        || anchor.genesis_hash.is_zero()
-        || anchor.node_id_hash.is_zero()
-        || anchor.enclave_id.is_zero()
-        || anchor.intent_hash.is_zero()
-        || anchor.finalized_height == 0
-        || anchor.finalized_hash.is_zero()
-        || anchor.finalized_state_root.is_zero()
-        || anchor.finalized_consensus_timestamp == 0
-    {
+    if anchor_identity_incomplete(anchor) || anchor_finality_incomplete(anchor) {
         return Err(TransportError::Codec(
             "finalized join admission anchor is incomplete".into(),
         ));
     }
     Ok(())
+}
+
+fn anchor_identity_incomplete(anchor: FinalizedJoinAdmissionAnchorV1) -> bool {
+    anchor_network_identity_incomplete(anchor) || anchor_binding_identity_incomplete(anchor)
+}
+
+fn anchor_network_identity_incomplete(anchor: FinalizedJoinAdmissionAnchorV1) -> bool {
+    anchor.chain_id == [0; 32] || anchor.genesis_hash.is_zero() || anchor.node_id_hash.is_zero()
+}
+
+fn anchor_binding_identity_incomplete(anchor: FinalizedJoinAdmissionAnchorV1) -> bool {
+    anchor.enclave_id.is_zero() || anchor.intent_hash.is_zero()
+}
+
+fn anchor_finality_incomplete(anchor: FinalizedJoinAdmissionAnchorV1) -> bool {
+    anchor.finalized_height == 0
+        || anchor.finalized_hash.is_zero()
+        || anchor.finalized_state_root.is_zero()
+        || anchor.finalized_consensus_timestamp == 0
 }
 
 pub(super) fn validate_anchor_replacement(
@@ -369,17 +357,29 @@ pub(super) fn validate_anchor_replacement(
     if durable == requested {
         return Ok(());
     }
-    if durable.chain_id != requested.chain_id
-        || durable.genesis_hash != requested.genesis_hash
-        || durable.node_id_hash != requested.node_id_hash
-        || requested.finalized_height <= durable.finalized_height
-        || requested.finalized_consensus_timestamp < durable.finalized_consensus_timestamp
-    {
+    if anchor_identity_changed(durable, requested) || anchor_not_newer(durable, requested) {
         return Err(TransportError::Codec(
             "finalized join admission anchor replacement must be newer for the same chain and NodeHost identity; requested value conflicts with durable state".into(),
         ));
     }
     Ok(())
+}
+
+fn anchor_identity_changed(
+    durable: FinalizedJoinAdmissionAnchorV1,
+    requested: FinalizedJoinAdmissionAnchorV1,
+) -> bool {
+    durable.chain_id != requested.chain_id
+        || durable.genesis_hash != requested.genesis_hash
+        || durable.node_id_hash != requested.node_id_hash
+}
+
+fn anchor_not_newer(
+    durable: FinalizedJoinAdmissionAnchorV1,
+    requested: FinalizedJoinAdmissionAnchorV1,
+) -> bool {
+    requested.finalized_height <= durable.finalized_height
+        || requested.finalized_consensus_timestamp < durable.finalized_consensus_timestamp
 }
 
 fn validate_anchor_against_local_state(
@@ -447,9 +447,27 @@ fn durable_join_intent_hash(
 }
 
 fn has_incomplete_join_checkpoint(paths: &NodeHostPaths) -> Result<bool, TransportError> {
-    Ok(path_exists(&paths.replacement_candidate)?
-        || path_exists(&paths.replacement_submission)?
-        || path_exists(&paths.replacement_relay)?
-        || path_exists(&paths.committed_join_submission)?
-        || path_exists(&paths.committed_join_relay)?)
+    if has_incomplete_replacement_checkpoint(paths)? {
+        return Ok(true);
+    }
+    has_incomplete_committed_checkpoint(paths)
+}
+
+// Each probe is fallible. Keep the replacement paths before the committed paths
+// and stop as soon as an existing checkpoint is found.
+fn has_incomplete_replacement_checkpoint(paths: &NodeHostPaths) -> Result<bool, TransportError> {
+    if path_exists(&paths.replacement_candidate)? {
+        return Ok(true);
+    }
+    if path_exists(&paths.replacement_submission)? {
+        return Ok(true);
+    }
+    path_exists(&paths.replacement_relay)
+}
+
+fn has_incomplete_committed_checkpoint(paths: &NodeHostPaths) -> Result<bool, TransportError> {
+    if path_exists(&paths.committed_join_submission)? {
+        return Ok(true);
+    }
+    path_exists(&paths.committed_join_relay)
 }

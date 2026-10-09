@@ -1,9 +1,7 @@
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_ocomp_protocol::{
-    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
-    profile::{CapacityProfileV1, ProtocolBundleV1},
-};
+use outbe_ocomp_protocol::{profile::ProtocolBundleV1, test_utils::minimal_capacity_profile};
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 
 use crate::{
@@ -19,66 +17,15 @@ fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
 }
 
-fn capacity() -> CapacityProfileV1 {
-    let generated = OCOMP_POC_CANDIDATE_LIMITS_V1;
-    CapacityProfileV1 {
-        profile_id: hash(13),
-        max_tributes_per_work_shard: u32::try_from(generated.max_tributes_per_work_shard).unwrap(),
-        max_workers_per_domain: 4,
-        max_intents_per_block: 1,
-        max_activations_per_block: 1,
-        max_ready_inspections_per_block: 1,
-        max_expirations_per_block: 1,
-        ready_backoff_blocks: 1,
-        max_reference_currencies: 1,
-        max_oracle_wwd_pair_entries: 1,
-        max_active_scurve_entries: 1,
-        result_deadline_blocks: 10,
-        source_retention_after_terminal_blocks: generated.source_retention_after_terminal_blocks,
-        generated_limits_manifest_hash: hash(30),
-    }
-}
-
 fn bundle() -> ProtocolBundleV1 {
     ProtocolBundleV1 {
-        protocol_version: 1,
         fork_id: hash(21),
-        intent_codec_id: hash(2),
-        finalized_intent_proof_codec_id: hash(3),
-        tribute_body_codec_id: outbe_ocomp_protocol::registry::TRIBUTE_BODY_CODEC_ID,
-        fidelity_opening_codec_id: outbe_ocomp_protocol::registry::FIDELITY_OPENING_CODEC_ID,
-        oracle_opening_codec_id: outbe_ocomp_protocol::registry::ORACLE_OPENING_CODEC_ID,
-        result_codec_id: hash(4),
-        action_codec_id: hash(5),
-        activation_codec_id: hash(6),
-        evidence_codec_id: hash(7),
-        request_semantics_version: 1,
-        lysis_program_semantics_hash: hash(8),
-        planner_spec_version: 1,
-        reducer_spec_version: 1,
-        activation_apply_semantics_hash: hash(9),
-        effect_contract_registry_hash: hash(10),
-        object_codec_registry_hash: hash(11),
-        correctness_profile_id: hash(12),
-        capacity_profile_id: hash(13),
-        result_signature_profile_id: hash(14),
-        finality_verifier_and_vote_domain_id: hash(15),
-        consensus_committee_history_schema_version: 1,
-        ocomp_committee_schema_version: 1,
-        proof_system_and_verifier_key_id: None,
-        da_codec_and_binding_verifier_id: None,
-        anti_equivocation_journal_schema_hash: hash(16),
-        mode_pause_revocation_semantics_hash: hash(17),
-        upgrade_fsm_semantics_hash: hash(18),
-        release_requirement_catalog_sequence: 1,
-        release_requirement_catalog_hash: hash(19),
-        release_requirement_catalog_parent_hash: hash(20),
         release_gate_authority_envelope_hash: hash(22),
         release_approval_policy_hash: hash(24),
         release_validator_command_artifact_hash: hash(25),
-        consensus_state_schema_version: 1,
         migration_manifest_hash: hash(26),
         required_upgrade_handler_set_hash: hash(27),
+        ..outbe_ocomp_protocol::test_utils::minimal_protocol_bundle()
     }
 }
 
@@ -93,7 +40,7 @@ fn authority(genesis_hash: B256) -> OcompProtocolAuthorityV1 {
             fork_id: protocol_bundle.fork_id,
             protocol_bundle_hash: bundle_hash,
             correctness_profile_id: protocol_bundle.correctness_profile_id,
-            capacity_profile: capacity(),
+            capacity_profile: minimal_capacity_profile(),
             source_availability_policy_id: hash(44),
         },
         protocol_bundle,
@@ -122,6 +69,72 @@ fn successor(genesis_hash: B256, activation_height: u64) -> crate::OcompSuccesso
             protocol_bundle,
         },
     }
+}
+
+#[test]
+fn successor_errors_preserve_priority_at_the_protocol_version_limit() {
+    let limits = poc_schema_limits();
+    let mut predecessor = authority(hash(42));
+    predecessor.protocol_bundle.protocol_version = u16::MAX;
+    predecessor.request_profile.protocol_bundle_hash = predecessor
+        .protocol_bundle
+        .protocol_bundle_hash(&limits)
+        .unwrap();
+    let mut next = successor(hash(42), 100);
+    next.predecessor_protocol_bundle_hash = predecessor.request_profile.protocol_bundle_hash;
+
+    assert!(matches!(
+        next.validate_against(&predecessor, 50, &limits),
+        Err(PrecompileError::Fatal(message)) if message == "OCOMP protocol version overflow"
+    ));
+
+    next.activation_height = 50;
+    assert!(matches!(
+        next.validate_against(&predecessor, 50, &limits),
+        Err(PrecompileError::Fatal(message))
+            if message == "OCOMP successor violates predecessor or immutable-policy invariants"
+    ));
+
+    next.activation_height = 100;
+    next.authority.request_profile.source_availability_policy_id = hash(45);
+    assert!(matches!(
+        next.validate_against(&predecessor, 50, &limits),
+        Err(PrecompileError::Fatal(message))
+            if message == "OCOMP successor violates predecessor or immutable-policy invariants"
+    ));
+}
+
+#[test]
+fn request_profile_reports_reserved_identity_before_capacity_violation() {
+    let mut profile = authority(hash(42)).request_profile;
+    profile.chain_id = 0;
+    profile.capacity_profile.max_workers_per_domain = 5;
+
+    assert!(matches!(
+        profile.validate(),
+        Err(PrecompileError::Fatal(message))
+            if message == "OCOMP request profile contains a reserved zero identity"
+    ));
+}
+
+#[test]
+fn request_profile_reports_frozen_capacity_bounds() {
+    let mut profile = authority(hash(42)).request_profile;
+    profile.capacity_profile.max_workers_per_domain = 5;
+
+    assert!(matches!(
+        profile.validate(),
+        Err(PrecompileError::Fatal(message))
+            if message == "OCOMP request profile violates frozen PoC bounds"
+    ));
+
+    profile.capacity_profile.max_workers_per_domain = 4;
+    profile.capacity_profile.max_reference_currencies = 0;
+    assert!(matches!(
+        profile.validate(),
+        Err(PrecompileError::Fatal(message))
+            if message == "OCOMP request profile violates frozen PoC bounds"
+    ));
 }
 
 #[test]

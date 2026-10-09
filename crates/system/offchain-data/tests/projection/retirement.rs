@@ -3,14 +3,12 @@ use std::sync::Arc;
 use alloy_primitives::{keccak256, Address, B256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{encode_tribute_v1, StoredBody};
-use outbe_offchain_data::{
-    read_projection_state, FinalizedBlock, ProjectionOutcome, PROJECTION_STATE_NAMESPACE,
-};
+use outbe_offchain_data::{read_projection_state, ProjectionOutcome, PROJECTION_STATE_NAMESPACE};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
     canonical_body, precompile::ITribute, RetainedTributePin, RetainedTributeReader,
-    TributePageRequest, TributeRepositoryReader, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
+    TributeRepositoryReader, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
     OCOMP_RETAINED_TRIBUTES_NAMESPACE,
 };
 
@@ -31,54 +29,42 @@ fn tribute_partition_retirement_atomically_deletes_only_the_selected_day() {
     let retained_id = poseidon_entity(owner, retained_day);
 
     projection
-        .project_block(&FinalizedBlock {
-            number: 10,
-            hash: B256::repeat_byte(0x70),
-            receipts: vec![receipt(
-                0,
-                0x71,
-                vec![
-                    log(
-                        0,
-                        TRIBUTE_ADDRESS,
-                        tribute_stored(retired_id, owner, retired_day),
-                    ),
-                    log(
-                        1,
-                        TRIBUTE_ADDRESS,
-                        tribute_stored(retained_id, owner, retained_day),
-                    ),
-                ],
-            )],
-        })
+        .project_block(&single_receipt_block(
+            10,
+            0x70,
+            0x71,
+            vec![
+                log(
+                    0,
+                    TRIBUTE_ADDRESS,
+                    tribute_stored(retired_id, owner, retired_day),
+                ),
+                log(
+                    1,
+                    TRIBUTE_ADDRESS,
+                    tribute_stored(retained_id, owner, retained_day),
+                ),
+            ],
+        ))
         .unwrap();
 
-    let retirement = FinalizedBlock {
-        number: 11,
-        hash: B256::repeat_byte(0x72),
-        receipts: vec![receipt(
+    let retirement = single_receipt_block(
+        11,
+        0x72,
+        0x73,
+        vec![log(
             0,
-            0x73,
-            vec![log(
-                0,
-                TRIBUTE_ADDRESS,
-                tribute_partition_retired(retired_day),
-            )],
+            TRIBUTE_ADDRESS,
+            tribute_partition_retired(retired_day),
         )],
-    };
+    );
     projection.project_block(&retirement).unwrap();
 
     let repository = TributeRepositoryReader::new(storage.clone());
     assert!(repository.get(retired_id).unwrap().is_none());
     assert!(repository.get(retained_id).unwrap().is_some());
     assert!(repository
-        .list_by_day(
-            WorldwideDay::new(retired_day),
-            TributePageRequest {
-                after: None,
-                limit: 10
-            },
-        )
+        .list_by_day(WorldwideDay::new(retired_day), FIRST_TRIBUTE_PAGE,)
         .unwrap()
         .records
         .is_empty());
@@ -113,30 +99,24 @@ fn pinned_tribute_partition_retirement_atomically_moves_exact_body_to_job_retent
     let body = tribute_body(tribute_id, owner, day);
 
     projection
-        .project_block(&FinalizedBlock {
-            number: 10,
-            hash: B256::repeat_byte(0x53),
-            receipts: vec![receipt(
+        .project_block(&single_receipt_block(
+            10,
+            0x53,
+            0x54,
+            vec![log(
                 0,
-                0x54,
-                vec![log(
-                    0,
-                    TRIBUTE_ADDRESS,
-                    tribute_stored_body_after(&body, B256::ZERO),
-                )],
+                TRIBUTE_ADDRESS,
+                tribute_stored_body_after(&body, B256::ZERO),
             )],
-        })
+        ))
         .unwrap();
     projection
-        .project_block(&FinalizedBlock {
-            number: 11,
-            hash: B256::repeat_byte(0x55),
-            receipts: vec![receipt(
-                0,
-                0x56,
-                vec![log(0, TRIBUTE_ADDRESS, tribute_partition_retired(day))],
-            )],
-        })
+        .project_block(&single_receipt_block(
+            11,
+            0x55,
+            0x56,
+            vec![log(0, TRIBUTE_ADDRESS, tribute_partition_retired(day))],
+        ))
         .unwrap();
 
     assert!(TributeRepositoryReader::new(storage.clone())
@@ -188,31 +168,25 @@ fn rocksdb_retirement_and_gc_preserve_open_export_session_and_durable_checkpoint
     )
     .unwrap();
     projection
-        .project_block(&FinalizedBlock {
-            number: 10,
-            hash: B256::repeat_byte(0x53),
-            receipts: vec![receipt(
+        .project_block(&single_receipt_block(
+            10,
+            0x53,
+            0x54,
+            vec![log(
                 0,
-                0x54,
-                vec![log(
-                    0,
-                    TRIBUTE_ADDRESS,
-                    tribute_stored_body_after(&body, B256::ZERO),
-                )],
+                TRIBUTE_ADDRESS,
+                tribute_stored_body_after(&body, B256::ZERO),
             )],
-        })
+        ))
         .unwrap();
     let before = Arc::new(RocksDbReader::open(&path, &root.path().join("before")).unwrap());
     projection
-        .project_block(&FinalizedBlock {
-            number: 11,
-            hash: B256::repeat_byte(0x55),
-            receipts: vec![receipt(
-                0,
-                0x56,
-                vec![log(0, TRIBUTE_ADDRESS, tribute_partition_retired(day))],
-            )],
-        })
+        .project_block(&single_receipt_block(
+            11,
+            0x55,
+            0x56,
+            vec![log(0, TRIBUTE_ADDRESS, tribute_partition_retired(day))],
+        ))
         .unwrap();
     let retired = Arc::new(RocksDbReader::open(&path, &root.path().join("retired")).unwrap());
     assert!(TributeRepositoryReader::new(before.clone())

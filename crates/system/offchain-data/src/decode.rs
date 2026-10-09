@@ -20,53 +20,38 @@ pub(super) enum EntityIdentity {
     Bucket(WwdEntityId),
 }
 
+pub(super) struct StoredEntityEvent {
+    pub(super) source: ProjectionSource,
+    pub(super) identity: WwdEntityId,
+    pub(super) stored_body: Value,
+    pub(super) previous_commitment: B256,
+}
+
+pub(super) struct DeletedEntityEvent {
+    pub(super) identity: WwdEntityId,
+    pub(super) previous_commitment: B256,
+}
+
 pub(super) enum ProjectionEvent {
-    TributeStored {
-        source: ProjectionSource,
-        tribute_id: WwdEntityId,
-        stored_body: Value,
-        previous_commitment: B256,
-    },
-    TributeDeleted {
-        tribute_id: WwdEntityId,
-        previous_commitment: B256,
-    },
-    TributePartitionRetired {
-        worldwide_day: WorldwideDay,
-    },
-    NodStored {
-        source: ProjectionSource,
-        nod_id: WwdEntityId,
-        stored_body: Value,
-        previous_commitment: B256,
-    },
-    NodDeleted {
-        nod_id: WwdEntityId,
-        previous_commitment: B256,
-    },
-    BucketStored {
-        source: ProjectionSource,
-        bucket_id: WwdEntityId,
-        stored_body: Value,
-        previous_commitment: B256,
-    },
-    BucketDeleted {
-        bucket_id: WwdEntityId,
-        previous_commitment: B256,
-    },
+    TributeStored(StoredEntityEvent),
+    TributeDeleted(DeletedEntityEvent),
+    TributePartitionRetired { worldwide_day: WorldwideDay },
+    NodStored(StoredEntityEvent),
+    NodDeleted(DeletedEntityEvent),
+    BucketStored(StoredEntityEvent),
+    BucketDeleted(DeletedEntityEvent),
 }
 
 impl ProjectionEvent {
     pub(super) fn identity(&self) -> Option<EntityIdentity> {
         match self {
-            Self::TributeStored { tribute_id, .. } => Some(EntityIdentity::Tribute(*tribute_id)),
-            Self::TributeDeleted { tribute_id, .. } => Some(EntityIdentity::Tribute(*tribute_id)),
+            Self::TributeStored(event) => Some(EntityIdentity::Tribute(event.identity)),
+            Self::TributeDeleted(event) => Some(EntityIdentity::Tribute(event.identity)),
             Self::TributePartitionRetired { .. } => None,
-            Self::NodStored { nod_id, .. } => Some(EntityIdentity::Nod(*nod_id)),
-            Self::NodDeleted { nod_id, .. } => Some(EntityIdentity::Nod(*nod_id)),
-            Self::BucketStored { bucket_id, .. } | Self::BucketDeleted { bucket_id, .. } => {
-                Some(EntityIdentity::Bucket(*bucket_id))
-            }
+            Self::NodStored(event) => Some(EntityIdentity::Nod(event.identity)),
+            Self::NodDeleted(event) => Some(EntityIdentity::Nod(event.identity)),
+            Self::BucketStored(event) => Some(EntityIdentity::Bucket(event.identity)),
+            Self::BucketDeleted(event) => Some(EntityIdentity::Bucket(event.identity)),
         }
     }
 }
@@ -136,20 +121,20 @@ fn decode_tribute_event(
             (event.previousCommitment, event.newCommitment),
             event.schemaVersion,
         )?;
-        Some(ProjectionEvent::TributeStored {
+        Some(ProjectionEvent::TributeStored(StoredEntityEvent {
             source,
-            tribute_id,
+            identity: tribute_id,
             stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
             previous_commitment: event.previousCommitment,
-        })
+        }))
     } else if source.event_signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH {
         let event = ITribute::TributeBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
-        Some(ProjectionEvent::TributeDeleted {
-            tribute_id: WwdEntityId::from(event.tributeId),
+        Some(ProjectionEvent::TributeDeleted(DeletedEntityEvent {
+            identity: WwdEntityId::from(event.tributeId),
             previous_commitment: event.previousCommitment,
-        })
+        }))
     } else if source.event_signature == ITribute::TributePartitionRetired::SIGNATURE_HASH {
         let event = ITribute::TributePartitionRetired::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
@@ -167,84 +152,98 @@ fn decode_nod_event(
     data: &LogData,
 ) -> Result<Option<ProjectionEvent>, ProjectionError> {
     let decoded = if source.event_signature == INod::NodBodyStored::SIGNATURE_HASH {
-        let event = INod::NodBodyStored::decode_log_data(data)
-            .map_err(|error| malformed_event(source, error))?;
-        validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
-        let nod_id = WwdEntityId::from(event.nodId);
-        let canonical = outbe_compressed_entities::decode_nod_item_v2(&event.canonicalPayload)
-            .map_err(|error| malformed_event(source, error))?;
-        if canonical.encrypted.terms.nod_id != nod_id {
-            return Err(malformed_event(
-                source,
-                "Nod event identity/payload mismatch",
-            ));
-        }
-        validate_poseidon_identity(
-            source,
-            "Nod item",
-            nod_id,
-            canonical.encrypted.terms.owner,
-            canonical.encrypted.terms.worldwide_day,
-        )?;
-        validate_stored_commitment(
-            source,
-            nod_id,
-            &event.canonicalPayload,
-            (event.previousCommitment, event.newCommitment),
-            event.schemaVersion,
-        )?;
-        Some(ProjectionEvent::NodStored {
-            source,
-            nod_id,
-            stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
-            previous_commitment: event.previousCommitment,
-        })
+        Some(decode_nod_item(source, data)?)
     } else if source.event_signature == INod::NodBodyDeleted::SIGNATURE_HASH {
         let event = INod::NodBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
-        Some(ProjectionEvent::NodDeleted {
-            nod_id: WwdEntityId::from(event.nodId),
+        Some(ProjectionEvent::NodDeleted(DeletedEntityEvent {
+            identity: WwdEntityId::from(event.nodId),
             previous_commitment: event.previousCommitment,
-        })
+        }))
     } else if source.event_signature == INod::NodBucketBodyStored::SIGNATURE_HASH {
-        let event = INod::NodBucketBodyStored::decode_log_data(data)
-            .map_err(|error| malformed_event(source, error))?;
-        validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
-        let bucket_id = WwdEntityId::from(event.bucketId);
-        let canonical = decode_nod_bucket_v1(&event.canonicalPayload)
-            .map_err(|error| malformed_event(source, error))?;
-        if canonical.entity_id() != bucket_id {
-            return Err(malformed_event(
-                source,
-                "Nod bucket event identity/payload mismatch",
-            ));
-        }
-        validate_stored_commitment(
-            source,
-            bucket_id,
-            &event.canonicalPayload,
-            (event.previousCommitment, event.newCommitment),
-            event.schemaVersion,
-        )?;
-        Some(ProjectionEvent::BucketStored {
-            source,
-            bucket_id,
-            stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
-            previous_commitment: event.previousCommitment,
-        })
+        Some(decode_nod_bucket(source, data)?)
     } else if source.event_signature == INod::NodBucketBodyDeleted::SIGNATURE_HASH {
         let event = INod::NodBucketBodyDeleted::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
-        Some(ProjectionEvent::BucketDeleted {
-            bucket_id: WwdEntityId::from(event.bucketId),
+        Some(ProjectionEvent::BucketDeleted(DeletedEntityEvent {
+            identity: WwdEntityId::from(event.bucketId),
             previous_commitment: event.previousCommitment,
-        })
+        }))
     } else {
         None
     };
     Ok(decoded)
+}
+
+fn decode_nod_item(
+    source: ProjectionSource,
+    data: &LogData,
+) -> Result<ProjectionEvent, ProjectionError> {
+    let event = INod::NodBodyStored::decode_log_data(data)
+        .map_err(|error| malformed_event(source, error))?;
+    validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
+    let nod_id = WwdEntityId::from(event.nodId);
+    let canonical = outbe_compressed_entities::decode_nod_item_v2(&event.canonicalPayload)
+        .map_err(|error| malformed_event(source, error))?;
+    if canonical.encrypted.terms.nod_id != nod_id {
+        return Err(malformed_event(
+            source,
+            "Nod event identity/payload mismatch",
+        ));
+    }
+    validate_poseidon_identity(
+        source,
+        "Nod item",
+        nod_id,
+        canonical.encrypted.terms.owner,
+        canonical.encrypted.terms.worldwide_day,
+    )?;
+    validate_stored_commitment(
+        source,
+        nod_id,
+        &event.canonicalPayload,
+        (event.previousCommitment, event.newCommitment),
+        event.schemaVersion,
+    )?;
+    Ok(ProjectionEvent::NodStored(StoredEntityEvent {
+        source,
+        identity: nod_id,
+        stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
+        previous_commitment: event.previousCommitment,
+    }))
+}
+
+fn decode_nod_bucket(
+    source: ProjectionSource,
+    data: &LogData,
+) -> Result<ProjectionEvent, ProjectionError> {
+    let event = INod::NodBucketBodyStored::decode_log_data(data)
+        .map_err(|error| malformed_event(source, error))?;
+    validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
+    let bucket_id = WwdEntityId::from(event.bucketId);
+    let canonical = decode_nod_bucket_v1(&event.canonicalPayload)
+        .map_err(|error| malformed_event(source, error))?;
+    if canonical.entity_id() != bucket_id {
+        return Err(malformed_event(
+            source,
+            "Nod bucket event identity/payload mismatch",
+        ));
+    }
+    validate_stored_commitment(
+        source,
+        bucket_id,
+        &event.canonicalPayload,
+        (event.previousCommitment, event.newCommitment),
+        event.schemaVersion,
+    )?;
+    Ok(ProjectionEvent::BucketStored(StoredEntityEvent {
+        source,
+        identity: bucket_id,
+        stored_body: stored_event_body(source, event.schemaVersion, &event.canonicalPayload)?,
+        previous_commitment: event.previousCommitment,
+    }))
 }
 
 pub(super) fn validate_poseidon_identity(
@@ -286,19 +285,26 @@ pub(super) fn validate_versions(
             format!("unsupported commitment scheme {commitment_scheme_version}"),
         ));
     }
-    let encrypted_tribute = source.emitter == TRIBUTE_ADDRESS
-        && source.event_signature == ITribute::TributeBodyStored::SIGNATURE_HASH
-        && schema_version == outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2;
-    let encrypted_nod = source.emitter == NOD_ADDRESS
-        && source.event_signature == INod::NodBodyStored::SIGNATURE_HASH
-        && schema_version == outbe_compressed_entities::NOD_BODY_SCHEMA_V2;
-    if schema_version != BODY_SCHEMA_V1 && !encrypted_tribute && !encrypted_nod {
+    let encrypted_schema = encrypted_body_schema(source);
+    if schema_version != BODY_SCHEMA_V1 && encrypted_schema != Some(schema_version) {
         return Err(malformed_event(
             source,
             format!("unsupported body schema {schema_version}"),
         ));
     }
     Ok(())
+}
+
+fn encrypted_body_schema(source: ProjectionSource) -> Option<u32> {
+    match (source.emitter, source.event_signature) {
+        (TRIBUTE_ADDRESS, ITribute::TributeBodyStored::SIGNATURE_HASH) => {
+            Some(outbe_compressed_entities::TRIBUTE_BODY_SCHEMA_V2)
+        }
+        (NOD_ADDRESS, INod::NodBodyStored::SIGNATURE_HASH) => {
+            Some(outbe_compressed_entities::NOD_BODY_SCHEMA_V2)
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn validate_stored_commitment(

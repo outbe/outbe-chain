@@ -30,81 +30,50 @@ impl<'a> BlockProjection<'a> {
         &mut self,
         event: ProjectionEvent,
     ) -> Result<AtomicWriteBatch, ProjectionError> {
-        let mut batch = AtomicWriteBatch::new();
-        match event {
-            ProjectionEvent::TributeStored {
-                source,
-                tribute_id,
-                stored_body,
-                previous_commitment,
-            } => {
-                self.require_live_tribute(tribute_id)?;
-                self.require_tribute_transition(tribute_id, previous_commitment)?;
-                let planned = self.sources.tributes.store(
-                    tribute_id,
-                    stored_body,
-                    Some(source.to_storage_metadata()?),
-                )?;
-                batch.extend(planned.operations().iter().cloned());
+        let planned = match event {
+            ProjectionEvent::TributeStored(event) => {
+                self.require_live_tribute(event.identity)?;
+                self.require_tribute_transition(event.identity, event.previous_commitment)?;
+                self.sources.tributes.store(
+                    event.identity,
+                    event.stored_body,
+                    Some(event.source.to_storage_metadata()?),
+                )?
             }
-            ProjectionEvent::TributeDeleted {
-                tribute_id,
-                previous_commitment,
-            } => {
-                self.require_live_tribute(tribute_id)?;
-                self.require_tribute_transition(tribute_id, previous_commitment)?;
-                let planned = self.sources.tributes.delete(tribute_id)?;
-                batch.extend(planned.operations().iter().cloned());
+            ProjectionEvent::TributeDeleted(event) => {
+                self.require_live_tribute(event.identity)?;
+                self.require_tribute_transition(event.identity, event.previous_commitment)?;
+                self.sources.tributes.delete(event.identity)?
             }
             ProjectionEvent::TributePartitionRetired { worldwide_day } => {
                 return self.plan_retirement(worldwide_day);
             }
-            ProjectionEvent::NodStored {
-                source,
-                nod_id,
-                stored_body,
-                previous_commitment,
-            } => {
-                self.require_nod_transition(nod_id, previous_commitment)?;
-                let planned = self.sources.nods.store_item(
-                    nod_id,
-                    stored_body,
-                    Some(source.to_storage_metadata()?),
-                )?;
-                batch.extend(planned.operations().iter().cloned());
+            ProjectionEvent::NodStored(event) => {
+                self.require_nod_transition(event.identity, event.previous_commitment)?;
+                self.sources.nods.store_item(
+                    event.identity,
+                    event.stored_body,
+                    Some(event.source.to_storage_metadata()?),
+                )?
             }
-            ProjectionEvent::NodDeleted {
-                nod_id,
-                previous_commitment,
-            } => {
-                self.require_nod_transition(nod_id, previous_commitment)?;
-                let planned = self.sources.nods.delete_item(nod_id)?;
-                batch.extend(planned.operations().iter().cloned());
+            ProjectionEvent::NodDeleted(event) => {
+                self.require_nod_transition(event.identity, event.previous_commitment)?;
+                self.sources.nods.delete_item(event.identity)?
             }
-            ProjectionEvent::BucketStored {
-                source,
-                bucket_id,
-                stored_body,
-                previous_commitment,
-            } => {
-                self.require_bucket_transition(bucket_id, previous_commitment)?;
-                let planned = self.sources.nods.store_bucket(
-                    bucket_id,
-                    stored_body,
-                    Some(source.to_storage_metadata()?),
-                )?;
-                batch.extend(planned.operations().iter().cloned());
+            ProjectionEvent::BucketStored(event) => {
+                self.require_bucket_transition(event.identity, event.previous_commitment)?;
+                self.sources.nods.store_bucket(
+                    event.identity,
+                    event.stored_body,
+                    Some(event.source.to_storage_metadata()?),
+                )?
             }
-            ProjectionEvent::BucketDeleted {
-                bucket_id,
-                previous_commitment,
-            } => {
-                self.require_bucket_transition(bucket_id, previous_commitment)?;
-                let planned = self.sources.nods.delete_bucket(bucket_id)?;
-                batch.extend(planned.operations().iter().cloned());
+            ProjectionEvent::BucketDeleted(event) => {
+                self.require_bucket_transition(event.identity, event.previous_commitment)?;
+                self.sources.nods.delete_bucket(event.identity)?
             }
-        }
-        Ok(batch)
+        };
+        Ok(planned)
     }
 
     fn require_live_tribute(&self, tribute_id: WwdEntityId) -> Result<(), ProjectionError> {
@@ -193,9 +162,11 @@ impl<'a> BlockProjection<'a> {
                 super::super::retirement::plan_retired_partition(
                     &mut self.sources.tributes,
                     &self.sources.retained_tribute_reader,
-                    &self.sources.tribute_ids,
-                    worldwide_day,
-                    retention_pin,
+                    super::super::retirement::RetiredPartition {
+                        tribute_ids: &self.sources.tribute_ids,
+                        worldwide_day,
+                        retention_pin,
+                    },
                     &mut batch,
                 )?;
             }
@@ -203,9 +174,11 @@ impl<'a> BlockProjection<'a> {
             super::super::retirement::plan_retired_partition(
                 &mut self.sources.tributes,
                 &self.sources.retained_tribute_reader,
-                &self.sources.tribute_ids,
-                worldwide_day,
-                retention_pin,
+                super::super::retirement::RetiredPartition {
+                    tribute_ids: &self.sources.tribute_ids,
+                    worldwide_day,
+                    retention_pin,
+                },
                 &mut batch,
             )?;
         }

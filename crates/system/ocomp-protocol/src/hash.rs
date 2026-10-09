@@ -50,3 +50,50 @@ pub fn verify_framed_hash(
         Err(ProtocolError::HashMismatch)
     }
 }
+
+/// Expands, inside an `impl` block, to `pub fn $method(&self, limits)`: the
+/// framed hash of the canonical encoding of `self` under `HashDomain::$domain`.
+/// A check argument makes the method call `self.$check(limits)` or
+/// `self.$check()` first.
+macro_rules! framed_identity_hash {
+    ($(#[$meta:meta])* $method:ident, $domain:ident) => {
+        $(#[$meta])*
+        pub fn $method(
+            &self,
+            limits: &$crate::schema::SchemaLimits,
+        ) -> Result<::alloy_primitives::B256, $crate::error::ProtocolError> {
+            $crate::hash::hash_framed(
+                $crate::registry::HashDomain::$domain,
+                &self.encode_canonical(limits)?,
+            )
+        }
+    };
+    ($(#[$meta:meta])* $method:ident, $domain:ident, $check:ident(limits)) => {
+        $(#[$meta])*
+        pub fn $method(
+            &self,
+            limits: &$crate::schema::SchemaLimits,
+        ) -> Result<::alloy_primitives::B256, $crate::error::ProtocolError> {
+            self.$check(limits)?;
+            $crate::hash::hash_framed(
+                $crate::registry::HashDomain::$domain,
+                &self.encode_canonical(limits)?,
+            )
+        }
+    };
+    ($(#[$meta:meta])* $method:ident, $domain:ident, $check:ident()) => {
+        $(#[$meta])*
+        pub fn $method(
+            &self,
+            limits: &$crate::schema::SchemaLimits,
+        ) -> Result<::alloy_primitives::B256, $crate::error::ProtocolError> {
+            self.$check()?;
+            $crate::hash::hash_framed(
+                $crate::registry::HashDomain::$domain,
+                &self.encode_canonical(limits)?,
+            )
+        }
+    };
+}
+
+pub(crate) use framed_identity_hash;

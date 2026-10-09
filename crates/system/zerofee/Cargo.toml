@@ -12,6 +12,7 @@ outbe-oracle.workspace = true
 outbe-hyperlanecontroller.workspace = true
 outbe-validatorset.workspace = true
 outbe-macros.workspace = true
+outbe-ocomp-protocol.workspace = true
 
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
@@ -21,10 +22,10 @@ alloy-sol-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-outbe-ocomp-protocol.workspace = true
 proptest.workspace = true
 revm.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

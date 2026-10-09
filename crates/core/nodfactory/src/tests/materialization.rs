@@ -1,12 +1,11 @@
 use super::*;
 
 use outbe_chain_constants::NodMaterializationProfileV1;
+use outbe_ocomp_protocol::test_utils::nod_action_population;
 use outbe_ocomp_protocol::{
-    list::{ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits},
     nod_materialization::{NodMaterializationBatchV1, NodMaterializationHeadV1},
     profile::poc_schema_limits,
     result::NodActionV1,
-    ListKind,
 };
 
 const MATERIALIZATION_WWD: u32 = 20_260_812;
@@ -63,30 +62,7 @@ fn population_for(materialization_wwd: u32, count: u32) -> Population {
 }
 
 fn population_of(actions: Vec<NodActionV1>) -> Population {
-    let limits = poc_schema_limits();
-    let count = u32::try_from(actions.len()).unwrap();
-    let encoded = actions
-        .iter()
-        .map(|action| action.encode_canonical_record(&limits).unwrap())
-        .collect::<Vec<_>>();
-    let root = ordered_list_root(
-        ListKind::NodActions,
-        &encoded,
-        OrderedListLimits::new(512, limits.max_bounded_bytes, 1 << 20),
-    )
-    .unwrap();
-    let proofs = (0..count)
-        .map(|ordinal| {
-            streaming_ordered_list_membership_proof(
-                ListKind::NodActions,
-                count,
-                ordinal,
-                encoded.iter(),
-                limits.max_bounded_bytes,
-            )
-            .unwrap()
-        })
-        .collect();
+    let (root, proofs) = nod_action_population(&actions);
     Population {
         actions,
         root,

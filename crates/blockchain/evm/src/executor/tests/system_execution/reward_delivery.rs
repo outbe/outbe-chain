@@ -79,9 +79,11 @@ fn prepare_reward_state(
             storage,
             Address::ZERO,
             outbe_oracle::api::DAY_TYPE_PAIR,
-            U256::from(1_000_000u64),
-            1,
-            days.block_ts,
+            outbe_oracle::api::RateObservation {
+                rate: U256::from(1_000_000u64),
+                block_number: 1,
+                timestamp: days.block_ts,
+            },
         )
         .unwrap();
     })

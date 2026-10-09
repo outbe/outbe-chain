@@ -23,6 +23,8 @@ pub mod lifecycle;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
+#[cfg(test)]
+mod test_support;
 
 // Backward-compat aliases for external callers (deprecate when all
 // `outbe_rewards::contract::*` / `outbe_rewards::logic::*` call sites

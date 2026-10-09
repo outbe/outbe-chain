@@ -21,36 +21,25 @@
 //! ```
 //!
 
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{B256, U256};
 use commonware_codec::Encode;
-use commonware_consensus::{
-    simplex::types::Proposal,
-    types::{Epoch, Round, View},
-};
+use commonware_consensus::{simplex::types::Proposal, types::View};
 use commonware_cryptography::{
-    bls12381::{
-        primitives::{
-            ops::{aggregate, keypair, sign_message},
-            variant::{MinPk, MinSig, Variant},
-        },
-        PrivateKey, PublicKey,
-    },
-    certificate::Signers,
-    sha256::Digest as Sha256Digest,
-    Signer,
+    bls12381::primitives::variant::MinSig, sha256::Digest as Sha256Digest,
 };
-use commonware_utils::Participant;
 use outbe_consensus::proof::{
-    canonical_vrf_proof_hash_v2, constants::finalize_namespace, hybrid_seed_namespace,
-    verify_v2_proof, HybridCertificate, VrfProof,
+    canonical_vrf_proof_hash_v2, constants::finalize_namespace, verify_v2_proof, HybridCertificate,
+    VrfProof,
+};
+use outbe_consensus::test_harness::{
+    finalize_messages, test_fully_signed_metadata, vrf_test_committee, CertificateMessages,
+    TestFinalizedParent, VrfTestCommittee,
 };
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
 use outbe_rewards::runtime::compute_metadata_fingerprint;
-use outbe_validatorset::state::{committee_set_hash_v2, CommitteeSnapshot};
-use rand_commonware::rngs::ChaCha20Rng;
-use rand_commonware::SeedableRng;
+use outbe_validatorset::state::CommitteeSnapshot;
 
 // Fixture constants. They have the same shape as the verifier_cluster.rs
 // fixture, so the cert format and metadata field layout are byte-compatible
@@ -61,88 +50,29 @@ const PARENT_VIEW: u64 = 99;
 const VRF_MATERIAL_VERSION: u64 = 5;
 const FINALIZED_BLOCK_NUMBER: u64 = 41;
 
-struct Dkg {
-    keys: Vec<PrivateKey>,
-    pubkeys: Vec<PublicKey>,
-    vrf_group_public_key: <MinSig as Variant>::Public,
-    vrf_threshold_private: commonware_cryptography::bls12381::primitives::group::Private,
-}
-
-fn build_dkg(n: u32) -> Dkg {
-    let keys: Vec<PrivateKey> = (0..n)
-        .map(|i| PrivateKey::from_seed(i as u64 + 1))
-        .collect();
-    let pubkeys: Vec<PublicKey> = keys.iter().cloned().map(PublicKey::from).collect();
-    let mut rng = ChaCha20Rng::seed_from_u64(13);
-    let (vrf_threshold_private, vrf_group_public_key) = keypair::<_, MinSig>(&mut rng);
-    Dkg {
-        keys,
-        pubkeys,
-        vrf_group_public_key,
-        vrf_threshold_private,
-    }
-}
-
-fn build_snapshot(dkg: &Dkg) -> CommitteeSnapshot {
-    outbe_consensus::test_harness::committee_snapshot(
-        &dkg.pubkeys,
-        &dkg.vrf_group_public_key,
-        VRF_MATERIAL_VERSION,
-    )
-}
-
-fn proposal_bytes(parent_hash: B256) -> (Round, Vec<u8>, Vec<u8>) {
-    let round = Round::new(Epoch::new(FINALIZED_EPOCH), View::new(FINALIZED_VIEW));
-    let payload = Sha256Digest(parent_hash.0);
-    let proposal: Proposal<Sha256Digest> = Proposal::new(round, View::new(PARENT_VIEW), payload);
-    let vote_message = proposal.encode().to_vec();
-    let seed_message = round.encode().to_vec();
-    (round, vote_message, seed_message)
-}
-
 /// Build a real BLS+VRF signed certificate AND return the underlying
 /// `VrfProof`. With it, the test can independently compute the canonical
 /// proof hash and compare it to whatever `verify_v2_proof` derives.
 fn build_cert_with_vrf_proof(
-    dkg: &Dkg,
+    dkg: &VrfTestCommittee,
     signer_indices: &[u32],
     parent_hash: B256,
 ) -> (HybridCertificate<MinSig>, VrfProof<MinSig>) {
-    let participants = dkg.keys.len();
-    let signers = Signers::new(
-        participants as u32,
-        signer_indices.iter().copied().map(Participant::new),
-    )
-    .unwrap();
-
-    let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
-    // Finalize votes bind the ordered committee. Build the canonical `Set`
-    // from the DKG committee (it matches the snapshot that the verifier reads).
-    let committee_set: commonware_utils::ordered::Set<_> =
-        commonware_utils::ordered::Set::from_iter_dedup(dkg.keys.iter().map(|k| k.public_key()));
-    let sigs: Vec<_> = signer_indices
-        .iter()
-        .map(|&i| dkg.keys[i as usize].sign(&finalize_namespace(&committee_set), &vote_message))
-        .collect();
-    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
-        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
-    );
-
-    let threshold_signature = sign_message::<MinSig>(
+    let (_, vote, seed) =
+        finalize_messages(FINALIZED_EPOCH, FINALIZED_VIEW, PARENT_VIEW, parent_hash);
+    let vote_namespace = finalize_namespace(&dkg.committee_set());
+    let messages = CertificateMessages {
+        vote_namespace: &vote_namespace,
+        vote: &vote,
+        seed: &seed,
+    };
+    let cert = dkg.certificate(
+        signer_indices,
+        &messages,
         &dkg.vrf_threshold_private,
-        &hybrid_seed_namespace(),
-        &seed_message,
+        VRF_MATERIAL_VERSION,
     );
-    let vrf_proof = VrfProof::<MinSig> {
-        material_version: VRF_MATERIAL_VERSION,
-        threshold_signature,
-    };
-
-    let cert = HybridCertificate {
-        signers,
-        bls_aggregated_vote,
-        vrf_proof: vrf_proof.clone(),
-    };
+    let vrf_proof = cert.vrf_proof.clone();
     (cert, vrf_proof)
 }
 
@@ -151,29 +81,16 @@ fn build_metadata(
     cert_bytes: &[u8],
     parent_hash: B256,
 ) -> CertifiedParentAccountingMetadata {
-    let ordered_committee: Vec<Address> = snapshot
-        .committee
-        .iter()
-        .map(|entry| entry.address)
-        .collect();
-    let signer_bitmap = vec![1u8; snapshot.committee.len()];
-    let committee_set_hash = committee_set_hash_v2(FINALIZED_EPOCH, snapshot);
-    let vrf_group_public_key_hash = keccak256(&snapshot.vrf_group_public_key_bytes);
-    CertifiedParentAccountingMetadata {
-        finalized_block_number: FINALIZED_BLOCK_NUMBER,
-        finalized_block_hash: parent_hash,
-        finalized_epoch: FINALIZED_EPOCH,
-        finalized_view: FINALIZED_VIEW,
+    let parent = TestFinalizedParent {
+        block_number: FINALIZED_BLOCK_NUMBER,
+        block_hash: parent_hash,
+        epoch: FINALIZED_EPOCH,
+        view: FINALIZED_VIEW,
         parent_view: PARENT_VIEW,
-        ordered_committee,
-        signer_bitmap,
-        proof: Bytes::copy_from_slice(cert_bytes),
-        committee_set_hash,
         vrf_material_version: VRF_MATERIAL_VERSION,
-        vrf_group_public_key_hash,
         proof_kind: ParentParticipationProof::Finalization,
-        missed_proposers: Vec::new(),
-    }
+    };
+    test_fully_signed_metadata(&parent, snapshot, cert_bytes)
 }
 
 /// End-to-end wire test:
@@ -192,11 +109,12 @@ fn build_metadata(
 #[test]
 fn phase1_end_to_end_real_vrf_proof_binds_v3_fingerprint() {
     // 1. Build the DKG fixture and a real signed certificate.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let (cert, vrf_proof) = build_cert_with_vrf_proof(&dkg, &[0, 1, 2, 3], parent_hash);
-    let (round, _, _) = proposal_bytes(parent_hash);
+    let (round, _, _) =
+        finalize_messages(FINALIZED_EPOCH, FINALIZED_VIEW, PARENT_VIEW, parent_hash);
     let proposal = Proposal::new(round, View::new(PARENT_VIEW), Sha256Digest(parent_hash.0));
     let finalization: outbe_consensus::proof::Finalization<
         outbe_consensus::hybrid::HybridScheme<MinSig>,

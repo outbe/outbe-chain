@@ -175,6 +175,18 @@ pub(crate) fn encode_nested_value<T: NestedCodec>(
     Ok(output.into_bytes())
 }
 
+pub(crate) fn decode_nested_value<T: NestedCodec>(
+    encoded: &[u8],
+    limits: &SchemaLimits,
+) -> Result<T, ProtocolError> {
+    let mut reader = CanonicalReader::new(encoded, limits.codec)?;
+    let value = T::decode_nested(&mut reader, limits)?;
+    reader.finish()?;
+    value.validate(limits)?;
+    require_canonical_reencoding(encoded, &encode_nested_value(&value, limits)?)?;
+    Ok(value)
+}
+
 pub(crate) fn decode_top<T: NestedCodec>(
     encoded: &[u8],
     kind: ObjectKind,
@@ -373,3 +385,33 @@ macro_rules! impl_top_level_codec {
 }
 
 pub(crate) use impl_top_level_codec;
+
+/// Implements the canonical record codec of a nested wire value:
+/// `encode_canonical_record` and, without `encode_only`,
+/// `decode_canonical_record`.
+macro_rules! impl_nested_record_codec {
+    ($type:ty) => {
+        $crate::schema::impl_nested_record_codec!($type, encode_only);
+
+        impl $type {
+            pub fn decode_canonical_record(
+                encoded: &[u8],
+                limits: &$crate::schema::SchemaLimits,
+            ) -> Result<Self, $crate::error::ProtocolError> {
+                $crate::schema::decode_nested_value(encoded, limits)
+            }
+        }
+    };
+    ($type:ty, encode_only) => {
+        impl $type {
+            pub fn encode_canonical_record(
+                &self,
+                limits: &$crate::schema::SchemaLimits,
+            ) -> Result<Vec<u8>, $crate::error::ProtocolError> {
+                $crate::schema::encode_nested_value(self, limits)
+            }
+        }
+    };
+}
+
+pub(crate) use impl_nested_record_codec;

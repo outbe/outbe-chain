@@ -1,7 +1,7 @@
 //! Client-local opening of a context-bound Gratis balance with its view key.
 use crate::offer_encrypt::hkdf_sha256;
+use crate::owner_local_open::{open_local_ciphertext, LocalOpen};
 use alloy_primitives::{Address, U256};
-use ring::aead;
 use zeroize::Zeroizing;
 pub fn decrypt_gratis_balance(
     view_key: &[u8; 32],
@@ -23,22 +23,16 @@ pub fn decrypt_gratis_balance(
         &context,
         b"outbe/gratis/amount-key/v2",
     )?);
-    let nonce_bytes = hkdf_sha256(&*key, &context, b"outbe/gratis/amount-nonce/v2")?;
-    let mut nonce = [0u8; 12];
-    nonce.copy_from_slice(&nonce_bytes[..12]);
-    let opening = aead::LessSafeKey::new(
-        aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &*key)
-            .map_err(|_| "invalid Gratis view key")?,
-    );
-    let mut bytes = Zeroizing::new(blob[44..].to_vec());
-    let plaintext = opening
-        .open_in_place(
-            aead::Nonce::assume_unique_for_key(nonce),
-            aead::Aad::empty(),
-            &mut bytes,
-        )
-        .map_err(|_| "Gratis balance decryption failed")?;
-    let amount: &[u8; 32] = (&*plaintext)
+    let opened = open_local_ciphertext(LocalOpen {
+        key: &key,
+        nonce_context: &context,
+        nonce_info: b"outbe/gratis/amount-nonce/v2",
+        ciphertext: &blob[44..],
+        invalid_key_error: "invalid Gratis view key",
+        decryption_error: "Gratis balance decryption failed",
+    })?;
+    let amount: &[u8; 32] = opened
+        .as_slice()
         .try_into()
         .map_err(|_| "invalid Gratis amount length")?;
     Ok(U256::from_be_bytes(*amount))

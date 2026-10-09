@@ -22,14 +22,14 @@ impl ValidatorSet<'_> {
         consensus_pubkey: &[u8; 48],
     ) -> Result<()> {
         let radicle_node_id = keccak256(validator_addr.as_slice());
-        self.register_validator_inner(
+        self.register_validator_inner(&super::registration::RegistrationRequest {
             caller,
-            validator_addr,
+            validator: validator_addr,
             consensus_pubkey,
             radicle_node_id,
-            None,
-            true,
-        )
+            bls_signature: None,
+            allow_bootstrap_without_pop: true,
+        })
     }
 
     /// Test-only compatibility helper for moving `WaitingForStake` to
@@ -54,11 +54,8 @@ impl ValidatorSet<'_> {
             U256::ZERO,
         )?);
         let after = before.clone().with_lifecycle(lifecycle)?;
-        let guard = self.storage.checkpoint_guard();
-        self.persist_validator_state_delta(&before, &after)?;
         // Signal consensus to include this validator in the next reshare target.
-        self.pending_set_change.write(true)?;
-        guard.commit();
+        self.commit_transition(&before, &after, true)?;
 
         crate::metrics::record_validator_status(addr, status::PENDING);
         crate::metrics::record_pending_set_change(true);

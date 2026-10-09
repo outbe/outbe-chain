@@ -9,10 +9,7 @@ use outbe_ocomp_protocol::abi::{
     OCOMP_EXPIRED_TOPIC0, OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_REQUESTED_TOPIC0,
     OCOMP_TERMINAL_REQUEST_SELECTOR, SUBMIT_LYSIS_RESULT_SELECTOR,
 };
-
-fn selector(signature: &str) -> [u8; 4] {
-    keccak256(signature.as_bytes()).0[..4].try_into().unwrap()
-}
+use outbe_ocomp_protocol::test_utils::keccak_selector as selector;
 
 #[test]
 fn abi_selectors_errors_and_topics_match_independent_keccak() {

@@ -1,29 +1,11 @@
 #![cfg(all(native_qvl_linked, target_arch = "x86_64", target_os = "linux"))]
 
+mod support;
+
 use outbe_tee::native_qvl::{verify_quote_native, NativeDcapCollateral, NativeQvlStatus};
-use serde::Deserialize;
+use support::{signed_document, FixtureCollateral, QUOTE};
 
 const FIXTURE_TIME: i64 = 1_751_000_000;
-const QUOTE: &[u8] = include_bytes!("fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin");
-const COLLATERAL_WRAPPER: &str =
-    include_str!("fixtures/intel-dcap-1.26/sgx-processor-collateral-wrapper.json");
-
-#[derive(Deserialize)]
-struct FixtureCollateral {
-    pck_crl_issuer_chain: String,
-    root_ca_crl: String,
-    pck_crl: String,
-    tcb_info_issuer_chain: String,
-    tcb_info: String,
-    tcb_info_signature: String,
-    qe_identity_issuer_chain: String,
-    qe_identity: String,
-    qe_identity_signature: String,
-}
-
-fn signed_document(field: &str, body: &str, signature: &str) -> Vec<u8> {
-    format!(r#"{{"{field}":{body},"signature":"{signature}"}}"#).into_bytes()
-}
 
 struct Fixture {
     root_ca_crl: Vec<u8>,
@@ -35,7 +17,7 @@ struct Fixture {
 
 impl Fixture {
     fn load() -> Self {
-        let source: FixtureCollateral = serde_json::from_str(COLLATERAL_WRAPPER).unwrap();
+        let source = FixtureCollateral::load();
         Self {
             root_ca_crl: hex::decode(&source.root_ca_crl).unwrap(),
             pck_crl: hex::decode(&source.pck_crl).unwrap(),

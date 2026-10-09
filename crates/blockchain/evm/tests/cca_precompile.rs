@@ -507,19 +507,7 @@ fn bond_past_the_active_cap_refunds_value_and_leaves_the_set_unchanged() {
 alloy_sol_types::sol!("../../../contracts/precompiles/src/IAgentReward.sol");
 
 fn seed_oracle(storage: &StorageHandle<'_>) {
-    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-    outbe_oracle::api::set_exchange_rate(
-        storage.clone(),
-        Address::ZERO,
-        outbe_oracle::api::DAY_TYPE_PAIR,
-        U256::from(3_000_000),
-        1,
-        NOW,
-    )
-    .unwrap();
-    outbe_oracle::schema::OracleContract::new(storage.clone())
-        .reference_currencies
-        .push(840)
+    outbe_oracle::test_support::publish_day_type_quote(storage, U256::from(3_000_000), 1, NOW)
         .unwrap();
 }
 

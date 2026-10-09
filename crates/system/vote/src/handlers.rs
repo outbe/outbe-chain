@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::VoteError;
@@ -35,6 +35,19 @@ pub struct VoteTargetContext {
 pub enum TargetExecutionOutcome {
     Applied,
     Error { reason: String },
+}
+
+/// Decodes a JSON proposal payload for admission.
+/// Reverts malformed JSON with [`VoteError::InvalidPayload`].
+pub fn decode_proposal_payload(payload: &[u8]) -> Result<serde_json::Value> {
+    serde_json::from_slice(payload).map_err(|_| VoteError::InvalidPayload.into())
+}
+
+/// Decodes the stored JSON payload of an approved proposal for `module`.
+/// Returns a fatal error if the stored payload is malformed JSON.
+pub fn decode_stored_proposal_payload(payload: &[u8], module: &str) -> Result<serde_json::Value> {
+    serde_json::from_slice(payload)
+        .map_err(|_| PrecompileError::Fatal(format!("stored {module} proposal payload is invalid")))
 }
 
 /// Target-module handler for approved vote proposals.
@@ -118,53 +131,31 @@ impl VoteTargetRegistry {
         }
         Ok(*first)
     }
-}
 
-/// Validates a target payload during proposal creation.
-pub fn validate_target_payload(
-    registry: &VoteTargetRegistry,
-    target_module: Address,
-    payload: &[u8],
-    context: VoteTargetContext,
-) -> Result<()> {
-    let target = registry.lookup(target_module)?;
-    target.validate(payload, context)
-}
-
-pub fn reserve_target_proposal(
-    registry: &VoteTargetRegistry,
-    storage: StorageHandle<'_>,
-    target_module: Address,
-    proposal_id: U256,
-    payload: &[u8],
-    context: VoteTargetContext,
-) -> Result<()> {
-    registry
-        .lookup(target_module)?
-        .reserve(storage, proposal_id, payload, context)
-}
-
-/// Dispatches a terminal proposal outcome to its target module.
-pub fn handle_target_tally(
-    registry: &VoteTargetRegistry,
-    ctx: &BlockRuntimeContext,
-    proposal_id: U256,
-    proposal: &ProposalRecord,
-    attached_value: U256,
-    status: ProposalStatus,
-) -> Result<TargetExecutionOutcome> {
-    let target = registry.lookup(proposal.target_module)?;
-    let context = VoteTargetContext {
-        proposer: proposal.proposer,
-        attached_value,
-        block_number: ctx.block.block_number,
-        chain_id: ctx.storage.chain_id()?,
-    };
-    target.handle_tally(
-        ctx,
-        proposal_id,
-        proposal.payload.as_bytes(),
-        context,
-        status,
-    )
+    /// Dispatches a terminal proposal outcome to the target module of
+    /// `proposal`. The target context carries `attached_value`, the current
+    /// block number and the chain id.
+    pub fn handle_tally(
+        &self,
+        ctx: &BlockRuntimeContext,
+        proposal_id: U256,
+        proposal: &ProposalRecord,
+        attached_value: U256,
+        status: ProposalStatus,
+    ) -> Result<TargetExecutionOutcome> {
+        let target = self.lookup(proposal.target_module)?;
+        let context = VoteTargetContext {
+            proposer: proposal.proposer,
+            attached_value,
+            block_number: ctx.block.block_number,
+            chain_id: ctx.storage.chain_id()?,
+        };
+        target.handle_tally(
+            ctx,
+            proposal_id,
+            proposal.payload.as_bytes(),
+            context,
+            status,
+        )
+    }
 }

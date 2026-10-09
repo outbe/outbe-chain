@@ -48,9 +48,11 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
             storage.clone(),
             Address::ZERO,
             outbe_oracle::api::DAY_TYPE_PAIR,
-            U256::from(1_000_000u64),
-            0,
-            0,
+            outbe_oracle::api::RateObservation {
+                rate: U256::from(1_000_000u64),
+                block_number: 0,
+                timestamp: 0,
+            },
         )
         .unwrap();
         seed_extra(storage);

@@ -201,6 +201,29 @@ impl TeeRegistry<'_> {
         )
     }
 
+    pub(super) fn register_and_associate_v1(
+        &mut self,
+        association: NodeHostAssociationV1<'_>,
+        caller_context: RegistrationCallerContextV1,
+        register: impl FnOnce(&mut Self) -> Result<V1OnboardingOutcome>,
+    ) -> Result<V1OnboardingOutcome> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let onboarding = register(self)?;
+            let association = self.apply_validator_node_binding_v1(
+                association.binding,
+                association.validator_signature,
+                association.node_binding_signature,
+            )?;
+            Self::require_atomic_registration_outcome_v1(
+                onboarding.registration,
+                association,
+                caller_context,
+            )?;
+            Ok(onboarding)
+        })
+    }
+
     pub(crate) fn register_enclave_with_active_policy_v1(
         &mut self,
         request: EnclaveEvidenceV1<'_>,
@@ -213,17 +236,12 @@ impl TeeRegistry<'_> {
             node_signature,
             enclave_signature,
         } = request;
-        let NodeHostAssociationV1 {
-            binding,
-            validator_signature,
-            node_binding_signature,
-        } = association;
+        let binding = association.binding;
 
         Self::require_initial_binding_evidence_target_v1(evidence, binding)?;
         let caller_context = self.require_registration_caller_v1(caller, binding)?;
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
-            let registration = self.apply_evidence_mutation_with_active_policy_v1(
+        self.register_and_associate_v1(association, caller_context, |registry| {
+            let registration = registry.apply_evidence_mutation_with_active_policy_v1(
                 AttestationOperationV1::RegisterEnclave,
                 EnclaveEvidenceV1 {
                     caller,
@@ -233,13 +251,12 @@ impl TeeRegistry<'_> {
                 },
                 policy,
             )?;
-            let association = self.apply_validator_node_binding_v1(
-                binding,
-                validator_signature,
-                node_binding_signature,
-            )?;
-            Self::require_atomic_registration_outcome_v1(registration, association, caller_context)
+            Ok(V1OnboardingOutcome {
+                registration,
+                artifact: None,
+            })
         })
+        .map(|outcome| outcome.registration)
     }
 
     pub(crate) fn register_enclave_with_onboarding_v1(
@@ -254,17 +271,12 @@ impl TeeRegistry<'_> {
             node_signature,
             enclave_signature,
         } = request;
-        let NodeHostAssociationV1 {
-            binding,
-            validator_signature,
-            node_binding_signature,
-        } = association;
+        let binding = association.binding;
 
         Self::require_initial_binding_evidence_target_v1(evidence, binding)?;
         let caller_context = self.require_registration_caller_v1(caller, binding)?;
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
-            let onboarding = self.apply_evidence_mutation_with_onboarding_v1(
+        self.register_and_associate_v1(association, caller_context, |registry| {
+            registry.apply_evidence_mutation_with_onboarding_v1(
                 AttestationOperationV1::RegisterEnclave,
                 EnclaveEvidenceV1 {
                     caller,
@@ -274,18 +286,7 @@ impl TeeRegistry<'_> {
                 },
                 policy,
                 true,
-            )?;
-            let association = self.apply_validator_node_binding_v1(
-                binding,
-                validator_signature,
-                node_binding_signature,
-            )?;
-            Self::require_atomic_registration_outcome_v1(
-                onboarding.registration,
-                association,
-                caller_context,
-            )?;
-            Ok(onboarding)
+            )
         })
     }
 }

@@ -8,82 +8,14 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 
 use alloy_sol_types::SolValue as _;
-use outbe_ocomp_protocol::intent::{
-    ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType, FrozenMetadosisValuesV1,
-    JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
-    TributeInputBindingV1,
-};
 use outbe_ocomp_protocol::state::{LysisTerminalV1, OcompFinalizedJobV1, OcompTerminalOutcome};
 use serde_json::{json, Value};
 
 use super::*;
 
 fn pending_record() -> OcompJobRecordV1 {
-    let hash = B256::repeat_byte;
     OcompJobRecordV1 {
-        intent: JobIntentV1 {
-            chain_id: 42,
-            genesis_hash: hash(40),
-            fork_id: hash(1),
-            wwd: 7,
-            pending_nonce: 0,
-            attempt: 0,
-            protocol_bundle_hash: hash(41),
-            ce_sealed_root: hash(42),
-            sealed_tribute_collection_key: hash(30),
-            sealed_tribute_collection_root: hash(31),
-            authenticated_day_count: 1,
-            authenticated_day_nominal: U256::ZERO,
-            pre_admission_envelope_hash: hash(43),
-            source_availability_policy_id: hash(44),
-            frozen_metadosis_values: FrozenMetadosisValuesV1 {
-                day_type: DayType::Green,
-                day_limit: U256::ZERO,
-                previous_vwap: U256::ZERO,
-                current_vwap: U256::ZERO,
-                gratis_demand: U256::ZERO,
-                day_gratis_limit_minor: U256::ZERO,
-                lysis_limit_minor: U256::ZERO,
-                desis_limit_minor: U256::ZERO,
-                request_limit_split_receipt_hash: hash(113),
-            },
-            logical_evaluation_height: 100,
-            logical_evaluation_time: 1_000,
-            activation_preconditions: ActivationPreconditionsV1 {
-                tribute: TributeInputBindingV1 {
-                    wwd: 7,
-                    source_generation: 3,
-                    collection_key: hash(30),
-                    sealed_collection_root: hash(31),
-                    exact_count: 1,
-                    exact_nominal_total: U256::ZERO,
-                },
-                nod: NodTargetPreconditionV1 {
-                    wwd: 7,
-                    target_generation: 5,
-                    namespace_root_before: hash(32),
-                    max_nod_count: 1,
-                },
-                contributors: ContributorTargetPreconditionV1 {
-                    worldwide_day: 7,
-                    expected_series_version: 8,
-                    max_contributor_count: 1,
-                    max_eligible_nominal_total: U256::ZERO,
-                },
-                metadosis: MetadosisAttemptPreconditionV1 {
-                    wwd: 7,
-                    pending_nonce: 0,
-                    expected_status: MetadosisExpectedStatus::OffchainPending,
-                    state_version: 12,
-                },
-            },
-            result_validator_set_epoch: 1,
-            result_committee_set_hash: hash(45),
-            result_ocomp_binding_hash: hash(46),
-            result_member_count: 4,
-            result_quorum_threshold: 3,
-            custody_committee_epoch_hash: None,
-        },
+        intent: outbe_ocomp_protocol::test_utils::fixed_job_intent(),
         intent_height: 100,
         status: OcompJobStatus::AwaitingFinality,
         finalized: None,

@@ -107,16 +107,9 @@ impl<'storage> CallWindows<'storage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use outbe_primitives::test_utils::call_breach_prices as days;
 
     const DAY: u32 = 86_400;
-
-    fn days(prices: &[Option<u64>]) -> Vec<(u32, Option<U256>)> {
-        prices
-            .iter()
-            .enumerate()
-            .map(|(back, price)| (100 - back as u32, price.map(U256::from)))
-            .collect()
-    }
 
     fn terms(price: u64, threshold: u32) -> BreachTerms {
         BreachTerms {

@@ -31,14 +31,16 @@ fn late_finalize_window_close_settles_and_recycles_residue() {
         // Escrow block 10. Only 3 of 4 voters credited at k=0 (one absent).
         outbe_rewards::late_settlement::escrow_block_fee(
             &ctx,
-            10,
-            fb_hash,
+            &outbe_rewards::late_settlement::FinalizedBlockBinding {
+                number: 10,
+                hash: fb_hash,
+                committee_size,
+                epoch: 0,
+                view: 0,
+                parent_view: 0,
+                committee_set_hash: B256::ZERO,
+            },
             pool,
-            committee_size,
-            0, // epoch
-            0, // view
-            0, // parent_view
-            B256::ZERO,
             &[V0, V1, V2],
         )
         .unwrap();
@@ -140,14 +142,16 @@ fn window_close_records_miss_for_absent_committee_voter_only() {
             .unwrap();
         outbe_rewards::late_settlement::escrow_block_fee(
             &ctx,
-            10,
-            fb_hash,
+            &outbe_rewards::late_settlement::FinalizedBlockBinding {
+                number: 10,
+                hash: fb_hash,
+                committee_size: 2,
+                epoch,
+                view: 0,
+                parent_view: 0,
+                committee_set_hash: csh,
+            },
             U256::from(2_000u64),
-            2,
-            epoch,
-            0,
-            0,
-            csh,
             &[V0],
         )
         .unwrap();
@@ -241,14 +245,16 @@ fn window_close_absentee_pass_is_deterministic_and_correct() {
             // Credit C0 and C2 at k=0. C1 and C3 absent.
             outbe_rewards::late_settlement::escrow_block_fee(
                 &ctx,
-                10,
-                fb_hash,
+                &outbe_rewards::late_settlement::FinalizedBlockBinding {
+                    number: 10,
+                    hash: fb_hash,
+                    committee_size: 4,
+                    epoch,
+                    view: 0,
+                    parent_view: 0,
+                    committee_set_hash: csh,
+                },
                 U256::from(4_000u64),
-                4,
-                epoch,
-                0,
-                0,
-                csh,
                 &[C0, C2],
             )
             .unwrap();
@@ -335,14 +341,16 @@ fn window_close_miss_survives_epoch_boundary_reset() {
             .unwrap();
         outbe_rewards::late_settlement::escrow_block_fee(
             &ctx,
-            10,
-            fb_hash,
+            &outbe_rewards::late_settlement::FinalizedBlockBinding {
+                number: 10,
+                hash: fb_hash,
+                committee_size: 2,
+                epoch,
+                view: 0,
+                parent_view: 0,
+                committee_set_hash: csh,
+            },
             U256::from(2_000u64),
-            2,
-            epoch,
-            0,
-            0,
-            csh,
             &[A],
         )
         .unwrap();
@@ -424,14 +432,16 @@ fn late_finalize_unverifiable_credit_is_fatal() {
         // authentication and reaches the (missing) snapshot lookup.
         outbe_rewards::late_settlement::escrow_block_fee(
             &ctx,
-            credit.fb_number,
-            credit.fb_hash,
+            &outbe_rewards::late_settlement::FinalizedBlockBinding {
+                number: credit.fb_number,
+                hash: credit.fb_hash,
+                committee_size: 4,
+                epoch: credit.epoch,
+                view: credit.view,
+                parent_view: credit.parent_view,
+                committee_set_hash: credit.committee_set_hash,
+            },
             U256::from(1_000u64),
-            4,
-            credit.epoch,
-            credit.view,
-            credit.parent_view,
-            credit.committee_set_hash,
             &[],
         )
         .unwrap();
@@ -478,14 +488,16 @@ fn assert_auth_mismatch_fatal(
         // Canonical escrow for fb_number 11 (view/parent_view match dummy_credit).
         outbe_rewards::late_settlement::escrow_block_fee(
             &ctx,
-            11,
-            B256::repeat_byte(0xCD),
+            &outbe_rewards::late_settlement::FinalizedBlockBinding {
+                number: 11,
+                hash: B256::repeat_byte(0xCD),
+                committee_size: 4,
+                epoch: 7,
+                view: 9,        // view (dummy_credit default)
+                parent_view: 8, // parent_view (dummy_credit default)
+                committee_set_hash: B256::repeat_byte(0xEF),
+            },
             U256::from(1_000u64),
-            4,
-            7, // epoch
-            9, // view (dummy_credit default)
-            8, // parent_view (dummy_credit default)
-            B256::repeat_byte(0xEF),
             &[],
         )
         .unwrap();
@@ -493,14 +505,16 @@ fn assert_auth_mismatch_fatal(
         // hits a populated-but-wrong binding rather than an empty one.
         outbe_rewards::late_settlement::escrow_block_fee(
             &ctx,
-            12,
-            B256::repeat_byte(0xAA),
+            &outbe_rewards::late_settlement::FinalizedBlockBinding {
+                number: 12,
+                hash: B256::repeat_byte(0xAA),
+                committee_size: 4,
+                epoch: 7,
+                view: 9,
+                parent_view: 8,
+                committee_set_hash: B256::repeat_byte(0xEF),
+            },
             U256::from(1_000u64),
-            4,
-            7, // epoch
-            9, // view
-            8, // parent_view
-            B256::repeat_byte(0xEF),
             &[],
         )
         .unwrap();

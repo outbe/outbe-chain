@@ -12,12 +12,13 @@ use crate::constants::{
 };
 use crate::errors::VoteError;
 use crate::handlers::{
-    self, TargetAdmission, TargetExecutionOutcome, VoteTargetContext, VoteTargetRegistry,
+    TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
 };
 use crate::notify::ProposalFinalization;
 use crate::schema::{BondSettlement, Vote};
 use crate::state::{
-    active_validator_addresses, calculate_vote_tally, ProposalBond, ProposalStatus, VoteKind,
+    active_validator_addresses, calculate_vote_tally, ProposalBond, ProposalStatus,
+    ProposalSubmission, VoteKind,
 };
 
 /// Returns `Ok(())` when `caller` is a registered validator with `status == ACTIVE`.
@@ -49,6 +50,15 @@ pub const fn quorum_reached(yes_votes: u64, active_validator_count: u32) -> bool
     yes * QUORUM_DENOMINATOR as u128 >= active * QUORUM_NUMERATOR as u128
 }
 
+/// Proposal that passed every admission guard and waits for its write.
+#[derive(Clone, Copy, Debug)]
+struct AdmittedProposal<'a> {
+    submission: ProposalSubmission<'a>,
+    voting_deadline: u64,
+    admission: TargetAdmission,
+    target_context: VoteTargetContext,
+}
+
 impl Vote<'_> {
     /// Creates a pending generic proposal.
     pub fn create_proposal(
@@ -60,11 +70,7 @@ impl Vote<'_> {
         registry: &VoteTargetRegistry,
     ) -> Result<U256> {
         self.create_proposal_with_value(
-            proposer,
-            target_module,
-            payload,
-            current_height,
-            U256::ZERO,
+            ProposalSubmission::new(proposer, target_module, payload, current_height),
             registry,
         )
     }
@@ -73,36 +79,20 @@ impl Vote<'_> {
     /// compile-time target admission class.
     pub fn create_proposal_with_value(
         &mut self,
-        proposer: Address,
-        target_module: Address,
-        payload: &str,
-        current_height: u64,
-        attached_value: U256,
+        submission: ProposalSubmission<'_>,
         registry: &VoteTargetRegistry,
     ) -> Result<U256> {
         // Preserve the legacy calculation, including saturation, during replay.
-        let deadline = current_height
+        let deadline = submission
+            .created_height
             .saturating_add(outbe_chain_constants::get_governance_voting_window_blocks());
-        self.create_proposal_with_deadline(
-            proposer,
-            target_module,
-            payload,
-            current_height,
-            attached_value,
-            deadline,
-            registry,
-        )
+        self.create_proposal_with_deadline(submission, deadline, registry)
     }
 
     /// Creates a proposal with an immutable, author-selected voting duration.
-    #[allow(clippy::too_many_arguments)]
     pub fn create_proposal_with_voting_window(
         &mut self,
-        proposer: Address,
-        target_module: Address,
-        payload: &str,
-        current_height: u64,
-        attached_value: U256,
+        submission: ProposalSubmission<'_>,
         voting_window_blocks: u64,
         registry: &VoteTargetRegistry,
     ) -> Result<U256> {
@@ -114,133 +104,174 @@ impl Vote<'_> {
             }
             .into());
         }
-        let deadline = current_height
+        let deadline = submission
+            .created_height
             .checked_add(voting_window_blocks)
             .ok_or(VoteError::VotingDeadlineOverflow)?;
-        self.create_proposal_with_deadline(
-            proposer,
-            target_module,
-            payload,
-            current_height,
-            attached_value,
-            deadline,
-            registry,
-        )
+        self.create_proposal_with_deadline(submission, deadline, registry)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Runs the admission guards of `submission` in this order:
+    ///
+    /// 1. The target module is registered.
+    /// 2. The attached value and the proposer match the admission class.
+    /// 3. The pending caps permit one more proposal.
+    /// 4. The target module accepts the payload.
+    ///
+    /// Then writes the proposal in one storage checkpoint.
     fn create_proposal_with_deadline(
         &mut self,
-        proposer: Address,
-        target_module: Address,
-        payload: &str,
-        current_height: u64,
-        attached_value: U256,
+        submission: ProposalSubmission<'_>,
         voting_deadline: u64,
         registry: &VoteTargetRegistry,
     ) -> Result<U256> {
         let chain_id = self.storage.chain_id()?;
-        let target = registry.lookup(target_module)?;
+        let target = registry.lookup(submission.target_module)?;
         let admission = target.admission();
-        match admission {
-            TargetAdmission::ActiveValidatorOnly => {
-                if !attached_value.is_zero() {
-                    return Err(VoteError::InvalidProposalBond {
-                        expected: U256::ZERO,
-                        actual: attached_value,
-                    }
-                    .into());
-                }
-                ensure_active_validator(self.storage.clone(), proposer)?;
-            }
-            TargetAdmission::PublicBonded { amount } => {
-                if attached_value != amount {
-                    return Err(VoteError::InvalidProposalBond {
-                        expected: amount,
-                        actual: attached_value,
-                    }
-                    .into());
-                }
-            }
-        }
+        self.check_admission(admission, &submission)?;
+        self.check_pending_caps(admission, registry, submission.proposer)?;
 
+        let target_context = VoteTargetContext {
+            proposer: submission.proposer,
+            attached_value: submission.attached_value,
+            block_number: submission.created_height,
+            chain_id,
+        };
+        target.validate(submission.payload.as_bytes(), target_context)?;
+
+        let admitted = AdmittedProposal {
+            submission,
+            voting_deadline,
+            admission,
+            target_context,
+        };
+        self.commit_proposal(admitted, target)
+    }
+
+    /// Checks that the attached value equals the bond of the admission class.
+    /// A validator-only target also requires an active-validator proposer.
+    fn check_admission(
+        &self,
+        admission: TargetAdmission,
+        submission: &ProposalSubmission<'_>,
+    ) -> Result<()> {
+        let expected = match admission {
+            TargetAdmission::ActiveValidatorOnly => U256::ZERO,
+            TargetAdmission::PublicBonded { amount } => amount,
+        };
+        if submission.attached_value != expected {
+            return Err(VoteError::InvalidProposalBond {
+                expected,
+                actual: submission.attached_value,
+            }
+            .into());
+        }
+        if admission == TargetAdmission::ActiveValidatorOnly {
+            ensure_active_validator(self.storage.clone(), submission.proposer)?;
+        }
+        Ok(())
+    }
+
+    /// Checks the global pending cap, then the cap of the admission class.
+    fn check_pending_caps(
+        &self,
+        admission: TargetAdmission,
+        registry: &VoteTargetRegistry,
+        proposer: Address,
+    ) -> Result<()> {
         let pending_len = self.pending_proposal_ids.len()?;
         if pending_len >= MAX_PENDING_PROPOSALS {
             return Err(VoteError::TooManyPending.into());
         }
-
         match admission {
-            TargetAdmission::ActiveValidatorOnly => {
-                let proposer_pending = self.pending_proposal_count_by_proposer(proposer)?;
-                if proposer_pending >= MAX_PENDING_PROPOSALS_PER_VALIDATOR {
-                    return Err(VoteError::TooManyPendingByValidator.into());
-                }
-            }
+            TargetAdmission::ActiveValidatorOnly => self.check_validator_pending_cap(proposer),
             TargetAdmission::PublicBonded { .. } => {
-                let (public_total, public_by_proposer) =
-                    self.pending_public_bonded_counts(registry, proposer)?;
-                if public_total >= MAX_PENDING_PUBLIC_BONDED_PROPOSALS {
-                    return Err(VoteError::TooManyPendingPublicBonded.into());
-                }
-                if public_by_proposer > 0 {
-                    return Err(VoteError::TooManyPendingPublicBondedByProposer.into());
-                }
+                self.check_public_bonded_pending_caps(registry, proposer)
             }
         }
+    }
 
-        let target_context = VoteTargetContext {
-            proposer,
-            attached_value,
-            block_number: current_height,
-            chain_id,
-        };
-        handlers::validate_target_payload(
-            registry,
-            target_module,
-            payload.as_bytes(),
+    fn check_validator_pending_cap(&self, proposer: Address) -> Result<()> {
+        let proposer_pending = self.pending_proposal_count_by_proposer(proposer)?;
+        if proposer_pending >= MAX_PENDING_PROPOSALS_PER_VALIDATOR {
+            return Err(VoteError::TooManyPendingByValidator.into());
+        }
+        Ok(())
+    }
+
+    fn check_public_bonded_pending_caps(
+        &self,
+        registry: &VoteTargetRegistry,
+        proposer: Address,
+    ) -> Result<()> {
+        let (public_total, public_by_proposer) =
+            self.pending_public_bonded_counts(registry, proposer)?;
+        if public_total >= MAX_PENDING_PUBLIC_BONDED_PROPOSALS {
+            return Err(VoteError::TooManyPendingPublicBonded.into());
+        }
+        if public_by_proposer > 0 {
+            return Err(VoteError::TooManyPendingPublicBondedByProposer.into());
+        }
+        Ok(())
+    }
+
+    /// Writes an admitted proposal in one storage checkpoint: the proposal
+    /// record, the target reservation, the bond escrow of a public bonded
+    /// target, and the creation event. An error rolls back every write.
+    fn commit_proposal(
+        &mut self,
+        admitted: AdmittedProposal<'_>,
+        target: &dyn VoteTarget,
+    ) -> Result<U256> {
+        let AdmittedProposal {
+            submission,
+            voting_deadline,
+            admission,
             target_context,
-        )?;
-
+        } = admitted;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            let proposal_id = self.write_proposal(
-                proposer,
-                target_module,
-                payload,
-                current_height,
-                voting_deadline,
-                ProposalStatus::Pending,
-            )?;
-            handlers::reserve_target_proposal(
-                registry,
+            let proposal_id =
+                self.write_proposal(&submission, voting_deadline, ProposalStatus::Pending)?;
+            target.reserve(
                 storage.clone(),
-                target_module,
                 proposal_id,
-                payload.as_bytes(),
+                submission.payload.as_bytes(),
                 target_context,
             )?;
             if let TargetAdmission::PublicBonded { amount } = admission {
-                self.record_proposal_bond(proposal_id, amount)?;
-                let liabilities = self.bond_liabilities()?;
-                let balance = storage.balance(VOTE_ADDRESS)?;
-                if balance < liabilities {
-                    return Err(VoteError::BondLiabilityInvariant {
-                        balance,
-                        liabilities,
-                    }
-                    .into());
-                }
-                self.notify_proposal_bond_escrowed(proposal_id, proposer, amount)?;
+                self.escrow_proposal_bond(proposal_id, submission.proposer, amount)?;
             }
             self.notify_proposal_created(
                 proposal_id,
-                proposer,
-                target_module,
-                payload,
+                submission.proposer,
+                submission.target_module,
+                submission.payload,
                 voting_deadline,
             )?;
             Ok(proposal_id)
         })
+    }
+
+    /// Records the bond of `proposal_id`. Then checks that the Vote balance
+    /// covers all bond liabilities and emits the escrow event.
+    fn escrow_proposal_bond(
+        &mut self,
+        proposal_id: U256,
+        proposer: Address,
+        amount: U256,
+    ) -> Result<()> {
+        self.record_proposal_bond(proposal_id, amount)?;
+        let liabilities = self.bond_liabilities()?;
+        let balance = self.storage.balance(VOTE_ADDRESS)?;
+        if balance < liabilities {
+            return Err(VoteError::BondLiabilityInvariant {
+                balance,
+                liabilities,
+            }
+            .into());
+        }
+        self.notify_proposal_bond_escrowed(proposal_id, proposer, amount)
     }
 
     fn pending_public_bonded_counts(
@@ -380,14 +411,8 @@ impl Vote<'_> {
 
         let finalization_checkpoint = self.storage.checkpoint_guard();
         let target_checkpoint = self.storage.checkpoint_guard();
-        let target_outcome = handlers::handle_target_tally(
-            registry,
-            ctx,
-            proposal_id,
-            &proposal,
-            bond.amount,
-            status,
-        )?;
+        let target_outcome =
+            registry.handle_tally(ctx, proposal_id, &proposal, bond.amount, status)?;
         let (status, outcome) = match target_outcome {
             TargetExecutionOutcome::Applied => {
                 target_checkpoint.commit();

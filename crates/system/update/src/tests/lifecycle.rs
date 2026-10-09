@@ -7,16 +7,14 @@ use crate::encode_protocol_version;
 use crate::schema::ScheduledUpdateStatus;
 use crate::schema::Update;
 
-use super::{min_activation, schedule_update, with_update, UpdateTestExt, PV, V1_2, V1_3};
+use super::{
+    min_activation, schedule_early_and_late, schedule_update, schedule_version,
+    with_scheduled_update, with_update, UpdateTestExt, PV, SCHEDULE_HEIGHT, V1_2, V1_3,
+};
 
 #[test]
 fn activation_boundary_is_begin_block_inclusive() {
-    with_update(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation = min_activation(current);
-        schedule_update(&mut update, U256::from(1), PV, activation, "", current).unwrap();
-
+    with_scheduled_update(PV, |storage, update, activation| {
         update.process_begin_block_test(activation - 1).unwrap();
         assert_eq!(
             get_active_version(storage.clone()).unwrap(),
@@ -43,12 +41,8 @@ fn activation_boundary_is_begin_block_inclusive() {
 
 #[test]
 fn lifecycle_activates_scheduled_update() {
-    with_update(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation = min_activation(current);
+    with_scheduled_update(PV, |storage, update, activation| {
         let proposal_id = U256::from(1);
-        schedule_update(&mut update, proposal_id, PV, activation, "", current).unwrap();
 
         update.process_begin_block_test(activation).unwrap();
 
@@ -65,20 +59,8 @@ fn lifecycle_activates_scheduled_update() {
 
 #[test]
 fn waiting_index_tracks_pending_scheduled_updates() {
-    with_update(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
+    with_scheduled_update(V1_2, |_storage, update, _activation| {
         let proposal_id = U256::from(1);
-        schedule_update(
-            &mut update,
-            proposal_id,
-            V1_2,
-            min_activation(current),
-            "",
-            current,
-        )
-        .unwrap();
-
         assert_eq!(
             update.list_waiting_for_activation_proposal_ids().unwrap(),
             vec![proposal_id]
@@ -88,14 +70,8 @@ fn waiting_index_tracks_pending_scheduled_updates() {
 
 #[test]
 fn second_schedule_at_same_height_is_rejected() {
-    with_update(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation = min_activation(current);
-        schedule_update(&mut update, U256::from(1), V1_2, activation, "", current).unwrap();
-        assert!(
-            schedule_update(&mut update, U256::from(2), V1_3, activation, "", current).is_err()
-        );
+    with_scheduled_update(V1_2, |_storage, update, activation| {
+        assert!(schedule_version(update, U256::from(2), V1_3, activation).is_err());
         assert_eq!(
             update.list_waiting_for_activation_proposal_ids().unwrap(),
             vec![U256::from(1)]
@@ -107,21 +83,9 @@ fn second_schedule_at_same_height_is_rejected() {
 fn activate_scheduled_update_cancels_stale_lower_version() {
     with_update(|storage| {
         let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation_early = min_activation(current);
-        let activation_late = activation_early + 500;
         // Both schedules use PV (the only activatable version). The later one
         // becomes stale once the earlier activation sets active == PV.
-        schedule_update(
-            &mut update,
-            U256::from(1),
-            PV,
-            activation_early,
-            "",
-            current,
-        )
-        .unwrap();
-        schedule_update(&mut update, U256::from(2), PV, activation_late, "", current).unwrap();
+        let (activation_early, activation_late) = schedule_early_and_late(&mut update);
 
         update.process_begin_block_test(activation_early).unwrap();
         assert_eq!(get_active_version(storage.clone()).unwrap(), PV);
@@ -155,15 +119,24 @@ fn multiple_due_updates_cannot_reduce_active_version() {
         let mut update = Update::new(storage.clone());
         let current = 200u64;
         let activation = min_activation(current) + 1000;
-        schedule_update(&mut update, U256::from(1), PV, activation, "", current).unwrap();
-        schedule_update(&mut update, U256::from(2), PV, activation, "", current + 1)
-            .expect_err("conflicting activation height must be rejected at schedule time");
+        schedule_update(
+            &mut update,
+            U256::from(1),
+            crate::ScheduleUpdatePayload::new(PV, activation, ""),
+            current,
+        )
+        .unwrap();
         schedule_update(
             &mut update,
             U256::from(2),
-            PV,
-            activation + 1,
-            "",
+            crate::ScheduleUpdatePayload::new(PV, activation, ""),
+            current + 1,
+        )
+        .expect_err("conflicting activation height must be rejected at schedule time");
+        schedule_update(
+            &mut update,
+            U256::from(2),
+            crate::ScheduleUpdatePayload::new(PV, activation + 1, ""),
             current + 1,
         )
         .unwrap();
@@ -184,22 +157,13 @@ fn multiple_due_updates_cannot_reduce_active_version() {
 fn activate_version_above_protocol_version_is_fatal() {
     with_update(|storage| {
         let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation = min_activation(current);
+        let activation = min_activation(SCHEDULE_HEIGHT);
         let unsupported = encode_protocol_version(PROTOCOL_VERSION_MAJOR.saturating_add(1), 0);
         assert!(
             unsupported > PROTOCOL_VERSION,
             "test version must exceed binary PROTOCOL_VERSION"
         );
-        schedule_update(
-            &mut update,
-            U256::from(1),
-            unsupported,
-            activation,
-            "",
-            current,
-        )
-        .unwrap();
+        schedule_version(&mut update, U256::from(1), unsupported, activation).unwrap();
 
         let err = update.process_begin_block_test(activation).unwrap_err();
         assert!(

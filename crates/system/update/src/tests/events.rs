@@ -8,24 +8,13 @@ use crate::precompile::{dispatch, IUpdate};
 use crate::schema::Update;
 
 use super::{
-    min_activation, schedule_update, with_update, with_update_provider, UpdateTestExt, PV, V1_2,
+    schedule_early_and_late, scheduled_update_provider, with_update, with_update_provider,
+    UpdateTestExt, PV, V1_2,
 };
 
 #[test]
 fn schedule_emits_scheduled_update_created_event() {
-    let provider = with_update_provider(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        schedule_update(
-            &mut update,
-            U256::from(1),
-            V1_2,
-            min_activation(current),
-            "notes",
-            current,
-        )
-        .unwrap();
-    });
+    let provider = scheduled_update_provider(V1_2, "notes", |_storage, _update, _activation| {});
 
     assert!(has_event(
         &provider,
@@ -35,11 +24,7 @@ fn schedule_emits_scheduled_update_created_event() {
 
 #[test]
 fn lifecycle_emits_upgrade_activated_event() {
-    let provider = with_update_provider(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation = min_activation(current);
-        schedule_update(&mut update, U256::from(1), PV, activation, "", current).unwrap();
+    let provider = scheduled_update_provider(PV, "", |_storage, update, activation| {
         update.process_begin_block_test(activation).unwrap();
     });
 
@@ -53,19 +38,7 @@ fn lifecycle_emits_upgrade_activated_event() {
 fn lifecycle_emits_upgrade_canceled_event() {
     let provider = with_update_provider(|storage| {
         let mut update = Update::new(storage.clone());
-        let current = 100u64;
-        let activation_early = min_activation(current);
-        let activation_late = activation_early + 500;
-        schedule_update(
-            &mut update,
-            U256::from(1),
-            PV,
-            activation_early,
-            "",
-            current,
-        )
-        .unwrap();
-        schedule_update(&mut update, U256::from(2), PV, activation_late, "", current).unwrap();
+        let (activation_early, _activation_late) = schedule_early_and_late(&mut update);
         update.process_begin_block_test(activation_early).unwrap();
     });
 

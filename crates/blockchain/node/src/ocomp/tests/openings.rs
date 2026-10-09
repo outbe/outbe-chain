@@ -1,12 +1,12 @@
-use outbe_ocomp_protocol::test_utils::{proof_nodes_for_target, storage_trie};
+use outbe_ocomp_protocol::test_utils::{account_mpt_with_proofs as account_trie, storage_trie};
 use std::{
     collections::BTreeMap,
     sync::{atomic::AtomicUsize, Arc},
 };
 
 use alloy_eips::BlockNumHash;
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount, KECCAK_EMPTY};
+use alloy_primitives::{Address, B256, U256};
+use alloy_trie::{TrieAccount, KECCAK_EMPTY};
 use outbe_metadosis::config::poc_schema_limits;
 use outbe_nod::openings::entry_price_slots;
 use outbe_ocomp_protocol::{
@@ -27,30 +27,6 @@ use crate::ocomp::{
 type OpeningStateProvider = crate::test_utils::OpeningStateFixture<Arc<AtomicUsize>>;
 
 type OpeningProvider = crate::test_utils::OpeningProviderFixture<Arc<AtomicUsize>>;
-
-fn account_trie(accounts: &[(Address, TrieAccount)]) -> (B256, BTreeMap<Address, Vec<Bytes>>) {
-    let targets = accounts
-        .iter()
-        .map(|(address, _)| (*address, Nibbles::unpack(keccak256(address))))
-        .collect::<BTreeMap<_, _>>();
-    let mut builder = HashBuilder::default()
-        .with_proof_retainer(ProofRetainer::from_iter(targets.values().copied()));
-    let mut leaves = accounts
-        .iter()
-        .map(|(address, account)| (targets[address], alloy_rlp::encode(*account)))
-        .collect::<Vec<_>>();
-    leaves.sort_by_key(|(path, _)| *path);
-    for (path, value) in leaves {
-        builder.add_leaf(path, &value);
-    }
-    let root = builder.root();
-    let retained = builder.take_proof_nodes();
-    let proofs = targets
-        .into_iter()
-        .map(|(address, target)| (address, proof_nodes_for_target(&retained, &target)))
-        .collect();
-    (root, proofs)
-}
 
 fn opening_state(contracts: &[(Address, Vec<(B256, U256)>)]) -> (OpeningStateProvider, B256) {
     let mut contract_tries = Vec::with_capacity(contracts.len());

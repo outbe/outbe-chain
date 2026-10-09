@@ -1,5 +1,6 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::keys::address_u32_key;
 
 use crate::errors::GovernanceError;
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
@@ -19,10 +20,7 @@ pub struct ProposalMeta {
 /// Storage key for the per-author id list: `keccak256(author || index_be)`.
 /// Shared by the writer (runtime submit) and the reader (below).
 pub(crate) fn author_index_key(author: Address, index: u32) -> B256 {
-    let mut buf = [0u8; 24];
-    buf[..20].copy_from_slice(author.as_slice());
-    buf[20..].copy_from_slice(&index.to_be_bytes());
-    keccak256(buf)
+    address_u32_key(author, index)
 }
 
 /// Hard cap on how many items a single paginated read returns, so a caller

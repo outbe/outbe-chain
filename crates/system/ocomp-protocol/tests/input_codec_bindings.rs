@@ -1,77 +1,27 @@
+#[path = "support/strict_canonical.rs"]
+mod strict_canonical;
+
 use alloy_primitives::{Address, B256, U256};
+use outbe_ocomp_protocol::test_utils::{
+    minimal_protocol_bundle as bundle, FINALITY_INPUT_TEST_LIMITS as LIMITS,
+};
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
     input::{
         authenticated_opening_root, materialize_authenticated_openings, AuthenticatedOpeningV1,
-        CheckpointIdentityV1, Compression, InputManifestV1, OpeningSourceKind,
+        CheckpointIdentityV1, Compression, InputChunkKind, InputChunkRefV1, InputManifestV1,
+        OpeningSourceKind,
     },
     opening::{
         partition_lysis_opening_subjects, LysisOpeningsProofV1, OpeningSubjectsV1,
         RawContractOpeningProofV1, RawStorageSlotV1, MAX_FIDELITY_OWNERS_PER_OPENING,
     },
     profile::ProtocolBundleV1,
-    registry::{FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID},
-    CodecLimits, OrderedListLimits, ProtocolError, SchemaLimits,
-};
-
-const LIMITS: SchemaLimits = SchemaLimits {
-    codec: CodecLimits::new(1_048_576, 4_096, 2_097_152),
-    max_bounded_bytes: 262_144,
-    max_proof_bytes: 262_144,
-    max_opening_bytes: 262_144,
-    max_collection_items: 4_096,
-    max_action_items: 4_096,
-    max_chunk_items: 4_096,
-    max_unit_inputs: 64,
-    max_result_chunk_bytes: 524_288,
-    max_control_body_bytes: 262_144,
+    OrderedListLimits, ProtocolError,
 };
 
 fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
-}
-
-fn bundle() -> ProtocolBundleV1 {
-    ProtocolBundleV1 {
-        protocol_version: 1,
-        fork_id: hash(1),
-        intent_codec_id: hash(2),
-        finalized_intent_proof_codec_id: hash(3),
-        tribute_body_codec_id: TRIBUTE_BODY_CODEC_ID,
-        fidelity_opening_codec_id: FIDELITY_OPENING_CODEC_ID,
-        oracle_opening_codec_id: ORACLE_OPENING_CODEC_ID,
-        result_codec_id: hash(4),
-        action_codec_id: hash(5),
-        activation_codec_id: hash(6),
-        evidence_codec_id: hash(7),
-        request_semantics_version: 1,
-        lysis_program_semantics_hash: hash(8),
-        planner_spec_version: 1,
-        reducer_spec_version: 1,
-        activation_apply_semantics_hash: hash(9),
-        effect_contract_registry_hash: hash(10),
-        object_codec_registry_hash: hash(11),
-        correctness_profile_id: hash(12),
-        capacity_profile_id: hash(13),
-        result_signature_profile_id: hash(14),
-        finality_verifier_and_vote_domain_id: hash(15),
-        consensus_committee_history_schema_version: 1,
-        ocomp_committee_schema_version: 1,
-        proof_system_and_verifier_key_id: None,
-        da_codec_and_binding_verifier_id: None,
-        anti_equivocation_journal_schema_hash: hash(16),
-        mode_pause_revocation_semantics_hash: hash(17),
-        upgrade_fsm_semantics_hash: hash(18),
-        release_requirement_catalog_sequence: 1,
-        release_requirement_catalog_hash: hash(19),
-        release_requirement_catalog_parent_hash: hash(20),
-        release_gate_authority_envelope_hash: hash(21),
-        release_approval_policy_hash: hash(22),
-        release_validator_command_artifact_hash: hash(23),
-        consensus_state_schema_version: 1,
-        migration_manifest_hash: hash(24),
-        required_upgrade_handler_set_hash: hash(25),
-    }
 }
 
 fn manifest(bundle: &ProtocolBundleV1) -> InputManifestV1 {
@@ -159,16 +109,69 @@ fn authenticated_opening_record_has_one_strict_canonical_encoding() {
         opening_codec_id: bundle.oracle_opening_codec_id,
         canonical_opening: BoundedBytes(vec![3]),
     };
+    strict_canonical::assert_strict_canonical_record(
+        opening,
+        |value| value.encode_canonical_record(&LIMITS).unwrap(),
+        |encoded| AuthenticatedOpeningV1::decode_canonical_record(encoded, &LIMITS),
+    );
+}
+
+#[test]
+fn input_chunk_record_rejects_trailing_bytes_before_invalid_range() {
+    let reference = InputChunkRefV1 {
+        kind: InputChunkKind::Tribute,
+        ordinal: 0,
+        record_count: 1,
+        first_key: BoundedBytes(vec![1]),
+        last_key_inclusive: BoundedBytes(vec![2]),
+        encoded_bytes: 1,
+        semantic_digest: hash(1),
+        transport_digest: hash(2),
+    };
+    let encoded = reference.encode_canonical_record(&LIMITS).unwrap();
+    assert_eq!(
+        InputChunkRefV1::decode_canonical_record(&encoded, &LIMITS).unwrap(),
+        reference
+    );
+
+    let mut invalid_range = encoded;
+    invalid_range[5..9].copy_from_slice(&0_u32.to_be_bytes());
+    assert_eq!(
+        InputChunkRefV1::decode_canonical_record(&invalid_range, &LIMITS),
+        Err(ProtocolError::InvalidInvariant(
+            "input chunk reference committed range"
+        ))
+    );
+
+    invalid_range.push(0);
+    assert!(matches!(
+        InputChunkRefV1::decode_canonical_record(&invalid_range, &LIMITS),
+        Err(ProtocolError::TrailingBytes { .. })
+    ));
+}
+
+#[test]
+fn raw_contract_opening_record_has_one_strict_canonical_encoding() {
+    let opening = RawContractOpeningProofV1 {
+        contract_address: Address::repeat_byte(0xf1),
+        state_root: hash(32),
+        ordered_slots: vec![RawStorageSlotV1 {
+            slot: hash(40),
+            value: U256::from(7),
+        }],
+        account_proof: ProofBytes(vec![1]),
+        storage_proof: ProofBytes(vec![2]),
+    };
     let encoded = opening.encode_canonical_record(&LIMITS).unwrap();
     assert_eq!(
-        AuthenticatedOpeningV1::decode_canonical_record(&encoded, &LIMITS).unwrap(),
+        RawContractOpeningProofV1::decode_canonical_record(&encoded, &LIMITS).unwrap(),
         opening
     );
 
     let mut trailing = encoded;
     trailing.push(0);
     assert!(matches!(
-        AuthenticatedOpeningV1::decode_canonical_record(&trailing, &LIMITS),
+        RawContractOpeningProofV1::decode_canonical_record(&trailing, &LIMITS),
         Err(ProtocolError::TrailingBytes { .. })
     ));
 }

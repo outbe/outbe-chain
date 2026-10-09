@@ -1,27 +1,34 @@
-use alloy_primitives::{Address, U256};
+use core::fmt;
+
+use alloy_primitives::Address;
+use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 
-use crate::hyperlane::HyperlaneSubmitCheckpointHook;
-use crate::intexfactory::IntexFactoryPayContributorBatchHook;
-use crate::oracle::OracleSubmitVoteHook;
+use outbe_hyperlanecontroller::precompile::IHyperlaneController;
+use outbe_intexfactory::precompile::IIntexFactory;
+use outbe_oracle::precompile::IOracle;
+use outbe_validatorset::delegation::ValidatorDelegateRole;
+
+use crate::envelope::{active_validator_for_role, validator_for_role, ValidatorCallHook};
+use crate::{hyperlane, intexfactory, oracle};
 
 /// A minimal, execution-layer independent transaction view for zero-fee hooks.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ZeroFeeTransaction<'a> {
     /// Recovered signer of the signed EVM transaction.
     pub signer: Address,
-    /// Call target. Contract creation transactions are represented as `None`.
-    pub to: Option<Address>,
-    /// Native value attached to the transaction.
-    pub value: U256,
-    /// ABI calldata bytes.
-    pub input: &'a [u8],
-    /// Transaction gas limit.
-    pub gas_limit: u64,
-    /// EIP-1559 max fee per gas.
-    pub max_fee_per_gas: u128,
-    /// EIP-1559 priority fee per gas, if present.
-    pub max_priority_fee_per_gas: Option<u128>,
+    /// Call fields of the signed EVM transaction.
+    pub call: TransactionCallFields<'a>,
+}
+
+/// The text form keeps the call fields flat, as before they moved to `call`.
+impl fmt::Debug for ZeroFeeTransaction<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut out = f.debug_struct("ZeroFeeTransaction");
+        out.field("signer", &self.signer);
+        self.call.debug_fields(&mut out);
+        out.finish()
+    }
 }
 
 /// Stable identifier for a registered zero-fee hook.
@@ -189,6 +196,7 @@ impl ZeroFeePolicyError {
 #[cfg(test)]
 mod failure_code_tests {
     use super::*;
+    use alloy_primitives::U256;
 
     fn all_variants() -> Vec<ZeroFeePolicyError> {
         vec![
@@ -254,12 +262,14 @@ mod failure_code_tests {
     fn ocomp_result_vote_selector_is_not_owned_by_zero_fee_policy() {
         let tx = ZeroFeeTransaction {
             signer: Address::repeat_byte(0x11),
-            to: Some(outbe_ocomp_protocol::abi::METADOSIS_ADDRESS),
-            value: U256::ZERO,
-            input: &outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR,
-            gas_limit: 30_000,
-            max_fee_per_gas: u128::MAX,
-            max_priority_fee_per_gas: Some(0),
+            call: TransactionCallFields {
+                to: Some(outbe_ocomp_protocol::abi::METADOSIS_ADDRESS),
+                value: U256::ZERO,
+                input: &outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR,
+                gas_limit: 30_000,
+                max_fee_per_gas: u128::MAX,
+                max_priority_fee_per_gas: Some(0),
+            },
         };
 
         assert_eq!(registry().classify(&tx).unwrap(), None);
@@ -334,11 +344,33 @@ impl ZeroFeeRegistry {
     }
 }
 
-static ORACLE_SUBMIT_VOTE_HOOK: OracleSubmitVoteHook = OracleSubmitVoteHook;
-static INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK: IntexFactoryPayContributorBatchHook =
-    IntexFactoryPayContributorBatchHook;
-static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: HyperlaneSubmitCheckpointHook =
-    HyperlaneSubmitCheckpointHook;
+/// `Oracle.submitVote`: an active validator or its oracle delegate that has
+/// not voted in this period.
+static ORACLE_SUBMIT_VOTE_HOOK: ValidatorCallHook<IOracle::submitVoteCall> = ValidatorCallHook::new(
+    ZeroFeeHookId::OracleSubmitVote,
+    oracle::VOTE_ENVELOPE,
+    oracle::validate_oracle_submit_vote_state,
+);
+
+/// `IntexFactory.payContributorBatch`: a validator or its OCOMP delegate.
+static INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK: ValidatorCallHook<
+    IIntexFactory::payContributorBatchCall,
+> = ValidatorCallHook::new(
+    ZeroFeeHookId::IntexFactoryPayContributorBatch,
+    intexfactory::CONTRIBUTOR_BATCH_ENVELOPE,
+    |storage, signer| validator_for_role(storage, signer, ValidatorDelegateRole::Ocomp),
+);
+
+/// `HyperlaneController.submitCheckpoint`: an active validator or its oracle
+/// delegate.
+static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ValidatorCallHook<
+    IHyperlaneController::submitCheckpointCall,
+> = ValidatorCallHook::new(
+    ZeroFeeHookId::HyperlaneSubmitCheckpoint,
+    hyperlane::CHECKPOINT_ENVELOPE,
+    |storage, signer| active_validator_for_role(storage, signer, ValidatorDelegateRole::Oracle),
+);
+
 static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] = &[
     &ORACLE_SUBMIT_VOTE_HOOK,
     &INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK,

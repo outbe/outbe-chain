@@ -1,7 +1,9 @@
 //! Shared artifact construction for tests and protocol benchmarks.
 
+pub mod sol_interface;
+
 use crate::consensus::{DkgBoundaryArtifact, ReshareResult};
-use alloy_primitives::{address, Bytes, B256};
+use alloy_primitives::{address, Bytes, B256, U256};
 
 pub fn sample_system_tx_boundary(block_number: u64) -> DkgBoundaryArtifact {
     DkgBoundaryArtifact {
@@ -25,4 +27,13 @@ pub fn sample_system_tx_boundary(block_number: u64) -> DkgBoundaryArtifact {
             active_set_hash: B256::repeat_byte(0x55),
         },
     }
+}
+
+/// Build call-breach test prices for days 100, 99, and earlier.
+pub fn call_breach_prices(prices: &[Option<u64>]) -> Vec<(u32, Option<U256>)> {
+    prices
+        .iter()
+        .enumerate()
+        .map(|(back, price)| (100 - back as u32, price.map(U256::from)))
+        .collect()
 }

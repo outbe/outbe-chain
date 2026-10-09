@@ -1,7 +1,11 @@
 use alloy_primitives::Address;
 use outbe_primitives::error::{PrecompileError, Result};
 
-use crate::{precompile::IValidatorSet, runtime::status, schema::ValidatorSet};
+use crate::{
+    precompile::IValidatorSet,
+    runtime::{status, ValidatorRecord},
+    schema::ValidatorSet,
+};
 
 /// Stable protocol role identifiers for validator-owned operational keys.
 ///
@@ -142,12 +146,18 @@ impl ValidatorSet<'_> {
     ) -> Result<Option<Address>> {
         if let Some(record) = self.get_validator(signer)? {
             let explicit = self.get_delegate(signer, role)?;
-            if explicit.is_zero() && record.status == status::ACTIVE && record.has_bls_share {
-                return Ok(Some(signer));
-            }
-            return Ok(None);
+            return Ok((explicit.is_zero() && is_live_signer(&record)).then_some(signer));
         }
+        self.resolve_role_delegate(signer, role)
+    }
 
+    /// Resolves `signer` as the current explicit `role` delegate of a live
+    /// validator.
+    fn resolve_role_delegate(
+        &self,
+        signer: Address,
+        role: ValidatorDelegateRole,
+    ) -> Result<Option<Address>> {
         let validator = self
             .validator_by_role_delegate
             .get_nested(&role.id())
@@ -159,10 +169,7 @@ impl ValidatorSet<'_> {
         let Some(record) = self.get_validator(validator)? else {
             return Ok(None);
         };
-        if record.status != status::ACTIVE || !record.has_bls_share {
-            return Ok(None);
-        }
-        Ok(Some(validator))
+        Ok(is_live_signer(&record).then_some(validator))
     }
 
     fn ensure_registered_validator(&self, validator: Address) -> Result<()> {
@@ -188,4 +195,9 @@ impl ValidatorSet<'_> {
         }
         Ok(())
     }
+}
+
+/// Whether a validator record may sign for a role: ACTIVE with a live BLS share.
+fn is_live_signer(record: &ValidatorRecord) -> bool {
+    record.status == status::ACTIVE && record.has_bls_share
 }

@@ -28,17 +28,17 @@ fn authorized_node_host_client_signs_dev_evidence_in_sgx_no_attest_mode() {
     let server_keys = keys.clone();
     let server_initialization = initialization.clone();
     let server = std::thread::spawn(move || {
-        for _ in 0..2 {
-            let (stream, _) = listener.accept().unwrap();
-            serve_connection_with(
-                stream,
-                &server_keys,
-                &offer_key,
-                Some(&boot),
-                &server_initialization,
-            )
-            .unwrap();
-        }
+        serve_sequential_unix_connections(
+            listener,
+            SequentialTestServerContext {
+                keys: &server_keys,
+                offer_key: &offer_key,
+                boot: &boot,
+                initialization: &server_initialization,
+            },
+            2,
+            serve_connection_with::<UnixStream>,
+        );
     });
 
     let challenge = AuthorizedEnclaveClient::discover_endpoint(&endpoint).unwrap();
@@ -418,17 +418,17 @@ fn node_host_state_initializes_once_and_reconnects_from_datadir() {
     let server_keys = keys.clone();
     let server_initialization = initialization.clone();
     let server = std::thread::spawn(move || {
-        for _ in 0..3 {
-            let (stream, _) = listener.accept().unwrap();
-            serve_connection_with(
-                stream,
-                &server_keys,
-                &offer_key,
-                Some(&boot),
-                &server_initialization,
-            )
-            .unwrap();
-        }
+        serve_sequential_unix_connections(
+            listener,
+            SequentialTestServerContext {
+                keys: &server_keys,
+                offer_key: &offer_key,
+                boot: &boot,
+                initialization: &server_initialization,
+            },
+            3,
+            serve_connection_with::<UnixStream>,
+        );
     });
 
     let signing = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
@@ -883,10 +883,17 @@ fn spawn_sequential_server(
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        for _ in 0..connections {
-            let (stream, _) = listener.accept().unwrap();
-            serve_connection_with(stream, &keys, &offer_key, Some(&boot), &initialization).unwrap();
-        }
+        serve_sequential_unix_connections(
+            listener,
+            SequentialTestServerContext {
+                keys: &keys,
+                offer_key: &offer_key,
+                boot: &boot,
+                initialization: &initialization,
+            },
+            connections,
+            serve_connection_with::<UnixStream>,
+        );
     })
 }
 

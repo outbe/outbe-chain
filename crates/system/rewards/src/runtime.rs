@@ -261,23 +261,11 @@ pub const VALIDATOR_REWARD_PERCENT: u64 = 4;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Address;
-    use outbe_primitives::block::BlockContext;
-    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-
-    const CHAIN_ID: u64 = 1;
-    const GENESIS_TS_2024_01_01: u64 = 1_704_067_200;
-
-    fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
-        BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
-    }
+    use crate::test_support::{block_ctx, with_block, GENESIS_TS as GENESIS_TS_2024_01_01};
 
     #[test]
     fn ensure_genesis_anchor_initializes_on_first_call_and_is_idempotent() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(0, GENESIS_TS_2024_01_01), handle);
-
+        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
             let day = ensure_genesis_anchor(&ctx).unwrap();
             assert_eq!(day, 20240101);
             let day_again = ensure_genesis_anchor(&ctx).unwrap();
@@ -287,17 +275,14 @@ mod tests {
 
     #[test]
     fn ensure_genesis_anchor_does_not_advance_after_lock() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            // Lock anchor at block 0.
-            let ctx0 =
-                BlockRuntimeContext::new(block_ctx(0, GENESIS_TS_2024_01_01), handle.clone());
+        // Lock anchor at block 0.
+        with_block(0, GENESIS_TS_2024_01_01, |ctx0| {
             let _ = ensure_genesis_anchor(&ctx0).unwrap();
 
             // Re-call with a later-block context (same storage). Anchor stays.
             let ctx_later = BlockRuntimeContext::new(
                 block_ctx(100, GENESIS_TS_2024_01_01 + 86_400 * 30),
-                handle,
+                ctx0.storage.clone(),
             );
             let day = ensure_genesis_anchor(&ctx_later).unwrap();
             assert_eq!(day, 20240101);
@@ -308,9 +293,7 @@ mod tests {
 
     #[test]
     fn genesis_utc_day_uninitialized_is_fatal() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(0, GENESIS_TS_2024_01_01), handle);
+        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
             let err = genesis_utc_day(&ctx).unwrap_err();
             assert!(format!("{err}").contains("not initialized"));
         });
@@ -318,9 +301,7 @@ mod tests {
 
     #[test]
     fn day_number_since_genesis_walks_forward() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(0, GENESIS_TS_2024_01_01), handle);
+        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
             let _ = ensure_genesis_anchor(&ctx).unwrap();
 
             assert_eq!(day_number_since_genesis(&ctx, 20240101).unwrap(), 0);
@@ -331,163 +312,11 @@ mod tests {
 
     #[test]
     fn day_number_since_genesis_pre_genesis_is_fatal() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(0, GENESIS_TS_2024_01_01), handle);
+        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
             let _ = ensure_genesis_anchor(&ctx).unwrap();
 
             let err = day_number_since_genesis(&ctx, 20231231).unwrap_err();
             assert!(format!("{err}").contains("predates genesis"));
-        });
-    }
-
-    // ---- Step 9: metadata fingerprint helper tests --------------------
-
-    use alloy_primitives::{address, b256, Bytes};
-    use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
-
-    fn meta_v1() -> CertifiedParentAccountingMetadata {
-        CertifiedParentAccountingMetadata {
-            finalized_block_number: 42,
-            finalized_block_hash: b256!(
-                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            ),
-            finalized_epoch: 8,
-            finalized_view: 1010,
-            parent_view: 1009,
-            ordered_committee: vec![
-                address!("0x1111111111111111111111111111111111111111"),
-                address!("0x2222222222222222222222222222222222222222"),
-                address!("0x3333333333333333333333333333333333333333"),
-                address!("0x4444444444444444444444444444444444444444"),
-            ],
-            signer_bitmap: vec![1, 1, 1, 0],
-            proof: Bytes::new(),
-            committee_set_hash: B256::ZERO,
-            vrf_material_version: 0,
-            vrf_group_public_key_hash: B256::ZERO,
-            proof_kind:
-                outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization,
-            missed_proposers: vec![],
-        }
-    }
-
-    #[test]
-    fn fingerprint_first_call_is_fresh() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS_2024_01_01 + 60), handle);
-            let m = meta_v1();
-            let outcome =
-                check_and_record_metadata_fingerprint(&ctx, &m, U256::from(100u64), B256::ZERO)
-                    .unwrap();
-            assert_eq!(outcome, MetadataFingerprintOutcome::Fresh);
-            let stored = ctx
-                .storage
-                .contract::<Rewards>()
-                .metadata_fingerprint_for_block
-                .read(&m.finalized_block_hash)
-                .unwrap();
-            assert_ne!(stored, B256::ZERO);
-        });
-    }
-
-    #[test]
-    fn fingerprint_replay_is_identical_replay() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS_2024_01_01 + 60), handle);
-            let m = meta_v1();
-            let _ = check_and_record_metadata_fingerprint(&ctx, &m, U256::from(100u64), B256::ZERO)
-                .unwrap();
-            let outcome =
-                check_and_record_metadata_fingerprint(&ctx, &m, U256::from(100u64), B256::ZERO)
-                    .unwrap();
-            assert_eq!(outcome, MetadataFingerprintOutcome::IdenticalReplay);
-            let outcome3 =
-                check_and_record_metadata_fingerprint(&ctx, &m, U256::from(100u64), B256::ZERO)
-                    .unwrap();
-            assert_eq!(outcome3, MetadataFingerprintOutcome::IdenticalReplay);
-        });
-    }
-
-    #[test]
-    fn fingerprint_mismatch_for_same_fb_hash_is_fatal() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS_2024_01_01 + 60), handle);
-            let m1 = meta_v1();
-            let _ =
-                check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(100u64), B256::ZERO)
-                    .unwrap();
-
-            // Mutate `missed_proposers` (canonical content) - same fb_hash.
-            let mut m2 = m1.clone();
-            m2.missed_proposers = vec![outbe_primitives::consensus_metadata::MissedProposerEvent {
-                view: 1,
-                validator: address!("0x9999999999999999999999999999999999999999"),
-            }];
-            let err =
-                check_and_record_metadata_fingerprint(&ctx, &m2, U256::from(100u64), B256::ZERO)
-                    .unwrap_err();
-            assert!(
-                format!("{err}").contains("contradictory consensus metadata"),
-                "expected contradictory-fatal, got: {err}"
-            );
-
-            // Different fee sum, original metadata - also contradictory.
-            let err2 =
-                check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(101u64), B256::ZERO)
-                    .unwrap_err();
-            assert!(format!("{err2}").contains("contradictory consensus metadata"));
-        });
-    }
-
-    /// The V3 fingerprint binds the base certificate's signer bitmap.
-    /// Late credits must use their separate authenticated phase, never a
-    /// changed bitmap in a replay of the original CPA metadata.
-    #[test]
-    fn fingerprint_signer_bitmap_variation_is_contradictory_v3() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS_2024_01_01 + 60), handle);
-            let m1 = meta_v1();
-            let _ =
-                check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(100u64), B256::ZERO)
-                    .unwrap();
-
-            let mut m2 = m1.clone();
-            m2.signer_bitmap = vec![1, 1, 1, 1];
-            let err =
-                check_and_record_metadata_fingerprint(&ctx, &m2, U256::from(100u64), B256::ZERO)
-                    .unwrap_err();
-            assert!(
-                format!("{err}").contains("contradictory consensus metadata"),
-                "V3: signer_bitmap variation must trigger contradictory-fatal; got: {err}"
-            );
-        });
-    }
-
-    #[test]
-    fn fingerprint_distinct_fb_hashes_are_independent() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS_2024_01_01 + 60), handle);
-            let mut m1 = meta_v1();
-            let mut m2 = meta_v1();
-            m2.finalized_block_hash =
-                b256!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-            m1.finalized_block_number = 42;
-            m2.finalized_block_number = 43;
-
-            let r1 =
-                check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(100u64), B256::ZERO)
-                    .unwrap();
-            let r2 =
-                check_and_record_metadata_fingerprint(&ctx, &m2, U256::from(200u64), B256::ZERO)
-                    .unwrap();
-            assert_eq!(r1, MetadataFingerprintOutcome::Fresh);
-            assert_eq!(r2, MetadataFingerprintOutcome::Fresh);
         });
     }
 
@@ -496,43 +325,4 @@ mod tests {
     // orchestration lives in `outbe_cycle::handler::run_emission_limit_daily`.
     // The Cycle crate tests and the public api tests in `crate::api::tests`
     // now cover the contract.
-
-    #[test]
-    fn fingerprint_canonical_encoding_is_length_prefix_safe() {
-        // [A,B] || [C] should NOT collide with [A] || [B,C] under our
-        // canonical encoding because both lists carry length prefixes.
-        let a = address!("0x1111111111111111111111111111111111111111");
-        let b = address!("0x2222222222222222222222222222222222222222");
-        let c = address!("0x3333333333333333333333333333333333333333");
-
-        let m_x = CertifiedParentAccountingMetadata {
-            ordered_committee: vec![a, b],
-            missed_proposers: vec![outbe_primitives::consensus_metadata::MissedProposerEvent {
-                view: 1,
-                validator: c,
-            }],
-            ..meta_v1()
-        };
-        let m_y = CertifiedParentAccountingMetadata {
-            ordered_committee: vec![a],
-            missed_proposers: vec![
-                outbe_primitives::consensus_metadata::MissedProposerEvent {
-                    view: 1,
-                    validator: b,
-                },
-                outbe_primitives::consensus_metadata::MissedProposerEvent {
-                    view: 2,
-                    validator: c,
-                },
-            ],
-            ..meta_v1()
-        };
-
-        let fp_x = compute_metadata_fingerprint(&m_x, U256::ZERO, B256::ZERO);
-        let fp_y = compute_metadata_fingerprint(&m_y, U256::ZERO, B256::ZERO);
-        assert_ne!(
-            fp_x, fp_y,
-            "length-prefix collision: lists [A,B]||[C] should not equal [A]||[B,C]"
-        );
-    }
 }

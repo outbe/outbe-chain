@@ -50,6 +50,8 @@ mod sgx_sealing;
 #[cfg(feature = "sgx-sealing-probe")]
 pub mod sgx_sealing;
 pub mod telemetry;
+#[cfg(any(test, feature = "mock"))]
+pub mod test_utils;
 pub mod transport;
 pub mod tribute_day;
 pub mod tribute_encryption;

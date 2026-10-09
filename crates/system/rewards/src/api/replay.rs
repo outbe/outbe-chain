@@ -118,9 +118,7 @@ fn require_pending_replay_linkage(
             "validator reward Gem preparation replay lost FIFO linkage for UTC day {utc_day}"
         ))
     })?;
-    if head > tail
-        || sequence < head
-        || sequence >= tail
+    if !fifo_holds(head, tail, sequence)
         || rewards.reward_gem_utc_day_by_sequence.read(&sequence)? != utc_day
     {
         return Err(reward_gem_retryable_error(format!(
@@ -128,6 +126,12 @@ fn require_pending_replay_linkage(
         )));
     }
     Ok(())
+}
+
+/// Returns `true` when `sequence` is a live position of the reward Gem FIFO:
+/// `head <= sequence < tail`.
+fn fifo_holds(head: u64, tail: u64, sequence: u64) -> bool {
+    head <= tail && head <= sequence && sequence < tail
 }
 
 fn require_replay_recipients(

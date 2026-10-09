@@ -216,9 +216,11 @@ fn seed_issuance_oracle(storage: StorageHandle<'_>) -> eyre::Result<()> {
         storage.clone(),
         Address::ZERO,
         AddressPair::new_coen_to(840),
-        price,
-        1,
-        NOW,
+        outbe_oracle::api::RateObservation {
+            rate: price,
+            block_number: 1,
+            timestamp: NOW,
+        },
     )?;
     let oracle = OracleContract::new(storage.clone());
     oracle.reference_currencies.push(840)?;

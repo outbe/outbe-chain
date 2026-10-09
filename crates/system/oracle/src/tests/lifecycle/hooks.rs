@@ -1,36 +1,22 @@
 use super::*;
+use outbe_validatorset::test_support::StorageOverrides;
 
 #[test]
 fn run_tally_counts_an_abstain_for_every_silent_validator() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
-        let v1 = Address::new([0x11; 20]);
-        register_validator(storage.clone(), v1, native_coen(100));
-
+    with_coen_usdt_voter(|_storage, oracle, v1| {
         // No votes submitted -> all abstain
-        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+        crate::tally::run_tally(oracle, 2, 24).unwrap();
 
-        assert_eq!(oracle.penalty_abstain_count.read(&v1).unwrap(), 1);
-        assert_eq!(oracle.penalty_success_count.read(&v1).unwrap(), 0);
+        assert_penalty_counters(
+            oracle,
+            &[(v1, Penalty::Abstain, 1), (v1, Penalty::Success, 0)],
+        );
     });
 }
 
 #[test]
 fn begin_block_tallies_only_on_a_vote_period_boundary() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
-        let v1 = Address::new([0x11; 20]);
-        register_validator(storage.clone(), v1, native_coen(100));
+    with_coen_usdt_voter(|storage, oracle, v1| {
         oracle
             .submit_vote(v1, &[(COEN, USDT, fixed18(42), SCALE_1E18)])
             .unwrap();
@@ -54,12 +40,8 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
 
 #[test]
 fn slash_window_resets_penalty_counters_at_the_window_end() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-
-        let v1 = Address::new([0x11; 20]);
-        register_validator(storage.clone(), v1, native_coen(100));
+    with_oracle(|storage, oracle| {
+        let v1 = register_voter(&storage);
 
         // Simulate many misses (below 5% success rate)
         for _ in 0..20 {
@@ -68,11 +50,10 @@ fn slash_window_resets_penalty_counters_at_the_window_end() {
         oracle.increment_success(&v1).unwrap(); // 1 success out of 21 = 4.76% < 5%
 
         // Run slash and reset
-        crate::tally::slash_and_reset_counters(&mut oracle, 10000).unwrap();
+        crate::tally::slash_and_reset_counters(oracle, 10000).unwrap();
 
         // Counters should be reset
-        assert_eq!(oracle.penalty_success_count.read(&v1).unwrap(), 0);
-        assert_eq!(oracle.penalty_miss_count.read(&v1).unwrap(), 0);
+        assert_penalty_counters(oracle, &[(v1, Penalty::Success, 0), (v1, Penalty::Miss, 0)]);
 
         // Validator should be force-exited (check via ValidatorSet)
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -85,10 +66,7 @@ fn slash_window_resets_penalty_counters_at_the_window_end() {
 
 #[test]
 fn slash_window_rejects_unbounded_validator_work() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-
+    with_oracle(|storage, oracle| {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_is_initialized.write(true).unwrap();
         vs.config_owner.write(Address::ZERO).unwrap();
@@ -103,7 +81,7 @@ fn slash_window_rejects_unbounded_validator_work() {
             register_validator(storage.clone(), Address::new(bytes), U256::from(1u64));
         }
 
-        let err = crate::tally::slash_and_reset_counters(&mut oracle, 10_000).unwrap_err();
+        let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
         assert!(
             err.to_string().contains("exceeds cap"),
             "unexpected error: {err}"
@@ -113,9 +91,7 @@ fn slash_window_rejects_unbounded_validator_work() {
 
 #[test]
 fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
+    with_oracle(|storage, oracle| {
         oracle
             .config_slash_fraction
             .write(SCALE_1E18 / U256::from(10u64))
@@ -137,7 +113,7 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
 
         oracle.increment_miss(&validator).unwrap();
 
-        let err = crate::tally::slash_and_reset_counters(&mut oracle, 10_000).unwrap_err();
+        let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
         assert!(err.to_string().contains("cannot jail validator"));
 
         let staking = outbe_staking::contract::Staking::new(storage.clone());
@@ -164,9 +140,7 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
 
 #[test]
 fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
+    with_oracle(|storage, oracle| {
         oracle
             .config_slash_fraction
             .write(SCALE_1E18 / U256::from(10u64))
@@ -188,7 +162,7 @@ fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
 
         oracle.increment_miss(&validator).unwrap();
 
-        let err = crate::tally::slash_and_reset_counters(&mut oracle, 10_000).unwrap_err();
+        let err = crate::tally::slash_and_reset_counters(oracle, 10_000).unwrap_err();
         assert!(
             err.to_string().contains("insufficient") || err.to_string().contains("balance"),
             "unexpected error: {err}"
@@ -207,13 +181,10 @@ fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
 
 #[test]
 fn slash_window_never_force_exits_a_protected_validator() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
+    with_oracle(|storage, oracle| {
         oracle.config_allow_protected.write(true).unwrap();
 
-        let v1 = Address::new([0x11; 20]);
-        register_validator(storage.clone(), v1, native_coen(100));
+        let v1 = register_voter(&storage);
 
         // Mark as protected
         oracle.protected_validator.write(&v1, true).unwrap();
@@ -223,7 +194,7 @@ fn slash_window_never_force_exits_a_protected_validator() {
             oracle.increment_miss(&v1).unwrap();
         }
 
-        crate::tally::slash_and_reset_counters(&mut oracle, 10000).unwrap();
+        crate::tally::slash_and_reset_counters(oracle, 10000).unwrap();
 
         // Counters reset but validator NOT force-exited
         assert_eq!(oracle.penalty_miss_count.read(&v1).unwrap(), 0);
@@ -233,9 +204,7 @@ fn slash_window_never_force_exits_a_protected_validator() {
 }
 #[test]
 fn begin_block_scurve_hook_records_the_daily_peak() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
+    with_oracle(|storage, oracle| {
         oracle.reference_currencies.push(840).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
 
@@ -281,7 +250,7 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         assert_eq!(oracle.scurve_last_processed_day.read().unwrap(), day_4);
 
         let active_value =
-            crate::scurve::get_max_active_scurve_value(&oracle, pair_key(COEN, usd()), day_4)
+            crate::scurve::get_max_active_scurve_value(oracle, pair_key(COEN, usd()), day_4)
                 .unwrap();
         assert!(!active_value.is_zero());
         assert!(active_value < coen_iso(150));
@@ -297,7 +266,7 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
         assert_eq!(oracle.scurve_count.read().unwrap(), 1);
         assert_eq!(
-            crate::scurve::get_max_active_scurve_value(&oracle, pair_key(COEN, usd()), day_130)
+            crate::scurve::get_max_active_scurve_value(oracle, pair_key(COEN, usd()), day_130)
                 .unwrap(),
             crate::scurve::compute_scurve_value(coen_iso(150), 128)
         );
@@ -306,9 +275,7 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
 
 #[test]
 fn begin_block_scurve_hook_processes_only_registered_reference_pairs() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
+    with_oracle(|storage, oracle| {
         oracle.reference_currencies.push(840).unwrap();
         oracle.reference_currencies.push(978).unwrap();
         oracle.reference_currencies.push(392).unwrap(); // no pair: no-op
@@ -381,8 +348,7 @@ fn begin_block_scurve_hook_processes_only_registered_reference_pairs() {
 
 #[test]
 fn begin_block_finalizes_the_closed_utc_day() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         oracle.config_is_initialized.write(true).unwrap();
         oracle.config_vote_period.write(2).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();

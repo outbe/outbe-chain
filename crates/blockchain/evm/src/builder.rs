@@ -724,12 +724,8 @@ mod tests {
                     .unwrap();
             }
             // Seed the COEN/840 pair and a 1.0 rate so products priced in 840 resolve a live rate.
-            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
-                .unwrap();
-            outbe_oracle::api::set_exchange_rate(
-                storage.clone(),
-                Address::ZERO,
-                outbe_oracle::api::DAY_TYPE_PAIR,
+            outbe_oracle::test_support::publish_day_type_rate(
+                &storage,
                 U256::from(1_000_000u64),
                 0,
                 0,

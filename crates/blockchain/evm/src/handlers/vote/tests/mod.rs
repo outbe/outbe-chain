@@ -326,11 +326,13 @@ fn factory_public_admission_atomically_records_reservation_and_bond() {
         let mut vote = Vote::new(storage.clone());
         let proposal_id = vote
             .create_proposal_with_value(
-                issuer,
-                STABLECOIN_FACTORY_ADDRESS,
-                raw,
-                7,
-                STABLECOIN_CREATE_BOND,
+                outbe_vote::ProposalSubmission {
+                    proposer: issuer,
+                    target_module: STABLECOIN_FACTORY_ADDRESS,
+                    payload: raw,
+                    created_height: 7,
+                    attached_value: STABLECOIN_CREATE_BOND,
+                },
                 registry(),
             )
             .unwrap();
@@ -355,11 +357,13 @@ fn factory_public_admission_atomically_records_reservation_and_bond() {
     let mut vote = Vote::new(mismatch_storage.clone());
     assert!(vote
         .create_proposal_with_value(
-            Address::repeat_byte(0x22),
-            STABLECOIN_FACTORY_ADDRESS,
-            raw,
-            7,
-            STABLECOIN_CREATE_BOND,
+            outbe_vote::ProposalSubmission {
+                proposer: Address::repeat_byte(0x22),
+                target_module: STABLECOIN_FACTORY_ADDRESS,
+                payload: raw,
+                created_height: 7,
+                attached_value: STABLECOIN_CREATE_BOND,
+            },
             registry(),
         )
         .is_err());

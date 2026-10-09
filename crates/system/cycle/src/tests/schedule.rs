@@ -49,10 +49,7 @@ fn first_encounter_anchors_without_firing() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         let block_ts = GENESIS_TS + 60;
-        let ctx = BlockRuntimeContext::new(block_ctx(1, block_ts), handle);
-        anchor_genesis(&ctx);
-
-        dispatch_triggers(&ctx).unwrap();
+        let ctx = anchor_at(handle, block_ts);
 
         let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
         assert_eq!(
@@ -81,8 +78,7 @@ fn block_1_begin_block_creates_genesis_worldwide_day() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         let block_ts = GENESIS_TS + 60;
-        let ctx = BlockRuntimeContext::new(block_ctx(1, block_ts), handle);
-        anchor_genesis(&ctx);
+        let ctx = genesis_block(handle, block_ts);
 
         // Sanity: no worldwide day exists before begin_block.
         assert!(outbe_metadosis::api::has_active_ocomp_profile(ctx.storage.clone()).unwrap());
@@ -125,33 +121,16 @@ fn block_1_begin_block_rejects_missing_genesis_ocomp_profile_without_partial_sta
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     storage.enter(|handle| {
-        handle
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-            .unwrap();
-        handle
-            .sstore(
-                COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(
-                    outbe_compressed_entities::sealed_root(B256::ZERO)
-                        .unwrap()
-                        .as_slice(),
-                ),
-            )
-            .unwrap();
-        let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-        anchor_genesis(&ctx);
+        outbe_compressed_entities::test_support::seed_compressed_entities_genesis_after_marker(
+            &handle,
+        );
+        genesis_block(handle, GENESIS_TS + 60);
     });
-    let storage_before = storage.storage.clone();
-    let events_before = storage.events.clone();
 
-    storage.enter(|handle| {
+    assert_storage_unchanged(&mut storage, |handle| {
         let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
         assert!(run_cycle_lifecycle(&ctx).is_err());
     });
-
-    assert_eq!(storage.storage, storage_before);
-    assert_eq!(storage.events, events_before);
 }
 
 #[test]
@@ -159,8 +138,7 @@ fn frozen_final_profile_initializes_metadosis_at_its_existing_activation_height(
     let mut storage = cycle_storage();
 
     storage.enter(|handle| {
-        let block_1 = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
-        anchor_genesis(&block_1);
+        let block_1 = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_lifecycle_at_activation(&block_1, 32).unwrap();
 
         assert!(
@@ -186,22 +164,15 @@ fn frozen_final_profile_initializes_metadosis_at_its_existing_activation_height(
 #[test]
 fn does_not_fire_before_next_slot_after_anchor() {
     // Anchor at 00:01 UTC. The first aligned hourly slot is 01:00 UTC.
-    let mut storage = cycle_storage();
-    storage.enter(|handle| {
-        let anchor_ts = GENESIS_TS + 60;
-        let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle.clone());
-        anchor_genesis(&ctx_anchor);
-        dispatch_triggers(&ctx_anchor).unwrap();
-
+    with_anchored_cycle(|handle| {
         // Block at 00:59:59 UTC - still before the next slot.
         let ctx_before =
             BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 3_600 - 1), handle.clone());
         dispatch_triggers(&ctx_before).unwrap();
 
-        let cycle: Cycle<'_> = ctx_before.storage.contract::<Cycle<'_>>();
         assert_eq!(
-            cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
-            anchor_ts,
+            last_executed_at(&ctx_before),
+            ANCHOR_TS,
             "trigger must not fire before the next slot"
         );
     });
@@ -209,19 +180,12 @@ fn does_not_fire_before_next_slot_after_anchor() {
 
 #[test]
 fn fires_at_first_block_past_next_slot() {
-    let mut storage = cycle_storage();
-    storage.enter(|handle| {
+    with_anchored_cycle(|handle| {
         // Step 1: anchor.
-        let anchor_ts = GENESIS_TS + 60;
-        let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle.clone());
-        anchor_genesis(&ctx_anchor);
-        dispatch_triggers(&ctx_anchor).unwrap();
 
         // Step 2: first block past the next aligned hour.
         let fire_ts = GENESIS_TS + 3_600 + 5;
-        let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
-        account_parent(&ctx_fire, 2);
-        dispatch_triggers(&ctx_fire).unwrap();
+        let ctx_fire = dispatch_at(handle, 2, fire_ts);
 
         let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
@@ -241,17 +205,9 @@ fn fires_at_first_block_past_next_slot() {
 
 #[test]
 fn does_not_refire_within_same_slot() {
-    let mut storage = cycle_storage();
-    storage.enter(|handle| {
-        let anchor_ts = GENESIS_TS + 60;
-        let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle.clone());
-        anchor_genesis(&ctx_anchor);
-        dispatch_triggers(&ctx_anchor).unwrap();
-
+    with_anchored_cycle(|handle| {
         let fire_ts = GENESIS_TS + 3_600 + 60;
-        let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle.clone());
-        account_parent(&ctx_fire, 2);
-        dispatch_triggers(&ctx_fire).unwrap();
+        let ctx_fire = dispatch_at(handle.clone(), 2, fire_ts);
         let after_first_fire = ctx_fire
             .storage
             .contract::<Cycle<'_>>()
@@ -260,12 +216,9 @@ fn does_not_refire_within_same_slot() {
             .unwrap();
 
         // Second block within the same slot.
-        let ctx_again = BlockRuntimeContext::new(block_ctx(3, fire_ts + 30), handle);
-        account_parent(&ctx_again, 3);
-        dispatch_triggers(&ctx_again).unwrap();
-        let cycle: Cycle<'_> = ctx_again.storage.contract::<Cycle<'_>>();
+        let ctx_again = dispatch_at(handle, 3, fire_ts + 30);
         assert_eq!(
-            cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
+            last_executed_at(&ctx_again),
             after_first_fire,
             "trigger must not refire within the same slot"
         );
@@ -279,20 +232,14 @@ fn multi_slot_gap_fires_only_for_latest_slot_after_anchor() {
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 10);
     storage.enter(|handle| {
         let anchor_ts = GENESIS_TS + 60;
-        let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle.clone());
-        anchor_genesis(&ctx_anchor);
-        dispatch_triggers(&ctx_anchor).unwrap();
+        anchor_at(handle.clone(), anchor_ts);
 
         // Missed hourly scheduler slots collapse to one execution at the latest
         // due boundary. Calendar policy then forfeits this multi-day gap.
-        let ctx_fire =
-            BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 4 * SECONDS_PER_DAY), handle);
-        account_parent(&ctx_fire, 2);
-        dispatch_triggers(&ctx_fire).unwrap();
+        let ctx_fire = dispatch_at(handle, 2, GENESIS_TS + 4 * SECONDS_PER_DAY);
 
-        let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
-            cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
+            last_executed_at(&ctx_fire),
             GENESIS_TS + 4 * SECONDS_PER_DAY,
             "multi-slot gap fires once at the latest due hourly slot"
         );

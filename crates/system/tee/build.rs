@@ -1,3 +1,4 @@
+use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -58,6 +59,32 @@ fn main() {
         return;
     }
 
+    let mut required_packages = verify_dcap_package_pins(&qvl_manifest, package_pins);
+
+    let verified_intel_include_dir = PathBuf::from(
+        std::env::var_os("OUT_DIR").expect("Cargo must set OUT_DIR for native-QVL build"),
+    )
+    .join("verified-intel-qvl-include-v1");
+    std::fs::create_dir_all(&verified_intel_include_dir)
+        .expect("create verified Intel QVL include directory");
+    verify_and_stage_build_inputs(
+        build_inputs,
+        package_pins,
+        &verified_intel_include_dir,
+        &mut required_packages,
+    );
+    let qvl_library_dir = verify_native_artifacts(artifacts, package_pins, &mut required_packages);
+    for package in required_packages {
+        verify_package(&package, pinned_package_version(package_pins, &package));
+    }
+
+    compile_and_link_native_qvl(&verified_intel_include_dir, qvl_library_dir);
+}
+
+fn verify_dcap_package_pins(
+    qvl_manifest: &Value,
+    package_pins: &Map<String, Value>,
+) -> BTreeSet<String> {
     let mut required_packages = BTreeSet::new();
     let dcap = qvl_manifest["intel_dcap"]
         .as_object()
@@ -78,15 +105,44 @@ fn main() {
             pinned_package_version(package_pins, package),
             "native-QVL package version must match the project toolchain pin: {package}"
         );
-        required_packages.insert(package);
+        required_packages.insert(package.to_owned());
     }
 
-    let verified_intel_include_dir = PathBuf::from(
-        std::env::var_os("OUT_DIR").expect("Cargo must set OUT_DIR for native-QVL build"),
-    )
-    .join("verified-intel-qvl-include-v1");
-    std::fs::create_dir_all(&verified_intel_include_dir)
-        .expect("create verified Intel QVL include directory");
+    required_packages
+}
+
+fn compile_and_link_native_qvl(
+    verified_intel_include_dir: &Path,
+    qvl_library_dir: Option<PathBuf>,
+) {
+    println!("cargo:rerun-if-changed=native/qvl_wrapper.c");
+    let mut c = cc::Build::new();
+    c.include(verified_intel_include_dir)
+        .file("native/qvl_wrapper.c")
+        .flag_if_supported("-std=c11")
+        .warnings_into_errors(true);
+    if std::env::var_os("CARGO_FEATURE_NATIVE_DCAP_TEST_TRACE").is_some() {
+        c.define("OUTBE_QVL_TEST_TRACE", None);
+    }
+    c.compile("outbe_native_qvl_wrapper");
+    let qvl_library_dir: PathBuf =
+        qvl_library_dir.expect("native-QVL manifest must contain the qvl artifact");
+    println!(
+        "cargo:rustc-link-search=native={}",
+        qvl_library_dir.display()
+    );
+    println!("cargo:rustc-link-lib=dylib=sgx_dcap_quoteverify");
+    println!("cargo:rustc-cfg=native_qvl_linked");
+}
+
+// These are distinct pinned files. Keep manifest iteration, read/hash,
+// staging, rerun directives, and error order inside this phase.
+fn verify_and_stage_build_inputs(
+    build_inputs: &[Value],
+    package_pins: &Map<String, Value>,
+    verified_intel_include_dir: &Path,
+    required_packages: &mut BTreeSet<String>,
+) {
     let mut verified_include_names = BTreeSet::new();
     for build_input in build_inputs {
         let package = build_input["package"]
@@ -100,7 +156,7 @@ fn main() {
             pinned_package_version(package_pins, package),
             "native-QVL build-input version must match the project toolchain pin: {package}"
         );
-        required_packages.insert(package);
+        required_packages.insert(package.to_owned());
 
         let path = build_input["path"]
             .as_str()
@@ -125,7 +181,13 @@ fn main() {
         );
         println!("cargo:rerun-if-changed={path}");
     }
+}
 
+fn verify_native_artifacts(
+    artifacts: &[Value],
+    package_pins: &Map<String, Value>,
+    required_packages: &mut BTreeSet<String>,
+) -> Option<PathBuf> {
     let mut qvl_library_dir = None;
     for artifact in artifacts {
         let package = artifact["package"]
@@ -139,7 +201,7 @@ fn main() {
             pinned_package_version(package_pins, package),
             "native-QVL artifact version must match the project toolchain pin: {package}"
         );
-        required_packages.insert(package);
+        required_packages.insert(package.to_owned());
 
         let path = artifact["path"]
             .as_str()
@@ -156,28 +218,7 @@ fn main() {
             qvl_library_dir = Path::new(path).parent().map(Path::to_path_buf);
         }
     }
-    for package in required_packages {
-        verify_package(package, pinned_package_version(package_pins, package));
-    }
-
-    println!("cargo:rerun-if-changed=native/qvl_wrapper.c");
-    let mut c = cc::Build::new();
-    c.include(&verified_intel_include_dir)
-        .file("native/qvl_wrapper.c")
-        .flag_if_supported("-std=c11")
-        .warnings_into_errors(true);
-    if std::env::var_os("CARGO_FEATURE_NATIVE_DCAP_TEST_TRACE").is_some() {
-        c.define("OUTBE_QVL_TEST_TRACE", None);
-    }
-    c.compile("outbe_native_qvl_wrapper");
-    let qvl_library_dir: PathBuf =
-        qvl_library_dir.expect("native-QVL manifest must contain the qvl artifact");
-    println!(
-        "cargo:rustc-link-search=native={}",
-        qvl_library_dir.display()
-    );
-    println!("cargo:rustc-link-lib=dylib=sgx_dcap_quoteverify");
-    println!("cargo:rustc-cfg=native_qvl_linked");
+    qvl_library_dir
 }
 
 /// Leave `native_qvl_linked` unset: `verify_quote_native` then fails closed on

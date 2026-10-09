@@ -15,7 +15,7 @@
 //! binding tests in `tests/verifier.rs` and the 5 low-level smoke tests in
 //! `tests/verifier_smoke.rs`'s full 31-test contract is covered.
 
-use alloy_primitives::{keccak256, Address, Bytes, B256};
+use alloy_primitives::B256;
 use commonware_codec::{Encode, Read};
 use commonware_consensus::{
     simplex::types::{Finalization, Notarization, Proposal, Subject},
@@ -24,10 +24,10 @@ use commonware_consensus::{
 use commonware_cryptography::{
     bls12381::{
         primitives::{
-            ops::{aggregate, keypair, sign_message},
-            variant::{MinPk, MinSig, Variant},
+            ops::{aggregate, sign_message},
+            variant::{MinPk, MinSig},
         },
-        PrivateKey, PublicKey,
+        PrivateKey,
     },
     certificate::{Scheme as _, Signers, Verifier as _},
     sha256::Digest as Sha256Digest,
@@ -43,15 +43,17 @@ use outbe_consensus::hybrid::{HybridScheme, VrfMaterialProvider};
 use outbe_consensus::proof::constants::{
     finalize_namespace, notarize_namespace, outbe_app_namespace,
 };
-use outbe_consensus::proof::{committee_set_hash_v2, CommitteeSnapshot};
+use outbe_consensus::proof::CommitteeSnapshot;
 use outbe_consensus::proof::{
     hybrid_seed_namespace, verify_v2_proof, HybridCertificate, V2VerifyError, VrfProof,
+};
+use outbe_consensus::test_harness::{
+    finalize_messages, test_fully_signed_metadata, vrf_test_committee, CertificateMessages,
+    TestFinalizedParent, VrfTestCommittee,
 };
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
-use rand_commonware::rngs::ChaCha20Rng;
-use rand_commonware::SeedableRng;
 
 // -- Shared fixture --------------------------------------------------------
 
@@ -60,49 +62,6 @@ const FINALIZED_VIEW: u64 = 100;
 const PARENT_VIEW: u64 = 99;
 const VRF_MATERIAL_VERSION: u64 = 5;
 const FINALIZED_BLOCK_NUMBER: u64 = 41;
-
-struct Dkg {
-    keys: Vec<PrivateKey>,
-    pubkeys: Vec<PublicKey>,
-    vrf_group_public_key: <MinSig as Variant>::Public,
-    vrf_threshold_private: commonware_cryptography::bls12381::primitives::group::Private,
-}
-
-fn build_dkg(n: u32) -> Dkg {
-    let keys: Vec<PrivateKey> = (0..n)
-        .map(|i| PrivateKey::from_seed(i as u64 + 1))
-        .collect();
-    let pubkeys: Vec<PublicKey> = keys.iter().cloned().map(PublicKey::from).collect();
-    let mut rng = ChaCha20Rng::seed_from_u64(13);
-    let (vrf_threshold_private, vrf_group_public_key) = keypair::<_, MinSig>(&mut rng);
-    Dkg {
-        keys,
-        pubkeys,
-        vrf_group_public_key,
-        vrf_threshold_private,
-    }
-}
-
-fn build_snapshot(dkg: &Dkg) -> CommitteeSnapshot {
-    outbe_consensus::test_harness::committee_snapshot(
-        &dkg.pubkeys,
-        &dkg.vrf_group_public_key,
-        VRF_MATERIAL_VERSION,
-    )
-}
-
-/// Build a `(Round, Proposal, vote_message_bytes, seed_message_bytes)`
-/// 4-tuple that matches what the metadata-bound verifier derives from
-/// metadata (epoch=FINALIZED_EPOCH, view=FINALIZED_VIEW, parent_view=PARENT_VIEW,
-/// payload=parent_hash).
-fn proposal_bytes(parent_hash: B256) -> (Round, Vec<u8>, Vec<u8>) {
-    let round = Round::new(Epoch::new(FINALIZED_EPOCH), View::new(FINALIZED_VIEW));
-    let payload = Sha256Digest(parent_hash.0);
-    let proposal: Proposal<Sha256Digest> = Proposal::new(round, View::new(PARENT_VIEW), payload);
-    let vote_message = proposal.encode().to_vec();
-    let seed_message = round.encode().to_vec();
-    (round, vote_message, seed_message)
-}
 
 fn proof_envelope_bytes(
     cert: &HybridCertificate<MinSig>,
@@ -135,50 +94,31 @@ fn proof_envelope_bytes(
 /// Build a real BLS-signed `HybridCertificate` for the given signers,
 /// signed against the metadata-bound verifier's canonical bytes.
 fn build_cert(
-    dkg: &Dkg,
+    dkg: &VrfTestCommittee,
     signer_indices: &[u32],
     parent_hash: B256,
     proof_kind: ParentParticipationProof,
 ) -> HybridCertificate<MinSig> {
-    let participants = dkg.keys.len();
-    let signers = Signers::new(
-        participants as u32,
-        signer_indices.iter().copied().map(Participant::new),
-    )
-    .unwrap();
-
-    let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
-    // Vote namespaces bind the ordered committee. Build the canonical `Set`
-    // from the full DKG committee (this matches what the verifier rebuilds).
-    let committee_set: commonware_utils::ordered::Set<PublicKey> =
-        commonware_utils::ordered::Set::from_iter_dedup(dkg.keys.iter().map(|k| k.public_key()));
-    let namespace = match proof_kind {
+    let (_, vote, seed) =
+        finalize_messages(FINALIZED_EPOCH, FINALIZED_VIEW, PARENT_VIEW, parent_hash);
+    // Vote namespaces bind the ordered committee. The canonical `Set` of the
+    // full DKG committee matches what the verifier rebuilds.
+    let committee_set = dkg.committee_set();
+    let vote_namespace = match proof_kind {
         ParentParticipationProof::Finalization => finalize_namespace(&committee_set),
         ParentParticipationProof::CertifiedNotarization => notarize_namespace(&committee_set),
     };
-    let sigs: Vec<_> = signer_indices
-        .iter()
-        .map(|&i| dkg.keys[i as usize].sign(&namespace, &vote_message))
-        .collect();
-    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
-        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
-    );
-
-    let threshold_signature = sign_message::<MinSig>(
-        &dkg.vrf_threshold_private,
-        &hybrid_seed_namespace(),
-        &seed_message,
-    );
-    let vrf_proof = VrfProof::<MinSig> {
-        material_version: VRF_MATERIAL_VERSION,
-        threshold_signature,
+    let messages = CertificateMessages {
+        vote_namespace: &vote_namespace,
+        vote: &vote,
+        seed: &seed,
     };
-
-    HybridCertificate {
-        signers,
-        bls_aggregated_vote,
-        vrf_proof,
-    }
+    dkg.certificate(
+        signer_indices,
+        &messages,
+        &dkg.vrf_threshold_private,
+        VRF_MATERIAL_VERSION,
+    )
 }
 
 fn build_metadata(
@@ -187,37 +127,24 @@ fn build_metadata(
     parent_hash: B256,
     proof_kind: ParentParticipationProof,
 ) -> CertifiedParentAccountingMetadata {
-    let ordered_committee: Vec<Address> = snapshot
-        .committee
-        .iter()
-        .map(|entry| entry.address)
-        .collect();
-    let signer_bitmap = vec![1u8; snapshot.committee.len()];
-    let committee_set_hash = committee_set_hash_v2(FINALIZED_EPOCH, snapshot);
-    let vrf_group_public_key_hash = keccak256(&snapshot.vrf_group_public_key_bytes);
-    CertifiedParentAccountingMetadata {
-        finalized_block_number: FINALIZED_BLOCK_NUMBER,
-        finalized_block_hash: parent_hash,
-        finalized_epoch: FINALIZED_EPOCH,
-        finalized_view: FINALIZED_VIEW,
+    let parent = TestFinalizedParent {
+        block_number: FINALIZED_BLOCK_NUMBER,
+        block_hash: parent_hash,
+        epoch: FINALIZED_EPOCH,
+        view: FINALIZED_VIEW,
         parent_view: PARENT_VIEW,
-        ordered_committee,
-        signer_bitmap,
-        proof: Bytes::copy_from_slice(cert_bytes),
-        committee_set_hash,
         vrf_material_version: VRF_MATERIAL_VERSION,
-        vrf_group_public_key_hash,
         proof_kind,
-        missed_proposers: Vec::new(),
-    }
+    };
+    test_fully_signed_metadata(&parent, snapshot, cert_bytes)
 }
 
 fn bare_certificate_rejection_error(
     proof_kind: ParentParticipationProof,
     expected_rejection: &str,
 ) -> V2VerifyError {
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(&dkg, &[0, 1, 2, 3], parent_hash, proof_kind);
     let envelope_bytes = cert.encode().to_vec();
@@ -244,8 +171,8 @@ fn cluster_happy_path_quorum_certificate_verifies() {
     // Baseline: real cert against real metadata + snapshot -> verify_v2_proof
     // returns Ok. This proves the fixture is well-formed. Any failure-class test
     // that adjusts ONE field can attribute the rejection to that change.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(
         &dkg,
@@ -358,10 +285,11 @@ fn wrong_bls_domain_rejects() {
     // Sign votes under the WRONG namespace. The metadata-bound verifier
     // derives `finalize_namespace` internally, and the aggregate
     // verify fails.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
-    let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
+    let (_, vote_message, seed_message) =
+        finalize_messages(FINALIZED_EPOCH, FINALIZED_VIEW, PARENT_VIEW, parent_hash);
 
     // Sign under wrong namespace.
     let sigs: Vec<_> = (0..4)
@@ -404,8 +332,8 @@ fn proof_trailing_bytes_rejects() {
     // The proof-bytes-equal-metadata.proof check fires first (since
     // we must update the metadata.proof to match). Then the inner
     // decoder sees trailing bytes.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(
         &dkg,
@@ -434,8 +362,8 @@ fn proof_codec_wrong_committee_size_rejects() {
     // Cert built for 4 participants, snapshot has 3. The length mismatch between
     // metadata.ordered_committee and snapshot.committee triggers BitmapMismatch
     // before the inner decoder sees the cert.
-    let dkg_4 = build_dkg(4);
-    let snapshot_3 = build_snapshot(&build_dkg(3));
+    let dkg_4 = vrf_test_committee(4);
+    let snapshot_3 = vrf_test_committee(3).snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(
         &dkg_4,
@@ -446,7 +374,7 @@ fn proof_codec_wrong_committee_size_rejects() {
     let cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
     let metadata = build_metadata(
-        &build_snapshot(&dkg_4),
+        &dkg_4.snapshot(VRF_MATERIAL_VERSION),
         &cert_bytes,
         parent_hash,
         ParentParticipationProof::Finalization,
@@ -482,8 +410,8 @@ fn hybrid_signer_length_mismatch_rejects() {
     // Corrupt the cert bytes to claim a different committee size in the
     // signers prefix. The decoder will reject because the bitmap length
     // does not match the committee-size config the verifier passes in.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(
         &dkg,
@@ -523,8 +451,8 @@ fn hybrid_signer_duplicate_or_out_of_range_rejects() {
     // This is the "signer index out of range / bitmap mismatch" failure
     // class. The inner decoder + the metadata bitmap reconciliation
     // both catch it.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(
         &dkg,
@@ -556,8 +484,8 @@ fn hybrid_signer_duplicate_or_out_of_range_rejects() {
 fn signer_bitmap_round_trips_with_hybrid_signers_via_commonware_pk_order() {
     // Happy-path round-trip: every position in metadata.signer_bitmap must
     // equal the position the verifier reconstructs from cert.signers.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(
         &dkg,
@@ -585,8 +513,8 @@ fn signer_bitmap_round_trips_with_hybrid_signers_via_commonware_pk_order() {
 
 #[test]
 fn truncated_mandatory_vrf_proof_rejects() {
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(
         &dkg,
@@ -612,8 +540,8 @@ fn truncated_mandatory_vrf_proof_rejects() {
 
 #[test]
 fn wire_level_certificate_without_mandatory_vrf_does_not_decode() {
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(
         &dkg,
@@ -648,8 +576,8 @@ fn malformed_vrf_proof_encoding_rejects() {
     // Corrupt the VRF threshold signature bytes inside the encoded cert.
     // The decoder may accept the bytes (length matches), but the verify
     // step fails. This yields InvalidVrfSignature.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(
         &dkg,
@@ -691,8 +619,8 @@ fn wrong_vrf_seed_round_rejects() {
     // claims (epoch=3, view=100). The verifier derives the seed message
     // from metadata's round. VRF verify fails because the signature was
     // produced over a different seed message.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
     let cert = build_cert(
         &dkg,
@@ -742,10 +670,11 @@ fn invalid_vrf_signature_rejects_before_state_change() {
     // different namespace. VRF verify fails. The verifier returns Err before
     // it constructs VerifiedProof -> no state mutation, no proof-less
     // metadata leak ( in spirit, applied at the verifier layer).
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let parent_hash = B256::with_last_byte(0xAA);
-    let (_, _, seed_message) = proposal_bytes(parent_hash);
+    let (_, _, seed_message) =
+        finalize_messages(FINALIZED_EPOCH, FINALIZED_VIEW, PARENT_VIEW, parent_hash);
 
     // Sign threshold under wrong namespace.
     let wrong_threshold = sign_message::<MinSig>(
@@ -803,8 +732,8 @@ fn certified_notarization_proof_rejected_for_non_parent_ancestor() {
     // inner BLS verifier fails because the Proposal payload derived from
     // metadata uses Y, while the cert was signed for X. failure
     // through the BLS aggregate layer.
-    let dkg = build_dkg(4);
-    let snapshot = build_snapshot(&dkg);
+    let dkg = vrf_test_committee(4);
+    let snapshot = dkg.snapshot(VRF_MATERIAL_VERSION);
     let ancestor_hash = B256::with_last_byte(0xAA);
     let actual_parent_hash = B256::with_last_byte(0xBB);
     // Cert built for ancestor.

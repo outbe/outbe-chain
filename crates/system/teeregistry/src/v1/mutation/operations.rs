@@ -1,6 +1,74 @@
 use super::*;
 
+fn rejoin_counters_match_v1(
+    intent: &RegistrationIntentV1,
+    current: &NodeEnclaveBindingV1,
+) -> Result<bool> {
+    if intent.binding_version != next_counter(current.binding_version, "binding version")? {
+        return Ok(false);
+    }
+    if intent.registration_version
+        != next_counter(current.registration_version, "registration version")?
+    {
+        return Ok(false);
+    }
+    Ok(intent.renewal_nonce == current.renewal_nonce
+        && intent.transition_nonce == current.transition_nonce)
+}
+
+fn initial_registration_counters_match_v1(intent: &RegistrationIntentV1) -> bool {
+    (
+        intent.binding_version,
+        intent.registration_version,
+        intent.renewal_nonce,
+        intent.transition_nonce,
+    ) == (1, 0, 0, 0)
+}
+
+fn renewal_counters_match_v1(
+    intent: &RegistrationIntentV1,
+    current: &NodeEnclaveBindingV1,
+) -> Result<bool> {
+    Ok(intent.binding_version == current.binding_version
+        && intent.registration_version
+            == next_counter(current.registration_version, "registration version")?
+        && intent.renewal_nonce == next_counter(current.renewal_nonce, "renewal nonce")?
+        && intent.transition_nonce == current.transition_nonce)
+}
+
+fn replacement_counters_match_v1(
+    intent: &RegistrationIntentV1,
+    current: &NodeEnclaveBindingV1,
+) -> Result<bool> {
+    Ok(
+        intent.binding_version == next_counter(current.binding_version, "binding version")?
+            && intent.registration_version
+                == next_counter(current.registration_version, "registration version")?
+            && intent.renewal_nonce == current.renewal_nonce
+            && intent.transition_nonce == current.transition_nonce,
+    )
+}
+
+fn successor_ids_are_fresh_v1(
+    intent: &RegistrationIntentV1,
+    current: &NodeEnclaveBindingV1,
+) -> bool {
+    intent.enclave_id != current.enclave_id && intent.binding_id != current.binding_id
+}
+
 impl TeeRegistry<'_> {
+    fn is_late_measurement_recovery_v1(
+        &self,
+        policy_hash: B256,
+        current: &NodeEnclaveBindingV1,
+    ) -> Result<bool> {
+        let upgrade = self.enclave_upgrade_v1()?;
+        Ok(!upgrade.proposal_id.is_zero()
+            && self.storage.block_number()? >= upgrade.activation_height
+            && policy_hash == upgrade.successor_policy_hash
+            && current.policy_hash != upgrade.successor_policy_hash)
+    }
+
     pub(super) fn require_existing_binding_policy_v1(
         &self,
         mutation: &VerifiedClaimsMutationV1<'_>,
@@ -46,21 +114,12 @@ impl TeeRegistry<'_> {
                     "expired rejoin changes the persistent NodeHost authorization".into(),
                 ));
             }
-            if intent.binding_version != next_counter(current.binding_version, "binding version")?
-                || intent.registration_version
-                    != next_counter(current.registration_version, "registration version")?
-                || intent.renewal_nonce != current.renewal_nonce
-                || intent.transition_nonce != current.transition_nonce
-            {
+            if !rejoin_counters_match_v1(intent, current)? {
                 return Err(PrecompileError::Revert(
                     "expired rejoin does not carry the exact next registration versions".into(),
                 ));
             }
-        } else if intent.binding_version != 1
-            || intent.registration_version != 0
-            || intent.renewal_nonce != 0
-            || intent.transition_nonce != 0
-        {
+        } else if !initial_registration_counters_match_v1(intent) {
             return Err(PrecompileError::Revert(
                 "initial registration versions and nonces are not canonical".into(),
             ));
@@ -86,12 +145,7 @@ impl TeeRegistry<'_> {
             PrecompileError::Revert("cannot renew a missing enclave binding".into())
         })?;
         ensure_continuous_binding(current, intent, claims)?;
-        if intent.binding_version != current.binding_version
-            || intent.registration_version
-                != next_counter(current.registration_version, "registration version")?
-            || intent.renewal_nonce != next_counter(current.renewal_nonce, "renewal nonce")?
-            || intent.transition_nonce != current.transition_nonce
-        {
+        if !renewal_counters_match_v1(intent, current)? {
             return Err(PrecompileError::Revert(
                 "renewal does not carry the exact next renewal version and nonce".into(),
             ));
@@ -118,17 +172,12 @@ impl TeeRegistry<'_> {
                 "replacement changes the persistent NodeHost authorization".into(),
             ));
         }
-        if intent.enclave_id == current.enclave_id || intent.binding_id == current.binding_id {
+        if !successor_ids_are_fresh_v1(intent, current) {
             return Err(PrecompileError::Revert(
                 "replacement must use a fresh enclave and binding id".into(),
             ));
         }
-        if intent.binding_version != next_counter(current.binding_version, "binding version")?
-            || intent.registration_version
-                != next_counter(current.registration_version, "registration version")?
-            || intent.renewal_nonce != current.renewal_nonce
-            || intent.transition_nonce != current.transition_nonce
-        {
+        if !replacement_counters_match_v1(intent, current)? {
             return Err(PrecompileError::Revert(
                 "replacement does not carry the exact next binding version".into(),
             ));
@@ -150,11 +199,7 @@ impl TeeRegistry<'_> {
         let current = current.as_ref().ok_or_else(|| {
             PrecompileError::Revert("cannot transition a missing enclave binding".into())
         })?;
-        let upgrade = self.enclave_upgrade_v1()?;
-        let late_recovery = !upgrade.proposal_id.is_zero()
-            && self.storage.block_number()? >= upgrade.activation_height
-            && policy_hash == upgrade.successor_policy_hash
-            && current.policy_hash != upgrade.successor_policy_hash;
+        let late_recovery = self.is_late_measurement_recovery_v1(policy_hash, current)?;
         if !late_recovery {
             ensure_live_binding(current, now)?;
         }
@@ -163,7 +208,7 @@ impl TeeRegistry<'_> {
                 "measurement transition changes the persistent NodeHost authorization".into(),
             ));
         }
-        if intent.enclave_id == current.enclave_id || intent.binding_id == current.binding_id {
+        if !successor_ids_are_fresh_v1(intent, current) {
             return Err(PrecompileError::Revert(
                 "measurement transition must use a fresh enclave and binding id".into(),
             ));

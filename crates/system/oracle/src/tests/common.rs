@@ -286,6 +286,279 @@ pub(super) fn init_oracle(oracle: &mut OracleContract) {
     oracle.config_is_initialized.write(true).unwrap();
 }
 
+/// Runs `f` with the storage and an unconfigured Oracle on fresh storage.
+pub(super) fn with_bare_oracle(f: impl FnOnce(StorageHandle<'_>, &mut OracleContract<'_>)) {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        f(storage, &mut oracle);
+    });
+}
+
+/// [`with_bare_oracle`] with the COEN/USDT pair registered.
+pub(super) fn with_bare_coen_usdt_oracle(
+    f: impl FnOnce(StorageHandle<'_>, &mut OracleContract<'_>),
+) {
+    with_bare_oracle(|storage, oracle| {
+        oracle
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
+            .unwrap();
+        f(storage, oracle);
+    });
+}
+
+/// Runs `f` on an initialized oracle after it registers COEN/840.
+pub(super) fn with_coen840_oracle(
+    f: impl FnOnce(StorageHandle<'_>, &mut OracleContract<'_>, AddressPair),
+) {
+    with_oracle(|storage, oracle| {
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        f(storage, oracle, pair);
+    });
+}
+
+/// Runs `f` with an unconfigured Oracle that has the COEN/840 pair registered.
+pub(super) fn with_bare_coen840_oracle(f: impl FnOnce(&mut OracleContract<'_>, AddressPair)) {
+    with_bare_oracle(|_storage, oracle| {
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        f(oracle, pair);
+    });
+}
+
+/// Runs `f` with the storage and an Oracle that [`init_oracle`] configured.
+pub(super) fn with_oracle(f: impl FnOnce(StorageHandle<'_>, &mut OracleContract<'_>)) {
+    with_bare_oracle(|storage, oracle| {
+        init_oracle(oracle);
+        f(storage, oracle);
+    });
+}
+
+/// [`with_oracle`] with the COEN/USDT pair registered.
+pub(super) fn with_coen_usdt_oracle(f: impl FnOnce(StorageHandle<'_>, &mut OracleContract<'_>)) {
+    with_oracle(|storage, oracle| {
+        oracle
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
+            .unwrap();
+        f(storage, oracle);
+    });
+}
+
+/// Runs `f` on [`with_coen_usdt_oracle`] after it registers the voter
+/// `[0x11; 20]` with [`register_voter`].
+pub(super) fn with_coen_usdt_voter(
+    f: impl FnOnce(StorageHandle<'_>, &mut OracleContract<'_>, Address),
+) {
+    with_coen_usdt_oracle(|storage, oracle| {
+        let voter = register_voter(&storage);
+        f(storage, oracle, voter);
+    });
+}
+
+/// The first tally validator. [`register_voter`] registers it.
+pub(super) const FIRST_VOTER: Address = Address::new([0x11; 20]);
+
+/// Registers the tally validators `[0x11; 20]`, `[0x22; 20]` and so on, in that
+/// order, one for each whole-COEN stake in `stakes`. Returns their addresses.
+pub(super) fn register_staked_voters<const N: usize>(
+    storage: &StorageHandle<'_>,
+    stakes: [u64; N],
+) -> [Address; N] {
+    let voters: [Address; N] =
+        std::array::from_fn(|index| Address::new([0x11 * (index as u8 + 1); 20]));
+    for (voter, stake) in voters.into_iter().zip(stakes) {
+        register_validator(storage.clone(), voter, native_coen(stake));
+    }
+    voters
+}
+
+/// Registers the validator `[0x11; 20]` with 100 COEN of stake. Returns its
+/// address.
+pub(super) fn register_voter(storage: &StorageHandle<'_>) -> Address {
+    let [validator] = register_staked_voters(storage, [100]);
+    validator
+}
+
+/// Registers the synthetic pairs `[0x71; 20]/[0x72; 20]` and then
+/// `[0x81; 20]/[0x82; 20]`. Returns them in registration order.
+pub(super) fn register_synthetic_pairs(
+    oracle: &mut OracleContract<'_>,
+) -> (AddressPair, AddressPair) {
+    let first = AddressPair::from_addresses(Address::new([0x71; 20]), Address::new([0x72; 20]));
+    let later = AddressPair::from_addresses(Address::new([0x81; 20]), Address::new([0x82; 20]));
+    oracle.register_pair(first).unwrap();
+    oracle.register_pair(later).unwrap();
+    (first, later)
+}
+
+/// Runs `f` on an initialized oracle after it registers the two synthetic
+/// pairs, runs `seed` on them and then registers the four tally validators.
+pub(super) fn with_synthetic_market(
+    seed: impl FnOnce(&mut OracleContract<'_>, (AddressPair, AddressPair)),
+    f: impl FnOnce(&mut OracleContract<'_>, (AddressPair, AddressPair), [Address; 4]),
+) {
+    with_oracle(|storage, oracle| {
+        let pairs = register_synthetic_pairs(oracle);
+        seed(oracle, pairs);
+        let voters = register_four_voters(&storage);
+        f(oracle, pairs, voters);
+    });
+}
+
+/// Registers the four tally validators `[0x11; 20]` to `[0x44; 20]`, in that
+/// order, each with 100 COEN of stake. Returns their addresses.
+pub(super) fn register_four_voters(storage: &StorageHandle<'_>) -> [Address; 4] {
+    register_staked_voters(storage, [100; 4])
+}
+
+/// The canonical COEN/USDT and USDT/ETH pairs, in that order.
+pub(super) fn coen_usdt_and_usdt_eth() -> (AddressPair, AddressPair) {
+    (
+        AddressPair::from_addresses(COEN, USDT).to_canonical(),
+        AddressPair::from_addresses(USDT, ETH).to_canonical(),
+    )
+}
+
+/// Registers [`coen_usdt_and_usdt_eth`] in that order and returns the pairs.
+pub(super) fn register_coen_usdt_and_usdt_eth(
+    oracle: &mut OracleContract<'_>,
+) -> (AddressPair, AddressPair) {
+    let (coen_usdt, usdt_eth) = coen_usdt_and_usdt_eth();
+    oracle.register_pair(coen_usdt).unwrap();
+    oracle.register_pair(usdt_eth).unwrap();
+    (coen_usdt, usdt_eth)
+}
+
+/// The published exchange rate of `pair`.
+pub(super) fn pair_rate(oracle: &OracleContract<'_>, pair: AddressPair) -> U256 {
+    oracle
+        .get_exchange_rate(pair.address1(), pair.address2())
+        .unwrap()
+}
+
+/// The stored `(rate, block, timestamp)` of `pair`.
+pub(super) fn pair_rate_data(oracle: &OracleContract<'_>, pair: AddressPair) -> (U256, u64, u64) {
+    oracle
+        .get_exchange_rate_data(pair.address1(), pair.address2())
+        .unwrap()
+}
+
+/// Publishes `rate` on `pair` at block 1, timestamp 12, before the tested
+/// tally.
+pub(super) fn publish_prior_rate(oracle: &mut OracleContract<'_>, pair: AddressPair, rate: U256) {
+    oracle
+        .set_exchange_rate(Address::ZERO, pair, rate, 1, 12)
+        .unwrap();
+}
+
+/// Asserts that `pair` still holds the prior `rate` from block 1, timestamp 12.
+pub(super) fn assert_prior_rate_kept(oracle: &OracleContract<'_>, pair: AddressPair, rate: U256) {
+    assert_eq!(pair_rate_data(oracle, pair), (rate, 1, 12));
+}
+
+/// Submits the sample COEN/USDT vote of 50 with a volume of 1000 for `voter`.
+/// Returns the vote line.
+pub(super) fn submit_sample_vote(
+    oracle: &mut OracleContract<'_>,
+    voter: Address,
+) -> (Address, Address, U256, U256) {
+    let vote = (COEN, USDT, fixed18(50), fixed18(1000));
+    oracle.submit_vote(voter, &[vote]).unwrap();
+    vote
+}
+
+/// A vote line on `pair` with `rate` and `volume`.
+pub(super) fn pair_vote(
+    pair: AddressPair,
+    rate: U256,
+    volume: U256,
+) -> (Address, Address, U256, U256) {
+    (pair.address1(), pair.address2(), rate, volume)
+}
+
+/// Asserts that the first price snapshot leads with `pair`, the reference pair.
+pub(super) fn assert_reference_pair(oracle: &OracleContract<'_>, pair: AddressPair) {
+    let (_, _, bases, quotes, _, _) = oracle.get_all_price_snapshot_history(1).unwrap();
+    assert_eq!((bases[0], quotes[0]), (pair.address1(), pair.address2()));
+}
+
+/// The volume of `pair` in the latest price snapshot.
+pub(super) fn latest_snapshot_volume(oracle: &OracleContract<'_>, pair: AddressPair) -> U256 {
+    let (_, _, bases, quotes, _, volumes) = oracle.get_all_price_snapshot_history(1).unwrap();
+    let row = bases
+        .iter()
+        .zip(&quotes)
+        .position(|(base, quote)| (*base, *quote) == (pair.address1(), pair.address2()))
+        .unwrap();
+    volumes[row]
+}
+
+/// The `(success, abstain, miss)` penalty counts of `validator`.
+pub(super) fn penalty_counts(oracle: &OracleContract<'_>, validator: &Address) -> (u64, u64, u64) {
+    (
+        oracle.penalty_success_count.read(validator).unwrap(),
+        oracle.penalty_abstain_count.read(validator).unwrap(),
+        oracle.penalty_miss_count.read(validator).unwrap(),
+    )
+}
+
+/// A tally outcome that a penalty counter records.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Penalty {
+    Success,
+    Abstain,
+    Miss,
+}
+
+/// Records `outcomes` for `validator`, in order, through the penalty counter
+/// increments.
+pub(super) fn record_outcomes(
+    oracle: &mut OracleContract<'_>,
+    validator: &Address,
+    outcomes: &[Penalty],
+) {
+    for outcome in outcomes {
+        match outcome {
+            Penalty::Success => oracle.increment_success(validator),
+            Penalty::Abstain => oracle.increment_abstain(validator),
+            Penalty::Miss => oracle.increment_miss(validator),
+        }
+        .unwrap();
+    }
+}
+
+/// Asserts that `validator` has a stored vote of `tuples` rows and that the
+/// voter list holds `voters` entries.
+pub(super) fn assert_vote_stored(
+    oracle: &OracleContract<'_>,
+    validator: &Address,
+    tuples: u32,
+    voters: u32,
+) {
+    assert!(oracle.vote_exists.read(validator).unwrap());
+    assert_eq!(oracle.vote_tuple_count.read(validator).unwrap(), tuples);
+    assert_eq!(oracle.voter_list.len().unwrap(), voters);
+}
+
+/// Asserts each `(validator, outcome, count)` penalty counter, in order.
+pub(super) fn assert_penalty_counters(
+    oracle: &OracleContract<'_>,
+    expected: &[(Address, Penalty, u64)],
+) {
+    for &(validator, penalty, count) in expected {
+        let counter = match penalty {
+            Penalty::Success => &oracle.penalty_success_count,
+            Penalty::Abstain => &oracle.penalty_abstain_count,
+            Penalty::Miss => &oracle.penalty_miss_count,
+        };
+        assert_eq!(
+            counter.read(&validator).unwrap(),
+            count,
+            "{penalty:?} count of {validator}"
+        );
+    }
+}
+
 /// Helper: register a validator in the ValidatorSet with given stake.
 /// Uses the first byte of addr as the pubkey seed to avoid BLS pubkey collision.
 pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U256) {

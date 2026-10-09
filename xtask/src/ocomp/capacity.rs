@@ -758,7 +758,7 @@ mod tests {
 
     use outbe_ocomp_protocol::capacity::{
         CapacityBudgetV1, CapacityColdRunV1, CapacityEvidenceV1, CapacityRunBindingV1,
-        CapacityValidatorBlockProcessingV1, CapacityWorkBillV1, ObservedMachineFactsV1,
+        CapacityValidatorBlockProcessingV1, CapacityWorkBillV1,
     };
 
     use super::*;
@@ -1091,21 +1091,7 @@ mod tests {
             })
             .collect();
         CapacityEvidenceV1 {
-            machine: ObservedMachineFactsV1 {
-                architecture: "x86_64".to_owned(),
-                operating_system: "Ubuntu 24.04".to_owned(),
-                logical_cpu_count: 4,
-                physical_memory_bytes: 17_179_869_184,
-                process_memory_limit_bytes: 12_884_901_888,
-                root_disk_bytes: 139_586_437_120,
-                free_workspace_bytes: 107_374_182_400,
-                block_iops: 8_000,
-                block_throughput_bytes_per_second: 250_000_000,
-                pid1_is_systemd: true,
-                unified_cgroup_v2: true,
-                writable_resource_cgroup: true,
-                production_enclave_sgx_no_attest: true,
-            },
+            machine: outbe_ocomp_protocol::test_utils::conforming_capacity_machine(),
             budget,
             runs,
         }

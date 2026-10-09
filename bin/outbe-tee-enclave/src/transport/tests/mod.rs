@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_utils::{serve_sequential_unix_connections, SequentialTestServerContext};
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 

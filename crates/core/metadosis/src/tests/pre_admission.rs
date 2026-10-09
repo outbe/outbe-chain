@@ -1,5 +1,7 @@
 use alloy_primitives::{B256, U256};
-use outbe_ocomp_protocol::{codec::CodecLimits, profile::CapacityProfileV1, SchemaLimits};
+use outbe_ocomp_protocol::{
+    profile::CapacityProfileV1, test_utils::FINALITY_INPUT_TEST_LIMITS as SCHEMA_LIMITS,
+};
 use outbe_oracle::api::OcompOraclePreAdmissionProjection;
 use outbe_primitives::error::PrecompileError;
 use outbe_tribute::TributePreAdmissionProjection;
@@ -10,19 +12,6 @@ use crate::pre_admission::{
 };
 use crate::schema::OcompPreAdmissionState;
 use crate::tests::with_contract;
-
-const SCHEMA_LIMITS: SchemaLimits = SchemaLimits {
-    codec: CodecLimits::new(1_048_576, 4_096, 2_097_152),
-    max_bounded_bytes: 262_144,
-    max_proof_bytes: 262_144,
-    max_opening_bytes: 262_144,
-    max_collection_items: 4_096,
-    max_action_items: 4_096,
-    max_chunk_items: 4_096,
-    max_unit_inputs: 64,
-    max_result_chunk_bytes: 524_288,
-    max_control_body_bytes: 262_144,
-};
 
 fn capacity() -> CapacityProfileV1 {
     CapacityProfileV1 {

@@ -171,8 +171,7 @@ fn full_and_hot_lifecycle_reads_both_reject_combined_residue() {
     let addr = address!("0x2222222222222222222222222222222222222228");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, addr, &dummy_consensus_pubkey(28))
-            .unwrap();
+        register_validators(vs, &[(addr, 28)]).unwrap();
         vs.val_status.write(&addr, status::UNBONDING).unwrap();
         vs.val_join_confirmed.write(&addr, true).unwrap();
         vs.val_has_bls_share.write(&addr, true).unwrap();
@@ -231,12 +230,8 @@ fn radicle_node_id_registration_is_bidirectional_and_signature_bound() {
             .is_zero());
     });
 
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.set_block_number(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut vs = ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(10).unwrap();
+    let mut provider = registry_storage(1, 10).unwrap();
+    at_height(&mut provider, 1, |vs| {
         let err = vs
             .register_validator_with_sig(
                 validator,
@@ -368,16 +363,7 @@ fn every_radicle_registration_mutation_rolls_back_atomically() {
     let node_id = B256::repeat_byte(0x86);
     let (public_key, signature) = signed_radicle_registration(0x37, CHAIN_ID, validator, node_id);
 
-    let configured_provider = || {
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        provider.set_block_number(1);
-        StorageHandle::enter(&mut provider, |storage| {
-            let vs = ValidatorSet::new(storage);
-            vs.config_owner.write(OWNER).unwrap();
-            vs.config_max_validators.write(10).unwrap();
-        });
-        provider
-    };
+    let configured_provider = || registry_storage(1, 10).unwrap();
 
     let mut measured = configured_provider();
     measured.fail_after_mutation_at(usize::MAX);

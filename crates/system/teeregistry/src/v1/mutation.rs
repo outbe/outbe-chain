@@ -103,24 +103,16 @@ impl TeeRegistry<'_> {
         context: &MutationContextV1,
     ) -> Result<bool> {
         let VerifiedClaimsMutationV1 {
-            expected_operation,
             intent,
             evidence_hash,
             ..
         } = *mutation;
         let MutationContextV1 {
-            now,
             node_id_hash,
             intent_hash,
-            candidate_context_hash,
             ..
         } = *context;
-        if expected_operation == AttestationOperationV1::PrepareEnclaveUpgrade
-            && self.upgrade_candidate_context.read(&node_id_hash)? == candidate_context_hash
-            && self.upgrade_candidate_expiry.read(&node_id_hash)? > now
-            && self.upgrade_candidate_source.read(&node_id_hash)?
-                == self.v1_node_binding_id.read(&node_id_hash)?
-        {
+        if self.is_same_active_upgrade_candidate_v1(mutation, context)? {
             if self.upgrade_candidate_evidence.read(&node_id_hash)? != evidence_hash {
                 return Err(PrecompileError::Revert(
                     "candidate is not an exact evidence replay".into(),
@@ -146,5 +138,21 @@ impl TeeRegistry<'_> {
         }
 
         Ok(false)
+    }
+
+    fn is_same_active_upgrade_candidate_v1(
+        &self,
+        mutation: &VerifiedClaimsMutationV1<'_>,
+        context: &MutationContextV1,
+    ) -> Result<bool> {
+        let node_id_hash = &context.node_id_hash;
+        Ok(
+            mutation.expected_operation == AttestationOperationV1::PrepareEnclaveUpgrade
+                && self.upgrade_candidate_context.read(node_id_hash)?
+                    == context.candidate_context_hash
+                && self.upgrade_candidate_expiry.read(node_id_hash)? > context.now
+                && self.upgrade_candidate_source.read(node_id_hash)?
+                    == self.v1_node_binding_id.read(node_id_hash)?,
+        )
     }
 }

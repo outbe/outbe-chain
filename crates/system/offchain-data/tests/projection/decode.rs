@@ -15,26 +15,61 @@ use outbe_tribute::{canonical_body, precompile::ITribute, TributeRepositoryReade
 use super::support::*;
 
 #[test]
+fn commitment_scheme_errors_precede_body_schema_errors_without_writes() {
+    for (scheme, expected) in [
+        (
+            ACTIVE_COMMITMENT_SCHEME + 1,
+            format!(
+                "unsupported commitment scheme {}",
+                ACTIVE_COMMITMENT_SCHEME + 1
+            ),
+        ),
+        (
+            ACTIVE_COMMITMENT_SCHEME,
+            format!("unsupported body schema {}", u32::MAX),
+        ),
+    ] {
+        let storage = Arc::new(RecordingStorage::default());
+        let mut projection = open(&storage, 80);
+        let batches_before = storage.batches().len();
+        let data = ITribute::TributeBodyStored {
+            tributeId: entity(1, 20260715).to_u256(),
+            commitmentSchemeVersion: scheme,
+            schemaVersion: u32::MAX,
+            previousCommitment: B256::ZERO,
+            newCommitment: B256::ZERO,
+            canonicalPayload: Bytes::new(),
+        }
+        .encode_log_data();
+        let block = single_receipt_block(80, 80, 1, vec![log(0, TRIBUTE_ADDRESS, data)]);
+        let error = projection.project_block(&block).unwrap_err();
+        let ProjectionError::MalformedProjectionEvent { reason, .. } = error else {
+            panic!("expected malformed projection event: {error:?}");
+        };
+        assert_eq!(reason, expected);
+        assert_eq!(storage.batches().len(), batches_before);
+        assert!(projection.state().checkpoint.is_none());
+    }
+}
+
+#[test]
 fn exact_pair_filtering_and_full_block_prepare_failure_do_not_write_domain_data() {
     let storage = Arc::new(RecordingStorage::default());
     let mut projection = open(&storage, 20);
     let ignored_id = entity(1, 20260715);
-    let ignored = FinalizedBlock {
-        number: 20,
-        hash: B256::repeat_byte(20),
-        receipts: vec![receipt(
-            0,
-            3,
-            vec![
-                log(
-                    0,
-                    NOD_ADDRESS,
-                    tribute_stored(ignored_id, Address::ZERO, 20260715),
-                ),
-                log(1, NOD_ADDRESS, tribute_partition_retired(20260715)),
-            ],
-        )],
-    };
+    let ignored = single_receipt_block(
+        20,
+        20,
+        3,
+        vec![
+            log(
+                0,
+                NOD_ADDRESS,
+                tribute_stored(ignored_id, Address::ZERO, 20260715),
+            ),
+            log(1, NOD_ADDRESS, tribute_partition_retired(20260715)),
+        ],
+    );
     projection.project_block(&ignored).unwrap();
     assert!(TributeRepositoryReader::new(storage.clone())
         .get(ignored_id)
@@ -138,15 +173,12 @@ fn rejects_tampered_commitment_identity_version_and_transition_before_any_domain
         let storage = Arc::new(RecordingStorage::default());
         let mut projection = open(&storage, 80);
         let batches_before = storage.batches().len();
-        let block = FinalizedBlock {
-            number: 80,
-            hash: B256::repeat_byte(0x80 + case as u8),
-            receipts: vec![receipt(
-                0,
-                0x80 + case as u8,
-                vec![log(0, TRIBUTE_ADDRESS, event)],
-            )],
-        };
+        let block = single_receipt_block(
+            80,
+            0x80 + case as u8,
+            0x80 + case as u8,
+            vec![log(0, TRIBUTE_ADDRESS, event)],
+        );
         assert!(matches!(
             projection.project_block(&block),
             Err(ProjectionError::MalformedProjectionEvent { .. })
@@ -267,11 +299,12 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         let storage = Arc::new(RecordingStorage::default());
         let mut projection = open(&storage, 80);
         let batches_before = storage.batches().len();
-        let block = FinalizedBlock {
-            number: 80,
-            hash: B256::repeat_byte(0xa0 + case as u8),
-            receipts: vec![receipt(0, 0xa0 + case as u8, vec![log(0, emitter, event)])],
-        };
+        let block = single_receipt_block(
+            80,
+            0xa0 + case as u8,
+            0xa0 + case as u8,
+            vec![log(0, emitter, event)],
+        );
 
         assert!(projection.project_block(&block).is_err(), "case {case}");
         assert_eq!(storage.batches().len(), batches_before, "case {case}");

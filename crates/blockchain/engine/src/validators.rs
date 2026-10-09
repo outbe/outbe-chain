@@ -657,6 +657,7 @@ mod tests {
         hashmap::HashMapStorageProvider, readonly::ReadOnlyBlockContext, StorageHandle,
     };
     use outbe_primitives::tee_attestation_v1::NodeIdV1;
+    use outbe_validatorset::test_support::StorageOverrides;
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 

@@ -25,8 +25,8 @@ pub mod state;
 pub use handlers::{VoteTarget, VoteTargetHandlers, VoteTargetRegistry};
 pub use schema::Vote;
 pub use state::{
-    active_validator_addresses, calculate_vote_tally, ProposalInfo, ProposalStatus, VoteInfo,
-    VoteKind, VoteTally,
+    active_validator_addresses, calculate_vote_tally, ProposalInfo, ProposalStatus,
+    ProposalSubmission, VoteInfo, VoteKind, VoteTally,
 };
 
 #[cfg(test)]

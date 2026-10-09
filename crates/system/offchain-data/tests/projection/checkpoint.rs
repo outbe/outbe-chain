@@ -14,9 +14,7 @@ use outbe_offchain_storage::{
 };
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
-use outbe_tribute::{
-    canonical_body, precompile::ITribute, TributeData, TributePageRequest, TributeRepositoryReader,
-};
+use outbe_tribute::{canonical_body, precompile::ITribute, TributeData, TributeRepositoryReader};
 
 use super::support::*;
 
@@ -79,30 +77,27 @@ fn projects_primary_indexes_provenance_and_writes_checkpoint_last() {
     let mut projection = open(&storage, 10);
     let owner = Address::repeat_byte(0xa1);
     let token_id = poseidon_entity(owner, 20260715);
-    let block = FinalizedBlock {
-        number: 10,
-        hash: B256::repeat_byte(0x10),
-        receipts: vec![receipt(
-            0,
-            0x20,
-            vec![
-                log(
-                    0,
-                    Address::repeat_byte(0xee),
-                    LogData::new(
-                        vec![B256::repeat_byte(0xee)],
-                        Bytes::from_static(b"ignored"),
-                    )
-                    .unwrap(),
-                ),
-                log(
-                    1,
-                    TRIBUTE_ADDRESS,
-                    tribute_stored(token_id, owner, 20260715),
-                ),
-            ],
-        )],
-    };
+    let block = single_receipt_block(
+        10,
+        0x10,
+        0x20,
+        vec![
+            log(
+                0,
+                Address::repeat_byte(0xee),
+                LogData::new(
+                    vec![B256::repeat_byte(0xee)],
+                    Bytes::from_static(b"ignored"),
+                )
+                .unwrap(),
+            ),
+            log(
+                1,
+                TRIBUTE_ADDRESS,
+                tribute_stored(token_id, owner, 20260715),
+            ),
+        ],
+    );
 
     let outcome = projection.project_block(&block).unwrap();
     assert_eq!(
@@ -145,13 +140,7 @@ fn projects_primary_indexes_provenance_and_writes_checkpoint_last() {
     );
     assert_eq!(
         repository
-            .list_by_owner(
-                owner,
-                TributePageRequest {
-                    after: None,
-                    limit: 10,
-                },
-            )
+            .list_by_owner(owner, FIRST_TRIBUTE_PAGE,)
             .unwrap()
             .records
             .len(),
@@ -178,19 +167,16 @@ fn logical_projection_advances_before_the_durable_batch_is_written() {
         outbe_offchain_data::open_projection(config(10), overlay.clone(), overlay.clone()).unwrap();
     let owner = Address::repeat_byte(0xa2);
     let tribute_id = poseidon_entity(owner, 20260715);
-    let block = FinalizedBlock {
-        number: 10,
-        hash: B256::repeat_byte(0x42),
-        receipts: vec![receipt(
+    let block = single_receipt_block(
+        10,
+        0x42,
+        0x43,
+        vec![log(
             0,
-            0x43,
-            vec![log(
-                0,
-                TRIBUTE_ADDRESS,
-                tribute_stored(tribute_id, owner, 20260715),
-            )],
+            TRIBUTE_ADDRESS,
+            tribute_stored(tribute_id, owner, 20260715),
         )],
-    };
+    );
 
     let prepared = logical.prepare_block(&block).unwrap();
     let (outcome, pending) = logical
@@ -249,32 +235,26 @@ fn restart_replays_pending_finalized_receipts_from_the_durable_checkpoint() {
     let owner = Address::repeat_byte(0xb2);
     let durable_id = poseidon_entity(owner, 20260715);
     let pending_id = poseidon_entity(owner, 20260716);
-    let durable_block = FinalizedBlock {
-        number: 10,
-        hash: B256::repeat_byte(0x51),
-        receipts: vec![receipt(
+    let durable_block = single_receipt_block(
+        10,
+        0x51,
+        0x52,
+        vec![log(
             0,
-            0x52,
-            vec![log(
-                0,
-                TRIBUTE_ADDRESS,
-                tribute_stored(durable_id, owner, 20260715),
-            )],
+            TRIBUTE_ADDRESS,
+            tribute_stored(durable_id, owner, 20260715),
         )],
-    };
-    let pending_block = FinalizedBlock {
-        number: 11,
-        hash: B256::repeat_byte(0x53),
-        receipts: vec![receipt(
+    );
+    let pending_block = single_receipt_block(
+        11,
+        0x53,
+        0x54,
+        vec![log(
             0,
-            0x54,
-            vec![log(
-                0,
-                TRIBUTE_ADDRESS,
-                tribute_stored(pending_id, owner, 20260716),
-            )],
+            TRIBUTE_ADDRESS,
+            tribute_stored(pending_id, owner, 20260716),
         )],
-    };
+    );
     let mut durable_projection =
         outbe_offchain_data::open_projection(config(10), durable.clone(), durable.clone()).unwrap();
     durable_projection.project_block(&durable_block).unwrap();
@@ -368,15 +348,7 @@ fn full_block_overlay_applies_successive_canonical_updates_across_receipts() {
 
     projection.project_block(&block).unwrap();
     let repository = TributeRepositoryReader::new(storage.clone());
-    let final_page = repository
-        .list_by_owner(
-            owner,
-            TributePageRequest {
-                after: None,
-                limit: 10,
-            },
-        )
-        .unwrap();
+    let final_page = repository.list_by_owner(owner, FIRST_TRIBUTE_PAGE).unwrap();
     assert_eq!(final_page.records.len(), 1);
     assert_eq!(final_page.records[0].tribute_price_minor, U256::from(99));
     assert_eq!(
@@ -448,6 +420,33 @@ fn duplicate_delivery_is_idempotent_and_conflicting_hash_is_rejected() {
     ));
 }
 
+fn tribute_update_block(bodies: &[TributeData; 4]) -> FinalizedBlock {
+    FinalizedBlock {
+        number: 60,
+        hash: B256::repeat_byte(0x60),
+        receipts: bodies
+            .iter()
+            .enumerate()
+            .map(|(index, body)| {
+                let previous = if index == 0 {
+                    B256::ZERO
+                } else {
+                    tribute_commitment(&bodies[index - 1])
+                };
+                receipt(
+                    index as u64,
+                    0x61 + index as u8,
+                    vec![log(
+                        index as u64,
+                        TRIBUTE_ADDRESS,
+                        tribute_stored_body_after(body, previous),
+                    )],
+                )
+            })
+            .collect(),
+    }
+}
+
 #[test]
 fn replay_after_atomic_block_boundary_converges() {
     let owner = Address::repeat_byte(0x51);
@@ -457,48 +456,7 @@ fn replay_after_atomic_block_boundary_converges() {
     for (index, body) in bodies.iter_mut().enumerate() {
         body.tribute_price_minor = U256::from(index + 1);
     }
-    let block = FinalizedBlock {
-        number: 60,
-        hash: B256::repeat_byte(0x60),
-        receipts: vec![
-            receipt(
-                0,
-                0x61,
-                vec![log(
-                    0,
-                    TRIBUTE_ADDRESS,
-                    tribute_stored_body_after(&bodies[0], B256::ZERO),
-                )],
-            ),
-            receipt(
-                1,
-                0x62,
-                vec![log(
-                    1,
-                    TRIBUTE_ADDRESS,
-                    tribute_stored_body_after(&bodies[1], tribute_commitment(&bodies[0])),
-                )],
-            ),
-            receipt(
-                2,
-                0x63,
-                vec![log(
-                    2,
-                    TRIBUTE_ADDRESS,
-                    tribute_stored_body_after(&bodies[2], tribute_commitment(&bodies[1])),
-                )],
-            ),
-            receipt(
-                3,
-                0x64,
-                vec![log(
-                    3,
-                    TRIBUTE_ADDRESS,
-                    tribute_stored_body_after(&bodies[3], tribute_commitment(&bodies[2])),
-                )],
-            ),
-        ],
-    };
+    let block = tribute_update_block(&bodies);
 
     for fail_on in 1..=1 {
         let storage = Arc::new(FailOnceStorage::default());
@@ -519,13 +477,7 @@ fn replay_after_atomic_block_boundary_converges() {
         assert_eq!(final_body.tribute_price_minor, U256::from(4));
         assert_eq!(
             repository
-                .list_by_owner(
-                    owner,
-                    TributePageRequest {
-                        after: None,
-                        limit: 10,
-                    },
-                )
+                .list_by_owner(owner, FIRST_TRIBUTE_PAGE,)
                 .unwrap()
                 .records
                 .len(),

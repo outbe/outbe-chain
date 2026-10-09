@@ -3,16 +3,10 @@ use super::*;
 #[test]
 fn tee_expiry_jail_is_non_slashing_and_idempotent() {
     let validator = address!("0x0000000000000000000000000000000000000A13");
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_block_number(17);
-
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut vs = ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(10).unwrap();
-        vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(0xA3))
-            .unwrap();
-        activate_staked_for_test(&mut vs, validator);
+    let mut storage = registry_storage(17, 10).unwrap();
+    at_height(&mut storage, 17, |vs| {
+        register_validators(vs, &[(validator, 0xA3)]).unwrap();
+        activate_staked_for_test(vs, validator);
 
         let before = vs.get_validator(validator).unwrap().unwrap();
         let before_stake = before.stake;
@@ -47,10 +41,7 @@ fn tee_expiry_jail_is_non_slashing_and_idempotent() {
 fn test_jail_validator_from_active() {
     with_vs_configured(128, |vs| {
         let v = address!("0x1111111111111111111111111111111111111111");
-        vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(v).unwrap();
-        vs.val_has_bls_share.write(&v, true).unwrap();
+        register_participant(vs, v, 0x01).unwrap();
         assert!(vs.is_consensus_participant(v).unwrap());
 
         vs.jail_validator(v).unwrap();
@@ -79,10 +70,7 @@ fn test_jail_validator_from_active() {
 fn test_jailed_loses_share_at_reshare() {
     with_vs_configured(128, |vs| {
         let v = address!("0x1111111111111111111111111111111111111111");
-        vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(v).unwrap();
-        vs.val_has_bls_share.write(&v, true).unwrap();
+        register_participant(vs, v, 0x01).unwrap();
         vs.jail_validator(v).unwrap();
 
         // A reshare that does not include the jailed validator clears its share
@@ -98,10 +86,7 @@ fn test_jailed_loses_share_at_reshare() {
 fn test_unjail_after_exclusion_returns_to_unconfirmed_pending() {
     with_vs_configured(128, |vs| {
         let v = address!("0x1111111111111111111111111111111111111111");
-        vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(v).unwrap();
-        vs.val_has_bls_share.write(&v, true).unwrap();
+        register_participant(vs, v, 0x01).unwrap();
         vs.val_missed_blocks.write(&v, 7).unwrap();
         vs.val_missed_votes.write(&v, 9).unwrap();
         vs.jail_validator(v).unwrap();
@@ -136,8 +121,7 @@ fn test_unjail_after_exclusion_returns_to_unconfirmed_pending() {
 fn excluded_jail_accepts_late_finalized_participation_then_unjail_clears_it() {
     with_vs_configured(128, |vs| {
         let v = address!("0x1111111111111111111111111111111111111111");
-        vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
-            .unwrap();
+        register_validators(vs, &[(v, 0x01)]).unwrap();
         vs.activate_validator(v).unwrap();
         vs.val_has_bls_share.write(&v, true).unwrap();
         vs.val_missed_blocks.write(&v, 7).unwrap();
@@ -168,16 +152,13 @@ fn excluded_jail_accepts_late_finalized_participation_then_unjail_clears_it() {
 fn test_unjail_requires_jailed_status() {
     with_vs_configured(128, |vs| {
         let active = address!("0x1111111111111111111111111111111111111111");
-        vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(active).unwrap();
+        register_boundary_active(vs, active, 0x01).unwrap();
         assert!(
             vs.unjail_to_pending(active).is_err(),
             "cannot unjail an ACTIVE validator"
         );
         let reg = address!("0x2222222222222222222222222222222222222222");
-        vs.register_validator(OWNER, reg, &dummy_consensus_pubkey(0x02))
-            .unwrap();
+        register_validators(vs, &[(reg, 0x02)]).unwrap();
         assert!(
             vs.unjail_to_pending(reg).is_err(),
             "cannot unjail a REGISTERED validator"
@@ -187,19 +168,11 @@ fn test_unjail_requires_jailed_status() {
 
 #[test]
 fn test_unjail_cooldown_blocks() {
-    use outbe_primitives::storage::StorageHandle;
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = registry_storage(100, 128).unwrap();
     let v = address!("0x1111111111111111111111111111111111111111");
-    storage.set_block_number(100);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(128).unwrap();
+    at_height(&mut storage, 100, |vs| {
         vs.config_unjail_cooldown_blocks.write(50).unwrap();
-        vs.register_validator(OWNER, v, &dummy_consensus_pubkey(0x01))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(v).unwrap();
-        vs.val_has_bls_share.write(&v, true).unwrap();
+        register_participant(vs, v, 0x01).unwrap();
         vs.jail_validator(v).unwrap();
         assert_eq!(vs.val_jailed_at_height.read(&v).unwrap(), 100);
         vs.activate_reshared_set(&[], B256::ZERO).unwrap();
@@ -209,9 +182,7 @@ fn test_unjail_cooldown_blocks() {
             "unjail must fail before the cooldown elapses"
         );
     });
-    storage.set_block_number(150);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut vs = ValidatorSet::new(storage.clone());
+    at_height(&mut storage, 150, |vs| {
         // 150 >= 100 + 50 -> cooldown elapsed.
         vs.unjail_to_pending(v).unwrap();
         assert_eq!(vs.val_status.read(&v).unwrap(), status::PENDING);

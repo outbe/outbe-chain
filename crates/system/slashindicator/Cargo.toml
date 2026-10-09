@@ -36,9 +36,17 @@ alloy-signer-local.workspace = true
 commonware-consensus.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset", features = ["test-utils"] }
+# Test only: the shared committee-entry fixture in `test_harness`.
+outbe-consensus = { workspace = true, features = ["test-utils"] }
 rand.workspace = true
 rand-commonware.workspace = true
 rand_chacha = "0.3"
+# Test only: the integration tests use the shared `test_signing` fixtures.
+outbe-slashindicator = { path = ".", features = ["test-utils"] }
+
+[features]
+# Exposes the signer-side `test_signing` fixtures to tests in other crates.
+test-utils = []
 
 [lints]
 workspace = true

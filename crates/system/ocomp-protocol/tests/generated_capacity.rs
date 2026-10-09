@@ -10,27 +10,34 @@ use outbe_ocomp_protocol::{
     },
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     profile::poc_schema_limits,
-    vote::{EquivocationEvidenceV1, OcompVoteAccountabilityV1, ResultVoteSlotV1},
+    vote::{
+        EquivocationEvidenceV1, OcompVoteAccountabilityV1, ResultVoteSlotV1, VoteAccountabilitySeed,
+    },
+    CodecLimits, SchemaLimits,
 };
 
-fn conforming_machine() -> ObservedMachineFactsV1 {
-    ObservedMachineFactsV1 {
-        architecture: "x86_64".to_owned(),
-        operating_system: "Ubuntu 24.04".to_owned(),
-        logical_cpu_count: 4,
-        physical_memory_bytes: 17_179_869_184,
-        process_memory_limit_bytes: 12_884_901_888,
-        root_disk_bytes: 139_586_437_120,
-        free_workspace_bytes: 107_374_182_400,
-        block_iops: 8_000,
-        block_throughput_bytes_per_second: 250_000_000,
-        pid1_is_systemd: true,
-        unified_cgroup_v2: true,
-        writable_resource_cgroup: true,
-        production_enclave_sgx_no_attest: true,
-    }
+#[test]
+fn poc_schema_limits_match_the_frozen_generated_profile() {
+    assert_eq!(
+        poc_schema_limits(),
+        SchemaLimits {
+            codec: CodecLimits::new(2_097_152, 4_096, 2_097_408),
+            max_bounded_bytes: 2_097_152,
+            max_proof_bytes: 524_288,
+            max_opening_bytes: 262_144,
+            max_collection_items: 4_096,
+            max_action_items: 256,
+            max_chunk_items: 768,
+            max_unit_inputs: 13,
+            max_result_chunk_bytes: 524_288,
+            max_control_body_bytes: 2_097_152,
+        }
+    );
 }
 
+fn conforming_machine() -> ObservedMachineFactsV1 {
+    outbe_ocomp_protocol::test_utils::conforming_capacity_machine()
+}
 fn work(value: u64) -> CapacityWorkBillV1 {
     CapacityWorkBillV1 {
         transaction_bytes: value,
@@ -216,6 +223,39 @@ fn ocm_cap_001_applies_the_twenty_percent_boundary_exactly() {
 }
 
 #[test]
+fn every_capacity_dimension_must_be_positive_in_budget_and_work() {
+    for name in [
+        "transaction_bytes",
+        "block_bytes",
+        "gas",
+        "internal_work",
+        "cpu_micros",
+        "network_bytes",
+        "assigned_memory_bytes",
+        "disk_write_bytes",
+        "cas_bytes",
+        "block_processing_micros",
+        "finality_latency_micros",
+    ] {
+        let mut zero_budget = serde_json::to_value(evidence(800)).unwrap();
+        zero_budget["budget"][name] = serde_json::json!(0);
+        let zero_budget: CapacityEvidenceV1 = serde_json::from_value(zero_budget).unwrap();
+        assert_eq!(
+            zero_budget.verify().unwrap_err(),
+            CapacityEvidenceError::ZeroBudget
+        );
+
+        let mut zero_work = serde_json::to_value(evidence(800)).unwrap();
+        zero_work["runs"][0]["work"][name] = serde_json::json!(0);
+        let zero_work: CapacityEvidenceV1 = serde_json::from_value(zero_work).unwrap();
+        assert_eq!(
+            zero_work.verify().unwrap_err(),
+            CapacityEvidenceError::ZeroWorkBill { ordinal: 1 }
+        );
+    }
+}
+
+#[test]
 fn ocm_cap_001_rejects_a_run_missing_required_observed_dimensions() {
     for clear in [
         |bill: &mut CapacityWorkBillV1| bill.cpu_micros = 0,
@@ -313,6 +353,25 @@ fn ocm_cap_001_rejects_a_cold_run_not_bound_to_the_public_s_plus_one_path() {
 }
 
 #[test]
+fn capacity_evidence_preserves_run_error_precedence() {
+    let mut invalid_binding_and_retry = evidence(800);
+    invalid_binding_and_retry.runs[1].binding.tribute_count = 256;
+    invalid_binding_and_retry.runs[1].retried = true;
+    assert_eq!(
+        invalid_binding_and_retry.verify().unwrap_err(),
+        CapacityEvidenceError::InvalidPublicCapacityBinding { ordinal: 2 }
+    );
+
+    let mut duplicate_and_invalid_binding = evidence(800);
+    duplicate_and_invalid_binding.runs[1].ordinal = 1;
+    duplicate_and_invalid_binding.runs[1].binding.tribute_count = 256;
+    assert_eq!(
+        duplicate_and_invalid_binding.verify().unwrap_err(),
+        CapacityEvidenceError::DuplicateRunOrdinal
+    );
+}
+
+#[test]
 fn ocm_cap_001_internal_work_uses_the_frozen_checked_q_forming_formula() {
     let limits = OCOMP_POC_CANDIDATE_LIMITS_V1;
     let vote_cap = usize::try_from(limits.max_result_vote_bytes).unwrap();
@@ -336,14 +395,14 @@ fn dynamic_membership_capacity_fits_the_consensus_validator_bound() {
     )))
     .unwrap();
     let limits = poc_schema_limits();
-    let mut accountability = OcompVoteAccountabilityV1::empty(
-        B256::repeat_byte(0x31),
-        7,
-        B256::repeat_byte(0x32),
-        B256::repeat_byte(0x33),
+    let mut accountability = OcompVoteAccountabilityV1::empty(VoteAccountabilitySeed {
+        job_id: B256::repeat_byte(0x31),
+        result_validator_set_epoch: 7,
+        result_committee_set_hash: B256::repeat_byte(0x32),
+        result_ocomp_binding_hash: B256::repeat_byte(0x33),
         member_count,
         quorum_threshold,
-    )
+    })
     .unwrap();
 
     for validator_index in 0..member_count {

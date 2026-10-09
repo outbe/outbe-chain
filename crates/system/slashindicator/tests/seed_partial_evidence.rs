@@ -10,13 +10,16 @@ use commonware_codec::Encode;
 use commonware_cryptography::{bls12381, Signer as _};
 use outbe_consensus::proof::{seed_attest_namespace, seed_partial_attest_message};
 use outbe_primitives::addresses::STAKING_ADDRESS;
-use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_primitives::storage::StorageHandle;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
+use outbe_validatorset::test_support::{test_lifecycle_of, StorageOverrides};
 use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 
-const CHAIN_ID: u64 = 1;
+mod support;
+use support::{register_active_submitter, with_storage};
+
 const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
 const ACCUSED: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
@@ -73,8 +76,7 @@ fn build_evidence(
 /// as an active validator. Set the epoch counter so epoch-lag passes.
 fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.config_owner.write(OWNER).unwrap();
-    vs.set_config_max_validators(100).unwrap();
+    vs.test_configure_registry(OWNER).unwrap();
     let mut epoch = vs.epoch_snapshot().unwrap();
     epoch.number = U256::from(ROUND_EPOCH);
     vs.test_set_epoch_snapshot(epoch).unwrap();
@@ -94,18 +96,7 @@ fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
     vs.activate_validator_via_boundary_for_test(ACCUSED)
         .unwrap();
 
-    let mut submitter_pk = [0u8; 48];
-    submitter_pk[0] = 0x77;
-    vs.test_register_validator_without_pop(SUBMITTER, &submitter_pk)
-        .unwrap();
-    vs.activate_validator_via_boundary_for_test(SUBMITTER)
-        .unwrap();
-}
-
-fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_block_number(1);
-    storage.enter(f)
+    register_active_submitter(&mut vs, SUBMITTER, None).unwrap();
 }
 
 #[test]
@@ -123,10 +114,9 @@ fn equivocation_jails_and_slashes_then_dedups() {
         si.submit_seed_partial_equivocation_evidence(SUBMITTER, &evidence)
             .expect("valid equivocation evidence must slash");
 
-        let vs = ValidatorSet::new(storage.clone());
         assert!(
             matches!(
-                vs.validator_lifecycle(ACCUSED).unwrap(),
+                test_lifecycle_of(storage.clone(), ACCUSED).unwrap(),
                 ValidatorLifecycle::JailRetained(_)
             ),
             "accused must be JAILED"
@@ -186,17 +176,11 @@ fn unregistered_signer_is_rejected() {
     with_storage(|storage| {
         // Do NOT register the accused; only the submitter.
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(100).unwrap();
+        vs.test_configure_registry(OWNER).unwrap();
         let mut epoch = vs.epoch_snapshot().unwrap();
         epoch.number = U256::from(ROUND_EPOCH);
         vs.test_set_epoch_snapshot(epoch).unwrap();
-        let mut submitter_pk = [0u8; 48];
-        submitter_pk[0] = 0x77;
-        vs.test_register_validator_without_pop(SUBMITTER, &submitter_pk)
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(SUBMITTER)
-            .unwrap();
+        register_active_submitter(&mut vs, SUBMITTER, None).unwrap();
 
         let key = accused_key();
         let pubkey = pubkey_bytes(&key);
@@ -216,16 +200,11 @@ fn non_active_submitter_is_rejected() {
         let pubkey = pubkey_bytes(&key);
         // Register accused but NOT the submitter (submitter status = 0).
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(100).unwrap();
+        vs.test_configure_registry(OWNER).unwrap();
         let mut epoch = vs.epoch_snapshot().unwrap();
         epoch.number = U256::from(ROUND_EPOCH);
         vs.test_set_epoch_snapshot(epoch).unwrap();
-        vs.test_register_validator_without_pop(ACCUSED, &pubkey)
-            .unwrap();
-        vs.test_set_stake_projection(ACCUSED, StakeProjection::new(U256::from(1), None))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(ACCUSED)
+        vs.test_register_active_validator(ACCUSED, &pubkey, U256::from(1))
             .unwrap();
 
         let evidence = build_evidence(&key, &pubkey, &[0x11; 48], &[0x22; 48]);

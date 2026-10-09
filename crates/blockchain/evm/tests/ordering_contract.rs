@@ -16,6 +16,7 @@ use outbe_evm::executor::run_outbe_pre_execution_hooks;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
+use outbe_validatorset::test_support::StorageOverrides;
 use outbe_validatorset::EpochSnapshot;
 
 const CHAIN_ID: u64 = 1;
@@ -43,9 +44,11 @@ fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
         storage,
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        U256::from(1_000_000u64),
-        0,
-        0,
+        outbe_oracle::api::RateObservation {
+            rate: U256::from(1_000_000u64),
+            block_number: 0,
+            timestamp: 0,
+        },
     )
     .unwrap();
 }

@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::filesystem::entry_exists;
 
 pub(super) fn digest_file_observing(
     path: &Path,
@@ -183,11 +184,7 @@ pub(super) fn sync_directory(path: &Path) -> Result<(), TributeInventoryError> {
 }
 
 pub(super) fn path_exists(path: &Path) -> Result<bool, TributeInventoryError> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(io_error("inspect inventory path", path, source)),
-    }
+    entry_exists(path).map_err(|source| io_error("inspect inventory path", path, source))
 }
 
 pub(super) struct InventoryLock {
@@ -227,5 +224,25 @@ impl Drop for InventoryLock {
         unsafe {
             libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
         }
+    }
+}
+
+#[cfg(test)]
+mod path_exists_tests {
+    use super::*;
+
+    /// `path_exists` keeps the inventory IO error with its operation and path.
+    #[test]
+    fn path_exists_names_the_inspected_path_in_io_errors() -> std::io::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("file");
+        std::fs::write(&file, b"x")?;
+        let child = file.join("child");
+        assert!(matches!(
+            path_exists(&child),
+            Err(TributeInventoryError::Io { operation: "inspect inventory path", ref path, .. })
+                if *path == child
+        ));
+        Ok(())
     }
 }

@@ -62,18 +62,13 @@ impl TeeRegistry<'_> {
             enclave_signature,
             capability,
         } = verified;
-        let NodeHostAssociationV1 {
-            binding,
-            validator_signature,
-            node_binding_signature,
-        } = association;
+        let binding = association.binding;
 
         let policy = self.active_policy_v1()?;
         Self::require_initial_binding_target_v1(intent, binding)?;
         let caller_context = self.require_registration_caller_v1(caller, binding)?;
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
-            let registration = self.apply_verified_mutation_v1(
+        self.register_and_associate_v1(association, caller_context, |registry| {
+            let registration = registry.apply_verified_mutation_v1(
                 AttestationOperationV1::RegisterEnclave,
                 Some(caller),
                 VerifiedIntentV1 {
@@ -84,13 +79,12 @@ impl TeeRegistry<'_> {
                 },
                 &policy,
             )?;
-            let association = self.apply_validator_node_binding_v1(
-                binding,
-                validator_signature,
-                node_binding_signature,
-            )?;
-            Self::require_atomic_registration_outcome_v1(registration, association, caller_context)
+            Ok(V1OnboardingOutcome {
+                registration,
+                artifact: None,
+            })
         })
+        .map(|outcome| outcome.registration)
     }
 
     pub(crate) fn renew_enclave_after_verifier_for_test(

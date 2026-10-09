@@ -361,21 +361,28 @@ impl TeeRegistry<'_> {
                 "staged successor V1 policy changes attestation mode".into(),
             ));
         }
-        if policy.chain_id != current.chain_id
-            || policy.genesis_hash != current.genesis_hash
-            || policy.predecessor_policy_hash != current_hash
-            || policy.policy_version
-                != current
-                    .policy_version
-                    .checked_add(1)
-                    .ok_or_else(|| PrecompileError::Fatal("V1 policy version overflow".into()))?
-        {
+        let same_chain =
+            policy.chain_id == current.chain_id && policy.genesis_hash == current.genesis_hash;
+        if !same_chain || !Self::policy_promotion_follows_v1(policy, &current, current_hash)? {
             return Err(PrecompileError::Fatal(
                 "staged successor V1 policy no longer follows current policy".into(),
             ));
         }
         Ok(())
     }
+    fn policy_promotion_follows_v1(
+        policy: &TeePolicyV1,
+        current: &TeePolicyV1,
+        current_hash: B256,
+    ) -> Result<bool> {
+        Ok(policy.predecessor_policy_hash == current_hash
+            && policy.policy_version
+                == current
+                    .policy_version
+                    .checked_add(1)
+                    .ok_or_else(|| PrecompileError::Fatal("V1 policy version overflow".into()))?)
+    }
+
     fn validate_successor_identity_v1(policy: &TeePolicyV1, current: &TeePolicyV1) -> Result<()> {
         if policy.chain_id != current.chain_id || policy.genesis_hash != current.genesis_hash {
             return Err(PrecompileError::Revert(

@@ -4,7 +4,10 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
-    list::{ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits},
+    list::{
+        ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits,
+        OrderedListProofTarget,
+    },
     nod_materialization::{
         NodMaterializationBatchV1, NodMaterializationHeadV1, ProtectedNodMaterializationV2,
     },
@@ -131,9 +134,7 @@ fn certified_fixture(count: usize) -> Result<CertifiedFixture, String> {
     let proofs = (0..count)
         .map(|ordinal| {
             streaming_ordered_list_membership_proof(
-                ListKind::NodActions,
-                count as u32,
-                ordinal as u32,
+                OrderedListProofTarget::new(ListKind::NodActions, count as u32, ordinal as u32),
                 encoded.iter(),
                 limits.max_bounded_bytes,
             )

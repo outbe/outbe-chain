@@ -1,11 +1,11 @@
-use outbe_ocomp_protocol::test_utils::{proof_nodes_for_target, storage_trie};
+use outbe_ocomp_protocol::test_utils::{account_mpt_with_proofs as account_trie, storage_trie};
 #[path = "../../../../testing/support/block_num_reader.rs"]
 mod block_num_reader;
 
 use alloy_consensus::{Header, Sealable as _};
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
-use alloy_primitives::{keccak256, Address, BlockHash, BlockNumber, Bytes, B256, U256};
-use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount, KECCAK_EMPTY};
+use alloy_primitives::{BlockHash, BlockNumber, Bytes, B256, U256};
+use alloy_trie::{TrieAccount, KECCAK_EMPTY};
 use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicStorageProofV1};
 use outbe_node::tee_remote_session::{
     admit_anchored_remote_session_v1, admit_local_finalized_remote_session_v1,
@@ -1002,30 +1002,4 @@ impl StateProviderFactory for FinalizedMockProvider {
     fn maybe_pending(&self) -> ProviderResult<Option<StateProviderBox>> {
         self.inner.maybe_pending()
     }
-}
-
-fn account_trie(
-    accounts: &[(Address, TrieAccount)],
-) -> (B256, std::collections::BTreeMap<Address, Vec<Bytes>>) {
-    let targets = accounts
-        .iter()
-        .map(|(address, _)| (*address, Nibbles::unpack(keccak256(address))))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let mut builder = HashBuilder::default()
-        .with_proof_retainer(ProofRetainer::from_iter(targets.values().copied()));
-    let mut leaves = accounts
-        .iter()
-        .map(|(address, account)| (targets[address], alloy_rlp::encode(*account)))
-        .collect::<Vec<_>>();
-    leaves.sort_by_key(|(path, _)| *path);
-    for (path, value) in leaves {
-        builder.add_leaf(path, &value);
-    }
-    let root = builder.root();
-    let retained = builder.take_proof_nodes();
-    let proofs = targets
-        .into_iter()
-        .map(|(address, target)| (address, proof_nodes_for_target(&retained, &target)))
-        .collect();
-    (root, proofs)
 }

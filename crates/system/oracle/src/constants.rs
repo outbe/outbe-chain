@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::math::reference_price::is_coen_iso_market;
-use outbe_primitives::units::{SCALE_1E18, SCALE_1E6_U256};
+use outbe_primitives::units::{SCALE_1E18, SCALE_1E18_U128, SCALE_1E6_U128, SCALE_1E6_U256};
 
 /// Genesis seed for the USD (ISO 840) currency rate: the current SOFR
 /// (Secured Overnight Financing Rate) at scale `1e6`.
@@ -62,6 +62,43 @@ pub(crate) const MAX_VOTE_PRICE_WHOLE: u64 = 1_000_000;
 /// units times the pair scale, so one trillion on COEN/ISO is raw `1e18`.
 pub(crate) const MAX_VOTE_VOLUME_WHOLE: u64 = 1_000_000_000_000;
 
+/// Largest raw price and volume that one vote may quote for a market.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct VoteCaps {
+    pub(crate) max_price: U256,
+    pub(crate) max_volume: U256,
+}
+
+impl VoteCaps {
+    /// Multiplies the whole-unit caps by `scale`. Only const items call it, so
+    /// an overflow is a compile error.
+    const fn scaled(scale: u128) -> Self {
+        Self {
+            max_price: u128_to_u256(MAX_VOTE_PRICE_WHOLE as u128 * scale),
+            max_volume: u128_to_u256(MAX_VOTE_VOLUME_WHOLE as u128 * scale),
+        }
+    }
+}
+
+const fn u128_to_u256(value: u128) -> U256 {
+    U256::from_limbs([value as u64, (value >> 64) as u64, 0, 0])
+}
+
+/// Vote caps of a COEN/ISO market (six-decimal scale).
+const COEN_ISO_VOTE_CAPS: VoteCaps = VoteCaps::scaled(SCALE_1E6_U128);
+
+/// Vote caps of a generic market (decimal18 scale).
+const GENERIC_VOTE_CAPS: VoteCaps = VoteCaps::scaled(SCALE_1E18_U128);
+
+/// Vote caps of `pair`. They use the same market scale as [`reciprocal_scale`].
+pub(crate) fn vote_caps(pair: AddressPair) -> VoteCaps {
+    if is_coen_iso_market(pair) {
+        COEN_ISO_VOTE_CAPS
+    } else {
+        GENERIC_VOTE_CAPS
+    }
+}
+
 /// Price scale used only when taking a reciprocal. Generic Oracle markets keep
 /// their existing decimal18 reciprocal contract.
 pub(crate) fn reciprocal_scale(pair: AddressPair) -> U256 {
@@ -87,7 +124,10 @@ mod tests {
     use alloy_primitives::{address, U256};
     use outbe_primitives::asset_type::AssetType;
 
-    use super::{reciprocal_scale, zero_volume_weight, AddressPair, DAY_TYPE_ISO, DAY_TYPE_PAIR};
+    use super::{
+        reciprocal_scale, vote_caps, zero_volume_weight, AddressPair, DAY_TYPE_ISO, DAY_TYPE_PAIR,
+        MAX_VOTE_PRICE_WHOLE, MAX_VOTE_VOLUME_WHOLE,
+    };
 
     #[test]
     fn the_day_type_pair_key_is_the_coen_iso_840_pair() {
@@ -118,6 +158,22 @@ mod tests {
                 zero_volume_weight(pair),
                 U256::from(1_000_000_000_000_000_000u128)
             );
+        }
+    }
+
+    #[test]
+    fn vote_caps_are_the_whole_unit_caps_at_the_reciprocal_scale() {
+        let token = address!("0x1111111111111111111111111111111111111111");
+        for pair in [
+            AddressPair::new_coen_to(840),
+            AddressPair::new_coen_to(978),
+            AddressPair::from_assets(AssetType::Native, AssetType::ERC20(token)),
+            AddressPair::from_assets(AssetType::ERC20(token), AssetType::IsoCurrency(840)),
+        ] {
+            let caps = vote_caps(pair);
+            let scale = reciprocal_scale(pair);
+            assert_eq!(caps.max_price, U256::from(MAX_VOTE_PRICE_WHOLE) * scale);
+            assert_eq!(caps.max_volume, U256::from(MAX_VOTE_VOLUME_WHOLE) * scale);
         }
     }
 }

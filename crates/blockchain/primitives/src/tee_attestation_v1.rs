@@ -251,6 +251,6 @@ pub use network::{
 };
 pub use policy::{
     PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1,
-    TeePolicyScheduleV1, TeePolicyV1, MAX_TEE_POLICY_SCHEDULE_BYTES,
+    TeePolicyScheduleV1, TeePolicyV1, INTEL_QE_VENDOR_ID, MAX_TEE_POLICY_SCHEDULE_BYTES,
 };
 pub use transition::TransitionKeyReadyProofV1;

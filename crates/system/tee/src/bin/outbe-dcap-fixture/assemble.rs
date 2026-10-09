@@ -1,3 +1,5 @@
+use super::cli::{argument, ensure_empty_directory, parse_u64, write_new};
+use alloy_primitives::hex;
 use std::{
     collections::BTreeMap,
     fs,
@@ -5,47 +7,43 @@ use std::{
 };
 
 use outbe_primitives::tee_attestation_v1::{
-    AttestationEvidenceV1, DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1,
-    RegistrationIntentV1, TeePolicyV1,
+    AttestationEvidenceV1, DcapCollateralComponentV1, DcapEvidenceV1, RegistrationIntentV1,
+    TeePolicyV1,
 };
+use outbe_tee::release_dcap_artifacts::DCAP_COLLATERAL_COMPONENT_FILES;
 use outbe_tee::{
+    dcap_protocol::DcapVerdictV1,
     dcap_v1::{verify_dcap_evidence, DcapRejectCodeV1},
     native_qvl::{verify_quote_native, NativeDcapCollateral},
     quote::parse_quote_measurements,
 };
 use sha2::{Digest, Sha256};
 
-const COMPONENT_FILES: [(DcapCollateralKind, &str); 8] = [
-    (
-        DcapCollateralKind::PckCertificateChain,
-        "pck-certificate-chain.pem0",
-    ),
-    (DcapCollateralKind::PckCrl, "pck.crl.der"),
-    (
-        DcapCollateralKind::PckCrlIssuerChain,
-        "pck-crl-issuer-chain.pem",
-    ),
-    (DcapCollateralKind::RootCaCrl, "root-ca.crl.der"),
-    (DcapCollateralKind::TcbInfo, "tcb-info.json"),
-    (
-        DcapCollateralKind::TcbInfoIssuerChain,
-        "tcb-info-issuer-chain.pem",
-    ),
-    (DcapCollateralKind::QeIdentity, "qe-identity.json"),
-    (
-        DcapCollateralKind::QeIdentityIssuerChain,
-        "qe-identity-issuer-chain.pem",
-    ),
-];
-
 pub fn run(arguments: &[String]) -> Result<(), String> {
+    let capture = load_capture(arguments)?;
+    let collateral = load_and_preflight_collateral(&capture)?;
+    let verified = verify_evidence(&capture, &collateral)?;
+    write_fixture(&capture, &collateral, &verified)
+}
+
+struct CaptureInputs {
+    collateral_dir: PathBuf,
+    output_dir: PathBuf,
+    timestamp: u64,
+    policy_bytes: Vec<u8>,
+    intent_bytes: Vec<u8>,
+    quote: Vec<u8>,
+    policy: TeePolicyV1,
+    intent: RegistrationIntentV1,
+    expected_report_data: [u8; 64],
+}
+
+fn load_capture(arguments: &[String]) -> Result<CaptureInputs, String> {
     let policy_path = PathBuf::from(argument(arguments, "--policy")?);
     let intent_path = PathBuf::from(argument(arguments, "--intent")?);
     let quote_path = PathBuf::from(argument(arguments, "--quote")?);
     let collateral_dir = PathBuf::from(argument(arguments, "--collateral-dir")?);
-    let timestamp = argument(arguments, "--timestamp")?
-        .parse::<u64>()
-        .map_err(|_| "timestamp is not a canonical u64".to_owned())?;
+    let timestamp = parse_u64(&argument(arguments, "--timestamp")?, "timestamp")?;
     let output_dir = PathBuf::from(argument(arguments, "--output-dir")?);
 
     let policy_bytes = read(&policy_path)?;
@@ -63,21 +61,40 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
     if measurements.report_data != expected_report_data {
         return Err("quote REPORT_DATA does not match the canonical intent".to_owned());
     }
+    Ok(CaptureInputs {
+        collateral_dir,
+        output_dir,
+        timestamp,
+        policy_bytes,
+        intent_bytes,
+        quote,
+        policy,
+        intent,
+        expected_report_data,
+    })
+}
 
-    let mut source_components = BTreeMap::new();
-    let components = COMPONENT_FILES
+struct CapturedCollateral {
+    components: Vec<DcapCollateralComponentV1>,
+    files: BTreeMap<&'static str, Vec<u8>>,
+    provenance: Vec<u8>,
+}
+
+fn load_and_preflight_collateral(capture: &CaptureInputs) -> Result<CapturedCollateral, String> {
+    let mut files = BTreeMap::new();
+    let components = DCAP_COLLATERAL_COMPONENT_FILES
         .into_iter()
         .map(|(kind, name)| {
-            let bytes = read(&collateral_dir.join(name))?;
-            source_components.insert(name, bytes.clone());
+            let bytes = read(&capture.collateral_dir.join(name))?;
+            files.insert(name, bytes.clone());
             Ok(DcapCollateralComponentV1 { kind, bytes })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let source_provenance = read(&collateral_dir.join("capture-provenance.json"))?;
-    serde_json::from_slice::<serde_json::Value>(&source_provenance)
+    let provenance = read(&capture.collateral_dir.join("capture-provenance.json"))?;
+    serde_json::from_slice::<serde_json::Value>(&provenance)
         .map_err(|error| format!("decode capture-provenance.json: {error}"))?;
     let component = |name: &str| {
-        source_components
+        files
             .get(name)
             .map(Vec::as_slice)
             .ok_or_else(|| format!("missing captured component {name}"))
@@ -92,9 +109,9 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
         qe_identity: component("qe-identity.json")?,
     };
     let native_preflight = verify_quote_native(
-        &quote,
+        &capture.quote,
         &native_collateral,
-        i64::try_from(timestamp).map_err(|_| "timestamp exceeds i64".to_owned())?,
+        i64::try_from(capture.timestamp).map_err(|_| "timestamp exceeds i64".to_owned())?,
     )
     .map_err(|error| format!("native QVL preflight failed: {error:?}"))?;
     eprintln!("native QVL preflight: {native_preflight:?}");
@@ -106,22 +123,42 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
         native_preflight.supplemental.tcb_evaluation_data_number,
         native_preflight.supplemental.qe_tcb_evaluation_data_number,
     );
-
-    let evidence = DcapEvidenceV1 {
-        intent: intent.clone(),
-        quote: quote.clone(),
+    Ok(CapturedCollateral {
         components,
+        files,
+        provenance,
+    })
+}
+
+struct VerifiedEvidence {
+    evidence_bytes: Vec<u8>,
+    verdict: DcapVerdictV1,
+    verdict_bytes: Vec<u8>,
+    tampered_evidence_bytes: Vec<u8>,
+    tampered_reject: DcapRejectCodeV1,
+    reject_bytes: [u8; 2],
+}
+
+fn verify_evidence(
+    capture: &CaptureInputs,
+    collateral: &CapturedCollateral,
+) -> Result<VerifiedEvidence, String> {
+    let evidence = DcapEvidenceV1 {
+        intent: capture.intent.clone(),
+        quote: capture.quote.clone(),
+        components: collateral.components.clone(),
         transition_key_ready_proof: None,
     };
     let evidence_bytes = AttestationEvidenceV1::Dcap(evidence.clone())
         .encode_canonical()
         .map_err(|error| format!("encode valid AttestationEvidenceV1: {error}"))?;
-    let verdict = verify_dcap_evidence(&evidence, &policy, timestamp).map_err(|code| {
-        format!(
-            "valid evidence rejected with stable code 0x{:04x}",
-            code.code()
-        )
-    })?;
+    let verdict =
+        verify_dcap_evidence(&evidence, &capture.policy, capture.timestamp).map_err(|code| {
+            format!(
+                "valid evidence rejected with stable code 0x{:04x}",
+                code.code()
+            )
+        })?;
     let verdict_bytes = verdict
         .encode_canonical()
         .map_err(|code| format!("encode stable verdict 0x{:04x}", code.code()))?;
@@ -135,7 +172,7 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
     let tampered_evidence_bytes = AttestationEvidenceV1::Dcap(tampered.clone())
         .encode_canonical()
         .map_err(|error| format!("encode tampered AttestationEvidenceV1: {error}"))?;
-    let tampered_reject = verify_dcap_evidence(&tampered, &policy, timestamp)
+    let tampered_reject = verify_dcap_evidence(&tampered, &capture.policy, capture.timestamp)
         .expect_err("tampered quote unexpectedly passed public verifier");
     if tampered_reject != DcapRejectCodeV1::NativeVerificationFailed {
         return Err(format!(
@@ -144,95 +181,109 @@ pub fn run(arguments: &[String]) -> Result<(), String> {
         ));
     }
     let reject_bytes = tampered_reject.code().to_be_bytes();
+    Ok(VerifiedEvidence {
+        evidence_bytes,
+        verdict,
+        verdict_bytes,
+        tampered_evidence_bytes,
+        tampered_reject,
+        reject_bytes,
+    })
+}
 
-    ensure_empty_directory(&output_dir)?;
+fn write_fixture(
+    capture: &CaptureInputs,
+    collateral: &CapturedCollateral,
+    verified: &VerifiedEvidence,
+) -> Result<(), String> {
+    ensure_empty_directory(&capture.output_dir)?;
     let mut artifacts = BTreeMap::new();
-    write_artifact(&output_dir, "policy-v1.bin", &policy_bytes, &mut artifacts)?;
-    write_artifact(&output_dir, "intent-v1.bin", &intent_bytes, &mut artifacts)?;
-    write_artifact(&output_dir, "quote-v3.bin", &quote, &mut artifacts)?;
-    for (name, bytes) in &source_components {
-        write_artifact(&output_dir, name, bytes, &mut artifacts)?;
+    write_artifact(
+        &capture.output_dir,
+        "policy-v1.bin",
+        &capture.policy_bytes,
+        &mut artifacts,
+    )?;
+    write_artifact(
+        &capture.output_dir,
+        "intent-v1.bin",
+        &capture.intent_bytes,
+        &mut artifacts,
+    )?;
+    write_artifact(
+        &capture.output_dir,
+        "quote-v3.bin",
+        &capture.quote,
+        &mut artifacts,
+    )?;
+    for (name, bytes) in &collateral.files {
+        write_artifact(&capture.output_dir, name, bytes, &mut artifacts)?;
     }
     write_artifact(
-        &output_dir,
+        &capture.output_dir,
         "capture-provenance.json",
-        &source_provenance,
+        &collateral.provenance,
         &mut artifacts,
     )?;
     write_artifact(
-        &output_dir,
+        &capture.output_dir,
         "evidence-valid-v1.bin",
-        &evidence_bytes,
+        &verified.evidence_bytes,
         &mut artifacts,
     )?;
     write_artifact(
-        &output_dir,
+        &capture.output_dir,
         "verdict-valid-v1.bin",
-        &verdict_bytes,
+        &verified.verdict_bytes,
         &mut artifacts,
     )?;
     write_artifact(
-        &output_dir,
+        &capture.output_dir,
         "evidence-tampered-quote-v1.bin",
-        &tampered_evidence_bytes,
+        &verified.tampered_evidence_bytes,
         &mut artifacts,
     )?;
     write_artifact(
-        &output_dir,
+        &capture.output_dir,
         "reject-tampered-quote-v1.bin",
-        &reject_bytes,
+        &verified.reject_bytes,
         &mut artifacts,
     )?;
 
+    write_fixture_manifest(capture, verified, artifacts)
+}
+
+fn write_fixture_manifest(
+    capture: &CaptureInputs,
+    verified: &VerifiedEvidence,
+    artifacts: BTreeMap<String, serde_json::Value>,
+) -> Result<(), String> {
     let manifest = serde_json::to_vec_pretty(&serde_json::json!({
         "schema_version": 1,
-        "capture_timestamp": timestamp,
-        "intent_report_data": encode_hex(&expected_report_data),
-        "platform_tcb_status": verdict.platform_tcb_status as u8,
-        "pck_ca": verdict.pck_ca as u8,
-        "fmspc": encode_hex(&verdict.fmspc),
-        "pce_id": verdict.pce_id,
-        "tcb_evaluation_data_number": verdict.tcb_evaluation_data_number,
-        "qe_tcb_evaluation_data_number": verdict.qe_tcb_evaluation_data_number,
-        "collateral_valid_until": verdict.collateral_valid_until,
-        "advisory_ids": verdict.advisory_ids,
-        "negative_reject_code": tampered_reject.code(),
+        "capture_timestamp": capture.timestamp,
+        "intent_report_data": hex::encode(capture.expected_report_data),
+        "platform_tcb_status": verified.verdict.platform_tcb_status as u8,
+        "pck_ca": verified.verdict.pck_ca as u8,
+        "fmspc": hex::encode(verified.verdict.fmspc),
+        "pce_id": verified.verdict.pce_id,
+        "tcb_evaluation_data_number": verified.verdict.tcb_evaluation_data_number,
+        "qe_tcb_evaluation_data_number": verified.verdict.qe_tcb_evaluation_data_number,
+        "collateral_valid_until": verified.verdict.collateral_valid_until,
+        "advisory_ids": &verified.verdict.advisory_ids,
+        "negative_reject_code": verified.tampered_reject.code(),
         "artifacts": artifacts,
     }))
     .map_err(|error| format!("encode fixture manifest: {error}"))?;
     let mut manifest_with_newline = manifest;
     manifest_with_newline.push(b'\n');
     write_new(
-        &output_dir.join("fixture-manifest-v1.json"),
+        &capture.output_dir.join("fixture-manifest-v1.json"),
         &manifest_with_newline,
     )
 }
 
-fn argument(arguments: &[String], name: &str) -> Result<String, String> {
-    let index = arguments
-        .iter()
-        .position(|argument| argument == name)
-        .ok_or_else(|| format!("missing {name}"))?;
-    arguments
-        .get(index + 1)
-        .cloned()
-        .ok_or_else(|| format!("missing value for {name}"))
-}
-
 fn read(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))
-}
-
-fn ensure_empty_directory(path: &Path) -> Result<(), String> {
-    if path.exists() {
-        let mut entries =
-            fs::read_dir(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-        if entries.next().is_some() {
-            return Err(format!("output directory is not empty: {}", path.display()));
-        }
-        return Ok(());
-    }
-    fs::create_dir_all(path).map_err(|error| format!("create {}: {error}", path.display()))
 }
 
 fn write_artifact(
@@ -246,31 +297,8 @@ fn write_artifact(
         name.to_owned(),
         serde_json::json!({
             "size": value.len(),
-            "sha256": encode_hex(&Sha256::digest(value)),
+            "sha256": hex::encode(Sha256::digest(value)),
         }),
     );
     Ok(())
-}
-
-fn write_new(path: &Path, value: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-
-    let mut output = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| format!("create {}: {error}", path.display()))?;
-    output
-        .write_all(value)
-        .map_err(|error| format!("write {}: {error}", path.display()))
-}
-
-fn encode_hex(value: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(value.len() * 2);
-    for byte in value {
-        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
-    }
-    encoded
 }

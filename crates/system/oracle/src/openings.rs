@@ -112,46 +112,84 @@ fn checked_pair(base_word: U256, quote_word: U256) -> AddressPair {
     )
 }
 
+/// Round-one values that size and address round two.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleOpeningCountsV1 {
+    /// Length of the on-chain reference-currency list.
+    pub reference_currency_count: u32,
+    /// Parallel to the reference ISOs: the registry index of each subject pair,
+    /// `0` when that pair is not registered.
+    pub pair_indices: Vec<u32>,
+    pub scurve_count: u32,
+    pub scurve_oldest: u32,
+}
+
+impl OracleOpeningCountsV1 {
+    /// Checks the counts against `reference_isos` and the caps. Returns the
+    /// number of active S-curve entries.
+    fn active_scurve_count(&self, reference_isos: &[u16]) -> Result<u32, OracleOcompError> {
+        if self.pair_indices.len() != reference_isos.len() {
+            return Err(OracleOcompError::PairIndexCountMismatch {
+                actual: self.pair_indices.len(),
+                expected: reference_isos.len(),
+            });
+        }
+        if self.reference_currency_count > MAX_OCOMP_REFERENCE_CURRENCIES {
+            return Err(OracleOcompError::ReferenceCurrencyCountExceedsCap {
+                actual: self.reference_currency_count,
+                cap: MAX_OCOMP_REFERENCE_CURRENCIES,
+            });
+        }
+        let active_scurve_count = self.scurve_count.checked_sub(self.scurve_oldest).ok_or(
+            OracleOcompError::ScurveOldestExceedsCount {
+                oldest: self.scurve_oldest,
+                count: self.scurve_count,
+            },
+        )?;
+        if active_scurve_count > MAX_OCOMP_ACTIVE_SCURVE_ENTRIES {
+            return Err(OracleOcompError::ActiveScurveCountExceedsCap {
+                actual: active_scurve_count,
+                cap: MAX_OCOMP_ACTIVE_SCURVE_ENTRIES,
+            });
+        }
+        Ok(active_scurve_count)
+    }
+}
+
 /// Round two: the full plan, addressed by the values round one returned.
 ///
-/// `pair_indices` is parallel to `reference_isos`. Entry `i` is the registry
-/// index `pair_to_index` holds for `COEN/reference_isos[i]`, as read from the
-/// round-one opening. A zero index means the pair is unregistered. That pair has
-/// no value slot to open, and `evaluate_oracle_opening_v1` rejects it.
+/// `counts.pair_indices` is parallel to `reference_isos`. Entry `i` is the
+/// registry index `pair_to_index` holds for `COEN/reference_isos[i]`, as read
+/// from the round-one opening. A zero index means the pair is unregistered. That
+/// pair has no value slot to open, and `evaluate_oracle_opening_v1` rejects it.
 pub fn oracle_opening_slot_plan_v1(
     worldwide_day: WorldwideDay,
     reference_isos: &[u16],
-    reference_currency_count: u32,
-    pair_indices: &[u32],
-    scurve_count: u32,
-    scurve_oldest: u32,
+    counts: &OracleOpeningCountsV1,
 ) -> Result<OracleOpeningSlotPlanV1, OracleOcompError> {
     validate_reference_isos(reference_isos)?;
-    if pair_indices.len() != reference_isos.len() {
-        return Err(OracleOcompError::PairIndexCountMismatch {
-            actual: pair_indices.len(),
-            expected: reference_isos.len(),
-        });
-    }
-    if reference_currency_count > MAX_OCOMP_REFERENCE_CURRENCIES {
-        return Err(OracleOcompError::ReferenceCurrencyCountExceedsCap {
-            actual: reference_currency_count,
-            cap: MAX_OCOMP_REFERENCE_CURRENCIES,
-        });
-    }
-    let active_scurve_count = scurve_count.checked_sub(scurve_oldest).ok_or(
-        OracleOcompError::ScurveOldestExceedsCount {
-            oldest: scurve_oldest,
-            count: scurve_count,
-        },
-    )?;
-    if active_scurve_count > MAX_OCOMP_ACTIVE_SCURVE_ENTRIES {
-        return Err(OracleOcompError::ActiveScurveCountExceedsCap {
-            actual: active_scurve_count,
-            cap: MAX_OCOMP_ACTIVE_SCURVE_ENTRIES,
-        });
-    }
+    let active_scurve_count = counts.active_scurve_count(reference_isos)?;
+    let slots = opening_slots(worldwide_day, reference_isos, counts, active_scurve_count)?;
 
+    Ok(OracleOpeningSlotPlanV1 {
+        worldwide_day,
+        reference_isos: reference_isos.to_vec(),
+        reference_currency_count: counts.reference_currency_count,
+        pair_indices: counts.pair_indices.clone(),
+        scurve_count: counts.scurve_count,
+        scurve_oldest: counts.scurve_oldest,
+        slots,
+    })
+}
+
+/// The round-two slots in canonical order: the reference-currency list, the
+/// pair-index words, the WorldwideDay VWAP words, and the active S-curve words.
+fn opening_slots(
+    worldwide_day: WorldwideDay,
+    reference_isos: &[u16],
+    counts: &OracleOpeningCountsV1,
+    active_scurve_count: u32,
+) -> Result<Vec<B256>, OracleOcompError> {
     let scurve_slots = usize::from(u16::try_from(active_scurve_count).map_err(|_| {
         OracleOcompError::ActiveScurveCountExceedsCap {
             actual: active_scurve_count,
@@ -163,14 +201,14 @@ pub fn oracle_opening_slot_plan_v1(
         reference_isos
             .len()
             .saturating_mul(2)
-            .saturating_add(reference_currency_count as usize)
+            .saturating_add(counts.reference_currency_count as usize)
             .saturating_add(4)
             .saturating_add(scurve_slots),
     );
     // The on-chain reference-currency list, so the verifier can prove every
     // subject ISO is actually registered.
     slots.push(direct_slot(REFERENCE_CURRENCIES_SLOT));
-    for index in 0..reference_currency_count {
+    for index in 0..counts.reference_currency_count {
         slots.push(vec_element_slot(REFERENCE_CURRENCIES_SLOT, index));
     }
     let mut seen = BTreeSet::new();
@@ -182,7 +220,12 @@ pub fn oracle_opening_slot_plan_v1(
     slots.push(mapping_slot(worldwide_day, WWD_VWAP_EXISTS_BASE_SLOT));
     // One value word per registered subject pair, addressed by its registry
     // index. Unregistered pairs (index 0) have nothing to open.
-    for index in pair_indices.iter().copied().filter(|index| *index != 0) {
+    for index in counts
+        .pair_indices
+        .iter()
+        .copied()
+        .filter(|index| *index != 0)
+    {
         slots.push(nested_mapping_slot(
             worldwide_day,
             WWD_VWAP_VALUE_BASE_SLOT,
@@ -191,23 +234,37 @@ pub fn oracle_opening_slot_plan_v1(
     }
     slots.push(direct_slot(SCURVE_COUNT_SLOT));
     slots.push(direct_slot(SCURVE_OLDEST_SLOT));
-    for index in scurve_oldest..scurve_count {
+    for index in counts.scurve_oldest..counts.scurve_count {
         let pair_slot = mapping_slot(index, SCURVE_PAIR_BASE_SLOT);
         slots.push(pair_slot);
         slots.push(next_slot(pair_slot));
         slots.push(mapping_slot(index, SCURVE_PEAK_DAY_BASE_SLOT));
         slots.push(mapping_slot(index, SCURVE_PEAK_PRICE_BASE_SLOT));
     }
+    Ok(slots)
+}
 
-    Ok(OracleOpeningSlotPlanV1 {
-        worldwide_day,
-        reference_isos: reference_isos.to_vec(),
-        reference_currency_count,
-        pair_indices: pair_indices.to_vec(),
-        scurve_count,
-        scurve_oldest,
-        slots,
-    })
+/// Opened slot values, keyed by slot.
+struct SlotValues(BTreeMap<B256, U256>);
+
+impl SlotValues {
+    /// Indexes `ordered_slots`. Rejects a slot that occurs twice.
+    fn new(ordered_slots: &[(B256, U256)]) -> Result<Self, OracleOcompError> {
+        let mut values = BTreeMap::new();
+        for (slot, value) in ordered_slots {
+            if values.insert(*slot, *value).is_some() {
+                return Err(OracleOcompError::DuplicateSlot(*slot));
+            }
+        }
+        Ok(Self(values))
+    }
+
+    fn at(&self, slot: B256) -> Result<U256, OracleOcompError> {
+        self.0
+            .get(&slot)
+            .copied()
+            .ok_or(OracleOcompError::MissingSlot(slot))
+    }
 }
 
 pub fn evaluate_oracle_opening_v1(
@@ -216,40 +273,9 @@ pub fn evaluate_oracle_opening_v1(
     ordered_slots: &[(B256, U256)],
 ) -> Result<OracleOpeningEvaluationV1, OracleOcompError> {
     let count_plan = oracle_count_slot_plan_v1(worldwide_day, reference_isos)?;
-    let mut values = BTreeMap::new();
-    for (slot, value) in ordered_slots {
-        if values.insert(*slot, *value).is_some() {
-            return Err(OracleOcompError::DuplicateSlot(*slot));
-        }
-    }
-    let value_at = |slot: B256| {
-        values
-            .get(&slot)
-            .copied()
-            .ok_or(OracleOcompError::MissingSlot(slot))
-    };
-    let reference_currency_count =
-        checked_u32(value_at(count_plan.slots[0])?, "reference currency count")?;
-    let worldwide_day_exists = value_at(count_plan.slots[1])?;
-    if worldwide_day_exists > U256::from(1) {
-        return Err(OracleOcompError::InvalidWorldwideDayExists(
-            worldwide_day_exists,
-        ));
-    }
-    let scurve_count = checked_u32(value_at(count_plan.slots[2])?, "S-curve count")?;
-    let scurve_oldest = checked_u32(value_at(count_plan.slots[3])?, "S-curve oldest index")?;
-    let mut pair_indices = Vec::with_capacity(reference_isos.len());
-    for slot in count_plan.slots.iter().skip(ORACLE_COUNT_SLOTS_V1) {
-        pair_indices.push(checked_u32(value_at(*slot)?, "reference pair index")?);
-    }
-    let plan = oracle_opening_slot_plan_v1(
-        worldwide_day,
-        reference_isos,
-        reference_currency_count,
-        &pair_indices,
-        scurve_count,
-        scurve_oldest,
-    )?;
+    let values = SlotValues::new(ordered_slots)?;
+    let (counts, worldwide_day_exists) = read_round_one(&count_plan, &values)?;
+    let plan = oracle_opening_slot_plan_v1(worldwide_day, reference_isos, &counts)?;
     if ordered_slots
         .iter()
         .map(|(slot, _)| *slot)
@@ -258,31 +284,11 @@ pub fn evaluate_oracle_opening_v1(
         return Err(OracleOcompError::NonCanonicalSlotSequence);
     }
 
-    let mut _scurves = Vec::with_capacity((scurve_count - scurve_oldest) as usize);
-    for index in scurve_oldest..scurve_count {
-        let pair_slot = mapping_slot(index, SCURVE_PAIR_BASE_SLOT);
-        _scurves.push((
-            checked_pair(value_at(pair_slot)?, value_at(next_slot(pair_slot))?),
-            checked_u64(
-                value_at(mapping_slot(index, SCURVE_PEAK_DAY_BASE_SLOT))?,
-                "S-curve peak day",
-            )?,
-            value_at(mapping_slot(index, SCURVE_PEAK_PRICE_BASE_SLOT))?,
-        ));
-    }
-
-    // Every subject ISO must be a registered on-chain reference currency.
-    let mut registered = BTreeSet::new();
-    for index in 0..reference_currency_count {
-        let word = value_at(vec_element_slot(REFERENCE_CURRENCIES_SLOT, index))?;
-        registered.insert(checked_u16(word, "reference currency ISO")?);
-    }
-    if let Some(iso) = reference_isos.iter().find(|iso| !registered.contains(iso)) {
-        return Err(OracleOcompError::IsoNotAReferenceCurrency { iso: *iso });
-    }
+    check_scurve_words(&counts, &values)?;
+    require_reference_currencies(reference_isos, counts.reference_currency_count, &values)?;
 
     let mut ordered_entry_prices = Vec::with_capacity(reference_isos.len());
-    for (iso, index) in reference_isos.iter().copied().zip(pair_indices) {
+    for (iso, index) in reference_isos.iter().copied().zip(counts.pair_indices) {
         // The proven index is both the registration witness and the key: a zero
         // means the verifier is pricing an unregistered pair.
         if index == 0 {
@@ -294,7 +300,7 @@ pub fn evaluate_oracle_opening_v1(
         let vwap = if worldwide_day_exists.is_zero() {
             U256::ZERO
         } else {
-            value_at(nested_mapping_slot(
+            values.at(nested_mapping_slot(
                 worldwide_day,
                 WWD_VWAP_VALUE_BASE_SLOT,
                 index,
@@ -305,6 +311,70 @@ pub fn evaluate_oracle_opening_v1(
     Ok(OracleOpeningEvaluationV1 {
         ordered_entry_prices,
     })
+}
+
+/// Reads the round-one counters and pair indices. Returns them with the
+/// WorldwideDay `exists` word, which must be 0 or 1.
+fn read_round_one(
+    count_plan: &OracleCountSlotPlanV1,
+    values: &SlotValues,
+) -> Result<(OracleOpeningCountsV1, U256), OracleOcompError> {
+    let reference_currency_count =
+        checked_u32(values.at(count_plan.slots[0])?, "reference currency count")?;
+    let worldwide_day_exists = values.at(count_plan.slots[1])?;
+    if worldwide_day_exists > U256::from(1) {
+        return Err(OracleOcompError::InvalidWorldwideDayExists(
+            worldwide_day_exists,
+        ));
+    }
+    let scurve_count = checked_u32(values.at(count_plan.slots[2])?, "S-curve count")?;
+    let scurve_oldest = checked_u32(values.at(count_plan.slots[3])?, "S-curve oldest index")?;
+    let mut pair_indices = Vec::with_capacity(count_plan.reference_isos.len());
+    for slot in count_plan.slots.iter().skip(ORACLE_COUNT_SLOTS_V1) {
+        pair_indices.push(checked_u32(values.at(*slot)?, "reference pair index")?);
+    }
+    let counts = OracleOpeningCountsV1 {
+        reference_currency_count,
+        pair_indices,
+        scurve_count,
+        scurve_oldest,
+    };
+    Ok((counts, worldwide_day_exists))
+}
+
+/// Checks that every active S-curve entry opens to a well-formed pair, peak
+/// day and peak price.
+fn check_scurve_words(
+    counts: &OracleOpeningCountsV1,
+    values: &SlotValues,
+) -> Result<(), OracleOcompError> {
+    for index in counts.scurve_oldest..counts.scurve_count {
+        let pair_slot = mapping_slot(index, SCURVE_PAIR_BASE_SLOT);
+        let _pair = checked_pair(values.at(pair_slot)?, values.at(next_slot(pair_slot))?);
+        checked_u64(
+            values.at(mapping_slot(index, SCURVE_PEAK_DAY_BASE_SLOT))?,
+            "S-curve peak day",
+        )?;
+        let _peak_price = values.at(mapping_slot(index, SCURVE_PEAK_PRICE_BASE_SLOT))?;
+    }
+    Ok(())
+}
+
+/// Every subject ISO must be a registered on-chain reference currency.
+fn require_reference_currencies(
+    reference_isos: &[u16],
+    reference_currency_count: u32,
+    values: &SlotValues,
+) -> Result<(), OracleOcompError> {
+    let mut registered = BTreeSet::new();
+    for index in 0..reference_currency_count {
+        let word = values.at(vec_element_slot(REFERENCE_CURRENCIES_SLOT, index))?;
+        registered.insert(checked_u16(word, "reference currency ISO")?);
+    }
+    if let Some(iso) = reference_isos.iter().find(|iso| !registered.contains(iso)) {
+        return Err(OracleOcompError::IsoNotAReferenceCurrency { iso: *iso });
+    }
+    Ok(())
 }
 
 fn checked_u32(value: U256, field: &'static str) -> Result<u32, OracleOcompError> {

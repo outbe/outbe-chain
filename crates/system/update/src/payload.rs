@@ -92,12 +92,12 @@ impl ScheduleUpdatePayload {
             .max_allocation_bytes
             .checked_mul(2)
             .ok_or(UpdateError::InvalidOcompSuccessor)?;
-        if encoded.is_empty()
-            || encoded.len() > maximum_hex_len
-            || encoded.len() % 2 != 0
-            || !encoded
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        if encoded.is_empty() || encoded.len() > maximum_hex_len || encoded.len() % 2 != 0 {
+            return Err(UpdateError::InvalidOcompSuccessor);
+        }
+        if !encoded
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
             return Err(UpdateError::InvalidOcompSuccessor);
         }

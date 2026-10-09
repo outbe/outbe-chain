@@ -392,9 +392,11 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
             storage.clone(),
             Address::ZERO,
             outbe_oracle::api::DAY_TYPE_PAIR,
-            U256::from(1_000_000u64),
-            0,
-            0,
+            outbe_oracle::api::RateObservation {
+                rate: U256::from(1_000_000u64),
+                block_number: 0,
+                timestamp: 0,
+            },
         )
         .unwrap();
     });
@@ -797,9 +799,11 @@ pub(super) fn seed_registered_active_validator(
         storage,
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        U256::from(1_000_000u64),
-        0,
-        0,
+        outbe_oracle::api::RateObservation {
+            rate: U256::from(1_000_000u64),
+            block_number: 0,
+            timestamp: 0,
+        },
     )
     .unwrap();
 }
@@ -852,9 +856,11 @@ fn seed_registered_active_validator_with_registration(
         storage,
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        U256::from(1_000_000u64),
-        0,
-        0,
+        outbe_oracle::api::RateObservation {
+            rate: U256::from(1_000_000u64),
+            block_number: 0,
+            timestamp: 0,
+        },
     )
     .unwrap();
 }

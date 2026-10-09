@@ -1,22 +1,18 @@
 use alloy_primitives::{address, Address, U256};
 
-use outbe_primitives::{
-    error::PrecompileError,
-    stablecoin_fork::{
-        MAX_PENDING_PUBLIC_BONDED_PROPOSALS, STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP,
-    },
+use outbe_primitives::stablecoin_fork::{
+    MAX_PENDING_PUBLIC_BONDED_PROPOSALS, STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP,
 };
 
-use crate::api::get_proposal;
 use crate::constants::{MAX_PENDING_PROPOSALS, MAX_PENDING_PROPOSALS_PER_VALIDATOR};
 use crate::schema::ProposalStatus;
 use crate::schema::Vote;
 use crate::state::{active_validator_addresses, calculate_vote_tally, VoteTally};
-use outbe_primitives::addresses::UPDATE_ADDRESS;
 
 use super::{
-    create_proposal_test, empty_update_payload, register_active_validator,
-    register_pending_validator, with_vote, VoteTestExt, PENDING_VOTER, PROPOSER, VOTER_A, VOTER_B,
+    approve_in_order, assert_proposal_view, assert_reverts_with, create_update_proposal,
+    proposal_status, register_active_validator, register_pending_validator, with_governance,
+    with_update_proposal, with_vote, VoteTestExt, PENDING_VOTER, PROPOSER, VOTER_A, VOTER_B,
 };
 
 const OUTSIDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead");
@@ -38,44 +34,22 @@ fn stablecoin_public_cap_preserves_48_vote_slots() {
 
 #[test]
 fn create_proposal_rejects_non_validator() {
-    with_vote(|storage| {
-        let mut vote = Vote::new(storage.clone());
+    with_governance(|_storage, vote| {
         let current = 10u64;
-        let err = create_proposal_test(
-            &mut vote,
-            OUTSIDER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("not an active validator")
-        ));
+        assert_reverts_with(
+            create_update_proposal(vote, OUTSIDER, current),
+            "not an active validator",
+        );
     });
 }
 
 #[test]
 fn cast_vote_rejects_non_validator() {
-    with_vote(|storage| {
-        let mut vote = Vote::new(storage.clone());
-        let current = 10u64;
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap();
-        let err = vote
-            .cast_vote_approve(proposal_id, OUTSIDER, true, 11)
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("not an active validator")
-        ));
+    with_update_proposal(10, |_storage, vote, proposal_id, _| {
+        assert_reverts_with(
+            vote.cast_vote_approve(proposal_id, OUTSIDER, true, 11),
+            "not an active validator",
+        );
     });
 }
 
@@ -85,22 +59,12 @@ fn pending_validator_cannot_cast_vote() {
         register_pending_validator(storage.clone(), PENDING_VOTER, 4);
         let mut vote = Vote::new(storage.clone());
         let current = 50u64;
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap();
+        let proposal_id = create_update_proposal(&mut vote, PROPOSER, current).unwrap();
 
-        let error = vote
-            .cast_vote_approve(proposal_id, PENDING_VOTER, true, current + 1)
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            PrecompileError::Revert(message) if message.contains("not an active validator")
-        ));
+        assert_reverts_with(
+            vote.cast_vote_approve(proposal_id, PENDING_VOTER, true, current + 1),
+            "not an active validator",
+        );
         assert!(vote.read_proposal_voters(proposal_id).unwrap().is_empty());
     });
 }
@@ -111,18 +75,10 @@ fn pending_validator_cannot_create_proposal() {
         register_pending_validator(storage.clone(), PENDING_VOTER, 4);
         let mut vote = Vote::new(storage.clone());
         let current = 10u64;
-        let err = create_proposal_test(
-            &mut vote,
-            PENDING_VOTER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("not an active validator")
-        ));
+        assert_reverts_with(
+            create_update_proposal(&mut vote, PENDING_VOTER, current),
+            "not an active validator",
+        );
     });
 }
 
@@ -132,14 +88,7 @@ fn pending_validator_cannot_add_a_ballot_to_the_tally() {
         register_pending_validator(storage.clone(), PENDING_VOTER, 4);
         let mut vote = Vote::new(storage.clone());
         let current = 60u64;
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap();
+        let proposal_id = create_update_proposal(&mut vote, PROPOSER, current).unwrap();
 
         assert!(vote
             .cast_vote_approve(proposal_id, PENDING_VOTER, true, current + 1)
@@ -152,139 +101,65 @@ fn pending_validator_cannot_add_a_ballot_to_the_tally() {
         let tally = calculate_vote_tally(&vote, &record, &active).unwrap();
         assert_eq!(tally, VoteTally { yes: 1, no: 0 });
 
-        let info = get_proposal(storage, proposal_id).unwrap().unwrap();
-        assert_eq!(info.state, VoteTally { yes: 1, no: 0 });
-        assert_eq!(info.voters_count, 1);
+        assert_proposal_view(storage, proposal_id, VoteTally { yes: 1, no: 0 }, 1);
     });
 }
 
 #[test]
 fn cast_vote_rejects_after_deadline() {
-    with_vote(|storage| {
-        let mut vote = Vote::new(storage.clone());
-        let current = 100u64;
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap();
+    with_update_proposal(100, |_storage, vote, proposal_id, _| {
         let record = vote.proposals.get(proposal_id).unwrap().unwrap();
         let after_deadline = record.voting_deadline_height + 1;
-        let err = vote
-            .cast_vote_approve(proposal_id, VOTER_A, true, after_deadline)
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("voting window is closed")
-        ));
+        assert_reverts_with(
+            vote.cast_vote_approve(proposal_id, VOTER_A, true, after_deadline),
+            "voting window is closed",
+        );
     });
 }
 
 #[test]
 fn cast_vote_rejects_when_not_pending() {
-    with_vote(|storage| {
-        let mut vote = Vote::new(storage.clone());
-        let current = 200u64;
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap();
+    with_update_proposal(200, |_storage, vote, proposal_id, current| {
         vote.cast_vote_approve(proposal_id, VOTER_A, true, current + 1)
             .unwrap();
 
         let deadline = current + crate::constants::VOTING_WINDOW_BLOCKS + 1;
         vote.process_begin_block_test(deadline).unwrap();
 
-        let record = vote.proposals.get(proposal_id).unwrap().unwrap();
-        assert_ne!(record.proposal_status().unwrap(), ProposalStatus::Pending);
+        assert_ne!(proposal_status(vote, proposal_id), ProposalStatus::Pending);
 
-        let err = vote
-            .cast_vote_approve(proposal_id, VOTER_B, true, deadline + 1)
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("not pending")
-        ));
+        assert_reverts_with(
+            vote.cast_vote_approve(proposal_id, VOTER_B, true, deadline + 1),
+            "not pending",
+        );
     });
 }
 
 #[test]
 fn begin_block_does_not_tally_at_exact_deadline() {
-    with_vote(|storage| {
-        let mut vote = Vote::new(storage.clone());
-        let current = 300u64;
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_A, true, current + 1)
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_B, true, current + 2)
-            .unwrap();
+    with_update_proposal(300, |_storage, vote, proposal_id, current| {
+        approve_in_order(vote, proposal_id, &[VOTER_A, VOTER_B], current + 1).unwrap();
 
         let record = vote.proposals.get(proposal_id).unwrap().unwrap();
         let deadline = record.voting_deadline_height;
         vote.process_begin_block_test(deadline).unwrap();
-        assert_eq!(
-            vote.proposals
-                .get(proposal_id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
-            ProposalStatus::Pending
-        );
+        assert_eq!(proposal_status(vote, proposal_id), ProposalStatus::Pending);
 
         vote.process_begin_block_test(deadline + 1).unwrap();
-        assert_ne!(
-            vote.proposals
-                .get(proposal_id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
-            ProposalStatus::Pending
-        );
+        assert_ne!(proposal_status(vote, proposal_id), ProposalStatus::Pending);
     });
 }
 
 #[test]
 fn max_pending_proposals_per_validator_is_enforced() {
-    with_vote(|storage| {
-        let mut vote = Vote::new(storage.clone());
+    with_governance(|_storage, vote| {
         let current = 350u64;
-        create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap();
+        create_update_proposal(vote, PROPOSER, current).unwrap();
 
-        let err = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current + 1),
-            current + 1,
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("validator has too many pending")
-        ));
+        assert_reverts_with(
+            create_update_proposal(vote, PROPOSER, current + 1),
+            "validator has too many pending",
+        );
         assert_eq!(
             vote.pending_proposal_count_by_proposer(PROPOSER).unwrap(),
             MAX_PENDING_PROPOSALS_PER_VALIDATOR
@@ -294,42 +169,19 @@ fn max_pending_proposals_per_validator_is_enforced() {
 
 #[test]
 fn other_validator_can_create_while_proposer_has_pending() {
-    with_vote(|storage| {
-        let mut vote = Vote::new(storage.clone());
+    with_governance(|_storage, vote| {
         let current = 360u64;
-        create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap();
+        create_update_proposal(vote, PROPOSER, current).unwrap();
 
-        create_proposal_test(
-            &mut vote,
-            VOTER_A,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current + 1),
-            current + 1,
-        )
-        .unwrap();
+        create_update_proposal(vote, VOTER_A, current + 1).unwrap();
     });
 }
 
 #[test]
 fn proposer_can_create_after_pending_proposal_is_tallied() {
-    with_vote(|storage| {
-        let mut vote = Vote::new(storage.clone());
+    with_governance(|_storage, vote| {
         let current = 370u64;
-        create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current),
-            current,
-        )
-        .unwrap();
+        create_update_proposal(vote, PROPOSER, current).unwrap();
 
         let deadline = current + crate::constants::VOTING_WINDOW_BLOCKS + 1;
         vote.process_begin_block_test(deadline).unwrap();
@@ -337,21 +189,13 @@ fn proposer_can_create_after_pending_proposal_is_tallied() {
         let record = vote.proposals.get(U256::from(1)).unwrap().unwrap();
         assert_ne!(record.proposal_status().unwrap(), ProposalStatus::Pending);
 
-        create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(deadline + 1),
-            deadline + 1,
-        )
-        .unwrap();
+        create_update_proposal(vote, PROPOSER, deadline + 1).unwrap();
     });
 }
 
 #[test]
 fn max_pending_proposals_is_enforced() {
-    with_vote(|storage| {
-        let mut vote = Vote::new(storage.clone());
+    with_governance(|storage, vote| {
         let current = 400u64;
         for i in 0..MAX_PENDING_PROPOSALS {
             let proposer = match i {
@@ -364,14 +208,7 @@ fn max_pending_proposals_is_enforced() {
                     addr
                 }
             };
-            create_proposal_test(
-                &mut vote,
-                proposer,
-                UPDATE_ADDRESS,
-                &empty_update_payload(current + i as u64),
-                current + i as u64,
-            )
-            .unwrap();
+            create_update_proposal(vote, proposer, current + i as u64).unwrap();
         }
         let overflow_proposer = extra_validator_addr(MAX_PENDING_PROPOSALS);
         register_active_validator(
@@ -379,17 +216,13 @@ fn max_pending_proposals_is_enforced() {
             overflow_proposer,
             (MAX_PENDING_PROPOSALS + 16) as u8,
         );
-        let err = create_proposal_test(
-            &mut vote,
-            overflow_proposer,
-            UPDATE_ADDRESS,
-            &empty_update_payload(current + MAX_PENDING_PROPOSALS as u64),
-            current + MAX_PENDING_PROPOSALS as u64,
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("too many pending")
-        ));
+        assert_reverts_with(
+            create_update_proposal(
+                vote,
+                overflow_proposer,
+                current + MAX_PENDING_PROPOSALS as u64,
+            ),
+            "too many pending",
+        );
     });
 }

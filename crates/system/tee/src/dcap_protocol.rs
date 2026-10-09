@@ -7,6 +7,8 @@
 use alloy_primitives::{keccak256, B256};
 use outbe_primitives::tee_attestation_v1::{MAX_ATTESTATION_EVIDENCE_BYTES, MAX_TEE_POLICY_BYTES};
 
+use crate::byte_cursor::ByteCursor;
+
 const DCAP_VERIFICATION_REQUEST_DOMAIN_V1: &[u8] = b"outbe/tee/dcap-verification-request/v1";
 const DCAP_ONBOARDING_REQUEST_DOMAIN_V1: &[u8] = b"outbe/tee/dcap-onboarding-request/v1";
 const DCAP_VERIFICATION_ATTESTATION_DOMAIN_V1: &[u8] =
@@ -79,7 +81,7 @@ impl DcapOnboardingContextV1 {
         if input.len() != DCAP_ONBOARDING_CONTEXT_BYTES {
             return Err(DcapRejectCodeV1::NativeOutputMalformed);
         }
-        let mut decoder = Decoder::new(input);
+        let mut decoder = canonical_decoder(input);
         if decoder.u8()? != 1 {
             return Err(DcapRejectCodeV1::NativeOutputMalformed);
         }
@@ -93,8 +95,8 @@ impl DcapOnboardingContextV1 {
             policy_hash: B256::from(decoder.array::<32>()?),
             recipient_x25519: decoder.array()?,
             tribute_offer_public: decoder.array()?,
-            key_epoch: decoder.u64()?,
-            tribute_offer_epoch: decoder.u64()?,
+            key_epoch: decoder.u64_be()?,
+            tribute_offer_epoch: decoder.u64_be()?,
         };
         decoder.finish()?;
         if value.binding_id.is_zero() || value.policy_hash.is_zero() {
@@ -151,7 +153,7 @@ impl DcapOnboardingArtifactV1 {
         {
             return Err(DcapRejectCodeV1::NativeOutputMalformed);
         }
-        let mut decoder = Decoder::new(input);
+        let mut decoder = canonical_decoder(input);
         if decoder.u8()? != 1 {
             return Err(DcapRejectCodeV1::NativeOutputMalformed);
         }
@@ -159,7 +161,7 @@ impl DcapOnboardingArtifactV1 {
             decoder.take(DCAP_ONBOARDING_CONTEXT_BYTES)?,
         )?;
         let nonce = decoder.array()?;
-        let ciphertext_len = usize::from(decoder.u16()?);
+        let ciphertext_len = usize::from(decoder.u16_be()?);
         if ciphertext_len < 16 {
             return Err(DcapRejectCodeV1::NativeOutputMalformed);
         }
@@ -247,14 +249,14 @@ impl DcapVerdictV1 {
         if input.len() > MAX_DCAP_VERDICT_BYTES {
             return Err(DcapRejectCodeV1::NativeOutputMalformed);
         }
-        let mut decoder = Decoder::new(input);
+        let mut decoder = canonical_decoder(input);
         if decoder.u8()? != 1 {
             return Err(DcapRejectCodeV1::NativeOutputMalformed);
         }
         let mrenclave = B256::from_slice(decoder.take(32)?);
         let mrsigner = B256::from_slice(decoder.take(32)?);
-        let isv_prod_id = decoder.u16()?;
-        let isv_svn = decoder.u16()?;
+        let isv_prod_id = decoder.u16_be()?;
+        let isv_svn = decoder.u16_be()?;
         let pck_ca = match decoder.u8()? {
             0x01 => DcapPckCaV1::Processor,
             0x02 => DcapPckCaV1::Platform,
@@ -264,20 +266,20 @@ impl DcapVerdictV1 {
             .take(6)?
             .try_into()
             .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?;
-        let pce_id = decoder.u16()?;
+        let pce_id = decoder.u16_be()?;
         let platform_tcb_status = match decoder.u8()? {
             0x01 => DcapPlatformTcbStatusV1::UpToDate,
             0x02 => DcapPlatformTcbStatusV1::SWHardeningNeeded,
             0x03 => DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded,
             _ => return Err(DcapRejectCodeV1::NativeOutputMalformed),
         };
-        let tcb_evaluation_data_number = decoder.u32()?;
-        let qe_tcb_evaluation_data_number = decoder.u32()?;
-        let collateral_valid_until = decoder.u64()?;
-        let advisory_count = usize::from(decoder.u16()?);
+        let tcb_evaluation_data_number = decoder.u32_be()?;
+        let qe_tcb_evaluation_data_number = decoder.u32_be()?;
+        let collateral_valid_until = decoder.u64_be()?;
+        let advisory_count = usize::from(decoder.u16_be()?);
         let mut advisory_ids = Vec::with_capacity(advisory_count);
         for _ in 0..advisory_count {
-            let len = usize::from(decoder.u16()?);
+            let len = usize::from(decoder.u16_be()?);
             let advisory = std::str::from_utf8(decoder.take(len)?)
                 .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?
                 .to_owned();
@@ -407,18 +409,18 @@ impl DcapVerificationOutcomeV1 {
     }
 
     pub fn decode_canonical(input: &[u8]) -> Result<Self, DcapRejectCodeV1> {
-        let mut decoder = Decoder::new(input);
+        let mut decoder = canonical_decoder(input);
         if decoder.u8()? != 1 {
             return Err(DcapRejectCodeV1::NativeOutputMalformed);
         }
         let outcome = match decoder.u8()? {
             1 => {
-                let len = usize::try_from(decoder.u32()?)
+                let len = usize::try_from(decoder.u32_be()?)
                     .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?;
                 Self::Accepted(DcapVerdictV1::decode_canonical(decoder.take(len)?)?)
             }
             2 => Self::Rejected(
-                DcapRejectCodeV1::try_from(decoder.u16()?)
+                DcapRejectCodeV1::try_from(decoder.u16_be()?)
                     .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?,
             ),
             _ => return Err(DcapRejectCodeV1::NativeOutputMalformed),
@@ -457,20 +459,37 @@ pub fn dcap_verification_request_hash(
     Ok(keccak256(preimage))
 }
 
+/// Evidence and signatures for a purpose-bound registration verification.
+/// One value crosses the global, session and client layers without reordering
+/// the request-hash or upload inputs.
+#[derive(Clone, Copy)]
+pub struct RegistrationVerificationRequest<'a> {
+    pub evidence: &'a [u8],
+    pub policy: &'a [u8],
+    pub block_timestamp: u64,
+    pub node_signature: &'a [u8; 65],
+    pub enclave_signature: &'a [u8; 64],
+    pub expected_tribute_offer_public: [u8; 32],
+    pub key_epoch: u64,
+    pub tribute_offer_epoch: u64,
+}
+
 /// Commit to the exact purpose-bound onboarding verifier inputs. This is a
 /// separate domain from generic evidence verification: possession of an
 /// authenticated generic verdict can never authorize offer-key delivery.
-#[allow(clippy::too_many_arguments)]
 pub fn dcap_onboarding_request_hash(
-    evidence: &[u8],
-    policy: &[u8],
-    block_timestamp: u64,
-    node_signature: &[u8; 65],
-    enclave_signature: &[u8; 64],
-    expected_tribute_offer_public: &[u8; 32],
-    key_epoch: u64,
-    tribute_offer_epoch: u64,
+    request: RegistrationVerificationRequest<'_>,
 ) -> Result<B256, DcapRejectCodeV1> {
+    let RegistrationVerificationRequest {
+        evidence,
+        policy,
+        block_timestamp,
+        node_signature,
+        enclave_signature,
+        expected_tribute_offer_public,
+        key_epoch,
+        tribute_offer_epoch,
+    } = request;
     if evidence.len() > MAX_ATTESTATION_EVIDENCE_BYTES {
         return Err(DcapRejectCodeV1::EvidenceNonCanonical);
     }
@@ -498,7 +517,7 @@ pub fn dcap_onboarding_request_hash(
     preimage.extend_from_slice(&block_timestamp.to_be_bytes());
     preimage.extend_from_slice(node_signature);
     preimage.extend_from_slice(enclave_signature);
-    preimage.extend_from_slice(expected_tribute_offer_public);
+    preimage.extend_from_slice(&expected_tribute_offer_public);
     preimage.extend_from_slice(&key_epoch.to_be_bytes());
     preimage.extend_from_slice(&tribute_offer_epoch.to_be_bytes());
     Ok(keccak256(preimage))
@@ -568,69 +587,10 @@ pub fn dcap_onboarding_attestation_preimage(
     Ok(preimage)
 }
 
-struct Decoder<'a> {
-    input: &'a [u8],
-    cursor: usize,
-}
-
-impl<'a> Decoder<'a> {
-    const fn new(input: &'a [u8]) -> Self {
-        Self { input, cursor: 0 }
-    }
-
-    fn take(&mut self, len: usize) -> Result<&'a [u8], DcapRejectCodeV1> {
-        let end = self
-            .cursor
-            .checked_add(len)
-            .ok_or(DcapRejectCodeV1::NativeOutputMalformed)?;
-        let value = self
-            .input
-            .get(self.cursor..end)
-            .ok_or(DcapRejectCodeV1::NativeOutputMalformed)?;
-        self.cursor = end;
-        Ok(value)
-    }
-
-    fn u8(&mut self) -> Result<u8, DcapRejectCodeV1> {
-        Ok(self.take(1)?[0])
-    }
-
-    fn u16(&mut self) -> Result<u16, DcapRejectCodeV1> {
-        Ok(u16::from_be_bytes(
-            self.take(2)?
-                .try_into()
-                .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?,
-        ))
-    }
-
-    fn u32(&mut self) -> Result<u32, DcapRejectCodeV1> {
-        Ok(u32::from_be_bytes(
-            self.take(4)?
-                .try_into()
-                .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?,
-        ))
-    }
-
-    fn u64(&mut self) -> Result<u64, DcapRejectCodeV1> {
-        Ok(u64::from_be_bytes(
-            self.take(8)?
-                .try_into()
-                .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?,
-        ))
-    }
-
-    fn array<const N: usize>(&mut self) -> Result<[u8; N], DcapRejectCodeV1> {
-        self.take(N)?
-            .try_into()
-            .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)
-    }
-
-    fn finish(self) -> Result<(), DcapRejectCodeV1> {
-        if self.cursor != self.input.len() {
-            return Err(DcapRejectCodeV1::NativeOutputMalformed);
-        }
-        Ok(())
-    }
+/// The reader of the canonical encodings in this module. Every bounded-read
+/// failure is `NativeOutputMalformed`.
+fn canonical_decoder(input: &[u8]) -> ByteCursor<'_, DcapRejectCodeV1> {
+    ByteCursor::new(input, |_| DcapRejectCodeV1::NativeOutputMalformed)
 }
 
 #[cfg(test)]
@@ -712,19 +672,11 @@ mod tests {
     }
 
     fn onboarding_context() -> DcapOnboardingContextV1 {
-        DcapOnboardingContextV1 {
-            chain_id: [0x31; 32],
-            genesis_hash: B256::repeat_byte(0x32),
-            intent_hash: B256::repeat_byte(0x33),
-            node_id_hash: B256::repeat_byte(0x34),
-            enclave_id: B256::repeat_byte(0x35),
-            binding_id: B256::repeat_byte(0x38),
-            policy_hash: B256::repeat_byte(0x39),
-            recipient_x25519: [0x36; 32],
-            tribute_offer_public: [0x37; 32],
-            key_epoch: 7,
-            tribute_offer_epoch: 8,
-        }
+        crate::test_utils::onboarding_context_fixture(
+            [0x31, 0x32, 0x33, 0x34, 0x35, 0x38, 0x39, 0x36, 0x37],
+            7,
+            8,
+        )
     }
 
     #[test]
@@ -765,46 +717,34 @@ mod tests {
         let node_signature = [0x71; 65];
         let enclave_signature = [0x72; 64];
         let offer_public = [0x73; 32];
-        let request = dcap_onboarding_request_hash(
-            &evidence,
-            &policy,
-            timestamp,
-            &node_signature,
-            &enclave_signature,
-            &offer_public,
-            9,
-            10,
-        )
-        .unwrap();
+        let input = RegistrationVerificationRequest {
+            evidence: &evidence,
+            policy: &policy,
+            block_timestamp: timestamp,
+            node_signature: &node_signature,
+            enclave_signature: &enclave_signature,
+            expected_tribute_offer_public: offer_public,
+            key_epoch: 9,
+            tribute_offer_epoch: 10,
+        };
+        let request = dcap_onboarding_request_hash(input).unwrap();
 
         let mut changed_node_signature = node_signature;
         changed_node_signature[0] ^= 1;
         assert_ne!(
             request,
-            dcap_onboarding_request_hash(
-                &evidence,
-                &policy,
-                timestamp,
-                &changed_node_signature,
-                &enclave_signature,
-                &offer_public,
-                9,
-                10,
-            )
+            dcap_onboarding_request_hash(RegistrationVerificationRequest {
+                node_signature: &changed_node_signature,
+                ..input
+            })
             .unwrap()
         );
         assert_ne!(
             request,
-            dcap_onboarding_request_hash(
-                &evidence,
-                &policy,
-                timestamp,
-                &node_signature,
-                &enclave_signature,
-                &offer_public,
-                9,
-                11,
-            )
+            dcap_onboarding_request_hash(RegistrationVerificationRequest {
+                tribute_offer_epoch: 11,
+                ..input
+            })
             .unwrap()
         );
 

@@ -6,7 +6,7 @@ use outbe_compressed_entities::{
     body_commitment, encode_nod_bucket_v1, encode_nod_item_v2, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
-use outbe_nod::{canonical_bucket, canonical_item, precompile::INod, NodPageRequest};
+use outbe_nod::{canonical_bucket, canonical_item, precompile::INod};
 use outbe_offchain_data::FinalizedBlock;
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
@@ -40,13 +40,7 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
     assert!(repository.get_bucket(bucket_id).unwrap().is_some());
     assert_eq!(
         repository
-            .list_by_owner(
-                owner,
-                NodPageRequest {
-                    after: None,
-                    limit: 10,
-                },
-            )
+            .list_by_owner(owner, FIRST_NOD_PAGE,)
             .unwrap()
             .records
             .len(),

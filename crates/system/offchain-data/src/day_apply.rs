@@ -41,40 +41,51 @@ pub(super) fn write_day_operations(
         }
     }
     for ((domain, day), operations) in by_day {
-        let creates = operations
-            .iter()
-            .any(|operation| matches!(operation, AtomicWriteOperation::Put { .. }));
-        let storage = match (domain, creates) {
-            (Domain::Tribute, true) => Some(databases.tribute(day)?),
-            (Domain::Tribute, false) => databases.tribute_if_present(day)?,
-            (Domain::Nod, true) => Some(databases.nod(day)?),
-            (Domain::Nod, false) => databases.nod_if_present(day)?,
-        };
-        let owners = match domain {
-            Domain::Nod => owner_addresses(&operations)?,
-            Domain::Tribute => Vec::new(),
-        };
-        let Some(storage) = storage else {
-            for owner in owners {
-                shared.push(clear_owner_day(owner, day)?);
-            }
-            continue;
-        };
-        let handle: StorageWriterHandle = storage.clone();
-        let day_batch = AtomicWriteBatch::from_operations(operations);
-        day_batch.validate()?;
-        handle.apply_atomic(&day_batch)?;
-        if domain == Domain::Nod {
-            let reader: StorageReaderHandle = storage;
-            let reader = outbe_nod::nod_reader(reader);
-            for owner in owners {
-                shared.push(reader.owner_day_marker(owner, day)?);
-            }
-        }
+        apply_day_operations(databases, domain, day, operations, &mut shared)?;
     }
     let shared = AtomicWriteBatch::from_operations(shared);
     shared.validate()?;
     Ok(shared)
+}
+
+fn apply_day_operations(
+    databases: &DayDatabases,
+    domain: Domain,
+    day: u32,
+    operations: Vec<AtomicWriteOperation>,
+    shared: &mut Vec<AtomicWriteOperation>,
+) -> Result<(), ProjectionError> {
+    let creates = operations
+        .iter()
+        .any(|operation| matches!(operation, AtomicWriteOperation::Put { .. }));
+    let storage = match (domain, creates) {
+        (Domain::Tribute, true) => Some(databases.tribute(day)?),
+        (Domain::Tribute, false) => databases.tribute_if_present(day)?,
+        (Domain::Nod, true) => Some(databases.nod(day)?),
+        (Domain::Nod, false) => databases.nod_if_present(day)?,
+    };
+    let owners = match domain {
+        Domain::Nod => owner_addresses(&operations)?,
+        Domain::Tribute => Vec::new(),
+    };
+    let Some(storage) = storage else {
+        for owner in owners {
+            shared.push(clear_owner_day(owner, day)?);
+        }
+        return Ok(());
+    };
+    let handle: StorageWriterHandle = storage.clone();
+    let day_batch = AtomicWriteBatch::from_operations(operations);
+    day_batch.validate()?;
+    handle.apply_atomic(&day_batch)?;
+    if domain == Domain::Nod {
+        let reader: StorageReaderHandle = storage;
+        let reader = outbe_nod::nod_reader(reader);
+        for owner in owners {
+            shared.push(reader.owner_day_marker(owner, day)?);
+        }
+    }
+    Ok(())
 }
 
 fn day_target(operation: &AtomicWriteOperation) -> Result<Option<(Domain, u32)>, ProjectionError> {

@@ -20,5 +20,9 @@ tracing.workspace = true
 serde_json.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 
+[features]
+# Exposes `test_support` fixtures to tests in other crates.
+test-utils = []
+
 [lints]
 workspace = true

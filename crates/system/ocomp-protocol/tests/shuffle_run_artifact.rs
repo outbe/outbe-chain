@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
+use std::{cell::Cell, collections::BTreeMap};
 
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_ocomp_protocol::test_utils::FINALITY_INPUT_TEST_LIMITS as LIMITS;
 use outbe_ocomp_protocol::{
-    codec::CodecLimits,
     control::CasObjectRefV1,
     registry::ObjectKind,
     result::ContributorActionV1,
@@ -14,20 +14,7 @@ use outbe_ocomp_protocol::{
         MAX_SHUFFLE_LEAF_RECORDS,
     },
     unit::CanonicalRunSpan,
-    ProtocolError, SchemaLimits,
-};
-
-const LIMITS: SchemaLimits = SchemaLimits {
-    codec: CodecLimits::new(1_048_576, 4_096, 2_097_152),
-    max_bounded_bytes: 262_144,
-    max_proof_bytes: 262_144,
-    max_opening_bytes: 262_144,
-    max_collection_items: 4_096,
-    max_action_items: 4_096,
-    max_chunk_items: 4_096,
-    max_unit_inputs: 64,
-    max_result_chunk_bytes: 524_288,
-    max_control_body_bytes: 262_144,
+    ProtocolError,
 };
 
 fn hash(byte: u8) -> B256 {
@@ -190,13 +177,13 @@ fn source_coverage_rejects_gap_overlap_and_reordered_producers() {
     assert!(ShuffleSourceCoverageV1::merge(&adjacent, &left, &LIMITS).is_err());
 }
 
-fn child(
-    digest: u8,
-    start_page: u32,
-    end_page: u32,
+struct ChildSlice {
+    pages: std::ops::Range<u32>,
     first_record_ordinal: u32,
     record_count: u32,
-) -> ShuffleRunChildV1 {
+}
+
+fn child(digest: u8, slice: ChildSlice) -> ShuffleRunChildV1 {
     ShuffleRunChildV1 {
         artifact_ref: CasObjectRefV1 {
             transport_digest: hash(digest),
@@ -204,13 +191,31 @@ fn child(
             expected_ocb1_kind: Some(ObjectKind::ShuffleRunArtifactV1.tag()),
         },
         page_span: ShufflePageSpanV1 {
-            start_page,
-            end_page,
+            start_page: slice.pages.start,
+            end_page: slice.pages.end,
         },
-        first_record_ordinal,
-        record_count,
+        first_record_ordinal: slice.first_record_ordinal,
+        record_count: slice.record_count,
         ordered_record_root: hash(digest + 20),
     }
+}
+
+fn owner_node(
+    run_end: u32,
+    coverage_count: u32,
+    left: ShuffleRunChildV1,
+    right: ShuffleRunChildV1,
+) -> ShuffleRunArtifactV1 {
+    let mut artifact = owner_leaf(0);
+    artifact.run_span.end_run = run_end;
+    artifact.page_span.end_page = right.page_span.end_page;
+    artifact.first_record_ordinal = left.first_record_ordinal;
+    artifact.record_count = left.record_count + right.record_count;
+    artifact.source_coverage_count = coverage_count;
+    artifact.payload = ShuffleRunPayloadV1::Node { left, right };
+    artifact
+        .with_recomputed_ordered_record_root(&LIMITS)
+        .unwrap()
 }
 
 fn owner_page(
@@ -355,16 +360,38 @@ fn traversal_opens_typed_children_and_yields_one_globally_ordered_stream() {
 #[test]
 fn streaming_builder_materializes_three_canonical_pages_with_logarithmic_frontier() {
     let mut objects = BTreeMap::new();
+    let mut staged = Vec::new();
     let root = build_owner_shuffle_run(
         build_context(513),
         (0..513_u32).map(|index| Ok(contributor(index))),
         &LIMITS,
-        |bytes| memory_stage(&mut objects, bytes),
+        |bytes| {
+            staged.push(ShuffleRunArtifactV1::decode_canonical(bytes, &LIMITS)?);
+            memory_stage(&mut objects, bytes)
+        },
     )
     .unwrap();
     assert_eq!(root.page_span.end_page, 3);
     assert_eq!(root.record_count, 513);
     assert_eq!(objects.len(), 5);
+    assert_eq!(
+        staged
+            .iter()
+            .map(|artifact| (
+                artifact.page_span.start_page,
+                artifact.page_span.end_page,
+                matches!(&artifact.payload, ShuffleRunPayloadV1::Node { .. }),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (0, 1, false),
+            (1, 2, false),
+            (0, 2, true),
+            (2, 3, false),
+            (0, 3, true)
+        ]
+    );
+    assert_eq!(staged.last(), Some(&root));
 
     let records = verified_shuffle_run_records(root, &LIMITS, |reference| {
         objects
@@ -524,6 +551,27 @@ fn streaming_merge_interleaves_two_verified_runs_and_rejects_duplicate_keys() {
 }
 
 #[test]
+fn streaming_merge_prioritizes_input_errors_and_stops_after_the_first() {
+    let left_error = ProtocolError::InvalidInvariant("left shuffle input");
+    let right_error = ProtocolError::InvalidInvariant("right shuffle input");
+    let mut both_errors = merge_verified_shuffle_runs(
+        ShuffleRunKindV1::Owner,
+        [Err(left_error.clone())],
+        [Err(right_error.clone())],
+    );
+    assert_eq!(both_errors.next(), Some(Err(left_error)));
+    assert_eq!(both_errors.next(), None);
+
+    let mut right_error_first = merge_verified_shuffle_runs(
+        ShuffleRunKindV1::Owner,
+        [Ok(VerifiedShuffleRecordV1::Owner(contributor(0)))],
+        [Err(right_error.clone())],
+    );
+    assert_eq!(right_error_first.next(), Some(Err(right_error)));
+    assert_eq!(right_error_first.next(), None);
+}
+
+#[test]
 fn builder_emits_one_empty_owner_leaf_but_rejects_an_empty_bucket_stream() {
     let mut owner_objects = BTreeMap::new();
     let owner_root =
@@ -547,6 +595,35 @@ fn builder_emits_one_empty_owner_leaf_but_rejects_an_empty_bucket_stream() {
         ))
     );
     assert!(bucket_objects.is_empty());
+}
+
+#[test]
+fn builder_constructs_the_input_iterator_once_before_context_validation() {
+    struct ObservedRecords<'a>(&'a Cell<usize>);
+
+    impl IntoIterator for ObservedRecords<'_> {
+        type Item = Result<ContributorActionV1, ProtocolError>;
+        type IntoIter = std::iter::Empty<Self::Item>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.0.set(self.0.get() + 1);
+            std::iter::empty()
+        }
+    }
+
+    let constructions = Cell::new(0);
+    let mut invalid = build_context(1);
+    invalid.run_span.end_run = invalid.run_span.start_run;
+    let result = build_owner_shuffle_run(invalid, ObservedRecords(&constructions), &LIMITS, |_| {
+        Err(ProtocolError::InvalidInvariant("unexpected stage"))
+    });
+    assert_eq!(
+        result,
+        Err(ProtocolError::InvalidInvariant(
+            "non-empty shuffle run span"
+        ))
+    );
+    assert_eq!(constructions.get(), 1);
 }
 
 #[test]
@@ -723,32 +800,26 @@ fn bucket_leaf_rejects_duplicate_or_reordered_raw_records() {
 
 #[test]
 fn node_requires_the_canonical_adjacent_page_and_record_split() {
-    let valid = ShuffleRunArtifactV1 {
-        protocol_bundle_hash: hash(1),
-        job_id: hash(2),
-        attempt: 1,
-        unit_id: hash(3),
-        kind: ShuffleRunKindV1::Owner,
-        run_span: CanonicalRunSpan {
-            start_run: 0,
-            end_run: 4,
-        },
-        page_span: ShufflePageSpanV1 {
-            start_page: 0,
-            end_page: 3,
-        },
-        first_record_ordinal: 0,
-        record_count: 600,
-        source_coverage_root: hash(4),
-        source_coverage_count: 1_024,
-        ordered_record_root: B256::ZERO,
-        payload: ShuffleRunPayloadV1::Node {
-            left: child(10, 0, 2, 0, 512),
-            right: child(11, 2, 3, 512, 88),
-        },
-    }
-    .with_recomputed_ordered_record_root(&LIMITS)
-    .unwrap();
+    let valid = owner_node(
+        4,
+        1_024,
+        child(
+            10,
+            ChildSlice {
+                pages: 0..2,
+                first_record_ordinal: 0,
+                record_count: 512,
+            },
+        ),
+        child(
+            11,
+            ChildSlice {
+                pages: 2..3,
+                first_record_ordinal: 512,
+                record_count: 88,
+            },
+        ),
+    );
     let encoded = valid.encode_canonical(&LIMITS).unwrap();
     assert_eq!(
         ShuffleRunArtifactV1::decode_canonical(&encoded, &LIMITS).unwrap(),
@@ -785,8 +856,22 @@ fn node_references_must_be_distinct_typed_nonempty_cas_objects() {
     artifact.page_span.end_page = 2;
     artifact.record_count = 2;
     artifact.payload = ShuffleRunPayloadV1::Node {
-        left: child(10, 0, 1, 0, 1),
-        right: child(10, 1, 2, 1, 1),
+        left: child(
+            10,
+            ChildSlice {
+                pages: 0..1,
+                first_record_ordinal: 0,
+                record_count: 1,
+            },
+        ),
+        right: child(
+            10,
+            ChildSlice {
+                pages: 1..2,
+                first_record_ordinal: 1,
+                record_count: 1,
+            },
+        ),
     };
     assert!(matches!(
         artifact.encode_canonical(&LIMITS),
@@ -798,32 +883,26 @@ fn node_references_must_be_distinct_typed_nonempty_cas_objects() {
 
 #[test]
 fn empty_owner_stream_is_one_leaf_and_never_an_empty_node_tree() {
-    let artifact = ShuffleRunArtifactV1 {
-        protocol_bundle_hash: hash(1),
-        job_id: hash(2),
-        attempt: 1,
-        unit_id: hash(3),
-        kind: ShuffleRunKindV1::Owner,
-        run_span: CanonicalRunSpan {
-            start_run: 0,
-            end_run: 2,
-        },
-        page_span: ShufflePageSpanV1 {
-            start_page: 0,
-            end_page: 2,
-        },
-        first_record_ordinal: 0,
-        record_count: 0,
-        source_coverage_root: hash(4),
-        source_coverage_count: 512,
-        ordered_record_root: B256::ZERO,
-        payload: ShuffleRunPayloadV1::Node {
-            left: child(10, 0, 1, 0, 0),
-            right: child(11, 1, 2, 0, 0),
-        },
-    }
-    .with_recomputed_ordered_record_root(&LIMITS)
-    .unwrap();
+    let artifact = owner_node(
+        2,
+        512,
+        child(
+            10,
+            ChildSlice {
+                pages: 0..1,
+                first_record_ordinal: 0,
+                record_count: 0,
+            },
+        ),
+        child(
+            11,
+            ChildSlice {
+                pages: 1..2,
+                first_record_ordinal: 0,
+                record_count: 0,
+            },
+        ),
+    );
     assert_eq!(
         artifact.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant("non-empty shuffle node"))
@@ -872,8 +951,22 @@ fn ordered_record_root_is_computed_from_leaf_records_and_child_summaries() {
         source_coverage_count: 512,
         ordered_record_root: B256::ZERO,
         payload: ShuffleRunPayloadV1::Node {
-            left: child(10, 0, 1, 0, 1),
-            right: child(11, 1, 2, 1, 1),
+            left: child(
+                10,
+                ChildSlice {
+                    pages: 0..1,
+                    first_record_ordinal: 0,
+                    record_count: 1,
+                },
+            ),
+            right: child(
+                11,
+                ChildSlice {
+                    pages: 1..2,
+                    first_record_ordinal: 1,
+                    record_count: 1,
+                },
+            ),
         },
     }
     .with_recomputed_ordered_record_root(&LIMITS)

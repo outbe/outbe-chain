@@ -22,8 +22,7 @@ fn test_activate_deactivate() {
     let val_addr = address!("0x4444444444444444444444444444444444444444");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(4))
-            .unwrap();
+        register_validators(vs, &[(val_addr, 4)]).unwrap();
 
         // Initially REGISTERED
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::REGISTERED);
@@ -46,8 +45,7 @@ fn deactivation_rejection_reasons_preserve_validator_state() {
     let validator = address!("0x4444444444444444444444444444444444444444");
     let outsider = address!("0x9999999999999999999999999999999999999999");
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(4))
-            .unwrap();
+        register_validators(vs, &[(validator, 4)]).unwrap();
         activate_staked_for_test(vs, validator);
         let active = vs.validator_state(validator).unwrap();
         let pending = vs.pending_set_change.read().unwrap();
@@ -80,8 +78,7 @@ fn test_force_exit() {
     let val_addr = address!("0x5555555555555555555555555555555555555555");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(5))
-            .unwrap();
+        register_validators(vs, &[(val_addr, 5)]).unwrap();
         activate_for_test(vs, val_addr);
 
         vs.force_exit_validator(val_addr).unwrap();
@@ -102,10 +99,7 @@ fn test_forced_exit_preserves_staking_lifecycle() {
     with_vs_configured(10, |vs| {
         vs.config_min_stake.write(U256::from(1000u64)).unwrap();
 
-        vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(0x33))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(val_addr)
-            .unwrap();
+        register_boundary_active(vs, val_addr, 0x33).unwrap();
 
         // Set stake above min then force exit.
         vs.val_stake.write(&val_addr, U256::from(1000u64)).unwrap();
@@ -133,16 +127,17 @@ fn test_cleanup_inactive_validators() {
     let val5 = address!("0x00000000000000000000000000000000000000A5");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val1, &dummy_consensus_pubkey(0xA1))
-            .unwrap();
-        vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xA2))
-            .unwrap();
-        vs.register_validator(OWNER, val3, &dummy_consensus_pubkey(0xA3))
-            .unwrap();
-        vs.register_validator(OWNER, val4, &dummy_consensus_pubkey(0xA4))
-            .unwrap();
-        vs.register_validator(OWNER, val5, &dummy_consensus_pubkey(0xA5))
-            .unwrap();
+        register_validators(
+            vs,
+            &[
+                (val1, 0xA1),
+                (val2, 0xA2),
+                (val3, 0xA3),
+                (val4, 0xA4),
+                (val5, 0xA5),
+            ],
+        )
+        .unwrap();
         assert_eq!(vs.validator_count.read().unwrap(), 5);
 
         // Move val2 and val4 through the canonical exit and claim-completion
@@ -176,12 +171,7 @@ fn test_cleanup_capped() {
     let val3 = address!("0x00000000000000000000000000000000000000B3");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val1, &dummy_consensus_pubkey(0xB1))
-            .unwrap();
-        vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xB2))
-            .unwrap();
-        vs.register_validator(OWNER, val3, &dummy_consensus_pubkey(0xB3))
-            .unwrap();
+        register_validators(vs, &[(val1, 0xB1), (val2, 0xB2), (val3, 0xB3)]).unwrap();
 
         // Move all three through canonical INACTIVE records.
         make_inactive_for_test(vs, val1);
@@ -209,24 +199,17 @@ fn test_reregistration_cooldown_gates_then_allows() {
     // Re-registration is rejected until `config_reregistration_cooldown` blocks
     // pass after deactivation, then allowed. Deactivated at h100, cooldown 1000:
     // rejected at h500 (400 elapsed), allowed at h1100 (1000 elapsed).
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = registry_storage(100, 128).unwrap();
     let val = address!("0x1111111111111111111111111111111111111111");
 
-    storage.set_block_number(100);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(128).unwrap();
+    at_height(&mut storage, 100, |vs| {
         vs.config_reregistration_cooldown.write(1000).unwrap();
-        vs.register_validator(OWNER, val, &dummy_consensus_pubkey(0xCC))
-            .unwrap();
-        make_inactive_for_test(&mut vs, val);
+        register_validators(vs, &[(val, 0xCC)]).unwrap();
+        make_inactive_for_test(vs, val);
     });
 
     // h500: only 400 blocks elapsed -> rejected with a cooldown error.
-    storage.set_block_number(500);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut vs = ValidatorSet::new(storage.clone());
+    at_height(&mut storage, 500, |vs| {
         let err = vs
             .register_validator(OWNER, val, &dummy_consensus_pubkey(0xDD))
             .unwrap_err();
@@ -237,11 +220,8 @@ fn test_reregistration_cooldown_gates_then_allows() {
     });
 
     // h1100: 1000 blocks elapsed -> allowed.
-    storage.set_block_number(1100);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut vs = ValidatorSet::new(storage.clone());
-        vs.register_validator(OWNER, val, &dummy_consensus_pubkey(0xFF))
-            .unwrap();
+    at_height(&mut storage, 1100, |vs| {
+        register_validators(vs, &[(val, 0xFF)]).unwrap();
         assert_eq!(vs.val_status.read(&val).unwrap(), status::REGISTERED);
     });
 }
@@ -271,8 +251,7 @@ fn test_stale_join_guard_resets_on_restake() {
     // clears the confirmed flag so a stale prior confirmation cannot leak through.
     with_vs_configured(128, |vs| {
         let pend = address!("0x2222222222222222222222222222222222222222");
-        vs.register_validator(OWNER, pend, &dummy_consensus_pubkey(0x02))
-            .unwrap();
+        register_validators(vs, &[(pend, 0x02)]).unwrap();
         vs.mark_pending(pend).unwrap();
         confirm_ready(vs, pend, 0x22);
         let in_target = |vs: &mut crate::schema::ValidatorSet, addr| {
@@ -290,8 +269,7 @@ fn test_stale_join_guard_resets_on_restake() {
         vs.activate_reshared_set(&[], B256::ZERO).unwrap(); // EXITING->UNBONDING
                                                             // A fresh registration+stake cycle starts unconfirmed.
         let pend2 = address!("0x4444444444444444444444444444444444444444");
-        vs.register_validator(OWNER, pend2, &dummy_consensus_pubkey(0x04))
-            .unwrap();
+        register_validators(vs, &[(pend2, 0x04)]).unwrap();
         vs.mark_pending(pend2).unwrap();
         assert!(
             !in_target(vs, pend2),
@@ -304,60 +282,79 @@ fn test_stale_join_guard_resets_on_restake() {
 // Forced-exit validator status guard tests
 // ===========================================================================
 
+/// The lifecycle that a forced exit starts from.
+#[derive(Clone, Copy)]
+enum ForceExitStart {
+    Active,
+    Exiting,
+    Unbonding,
+    Inactive,
+    Registered,
+}
+
+impl ForceExitStart {
+    /// Moves the registered `val` into this starting lifecycle.
+    fn prepare(self, vs: &mut ValidatorSet, val: Address) -> outbe_primitives::error::Result<()> {
+        match self {
+            Self::Active => activate_for_test(vs, val),
+            Self::Exiting => {
+                activate_for_test(vs, val);
+                vs.force_exit_validator(val)?;
+            }
+            Self::Unbonding => {
+                activate_for_test(vs, val);
+                vs.deactivate_validator(OWNER, val)?;
+                vs.activate_reshared_set(&[], B256::ZERO)?;
+            }
+            Self::Inactive => make_inactive_for_test(vs, val),
+            Self::Registered => {}
+        }
+        Ok(())
+    }
+}
+
 #[test]
 fn force_exit_from_each_status() {
     // force_exit_validator across every starting status: ACTIVE->EXITING, an
     // already-EXITING idempotent call, the UNBONDING/INACTIVE idempotent no-ops,
     // and the REGISTERED rejection.
     let val = address!("0x0909090909090909090909090909090909090909");
-    #[derive(Clone, Copy)]
-    enum Setup {
-        Active,
-        Exiting,
-        Unbonding,
-        Inactive,
-        Registered,
-    }
-    let cases: &[(&str, Setup, bool, u8)] = &[
-        ("ACTIVE -> EXITING", Setup::Active, true, status::EXITING),
-        ("EXITING idempotent", Setup::Exiting, true, status::EXITING),
+    let cases: &[(&str, ForceExitStart, bool, u8)] = &[
+        (
+            "ACTIVE -> EXITING",
+            ForceExitStart::Active,
+            true,
+            status::EXITING,
+        ),
+        (
+            "EXITING idempotent",
+            ForceExitStart::Exiting,
+            true,
+            status::EXITING,
+        ),
         (
             "UNBONDING idempotent",
-            Setup::Unbonding,
+            ForceExitStart::Unbonding,
             true,
             status::UNBONDING,
         ),
         (
             "INACTIVE idempotent",
-            Setup::Inactive,
+            ForceExitStart::Inactive,
             true,
             status::INACTIVE,
         ),
         (
             "REGISTERED rejected",
-            Setup::Registered,
+            ForceExitStart::Registered,
             false,
             status::REGISTERED,
         ),
     ];
-    for (i, (label, setup, expect_ok, final_status)) in cases.iter().enumerate() {
+    for (i, (label, start, expect_ok, final_status)) in cases.iter().enumerate() {
         with_vs_configured(10, |vs| {
-            vs.register_validator(OWNER, val, &dummy_consensus_pubkey(90 + i as u8))
-                .unwrap();
-            match setup {
-                Setup::Active => activate_for_test(vs, val),
-                Setup::Exiting => {
-                    activate_for_test(vs, val);
-                    vs.force_exit_validator(val).unwrap();
-                }
-                Setup::Unbonding => {
-                    activate_for_test(vs, val);
-                    vs.deactivate_validator(OWNER, val).unwrap();
-                    vs.activate_reshared_set(&[], B256::ZERO).unwrap();
-                }
-                Setup::Inactive => make_inactive_for_test(vs, val),
-                Setup::Registered => {}
-            }
+            register_validators(vs, &[(val, 90 + i as u8)]).unwrap();
+            start.prepare(vs, val).unwrap();
             assert_eq!(
                 vs.force_exit_validator(val).is_ok(),
                 *expect_ok,
@@ -378,9 +375,7 @@ fn force_exit_from_each_status() {
 fn test_repeated_force_exit_remains_exiting() {
     with_vs_configured(10, |vs| {
         let val = address!("0x0909090909090909090909090909090909090909");
-        vs.register_validator(OWNER, val, &dummy_consensus_pubkey(92))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(val).unwrap();
+        register_boundary_active(vs, val, 92).unwrap();
         vs.force_exit_validator(val).unwrap();
         vs.force_exit_validator(val).unwrap();
         assert_eq!(vs.val_status.read(&val).unwrap(), status::EXITING);
@@ -404,8 +399,7 @@ fn activate_rejected_from_non_promotable_status() {
     ];
     for (i, (label, s)) in cases.iter().enumerate() {
         with_vs_configured(10, |vs| {
-            vs.register_validator(OWNER, val, &dummy_consensus_pubkey(21 + i as u8))
-                .unwrap();
+            register_validators(vs, &[(val, 21 + i as u8)]).unwrap();
             vs.val_status.write(&val, *s).unwrap();
             assert!(
                 vs.activate_validator_via_boundary_for_test(val).is_err(),

@@ -12,11 +12,10 @@ use commonware_codec::{DecodeExt, Encode as _};
 use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
 use eyre::{ensure, eyre, Result, WrapErr as _};
+use outbe_slashindicator::test_signing;
 
 use crate::world::rpc::Rpc;
 use crate::world::validators::Validator;
-
-const INDIVIDUAL_SIGNATURE_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 
 #[derive(Clone, Debug)]
 pub(crate) struct ConflictingNotarizeEvidence {
@@ -76,11 +75,24 @@ pub(crate) fn conflicting_notarize_for_validator(
     );
 
     let parent = view.saturating_sub(1);
-    let proposal1 = proposal_bytes(epoch, view, parent, 0xA1);
-    let proposal2 = proposal_bytes(epoch, view, parent, 0xB2);
+    let proposal1 = test_signing::proposal(epoch, view, parent, [0xA1; 32]);
+    let proposal2 = test_signing::proposal(epoch, view, parent, [0xB2; 32]);
+    let public = secret.sk_to_pk();
     Ok(ConflictingNotarizeEvidence {
-        block1: evidence_block(&secret, &namespace, &proposal1),
-        block2: evidence_block(&secret, &namespace, &proposal2),
+        block1: test_signing::signed_evidence(
+            &secret,
+            &public,
+            &namespace,
+            &proposal1,
+            test_signing::POP_DST,
+        ),
+        block2: test_signing::signed_evidence(
+            &secret,
+            &public,
+            &namespace,
+            &proposal2,
+            test_signing::POP_DST,
+        ),
     })
 }
 
@@ -94,53 +106,17 @@ fn notarize_namespace(chain_id: u64, committee: &Set<bls12381::PublicKey>) -> Ve
     namespace
 }
 
-fn evidence_block(secret: &SecretKey, namespace: &[u8], proposal: &[u8]) -> Vec<u8> {
-    let mut signed = Vec::new();
-    write_leb128(&mut signed, namespace.len() as u64);
-    signed.extend_from_slice(namespace);
-    signed.extend_from_slice(proposal);
-    let signature = secret.sign(&signed, INDIVIDUAL_SIGNATURE_DST, &[]);
-
-    let mut block = Vec::with_capacity(48 + 96 + proposal.len());
-    block.extend_from_slice(&secret.sk_to_pk().to_bytes());
-    block.extend_from_slice(&signature.to_bytes());
-    block.extend_from_slice(proposal);
-    block
-}
-
-fn proposal_bytes(epoch: u64, view: u64, parent: u64, digest: u8) -> Vec<u8> {
-    let mut proposal = Vec::with_capacity(3 * 10 + 32);
-    write_leb128(&mut proposal, epoch);
-    write_leb128(&mut proposal, view);
-    write_leb128(&mut proposal, parent);
-    proposal.extend_from_slice(&[digest; 32]);
-    proposal
-}
-
-fn write_leb128(output: &mut Vec<u8>, mut value: u64) {
-    loop {
-        let byte = (value & 0x7f) as u8;
-        value >>= 7;
-        if value == 0 {
-            output.push(byte);
-            return;
-        }
-        output.push(byte | 0x80);
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{proposal_bytes, write_leb128};
+    use outbe_slashindicator::test_signing;
 
     #[test]
     fn leb128_matches_consensus_proposal_shape() {
-        let mut bytes = Vec::new();
-        write_leb128(&mut bytes, 127);
-        write_leb128(&mut bytes, 128);
+        // The varints of 127 then 128.
+        let bytes = test_signing::nullify_payload(127, 128);
         assert_eq!(bytes, [0x7f, 0x80, 0x01]);
 
-        let proposal = proposal_bytes(1, 5, 4, 0xaa);
+        let proposal = test_signing::proposal(1, 5, 4, [0xaa; 32]);
         assert_eq!(&proposal[..3], &[1, 5, 4]);
         assert_eq!(&proposal[3..], &[0xaa; 32]);
     }

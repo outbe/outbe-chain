@@ -40,7 +40,6 @@ use outbe_ocomp_protocol::{
     },
     common::BoundedBytes,
     profile::{CapacityProfileV1, ProtocolBundleV1},
-    registry::{FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID},
     vote::{ResultVoteSigningSubjectV1, ResultVoteV1},
     PreparedVoteTransactionV1,
 };

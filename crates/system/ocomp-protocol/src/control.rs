@@ -547,12 +547,13 @@ fn validate_snapshot_handoff(
         handoff.canonical_lease_offer.0.len() == SNAPSHOT_LEASE_WIRE_BYTES,
         "snapshot lease offer bytes",
     )?;
+    let finalized_request_identity = handoff.checkpoint.finalized_block_number != 0
+        && !handoff.checkpoint.finalized_block_hash.is_zero()
+        && !handoff.checkpoint.finalized_state_root.is_zero();
+    let sealed_ce_identity = !handoff.checkpoint.finalized_ce_root.is_zero()
+        && handoff.checkpoint.ce_schema_version != 0;
     require(
-        handoff.checkpoint.finalized_block_number != 0
-            && !handoff.checkpoint.finalized_block_hash.is_zero()
-            && !handoff.checkpoint.finalized_state_root.is_zero()
-            && !handoff.checkpoint.finalized_ce_root.is_zero()
-            && handoff.checkpoint.ce_schema_version != 0,
+        finalized_request_identity && sealed_ce_identity,
         "snapshot checkpoint identity",
     )
 }
@@ -677,12 +678,12 @@ fn validate_prepared_vote_transaction(
 ) -> Result<(), ProtocolError> {
     response.canonical_vote.validate(limits)?;
     response.raw_transaction.validate(limits)?;
+    let canonical_vote_body = !response.canonical_vote.0.is_empty()
+        && response.canonical_vote.0.len() <= limits.max_control_body_bytes;
+    let raw_transaction_body = !response.raw_transaction.0.is_empty()
+        && response.raw_transaction.0.len() <= limits.max_control_body_bytes;
     require(
-        !response.canonical_vote.0.is_empty()
-            && response.canonical_vote.0.len() <= limits.max_control_body_bytes
-            && !response.raw_transaction.0.is_empty()
-            && response.raw_transaction.0.len() <= limits.max_control_body_bytes
-            && !response.transaction_hash.is_zero(),
+        canonical_vote_body && raw_transaction_body && !response.transaction_hash.is_zero(),
         "prepared vote transaction response",
     )
 }

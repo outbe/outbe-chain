@@ -25,6 +25,42 @@ pub(crate) const SPE1_VERSION: u8 = 0x01;
 /// Fixed wire length: 4 + 1 + 8 + 8 + 8 + 48 + 48 + 96 + 48 + 96.
 pub(crate) const SPE1_LEN: usize = 365;
 
+/// Reads fixed-size big-endian fields from the front of an evidence body.
+///
+/// Every decoder checks the full length first, so a read past the end is
+/// impossible for accepted input. The reader still returns a revert instead
+/// of a panic when a read is short.
+struct WireReader<'a> {
+    rest: &'a [u8],
+}
+
+impl<'a> WireReader<'a> {
+    fn new(body: &'a [u8]) -> Self {
+        Self { rest: body }
+    }
+
+    fn bytes<const N: usize>(&mut self) -> Result<[u8; N]> {
+        let (field, rest) = self
+            .rest
+            .split_first_chunk::<N>()
+            .ok_or_else(|| PrecompileError::Revert("evidence field is truncated".into()))?;
+        self.rest = rest;
+        Ok(*field)
+    }
+
+    fn u64(&mut self) -> Result<u64> {
+        self.bytes::<8>().map(u64::from_be_bytes)
+    }
+
+    fn u32(&mut self) -> Result<u32> {
+        self.bytes::<4>().map(u32::from_be_bytes)
+    }
+
+    fn remaining(&self) -> &'a [u8] {
+        self.rest
+    }
+}
+
 /// Decoded seed-partial equivocation evidence.
 pub(crate) struct SeedPartialEquivocationEvidence {
     pub round_epoch: u64,
@@ -53,27 +89,17 @@ impl SeedPartialEquivocationEvidence {
         if data[4] != SPE1_VERSION {
             return Err(PrecompileError::Revert("SPE1 evidence bad version".into()));
         }
-        let mut pos = 5usize;
-        let mut u64_be = || -> u64 {
-            let v = u64::from_be_bytes(data[pos..pos + 8].try_into().expect("checked length"));
-            pos += 8;
-            v
-        };
-        let round_epoch = u64_be();
-        let round_view = u64_be();
-        let vrf_version = u64_be();
+        let mut wire = WireReader::new(&data[5..]);
+        let round_epoch = wire.u64()?;
+        let round_view = wire.u64()?;
+        let vrf_version = wire.u64()?;
         // Remaining fixed-size byte fields.
-        let signer_pubkey: [u8; 48] = data[pos..pos + 48].try_into().expect("checked length");
-        pos += 48;
-        let partial_1: [u8; 48] = data[pos..pos + 48].try_into().expect("checked length");
-        pos += 48;
-        let identity_sig_1: [u8; 96] = data[pos..pos + 96].try_into().expect("checked length");
-        pos += 96;
-        let partial_2: [u8; 48] = data[pos..pos + 48].try_into().expect("checked length");
-        pos += 48;
-        let identity_sig_2: [u8; 96] = data[pos..pos + 96].try_into().expect("checked length");
-        pos += 96;
-        debug_assert_eq!(pos, SPE1_LEN);
+        let signer_pubkey = wire.bytes::<48>()?;
+        let partial_1 = wire.bytes::<48>()?;
+        let identity_sig_1 = wire.bytes::<96>()?;
+        let partial_2 = wire.bytes::<48>()?;
+        let identity_sig_2 = wire.bytes::<96>()?;
+        debug_assert!(wire.remaining().is_empty());
 
         Ok(Self {
             round_epoch,
@@ -156,22 +182,17 @@ impl InvalidSeedPartialEvidence {
         if data[4] != IPE1_VERSION {
             return Err(PrecompileError::Revert("IPE1 evidence bad version".into()));
         }
-        let mut pos = 5usize;
-        let take = |pos: &mut usize, n: usize| -> &[u8] {
-            let s = &data[*pos..*pos + n];
-            *pos += n;
-            s
-        };
-        let committee_set_hash = B256::from_slice(take(&mut pos, 32));
-        let round_epoch = u64::from_be_bytes(take(&mut pos, 8).try_into().expect("checked"));
-        let round_view = u64::from_be_bytes(take(&mut pos, 8).try_into().expect("checked"));
-        let vrf_version = u64::from_be_bytes(take(&mut pos, 8).try_into().expect("checked"));
-        let signer_index = u32::from_be_bytes(take(&mut pos, 4).try_into().expect("checked"));
-        let signer_pubkey: [u8; 48] = take(&mut pos, 48).try_into().expect("checked");
-        let partial: [u8; 48] = take(&mut pos, 48).try_into().expect("checked");
-        let identity_sig: [u8; 96] = take(&mut pos, 96).try_into().expect("checked");
-        let commitment_len =
-            u32::from_be_bytes(take(&mut pos, 4).try_into().expect("checked")) as usize;
+        let mut wire = WireReader::new(&data[5..]);
+        let committee_set_hash = B256::from(wire.bytes::<32>()?);
+        let round_epoch = wire.u64()?;
+        let round_view = wire.u64()?;
+        let vrf_version = wire.u64()?;
+        let signer_index = wire.u32()?;
+        let signer_pubkey = wire.bytes::<48>()?;
+        let partial = wire.bytes::<48>()?;
+        let identity_sig = wire.bytes::<96>()?;
+        let commitment_len = wire.u32()? as usize;
+        let pos = data.len() - wire.remaining().len();
         debug_assert_eq!(pos, IPE1_PREFIX_LEN);
         let commitment = data
             .get(pos..pos + commitment_len)
@@ -319,5 +340,153 @@ mod tests {
         swapped[s2_off..s2_off + 96].copy_from_slice(&[0xB1; 96]);
         let b = SeedPartialEquivocationEvidence::decode(&swapped).unwrap();
         assert_eq!(a.dedup_hash(), b.dedup_hash());
+    }
+    /// The revert reason of a decode result, or `None` for success or another
+    /// error kind.
+    fn revert_reason<T>(result: Result<T>) -> Option<String> {
+        match result {
+            Err(PrecompileError::Revert(reason)) => Some(reason),
+            _ => None,
+        }
+    }
+
+    /// Bytes `start, start + 1, ...` (wrapping), so each field is distinct.
+    fn ramp<const N: usize>(start: u8) -> [u8; N] {
+        core::array::from_fn(|i| start.wrapping_add(i as u8))
+    }
+
+    #[test]
+    fn spe1_decode_reads_each_field_at_its_offset() {
+        let mut data = Vec::with_capacity(SPE1_LEN);
+        data.extend_from_slice(SPE1_MAGIC);
+        data.push(SPE1_VERSION);
+        data.extend_from_slice(&0x0102_0304_0506_0708u64.to_be_bytes());
+        data.extend_from_slice(&0x1112_1314_1516_1718u64.to_be_bytes());
+        data.extend_from_slice(&0x2122_2324_2526_2728u64.to_be_bytes());
+        data.extend_from_slice(&ramp::<48>(0x30));
+        data.extend_from_slice(&ramp::<48>(0x60));
+        data.extend_from_slice(&ramp::<96>(0x90));
+        data.extend_from_slice(&ramp::<48>(0xF0));
+        data.extend_from_slice(&ramp::<96>(0x20));
+        assert_eq!(data.len(), SPE1_LEN);
+
+        let ev = SeedPartialEquivocationEvidence::decode(&data).unwrap();
+        assert_eq!(ev.round_epoch, 0x0102_0304_0506_0708);
+        assert_eq!(ev.round_view, 0x1112_1314_1516_1718);
+        assert_eq!(ev.vrf_version, 0x2122_2324_2526_2728);
+        assert_eq!(ev.signer_pubkey, ramp::<48>(0x30));
+        assert_eq!(ev.partial_1, ramp::<48>(0x60));
+        assert_eq!(ev.identity_sig_1, ramp::<96>(0x90));
+        assert_eq!(ev.partial_2, ramp::<48>(0xF0));
+        assert_eq!(ev.identity_sig_2, ramp::<96>(0x20));
+    }
+
+    #[test]
+    fn spe1_decode_reports_exact_reverts_in_check_order() {
+        let mut short = sample_bytes();
+        short.pop();
+        short[0] = b'X';
+        assert_eq!(
+            revert_reason(SeedPartialEquivocationEvidence::decode(&short)),
+            Some("SPE1 evidence must be exactly 365 bytes, got 364".to_string())
+        );
+
+        let mut trailing = sample_bytes();
+        trailing.push(0);
+        assert_eq!(
+            revert_reason(SeedPartialEquivocationEvidence::decode(&trailing)),
+            Some("SPE1 evidence must be exactly 365 bytes, got 366".to_string())
+        );
+
+        let mut bad_magic = sample_bytes();
+        bad_magic[0] = b'X';
+        bad_magic[4] = 0x09;
+        assert_eq!(
+            revert_reason(SeedPartialEquivocationEvidence::decode(&bad_magic)),
+            Some("SPE1 evidence bad magic".to_string())
+        );
+
+        let mut bad_version = sample_bytes();
+        bad_version[4] = 0x09;
+        assert_eq!(
+            revert_reason(SeedPartialEquivocationEvidence::decode(&bad_version)),
+            Some("SPE1 evidence bad version".to_string())
+        );
+    }
+
+    #[test]
+    fn ipe1_decode_reads_each_field_at_its_offset() {
+        let commitment: Vec<u8> = (0..37u8).collect();
+        let mut data = Vec::new();
+        data.extend_from_slice(IPE1_MAGIC);
+        data.push(IPE1_VERSION);
+        data.extend_from_slice(&ramp::<32>(0x40));
+        data.extend_from_slice(&0x0102_0304_0506_0708u64.to_be_bytes());
+        data.extend_from_slice(&0x1112_1314_1516_1718u64.to_be_bytes());
+        data.extend_from_slice(&0x2122_2324_2526_2728u64.to_be_bytes());
+        data.extend_from_slice(&0x3132_3334u32.to_be_bytes());
+        data.extend_from_slice(&ramp::<48>(0x50));
+        data.extend_from_slice(&ramp::<48>(0x80));
+        data.extend_from_slice(&ramp::<96>(0xB0));
+        data.extend_from_slice(&(commitment.len() as u32).to_be_bytes());
+        assert_eq!(data.len(), IPE1_PREFIX_LEN);
+        data.extend_from_slice(&commitment);
+
+        let ev = InvalidSeedPartialEvidence::decode(&data).unwrap();
+        assert_eq!(ev.committee_set_hash, B256::from(ramp::<32>(0x40)));
+        assert_eq!(ev.round_epoch, 0x0102_0304_0506_0708);
+        assert_eq!(ev.round_view, 0x1112_1314_1516_1718);
+        assert_eq!(ev.vrf_version, 0x2122_2324_2526_2728);
+        assert_eq!(ev.signer_index, 0x3132_3334);
+        assert_eq!(ev.signer_pubkey, ramp::<48>(0x50));
+        assert_eq!(ev.partial, ramp::<48>(0x80));
+        assert_eq!(ev.identity_sig, ramp::<96>(0xB0));
+        assert_eq!(ev.commitment, commitment);
+
+        let empty = InvalidSeedPartialEvidence::decode(&ipe1_sample(0)).unwrap();
+        assert!(empty.commitment.is_empty());
+    }
+
+    #[test]
+    fn ipe1_decode_reports_exact_reverts_in_check_order() {
+        let mut short = ipe1_sample(0);
+        short.pop();
+        short[0] = b'X';
+        assert_eq!(
+            revert_reason(InvalidSeedPartialEvidence::decode(&short)),
+            Some(format!(
+                "IPE1 evidence too short: need at least {IPE1_PREFIX_LEN} bytes, got {}",
+                IPE1_PREFIX_LEN - 1
+            ))
+        );
+
+        let mut bad_magic = ipe1_sample(4);
+        bad_magic[0] = b'X';
+        bad_magic[4] = 0x09;
+        assert_eq!(
+            revert_reason(InvalidSeedPartialEvidence::decode(&bad_magic)),
+            Some("IPE1 evidence bad magic".to_string())
+        );
+
+        let mut bad_version = ipe1_sample(4);
+        bad_version[4] = 0x09;
+        assert_eq!(
+            revert_reason(InvalidSeedPartialEvidence::decode(&bad_version)),
+            Some("IPE1 evidence bad version".to_string())
+        );
+
+        let mut overlong = ipe1_sample(4);
+        overlong.truncate(IPE1_PREFIX_LEN + 3);
+        assert_eq!(
+            revert_reason(InvalidSeedPartialEvidence::decode(&overlong)),
+            Some("IPE1 commitment length exceeds input".to_string())
+        );
+
+        let mut trailing = ipe1_sample(4);
+        trailing.push(0);
+        assert_eq!(
+            revert_reason(InvalidSeedPartialEvidence::decode(&trailing)),
+            Some("IPE1 evidence has trailing bytes".to_string())
+        );
     }
 }

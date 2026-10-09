@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::{PrecompileError, Result};
 
@@ -25,181 +25,199 @@ pub fn dispatch(
         data,
         IValidatorSet::IValidatorSetCalls::abi_decode,
         |call| {
-            let mut vs = crate::schema::ValidatorSet::new(storage.clone());
-            use IValidatorSet::IValidatorSetCalls::*;
-            match call {
-                getValidators(_) => metadata::<IValidatorSet::getValidatorsCall>(|| {
-                    let validators = vs.get_all_validators()?;
-                    Ok(validators
-                        .iter()
-                        .map(|v| v.validator_address)
-                        .collect::<Vec<_>>())
-                }),
-                getActiveValidators(_) => {
-                    metadata::<IValidatorSet::getActiveValidatorsCall>(|| {
-                        let validators = vs.get_active_validators()?;
-                        Ok(validators
-                            .iter()
-                            .map(|v| v.validator_address)
-                            .collect::<Vec<_>>())
-                    })
-                }
-                getActiveConsensusSet(_) => {
-                    metadata::<IValidatorSet::getActiveConsensusSetCall>(|| {
-                        let validators = vs.get_active_consensus_set()?;
-                        Ok(validators
-                            .iter()
-                            .map(|v| v.validator_address)
-                            .collect::<Vec<_>>())
-                    })
-                }
-                validatorByAddress(c) => view(c, |c| {
-                    let v = vs
-                        .get_validator(c.addr)?
-                        .ok_or_else(|| PrecompileError::Revert("validator not found".into()))?;
-                    Ok((
-                        v.validator_address,
-                        Bytes::copy_from_slice(&v.consensus_pubkey),
-                        v.stake,
-                        v.status,
-                        v.slash_count,
-                        v.missed_blocks,
-                        v.missed_votes,
-                        v.blocks_proposed,
-                        v.joined_at_height,
-                        v.deactivated_at_height,
-                        v.unbonding_end,
-                        v.has_bls_share,
-                    )
-                        .into())
-                }),
-                validatorByIndex(c) => view(c, |c| {
-                    let addr = vs.validator_address_at(c.index)?.ok_or_else(|| {
-                        PrecompileError::Revert("validator not found at index".into())
-                    })?;
-                    let v = vs
-                        .get_validator(addr)?
-                        .ok_or_else(|| PrecompileError::Revert("validator not found".into()))?;
-                    Ok((
-                        v.validator_address,
-                        Bytes::copy_from_slice(&v.consensus_pubkey),
-                        v.stake,
-                        v.status,
-                        v.slash_count,
-                        v.missed_blocks,
-                        v.missed_votes,
-                        v.blocks_proposed,
-                        v.joined_at_height,
-                        v.deactivated_at_height,
-                        v.unbonding_end,
-                        v.has_bls_share,
-                    )
-                        .into())
-                }),
-                validatorCount(_) => {
-                    metadata::<IValidatorSet::validatorCountCall>(|| vs.validator_count())
-                }
-                activeValidatorCount(_) => {
-                    metadata::<IValidatorSet::activeValidatorCountCall>(|| {
-                        vs.active_validator_count()
-                    })
-                }
-                activeConsensusCount(_) => {
-                    metadata::<IValidatorSet::activeConsensusCountCall>(|| {
-                        vs.active_consensus_count()
-                    })
-                }
-                isValidator(c) => view(c, |c| vs.is_validator(c.addr)),
-                isConsensusParticipant(c) => view(c, |c| vs.is_consensus_participant(c.addr)),
-                hasPendingSetChange(_) => {
-                    metadata::<IValidatorSet::hasPendingSetChangeCall>(|| {
-                        vs.has_pending_set_change()
-                    })
-                }
-                getEpochNumber(_) => {
-                    metadata::<IValidatorSet::getEpochNumberCall>(|| vs.epoch_number.read())
-                }
-                getEpochStartTimestamp(_) => {
-                    metadata::<IValidatorSet::getEpochStartTimestampCall>(|| {
-                        vs.epoch_start_timestamp.read()
-                    })
-                }
-                getEpochStartBlock(_) => metadata::<IValidatorSet::getEpochStartBlockCall>(|| {
-                    vs.epoch_start_block.read()
-                }),
-                setDelegate(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
-                    vs.set_delegate(sender, role, c.delegate)
-                }),
-                revokeDelegate(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
-                    vs.revoke_delegate(sender, role)
-                }),
-                getDelegate(c) => view(c, |c| {
-                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
-                    vs.get_delegate(c.validator, role)
-                }),
-                resolveValidator(c) => view(c, |c| {
-                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
-                    Ok(vs
-                        .resolve_validator_for_role(c.signer, role)?
-                        .unwrap_or(Address::ZERO))
-                }),
-                getRadicleNodeId(c) => view(c, |c| vs.get_radicle_node_id(c.validator)),
-                validatorByRadicleNodeId(c) => {
-                    view(c, |c| vs.validator_by_radicle_node_id(c.nodeId))
-                }
-                registerValidator(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    if c.consensusPubkey.len() != 48 {
-                        return Err(PrecompileError::Revert(
-                            "consensus pubkey must be 48 bytes".into(),
-                        ));
-                    }
-                    let pubkey: [u8; 48] = c.consensusPubkey[..48].try_into().map_err(|_| {
-                        PrecompileError::Revert("consensus pubkey conversion failed".into())
-                    })?;
-                    let sig: &[u8; 96] = if c.blsRegistrationSignature.len() == 96 {
-                        c.blsRegistrationSignature[..96].try_into().map_err(|_| {
-                            PrecompileError::Revert("BLS signature conversion failed".into())
-                        })?
-                    } else {
-                        return Err(PrecompileError::Revert(
-                            "BLS proof of possession must be exactly 96 bytes".into(),
-                        ));
-                    };
-                    vs.register_validator_with_sig(
-                        sender,
-                        c.validatorAddress,
-                        &pubkey,
-                        c.radicleNodeId,
-                        Some(sig),
-                    )
-                }),
-                setP2pAddress(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    vs.set_p2p_address(sender, c.validatorAddress, c.version, &c.encoded)
-                }),
-                getP2pAddress(c) => view(c, |c| {
-                    let (version, encoded) = vs
-                        .get_p2p_address(c.validatorAddress)?
-                        .unwrap_or((0, Vec::new()));
-                    Ok((version, Bytes::from(encoded)).into())
-                }),
-                deactivateValidator(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    vs.deactivate_validator(sender, c.validatorAddress)
-                }),
-                confirmValidatorReady(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    vs.confirm_validator_ready(sender, &c.registration)
-                }),
-            }
+            route(
+                &storage,
+                &mut crate::schema::ValidatorSet::new(storage.clone()),
+                caller,
+                call,
+            )
         },
     )
+}
+
+/// Routes one decoded call to its ValidatorSet operation. Every selector has
+/// exactly one arm.
+fn route(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    vs: &mut crate::schema::ValidatorSet<'_>,
+    caller: Address,
+    call: IValidatorSet::IValidatorSetCalls,
+) -> Result<Bytes> {
+    use crate::delegation::ValidatorDelegateRole as Role;
+    use IValidatorSet as I;
+    use IValidatorSet::IValidatorSetCalls::*;
+    match call {
+        getValidators(_) => address_list::<I::getValidatorsCall>(|| vs.get_all_validators()),
+        getActiveValidators(_) => {
+            address_list::<I::getActiveValidatorsCall>(|| vs.get_active_validators())
+        }
+        getActiveConsensusSet(_) => {
+            address_list::<I::getActiveConsensusSetCall>(|| vs.get_active_consensus_set())
+        }
+        validatorByAddress(c) => view(c, |c| Ok(validator_view(vs, c.addr)?.into())),
+        validatorByIndex(c) => view(c, |c| Ok(validator_view_at(vs, c.index)?.into())),
+        validatorCount(_) => metadata::<I::validatorCountCall>(|| vs.validator_count()),
+        activeValidatorCount(_) => {
+            metadata::<I::activeValidatorCountCall>(|| vs.active_validator_count())
+        }
+        activeConsensusCount(_) => {
+            metadata::<I::activeConsensusCountCall>(|| vs.active_consensus_count())
+        }
+        isValidator(c) => view(c, |c| vs.is_validator(c.addr)),
+        isConsensusParticipant(c) => view(c, |c| vs.is_consensus_participant(c.addr)),
+        hasPendingSetChange(_) => {
+            metadata::<I::hasPendingSetChangeCall>(|| vs.has_pending_set_change())
+        }
+        getEpochNumber(_) => metadata::<I::getEpochNumberCall>(|| vs.epoch_number.read()),
+        getEpochStartTimestamp(_) => {
+            metadata::<I::getEpochStartTimestampCall>(|| vs.epoch_start_timestamp.read())
+        }
+        getEpochStartBlock(_) => {
+            metadata::<I::getEpochStartBlockCall>(|| vs.epoch_start_block.read())
+        }
+        setDelegate(c) => mutate_void(storage, c, caller, |sender, c| {
+            vs.set_delegate(sender, Role::try_from(c.role)?, c.delegate)
+        }),
+        revokeDelegate(c) => mutate_void(storage, c, caller, |sender, c| {
+            vs.revoke_delegate(sender, Role::try_from(c.role)?)
+        }),
+        getDelegate(c) => view(c, |c| vs.get_delegate(c.validator, Role::try_from(c.role)?)),
+        resolveValidator(c) => view(c, |c| resolved_signer(vs, c.signer, c.role)),
+        getRadicleNodeId(c) => view(c, |c| vs.get_radicle_node_id(c.validator)),
+        validatorByRadicleNodeId(c) => view(c, |c| vs.validator_by_radicle_node_id(c.nodeId)),
+        registerValidator(c) => mutate_void(storage, c, caller, |sender, c| {
+            register_from_call(vs, sender, &c)
+        }),
+        setP2pAddress(c) => mutate_void(storage, c, caller, |sender, c| {
+            vs.set_p2p_address(sender, c.validatorAddress, c.version, &c.encoded)
+        }),
+        getP2pAddress(c) => view(c, |c| Ok(p2p_view(vs, c.validatorAddress)?.into())),
+        deactivateValidator(c) => mutate_void(storage, c, caller, |sender, c| {
+            vs.deactivate_validator(sender, c.validatorAddress)
+        }),
+        confirmValidatorReady(c) => mutate_void(storage, c, caller, |sender, c| {
+            vs.confirm_validator_ready(sender, &c.registration)
+        }),
+    }
+}
+
+/// The ABI tuple of `validatorByAddress` and `validatorByIndex`.
+type ValidatorView = (
+    Address,
+    Bytes,
+    U256,
+    u8,
+    u64,
+    u64,
+    u64,
+    u64,
+    u64,
+    u64,
+    u64,
+    bool,
+);
+
+/// The ABI view of the registered validator `addr`.
+fn validator_view(vs: &crate::schema::ValidatorSet<'_>, addr: Address) -> Result<ValidatorView> {
+    let v = vs
+        .get_validator(addr)?
+        .ok_or_else(|| PrecompileError::Revert("validator not found".into()))?;
+    Ok((
+        v.validator_address,
+        Bytes::copy_from_slice(&v.consensus_pubkey),
+        v.stake,
+        v.status,
+        v.slash_count,
+        v.missed_blocks,
+        v.missed_votes,
+        v.blocks_proposed,
+        v.joined_at_height,
+        v.deactivated_at_height,
+        v.unbonding_end,
+        v.has_bls_share,
+    ))
+}
+
+/// The ABI view of the validator at the 1-based registry `index`.
+fn validator_view_at(vs: &crate::schema::ValidatorSet<'_>, index: u64) -> Result<ValidatorView> {
+    let addr = vs
+        .validator_address_at(index)?
+        .ok_or_else(|| PrecompileError::Revert("validator not found at index".into()))?;
+    validator_view(vs, addr)
+}
+
+/// Encodes the addresses of the validators that `validators` returns.
+fn address_list<T: SolCall<Return = Vec<Address>>>(
+    validators: impl FnOnce() -> Result<Vec<crate::runtime::ValidatorRecord>>,
+) -> Result<Bytes> {
+    metadata::<T>(|| Ok(validators()?.iter().map(|v| v.validator_address).collect()))
+}
+
+/// The validator that `signer` signs for in `role`, or the zero address.
+fn resolved_signer(
+    vs: &crate::schema::ValidatorSet<'_>,
+    signer: Address,
+    role: u8,
+) -> Result<Address> {
+    let role = crate::delegation::ValidatorDelegateRole::try_from(role)?;
+    Ok(vs
+        .resolve_validator_for_role(signer, role)?
+        .unwrap_or(Address::ZERO))
+}
+
+/// The stored versioned P2P address of `validator`, or version 0 with no
+/// bytes.
+fn p2p_view(vs: &crate::schema::ValidatorSet<'_>, validator: Address) -> Result<(u8, Bytes)> {
+    let (version, encoded) = vs.get_p2p_address(validator)?.unwrap_or((0, Vec::new()));
+    Ok((version, Bytes::from(encoded)))
+}
+
+/// Registers the validator of a `registerValidator` call from `sender`.
+fn register_from_call(
+    vs: &mut crate::schema::ValidatorSet<'_>,
+    sender: Address,
+    call: &IValidatorSet::registerValidatorCall,
+) -> Result<()> {
+    let (pubkey, sig) =
+        registration_key_and_proof(&call.consensusPubkey, &call.blsRegistrationSignature)?;
+    vs.register_validator_with_sig(
+        sender,
+        call.validatorAddress,
+        &pubkey,
+        call.radicleNodeId,
+        Some(sig),
+    )
+}
+
+/// The 48-byte consensus key and the 96-byte BLS proof of possession of a
+/// registration call. The key length is checked first.
+fn registration_key_and_proof<'a>(
+    consensus_pubkey: &[u8],
+    signature: &'a [u8],
+) -> Result<([u8; 48], &'a [u8; 96])> {
+    if consensus_pubkey.len() != 48 {
+        return Err(PrecompileError::Revert(
+            "consensus pubkey must be 48 bytes".into(),
+        ));
+    }
+    let pubkey: [u8; 48] = consensus_pubkey[..48]
+        .try_into()
+        .map_err(|_| PrecompileError::Revert("consensus pubkey conversion failed".into()))?;
+    if signature.len() != 96 {
+        return Err(PrecompileError::Revert(
+            "BLS proof of possession must be exactly 96 bytes".into(),
+        ));
+    }
+    let sig: &[u8; 96] = signature[..96]
+        .try_into()
+        .map_err(|_| PrecompileError::Revert("BLS signature conversion failed".into()))?;
+    Ok((pubkey, sig))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::B256;
-    use alloy_sol_types::SolCall as _;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::validators::{

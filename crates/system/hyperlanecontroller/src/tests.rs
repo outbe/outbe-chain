@@ -17,6 +17,8 @@ use crate::runtime::validate_validators;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
 use crate::RemoteCall;
+use outbe_primitives::error::PrecompileError;
+use outbe_validatorset::contract::ValidatorSet;
 
 const CHAIN_ID: u64 = 54_322_345;
 const LOCAL: u32 = CHAIN_ID as u32;
@@ -425,24 +427,24 @@ fn validator_shape_checks() {
     ));
 }
 
+const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
+
+/// Registers `addr` with a BLS key that starts with `seed` and activates it
+/// through a boundary. The first call also configures the validator set.
+fn activate(storage: StorageHandle<'_>, addr: Address, seed: u8) -> Result<(), PrecompileError> {
+    let mut vs = ValidatorSet::new(storage);
+    if vs.config_owner.read()?.is_zero() {
+        vs.test_configure_registry(VALIDATOR_OWNER)?;
+    }
+    let mut pubkey = [0u8; 48];
+    pubkey[0] = seed;
+    vs.register_validator(VALIDATOR_OWNER, addr, &pubkey)?;
+    vs.activate_validator_via_boundary_for_test(addr)?;
+    Ok(())
+}
+
 mod sync {
     use super::*;
-    use outbe_validatorset::contract::ValidatorSet;
-
-    const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
-
-    fn activate(storage: StorageHandle<'_>, addr: Address, seed: u8) {
-        let mut vs = ValidatorSet::new(storage);
-        if vs.config_owner.read().unwrap().is_zero() {
-            vs.config_owner.write(VALIDATOR_OWNER).unwrap();
-            vs.set_config_max_validators(100).unwrap();
-        }
-        let mut pubkey = [0u8; 48];
-        pubkey[0] = seed;
-        vs.register_validator(VALIDATOR_OWNER, addr, &pubkey)
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(addr).unwrap();
-    }
 
     #[test]
     fn threshold_is_two_thirds_rounded_up() {
@@ -462,7 +464,7 @@ mod sync {
         stub_router_and_ism(&mut p, U256::ZERO, &[v(1)], 1);
         StorageHandle::enter(&mut p, |storage| {
             for (i, addr) in [v(1), v(2), v(3), v(4)].into_iter().enumerate() {
-                activate(storage.clone(), addr, i as u8 + 1);
+                activate(storage.clone(), addr, i as u8 + 1).unwrap();
             }
         });
         // v4 signs Hyperlane checkpoints with a dedicated key.
@@ -508,18 +510,15 @@ mod sync {
 
 mod liveness {
     use super::*;
-    use crate::runtime::{checkpoint_digest, GRACE_BLOCKS, MAX_MISSES};
+    use crate::liveness::{checkpoint_digest, GRACE_BLOCKS, MAX_MISSES};
     use crate::schema::validator_domain_key;
     use alloy_primitives::{b256, hex};
     use outbe_primitives::tee_signatures::recover_signer;
-    use outbe_validatorset::contract::ValidatorSet;
 
     /// Real checkpoints signed on outbetestnet by validator 0x4fe927… for the
     /// (since redeployed) MerkleTreeHook 0x6543cef9…, taken from its S3 bucket.
     const FIXTURE_HOOK: Address = address!("0x6543cef9bbe42d66b5b36ccaf9374de2b55f9cbc");
     const FIXTURE_VALIDATOR: Address = address!("0x4fe927ab711793954b3a29969ecd4a60d6d265d0");
-    const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
-
     struct Checkpoint {
         root: B256,
         index: u32,
@@ -561,19 +560,6 @@ mod liveness {
         .into()
     }
 
-    fn activate(storage: StorageHandle<'_>, addr: Address, seed: u8) {
-        let mut vs = ValidatorSet::new(storage);
-        if vs.config_owner.read().unwrap().is_zero() {
-            vs.config_owner.write(VALIDATOR_OWNER).unwrap();
-            vs.set_config_max_validators(100).unwrap();
-        }
-        let mut pubkey = [0u8; 48];
-        pubkey[0] = seed;
-        vs.register_validator(VALIDATOR_OWNER, addr, &pubkey)
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(addr).unwrap();
-    }
-
     /// Initialized controller with the fixture hook on the local domain and
     /// the fixture validator active.
     fn liveness_provider() -> HashMapStorageProvider {
@@ -590,21 +576,21 @@ mod liveness {
             .abi_encode()
             .into();
             dispatch(storage.clone(), &call, deployer(), U256::ZERO).unwrap();
-            activate(storage, FIXTURE_VALIDATOR, 1);
+            activate(storage, FIXTURE_VALIDATOR, 1).unwrap();
         });
         p
     }
 
+    /// Stores a submission of `index` at `block` under the
+    /// `validator_domain_key` `key`.
     fn write_submission(
         c: &HyperlaneControllerContract<'_>,
-        validator: Address,
-        domain: u32,
+        key: B256,
         index: u32,
         block: u64,
-    ) {
-        let key = validator_domain_key(validator, domain);
-        c.submitted_index.write(&key, index).unwrap();
-        c.submitted_block.write(&key, block).unwrap();
+    ) -> Result<(), PrecompileError> {
+        c.submitted_index.write(&key, index)?;
+        c.submitted_block.write(&key, block)
     }
 
     #[test]
@@ -706,7 +692,7 @@ mod liveness {
     fn a_signer_cannot_be_shared_between_active_validators() {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
-            activate(storage.clone(), v(2), 2);
+            activate(storage.clone(), v(2), 2).unwrap();
             let mut c = HyperlaneControllerContract::new(storage);
             c.set_hyperlane_signer(v(2), v(9)).unwrap();
             let err = c.set_hyperlane_signer(FIXTURE_VALIDATOR, v(9)).unwrap_err();
@@ -762,16 +748,16 @@ mod liveness {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
             for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
-                activate(storage.clone(), addr, i as u8 + 2);
+                activate(storage.clone(), addr, i as u8 + 2).unwrap();
             }
             let c = HyperlaneControllerContract::new(storage);
             let old = 1_000 - GRACE_BLOCKS;
-            write_submission(&c, FIXTURE_VALIDATOR, LOCAL, 500, old);
-            write_submission(&c, v(2), LOCAL, 498, old);
-            write_submission(&c, v(3), LOCAL, 120, old);
-            write_submission(&c, v(4), LOCAL, 999_999, old);
+            write_submission(&c, validator_domain_key(FIXTURE_VALIDATOR, LOCAL), 500, old).unwrap();
+            write_submission(&c, validator_domain_key(v(2), LOCAL), 498, old).unwrap();
+            write_submission(&c, validator_domain_key(v(3), LOCAL), 120, old).unwrap();
+            write_submission(&c, validator_domain_key(v(4), LOCAL), 999_999, old).unwrap();
             for addr in [FIXTURE_VALIDATOR, v(2), v(3), v(4)] {
-                write_submission(&c, addr, SEPOLIA, 10, old);
+                write_submission(&c, validator_domain_key(addr, SEPOLIA), 10, old).unwrap();
             }
         });
         p.set_block_number(1_000);
@@ -784,7 +770,7 @@ mod liveness {
             }
             // v(3) closes the gap with a fresh submission. It is not part of the
             // reference yet, but v(3) itself is no longer behind.
-            write_submission(&c, v(3), LOCAL, 600, 999);
+            write_submission(&c, validator_domain_key(v(3), LOCAL), 600, 999).unwrap();
             assert!(c.check_liveness().unwrap().is_empty());
             assert_eq!(c.miss_count.read(&v(3)).unwrap(), 0);
         });
@@ -795,12 +781,12 @@ mod liveness {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
             for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
-                activate(storage.clone(), addr, i as u8 + 2);
+                activate(storage.clone(), addr, i as u8 + 2).unwrap();
             }
             let c = HyperlaneControllerContract::new(storage);
             for addr in [FIXTURE_VALIDATOR, v(2), v(3)] {
-                write_submission(&c, addr, LOCAL, 50, 100);
-                write_submission(&c, addr, SEPOLIA, 50, 100);
+                write_submission(&c, validator_domain_key(addr, LOCAL), 50, 100).unwrap();
+                write_submission(&c, validator_domain_key(addr, SEPOLIA), 50, 100).unwrap();
             }
         });
         p.set_block_number(1_000);
@@ -828,17 +814,17 @@ mod liveness {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
             for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
-                activate(storage.clone(), addr, i as u8 + 2);
+                activate(storage.clone(), addr, i as u8 + 2).unwrap();
             }
             let c = HyperlaneControllerContract::new(storage);
             // Only two settled submissions: below the threshold of three,
             // so there is no reference and nobody can be behind.
-            write_submission(&c, FIXTURE_VALIDATOR, LOCAL, 500, 100);
-            write_submission(&c, v(2), LOCAL, 500, 100);
-            write_submission(&c, v(3), LOCAL, 1, 100);
-            write_submission(&c, v(4), LOCAL, 1, 100);
+            write_submission(&c, validator_domain_key(FIXTURE_VALIDATOR, LOCAL), 500, 100).unwrap();
+            write_submission(&c, validator_domain_key(v(2), LOCAL), 500, 100).unwrap();
+            write_submission(&c, validator_domain_key(v(3), LOCAL), 1, 100).unwrap();
+            write_submission(&c, validator_domain_key(v(4), LOCAL), 1, 100).unwrap();
             for addr in [FIXTURE_VALIDATOR, v(2), v(3), v(4)] {
-                write_submission(&c, addr, SEPOLIA, 0, 100);
+                write_submission(&c, validator_domain_key(addr, SEPOLIA), 0, 100).unwrap();
             }
         });
         p.set_block_number(1_000);
@@ -858,15 +844,15 @@ mod liveness {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
             for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
-                activate(storage.clone(), addr, i as u8 + 2);
+                activate(storage.clone(), addr, i as u8 + 2).unwrap();
             }
             let c = HyperlaneControllerContract::new(storage);
             for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
-                write_submission(&c, addr, LOCAL, 500, 100);
-                write_submission(&c, addr, SEPOLIA, 5, 100);
+                write_submission(&c, validator_domain_key(addr, LOCAL), 500, 100).unwrap();
+                write_submission(&c, validator_domain_key(addr, SEPOLIA), 5, 100).unwrap();
             }
-            write_submission(&c, v(3), LOCAL, 7, 100);
-            write_submission(&c, v(3), SEPOLIA, 5, 100);
+            write_submission(&c, validator_domain_key(v(3), LOCAL), 7, 100).unwrap();
+            write_submission(&c, validator_domain_key(v(3), SEPOLIA), 5, 100).unwrap();
         });
         let mut jailed = Vec::new();
         for boundary in 1..=MAX_MISSES {

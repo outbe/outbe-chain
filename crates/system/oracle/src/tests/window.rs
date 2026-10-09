@@ -205,10 +205,9 @@ fn a_policy_change_leaves_an_old_snapshot_readable_and_unchanged() {
 
 #[test]
 fn get_policy_rate_reverts_for_an_unregistered_iso_code() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         crate::genesis::init_from_genesis(
-            &mut oracle,
+            oracle,
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
@@ -227,9 +226,7 @@ fn get_policy_rate_reverts_for_an_unregistered_iso_code() {
 /// without reverting and halting the block.
 #[test]
 fn coen_rate_for_opt_reports_unpriceable_currencies_instead_of_reverting() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-
+    with_bare_oracle(|storage, oracle| {
         // Never registered.
         assert_eq!(
             crate::api::coen_rate_for_opt(storage.clone(), 978).unwrap(),
@@ -248,9 +245,11 @@ fn coen_rate_for_opt_reports_unpriceable_currencies_instead_of_reverting() {
             storage.clone(),
             Address::ZERO,
             AddressPair::new_coen_to(978),
-            U256::from(1234u64),
-            1,
-            1,
+            crate::api::RateObservation {
+                rate: U256::from(1234u64),
+                block_number: 1,
+                timestamp: 1,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -272,14 +271,8 @@ fn seed_closed_days(oracle: &mut OracleContract, iso: u16, days: &[(u32, u64)], 
 
 #[test]
 fn closed_above_floor_needs_a_finalized_day_strictly_above_the_floor() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        seed_closed_days(
-            &mut oracle,
-            840,
-            &[(20260301, 100), (20260302, 150)],
-            20260302,
-        );
+    with_bare_oracle(|storage, oracle| {
+        seed_closed_days(oracle, 840, &[(20260301, 100), (20260302, 150)], 20260302);
         oracle
             .record_utc_day_vwap(20260303u32, 1u32, U256::from(500u64))
             .unwrap();
@@ -296,14 +289,8 @@ fn closed_above_floor_needs_a_finalized_day_strictly_above_the_floor() {
 
 #[test]
 fn closed_above_floor_counts_only_days_from_the_first_full_one() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        seed_closed_days(
-            &mut oracle,
-            840,
-            &[(20260228, 500), (20260302, 100)],
-            20260302,
-        );
+    with_bare_oracle(|storage, oracle| {
+        seed_closed_days(oracle, 840, &[(20260228, 500), (20260302, 100)], 20260302);
 
         let crossed = |from: u32| {
             crate::api::closed_above_floor(storage.clone(), 840, U256::from(200u64), from).unwrap()
@@ -321,14 +308,8 @@ fn closed_above_floor_counts_only_days_from_the_first_full_one() {
 /// day holding it.
 #[test]
 fn the_month_maximum_follows_its_days_through_every_write() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        seed_closed_days(
-            &mut oracle,
-            840,
-            &[(20260303, 900), (20260317, 500)],
-            20260331,
-        );
+    with_bare_oracle(|_storage, oracle| {
+        seed_closed_days(oracle, 840, &[(20260303, 900), (20260317, 500)], 20260331);
         let month_max = |oracle: &OracleContract| {
             oracle
                 .utc_month_vwap_max
@@ -336,69 +317,100 @@ fn the_month_maximum_follows_its_days_through_every_write() {
                 .read(&1u32)
                 .unwrap()
         };
-        assert_eq!(month_max(&oracle), U256::from(900u64));
+        assert_eq!(month_max(oracle), U256::from(900u64));
         oracle
             .record_utc_day_vwap(20260303, 1, U256::from(100u64))
             .unwrap();
         assert_eq!(
-            month_max(&oracle),
+            month_max(oracle),
             U256::from(500u64),
             "lowering the maximum rereads the month"
         );
         oracle
             .record_utc_day_vwap(20260320, 1, U256::from(700u64))
             .unwrap();
-        assert_eq!(month_max(&oracle), U256::from(700u64));
+        assert_eq!(month_max(oracle), U256::from(700u64));
         oracle
             .record_utc_day_vwap(20260317, 1, U256::from(10u64))
             .unwrap();
         assert_eq!(
-            month_max(&oracle),
+            month_max(oracle),
             U256::from(700u64),
             "lowering another day keeps it"
         );
     });
 }
 
+/// Pseudo-random closed-day VWAPs for days 1, 9, 15, 28 and 31 of every month
+/// of 2024 to 2026. Edge days outrank every other: a day past `watermark`
+/// gets 99999 and 2025-06-01, a day before a start inside its month, gets
+/// 88888.
+fn pseudo_random_closed_days(watermark: u32) -> Vec<(u32, u64)> {
+    let mut seed = 0x2545_f491_u64;
+    let mut days = Vec::new();
+    for year in 2024u32..=2026 {
+        for month in 1u32..=12 {
+            for dd in [1u32, 9, 15, 28, 31] {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                days.push((year * 10_000 + month * 100 + dd, 1 + (seed >> 33) % 10_000));
+            }
+        }
+    }
+    for (day, vwap) in days.iter_mut() {
+        if *day > watermark {
+            *vwap = 99_999;
+        } else if *day == 20250601 {
+            *vwap = 88_888;
+        }
+    }
+    days
+}
+
+/// The largest VWAP among `days` from `from` up to `watermark`, or zero.
+fn expected_max_since(days: &[(u32, u64)], from: u32, watermark: u32) -> U256 {
+    days.iter()
+        .filter(|(day, _)| *day >= from && *day <= watermark)
+        .map(|(_, vwap)| U256::from(*vwap))
+        .max()
+        .unwrap_or(U256::ZERO)
+}
+
+/// Asserts that a closed day from `from` is above a floor just below
+/// `expected`, and not above `expected` or a floor just above it.
+fn assert_floor_checks_around(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    expected: U256,
+    from: u32,
+) {
+    for (floor, above) in [
+        (expected - U256::ONE, true),
+        (expected, false),
+        (expected + U256::ONE, false),
+    ] {
+        assert_eq!(
+            crate::api::closed_above_floor(storage.clone(), 840, floor, from).unwrap(),
+            above,
+            "floor {floor} from {from}"
+        );
+    }
+}
+
 /// Month-bucketed reads return exactly what a walk over every day would, across months, years
 /// and a day past the watermark.
 #[test]
 fn bounded_history_reads_match_a_walk_over_every_day() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        let mut seed = 0x2545_f491_u64;
-        let mut days = Vec::new();
-        for year in 2024u32..=2026 {
-            for month in 1u32..=12 {
-                for dd in [1u32, 9, 15, 28, 31] {
-                    seed = seed
-                        .wrapping_mul(6364136223846793005)
-                        .wrapping_add(1442695040888963407);
-                    days.push((year * 10_000 + month * 100 + dd, 1 + (seed >> 33) % 10_000));
-                }
-            }
-        }
+    with_bare_oracle(|storage, oracle| {
         let watermark = 20261215;
-        // Edge days outrank every other: one past the watermark, one before a start inside its month.
-        for (day, vwap) in days.iter_mut() {
-            if *day > watermark {
-                *vwap = 99_999;
-            } else if *day == 20250601 {
-                *vwap = 88_888;
-            }
-        }
-        seed_closed_days(&mut oracle, 840, &days, watermark);
+        let days = pseudo_random_closed_days(watermark);
+        seed_closed_days(oracle, 840, &days, watermark);
 
         for from in [
             101, 20230101, 20240101, 20240131, 20240201, 20241231, 20250101, 20250615, 20251231,
             20261201, 20261215, 20261216, 20270101,
         ] {
-            let expected = days
-                .iter()
-                .filter(|(day, _)| *day >= from && *day <= watermark)
-                .map(|(_, vwap)| U256::from(*vwap))
-                .max()
-                .unwrap_or(U256::ZERO);
+            let expected = expected_max_since(&days, from, watermark);
             assert_eq!(
                 crate::api::max_utc_day_vwap_since(storage.clone(), 840, from).unwrap(),
                 expected,
@@ -407,31 +419,15 @@ fn bounded_history_reads_match_a_walk_over_every_day() {
             if expected.is_zero() {
                 continue;
             }
-            for (floor, above) in [
-                (expected - U256::ONE, true),
-                (expected, false),
-                (expected + U256::ONE, false),
-            ] {
-                assert_eq!(
-                    crate::api::closed_above_floor(storage.clone(), 840, floor, from).unwrap(),
-                    above,
-                    "floor {floor} from {from}"
-                );
-            }
+            assert_floor_checks_around(&storage, expected, from);
         }
     });
 }
 
 #[test]
 fn max_utc_day_vwap_since_reads_the_same_days_as_the_floor_check() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        seed_closed_days(
-            &mut oracle,
-            840,
-            &[(20260228, 500), (20260302, 150)],
-            20260302,
-        );
+    with_bare_oracle(|storage, oracle| {
+        seed_closed_days(oracle, 840, &[(20260228, 500), (20260302, 150)], 20260302);
         oracle
             .record_utc_day_vwap(20260303u32, 1u32, U256::from(900u64))
             .unwrap();
@@ -465,9 +461,8 @@ fn max_utc_day_vwap_since_reads_the_same_days_as_the_floor_check() {
 
 #[test]
 fn closed_above_floor_is_false_for_an_unregistered_currency() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        seed_closed_days(&mut oracle, 840, &[(20260301, 500)], 20260301);
+    with_bare_oracle(|storage, oracle| {
+        seed_closed_days(oracle, 840, &[(20260301, 500)], 20260301);
 
         assert!(!crate::api::closed_above_floor(storage, 978, U256::from(1u64), 20260301).unwrap());
     });

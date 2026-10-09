@@ -105,6 +105,7 @@ outbe-tee-enclave.workspace = true
 alloy-sol-types.workspace = true
 alloy-rpc-types-engine.workspace = true
 outbe-offchain-storage.workspace = true
+outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-txpool.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }

@@ -150,52 +150,16 @@ pub fn admit_remote_session_v1(
     source: FinalizedRegistryBindingV1,
     target: FinalizedRegistryBindingV1,
 ) -> Result<RemoteSessionAdmissionV1, RemoteSessionAdmissionError> {
-    validate_view(source.view)?;
-    if source.view != target.view {
-        return Err(RemoteSessionAdmissionError::MixedFinalizedViews);
-    }
-    validate_binding(source)?;
-    validate_binding(target)?;
-
-    if source.view.chain_id != expected.chain_id {
-        return Err(RemoteSessionAdmissionError::WrongChain);
-    }
-    if source.view.genesis_hash != expected.genesis_hash {
-        return Err(RemoteSessionAdmissionError::WrongGenesis);
-    }
-    if source.node_id_hash != expected.source_node_id_hash {
-        return Err(RemoteSessionAdmissionError::WrongSourceNode);
-    }
-    if target.node_id_hash != expected.target_node_id_hash {
-        return Err(RemoteSessionAdmissionError::WrongTargetNode);
-    }
-
-    let witness_node_id_hash = source_witness
-        .node_id
-        .node_id_hash()
-        .map_err(|_| RemoteSessionAdmissionError::MalformedSourceWitness)?;
-    let witness_authorization_hash = source_witness
-        .authorization_hash()
-        .map_err(|_| RemoteSessionAdmissionError::MalformedSourceWitness)?;
-    if source_witness.chain_id != expected.chain_id
-        || source_witness.genesis_hash != expected.genesis_hash
-        || witness_node_id_hash != expected.source_node_id_hash
-        || witness_authorization_hash != source.node_host_authorization_hash
-    {
-        return Err(RemoteSessionAdmissionError::WrongSourceWitness);
-    }
-
-    if source.valid_until <= source.view.consensus_timestamp {
-        return Err(RemoteSessionAdmissionError::SourceExpired);
-    }
-    if target.valid_until <= source.view.consensus_timestamp {
-        return Err(RemoteSessionAdmissionError::TargetExpired);
-    }
+    validate_finalized_pair(source, target)?;
+    validate_expected_chain(expected, source.view)?;
+    validate_expected_nodes(expected, source, target)?;
+    let initiator_static_x25519 = validate_source_witness(expected, source_witness, source)?;
+    let deadline = checked_deadline(source, target)?;
 
     Ok(RemoteSessionAdmissionV1 {
-        initiator_static_x25519: source_witness.node_host_noise_x25519,
+        initiator_static_x25519,
         responder_static_x25519: target.noise_responder_x25519,
-        deadline: source.valid_until.min(target.valid_until),
+        deadline,
         finalized_view: source.view,
         retirement_height: 0,
     })
@@ -214,30 +178,116 @@ pub fn admit_rpc_trusted_remote_session_v1(
         .map(|admission| RpcTrustedRemoteSessionV1 { admission })
 }
 
-fn validate_view(view: FinalizedRegistryViewV1) -> Result<(), RemoteSessionAdmissionError> {
-    if view.chain_id == [0; 32]
-        || view.genesis_hash.is_zero()
-        || view.block_number == 0
-        || view.block_hash.is_zero()
-        || view.state_root.is_zero()
-        || view.consensus_timestamp == 0
+// Preserve this order: malformed source view, mixed views, malformed source
+// binding, then malformed target binding. Callers rely on the first error.
+fn validate_finalized_pair(
+    source: FinalizedRegistryBindingV1,
+    target: FinalizedRegistryBindingV1,
+) -> Result<(), RemoteSessionAdmissionError> {
+    validate_view(source.view)?;
+    if source.view != target.view {
+        return Err(RemoteSessionAdmissionError::MixedFinalizedViews);
+    }
+    validate_binding(source)?;
+    validate_binding(target)
+}
+
+// Network identity precedes participant identity after both bindings are valid.
+fn validate_expected_chain(
+    expected: RemoteSessionExpectationV1,
+    view: FinalizedRegistryViewV1,
+) -> Result<(), RemoteSessionAdmissionError> {
+    if view.chain_id != expected.chain_id {
+        return Err(RemoteSessionAdmissionError::WrongChain);
+    }
+    if view.genesis_hash != expected.genesis_hash {
+        return Err(RemoteSessionAdmissionError::WrongGenesis);
+    }
+    Ok(())
+}
+
+fn validate_expected_nodes(
+    expected: RemoteSessionExpectationV1,
+    source: FinalizedRegistryBindingV1,
+    target: FinalizedRegistryBindingV1,
+) -> Result<(), RemoteSessionAdmissionError> {
+    if source.node_id_hash != expected.source_node_id_hash {
+        return Err(RemoteSessionAdmissionError::WrongSourceNode);
+    }
+    if target.node_id_hash != expected.target_node_id_hash {
+        return Err(RemoteSessionAdmissionError::WrongTargetNode);
+    }
+    Ok(())
+}
+
+fn validate_source_witness(
+    expected: RemoteSessionExpectationV1,
+    source_witness: &NodeHostAuthorizationWitnessV1,
+    source: FinalizedRegistryBindingV1,
+) -> Result<[u8; 32], RemoteSessionAdmissionError> {
+    let witness_node_id_hash = source_witness
+        .node_id
+        .node_id_hash()
+        .map_err(|_| RemoteSessionAdmissionError::MalformedSourceWitness)?;
+    let witness_authorization_hash = source_witness
+        .authorization_hash()
+        .map_err(|_| RemoteSessionAdmissionError::MalformedSourceWitness)?;
+    if !witness_uses_expected_network(expected, source_witness)
+        || witness_node_id_hash != expected.source_node_id_hash
+        || witness_authorization_hash != source.node_host_authorization_hash
     {
+        return Err(RemoteSessionAdmissionError::WrongSourceWitness);
+    }
+    Ok(source_witness.node_host_noise_x25519)
+}
+
+fn witness_uses_expected_network(
+    expected: RemoteSessionExpectationV1,
+    witness: &NodeHostAuthorizationWitnessV1,
+) -> bool {
+    witness.chain_id == expected.chain_id && witness.genesis_hash == expected.genesis_hash
+}
+
+fn checked_deadline(
+    source: FinalizedRegistryBindingV1,
+    target: FinalizedRegistryBindingV1,
+) -> Result<u64, RemoteSessionAdmissionError> {
+    if source.valid_until <= source.view.consensus_timestamp {
+        return Err(RemoteSessionAdmissionError::SourceExpired);
+    }
+    if target.valid_until <= source.view.consensus_timestamp {
+        return Err(RemoteSessionAdmissionError::TargetExpired);
+    }
+    Ok(source.valid_until.min(target.valid_until))
+}
+
+fn validate_view(view: FinalizedRegistryViewV1) -> Result<(), RemoteSessionAdmissionError> {
+    let has_missing_hash = [view.genesis_hash, view.block_hash, view.state_root]
+        .iter()
+        .any(|hash| hash.is_zero());
+    if view.chain_id == [0; 32] || !has_finalized_position(view) || has_missing_hash {
         return Err(RemoteSessionAdmissionError::MalformedFinalizedView);
     }
     Ok(())
 }
 
+fn has_finalized_position(view: FinalizedRegistryViewV1) -> bool {
+    view.block_number != 0 && view.consensus_timestamp != 0
+}
+
 fn validate_binding(
     binding: FinalizedRegistryBindingV1,
 ) -> Result<(), RemoteSessionAdmissionError> {
-    if binding.node_id_hash.is_zero()
-        || binding.enclave_id.is_zero()
-        || binding.binding_id.is_zero()
-        || binding.intent_hash.is_zero()
-        || binding.valid_until == 0
-        || binding.noise_responder_x25519 == [0; 32]
-        || binding.node_host_authorization_hash.is_zero()
-    {
+    let has_missing_hash = [
+        binding.node_id_hash,
+        binding.enclave_id,
+        binding.binding_id,
+        binding.intent_hash,
+        binding.node_host_authorization_hash,
+    ]
+    .iter()
+    .any(|hash| hash.is_zero());
+    if has_missing_hash || binding.valid_until == 0 || binding.noise_responder_x25519 == [0; 32] {
         return Err(RemoteSessionAdmissionError::MalformedBinding);
     }
     Ok(())

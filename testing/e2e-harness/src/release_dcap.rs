@@ -21,40 +21,19 @@ use eyre::{bail, ensure, eyre, Result, WrapErr as _};
 use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-    DcapCollateralKind, DcapEvidenceV1, NodeIdV1, RegistrationIntentV1,
+    DcapEvidenceV1, NodeIdV1, RegistrationIntentV1,
 };
 use outbe_tee::dcap_protocol::{DcapPckCaV1, DcapPlatformTcbStatusV1, DcapVerificationOutcomeV1};
 use outbe_tee::node_host::{
     connect_or_initialize_node_host_enclave, load_committed_enclave_manifest_v1, NodeHostIdentityV1,
 };
-use outbe_tee::release_dcap_artifacts::ReleaseDcapArtifactSetV1;
+use outbe_tee::release_dcap_artifacts::{
+    ReleaseDcapArtifactSetV1, DCAP_COLLATERAL_COMPONENT_FILES,
+};
 use rand_core::{OsRng, RngCore as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
-
-const COMPONENT_FILES: [(DcapCollateralKind, &str); 8] = [
-    (
-        DcapCollateralKind::PckCertificateChain,
-        "pck-certificate-chain.pem0",
-    ),
-    (DcapCollateralKind::PckCrl, "pck.crl.der"),
-    (
-        DcapCollateralKind::PckCrlIssuerChain,
-        "pck-crl-issuer-chain.pem",
-    ),
-    (DcapCollateralKind::RootCaCrl, "root-ca.crl.der"),
-    (DcapCollateralKind::TcbInfo, "tcb-info.json"),
-    (
-        DcapCollateralKind::TcbInfoIssuerChain,
-        "tcb-info-issuer-chain.pem",
-    ),
-    (DcapCollateralKind::QeIdentity, "qe-identity.json"),
-    (
-        DcapCollateralKind::QeIdentityIssuerChain,
-        "qe-identity-issuer-chain.pem",
-    ),
-];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ReleaseDcapNetworkArg {
@@ -337,7 +316,7 @@ fn run(cli: Cli) -> Result<()> {
     )?;
     let collateral_completed_at = unix_seconds()?;
 
-    let components = COMPONENT_FILES
+    let components = DCAP_COLLATERAL_COMPONENT_FILES
         .iter()
         .map(|(kind, name)| {
             Ok(DcapCollateralComponentV1 {
@@ -436,7 +415,7 @@ fn run(cli: Cli) -> Result<()> {
         &generated.enclave_signature,
         &mut artifacts,
     )?;
-    for (_, name) in COMPONENT_FILES {
+    for (_, name) in DCAP_COLLATERAL_COMPONENT_FILES {
         let bytes = fs::read(collateral_dir.join(name))?;
         write_artifact(&retained_collateral, name, &bytes, &mut artifacts)?;
     }

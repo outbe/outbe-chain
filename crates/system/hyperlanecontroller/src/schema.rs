@@ -1,6 +1,7 @@
-use alloy_primitives::{keccak256, Address, B256};
+use alloy_primitives::{Address, B256};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::storage::keys::address_u32_key;
 
 /// EVM storage layout for the Hyperlane controller.
 ///
@@ -54,8 +55,5 @@ pub struct HyperlaneControllerContract {
 
 /// Composite key for the per-(validator, domain) checkpoint maps.
 pub fn validator_domain_key(validator: Address, domain: u32) -> B256 {
-    let mut buf = [0u8; 24];
-    buf[..20].copy_from_slice(validator.as_slice());
-    buf[20..].copy_from_slice(&domain.to_be_bytes());
-    keccak256(buf)
+    address_u32_key(validator, domain)
 }

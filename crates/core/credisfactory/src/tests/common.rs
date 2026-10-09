@@ -246,9 +246,11 @@ pub fn set_coen_rate_for(storage: &StorageHandle<'_>, iso: u16, coen_iso_rate: U
         storage.clone(),
         Address::ZERO,
         outbe_oracle::api::AddressPair::new_coen_to(iso),
-        coen_iso_rate,
-        1,
-        timestamp,
+        outbe_oracle::api::RateObservation {
+            rate: coen_iso_rate,
+            block_number: 1,
+            timestamp,
+        },
     )
     .unwrap();
 }

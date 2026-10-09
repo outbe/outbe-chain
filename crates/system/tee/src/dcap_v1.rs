@@ -4,38 +4,33 @@
 //! time. Quote grammar, collateral adaptation, native QVL invocation and
 //! policy mapping remain private implementation details.
 
-use std::{collections::BTreeSet, fmt};
+mod pck_certificate;
+mod quote_layout;
+mod signed_collateral;
 
 use alloy_primitives::B256;
-use der::{
-    asn1::{AnyRef, ObjectIdentifier, OctetStringRef},
-    Decode as _, Encode as _, Reader as _, SliceReader, Tag, TagNumber, Tagged as _,
-};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, DcapEvidenceV1, PlatformTcbStatusSetV1, TeePolicyV1,
 };
-use pem::{EncodeConfig, LineEnding};
-use serde::{
-    de::{DeserializeSeed, Error as _, MapAccess, SeqAccess, Visitor},
-    Deserialize,
-};
-use serde_json::value::RawValue;
-use sha2::{Digest as _, Sha256};
 
 pub use crate::dcap_protocol::{
     DcapPckCaV1, DcapPlatformTcbStatusV1, DcapRejectCodeV1, DcapVerdictV1,
 };
 use crate::native_qvl::{
     verify_quote_native, NativeDcapCollateral, NativeQvlError, NativeQvlStatus,
-    NativeQvlSupplemental,
+    NativeQvlSupplemental, NativeQvlVerdict,
 };
-
-const QUOTE_AUTHENTICATION_DATA_LENGTH_OFFSET: usize = 432;
-const QUOTE_AUTHENTICATION_DATA_OFFSET: usize = 436;
-const QUOTE_SIGNATURE_BYTES: usize = 64;
-const ATTESTATION_PUBLIC_KEY_BYTES: usize = 64;
-const QE_REPORT_BYTES: usize = 384;
-const QE_REPORT_SIGNATURE_BYTES: usize = 64;
+use crate::quote::ReportMeasurements;
+use pck_certificate::{
+    parse_pck_identity, pck_root_der_hash, validate_canonical_certificate_chain,
+    validate_canonical_der_crl, validate_canonical_pck_certificate_chain, PckIdentity,
+};
+use quote_layout::{
+    parse_quote_authentication_data, validate_quote_outer_length, validate_quote_profile,
+};
+use signed_collateral::{
+    parse_signed_qe_identity, parse_signed_tcb_info, QeIdentityMetadata, TcbInfoMetadata,
+};
 
 /// Verify one canonical DCAP evidence value using only consensus inputs.
 pub fn verify_dcap_evidence(
@@ -43,6 +38,19 @@ pub fn verify_dcap_evidence(
     policy: &TeePolicyV1,
     block_timestamp: u64,
 ) -> Result<DcapVerdictV1, DcapRejectCodeV1> {
+    validate_evidence_context(evidence, policy, block_timestamp)?;
+    let measurements = validate_quote_binding(evidence, policy)?;
+    validate_canonical_collateral(evidence, policy)?;
+    let signed = validate_signed_collateral(evidence, policy, block_timestamp)?;
+    validate_measurement_rule(&measurements, policy)?;
+    verify_native_quote_and_build_verdict(evidence, policy, block_timestamp, measurements, signed)
+}
+
+fn validate_evidence_context(
+    evidence: &DcapEvidenceV1,
+    policy: &TeePolicyV1,
+    block_timestamp: u64,
+) -> Result<(), DcapRejectCodeV1> {
     AttestationEvidenceV1::Dcap(evidence.clone())
         .encode_canonical()
         .map_err(|_| DcapRejectCodeV1::EvidenceNonCanonical)?;
@@ -61,7 +69,13 @@ pub fn verify_dcap_evidence(
     if block_timestamp > i64::MAX as u64 {
         return Err(DcapRejectCodeV1::TimestampInvalid);
     }
+    Ok(())
+}
 
+fn validate_quote_binding(
+    evidence: &DcapEvidenceV1,
+    policy: &TeePolicyV1,
+) -> Result<ReportMeasurements, DcapRejectCodeV1> {
     validate_quote_outer_length(&evidence.quote)?;
     validate_quote_profile(&evidence.quote, policy)?;
     let quote_authentication = parse_quote_authentication_data(&evidence.quote)?;
@@ -83,6 +97,13 @@ pub fn verify_dcap_evidence(
     if measurements.report_data != expected_report_data {
         return Err(DcapRejectCodeV1::ReportDataMismatch);
     }
+    Ok(measurements)
+}
+
+fn validate_canonical_collateral(
+    evidence: &DcapEvidenceV1,
+    policy: &TeePolicyV1,
+) -> Result<(), DcapRejectCodeV1> {
     validate_canonical_pck_certificate_chain(component(evidence, 0)?)?;
     validate_canonical_der_crl(component(evidence, 1)?)?;
     validate_canonical_certificate_chain(component(evidence, 2)?, 2)?;
@@ -92,6 +113,22 @@ pub fn verify_dcap_evidence(
     if pck_root_der_hash(component(evidence, 0)?)? != policy.intel_root_der_hash {
         return Err(DcapRejectCodeV1::IntelRootMismatch);
     }
+    Ok(())
+}
+
+struct ValidatedDcapClaims {
+    tcb_info: TcbInfoMetadata,
+    qe_identity: QeIdentityMetadata,
+    pck_identity: PckIdentity,
+    issue_floor: u64,
+    expiration_ceiling: u64,
+}
+
+fn validate_signed_collateral(
+    evidence: &DcapEvidenceV1,
+    policy: &TeePolicyV1,
+    block_timestamp: u64,
+) -> Result<ValidatedDcapClaims, DcapRejectCodeV1> {
     let tcb_info = parse_signed_tcb_info(component(evidence, 4)?, policy)?;
     let qe_identity = parse_signed_qe_identity(component(evidence, 6)?, policy)?;
     let issue_floor = tcb_info.issue_date.max(qe_identity.issue_date);
@@ -111,6 +148,19 @@ pub fn verify_dcap_evidence(
     if pck_identity.fmspc != tcb_info.fmspc || pck_identity.pce_id != tcb_info.pce_id {
         return Err(DcapRejectCodeV1::PlatformIdentityMismatch);
     }
+    Ok(ValidatedDcapClaims {
+        tcb_info,
+        qe_identity,
+        pck_identity,
+        issue_floor,
+        expiration_ceiling,
+    })
+}
+
+fn validate_measurement_rule(
+    measurements: &ReportMeasurements,
+    policy: &TeePolicyV1,
+) -> Result<(), DcapRejectCodeV1> {
     let measurement_accepted = policy.measurement_rules.iter().any(|rule| {
         rule.mrenclave == B256::from(measurements.mrenclave)
             && rule.mrsigner == B256::from(measurements.mrsigner)
@@ -120,21 +170,24 @@ pub fn verify_dcap_evidence(
     if !measurement_accepted {
         return Err(DcapRejectCodeV1::MeasurementRejected);
     }
-    let native_collateral = NativeDcapCollateral {
-        pck_crl_issuer_chain: component(evidence, 2)?,
-        root_ca_crl: component(evidence, 3)?,
-        pck_crl: component(evidence, 1)?,
-        tcb_info_issuer_chain: component(evidence, 5)?,
-        tcb_info: component(evidence, 4)?,
-        qe_identity_issuer_chain: component(evidence, 7)?,
-        qe_identity: component(evidence, 6)?,
-    };
-    let native_verdict = verify_quote_native(
-        &evidence.quote,
-        &native_collateral,
-        i64::try_from(block_timestamp).map_err(|_| DcapRejectCodeV1::TimestampInvalid)?,
-    )
-    .map_err(map_native_error)?;
+    Ok(())
+}
+
+fn verify_native_quote_and_build_verdict(
+    evidence: &DcapEvidenceV1,
+    policy: &TeePolicyV1,
+    block_timestamp: u64,
+    measurements: ReportMeasurements,
+    signed: ValidatedDcapClaims,
+) -> Result<DcapVerdictV1, DcapRejectCodeV1> {
+    let ValidatedDcapClaims {
+        tcb_info,
+        qe_identity,
+        pck_identity,
+        issue_floor,
+        expiration_ceiling,
+    } = signed;
+    let native_verdict = verify_native_quote(evidence, block_timestamp)?;
     let signed_pce_id = u16::from_be_bytes(tcb_info.pce_id);
     let collateral_window = reconcile_native_supplemental(
         &native_verdict.supplemental,
@@ -174,6 +227,27 @@ pub fn verify_dcap_evidence(
         qe_tcb_evaluation_data_number: qe_identity.tcb_evaluation_data_number,
         collateral_valid_until: collateral_window.expiration_ceiling,
     })
+}
+
+fn verify_native_quote(
+    evidence: &DcapEvidenceV1,
+    block_timestamp: u64,
+) -> Result<NativeQvlVerdict, DcapRejectCodeV1> {
+    let native_collateral = NativeDcapCollateral {
+        pck_crl_issuer_chain: component(evidence, 2)?,
+        root_ca_crl: component(evidence, 3)?,
+        pck_crl: component(evidence, 1)?,
+        tcb_info_issuer_chain: component(evidence, 5)?,
+        tcb_info: component(evidence, 4)?,
+        qe_identity_issuer_chain: component(evidence, 7)?,
+        qe_identity: component(evidence, 6)?,
+    };
+    verify_quote_native(
+        &evidence.quote,
+        &native_collateral,
+        i64::try_from(block_timestamp).map_err(|_| DcapRejectCodeV1::TimestampInvalid)?,
+    )
+    .map_err(map_native_error)
 }
 
 /// Signed Intel collateral time bounds needed by the host renewal scheduler.
@@ -233,14 +307,18 @@ fn reconcile_native_supplemental(
     let expected_tcb_evaluation_reference = signed
         .platform_tcb_evaluation_data_number
         .min(signed.qe_tcb_evaluation_data_number);
-    if supplemental.tee_type != signed.tee_type
-        || supplemental.pce_id != signed.pce_id
-        || supplemental.tcb_evaluation_data_number != expected_tcb_evaluation_reference
-        || (supplemental.qe_tcb_evaluation_data_number != 0
-            && supplemental.qe_tcb_evaluation_data_number != signed.qe_tcb_evaluation_data_number)
-        || issue_floor < signed.issue_floor
-        || expiration_ceiling > signed.expiration_ceiling
-    {
+    let claims_match = [
+        supplemental.tee_type == signed.tee_type,
+        supplemental.pce_id == signed.pce_id,
+        supplemental.tcb_evaluation_data_number == expected_tcb_evaluation_reference,
+        supplemental.qe_tcb_evaluation_data_number == 0
+            || supplemental.qe_tcb_evaluation_data_number == signed.qe_tcb_evaluation_data_number,
+        issue_floor >= signed.issue_floor,
+        expiration_ceiling <= signed.expiration_ceiling,
+    ]
+    .into_iter()
+    .all(|matches| matches);
+    if !claims_match {
         return Err(DcapRejectCodeV1::NativeOutputMalformed);
     }
     Ok(CollateralWindow {
@@ -290,629 +368,6 @@ fn component(evidence: &DcapEvidenceV1, index: usize) -> Result<&[u8], DcapRejec
         .get(index)
         .map(|component| component.bytes.as_slice())
         .ok_or(DcapRejectCodeV1::EvidenceNonCanonical)
-}
-
-fn validate_canonical_pck_certificate_chain(bytes: &[u8]) -> Result<(), DcapRejectCodeV1> {
-    let canonical_pem = bytes
-        .strip_suffix(&[0])
-        .ok_or(DcapRejectCodeV1::CollateralNonCanonical)?;
-    if canonical_pem.contains(&0) {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    validate_canonical_certificate_chain(canonical_pem, 3)
-}
-
-fn pck_root_der_hash(bytes: &[u8]) -> Result<B256, DcapRejectCodeV1> {
-    let canonical_pem = bytes
-        .strip_suffix(&[0])
-        .ok_or(DcapRejectCodeV1::CollateralNonCanonical)?;
-    let certificates =
-        pem::parse_many(canonical_pem).map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    let root = certificates
-        .last()
-        .ok_or(DcapRejectCodeV1::CollateralNonCanonical)?;
-    Ok(B256::from_slice(&Sha256::digest(root.contents())))
-}
-
-struct PckIdentity {
-    ca: DcapPckCaV1,
-    fmspc: [u8; 6],
-    pce_id: [u8; 2],
-}
-
-fn parse_pck_identity(bytes: &[u8]) -> Result<PckIdentity, DcapRejectCodeV1> {
-    const SGX_EXTENSION_OID: ObjectIdentifier =
-        ObjectIdentifier::new_unwrap("1.2.840.113741.1.13.1");
-    const PCE_ID_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113741.1.13.1.3");
-    const FMSPC_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113741.1.13.1.4");
-
-    let canonical_pem = bytes
-        .strip_suffix(&[0])
-        .ok_or(DcapRejectCodeV1::CollateralNonCanonical)?;
-    let certificates =
-        pem::parse_many(canonical_pem).map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    let leaf = certificates
-        .first()
-        .ok_or(DcapRejectCodeV1::CollateralNonCanonical)?;
-    let certificate =
-        AnyRef::from_der(leaf.contents()).map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    let (issuer, extensions) = certificate
-        .sequence(|reader| {
-            let tbs_certificate = reader.decode::<AnyRef<'_>>()?;
-            reader.decode::<AnyRef<'_>>()?;
-            reader.decode::<AnyRef<'_>>()?;
-            tbs_certificate.sequence(|reader| {
-                if reader.peek_tag()? == TagNumber::N0.context_specific(true) {
-                    reader.decode::<AnyRef<'_>>()?;
-                }
-                reader.decode::<AnyRef<'_>>()?;
-                reader.decode::<AnyRef<'_>>()?;
-                let issuer = reader.decode::<AnyRef<'_>>()?;
-                reader.decode::<AnyRef<'_>>()?;
-                reader.decode::<AnyRef<'_>>()?;
-                reader.decode::<AnyRef<'_>>()?;
-                let mut extensions = None;
-                while !reader.is_finished() {
-                    let field = reader.decode::<AnyRef<'_>>()?;
-                    if field.tag() == TagNumber::N3.context_specific(true) {
-                        extensions = Some(field);
-                    }
-                }
-                Ok((issuer, extensions))
-            })
-        })
-        .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    let extensions = extensions.ok_or(DcapRejectCodeV1::CollateralNonCanonical)?;
-    let ca = pck_ca_from_issuer(issuer)?;
-    let sgx_extension = find_certificate_extension(extensions, SGX_EXTENSION_OID)?;
-    let mut fmspc = None;
-    let mut pce_id = None;
-    AnyRef::from_der(sgx_extension.as_bytes())
-        .and_then(|entries| {
-            entries.sequence(|reader| {
-                while !reader.is_finished() {
-                    let entry = reader.decode::<AnyRef<'_>>()?;
-                    let (oid, value) = entry.sequence(|reader| {
-                        let oid = reader.decode::<ObjectIdentifier>()?;
-                        let value = reader.decode::<AnyRef<'_>>()?;
-                        Ok((oid, value))
-                    })?;
-                    if oid == FMSPC_OID {
-                        let value = value.decode_as::<OctetStringRef<'_>>()?;
-                        fmspc = Some(
-                            value
-                                .as_bytes()
-                                .try_into()
-                                .map_err(|_| der::Tag::OctetString.unexpected_error(None))?,
-                        );
-                    } else if oid == PCE_ID_OID {
-                        let value = value.decode_as::<OctetStringRef<'_>>()?;
-                        pce_id = Some(
-                            value
-                                .as_bytes()
-                                .try_into()
-                                .map_err(|_| der::Tag::OctetString.unexpected_error(None))?,
-                        );
-                    }
-                }
-                Ok(())
-            })
-        })
-        .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    Ok(PckIdentity {
-        ca,
-        fmspc: fmspc.ok_or(DcapRejectCodeV1::CollateralNonCanonical)?,
-        pce_id: pce_id.ok_or(DcapRejectCodeV1::CollateralNonCanonical)?,
-    })
-}
-
-fn pck_ca_from_issuer(issuer: AnyRef<'_>) -> Result<DcapPckCaV1, DcapRejectCodeV1> {
-    const COMMON_NAME_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.4.3");
-    let (common_name_count, common_name) = issuer
-        .sequence(|reader| {
-            let mut common_name_count = 0_u8;
-            let mut common_name = None;
-            while !reader.is_finished() {
-                let relative_name = reader.decode::<AnyRef<'_>>()?;
-                relative_name.tag().assert_eq(Tag::Set)?;
-                let mut set_reader = SliceReader::new(relative_name.value())?;
-                while !set_reader.is_finished() {
-                    let attribute = set_reader.decode::<AnyRef<'_>>()?;
-                    let (oid, value) = attribute.sequence(|reader| {
-                        let oid = reader.decode::<ObjectIdentifier>()?;
-                        let value = reader.decode::<AnyRef<'_>>()?;
-                        Ok((oid, value))
-                    })?;
-                    if oid == COMMON_NAME_OID {
-                        common_name_count = common_name_count.saturating_add(1);
-                        common_name = Some((value.tag(), value.value()));
-                    }
-                }
-                set_reader.finish(())?;
-            }
-            Ok((common_name_count, common_name))
-        })
-        .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    let (tag, common_name) = common_name.ok_or(DcapRejectCodeV1::CollateralNonCanonical)?;
-    if common_name_count != 1 || !matches!(tag, Tag::Utf8String | Tag::PrintableString) {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    match common_name {
-        b"Intel SGX PCK Processor CA" => Ok(DcapPckCaV1::Processor),
-        b"Intel SGX PCK Platform CA" => Ok(DcapPckCaV1::Platform),
-        _ => Err(DcapRejectCodeV1::PlatformIdentityMismatch),
-    }
-}
-
-fn find_certificate_extension<'a>(
-    explicit_extensions: AnyRef<'a>,
-    expected_oid: ObjectIdentifier,
-) -> Result<OctetStringRef<'a>, DcapRejectCodeV1> {
-    let extensions = AnyRef::from_der(explicit_extensions.value())
-        .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    let mut matched = None;
-    extensions
-        .sequence(|reader| {
-            while !reader.is_finished() {
-                let extension = reader.decode::<AnyRef<'_>>()?;
-                let (oid, value) = extension.sequence(|reader| {
-                    let oid = reader.decode::<ObjectIdentifier>()?;
-                    if reader.peek_tag()? == Tag::Boolean {
-                        reader.decode::<bool>()?;
-                    }
-                    let value = reader.decode::<OctetStringRef<'_>>()?;
-                    Ok((oid, value))
-                })?;
-                if oid == expected_oid {
-                    if matched.is_some() {
-                        return Err(Tag::ObjectIdentifier.unexpected_error(None));
-                    }
-                    matched = Some(value);
-                }
-            }
-            Ok(())
-        })
-        .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    matched.ok_or(DcapRejectCodeV1::CollateralNonCanonical)
-}
-
-fn validate_canonical_certificate_chain(
-    bytes: &[u8],
-    expected_count: usize,
-) -> Result<(), DcapRejectCodeV1> {
-    let certificates =
-        pem::parse_many(bytes).map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    if certificates.len() != expected_count {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    let config = EncodeConfig::new().set_line_ending(LineEnding::LF);
-    let mut canonical = String::new();
-    for certificate in certificates {
-        if certificate.tag() != "CERTIFICATE" || certificate.headers().iter().next().is_some() {
-            return Err(DcapRejectCodeV1::CollateralNonCanonical);
-        }
-        let canonical_der = canonical_der_document(certificate.contents())?;
-        if canonical_der != certificate.contents() {
-            return Err(DcapRejectCodeV1::CollateralNonCanonical);
-        }
-        canonical.push_str(&pem::encode_config(
-            &pem::Pem::new("CERTIFICATE", canonical_der),
-            config,
-        ));
-    }
-    if canonical.as_bytes() != bytes {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    Ok(())
-}
-
-fn validate_canonical_der_crl(bytes: &[u8]) -> Result<(), DcapRejectCodeV1> {
-    let canonical = canonical_der_document(bytes)?;
-    if canonical != bytes {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    Ok(())
-}
-
-fn canonical_der_document(bytes: &[u8]) -> Result<Vec<u8>, DcapRejectCodeV1> {
-    let document = AnyRef::from_der(bytes).map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    if document.tag() != Tag::Sequence {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    document
-        .to_der()
-        .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SignedTcbInfo<'a> {
-    #[serde(borrow, rename = "tcbInfo")]
-    body: &'a RawValue,
-    signature: &'a str,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SignedQeIdentity<'a> {
-    #[serde(borrow, rename = "enclaveIdentity")]
-    body: &'a RawValue,
-    signature: &'a str,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TcbInfoBody<'a> {
-    id: &'a str,
-    version: u8,
-    issue_date: &'a str,
-    next_update: &'a str,
-    fmspc: &'a str,
-    pce_id: &'a str,
-    tcb_evaluation_data_number: u32,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct QeIdentityBody<'a> {
-    id: &'a str,
-    version: u8,
-    issue_date: &'a str,
-    next_update: &'a str,
-    tcb_evaluation_data_number: u32,
-}
-
-struct TcbInfoMetadata {
-    issue_date: u64,
-    next_update: u64,
-    fmspc: [u8; 6],
-    pce_id: [u8; 2],
-    tcb_evaluation_data_number: u32,
-}
-
-struct QeIdentityMetadata {
-    issue_date: u64,
-    next_update: u64,
-    tcb_evaluation_data_number: u32,
-}
-
-fn parse_signed_tcb_info(
-    bytes: &[u8],
-    policy: &TeePolicyV1,
-) -> Result<TcbInfoMetadata, DcapRejectCodeV1> {
-    let signed: SignedTcbInfo<'_> =
-        serde_json::from_slice(bytes).map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    validate_signed_json_wrapper(bytes, "tcbInfo", signed.body, signed.signature)?;
-    let body: TcbInfoBody<'_> = serde_json::from_str(signed.body.get())
-        .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    if body.id != "SGX" || body.version != policy.tcb_info_schema_version {
-        return Err(DcapRejectCodeV1::PlatformIdentityMismatch);
-    }
-    let issue_date = parse_canonical_timestamp(body.issue_date)?;
-    let next_update = parse_canonical_timestamp(body.next_update)?;
-    if issue_date >= next_update {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    Ok(TcbInfoMetadata {
-        issue_date,
-        next_update,
-        fmspc: decode_upper_hex(body.fmspc)?,
-        pce_id: decode_upper_hex(body.pce_id)?,
-        tcb_evaluation_data_number: body.tcb_evaluation_data_number,
-    })
-}
-
-fn parse_signed_qe_identity(
-    bytes: &[u8],
-    policy: &TeePolicyV1,
-) -> Result<QeIdentityMetadata, DcapRejectCodeV1> {
-    let signed: SignedQeIdentity<'_> =
-        serde_json::from_slice(bytes).map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    validate_signed_json_wrapper(bytes, "enclaveIdentity", signed.body, signed.signature)?;
-    let body: QeIdentityBody<'_> = serde_json::from_str(signed.body.get())
-        .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?;
-    if body.id != "QE" || body.version != policy.qe_identity_schema_version {
-        return Err(DcapRejectCodeV1::QeTcbRejected);
-    }
-    let issue_date = parse_canonical_timestamp(body.issue_date)?;
-    let next_update = parse_canonical_timestamp(body.next_update)?;
-    if issue_date >= next_update {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    Ok(QeIdentityMetadata {
-        issue_date,
-        next_update,
-        tcb_evaluation_data_number: body.tcb_evaluation_data_number,
-    })
-}
-
-fn validate_signed_json_wrapper(
-    bytes: &[u8],
-    field: &str,
-    body: &RawValue,
-    signature: &str,
-) -> Result<(), DcapRejectCodeV1> {
-    reject_duplicate_json_keys(bytes)?;
-    if !body.get().starts_with('{')
-        || !body.get().ends_with('}')
-        || signature.len() != 128
-        || !signature
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    let canonical = format!(r#"{{"{field}":{},"signature":"{signature}"}}"#, body.get());
-    if canonical.as_bytes() != bytes {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    Ok(())
-}
-
-fn reject_duplicate_json_keys(bytes: &[u8]) -> Result<(), DcapRejectCodeV1> {
-    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    RejectDuplicateJsonKeys
-        .deserialize(&mut deserializer)
-        .and_then(|()| deserializer.end())
-        .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)
-}
-
-#[derive(Clone, Copy)]
-struct RejectDuplicateJsonKeys;
-
-impl<'de> DeserializeSeed<'de> for RejectDuplicateJsonKeys {
-    type Value = ();
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_any(RejectDuplicateJsonKeysVisitor)
-    }
-}
-
-struct RejectDuplicateJsonKeysVisitor;
-
-impl<'de> Visitor<'de> for RejectDuplicateJsonKeysVisitor {
-    type Value = ();
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("canonical JSON without duplicate object keys")
-    }
-
-    fn visit_bool<E>(self, _value: bool) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn visit_i64<E>(self, _value: i64) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn visit_u64<E>(self, _value: u64) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn visit_f64<E>(self, _value: f64) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn visit_str<E>(self, _value: &str) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn visit_string<E>(self, _value: String) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn visit_none<E>(self) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn visit_some<D>(self, deserializer: D) -> Result<(), D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        RejectDuplicateJsonKeys.deserialize(deserializer)
-    }
-
-    fn visit_unit<E>(self) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn visit_seq<A>(self, mut sequence: A) -> Result<(), A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        while sequence
-            .next_element_seed(RejectDuplicateJsonKeys)?
-            .is_some()
-        {}
-        Ok(())
-    }
-
-    fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        let mut keys = BTreeSet::new();
-        while let Some(key) = map.next_key::<String>()? {
-            if !keys.insert(key) {
-                return Err(A::Error::custom("duplicate JSON object key"));
-            }
-            map.next_value_seed(RejectDuplicateJsonKeys)?;
-        }
-        Ok(())
-    }
-}
-
-fn parse_canonical_timestamp(value: &str) -> Result<u64, DcapRejectCodeV1> {
-    let bytes = value.as_bytes();
-    if bytes.len() != 20
-        || bytes[4] != b'-'
-        || bytes[7] != b'-'
-        || bytes[10] != b'T'
-        || bytes[13] != b':'
-        || bytes[16] != b':'
-        || bytes[19] != b'Z'
-        || bytes.iter().enumerate().any(|(index, byte)| {
-            !matches!(index, 4 | 7 | 10 | 13 | 16 | 19) && !byte.is_ascii_digit()
-        })
-    {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    let timestamp =
-        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
-            .map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)?
-            .unix_timestamp();
-    u64::try_from(timestamp).map_err(|_| DcapRejectCodeV1::CollateralNonCanonical)
-}
-
-fn decode_upper_hex<const N: usize>(value: &str) -> Result<[u8; N], DcapRejectCodeV1> {
-    if value.len() != N * 2 {
-        return Err(DcapRejectCodeV1::CollateralNonCanonical);
-    }
-    let mut decoded = [0; N];
-    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
-        let high = upper_hex_nibble(pair[0])?;
-        let low = upper_hex_nibble(pair[1])?;
-        decoded[index] = (high << 4) | low;
-    }
-    Ok(decoded)
-}
-
-fn upper_hex_nibble(value: u8) -> Result<u8, DcapRejectCodeV1> {
-    match value {
-        b'0'..=b'9' => Ok(value - b'0'),
-        b'A'..=b'F' => Ok(value - b'A' + 10),
-        _ => Err(DcapRejectCodeV1::CollateralNonCanonical),
-    }
-}
-
-fn validate_quote_outer_length(quote: &[u8]) -> Result<(), DcapRejectCodeV1> {
-    let declared = quote
-        .get(
-            QUOTE_AUTHENTICATION_DATA_LENGTH_OFFSET
-                ..QUOTE_AUTHENTICATION_DATA_LENGTH_OFFSET + size_of::<u32>(),
-        )
-        .and_then(|bytes| bytes.try_into().ok())
-        .map(u32::from_le_bytes)
-        .ok_or(DcapRejectCodeV1::QuoteMalformed)?;
-    let expected = QUOTE_AUTHENTICATION_DATA_OFFSET
-        .checked_add(usize::try_from(declared).map_err(|_| DcapRejectCodeV1::QuoteMalformed)?)
-        .ok_or(DcapRejectCodeV1::QuoteMalformed)?;
-    if quote.len() != expected {
-        return Err(DcapRejectCodeV1::QuoteMalformed);
-    }
-    Ok(())
-}
-
-fn validate_quote_profile(quote: &[u8], policy: &TeePolicyV1) -> Result<(), DcapRejectCodeV1> {
-    let version = read_u16(quote, 0)?;
-    let attestation_key_type = read_u16(quote, 2)?;
-    let tee_type = read_u32(quote, 4)?;
-    let qe_vendor_id: [u8; 16] = quote
-        .get(12..28)
-        .and_then(|bytes| bytes.try_into().ok())
-        .ok_or(DcapRejectCodeV1::QuoteMalformed)?;
-    if version != policy.quote_version
-        || attestation_key_type != policy.attestation_key_type
-        || tee_type != policy.tee_type
-        || qe_vendor_id != policy.qe_vendor_id
-    {
-        return Err(DcapRejectCodeV1::QuoteProfileMismatch);
-    }
-    Ok(())
-}
-
-fn parse_quote_authentication_data(
-    quote: &[u8],
-) -> Result<QuoteAuthenticationData<'_>, DcapRejectCodeV1> {
-    let mut cursor = QuoteCursor::new(
-        quote
-            .get(QUOTE_AUTHENTICATION_DATA_OFFSET..)
-            .ok_or(DcapRejectCodeV1::QuoteMalformed)?,
-    );
-    cursor.take(QUOTE_SIGNATURE_BYTES)?;
-    cursor.take(ATTESTATION_PUBLIC_KEY_BYTES)?;
-    cursor.take(QE_REPORT_BYTES)?;
-    cursor.take(QE_REPORT_SIGNATURE_BYTES)?;
-    let qe_authentication_data_len = usize::from(cursor.u16()?);
-    cursor.take(qe_authentication_data_len)?;
-    let certification_data_type = cursor.u16()?;
-    let certification_data_len =
-        usize::try_from(cursor.u32()?).map_err(|_| DcapRejectCodeV1::QuoteMalformed)?;
-    let certification_data = cursor.take(certification_data_len)?;
-    cursor.finish()?;
-    Ok(QuoteAuthenticationData {
-        certification_data_type,
-        certification_data,
-    })
-}
-
-struct QuoteAuthenticationData<'a> {
-    certification_data_type: u16,
-    certification_data: &'a [u8],
-}
-
-struct QuoteCursor<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> QuoteCursor<'a> {
-    const fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
-    }
-
-    fn take(&mut self, len: usize) -> Result<&'a [u8], DcapRejectCodeV1> {
-        let end = self
-            .offset
-            .checked_add(len)
-            .ok_or(DcapRejectCodeV1::QuoteMalformed)?;
-        let value = self
-            .bytes
-            .get(self.offset..end)
-            .ok_or(DcapRejectCodeV1::QuoteMalformed)?;
-        self.offset = end;
-        Ok(value)
-    }
-
-    fn u16(&mut self) -> Result<u16, DcapRejectCodeV1> {
-        self.take(size_of::<u16>())?
-            .try_into()
-            .map(u16::from_le_bytes)
-            .map_err(|_| DcapRejectCodeV1::QuoteMalformed)
-    }
-
-    fn u32(&mut self) -> Result<u32, DcapRejectCodeV1> {
-        self.take(size_of::<u32>())?
-            .try_into()
-            .map(u32::from_le_bytes)
-            .map_err(|_| DcapRejectCodeV1::QuoteMalformed)
-    }
-
-    fn finish(self) -> Result<(), DcapRejectCodeV1> {
-        if self.offset != self.bytes.len() {
-            return Err(DcapRejectCodeV1::QuoteMalformed);
-        }
-        Ok(())
-    }
-}
-
-fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, DcapRejectCodeV1> {
-    bytes
-        .get(offset..offset + size_of::<u16>())
-        .and_then(|value| value.try_into().ok())
-        .map(u16::from_le_bytes)
-        .ok_or(DcapRejectCodeV1::QuoteMalformed)
-}
-
-fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, DcapRejectCodeV1> {
-    bytes
-        .get(offset..offset + size_of::<u32>())
-        .and_then(|value| value.try_into().ok())
-        .map(u32::from_le_bytes)
-        .ok_or(DcapRejectCodeV1::QuoteMalformed)
 }
 
 #[cfg(test)]

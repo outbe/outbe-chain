@@ -1,7 +1,9 @@
+#[path = "support/strict_canonical.rs"]
+mod strict_canonical;
+
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
     local_control::poc_schema_limits, result::OutputManifestEntryV1, CasObjectRefV1, ObjectKind,
-    ProtocolError,
 };
 
 fn hash(byte: u8) -> B256 {
@@ -25,18 +27,11 @@ fn output_manifest_entry_has_one_strict_canonical_record() {
     let limits = poc_schema_limits();
     let entry = manifest_entry();
 
-    let encoded = entry.encode_canonical_record(&limits).unwrap();
-    assert_eq!(
-        OutputManifestEntryV1::decode_canonical_record(&encoded, &limits).unwrap(),
-        entry
+    strict_canonical::assert_strict_canonical_record(
+        entry,
+        |value| value.encode_canonical_record(&limits).unwrap(),
+        |encoded| OutputManifestEntryV1::decode_canonical_record(encoded, &limits),
     );
-
-    let mut trailing = encoded;
-    trailing.push(0);
-    assert!(matches!(
-        OutputManifestEntryV1::decode_canonical_record(&trailing, &limits),
-        Err(ProtocolError::TrailingBytes { .. })
-    ));
 }
 
 #[test]

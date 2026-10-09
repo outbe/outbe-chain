@@ -54,6 +54,8 @@ native-dcap-test-trace = ["native-dcap"]
 dcap-fixture-tool = ["native-dcap", "dep:k256"]
 
 [dev-dependencies]
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-tee = { path = ".", features = ["test-utils"] }
 k256.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true }

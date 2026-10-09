@@ -8,6 +8,7 @@
 
 use alloy_primitives::U256;
 
+use outbe_agentreward::distribution::{distribute_daily, PoolKind};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_emissionlimit::{
     allocation::{allocate_emission, EmissionSinkId},
@@ -39,16 +40,7 @@ pub enum ProtocolDayAction {
 /// more than one calendar day, every completed day in that gap is deliberately
 /// forfeited: no economic state is synthesized after the halt.
 pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<ProtocolDayAction> {
-    let valid_date_key = |date_key: u32| {
-        let year = date_key / 10_000;
-        let month = (date_key / 100) % 100;
-        let day = date_key % 100;
-        year >= 1970
-            && (1..=12).contains(&month)
-            && (1..=31).contains(&day)
-            && timestamp_to_date_key(date_key_to_utc_timestamp(date_key)) == date_key
-    };
-    if !valid_date_key(active_utc_day) || !valid_date_key(block_utc_day) {
+    if !is_valid_utc_day(active_utc_day) || !is_valid_utc_day(block_utc_day) {
         return Err(PrecompileError::Fatal(format!(
             "ProtocolCycle received invalid UTC day: active={active_utc_day}, block={block_utc_day}"
         )));
@@ -71,6 +63,18 @@ pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<Pr
         from: active_utc_day,
         to: block_utc_day,
     })
+}
+
+/// Returns `true` when `date_key` is a `YYYYMMDD` UTC day from 1970 or later
+/// that round-trips through its UTC midnight timestamp.
+fn is_valid_utc_day(date_key: u32) -> bool {
+    let year = date_key / 10_000;
+    let month = (date_key / 100) % 100;
+    let day = date_key % 100;
+    year >= 1970
+        && (1..=12).contains(&month)
+        && (1..=31).contains(&day)
+        && timestamp_to_date_key(date_key_to_utc_timestamp(date_key)) == date_key
 }
 
 fn gas(ctx: &BlockRuntimeContext) -> u64 {
@@ -99,9 +103,78 @@ fn wrap(step: &str, r: Result<()>) -> Result<()> {
 /// to [`run_protocol_cycle`]. This function only performs the existing daily
 /// economic calculation and commits its idempotency pair.
 pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<()> {
-    let block_ts = ctx.block.timestamp;
-    let current_day = timestamp_to_date_key(block_ts);
+    if day_settlement(ctx, prev_day)? == DaySettlement::Settled {
+        return Ok(());
+    }
+    trace_settlement_dates(ctx, prev_day);
 
+    let g0 = gas(ctx);
+    tracing::debug!(target: "outbe::cycle::gas", gas_used = g0, prev_day, block_ts = ctx.block.timestamp, "entry");
+
+    let day_number = day_number(ctx, prev_day)?;
+    let cap = day_emission_limit(day_number);
+    if cap.is_zero() {
+        return Ok(());
+    }
+    let shares = EmissionShares::allocate(cap)?;
+
+    let g1 = gas(ctx);
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = g1 - g0, cumulative = g1, "after allocate_emission");
+
+    let validator_pool = prepare_validator_pool(ctx, prev_day, shares.validator)?;
+
+    let g2 = gas(ctx);
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = g2 - g1, cumulative = g2, voters = validator_pool.voter_count, "after validator pool");
+
+    let agent_excess = distribute_agent_pools(ctx, prev_day, &shares)?;
+
+    let g3 = gas(ctx);
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = g3 - g2, cumulative = g3, "after agent distribute");
+
+    let metadosis_total = shares.terminal_total(validator_pool.excess, agent_excess)?;
+    dispatch_terminal_remainder(ctx, prev_day, metadosis_total)?;
+
+    let g4 = gas(ctx);
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = g4 - g3, cumulative = g4, "after terminal dispatch");
+
+    wrap(
+        "mark_day_settled",
+        outbe_rewards::api::mark_day_settled(ctx, prev_day),
+    )?;
+
+    let g5 = gas(ctx);
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = g5 - g4, cumulative = g5, total = g5 - g0, "completed");
+
+    tracing::info!(
+        target: "outbe::cycle",
+        prev_day,
+        day_number,
+        cap = %cap,
+        validator_amount = %shares.validator,
+        validator_excess = %validator_pool.excess,
+        agent_excess = %agent_excess,
+        metadosis_total = %metadosis_total,
+        total_gas = g5 - g0,
+        "emission_limit_daily handler completed"
+    );
+
+    Ok(())
+}
+
+/// Settlement state of one completed UTC day before its economic calculation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DaySettlement {
+    /// The day has no settled marker and no Metadosis day-limit receipt.
+    Pending,
+    /// The day has both its settled marker and its Metadosis receipt.
+    Settled,
+}
+
+/// Checks the settlement preconditions and the idempotency pair of `prev_day`.
+///
+/// The reward participation windows of `prev_day` must be closed. The Cycle
+/// `daily_settled` marker and the Metadosis day-limit receipt must agree.
+fn day_settlement(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<DaySettlement> {
     if !outbe_rewards::api::day_participation_complete(ctx, prev_day)? {
         return Err(PrecompileError::Fatal(
             "Cycle settlement before reward participation windows close".into(),
@@ -121,29 +194,31 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
     })?;
     let existing_formation =
         outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), prev_day.into())?;
-    match (settled, existing_formation) {
-        (true, None) => {
-            return Err(PrecompileError::Fatal(
-                "Cycle daily_settled marker has no Metadosis day-limit semantic receipt".into(),
-            ));
-        }
-        (false, Some(_)) => {
-            return Err(PrecompileError::Fatal(
-                "Metadosis day-limit semantic receipt has no Cycle daily_settled marker".into(),
-            ));
-        }
-        (true, Some(_)) => {
+    match (settled, existing_formation.is_some()) {
+        (true, false) => Err(PrecompileError::Fatal(
+            "Cycle daily_settled marker has no Metadosis day-limit semantic receipt".into(),
+        )),
+        (false, true) => Err(PrecompileError::Fatal(
+            "Metadosis day-limit semantic receipt has no Cycle daily_settled marker".into(),
+        )),
+        (true, true) => {
             tracing::debug!(
                 target: "outbe::cycle",
                 prev_day,
                 block_number = ctx.block.block_number,
                 "emission_limit_daily: prev_day already settled - skipping (idempotent)"
             );
-            return Ok(());
+            Ok(DaySettlement::Settled)
         }
-        (false, None) => {}
+        (false, false) => Ok(DaySettlement::Pending),
     }
+}
 
+/// Logs the calendar inputs of one settlement. The genesis UTC day read stays
+/// before the first gas sample of the settlement.
+fn trace_settlement_dates(ctx: &BlockRuntimeContext, prev_day: u32) {
+    let block_ts = ctx.block.timestamp;
+    let current_day = timestamp_to_date_key(block_ts);
     let genesis = outbe_rewards::runtime::genesis_utc_day(ctx).unwrap_or(0);
     tracing::info!(
         target: "outbe::cycle",
@@ -154,40 +229,76 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
         block_number = ctx.block.block_number,
         "emission_limit_daily dates"
     );
+}
 
-    let g0 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", gas_used = g0, prev_day, block_ts, "entry");
-
-    let day_number = outbe_rewards::runtime::day_number_since_genesis(ctx, prev_day)
+/// Returns the number of days from genesis to `prev_day`.
+fn day_number(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<u32> {
+    outbe_rewards::runtime::day_number_since_genesis(ctx, prev_day)
         .map_err(|e| {
             tracing::error!(target: "outbe::cycle", step = "day_number_since_genesis", prev_day, error = ?e, "emission_limit_daily step failed");
             let _bt = std::backtrace::Backtrace::force_capture();
             tracing::error!(target: "outbe::cycle", backtrace = %_bt, "stacktrace");
             e
-        })?;
+        })
+}
 
-    let cap = day_emission_limit(day_number);
-    if cap.is_zero() {
-        return Ok(());
+/// Daily emission cap split into its sink amounts.
+struct EmissionShares {
+    validator: U256,
+    waa: U256,
+    sra: U256,
+    cca: U256,
+    metadosis: U256,
+}
+
+impl EmissionShares {
+    /// Splits `cap` with the EmissionLimit allocation table. A sink without an
+    /// allocation row gets zero.
+    fn allocate(cap: U256) -> Result<Self> {
+        let allocations = allocate_emission(cap)?;
+        let amount_for = |id: EmissionSinkId| -> U256 {
+            allocations
+                .iter()
+                .find(|a| a.id == id)
+                .map(|a| a.amount)
+                .unwrap_or(U256::ZERO)
+        };
+        Ok(Self {
+            validator: amount_for(EmissionSinkId::Validator),
+            waa: amount_for(EmissionSinkId::Waa),
+            sra: amount_for(EmissionSinkId::Sra),
+            cca: amount_for(EmissionSinkId::Cca),
+            metadosis: amount_for(EmissionSinkId::Metadosis),
+        })
     }
 
-    let allocations = allocate_emission(cap)?;
-    let amount_for = |id: EmissionSinkId| -> U256 {
-        allocations
-            .iter()
-            .find(|a| a.id == id)
-            .map(|a| a.amount)
-            .unwrap_or(U256::ZERO)
-    };
-    let validator_amount = amount_for(EmissionSinkId::Validator);
-    let waa_amount = amount_for(EmissionSinkId::Waa);
-    let sra_amount = amount_for(EmissionSinkId::Sra);
-    let cca_amount = amount_for(EmissionSinkId::Cca);
-    let metadosis_amount = amount_for(EmissionSinkId::Metadosis);
+    /// Returns the terminal Metadosis amount: the Metadosis share plus the
+    /// validator and agent excess.
+    fn terminal_total(&self, validator_excess: U256, agent_excess: U256) -> Result<U256> {
+        self.metadosis
+            .checked_add(validator_excess)
+            .and_then(|v| v.checked_add(agent_excess))
+            .ok_or_else(|| PrecompileError::Revert("metadosis terminal overflow".into()))
+    }
+}
 
-    let g1 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g1 - g0, cumulative = g1, "after allocate_emission");
+/// Result of the validator pool step of one settlement.
+struct ValidatorPool {
+    /// Validator share that the reward Gem plan does not load.
+    excess: U256,
+    /// Number of voters of the settled day.
+    voter_count: usize,
+}
 
+/// Prepares the daily validator reward Gem batch for `prev_day`.
+///
+/// The top-up is the validator share minus the day's raw fees. It is zero when
+/// the share is zero or the day has no voters.
+fn prepare_validator_pool(
+    ctx: &BlockRuntimeContext,
+    prev_day: u32,
+    validator_amount: U256,
+) -> Result<ValidatorPool> {
     let fees = outbe_rewards::api::read_daily_fee_sum_raw(ctx, prev_day)
         .map_err(|e| {
             tracing::error!(target: "outbe::cycle", step = "read_daily_fee_sum_raw", error = ?e, "emission_limit_daily step failed");
@@ -221,37 +332,46 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
             batch.planned_promis_load_amount
         }
     };
-    let validator_excess = validator_amount
+    let excess = validator_amount
         .checked_sub(planned_promis_load_amount)
         .ok_or_else(|| {
             PrecompileError::Revert("validator reward Gem plan exceeds allocation".into())
         })?;
+    Ok(ValidatorPool {
+        excess,
+        voter_count: voters.len(),
+    })
+}
 
-    let g2 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g2 - g1, cumulative = g2, voters = voters.len(), "after validator pool");
-
-    use outbe_agentreward::distribution::{distribute_daily, PoolKind};
-    let agent_excess = distribute_daily(
+/// Distributes the WAA, SRA and CCA agent pools of `prev_day`. Returns the
+/// agent excess.
+fn distribute_agent_pools(
+    ctx: &BlockRuntimeContext,
+    prev_day: u32,
+    shares: &EmissionShares,
+) -> Result<U256> {
+    distribute_daily(
         ctx,
         prev_day.into(),
         &[
-            (PoolKind::Waa, waa_amount),
-            (PoolKind::Sra, sra_amount),
-            (PoolKind::Cca, cca_amount),
+            (PoolKind::Waa, shares.waa),
+            (PoolKind::Sra, shares.sra),
+            (PoolKind::Cca, shares.cca),
         ],
     )
     .map_err(|e| {
         tracing::error!(target: "outbe::cycle", step = "distribute_daily", error = ?e, "emission_limit_daily step failed");
         e
-    })?;
+    })
+}
 
-    let g3 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g3 - g2, cumulative = g3, "after agent distribute");
-
-    let metadosis_total = metadosis_amount
-        .checked_add(validator_excess)
-        .and_then(|v| v.checked_add(agent_excess))
-        .ok_or_else(|| PrecompileError::Revert("metadosis terminal overflow".into()))?;
+/// Sends the terminal Metadosis remainder of `prev_day`. Then checks that
+/// Metadosis formed the day limit for `prev_day` with the same base limit.
+fn dispatch_terminal_remainder(
+    ctx: &BlockRuntimeContext,
+    prev_day: u32,
+    metadosis_total: U256,
+) -> Result<()> {
     let prev_day_ts = date_key_to_utc_timestamp(prev_day);
     wrap(
         "dispatch_terminal_remainder_at",
@@ -266,40 +386,14 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
             })?;
     match formation {
         outbe_metadosis::DayLimitFormationReceipt::Formed(formed)
-            if formed.worldwide_day.value() == prev_day && formed.base_limit == metadosis_total => {
+            if formed.worldwide_day.value() == prev_day && formed.base_limit == metadosis_total =>
+        {
+            Ok(())
         }
-        outbe_metadosis::DayLimitFormationReceipt::Formed(_) => {
-            return Err(PrecompileError::Fatal(
-                "Cycle allocation disagrees with the Metadosis day-limit receipt".into(),
-            ));
-        }
+        outbe_metadosis::DayLimitFormationReceipt::Formed(_) => Err(PrecompileError::Fatal(
+            "Cycle allocation disagrees with the Metadosis day-limit receipt".into(),
+        )),
     }
-
-    let g4 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g4 - g3, cumulative = g4, "after terminal dispatch");
-
-    wrap(
-        "mark_day_settled",
-        outbe_rewards::api::mark_day_settled(ctx, prev_day),
-    )?;
-
-    let g5 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g5 - g4, cumulative = g5, total = g5 - g0, "completed");
-
-    tracing::info!(
-        target: "outbe::cycle",
-        prev_day,
-        day_number,
-        cap = %cap,
-        validator_amount = %validator_amount,
-        validator_excess = %validator_excess,
-        agent_excess = %agent_excess,
-        metadosis_total = %metadosis_total,
-        total_gas = g5 - g0,
-        "emission_limit_daily handler completed"
-    );
-
-    Ok(())
 }
 
 /// Runs the single hourly protocol orchestration entry point.

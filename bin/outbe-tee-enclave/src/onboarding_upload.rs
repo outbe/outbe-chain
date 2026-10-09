@@ -5,9 +5,9 @@ use outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1;
 use outbe_tee::{
     dcap_protocol::{DcapOnboardingArtifactV1, MAX_DCAP_ONBOARDING_ARTIFACT_BYTES},
     finalized_admission::{
-        onboarding_artifact_ingest_request_hash_v1, FinalizedAdmissionRecordKindV1,
-        MAX_COMMITTEE_TRANSITION_RECORD_BYTES, MAX_FINALIZED_ADMISSION_RECORD_BYTES,
-        MAX_ONBOARDING_INGEST_CHUNK_BYTES,
+        onboarding_artifact_ingest_request_hash_v1, FinalizedAdmissionBeginInputV1,
+        FinalizedAdmissionRecordKindV1, MAX_COMMITTEE_TRANSITION_RECORD_BYTES,
+        MAX_FINALIZED_ADMISSION_RECORD_BYTES, MAX_ONBOARDING_INGEST_CHUNK_BYTES,
     },
     protocol::EnclaveRequest,
 };
@@ -97,15 +97,16 @@ impl OnboardingArtifactUploadSessionV1 {
                     return Err("upgrade transfer commitment mismatch".into());
                 }
                 let context = decoded.context;
-                let old_hash = onboarding_artifact_ingest_request_hash_v1(
-                    &artifact,
-                    &anchor_outcome,
-                    context.intent_hash,
-                    context.tribute_offer_public,
-                    context.key_epoch,
-                    context.tribute_offer_epoch,
-                )
-                .map_err(|e| e.to_string())?;
+                let old_hash =
+                    onboarding_artifact_ingest_request_hash_v1(FinalizedAdmissionBeginInputV1 {
+                        artifact: &artifact,
+                        anchor_outcome: &anchor_outcome,
+                        expected_intent_hash: context.intent_hash,
+                        expected_tribute_offer_public: context.tribute_offer_public,
+                        expected_key_epoch: context.key_epoch,
+                        expected_tribute_offer_epoch: context.tribute_offer_epoch,
+                    })
+                    .map_err(|e| e.to_string())?;
                 self.begin(
                     descriptor,
                     old_hash,
@@ -191,14 +192,14 @@ impl OnboardingArtifactUploadSessionV1 {
         {
             return Err("onboarding artifact does not match the expected Registry values".into());
         }
-        let computed = onboarding_artifact_ingest_request_hash_v1(
-            &artifact,
-            &anchor_outcome,
+        let computed = onboarding_artifact_ingest_request_hash_v1(FinalizedAdmissionBeginInputV1 {
+            artifact: &artifact,
+            anchor_outcome: &anchor_outcome,
             expected_intent_hash,
             expected_tribute_offer_public,
             expected_key_epoch,
             expected_tribute_offer_epoch,
-        )
+        })
         .map_err(|error| error.to_string())?;
         if computed != request_hash {
             return Err("onboarding artifact request commitment mismatch".into());
@@ -375,15 +376,16 @@ mod tests {
         .encode_canonical()
         .unwrap();
         let anchor = committee.outcome(Epoch::new(0));
-        let request_hash = onboarding_artifact_ingest_request_hash_v1(
-            &artifact,
-            &anchor,
-            context.intent_hash,
-            context.tribute_offer_public,
-            context.key_epoch,
-            context.tribute_offer_epoch,
-        )
-        .unwrap();
+        let request_hash =
+            onboarding_artifact_ingest_request_hash_v1(FinalizedAdmissionBeginInputV1 {
+                artifact: &artifact,
+                anchor_outcome: &anchor,
+                expected_intent_hash: context.intent_hash,
+                expected_tribute_offer_public: context.tribute_offer_public,
+                expected_key_epoch: context.key_epoch,
+                expected_tribute_offer_epoch: context.tribute_offer_epoch,
+            })
+            .unwrap();
         let mut session = OnboardingArtifactUploadSessionV1::default();
         assert!(matches!(
             session.handle(

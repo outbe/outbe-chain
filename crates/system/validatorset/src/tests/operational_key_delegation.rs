@@ -7,11 +7,7 @@ const DELEGATE: Address = address!("0x00000000000000000000000000000000000000D1")
 const ROTATED: Address = address!("0x00000000000000000000000000000000000000D2");
 
 fn register_active(vs: &mut ValidatorSet, validator: Address, seed: u8) {
-    vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(seed))
-        .unwrap();
-    vs.activate_validator_via_boundary_for_test(validator)
-        .unwrap();
-    vs.val_has_bls_share.write(&validator, true).unwrap();
+    register_participant(vs, validator, seed).unwrap();
 }
 
 #[test]
@@ -139,8 +135,7 @@ fn operational_delegate_cannot_later_register_as_a_validator() {
 #[test]
 fn inactive_validator_can_configure_but_cannot_use_an_operational_key() {
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, VALIDATOR_A, &dummy_consensus_pubkey(1))
-            .unwrap();
+        register_validators(vs, &[(VALIDATOR_A, 1)]).unwrap();
         vs.set_delegate(VALIDATOR_A, ValidatorDelegateRole::Oracle, DELEGATE)
             .unwrap();
 

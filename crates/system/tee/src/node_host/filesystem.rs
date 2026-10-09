@@ -1,5 +1,6 @@
 use crate::TransportError;
 
+use outbe_primitives::filesystem::entry_exists;
 use outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1;
 
 use std::fs;
@@ -73,11 +74,7 @@ pub(super) fn read_owned_bounded_file(
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)?;
     let metadata = file.metadata()?;
-    if !metadata.is_file()
-        || metadata.permissions().mode() & 0o777 != 0o600
-        || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.len() > maximum_len
-    {
+    if !is_owner_only_regular_file(&metadata) || metadata.len() > maximum_len {
         return Err(TransportError::Codec(format!(
             "NodeHost {label} must be an owner-only bounded regular file"
         )));
@@ -97,6 +94,12 @@ pub(super) fn read_owned_bounded_file(
     Ok(bytes)
 }
 
+fn is_owner_only_regular_file(metadata: &fs::Metadata) -> bool {
+    metadata.is_file()
+        && metadata.permissions().mode() & 0o777 == 0o600
+        && metadata.uid() == rustix::process::geteuid().as_raw()
+}
+
 pub(super) struct NodeHostStateLock {
     _file: File,
 }
@@ -111,10 +114,7 @@ impl NodeHostStateLock {
             .custom_flags(libc::O_NOFOLLOW)
             .open(path)?;
         let metadata = file.metadata()?;
-        if !metadata.is_file()
-            || metadata.permissions().mode() & 0o777 != 0o600
-            || metadata.uid() != rustix::process::geteuid().as_raw()
-        {
+        if !is_owner_only_regular_file(&metadata) {
             return Err(TransportError::Codec(
                 "NodeHost state lock must be an owner-only regular file".into(),
             ));
@@ -160,23 +160,29 @@ pub(super) fn write_bytes_once(
     Ok(())
 }
 
+/// Bytes and read limits of one durable NodeHost record.
+pub(super) struct BoundedRecordBytes<'a> {
+    pub(super) bytes: &'a [u8],
+    pub(super) maximum_len: u64,
+    pub(super) label: &'static str,
+}
+
 pub(super) fn write_bytes_once_or_exact(
     path: &Path,
     scratch_path: &Path,
-    bytes: &[u8],
-    maximum_len: u64,
+    record: BoundedRecordBytes<'_>,
     directory: &Path,
-    label: &'static str,
 ) -> Result<(), TransportError> {
     if path_exists(path)? {
-        if read_owned_bounded_file(path, maximum_len, label)? == bytes {
+        if read_owned_bounded_file(path, record.maximum_len, record.label)? == record.bytes {
             return Ok(());
         }
         return Err(TransportError::Codec(format!(
-            "durable NodeHost {label} conflicts with the requested value"
+            "durable NodeHost {} conflicts with the requested value",
+            record.label
         )));
     }
-    stage_complete_bytes(path, scratch_path, bytes, directory)
+    stage_complete_bytes(path, scratch_path, record.bytes, directory)
 }
 
 pub(super) fn replace_bytes_atomically(
@@ -214,6 +220,15 @@ pub(super) fn remove_file_if_exists(path: &Path) -> Result<(), TransportError> {
     }
 }
 
+pub(super) fn remove_file_and_sync_directory(
+    path: &Path,
+    directory: &Path,
+) -> Result<(), TransportError> {
+    remove_file_if_exists(path)?;
+    File::open(directory)?.sync_all()?;
+    Ok(())
+}
+
 pub(super) fn ensure_private_directory(path: &Path) -> Result<(), TransportError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -238,11 +253,7 @@ pub(super) fn ensure_private_directory(path: &Path) -> Result<(), TransportError
 }
 
 pub(super) fn path_exists(path: &Path) -> Result<bool, TransportError> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-    }
+    entry_exists(path).map_err(Into::into)
 }
 
 pub(super) struct NodeHostPaths {

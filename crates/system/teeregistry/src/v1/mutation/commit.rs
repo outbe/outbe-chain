@@ -90,21 +90,31 @@ impl TeeRegistry<'_> {
                 .read(&node_id_hash)?
                 .is_zero()
         {
-            if self.upgrade_candidate_expiry.read(&node_id_hash)? <= now
-                || self.upgrade_candidate_source.read(&node_id_hash)?
-                    != self.v1_node_binding_id.read(&node_id_hash)?
-                || self.upgrade_candidate_target.read(&node_id_hash)?
-                    != intent
-                        .upgrade_target_hash()
-                        .map_err(|e| revert_codec("candidate target", e))?
-            {
-                return Err(PrecompileError::Revert(
-                    "transition does not match the live upgrade candidate".into(),
-                ));
-            }
+            self.require_live_upgrade_candidate_v1(intent, node_id_hash, now)?;
             self.clear_upgrade_candidate_v1(node_id_hash)?;
         }
 
+        Ok(())
+    }
+
+    fn require_live_upgrade_candidate_v1(
+        &self,
+        intent: &RegistrationIntentV1,
+        node_id_hash: B256,
+        now: u64,
+    ) -> Result<()> {
+        if self.upgrade_candidate_expiry.read(&node_id_hash)? <= now
+            || self.upgrade_candidate_source.read(&node_id_hash)?
+                != self.v1_node_binding_id.read(&node_id_hash)?
+            || self.upgrade_candidate_target.read(&node_id_hash)?
+                != intent
+                    .upgrade_target_hash()
+                    .map_err(|e| revert_codec("candidate target", e))?
+        {
+            return Err(PrecompileError::Revert(
+                "transition does not match the live upgrade candidate".into(),
+            ));
+        }
         Ok(())
     }
 

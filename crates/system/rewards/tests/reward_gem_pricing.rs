@@ -16,37 +16,19 @@ const DELIVERY_PREVIOUS_DAY: u32 = 20_240_103;
 const VOTER: Address = Address::repeat_byte(0x5a);
 const LOAD: u64 = 90;
 
-fn one_coen840() -> U256 {
-    U256::from(1_000_000u64)
-}
+#[path = "support/coen840.rs"]
+mod coen840;
+
+use coen840::{one_coen840, publish_coen840_quote, record_coen840_day_vwap};
 
 /// Registers COEN/840 and publishes `live_quote` on it.
 fn seed_oracle(ctx: &BlockRuntimeContext, live_quote: U256) {
-    outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
-        .unwrap();
-    outbe_oracle::api::set_exchange_rate(
-        ctx.storage.clone(),
-        Address::ZERO,
-        outbe_oracle::api::DAY_TYPE_PAIR,
+    publish_coen840_quote(
+        &ctx.storage,
         live_quote,
         ctx.block.block_number,
         ctx.block.timestamp,
-    )
-    .unwrap();
-    outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
-        .reference_currencies
-        .push(840u16)
-        .unwrap();
-}
-
-/// Publishes `vwap` as `day`'s finalized COEN/840 VWAP.
-fn seed_day_vwap(ctx: &BlockRuntimeContext, day: u32, vwap: U256) {
-    let index = outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), 840)
-        .unwrap()
-        .expect("COEN/840 registered");
-    outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
-        .record_utc_day_vwap(day, index, vwap)
-        .unwrap();
+    );
 }
 
 fn prepare(ctx: &BlockRuntimeContext) {
@@ -90,8 +72,12 @@ fn with_ctx<R>(f: impl FnOnce(&BlockRuntimeContext) -> R) -> R {
 fn a_batch_prices_off_the_day_before_its_delivery() {
     with_ctx(|ctx| {
         seed_oracle(ctx, U256::from(9u64) * one_coen840());
-        seed_day_vwap(ctx, REWARD_DAY, U256::from(2u64) * one_coen840());
-        seed_day_vwap(ctx, DELIVERY_PREVIOUS_DAY, U256::from(5u64) * one_coen840());
+        record_coen840_day_vwap(&ctx.storage, REWARD_DAY, U256::from(2u64) * one_coen840());
+        record_coen840_day_vwap(
+            &ctx.storage,
+            DELIVERY_PREVIOUS_DAY,
+            U256::from(5u64) * one_coen840(),
+        );
 
         prepare(ctx);
         deliver_oldest_reward_gem_batch(ctx).unwrap();
@@ -104,8 +90,8 @@ fn a_batch_prices_off_the_day_before_its_delivery() {
 fn a_batch_whose_cost_floors_below_one_minor_unit_still_delivers() {
     with_ctx(|ctx| {
         seed_oracle(ctx, U256::ONE);
-        seed_day_vwap(ctx, REWARD_DAY, U256::ONE);
-        seed_day_vwap(ctx, DELIVERY_PREVIOUS_DAY, U256::ONE);
+        record_coen840_day_vwap(&ctx.storage, REWARD_DAY, U256::ONE);
+        record_coen840_day_vwap(&ctx.storage, DELIVERY_PREVIOUS_DAY, U256::ONE);
 
         prepare(ctx);
         assert!(matches!(
@@ -133,7 +119,7 @@ fn a_batch_whose_cost_floors_below_one_minor_unit_still_delivers() {
 fn a_batch_waits_while_the_day_before_its_delivery_has_no_vwap() {
     with_ctx(|ctx| {
         seed_oracle(ctx, U256::from(9u64) * one_coen840());
-        seed_day_vwap(ctx, REWARD_DAY, U256::from(2u64) * one_coen840());
+        record_coen840_day_vwap(&ctx.storage, REWARD_DAY, U256::from(2u64) * one_coen840());
 
         prepare(ctx);
         assert!(matches!(

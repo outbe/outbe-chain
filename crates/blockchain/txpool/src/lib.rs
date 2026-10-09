@@ -13,6 +13,7 @@ use outbe_ocomp_protocol::system_carrier::{
     classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierError,
     OcompSystemCarrierView,
 };
+use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 use outbe_primitives::{
     addresses::OUTBE_SYSTEM_TX_ADDRESS,
     storage::{readonly::ReadOnlyStorageProvider, StorageHandle},
@@ -61,12 +62,7 @@ where
     classify_ocomp_system_carrier(
         OcompSystemCarrierView {
             is_eip1559: tx.ty() == alloy_consensus::TxType::Eip1559 as u8,
-            to: tx.to(),
-            value: tx.value(),
-            input: tx.input().as_ref(),
-            gas_limit: tx.gas_limit(),
-            max_fee_per_gas: tx.max_fee_per_gas(),
-            max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+            call: TransactionCallFields::from_transaction(tx),
         },
         &outbe_ocomp_protocol::profile::poc_schema_limits(),
     )

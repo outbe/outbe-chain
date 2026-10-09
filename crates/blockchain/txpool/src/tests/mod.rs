@@ -503,12 +503,14 @@ const NON_VALIDATOR_SIGNER: Address = address!("0x999999999999999999999999999999
 fn sponsored_envelope<'a>(input: &'a [u8]) -> ZeroFeeTransaction<'a> {
     ZeroFeeTransaction {
         signer: NON_VALIDATOR_SIGNER,
-        to: Some(AGENT_REWARD_ADDRESS),
-        value: U256::ZERO,
-        input,
-        gas_limit: 100_000,
-        max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
-        max_priority_fee_per_gas: Some(0),
+        call: TransactionCallFields {
+            to: Some(AGENT_REWARD_ADDRESS),
+            value: U256::ZERO,
+            input,
+            gas_limit: 100_000,
+            max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
+            max_priority_fee_per_gas: Some(0),
+        },
     }
 }
 
@@ -520,7 +522,7 @@ fn pool_classify_accepts_well_formed_sponsored_envelope() {
 #[test]
 fn pool_classify_rejects_non_zero_value_with_plan_code_113() {
     let mut tx = sponsored_envelope(&[]);
-    tx.value = U256::from(1);
+    tx.call.value = U256::from(1);
     let err = classify_sponsorship(&tx).unwrap_err();
     assert_eq!(err.code(), 113);
 }
@@ -528,7 +530,7 @@ fn pool_classify_rejects_non_zero_value_with_plan_code_113() {
 #[test]
 fn pool_classify_rejects_oversized_gas_with_plan_code_114() {
     let mut tx = sponsored_envelope(&[]);
-    tx.gas_limit = outbe_zerofee::FREE_TX_DAILY_GAS_LIMIT + 1;
+    tx.call.gas_limit = outbe_zerofee::FREE_TX_DAILY_GAS_LIMIT + 1;
     let err = classify_sponsorship(&tx).unwrap_err();
     assert_eq!(err.code(), 114);
 }
@@ -545,7 +547,7 @@ fn pool_classify_rejects_oversized_calldata_with_plan_code_115() {
 fn pool_classify_rejects_target_outside_whitelist_with_plan_code_116() {
     let mut tx = sponsored_envelope(&[]);
     // ZEROFEE_ADDRESS itself is not in the SPONSORED_TARGET_WHITELIST.
-    tx.to = Some(ZEROFEE_ADDRESS);
+    tx.call.to = Some(ZEROFEE_ADDRESS);
     let err = classify_sponsorship(&tx).unwrap_err();
     assert_eq!(err.code(), 116);
 }
@@ -613,7 +615,7 @@ fn decision_value_bearing_delegated_tx_falls_through_to_normal_path() {
     // normal fee path (NotSponsored). The pool must NOT reject it.
     // EIP-7702 delegation is additive and must never block a normal tx.
     let mut tx = ok_sponsored_envelope();
-    tx.value = U256::from(1);
+    tx.call.value = U256::from(1);
     let out = sponsorship_decision(NON_VALIDATOR_SIGNER, Some(ZEROFEE_ADDRESS), &tx)
         .expect("value-bearing delegated tx must not error");
     assert_eq!(out, SponsorshipOutcome::NotSponsored);
@@ -627,7 +629,7 @@ fn decision_paying_delegated_tx_falls_through_to_normal_path() {
     // can keep transacting (and paying) after the daily free quota
     // is exhausted.
     let mut tx = ok_sponsored_envelope();
-    tx.max_priority_fee_per_gas = Some(1);
+    tx.call.max_priority_fee_per_gas = Some(1);
     let out = sponsorship_decision(NON_VALIDATOR_SIGNER, Some(ZEROFEE_ADDRESS), &tx)
         .expect("paying delegated tx must not error");
     assert_eq!(
@@ -643,7 +645,7 @@ fn decision_non_whitelisted_target_delegated_tx_falls_through() {
     // -> not a sponsorship request -> normal path. The signer pays to
     // call whatever contract they like. Delegation does not gate it.
     let mut tx = ok_sponsored_envelope();
-    tx.to = Some(ZEROFEE_ADDRESS); // not in SPONSORED_TARGET_WHITELIST
+    tx.call.to = Some(ZEROFEE_ADDRESS); // not in SPONSORED_TARGET_WHITELIST
     let out = sponsorship_decision(NON_VALIDATOR_SIGNER, Some(ZEROFEE_ADDRESS), &tx)
         .expect("non-whitelisted delegated tx must not error");
     assert_eq!(out, SponsorshipOutcome::NotSponsored);

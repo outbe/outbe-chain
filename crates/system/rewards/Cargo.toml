@@ -32,13 +32,12 @@ outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-ocomp-protocol.workspace = true
 outbe-promislimit.workspace = true
 outbe-gem.workspace = true
+outbe-oracle = { workspace = true, features = ["test-utils"] }
 proptest.workspace = true
 commonware-codec.workspace = true
 commonware-consensus.workspace = true
 commonware-cryptography.workspace = true
-commonware-utils.workspace = true
 rand.workspace = true
-rand-commonware.workspace = true
 rand_chacha = "0.3"
 
 [lints]
