@@ -9,6 +9,7 @@ import {
   validatorStatusName,
 } from "../registry.js";
 import { parseDataUri } from "./datauri.js";
+import { epochIso } from "./time.js";
 
 /**
  * Sources of each unit:
@@ -78,12 +79,6 @@ function formatWwd(v: number): string {
   return `${y}-${pad(m)}-${pad(d)}`;
 }
 
-function toIso(epoch: bigint | number): string {
-  const sec = Number(epoch);
-  if (!Number.isFinite(sec) || sec <= 0) return "n/a";
-  return new Date(sec * 1000).toISOString();
-}
-
 /** A bare `status` byte is a proposal's or a validator's where its owner says so, else a WorldwideDay's. */
 function statusLabel(s: Scalar): (v: number) => string {
   if (/\bIGovernance\./.test(s.context.enclosingTupleType ?? "")) return proposalStatusName;
@@ -126,7 +121,7 @@ const RULES: Rule[] = [
   { when: uint256Named(GENERIC_FP18_RE), render: (s) => scaled(s.context.marketDecimals ?? 18)(s) },
   {
     when: (s) => uint(64)(s) && TIME_RE.test(s.name) && !/height$|block$/i.test(s.name),
-    render: (s) => ({ epoch: Number(s.value), iso: toIso(s.value as bigint) }),
+    render: (s) => epochIso(s.value as bigint),
   },
   { when: (s) => s.type === "string" && typeof s.value === "string", render: (s) => parseDataUri(s.value as string) },
   { when: (s) => typeof s.value === "bigint", render: (s) => (s.value as bigint).toString() },
@@ -134,5 +129,6 @@ const RULES: Rule[] = [
 
 /** Formats a single (non-array, non-tuple) value by its ABI name and type. */
 export function formatScalar(scalar: Scalar): unknown {
-  return RULES.find((rule) => rule.when(scalar))?.render(scalar) ?? scalar.value;
+  const rule = RULES.find((candidate) => candidate.when(scalar));
+  return rule ? rule.render(scalar) : scalar.value;
 }

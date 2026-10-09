@@ -1,3 +1,4 @@
+import { epochIso } from "../format/time.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   type Address,
@@ -140,7 +141,7 @@ function registerOrderOpen(server: McpServer, { ctx, router, resolveNetwork }: I
         outputToken: { symbol: output.symbol, address: output.address, decimals: outputDecimals },
         amountIn: { raw: amountIn.toString(), value: formatUnits(amountIn, inputDecimals) },
         amountOut: { raw: amountOut.toString(), value: formatUnits(amountOut, outputDecimals) },
-        fillDeadline: { epoch: fillDeadline, iso: new Date(fillDeadline * 1000).toISOString() },
+        fillDeadline: epochIso(fillDeadline),
       };
       if (a.wait === false) return ok({ ...meta, status: "submitted" });
 
@@ -195,8 +196,7 @@ function registerOrderTrack(server: McpServer, { router, resolveNetwork }: Inten
         originStatus,
         destinationStatus,
         fillDeadline: {
-          epoch: order.fillDeadline,
-          iso: new Date(Number(order.fillDeadline) * 1000).toISOString(),
+          ...epochIso(order.fillDeadline),
           expired: now > order.fillDeadline,
         },
         userBalances: { inputOnOrigin, outputOnDest },
