@@ -2,20 +2,16 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   type Address,
   type Hex,
-  decodeAbiParameters,
-  encodeAbiParameters,
   encodeFunctionData,
   formatUnits,
   getAddress,
   pad,
-  parseAbiParameters,
   parseUnits,
 } from "viem";
 import { z } from "zod";
 import { networkName, waitFlag } from "./schemas.js";
 import { type Ctx, formatNativeAmount } from "../chain.js";
-import { NETWORKS } from "../net/chains.js";
-import { type Network, networkResolver } from "../net/resolver.js";
+import { type Network, type NetworkResolver, networkResolver } from "../net/resolver.js";
 import { receiptSummary, requireAccount, sendCall, waitForReceipt } from "../net/tx.js";
 import { loadConfig } from "../config.js";
 import { handler, ok } from "./util.js";
@@ -30,88 +26,37 @@ import {
   type OrderData,
   bytes32ToAddress,
   computeOrderId,
-  decodeOrderData,
   encodeOrderData,
   humanizeOrder,
   isNative,
   statusLabel,
 } from "../intent/format.js";
+import { derivePhase, refundPayload } from "../intent/order.js";
+import { loadOrder, readDecimals, tokenBalance } from "../intent/reads.js";
 import { resolveToken } from "../intent/tokens.js";
 
-/**
- * Intent / cross-chain order tools (ERC-7683 LayerZeroRouter). User surface:
- * open an order, track its lifecycle, refund an expired one. Domain logic lives
- * in `src/intent/` (registry/format/tokens). Networks come from the NETWORKS
- * table. A resolved network reuses the connected `ctx` when the chain id matches.
- * Otherwise it opens a fresh client via `createCtx`.
- *
- * Env (optional): OUTBE_INTENT_ROUTER (router address override).
- */
+/** Intent order tools: open a cross-chain order, track its lifecycle, refund an expired one. */
+interface IntentDeps {
+  ctx: Ctx;
+  router: Address;
+  resolveNetwork: NetworkResolver;
+}
+
+const tokenArg = z.string().describe("token: symbol (USD, COEN, ...) or a 0x address");
 
 export function registerIntentTools(server: McpServer, ctx: Ctx): void {
   const config = loadConfig();
-  const router = getAddress(config.intentRouter ?? DEFAULT_ROUTER);
-  const pk = config.privateKey;
+  const deps: IntentDeps = {
+    ctx,
+    router: getAddress(config.intentRouter ?? DEFAULT_ROUTER),
+    resolveNetwork: networkResolver(ctx, config.privateKey),
+  };
+  registerOrderOpen(server, deps);
+  registerOrderTrack(server, deps);
+  registerOrderRefund(server, deps);
+}
 
-  const resolveNetwork = networkResolver(ctx, pk);
-
-  async function readDecimals(n: Network, token: Address): Promise<number> {
-    if (isNative(token)) return n.chain.nativeCurrency.decimals;
-    try {
-      const d = await n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" });
-      return Number(d);
-    } catch {
-      return 18;
-    }
-  }
-
-  /** Current balance of `account` for `token` on a network (native or ERC20). */
-  async function balanceOf(n: Network, token: Address, account: Address) {
-    if (isNative(token)) {
-      const bal = await n.client.getBalance({ address: account });
-      return { account, network: n.name, token, balance: { raw: bal.toString(), value: formatNativeAmount(n.chain, bal) } };
-    }
-    const [decimals, bal] = await Promise.all([
-      readDecimals(n, token),
-      n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [account] }) as Promise<bigint>,
-    ]);
-    return { account, network: n.name, token, balance: { raw: bal.toString(), value: formatUnits(bal, decimals) } };
-  }
-
-  /** Read openOrders on a hint network, else probe outbe/bsc. Then decode the order. */
-  async function loadOrder(
-    orderId: Hex,
-    hint: Network,
-  ): Promise<{ origin: Network; order: OrderData; originData: Hex }> {
-    const candidates: Network[] = [hint];
-    for (const def of NETWORKS) {
-      try {
-        candidates.push(await resolveNetwork(def.name));
-      } catch {
-        /* network unreachable - probe what we have */
-      }
-    }
-    const seen = new Set<number>();
-    for (const n of candidates) {
-      if (seen.has(n.chainId)) continue;
-      seen.add(n.chainId);
-      const raw = (await n.client.readContract({
-        address: router,
-        abi: ROUTER_ABI,
-        functionName: "openOrders",
-        args: [orderId],
-      })) as Hex;
-      if (raw && raw !== "0x") {
-        const [, orderBytes] = decodeAbiParameters([{ type: "bytes32" }, { type: "bytes" }], raw) as [Hex, Hex];
-        return { origin: n, order: decodeOrderData(orderBytes), originData: orderBytes };
-      }
-    }
-    throw new Error(`order not found: ${orderId}`);
-  }
-
-  const tokenArg = z.string().describe("token: symbol (USD, COEN, ...) or a 0x address");
-
-  // --- create order ----------------------------------------------------------
+function registerOrderOpen(server: McpServer, { ctx, router, resolveNetwork }: IntentDeps): void {
   server.tool(
     "intent_order_open",
     "Open a cross-chain intent order on the LayerZeroRouter (ERC-7683 `open`). Pulls/approves the input " +
@@ -209,8 +154,9 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       return ok({ ...meta, ...receiptSummary(await waitForReceipt(originNet, hash)) });
     }),
   );
+}
 
-  // --- track order (lifecycle snapshot) --------------------------------------
+function registerOrderTrack(server: McpServer, { router, resolveNetwork }: IntentDeps): void {
   server.tool(
     "intent_order_track",
     "Where an order is in its cross-chain lifecycle, as a deterministic snapshot (no event scan). " +
@@ -223,7 +169,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
     handler(async (a) => {
       const orderId = a.order_id as Hex;
       const hint = await resolveNetwork(a.chain);
-      const { origin, order } = await loadOrder(orderId, hint);
+      const { origin, order } = await loadOrder(router, resolveNetwork, orderId, hint);
       let destResolved: Network | undefined;
       try {
         destResolved = await resolveNetwork(String(order.destinationDomain));
@@ -242,35 +188,12 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       // The user's own balances (poll twice to see a before/after delta).
       const user = bytes32ToAddress(order.sender);
       const [inputOnOrigin, outputOnDest] = await Promise.all([
-        balanceOf(origin, bytes32ToAddress(order.inputToken), user),
-        balanceOf(destNet, bytes32ToAddress(order.outputToken), user),
+        tokenBalance(origin, bytes32ToAddress(order.inputToken), user),
+        tokenBalance(destNet, bytes32ToAddress(order.outputToken), user),
       ]);
 
       const now = Date.now() / 1000;
-      let phase: string;
-      let next: string;
-      if (originStatus === "SETTLED") {
-        phase = "SETTLED";
-        next = "done - solver paid on origin";
-      } else if (originStatus === "REFUNDED") {
-        phase = "REFUNDED";
-        next = "done - input returned to user";
-      } else if (destinationStatus === "FILLED") {
-        phase = "FILLED";
-        next = "awaiting settle message to origin -> SETTLED";
-      } else if (destinationStatus === "CLAIMED") {
-        phase = "CLAIMED";
-        next = "winner is filling on destination";
-      } else if (originStatus === "OPENED" && now > order.fillDeadline) {
-        phase = "EXPIRED";
-        next = "refundable via intent_order_refund";
-      } else if (originStatus === "OPENED") {
-        phase = "OPENED";
-        next = "auction running on destination - waiting for a solver to claim & fill";
-      } else {
-        phase = originStatus;
-        next = "-";
-      }
+      const { phase, next } = derivePhase(originStatus, destinationStatus, now > order.fillDeadline);
 
       return ok({
         orderId,
@@ -290,8 +213,9 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       });
     }),
   );
+}
 
-  // --- refund an expired order ----------------------------------------------
+function registerOrderRefund(server: McpServer, { ctx, router, resolveNetwork }: IntentDeps): void {
   server.tool(
     "intent_order_refund",
     "Refund an expired, still-OPENED order, returning the input back to the sender. Calls `refund` on the " +
@@ -307,7 +231,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       requireAccount(ctx);
       const orderId = a.order_id as Hex;
       const hint = await resolveNetwork(a.chain);
-      const { origin, order, originData } = await loadOrder(orderId, hint);
+      const { origin, order, originData } = await loadOrder(router, resolveNetwork, orderId, hint);
 
       const originStatusRaw = (await origin.client.readContract({
         address: router,
@@ -333,8 +257,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       const sameChain = order.originDomain === order.destinationDomain;
       let value = 0n;
       if (!sameChain) {
-        // payload mirrors RouterMessage refund encoding: (bool false, bytes32[] ids, bytes[] [])
-        const payload = encodeAbiParameters(parseAbiParameters("bool, bytes32[], bytes[]"), [false, [orderId], []]);
+        const payload = refundPayload(orderId);
         const fee = (await destNet.client.readContract({
           address: router,
           abi: ROUTER_ABI,
