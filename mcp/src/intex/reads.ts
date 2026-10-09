@@ -35,6 +35,11 @@ export function isRevert(error: unknown): boolean {
   return error instanceof BaseError && error.walk((e) => e instanceof ContractFunctionRevertedError) !== null;
 }
 
+/** A contract call that returned no data, as a call to an address without code does. */
+function isEmptyReturn(error: unknown): boolean {
+  return error instanceof BaseError && error.walk((e) => e instanceof ContractFunctionZeroDataError) !== null;
+}
+
 export function addr(n: Network, key: keyof IntexAddresses): Address {
   return intexAddress(n, key);
 }
@@ -229,7 +234,7 @@ export async function intexTargets(outbe: Network): Promise<number[]> {
     });
     return targets.map(Number);
   } catch (error) {
-    if (!isRevert(error) && !(error instanceof ContractFunctionZeroDataError)) throw error;
+    if (!isRevert(error) && !isEmptyReturn(error)) throw error;
     throw new Error(`no Intex origin router answers at ${router} on ${outbe.name}; set OUTBE_INTEX_ORIGIN_ROUTER`);
   }
 }

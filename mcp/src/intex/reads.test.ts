@@ -64,3 +64,15 @@ test("a bridge out of outbe names its destination once several chains could take
     await harness.close();
   }
 });
+
+test("an origin router address without a contract is named instead of a decode error", async () => {
+  const router = "0x00000000000000000000000000000000000000aa";
+  const harness = await startHarness(() => {}, { env: { OUTBE_INTEX_ORIGIN_ROUTER: router } });
+  try {
+    const { isError, text } = await harness.call("auctions_active", {});
+    assert(isError);
+    assert.match(text, new RegExp(`no Intex origin router answers at ${router} on outbe-testnet`, "i"));
+  } finally {
+    await harness.close();
+  }
+});
