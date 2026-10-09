@@ -417,11 +417,7 @@ impl EnclaveClient {
             .noise
             .read_message(&resp_ct, &mut pt)
             .map_err(|e| TransportError::Noise(e.to_string()))?;
-        let resp = decode_response(&pt[..n])?;
-        if let EnclaveResponse::Error { message } = &resp {
-            return Err(TransportError::EnclaveError(message.clone()));
-        }
-        Ok(resp)
+        enclave_answer(decode_response(&pt[..n])?)
     }
 
     /// Ask the enclave to sign one exact canonical GramineDirectDev
@@ -599,11 +595,7 @@ impl AuthorizedEnclaveClient {
             .noise
             .read_message(&ciphertext, &mut plaintext)
             .map_err(|error| TransportError::Noise(error.to_string()))?;
-        let response = decode_response(&plaintext[..length])?;
-        if let EnclaveResponse::Error { message } = &response {
-            return Err(TransportError::EnclaveError(message.clone()));
-        }
-        Ok(response)
+        enclave_answer(decode_response(&plaintext[..length])?)
     }
 
     /// Send an operation with an explicit block context. Retries preserve it.
@@ -1196,11 +1188,16 @@ impl RemoteEnclaveClient {
             .noise
             .read_message(&ciphertext, &mut plaintext)
             .map_err(|error| TransportError::Noise(error.to_string()))?;
-        let response = decode_response(&plaintext[..length])?;
-        if let EnclaveResponse::Error { message } = response {
-            return Err(TransportError::EnclaveError(message));
-        }
-        Ok(response)
+        enclave_answer(decode_response(&plaintext[..length])?)
+    }
+}
+
+/// An enclave refusal becomes an error: a not-ready enclave is this node's fault.
+fn enclave_answer(response: EnclaveResponse) -> Result<EnclaveResponse, TransportError> {
+    match response {
+        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
+        EnclaveResponse::NotReady { message } => Err(TransportError::Unavailable(message)),
+        response => Ok(response),
     }
 }
 

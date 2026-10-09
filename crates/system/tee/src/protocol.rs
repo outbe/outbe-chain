@@ -1478,6 +1478,11 @@ pub enum EnclaveResponse {
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
+    /// The enclave cannot serve requests yet: not initialized, no resident key,
+    /// or an expired session. Unlike `Error`, it never depends on the request.
+    NotReady {
+        message: String,
+    },
 }
 
 /// Deterministic hash over the canonical inputs of a single Gratis op. SHARED by

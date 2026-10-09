@@ -608,3 +608,23 @@ fn node_host_key_store_is_write_once_owner_only_and_never_regenerates() {
             if error.kind() == std::io::ErrorKind::NotFound
     ));
 }
+
+#[test]
+fn a_not_ready_enclave_is_unavailable_and_a_refusal_stays_an_enclave_error() {
+    assert!(matches!(
+        enclave_answer(EnclaveResponse::NotReady {
+            message: "enclave is not initialized".into()
+        }),
+        Err(TransportError::Unavailable(message)) if message == "enclave is not initialized"
+    ));
+    assert!(matches!(
+        enclave_answer(EnclaveResponse::Error {
+            message: "denied".into()
+        }),
+        Err(TransportError::EnclaveError(message)) if message == "denied"
+    ));
+    assert!(matches!(
+        enclave_answer(EnclaveResponse::Ack),
+        Ok(EnclaveResponse::Ack)
+    ));
+}
