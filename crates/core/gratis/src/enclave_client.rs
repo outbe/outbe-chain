@@ -20,8 +20,8 @@ use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse, GratisOpRequest, Grat
 /// Determinism: recompute the canonical inputs hash and reject a mismatch
 /// (`tee_enclave_nondeterminism`). Attestation: verify the tag against the
 /// enclave key pinned from its quote (`tee_gratis_attestation_invalid`), then
-/// discard the tag. The tag is never written to state. A missing enclave
-/// is `tee_sidecar_unavailable`. All of these errors are `Fatal` (a node/consensus
+/// discard the tag. The tag is never written to state. A missing or not-ready
+/// enclave is `EnclaveUnavailable`. The other errors are `Fatal` (a node/consensus
 /// fault, not a user revert). `GratisOpResult::status` carries a *business*
 /// rejection, and the caller handles it.
 pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
