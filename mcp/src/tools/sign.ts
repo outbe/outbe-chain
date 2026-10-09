@@ -1,12 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { type Hex, bytesToHex, toBytes } from "viem";
 import { z } from "zod";
+import { address, waitFlag } from "./schemas.js";
 import { type Ctx, parseNativeAmount, sendTx } from "../chain.js";
 import { buildPayload, canonicalAmountBase, canonicalAmountMicro, encryptOffer } from "../crypto.js";
 import { CONTRACTS, resolveContract } from "../registry.js";
 import { handler, ok, view } from "./util.js";
 
-const addr = z.string().describe("0x-prefixed address");
 const coen = z.string().describe("amount in whole COEN, e.g. \"100\" or \"1.5\"");
 const tributeBase = z
   .string()
@@ -107,7 +107,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     value => BigInt(value) < (1n << 256n), "amount exceeds uint256",
   ).describe("Amount in raw token units");
   server.tool("credis_reserve", "Reserve exact stablecoin principal and freeze the Credis terms for 15 minutes.",
-    { smart_account: addr, source: addr.describe("Main account that pledges the Gratis collateral"), asset: addr, amount: rawAmount, reference_currency: z.number().int().min(1).max(65535) },
+    { smart_account: address, source: address.describe("Main account that pledges the Gratis collateral"), asset: address, amount: rawAmount, reference_currency: z.number().int().min(1).max(65535) },
     handler(async ({ smart_account, source, asset, amount, reference_currency }) =>
       submit(ctx, { contract: "vaultrouter", method: "reserveStables", args: [smart_account, source, asset, BigInt(amount), reference_currency] })));
   server.tool("gratis_pledge", "Pledge the reservation's Gratis from the caller, its source. The mac binds Pledge and the reservation's gratisMinor.",
@@ -152,7 +152,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
       circuit_version: circuitVersion,
       tribute_draft_id: tributeDraftId,
       su_hashes: z.array(suHash).min(1).describe("SpendingUnit hashes bound by the proof"),
-      wait: z.boolean().optional().describe("wait for the receipt (default true)"),
+      wait: waitFlag,
     },
     handler(
       async ({
@@ -264,7 +264,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "staking_stake",
     "Stake COEN to a validator. Requires OUTBE_PRIVATE_KEY.",
-    { validator: addr, amount: coen, wait: z.boolean().optional() },
+    { validator: address, amount: coen, wait: z.boolean().optional() },
     handler(({ validator, amount, wait }) => {
       const stake = parseNativeAmount(ctx.chain, amount);
       return submit(ctx, { contract: "staking", method: "stake", args: [validator, stake], wait, value: stake });
@@ -314,7 +314,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "oracle_feeder_delegate",
     "Delegate oracle feeder consent to an address. Requires OUTBE_PRIVATE_KEY (validator).",
-    { feeder: addr, wait: z.boolean().optional() },
+    { feeder: address, wait: z.boolean().optional() },
     handler(({ feeder, wait }) =>
       submit(ctx, { contract: "oracle", method: "delegateFeederConsent", args: [feeder], wait }),
     ),

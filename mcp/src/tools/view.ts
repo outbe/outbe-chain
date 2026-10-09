@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { address } from "./schemas.js";
 import { rememberMarkets } from "../oracle/markets.js";
 import type { Ctx } from "../chain.js";
 import {
@@ -11,7 +12,6 @@ import {
 } from "../registry.js";
 import { handler, ok, view } from "./util.js";
 
-const addr = z.string().describe("0x-prefixed address");
 const wwd = z.number().int().describe("WorldwideDay as YYYYMMDD, e.g. 20260601");
 
 /**
@@ -63,7 +63,7 @@ function registerEntityViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "tributes_by_owner",
     "List Tribute token ids owned by an address.",
-    { owner: addr },
+    { owner: address },
     handler(async ({ owner }) => ok(await view(ctx, "tribute", "getTributesByOwner", [owner]))),
   );
 
@@ -103,7 +103,7 @@ function registerEntityViews(server: McpServer, ctx: Ctx): void {
     "nods_by_owner",
     "List Nod token ids owned by an address (Nod has no bulk getter, so this " +
       "enumerates balanceOf -> tokenOfOwnerByIndex).",
-    { owner: addr },
+    { owner: address },
     handler(async ({ owner }) => {
       const balance = Number(await view(ctx, "nod", "balanceOf", [owner]));
       const ids: unknown[] = [];
@@ -151,7 +151,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
       "the reference rail). An issuance-currency quote expires at the next whole UTC hour.",
     {
       id: z.string().describe("Gem token id (decimal or 0x hex)"),
-      asset: addr.describe("Settlement stablecoin the holder intends to pay with"),
+      asset: address.describe("Settlement stablecoin the holder intends to pay with"),
     },
     handler(async ({ id, asset }) =>
       ok(await view(ctx, "gemfactory", "quoteSettlement", [BigInt(id), asset])),
@@ -162,7 +162,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
     "gems_by_owner",
     "List Gems owned by an address with decoded status for each (Gem has no bulk getter, " +
       "so this enumerates balanceOf -> tokenOfOwnerByIndex -> getGemStatus).",
-    { owner: addr },
+    { owner: address },
     handler(async ({ owner }) => {
       const balance = Number(await view(ctx, "gem", "balanceOf", [owner]));
       const gems: unknown[] = [];
@@ -193,7 +193,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "gratis_balance",
     "Encrypted Gratis liquid and pledged balances; decrypt both locally with the account view key.",
-    { account: addr },
+    { account: address },
     handler(async ({ account }) => {
       const balance = await view(ctx, "gratis", "balanceOf", [account]);
       const pledged = await view(ctx, "gratis", "pledgedOf", [account]);
@@ -204,7 +204,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "promis_balance",
     "Promis balance for an account (in COEN).",
-    { account: addr },
+    { account: address },
     handler(async ({ account }) => ok(await view(ctx, "promis", "balanceOf", [account]))),
   );
 
@@ -224,7 +224,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "agentreward_claimable",
     "Claimable AgentReward balance for an account (in COEN), all three pools summed.",
-    { account: addr },
+    { account: address },
     handler(async ({ account }) =>
       ok(await view(ctx, "agentreward", "getClaimableBalance", [account])),
     ),
@@ -233,7 +233,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "agentreward_pool_claimable",
     "Claimable AgentReward balance for an account in one pool (0 = WAA, 1 = SRA, 2 = CCA), in COEN.",
-    { account: addr, pool: z.number().int().min(0).max(2).describe("0 = WAA, 1 = SRA, 2 = CCA") },
+    { account: address, pool: z.number().int().min(0).max(2).describe("0 = WAA, 1 = SRA, 2 = CCA") },
     handler(async ({ account, pool }) =>
       ok(await view(ctx, "agentreward", "getPoolClaimableBalance", [account, pool])),
     ),
@@ -348,7 +348,7 @@ function registerValidatorViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "validator_get",
     "Full validator record by address (stake, status, miss counters, epoch heights).",
-    { address: addr },
+    { address },
     handler(async ({ address }) =>
       ok(await view(ctx, "validatorset", "validatorByAddress", [address])),
     ),
@@ -357,7 +357,7 @@ function registerValidatorViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "staking_info",
     "Stake delegated to a validator and total staked.",
-    { validator: addr },
+    { validator: address },
     handler(async ({ validator }) => {
       const [stake, total] = await Promise.all([
         view(ctx, "staking", "getStake", [validator]),

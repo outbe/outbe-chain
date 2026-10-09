@@ -12,6 +12,7 @@ import {
   parseUnits,
 } from "viem";
 import { z } from "zod";
+import { networkName, waitFlag } from "./schemas.js";
 import { type Ctx, formatNativeAmount } from "../chain.js";
 import { NETWORKS } from "../net/chains.js";
 import { type Network, networkResolver } from "../net/resolver.js";
@@ -108,7 +109,6 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
     throw new Error(`order not found: ${orderId}`);
   }
 
-  const networkArg = z.string().describe(`network name (one of: ${NETWORKS.map((d) => d.name).join(", ")})`);
   const tokenArg = z.string().describe("token: symbol (USD, COEN, ...) or a 0x address");
 
   // --- create order ----------------------------------------------------------
@@ -120,8 +120,8 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       "decimals on destination (override with `output_decimals`). Tokens are symbols or 0x addresses. " +
       "Requires OUTBE_PRIVATE_KEY.",
     {
-      origin: networkArg,
-      destination: networkArg,
+      origin: networkName,
+      destination: networkName,
       input_token: tokenArg,
       output_token: tokenArg,
       amount_in: z.string().describe('input amount in whole tokens, e.g. "10" or "1.5"'),
@@ -129,7 +129,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       output_decimals: z.number().int().optional().describe("override dest output-token decimals"),
       recipient: z.string().optional().describe("recipient on dest chain (default = sender)"),
       fill_deadline_seconds: z.number().int().optional().describe("seconds until fill deadline (default 86400)"),
-      wait: z.boolean().optional().describe("wait for the receipt (default true)"),
+      wait: waitFlag,
     },
     handler(async (a) => {
       const account = requireAccount(ctx);
@@ -218,7 +218,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       "plus REFUNDED/EXPIRED) with a `next` hint. Poll it (e.g. via /loop) to follow progress.",
     {
       order_id: z.string().describe("0x-prefixed bytes32 order id"),
-      chain: networkArg.describe("network where the order was opened (origin)"),
+      chain: networkName.describe("network where the order was opened (origin)"),
     },
     handler(async (a) => {
       const orderId = a.order_id as Hex;
@@ -300,7 +300,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
       "Requires OUTBE_PRIVATE_KEY.",
     {
       order_id: z.string().describe("0x-prefixed bytes32 order id"),
-      chain: networkArg.describe("network where the order was opened (origin)"),
+      chain: networkName.describe("network where the order was opened (origin)"),
       wait: z.boolean().optional(),
     },
     handler(async (a) => {
