@@ -37,6 +37,9 @@ const NATIVE_COEN_READS = new Set([
   "agentreward.getClaimableBalance",
   "agentreward.getPoolClaimableBalance",
 ]);
+/** NFT precompiles whose `balanceOf` is a token count, not an amount. */
+const NFT_CONTRACTS = new Set(["nod", "gem", "credis"]);
+
 /** Fields that are native COEN at 1e18 inside an otherwise mixed record. */
 const NATIVE_COEN_FIELDS = new Set(["validatorset.validatorByAddress.stake", "validatorset.validatorByIndex.stake"]);
 
@@ -117,6 +120,10 @@ const RULES: Rule[] = [
   },
   { when: uint256Named(ASSET_UNIT_AMOUNT_RE), render: (s) => (s.value as bigint).toString() },
   { when: (s) => s.context.contractName === "vaultrouter" && uint256Named(/amount/i)(s), render: (s) => (s.value as bigint).toString() },
+  {
+    when: (s) => s.context.functionName === "balanceOf" && NFT_CONTRACTS.has(s.context.contractName ?? ""),
+    render: (s) => (s.value as bigint).toString(),
+  },
   { when: uint256Named(SIX_DECIMAL_AMOUNT_RE), render: scaled(6) },
   { when: uint256Named(GENERIC_FP18_RE), render: (s) => scaled(s.context.marketDecimals ?? 18)(s) },
   {

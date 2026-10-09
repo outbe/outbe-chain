@@ -6138,10 +6138,7 @@
       },
       "isError": false,
       "output": {
-        "balance": {
-          "raw": "3",
-          "value": "0.000003"
-        }
+        "balance": "3"
       },
       "sent": []
     },
@@ -6651,10 +6648,7 @@
       },
       "isError": false,
       "output": {
-        "balance": {
-          "raw": "3",
-          "value": "0.000003"
-        }
+        "balance": "3"
       },
       "sent": []
     },
@@ -7010,10 +7004,7 @@
       },
       "isError": false,
       "output": {
-        "balance": {
-          "raw": "3",
-          "value": "0.000003"
-        }
+        "balance": "3"
       },
       "sent": []
     },
