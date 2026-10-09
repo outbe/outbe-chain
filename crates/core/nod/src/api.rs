@@ -260,8 +260,14 @@ pub fn settle_nod(
 
 /// Internal arithmetic boundary; public bodies and projections retain ciphertext.
 pub fn calculation_amount(item: &NodItemState) -> Result<U256> {
+    use outbe_primitives::error::PrecompileError;
     crate::enclave_client::read_amount(&item.encrypted).map_err(|error| {
-        outbe_primitives::error::PrecompileError::Fatal(format!("NOD amount read failed: {error}"))
+        let message = format!("NOD amount read failed: {error}");
+        if error.is_node_local() {
+            PrecompileError::EnclaveUnavailable(message)
+        } else {
+            PrecompileError::Fatal(message)
+        }
     })
 }
 
