@@ -8,6 +8,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_ocomp_protocol::list::{
     leaf_hash, node_hash, pad_hash, root_hash, streaming_ordered_list_membership_proof,
+    OrderedListProofTarget,
 };
 use outbe_ocomp_protocol::{ListKind, ProtocolError, StreamingOrderedListRoot};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -144,9 +145,7 @@ where
 {
     let shape = RangeShape::resolve_bounds(real_count, start_index)?;
     let mut path = streaming_ordered_list_membership_proof(
-        KIND,
-        real_count,
-        start_index,
+        OrderedListProofTarget::new(KIND, real_count, start_index),
         items,
         CONTRIBUTOR_LEAF_BYTES,
     )

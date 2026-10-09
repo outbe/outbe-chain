@@ -1,5 +1,6 @@
 //! Confidential NOD exercise and authenticated internal calculation reads.
 use crate::{
+    nod_materialization::{codec, NodOperation},
     protocol::{EnclaveRequest, EnclaveResponse, FidelityOpOutcome, FidelityOpSection, ModifyAuth},
     TransportError,
 };
@@ -47,22 +48,7 @@ pub fn mine_encrypted_nod(
             crate::tribute_v2::verify_attestation(&key, &preimage, &result.attestation_tag)?;
             Ok(*result)
         }
-        EnclaveResponse::EncryptedNodMintRejectedV2 {
-            reason,
-            inputs_canonical_hash,
-            attestation_tag,
-        } if inputs_canonical_hash == expected => {
-            let preimage = crate::nod_materialization::attestation(
-                b"outbe/nod/mint-rejected/v2",
-                expected,
-                &reason,
-            )
-            .map_err(codec)?;
-            crate::tribute_v2::verify_attestation(&key, &preimage, &attestation_tag)?;
-            Err(TransportError::NodMintRejected(reason))
-        }
-        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
-        _ => Err(TransportError::UnexpectedResponse),
+        response => NodOperation::Mine.reject_or_unexpected(&key, expected, response),
     }
 }
 pub fn nod_read_hash(nod: &EncryptedNodV2) -> Result<B256, serde_json::Error> {
@@ -97,10 +83,6 @@ pub fn read_nod_amount(nod: &EncryptedNodV2) -> Result<U256, TransportError> {
         _ => Err(TransportError::UnexpectedResponse),
     }
 }
-fn codec(error: serde_json::Error) -> TransportError {
-    TransportError::Codec(error.to_string())
-}
-
 #[cfg(feature = "e2e-test")]
 pub fn create_nod_for_test(
     terms: outbe_primitives::nod_encryption::NodTermsV2,

@@ -6,7 +6,7 @@
 //! variant. Happy-path tests run the full flow end-to-end against a real
 //! DKG-derived HybridCertificate.
 
-use alloy_primitives::{keccak256, Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes, B256};
 use commonware_codec::{Encode, FixedSize};
 use commonware_consensus::{
     simplex::types::Proposal,
@@ -16,8 +16,9 @@ use commonware_cryptography::{
     bls12381::primitives::variant::{MinSig, Variant},
     sha256::Digest as Sha256Digest,
 };
-use outbe_consensus::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
 use outbe_consensus::proof::{verify_v2_proof, V2VerifyError};
+use outbe_consensus::proof::{CommitteeEntry, CommitteeSnapshot};
+use outbe_consensus::test_harness::{test_fully_signed_metadata, TestFinalizedParent};
 use outbe_primitives::consensus_metadata::{
     CertifiedParentAccountingMetadata, MissedProposerEvent, ParentParticipationProof,
 };
@@ -52,29 +53,16 @@ fn fixture_metadata(
     snapshot: &CommitteeSnapshot,
     parent_hash: B256,
 ) -> CertifiedParentAccountingMetadata {
-    let committee: Vec<Address> = snapshot
-        .committee
-        .iter()
-        .map(|entry| entry.address)
-        .collect();
-    let signer_bitmap = vec![1u8; snapshot.committee.len()];
-    let committee_set_hash = committee_set_hash_v2(3, snapshot);
-    let vrf_group_public_key_hash = keccak256(&snapshot.vrf_group_public_key_bytes);
-    CertifiedParentAccountingMetadata {
-        finalized_block_number: 41,
-        finalized_block_hash: parent_hash,
-        finalized_epoch: 3,
-        finalized_view: 100,
+    let parent = TestFinalizedParent {
+        block_number: 41,
+        block_hash: parent_hash,
+        epoch: 3,
+        view: 100,
         parent_view: 99,
-        ordered_committee: committee,
-        signer_bitmap,
-        proof: Bytes::from_static(b"opaque-cert-bytes-not-real"),
-        committee_set_hash,
         vrf_material_version: snapshot.vrf_material_version,
-        vrf_group_public_key_hash,
         proof_kind: ParentParticipationProof::Finalization,
-        missed_proposers: Vec::new(),
-    }
+    };
+    test_fully_signed_metadata(&parent, snapshot, b"opaque-cert-bytes-not-real")
 }
 
 // (FixedSize is imported at top via `use commonware_codec::FixedSize;`.)

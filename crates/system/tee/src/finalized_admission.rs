@@ -3,6 +3,7 @@
 
 use alloy_primitives::{keccak256, B256, U256};
 
+use crate::byte_cursor::{ByteCursor, CursorError};
 use crate::dcap_protocol::{
     DcapOnboardingArtifactV1, DcapOnboardingContextV1, MAX_DCAP_ONBOARDING_ARTIFACT_BYTES,
 };
@@ -32,17 +33,37 @@ pub const EXACT_REGISTRY_STORAGE_PROOFS: usize = 9;
 const ONBOARDING_INGEST_REQUEST_DOMAIN_V1: &[u8] =
     b"outbe/tee/onboarding-artifact-ingest-request/v1";
 
+/// Inputs committed by the first frame of one finalized admission upload.
+#[derive(Clone, Copy)]
+pub struct FinalizedAdmissionBeginInputV1<'a> {
+    pub artifact: &'a [u8],
+    pub anchor_outcome: &'a [u8],
+    pub expected_intent_hash: B256,
+    pub expected_tribute_offer_public: [u8; 32],
+    pub expected_key_epoch: u64,
+    pub expected_tribute_offer_epoch: u64,
+}
+
+pub struct FinalizedAdmissionIngestInputV1<'a> {
+    pub begin: FinalizedAdmissionBeginInputV1<'a>,
+    pub committee_transitions: &'a [Vec<u8>],
+    pub finalized_admission_witness: &'a [u8],
+}
+
 /// Commits the immutable start of one streaming target-enclave ingest. The
 /// current committee independently authenticates every later committee
 /// transition, so the transcript does not need to be buffered or pre-hashed.
 pub fn onboarding_artifact_ingest_request_hash_v1(
-    artifact: &[u8],
-    anchor_outcome: &[u8],
-    expected_intent_hash: B256,
-    expected_tribute_offer_public: [u8; 32],
-    expected_key_epoch: u64,
-    expected_tribute_offer_epoch: u64,
+    input: FinalizedAdmissionBeginInputV1<'_>,
 ) -> Result<B256, FinalizedAdmissionCodecError> {
+    let FinalizedAdmissionBeginInputV1 {
+        artifact,
+        anchor_outcome,
+        expected_intent_hash,
+        expected_tribute_offer_public,
+        expected_key_epoch,
+        expected_tribute_offer_epoch,
+    } = input;
     if artifact.len() > MAX_DCAP_ONBOARDING_ARTIFACT_BYTES
         || anchor_outcome.len() > MAX_COMMITTEE_OUTCOME_BYTES
     {
@@ -129,14 +150,14 @@ pub fn upgrade_key_transfer_request_hash_v1(
     let context = DcapOnboardingArtifactV1::decode_canonical(artifact)
         .map_err(|_| FinalizedAdmissionCodecError::Malformed("upgrade artifact"))?
         .context;
-    let base = onboarding_artifact_ingest_request_hash_v1(
+    let base = onboarding_artifact_ingest_request_hash_v1(FinalizedAdmissionBeginInputV1 {
         artifact,
-        anchor,
-        context.intent_hash,
-        context.tribute_offer_public,
-        context.key_epoch,
-        context.tribute_offer_epoch,
-    )?;
+        anchor_outcome: anchor,
+        expected_intent_hash: context.intent_hash,
+        expected_tribute_offer_public: context.tribute_offer_public,
+        expected_key_epoch: context.key_epoch,
+        expected_tribute_offer_epoch: context.tribute_offer_epoch,
+    })?;
     let mut bytes = b"outbe/tee/upgrade-key-transfer/v1".to_vec();
     bytes.push(u8::from(export));
     bytes.extend_from_slice(base.as_slice());
@@ -209,7 +230,7 @@ impl CertifiedHeaderV1 {
             return Err(FinalizedAdmissionCodecError::TooLarge);
         }
         let mut decoder = Decoder::new(input);
-        let version = decoder.u8()?;
+        let version = decoder.cursor.u8()?;
         if version != 1 && version != 2 {
             return Err(FinalizedAdmissionCodecError::Malformed("version"));
         }
@@ -217,7 +238,7 @@ impl CertifiedHeaderV1 {
         if version == 2 {
             value.descendants = decoder.descendants()?;
         }
-        decoder.finish()?;
+        decoder.cursor.finish()?;
         Ok(value)
     }
 }
@@ -257,7 +278,7 @@ impl FinalizedAdmissionWitnessV1 {
             return Err(FinalizedAdmissionCodecError::TooLarge);
         }
         let mut decoder = Decoder::new(input);
-        let version = decoder.u8()?;
+        let version = decoder.cursor.u8()?;
         if version != 1 && version != 2 {
             return Err(FinalizedAdmissionCodecError::Malformed("version"));
         }
@@ -275,12 +296,12 @@ impl FinalizedAdmissionWitnessV1 {
         let mut registry_storage = Vec::with_capacity(storage_count);
         for _ in 0..storage_count {
             registry_storage.push(MptStorageProofV1 {
-                key: B256::from(decoder.array::<32>()?),
-                value: U256::from_be_bytes(decoder.array::<32>()?),
+                key: B256::from(decoder.cursor.array::<32>()?),
+                value: U256::from_be_bytes(decoder.cursor.array::<32>()?),
                 nodes: decoder.nodes()?,
             });
         }
-        decoder.finish()?;
+        decoder.cursor.finish()?;
         Ok(Self {
             admission,
             registry_account,
@@ -372,13 +393,14 @@ fn put_u16(out: &mut Vec<u8>, value: usize) -> Result<(), FinalizedAdmissionCode
 }
 
 struct Decoder<'a> {
-    input: &'a [u8],
-    offset: usize,
+    cursor: ByteCursor<'a, FinalizedAdmissionCodecError>,
 }
 
 impl<'a> Decoder<'a> {
     const fn new(input: &'a [u8]) -> Self {
-        Self { input, offset: 0 }
+        Self {
+            cursor: ByteCursor::new(input, admission_cursor_error),
+        }
     }
 
     fn certified_header(&mut self) -> Result<CertifiedHeaderV1, FinalizedAdmissionCodecError> {
@@ -410,10 +432,10 @@ impl<'a> Decoder<'a> {
 
     fn account(&mut self) -> Result<MptAccountProofV1, FinalizedAdmissionCodecError> {
         Ok(MptAccountProofV1 {
-            nonce: u64::from_be_bytes(self.array()?),
-            balance: U256::from_be_bytes(self.array::<32>()?),
-            code_hash: B256::from(self.array::<32>()?),
-            storage_root: B256::from(self.array::<32>()?),
+            nonce: u64::from_be_bytes(self.cursor.array()?),
+            balance: U256::from_be_bytes(self.cursor.array::<32>()?),
+            code_hash: B256::from(self.cursor.array::<32>()?),
+            storage_root: B256::from(self.cursor.array::<32>()?),
             nodes: self.nodes()?,
         })
     }
@@ -432,47 +454,26 @@ impl<'a> Decoder<'a> {
     }
 
     fn bytes(&mut self) -> Result<&'a [u8], FinalizedAdmissionCodecError> {
-        let len = usize::try_from(u32::from_be_bytes(self.array()?))
+        let len = usize::try_from(u32::from_be_bytes(self.cursor.array()?))
             .map_err(|_| FinalizedAdmissionCodecError::TooLarge)?;
-        self.take(len)
+        self.cursor.take(len)
     }
 
     fn count(&mut self, max: usize) -> Result<usize, FinalizedAdmissionCodecError> {
-        let count = usize::from(u16::from_be_bytes(self.array()?));
+        let count = usize::from(u16::from_be_bytes(self.cursor.array()?));
         if count > max {
             return Err(FinalizedAdmissionCodecError::TooLarge);
         }
         Ok(count)
     }
+}
 
-    fn u8(&mut self) -> Result<u8, FinalizedAdmissionCodecError> {
-        Ok(self.take(1)?[0])
-    }
-
-    fn array<const N: usize>(&mut self) -> Result<[u8; N], FinalizedAdmissionCodecError> {
-        self.take(N)?
-            .try_into()
-            .map_err(|_| FinalizedAdmissionCodecError::Malformed("fixed field"))
-    }
-
-    fn take(&mut self, len: usize) -> Result<&'a [u8], FinalizedAdmissionCodecError> {
-        let end = self
-            .offset
-            .checked_add(len)
-            .ok_or(FinalizedAdmissionCodecError::TooLarge)?;
-        if end > self.input.len() {
-            return Err(FinalizedAdmissionCodecError::Malformed("truncated field"));
-        }
-        let bytes = &self.input[self.offset..end];
-        self.offset = end;
-        Ok(bytes)
-    }
-
-    fn finish(self) -> Result<(), FinalizedAdmissionCodecError> {
-        if self.offset != self.input.len() {
-            return Err(FinalizedAdmissionCodecError::Malformed("trailing bytes"));
-        }
-        Ok(())
+/// Maps a bounded-read failure to the admission codec error.
+const fn admission_cursor_error(error: CursorError) -> FinalizedAdmissionCodecError {
+    match error {
+        CursorError::Overflow => FinalizedAdmissionCodecError::TooLarge,
+        CursorError::Truncated => FinalizedAdmissionCodecError::Malformed("truncated field"),
+        CursorError::Trailing => FinalizedAdmissionCodecError::Malformed("trailing bytes"),
     }
 }
 
@@ -626,72 +627,59 @@ mod tests {
     fn ingest_commitment_binds_every_byte_string_and_expected_value() {
         let artifact = [0x21, 0x22];
         let anchor = [0x31, 0x32, 0x33];
-        let intent = B256::repeat_byte(0x41);
-        let offer = [0x51; 32];
-        let original =
-            onboarding_artifact_ingest_request_hash_v1(&artifact, &anchor, intent, offer, 6, 7)
-                .unwrap();
+        let input = FinalizedAdmissionBeginInputV1 {
+            artifact: &artifact,
+            anchor_outcome: &anchor,
+            expected_intent_hash: B256::repeat_byte(0x41),
+            expected_tribute_offer_public: [0x51; 32],
+            expected_key_epoch: 6,
+            expected_tribute_offer_epoch: 7,
+        };
+        let original = onboarding_artifact_ingest_request_hash_v1(input).unwrap();
 
         let mut changed_artifact = artifact;
         changed_artifact[0] ^= 1;
         let mut changed_anchor = anchor;
         changed_anchor[0] ^= 1;
+        let short_artifact = [artifact[0]];
         let mutations = [
-            onboarding_artifact_ingest_request_hash_v1(
-                &changed_artifact,
-                &anchor,
-                intent,
-                offer,
-                6,
-                7,
-            )
-            .unwrap(),
-            onboarding_artifact_ingest_request_hash_v1(
-                &artifact,
-                &changed_anchor,
-                intent,
-                offer,
-                6,
-                7,
-            )
-            .unwrap(),
-            onboarding_artifact_ingest_request_hash_v1(
-                &artifact,
-                &anchor,
-                B256::repeat_byte(0x42),
-                offer,
-                6,
-                7,
-            )
-            .unwrap(),
-            onboarding_artifact_ingest_request_hash_v1(
-                &artifact, &anchor, intent, [0x52; 32], 6, 7,
-            )
-            .unwrap(),
-            onboarding_artifact_ingest_request_hash_v1(&artifact, &anchor, intent, offer, 8, 7)
-                .unwrap(),
-            onboarding_artifact_ingest_request_hash_v1(&artifact, &anchor, intent, offer, 6, 8)
-                .unwrap(),
-            onboarding_artifact_ingest_request_hash_v1(
-                &[artifact[0]],
-                &anchor,
-                intent,
-                offer,
-                6,
-                7,
-            )
-            .unwrap(),
+            FinalizedAdmissionBeginInputV1 {
+                artifact: &changed_artifact,
+                ..input
+            },
+            FinalizedAdmissionBeginInputV1 {
+                anchor_outcome: &changed_anchor,
+                ..input
+            },
+            FinalizedAdmissionBeginInputV1 {
+                expected_intent_hash: B256::repeat_byte(0x42),
+                ..input
+            },
+            FinalizedAdmissionBeginInputV1 {
+                expected_tribute_offer_public: [0x52; 32],
+                ..input
+            },
+            FinalizedAdmissionBeginInputV1 {
+                expected_key_epoch: 8,
+                ..input
+            },
+            FinalizedAdmissionBeginInputV1 {
+                expected_tribute_offer_epoch: 8,
+                ..input
+            },
+            FinalizedAdmissionBeginInputV1 {
+                artifact: &short_artifact,
+                ..input
+            },
         ];
-        assert!(mutations.into_iter().all(|hash| hash != original));
+        let mutation_hashes =
+            mutations.map(|input| onboarding_artifact_ingest_request_hash_v1(input).unwrap());
+        assert!(mutation_hashes.into_iter().all(|hash| hash != original));
         assert_eq!(
-            onboarding_artifact_ingest_request_hash_v1(
-                &artifact,
-                &vec![0; MAX_COMMITTEE_OUTCOME_BYTES + 1],
-                intent,
-                offer,
-                6,
-                7,
-            ),
+            onboarding_artifact_ingest_request_hash_v1(FinalizedAdmissionBeginInputV1 {
+                anchor_outcome: &vec![0; MAX_COMMITTEE_OUTCOME_BYTES + 1],
+                ..input
+            }),
             Err(FinalizedAdmissionCodecError::TooLarge)
         );
     }

@@ -16,7 +16,7 @@ use crate::api::{
 use crate::errors::VoteError;
 use crate::handlers::VoteTargetRegistry;
 use crate::schema::{BondSettlement, Vote};
-use crate::state::{ProposalInfo, ProposalStatus, VoteTally};
+use crate::state::{ProposalInfo, ProposalStatus, ProposalSubmission, VoteTally};
 
 pub use crate::abi::IVote;
 
@@ -56,23 +56,18 @@ fn dispatch_vote_call(
     match call {
         createProposal(c) => mutate(&storage, c, caller, |sender, c| {
             let block_number = storage.block_number()?;
-            governance.create_proposal_with_value(
-                sender,
-                c.targetModule,
-                &c.payload,
-                block_number,
-                value,
-                registry,
-            )
+            let submission =
+                ProposalSubmission::new(sender, c.targetModule, &c.payload, block_number)
+                    .with_attached_value(value);
+            governance.create_proposal_with_value(submission, registry)
         }),
         createProposalWithVotingWindow(c) => mutate(&storage, c, caller, |sender, c| {
             let block_number = storage.block_number()?;
+            let submission =
+                ProposalSubmission::new(sender, c.targetModule, &c.payload, block_number)
+                    .with_attached_value(value);
             governance.create_proposal_with_voting_window(
-                sender,
-                c.targetModule,
-                &c.payload,
-                block_number,
-                value,
+                submission,
                 c.votingWindowBlocks,
                 registry,
             )

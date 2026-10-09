@@ -7,7 +7,8 @@ use outbe_tee::{
         dcap_onboarding_attestation_preimage, dcap_onboarding_request_hash,
         dcap_verification_attestation_preimage, dcap_verification_request_hash,
         DcapOnboardingArtifactV1, DcapOnboardingContextV1, DcapRejectCodeV1,
-        DcapVerificationOutcomeV1, MAX_DCAP_VERIFICATION_CHUNK_BYTES,
+        DcapVerificationOutcomeV1, RegistrationVerificationRequest,
+        MAX_DCAP_VERIFICATION_CHUNK_BYTES,
     },
     protocol::{EnclaveRequest, EnclaveResponse},
 };
@@ -225,16 +226,16 @@ impl DcapVerificationSessionV1 {
                 expected_tribute_offer_public,
                 key_epoch,
                 tribute_offer_epoch,
-            } => dcap_onboarding_request_hash(
-                &evidence,
-                &policy,
-                upload.block_timestamp,
+            } => dcap_onboarding_request_hash(RegistrationVerificationRequest {
+                evidence: &evidence,
+                policy: &policy,
+                block_timestamp: upload.block_timestamp,
                 node_signature,
                 enclave_signature,
-                expected_tribute_offer_public,
-                *key_epoch,
-                *tribute_offer_epoch,
-            ),
+                expected_tribute_offer_public: *expected_tribute_offer_public,
+                key_epoch: *key_epoch,
+                tribute_offer_epoch: *tribute_offer_epoch,
+            }),
         }
         .map_err(|_| "DCAP verification request commitment is invalid")?;
         if computed != request_hash {
@@ -581,12 +582,12 @@ fn verify_complete_request(
 mod tests {
     use super::*;
     use alloy_primitives::U256;
-    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
     use outbe_primitives::tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
         DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1, NodeIdV1,
         RegistrationIntentV1,
     };
+    use outbe_primitives::tee_test_utils::sign_node_host_hash_for_test;
     use outbe_tee::dcap_protocol::{
         dcap_onboarding_request_hash, dcap_verification_request_hash, DcapPckCaV1,
         DcapPlatformTcbStatusV1, DcapVerdictV1,
@@ -625,11 +626,7 @@ mod tests {
         };
         intent.enclave_id = intent.derived_enclave_id().unwrap();
         let intent_hash = intent.intent_hash().unwrap();
-        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-            node_key.sign_prehash(intent_hash.as_slice()).unwrap();
-        let mut node_signature = [0_u8; 65];
-        node_signature[..64].copy_from_slice(signature.to_bytes().as_slice());
-        node_signature[64] = recovery.to_byte();
+        let node_signature = sign_node_host_hash_for_test(&node_key, intent_hash);
         let enclave_signature = keys.sign_attestation(intent_hash.as_slice());
         let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
             intent,
@@ -1009,16 +1006,16 @@ mod tests {
         let node_signature = [0x74; 65];
         let enclave_signature = [0x75; 64];
         let offer_public = [0x76; 32];
-        let request_hash = dcap_onboarding_request_hash(
-            &evidence,
-            &policy,
-            77,
-            &node_signature,
-            &enclave_signature,
-            &offer_public,
-            2,
-            3,
-        )
+        let request_hash = dcap_onboarding_request_hash(RegistrationVerificationRequest {
+            evidence: &evidence,
+            policy: &policy,
+            block_timestamp: 77,
+            node_signature: &node_signature,
+            enclave_signature: &enclave_signature,
+            expected_tribute_offer_public: offer_public,
+            key_epoch: 2,
+            tribute_offer_epoch: 3,
+        })
         .unwrap();
         let mut session = DcapVerificationSessionV1::default();
         session

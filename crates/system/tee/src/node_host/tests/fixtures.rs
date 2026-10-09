@@ -1,4 +1,27 @@
 use super::*;
+use crate::transition_key_ready::signed_transition_key_ready_proof;
+use outbe_primitives::tee_test_utils::sign_node_host_hash_for_test;
+
+#[derive(Clone, Copy)]
+pub(super) enum DirectorySync {
+    Skip,
+    Sync,
+}
+
+pub(super) fn stage_existing_record_as_next(
+    final_path: &std::path::Path,
+    next_path: &std::path::Path,
+    root: &std::path::Path,
+    directory_sync: DirectorySync,
+) -> Vec<u8> {
+    let bytes = std::fs::read(final_path).unwrap();
+    std::fs::remove_file(final_path).unwrap();
+    if matches!(directory_sync, DirectorySync::Sync) {
+        File::open(root).unwrap().sync_all().unwrap();
+    }
+    write_bytes_once(next_path, &bytes, root).unwrap();
+    bytes
+}
 
 pub(super) struct ReplacementFixture {
     _root: tempfile::TempDir,
@@ -8,6 +31,35 @@ pub(super) struct ReplacementFixture {
     pub(super) active: EnclaveInitializationManifestV1,
     pub(super) candidate: EnclaveInitializationManifestV1,
     pub(super) authorization: FinalizedReplacementAuthorizationV1,
+}
+
+/// A promotable DirectDev RegisterEnclave fixture with the evidence and both
+/// signatures of its durable candidate submission.
+pub(super) struct DirectDevRegistration {
+    pub(super) fixture: ReplacementFixture,
+    pub(super) evidence: AttestationEvidenceV1,
+    pub(super) node_signature: [u8; 65],
+    pub(super) enclave_signature: [u8; 64],
+}
+
+pub(super) fn direct_dev_registration() -> DirectDevRegistration {
+    let fixture = replacement_fixture_for_mode(
+        AttestationOperationV1::RegisterEnclave,
+        AttestationMode::GramineDirectDev,
+    );
+    let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
+        .unwrap()
+        .unwrap();
+    let evidence =
+        AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
+    let node_signature = *candidate_submission.node_signature();
+    let enclave_signature = *candidate_submission.enclave_signature();
+    DirectDevRegistration {
+        fixture,
+        evidence,
+        node_signature,
+        enclave_signature,
+    }
 }
 
 pub(super) fn replacement_fixture() -> ReplacementFixture {
@@ -92,38 +144,23 @@ pub(super) fn replacement_fixture_for_mode(
         node_host_authorization_hash: candidate.node_host_authorization_hash().unwrap(),
     };
     let intent_hash = intent.intent_hash().unwrap();
-    let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-        node_signer.sign_prehash(intent_hash.as_slice()).unwrap();
-    let mut node_signature = [0_u8; 65];
-    node_signature[..64].copy_from_slice(signature.to_bytes().as_slice());
-    node_signature[64] = recovery.to_byte();
+    let node_signature = sign_node_host_hash_for_test(&node_signer, intent_hash);
     let enclave_signature = enclave_signer.sign(intent_hash.as_slice()).to_bytes();
     let transition_key_ready_proof =
         (operation == AttestationOperationV1::TransitionEnclaveMeasurement).then(|| {
-            let mut proof = TransitionKeyReadyProofV1 {
-                chain_id: intent.chain_id,
-                genesis_hash: intent.genesis_hash,
-                transition_intent_hash: intent_hash,
-                candidate_manifest_hash: candidate.authorization_hash().unwrap(),
-                transition_nonce: intent.transition_nonce,
-                resident_offer_public: [0x71; 32],
-                candidate_attestation_signature: [0; 64],
-            };
-            proof.candidate_attestation_signature = enclave_signer
-                .sign(proof.signing_hash().unwrap().as_slice())
-                .to_bytes();
-            proof
+            signed_transition_key_ready_proof(
+                &intent,
+                intent_hash,
+                candidate.authorization_hash().unwrap(),
+                [0x71; 32],
+                &enclave_signer,
+            )
         });
     let evidence = match attestation_mode {
         AttestationMode::DcapRequired => AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
             intent,
             quote: vec![0x51],
-            components: (1_u8..=8)
-                .map(|kind| DcapCollateralComponentV1 {
-                    kind: DcapCollateralKind::try_from(kind).unwrap(),
-                    bytes: vec![kind],
-                })
-                .collect(),
+            components: crate::test_utils::canonical_dcap_collateral_fixture(),
             transition_key_ready_proof,
         }),
         AttestationMode::GramineDirectDev => AttestationEvidenceV1::GramineDirectDev(
@@ -163,4 +200,77 @@ impl FinalizedReplacementAuthorizationV1 {
             candidate_manifest_hash,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum RelayRecordKind {
+    CommittedJoin,
+    Replacement,
+}
+
+impl RelayRecordKind {
+    fn path(self, paths: &NodeHostPaths) -> &std::path::Path {
+        match self {
+            Self::CommittedJoin => &paths.committed_join_relay,
+            Self::Replacement => &paths.replacement_relay,
+        }
+    }
+
+    const fn length_offset(self) -> usize {
+        match self {
+            Self::CommittedJoin => 105,
+            Self::Replacement => 97,
+        }
+    }
+
+    const fn record_name(self) -> &'static str {
+        match self {
+            Self::CommittedJoin => "committed join relay",
+            Self::Replacement => "replacement relay",
+        }
+    }
+
+    fn read_error(self, path: &std::path::Path) -> String {
+        match self {
+            Self::CommittedJoin => read_committed_join_relay(path).unwrap_err().to_string(),
+            Self::Replacement => read_replacement_relay(path).unwrap_err().to_string(),
+        }
+    }
+}
+
+pub(super) fn assert_relay_decode_precedence(
+    paths: &NodeHostPaths,
+    relay: &[u8],
+    kind: RelayRecordKind,
+) -> std::io::Result<()> {
+    let path = kind.path(paths);
+    let length_offset = kind.length_offset();
+    let record_name = kind.record_name();
+
+    let mut invalid_frame = relay.to_vec();
+    invalid_frame[0] = 2;
+    invalid_frame[length_offset..length_offset + 4].fill(0);
+    std::fs::write(path, invalid_frame)?;
+    assert_eq!(
+        kind.read_error(path),
+        format!("codec error: {record_name} framing is invalid")
+    );
+
+    let mut invalid_length = relay.to_vec();
+    invalid_length[1..97].fill(0);
+    invalid_length[length_offset..length_offset + 4].fill(0);
+    std::fs::write(path, invalid_length)?;
+    assert_eq!(
+        kind.read_error(path),
+        format!("codec error: {record_name} raw transaction length is invalid")
+    );
+
+    let mut invalid_commitment = relay.to_vec();
+    invalid_commitment[1..33].fill(0);
+    std::fs::write(path, invalid_commitment)?;
+    assert_eq!(
+        kind.read_error(path),
+        format!("codec error: {record_name} commitments are invalid")
+    );
+    Ok(())
 }

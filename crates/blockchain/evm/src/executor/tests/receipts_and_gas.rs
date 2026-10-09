@@ -451,9 +451,11 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
                 storage.clone(),
                 Address::ZERO,
                 outbe_oracle::api::DAY_TYPE_PAIR,
-                U256::from(1_000_000u64),
-                1,
-                block_ts,
+                outbe_oracle::api::RateObservation {
+                    rate: U256::from(1_000_000u64),
+                    block_number: 1,
+                    timestamp: block_ts,
+                },
             )
             .unwrap();
             seed_previous_day_vwap(&storage, block_ts, U256::from(1_000_000u64));

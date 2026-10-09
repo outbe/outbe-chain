@@ -88,6 +88,16 @@ pub use fixtures::{
     ResolverVote, SignedResolverProposal,
 };
 
+#[path = "test_harness/vrf_committee.rs"]
+mod vrf_committee;
+pub use vrf_committee::{
+    finalize_messages, vrf_test_committee, CertificateMessages, VrfTestCommittee,
+};
+
+#[path = "test_harness/certified_parent.rs"]
+mod certified_parent;
+pub use certified_parent::{test_fully_signed_metadata, TestFinalizedParent};
+
 #[path = "test_harness/send_observer.rs"]
 mod send_observer;
 pub use send_observer::{ObservedSender, SendObserver};

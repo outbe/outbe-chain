@@ -4,9 +4,11 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::error::PrecompileError;
 
 use crate::precompile::{dispatch, IUpdate};
-use crate::schema::Update;
 
-use super::{min_activation, schedule_update, with_update, V1_2, V3_0, V3_1};
+use super::{
+    min_activation, schedule_version, with_active_version, with_scheduled_release, with_update,
+    SCHEDULE_HEIGHT, V1_2, V3_0, V3_1,
+};
 
 #[test]
 fn precompile_abi_compiles() {
@@ -17,19 +19,8 @@ fn precompile_abi_compiles() {
 
 #[test]
 fn dispatch_get_scheduled_update() {
-    with_update(|storage| {
-        let mut update = Update::new(storage.clone());
-        let current = 100u64;
+    with_scheduled_release(V1_2, "notes", |storage, _update, _activation| {
         let proposal_id = U256::from(1);
-        schedule_update(
-            &mut update,
-            proposal_id,
-            V1_2,
-            min_activation(current),
-            "notes",
-            current,
-        )
-        .unwrap();
 
         let get_data = IUpdate::getScheduledUpdateCall {
             proposalId: proposal_id,
@@ -52,10 +43,7 @@ fn dispatch_get_scheduled_update() {
 
 #[test]
 fn dispatch_active_version_and_waiting_list() {
-    with_update(|storage| {
-        let mut update = Update::new(storage.clone());
-        update.set_active_version(V3_0, 42).unwrap();
-
+    with_active_version(V3_0, 42, |storage, update| {
         let active_data = IUpdate::getActiveVersionCall {}.abi_encode();
         let active_bytes = dispatch(
             storage.clone(),
@@ -82,16 +70,7 @@ fn dispatch_active_version_and_waiting_list() {
         .unwrap();
         assert!(IUpdate::isVersionActiveCall::abi_decode_returns(&is_active_bytes).unwrap());
 
-        let current = 100u64;
-        schedule_update(
-            &mut update,
-            U256::from(1),
-            V3_1,
-            min_activation(current),
-            "",
-            current,
-        )
-        .unwrap();
+        schedule_version(update, U256::from(1), V3_1, min_activation(SCHEDULE_HEIGHT)).unwrap();
 
         let list_data = IUpdate::listWaitingForActivationCall {}.abi_encode();
         let list_bytes = dispatch(

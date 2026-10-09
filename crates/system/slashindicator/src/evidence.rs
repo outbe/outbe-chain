@@ -171,14 +171,15 @@ fn read_leb128(data: &[u8], pos: &mut usize) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_signing::{self, signed_evidence, POP_DST};
+    use blst::min_pk::{PublicKey, SecretKey};
+    use commonware_codec::{varint::UInt, Encode as _};
     use commonware_cryptography::Signer as _;
 
-    /// A fixed test committee: the vote namespaces bind this set, so the
-    /// signing side and `verify_*_signature` must use the same committee.
-    fn test_committee() -> EvidenceCommittee {
-        Set::from_iter_dedup(
-            (1u64..=4).map(|s| bls12381::PublicKey::from(bls12381::PrivateKey::from_seed(s))),
-        )
+    /// Signs `payload` under `ns` with the Simplex signer DST, then parses the
+    /// evidence block with the production decoder.
+    fn signed_block(sk: &SecretKey, pk: &PublicKey, ns: &[u8], payload: &[u8]) -> EvidenceBlock {
+        EvidenceBlock::parse(&signed_evidence(sk, pk, ns, payload, POP_DST)).unwrap()
     }
 
     #[test]
@@ -186,6 +187,11 @@ mod tests {
         for value in [0u64, 1, 127, 128, 255, 300, 16384, u64::MAX] {
             let mut buf = Vec::new();
             write_leb128(&mut buf, value);
+            assert_eq!(
+                buf,
+                UInt(value).encode().to_vec(),
+                "commonware varint {value}"
+            );
             let mut pos = 0;
             let decoded = read_leb128(&buf, &mut pos).unwrap();
             assert_eq!(value, decoded, "failed for {value}");
@@ -218,7 +224,7 @@ mod tests {
         // leb128(len(ns)) || ns || proposal, where `ns` is the committee-bound
         // notarize namespace.
         let proposal = vec![1, 2, 3, 4];
-        let ns = outbe_consensus::proof::notarize_namespace(&test_committee());
+        let ns = outbe_consensus::proof::notarize_namespace(&test_signing::committee());
         let payload = build_signed_payload_with_ns(&ns, &proposal);
 
         let nlen = ns.len();
@@ -226,34 +232,18 @@ mod tests {
         assert_eq!(payload[0], nlen as u8); // leb128(nlen)
         assert_eq!(&payload[1..1 + nlen], ns.as_slice());
         assert_eq!(&payload[1 + nlen..], &[1, 2, 3, 4]);
+        assert_eq!(payload, commonware_utils::union_unique(&ns, &proposal));
     }
 
     #[test]
     fn test_verify_nullify_signature() {
-        use blst::min_pk::SecretKey;
+        let (sk, pk) = test_signing::keypair(55).unwrap();
 
-        let ikm = [55u8; 32];
-        let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-        let pk = sk.sk_to_pk();
-
-        // Nullify payload: epoch + view (same varint encoding as proposal)
-        let mut nullify_bytes = Vec::new();
-        write_leb128(&mut nullify_bytes, 5); // epoch
-        write_leb128(&mut nullify_bytes, 10); // view
-
-        // Sign with the committee-bound nullify namespace.
-        let committee = test_committee();
+        // Nullify payload: epoch 5 + view 10, signed with the
+        // committee-bound nullify namespace.
+        let committee = test_signing::committee();
         let ns = outbe_consensus::proof::nullify_namespace(&committee);
-        let signed_payload = build_signed_payload_with_ns(&ns, &nullify_bytes);
-        let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
-        let sig = sk.sign(&signed_payload, dst, &[]);
-
-        let mut data = Vec::new();
-        data.extend_from_slice(&pk.to_bytes());
-        data.extend_from_slice(&sig.to_bytes());
-        data.extend_from_slice(&nullify_bytes);
-
-        let block = EvidenceBlock::parse(&data).unwrap();
+        let block = signed_block(&sk, &pk, &ns, &test_signing::nullify_payload(5, 10));
         block.verify_nullify_signature(&committee).unwrap();
 
         // Notarize verification must fail for this signature
@@ -271,32 +261,13 @@ mod tests {
 
     #[test]
     fn test_verify_finalize_signature() {
-        use blst::min_pk::SecretKey;
+        let (sk, pk) = test_signing::keypair(77).unwrap();
 
-        let ikm = [77u8; 32];
-        let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-        let pk = sk.sk_to_pk();
-
-        let mut proposal_bytes = Vec::new();
-        write_leb128(&mut proposal_bytes, 4); // epoch
-        write_leb128(&mut proposal_bytes, 8); // view
-        write_leb128(&mut proposal_bytes, 7); // parent
-        proposal_bytes.extend_from_slice(&[9u8; 32]); // digest
-
-        let committee = test_committee();
+        let committee = test_signing::committee();
         let ns = outbe_consensus::proof::finalize_namespace(&committee);
         // Chain-bound: no longer the bare b"outbe_FINALIZE".
         assert_ne!(ns.as_slice(), b"outbe_FINALIZE");
-        let signed_payload = build_signed_payload_with_ns(&ns, &proposal_bytes);
-        let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
-        let sig = sk.sign(&signed_payload, dst, &[]);
-
-        let mut data = Vec::new();
-        data.extend_from_slice(&pk.to_bytes());
-        data.extend_from_slice(&sig.to_bytes());
-        data.extend_from_slice(&proposal_bytes);
-
-        let block = EvidenceBlock::parse(&data).unwrap();
+        let block = signed_block(&sk, &pk, &ns, &test_signing::proposal(4, 8, 7, [9u8; 32]));
         block.verify_finalize_signature(&committee).unwrap();
         // Cross-namespace must fail (domain separation).
         assert!(block.verify_notarize_signature(&committee).is_err());
@@ -305,34 +276,14 @@ mod tests {
 
     #[test]
     fn test_verify_notarize_signature() {
-        use blst::min_pk::SecretKey;
-
         // Generate a BLS keypair
-        let ikm = [42u8; 32];
-        let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-        let pk = sk.sk_to_pk();
+        let (sk, pk) = test_signing::keypair(42).unwrap();
 
-        // Create a fake proposal (epoch=1, view=2, parent=0, digest=zeros)
-        let mut proposal_bytes = Vec::new();
-        write_leb128(&mut proposal_bytes, 1); // epoch
-        write_leb128(&mut proposal_bytes, 2); // view
-        write_leb128(&mut proposal_bytes, 0); // parent
-        proposal_bytes.extend_from_slice(&[0u8; 32]); // digest
-
-        // Sign the full payload with BLS under the committee-bound namespace.
-        let committee = test_committee();
+        // A fake proposal (epoch=1, view=2, parent=0, digest=zeros), signed
+        // with BLS under the committee-bound namespace.
+        let committee = test_signing::committee();
         let ns = outbe_consensus::proof::notarize_namespace(&committee);
-        let signed_payload = build_signed_payload_with_ns(&ns, &proposal_bytes);
-        let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
-        let sig = sk.sign(&signed_payload, dst, &[]);
-
-        // Build evidence block
-        let mut data = Vec::new();
-        data.extend_from_slice(&pk.to_bytes());
-        data.extend_from_slice(&sig.to_bytes());
-        data.extend_from_slice(&proposal_bytes);
-
-        let block = EvidenceBlock::parse(&data).unwrap();
+        let block = signed_block(&sk, &pk, &ns, &test_signing::proposal(1, 2, 0, [0u8; 32]));
         block.verify_notarize_signature(&committee).unwrap();
 
         let (epoch, view) = block.round().unwrap();

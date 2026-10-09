@@ -7,7 +7,7 @@ use crate::{
     codec::{decode_envelope, CanonicalReader},
     committee::{verify_low_s_prehash, POC_KEY_EPOCH},
     error::ProtocolError,
-    hash::hash_framed,
+    hash::{framed_identity_hash, hash_framed},
     intent::JobIntentV1,
     registry::{HashDomain, ObjectKind},
     result::LysisResultV1,
@@ -280,7 +280,70 @@ pub struct ResultVoteSigningSubjectV1 {
     pub result_digest: B256,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HistoricalVoteMember<'a> {
+    pub member_count: u16,
+    pub key_epoch: u64,
+    pub ocomp_public_key_sec1: &'a [u8; 33],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VoteWindow {
+    pub inclusion_height: u64,
+    pub open_height: u64,
+    pub deadline_height: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VoteAccountabilitySeed {
+    pub job_id: B256,
+    pub result_validator_set_epoch: u64,
+    pub result_committee_set_hash: B256,
+    pub result_ocomp_binding_hash: B256,
+    pub member_count: u16,
+    pub quorum_threshold: u16,
+}
+
+struct SlotVoteInput<'a> {
+    validator_index: u16,
+    vote: &'a ResultVoteV1,
+    vote_digest: B256,
+    submitted_height: u64,
+    limits: &'a SchemaLimits,
+}
+
+/// Chain domain of a result-vote signing subject.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VoteSigningDomain {
+    pub chain_id: u64,
+    pub genesis_hash: B256,
+    pub fork_id: B256,
+}
+
 impl ResultVoteSigningSubjectV1 {
+    pub fn from_prefix(
+        domain: VoteSigningDomain,
+        prefix: ResultVotePrefixV1,
+        purpose: u8,
+        result_digest: B256,
+    ) -> Self {
+        Self {
+            chain_id: domain.chain_id,
+            genesis_hash: domain.genesis_hash,
+            fork_id: domain.fork_id,
+            protocol_bundle_hash: prefix.protocol_bundle_hash,
+            job_id: prefix.job_id,
+            attempt: prefix.attempt,
+            result_validator_set_epoch: prefix.result_validator_set_epoch,
+            result_committee_set_hash: prefix.result_committee_set_hash,
+            result_ocomp_binding_hash: prefix.result_ocomp_binding_hash,
+            ocomp_key_hash: prefix.ocomp_key_hash,
+            key_epoch: prefix.key_epoch,
+            purpose,
+            result_digest,
+        }
+    }
+
     pub fn signing_digest(self) -> Result<B256, ProtocolError> {
         let mut payload = Vec::with_capacity(8 * 3 + 32 * 8 + 4 + 1);
         payload.extend_from_slice(&self.chain_id.to_be_bytes());
@@ -303,27 +366,33 @@ impl ResultVoteSigningSubjectV1 {
 impl ResultVoteV1 {
     /// Verifies a vote against one member resolved by a stateful caller from
     /// the exact historical ValidatorSet snapshot pinned by the intent.
-    #[allow(clippy::too_many_arguments)]
     pub fn verify_historical_member(
         &self,
         finalized_intent: &JobIntentV1,
         expected_job_id: B256,
-        member_count: u16,
-        member_key_epoch: u64,
-        member_ocomp_public_key_sec1: &[u8; 33],
-        inclusion_height: u64,
-        open_height: u64,
-        deadline_height: u64,
+        member: HistoricalVoteMember<'_>,
+        window: VoteWindow,
         limits: &SchemaLimits,
     ) -> Result<(), ProtocolError> {
         finalized_intent.validate_semantics()?;
         self.result.validate_semantics(limits)?;
         self.result.validate_finalized_intent(finalized_intent)?;
-        require(open_height < deadline_height, "vote window ordering")?;
-        require(
-            open_height <= inclusion_height && inclusion_height < deadline_height,
-            "vote inclusion height",
-        )?;
+        window.validate()?;
+        self.verify_job_and_result_binding(finalized_intent, expected_job_id)?;
+        self.verify_historical_member_binding(finalized_intent, member)?;
+        let signing_digest = self.signing_digest(finalized_intent, limits)?;
+        verify_low_s_prehash(
+            member.ocomp_public_key_sec1,
+            signing_digest,
+            &self.signature_rs,
+        )
+    }
+
+    fn verify_job_and_result_binding(
+        &self,
+        finalized_intent: &JobIntentV1,
+        expected_job_id: B256,
+    ) -> Result<(), ProtocolError> {
         require(
             self.protocol_bundle_hash == finalized_intent.protocol_bundle_hash
                 && self.job_id == expected_job_id
@@ -335,27 +404,28 @@ impl ResultVoteV1 {
                 && self.result.job_id == self.job_id
                 && self.result.attempt == self.attempt,
             "vote full result binding",
-        )?;
+        )
+    }
+
+    fn verify_historical_member_binding(
+        &self,
+        finalized_intent: &JobIntentV1,
+        member: HistoricalVoteMember<'_>,
+    ) -> Result<(), ProtocolError> {
         require(
             self.result_validator_set_epoch == finalized_intent.result_validator_set_epoch
                 && self.result_committee_set_hash == finalized_intent.result_committee_set_hash
                 && self.result_ocomp_binding_hash == finalized_intent.result_ocomp_binding_hash
-                && finalized_intent.result_member_count == member_count,
+                && finalized_intent.result_member_count == member.member_count,
             "vote committee binding",
         )?;
         require(
-            self.ocomp_key_hash == keccak256(member_ocomp_public_key_sec1),
+            self.ocomp_key_hash == keccak256(member.ocomp_public_key_sec1),
             "vote OCOMP key hash",
         )?;
         require(
-            self.key_epoch == POC_KEY_EPOCH && member_key_epoch == self.key_epoch,
+            self.key_epoch == POC_KEY_EPOCH && member.key_epoch == self.key_epoch,
             "vote key epoch",
-        )?;
-        let signing_digest = self.signing_digest(finalized_intent, limits)?;
-        verify_low_s_prehash(
-            member_ocomp_public_key_sec1,
-            signing_digest,
-            &self.signature_rs,
         )
     }
 
@@ -369,29 +439,50 @@ impl ResultVoteV1 {
         limits: &SchemaLimits,
     ) -> Result<B256, ProtocolError> {
         require(
-            self.protocol_bundle_hash == finalized_intent.protocol_bundle_hash
-                && self.attempt == finalized_intent.attempt
-                && self.result_validator_set_epoch == finalized_intent.result_validator_set_epoch
-                && self.result_committee_set_hash == finalized_intent.result_committee_set_hash
-                && self.result_ocomp_binding_hash == finalized_intent.result_ocomp_binding_hash,
+            self.protocol_bundle_hash == finalized_intent.protocol_bundle_hash,
             "vote signing subject intent binding",
         )?;
-        ResultVoteSigningSubjectV1 {
-            chain_id: finalized_intent.chain_id,
-            genesis_hash: finalized_intent.genesis_hash,
-            fork_id: finalized_intent.fork_id,
-            protocol_bundle_hash: self.protocol_bundle_hash,
-            job_id: self.job_id,
-            attempt: self.attempt,
-            result_validator_set_epoch: self.result_validator_set_epoch,
-            result_committee_set_hash: self.result_committee_set_hash,
-            result_ocomp_binding_hash: self.result_ocomp_binding_hash,
-            ocomp_key_hash: self.ocomp_key_hash,
-            key_epoch: self.key_epoch,
-            purpose: 1, // SignOncePurpose::ResultSignature
-            result_digest: self.result_digest(limits)?,
-        }
+        require(
+            self.attempt == finalized_intent.attempt,
+            "vote signing subject intent binding",
+        )?;
+        require(
+            self.result_validator_set_epoch == finalized_intent.result_validator_set_epoch,
+            "vote signing subject intent binding",
+        )?;
+        require(
+            self.result_committee_set_hash == finalized_intent.result_committee_set_hash,
+            "vote signing subject intent binding",
+        )?;
+        require(
+            self.result_ocomp_binding_hash == finalized_intent.result_ocomp_binding_hash,
+            "vote signing subject intent binding",
+        )?;
+        ResultVoteSigningSubjectV1::from_prefix(
+            VoteSigningDomain {
+                chain_id: finalized_intent.chain_id,
+                genesis_hash: finalized_intent.genesis_hash,
+                fork_id: finalized_intent.fork_id,
+            },
+            self.prefix(),
+            1, // SignOncePurpose::ResultSignature
+            self.result_digest(limits)?,
+        )
         .signing_digest()
+    }
+}
+
+impl VoteWindow {
+    fn validate(self) -> Result<(), ProtocolError> {
+        require(
+            self.open_height < self.deadline_height,
+            "vote window ordering",
+        )?;
+        require(
+            self.open_height <= self.inclusion_height
+                && self.inclusion_height < self.deadline_height,
+            "vote inclusion height",
+        )
     }
 }
 
@@ -420,23 +511,16 @@ impl ResultVoteSlotV1 {
 }
 
 impl OcompVoteAccountabilityV1 {
-    pub fn empty(
-        job_id: B256,
-        result_validator_set_epoch: u64,
-        result_committee_set_hash: B256,
-        result_ocomp_binding_hash: B256,
-        member_count: u16,
-        quorum_threshold: u16,
-    ) -> Result<Self, ProtocolError> {
-        validate_n_and_quorum(member_count, quorum_threshold)?;
-        let slots = vec![None; usize::from(member_count)];
+    pub fn empty(seed: VoteAccountabilitySeed) -> Result<Self, ProtocolError> {
+        validate_n_and_quorum(seed.member_count, seed.quorum_threshold)?;
+        let slots = vec![None; usize::from(seed.member_count)];
         Ok(Self {
-            job_id,
-            result_validator_set_epoch,
-            result_committee_set_hash,
-            result_ocomp_binding_hash,
-            member_count,
-            quorum_threshold,
+            job_id: seed.job_id,
+            result_validator_set_epoch: seed.result_validator_set_epoch,
+            result_committee_set_hash: seed.result_committee_set_hash,
+            result_ocomp_binding_hash: seed.result_ocomp_binding_hash,
+            member_count: seed.member_count,
+            quorum_threshold: seed.quorum_threshold,
             slots,
             quorum: None,
             closed_summary: None,
@@ -452,49 +536,72 @@ impl OcompVoteAccountabilityV1 {
     ) -> Result<RecordVoteOutcomeV1, ProtocolError> {
         self.validate_semantics(limits)?;
         require(self.closed_summary.is_none(), "vote window already closed")?;
+        self.require_vote_binding(vote)?;
+        let vote_digest = vote.result_digest(limits)?;
+        let slot = self
+            .slots
+            .get_mut(usize::from(validator_index))
+            .ok_or(ProtocolError::InvalidInvariant("vote slot index"))?;
+        let outcome = Self::record_slot_vote(
+            slot,
+            SlotVoteInput {
+                validator_index,
+                vote,
+                vote_digest,
+                submitted_height,
+                limits,
+            },
+        )?;
+        if self.quorum.is_none() && matches!(outcome, RecordVoteOutcomeV1::FirstVote) {
+            self.quorum = self.derive_quorum(submitted_height, limits)?;
+        }
+        self.validate_semantics(limits)?;
+        Ok(outcome)
+    }
+
+    fn require_vote_binding(&self, vote: &ResultVoteV1) -> Result<(), ProtocolError> {
         require(
             vote.job_id == self.job_id
                 && vote.result_validator_set_epoch == self.result_validator_set_epoch
                 && vote.result_committee_set_hash == self.result_committee_set_hash
                 && vote.result_ocomp_binding_hash == self.result_ocomp_binding_hash,
             "vote accountability binding",
-        )?;
-        let vote_digest = vote.result_digest(limits)?;
-        let slot = self
-            .slots
-            .get_mut(usize::from(validator_index))
-            .ok_or(ProtocolError::InvalidInvariant("vote slot index"))?;
+        )
+    }
+
+    fn record_slot_vote(
+        slot: &mut Option<ResultVoteSlotV1>,
+        input: SlotVoteInput<'_>,
+    ) -> Result<RecordVoteOutcomeV1, ProtocolError> {
         let outcome = match slot {
             None => {
                 *slot = Some(ResultVoteSlotV1::from_vote(
-                    validator_index,
-                    vote,
-                    submitted_height,
-                    limits,
+                    input.validator_index,
+                    input.vote,
+                    input.submitted_height,
+                    input.limits,
                 )?);
                 RecordVoteOutcomeV1::FirstVote
             }
-            Some(existing) if existing.exact_vote(vote, vote_digest, submitted_height) => {
+            Some(existing)
+                if existing.exact_vote(input.vote, input.vote_digest, input.submitted_height) =>
+            {
                 RecordVoteOutcomeV1::ExactRetry
             }
-            Some(existing) if existing.first_result_digest == vote_digest => {
+            Some(existing) if existing.first_result_digest == input.vote_digest => {
                 RecordVoteOutcomeV1::SameDigestRetry
             }
             Some(existing) if existing.equivocation.is_none() => {
                 existing.equivocation = Some(EquivocationEvidenceV1 {
-                    conflicting_result_digest: vote_digest,
-                    conflicting_key_epoch: vote.key_epoch,
-                    conflicting_signature_rs: vote.signature_rs,
-                    submitted_height,
+                    conflicting_result_digest: input.vote_digest,
+                    conflicting_key_epoch: input.vote.key_epoch,
+                    conflicting_signature_rs: input.vote.signature_rs,
+                    submitted_height: input.submitted_height,
                 });
                 RecordVoteOutcomeV1::EquivocationRecorded
             }
             Some(_) => RecordVoteOutcomeV1::EquivocationAlreadyRecorded,
         };
-        if self.quorum.is_none() && matches!(outcome, RecordVoteOutcomeV1::FirstVote) {
-            self.quorum = self.derive_quorum(submitted_height, limits)?;
-        }
-        self.validate_semantics(limits)?;
         Ok(outcome)
     }
 
@@ -558,13 +665,11 @@ impl OcompVoteAccountabilityV1 {
         Ok(summary)
     }
 
-    pub fn accountability_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_semantics(limits)?;
-        hash_framed(
-            HashDomain::VoteAccountability,
-            &self.encode_canonical(limits)?,
-        )
-    }
+    framed_identity_hash!(
+        accountability_hash,
+        VoteAccountability,
+        validate_semantics(limits)
+    );
 
     fn derive_quorum(
         &self,
@@ -645,6 +750,17 @@ impl OcompVoteAccountabilityV1 {
             self.slots.len() == usize::from(self.member_count),
             "accountability slot count",
         )?;
+        self.validate_slots()?;
+        if let Some(quorum) = &self.quorum {
+            self.validate_quorum(quorum, limits)?;
+        }
+        if let Some(summary) = &self.closed_summary {
+            self.validate_closed_summary(summary)?;
+        }
+        Ok(())
+    }
+
+    fn validate_slots(&self) -> Result<(), ProtocolError> {
         for (index, slot) in self.slots.iter().enumerate() {
             let Some(slot) = slot else {
                 continue;
@@ -655,55 +771,81 @@ impl OcompVoteAccountabilityV1 {
                 "accountability slot position",
             )?;
         }
-        if let Some(quorum) = &self.quorum {
-            quorum.validate_semantics()?;
-            require(
-                quorum.member_count == self.member_count
-                    && quorum.quorum_threshold == self.quorum_threshold,
-                "quorum accountability shape",
-            )?;
-            let matching = self
-                .slots
-                .iter()
-                .enumerate()
-                .filter(|(index, slot)| {
-                    bitmap_bit_is_set(&quorum.signer_bitmap, *index).unwrap_or(false)
-                        && slot
-                            .as_ref()
-                            .is_some_and(|slot| slot.first_result_digest == quorum.result_digest)
-                })
-                .count();
-            require(
-                matching >= usize::from(self.quorum_threshold),
-                "quorum matching slots",
-            )?;
-            require(
-                quorum.evidence_hash
-                    == self.quorum_evidence_hash(
-                        quorum.result_digest,
-                        quorum.quorum_height,
-                        &quorum.signer_bitmap,
-                        limits,
-                    )?,
-                "quorum evidence hash",
-            )?;
-        }
-        if let Some(summary) = &self.closed_summary {
-            summary.validate_semantics()?;
-            require(
-                summary.result_validator_set_epoch == self.result_validator_set_epoch
-                    && summary.result_committee_set_hash == self.result_committee_set_hash
-                    && summary.result_ocomp_binding_hash == self.result_ocomp_binding_hash
-                    && summary.member_count == self.member_count
-                    && summary.quorum_threshold == self.quorum_threshold
-                    && summary.winning_result_digest
-                        == self.quorum.as_ref().map(|quorum| quorum.result_digest)
-                    && summary.quorum_evidence_hash
-                        == self.quorum.as_ref().map(|quorum| quorum.evidence_hash),
-                "accountability closed summary binding",
-            )?;
-        }
         Ok(())
+    }
+
+    fn validate_quorum(
+        &self,
+        quorum: &OcompQuorumV1,
+        limits: &SchemaLimits,
+    ) -> Result<(), ProtocolError> {
+        quorum.validate_semantics()?;
+        require(
+            quorum.member_count == self.member_count
+                && quorum.quorum_threshold == self.quorum_threshold,
+            "quorum accountability shape",
+        )?;
+        let matching = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(index, slot)| {
+                bitmap_bit_is_set(&quorum.signer_bitmap, *index).unwrap_or(false)
+                    && slot
+                        .as_ref()
+                        .is_some_and(|slot| slot.first_result_digest == quorum.result_digest)
+            })
+            .count();
+        require(
+            matching >= usize::from(self.quorum_threshold),
+            "quorum matching slots",
+        )?;
+        require(
+            quorum.evidence_hash
+                == self.quorum_evidence_hash(
+                    quorum.result_digest,
+                    quorum.quorum_height,
+                    &quorum.signer_bitmap,
+                    limits,
+                )?,
+            "quorum evidence hash",
+        )
+    }
+
+    fn validate_closed_summary(
+        &self,
+        summary: &OcompAccountabilitySummaryV1,
+    ) -> Result<(), ProtocolError> {
+        summary.validate_semantics()?;
+        require(
+            summary.result_validator_set_epoch == self.result_validator_set_epoch,
+            "accountability closed summary binding",
+        )?;
+        require(
+            summary.result_committee_set_hash == self.result_committee_set_hash,
+            "accountability closed summary binding",
+        )?;
+        require(
+            summary.result_ocomp_binding_hash == self.result_ocomp_binding_hash,
+            "accountability closed summary binding",
+        )?;
+        require(
+            summary.member_count == self.member_count,
+            "accountability closed summary binding",
+        )?;
+        require(
+            summary.quorum_threshold == self.quorum_threshold,
+            "accountability closed summary binding",
+        )?;
+        require(
+            summary.winning_result_digest
+                == self.quorum.as_ref().map(|quorum| quorum.result_digest),
+            "accountability closed summary binding",
+        )?;
+        require(
+            summary.quorum_evidence_hash == self.quorum.as_ref().map(|quorum| quorum.evidence_hash),
+            "accountability closed summary binding",
+        )
     }
 }
 

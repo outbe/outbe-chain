@@ -8,12 +8,7 @@ use super::common::*;
 
 #[test]
 fn write_snapshot_advances_the_ring_buffer_and_feeds_vwap() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         // Write 3 snapshots
         let entries = vec![(pair_key(COEN, USDT), fixed18(100), fixed18(1000))];
         oracle.write_snapshot(1000, &entries).unwrap();
@@ -43,12 +38,7 @@ fn write_snapshot_advances_the_ring_buffer_and_feeds_vwap() {
 
 #[test]
 fn calculate_vwap_includes_only_snapshots_inside_the_window() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         let entries1 = vec![(pair_key(COEN, USDT), fixed18(100), SCALE_1E18)];
         oracle.write_snapshot(1000, &entries1).unwrap();
 
@@ -74,10 +64,7 @@ fn calculate_vwap_includes_only_snapshots_inside_the_window() {
 
 #[test]
 fn calculate_vwap_excludes_the_half_open_end_boundary() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
-        let pair = AddressPair::new_coen_to(840);
-        oracle.register_pair(pair).unwrap();
+    with_bare_coen840_oracle(|oracle, pair| {
         oracle
             .write_snapshot(1_000, &[(pair, coen_iso(10), coen_iso(1))])
             .unwrap();
@@ -94,10 +81,7 @@ fn calculate_vwap_excludes_the_half_open_end_boundary() {
 
 #[test]
 fn write_snapshot_updates_exact_prefix_and_suffix_aggregates() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
-        let pair = AddressPair::new_coen_to(840);
-        oracle.register_pair(pair).unwrap();
+    with_bare_coen840_oracle(|oracle, pair| {
         let day = 1_780_012_800u64;
 
         for (offset, price, volume) in [
@@ -130,10 +114,7 @@ fn write_snapshot_updates_exact_prefix_and_suffix_aggregates() {
 
 #[test]
 fn partial_aggregate_overflow_rolls_back_the_entire_snapshot() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
-        let pair = AddressPair::new_coen_to(840);
-        oracle.register_pair(pair).unwrap();
+    with_bare_coen840_oracle(|oracle, pair| {
         let day = 1_780_012_800u64;
         oracle
             .wwd_prefix_pv_sum
@@ -163,8 +144,7 @@ fn partial_aggregate_overflow_rolls_back_the_entire_snapshot() {
 
 #[test]
 fn calculate_vwap_reverts_for_a_window_without_snapshots() {
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         // No snapshots at all
         assert!(oracle
             .calculate_vwap(pair_key(COEN, USDT), 0, 1000)
@@ -174,12 +154,7 @@ fn calculate_vwap_reverts_for_a_window_without_snapshots() {
 
 #[test]
 fn calculate_vwap_treats_zero_volume_as_one_scaled_unit() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         // Zero-volume entries -> equal-weight averaging
         let entries1 = vec![(pair_key(COEN, USDT), fixed18(100), U256::ZERO)];
         oracle.write_snapshot(1000, &entries1).unwrap();
@@ -200,8 +175,7 @@ fn calculate_vwap_treats_zero_volume_as_one_scaled_unit() {
 
 #[test]
 fn calculate_vwap_uses_the_six_decimal_sentinel_for_zero_volume_coen_iso() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         for (index, iso) in [840, 978].into_iter().enumerate() {
             let pair = AddressPair::new_coen_to(iso);
             oracle.register_pair(pair).unwrap();
@@ -221,8 +195,7 @@ fn calculate_vwap_uses_the_six_decimal_sentinel_for_zero_volume_coen_iso() {
 
 #[test]
 fn calculate_vwap_returns_a_six_decimal_coen_iso_price() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle
             .write_snapshot(
@@ -248,11 +221,7 @@ fn calculate_vwap_returns_a_six_decimal_coen_iso_price() {
 
 #[test]
 fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         oracle
             .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
@@ -277,8 +246,7 @@ fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
 
 #[test]
 fn hourly_cells_reproduce_the_raw_snapshot_vwap() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
 
@@ -327,10 +295,61 @@ fn hourly_cells_reproduce_the_raw_snapshot_vwap() {
     });
 }
 
+/// One raw snapshot sample: pair, timestamp, rate and volume.
+type Sample = (AddressPair, u64, U256, U256);
+
+/// Writes 60 snapshots 1111 s apart from `ATOMIC_DAY_START`. Each holds a
+/// `coen` entry (zero volume on every fourth), and every hour except each
+/// third one also holds an `eth` entry. Returns every written entry.
+fn write_sample_snapshots(
+    oracle: &mut OracleContract<'_>,
+    coen: AddressPair,
+    eth: AddressPair,
+) -> Vec<Sample> {
+    let day = ATOMIC_DAY_START;
+    let hour = 3_600;
+    let mut samples: Vec<Sample> = Vec::new();
+    for i in 0..60u64 {
+        let ts = day + i * 1_111;
+        let coen_volume = if i % 4 == 0 {
+            U256::ZERO
+        } else {
+            coen_iso(i % 7)
+        };
+        let mut entries = vec![(coen, coen_iso(100 + i % 9), coen_volume)];
+        if (ts - day) / hour % 3 != 1 {
+            entries.push((eth, fixed18(2_000 + i), fixed18(i % 3)));
+        }
+        oracle.write_snapshot(ts, &entries).unwrap();
+        samples.extend(entries.into_iter().map(|(p, r, v)| (p, ts, r, v)));
+    }
+    samples
+}
+
+/// The volume-weighted average rate of `pair` over the `samples` in
+/// `[start, end)`, with zero volume weighted as the Oracle weights it. `None`
+/// without weight.
+fn reference_vwap(samples: &[Sample], pair: AddressPair, start: u64, end: u64) -> Option<U256> {
+    let (pv, volume) = samples
+        .iter()
+        .filter(|(p, ts, _, _)| *p == pair && (start..end).contains(ts))
+        .fold(
+            (U256::ZERO, U256::ZERO),
+            |(pv, total), (_, _, rate, vol)| {
+                let weight = if vol.is_zero() {
+                    crate::constants::zero_volume_weight(pair)
+                } else {
+                    *vol
+                };
+                (pv + rate * weight, total + weight)
+            },
+        );
+    (!volume.is_zero()).then(|| pv / volume)
+}
+
 #[test]
 fn hourly_cells_reproduce_raw_vwap_for_several_pairs_and_zero_volume() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let coen = AddressPair::new_coen_to(840);
         let eth = AddressPair::from_addresses(ETH, USDT);
         oracle.register_pair(coen).unwrap();
@@ -338,21 +357,7 @@ fn hourly_cells_reproduce_raw_vwap_for_several_pairs_and_zero_volume() {
 
         let day = ATOMIC_DAY_START;
         let hour = 3_600;
-        let mut samples: Vec<(AddressPair, u64, U256, U256)> = Vec::new();
-        for i in 0..60u64 {
-            let ts = day + i * 1_111;
-            let coen_volume = if i % 4 == 0 {
-                U256::ZERO
-            } else {
-                coen_iso(i % 7)
-            };
-            let mut entries = vec![(coen, coen_iso(100 + i % 9), coen_volume)];
-            if (ts - day) / hour % 3 != 1 {
-                entries.push((eth, fixed18(2_000 + i), fixed18(i % 3)));
-            }
-            oracle.write_snapshot(ts, &entries).unwrap();
-            samples.extend(entries.into_iter().map(|(p, r, v)| (p, ts, r, v)));
-        }
+        let samples = write_sample_snapshots(oracle, coen, eth);
 
         for pair in [coen, eth] {
             for (start, end) in [
@@ -360,21 +365,7 @@ fn hourly_cells_reproduce_raw_vwap_for_several_pairs_and_zero_volume() {
                 (day + 1_234, day + 17 * hour + 99),
                 (day + 4 * hour, day + 5 * hour),
             ] {
-                let (pv, volume) = samples
-                    .iter()
-                    .filter(|(p, ts, _, _)| *p == pair && (start..end).contains(ts))
-                    .fold(
-                        (U256::ZERO, U256::ZERO),
-                        |(pv, total), (_, _, rate, vol)| {
-                            let weight = if vol.is_zero() {
-                                crate::constants::zero_volume_weight(pair)
-                            } else {
-                                *vol
-                            };
-                            (pv + rate * weight, total + weight)
-                        },
-                    );
-                let expected = (!volume.is_zero()).then(|| pv / volume);
+                let expected = reference_vwap(&samples, pair, start, end);
                 assert_eq!(
                     oracle.try_calculate_vwap(pair, start, end).unwrap(),
                     expected,
@@ -387,10 +378,7 @@ fn hourly_cells_reproduce_raw_vwap_for_several_pairs_and_zero_volume() {
 
 #[test]
 fn a_snapshot_cannot_precede_the_previous_one() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
-        let pair = AddressPair::new_coen_to(840);
-        oracle.register_pair(pair).unwrap();
+    with_bare_coen840_oracle(|oracle, pair| {
         let ts = ATOMIC_DAY_START + 5 * 3_600;
         let entry = [(pair, coen_iso(10), coen_iso(1))];
         oracle.write_snapshot(ts, &entry).unwrap();
@@ -410,10 +398,7 @@ fn a_snapshot_cannot_precede_the_previous_one() {
 
 #[test]
 fn an_hourly_cell_serves_a_whole_hour_whose_raw_snapshots_were_evicted() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
-        let pair = AddressPair::new_coen_to(840);
-        oracle.register_pair(pair).unwrap();
+    with_bare_coen840_oracle(|oracle, pair| {
         let start = ATOMIC_DAY_START + 11 * 3_600;
         oracle
             .write_snapshot(start, &[(pair, coen_iso(10), coen_iso(1))])
@@ -435,12 +420,7 @@ fn an_hourly_cell_serves_a_whole_hour_whose_raw_snapshots_were_evicted() {
 /// not absorb it.
 #[test]
 fn bulk_calculators_propagate_argument_errors_instead_of_reporting_no_data() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
+    with_coen_usdt_oracle(|_storage, oracle| {
         oracle
             .write_snapshot(1000, &[(pair_key(COEN, USDT), fixed18(1), fixed18(100))])
             .unwrap();

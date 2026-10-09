@@ -2,38 +2,20 @@
 
 use alloy_primitives::{Address, U256};
 
-use crate::schema::{OracleContract, SCALE_1E18};
+use crate::schema::SCALE_1E18;
 
 use super::common::*;
 
 #[test]
 fn submit_vote_stores_tuples_until_clear_votes_drains_them() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
-        let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, native_coen(100));
-        let rate = fixed18(50);
-        let volume = fixed18(1000);
-
-        // Submit vote
-        oracle
-            .submit_vote(validator, &[(COEN, USDT, rate, volume)])
-            .unwrap();
+    with_coen_usdt_voter(|_storage, oracle, validator| {
+        let vote = submit_sample_vote(oracle, validator);
 
         // Verify vote stored
-        assert!(oracle.vote_exists.read(&validator).unwrap());
-        assert_eq!(oracle.vote_tuple_count.read(&validator).unwrap(), 1);
-        assert_eq!(oracle.voter_list.len().unwrap(), 1);
+        assert_vote_stored(oracle, &validator, 1, 1);
 
         // Double vote should fail
-        assert!(oracle
-            .submit_vote(validator, &[(COEN, USDT, rate, volume)])
-            .is_err());
+        assert!(oracle.submit_vote(validator, &[vote]).is_err());
 
         // Clear
         oracle.clear_votes().unwrap();
@@ -44,11 +26,7 @@ fn submit_vote_stores_tuples_until_clear_votes_drains_them() {
 
 #[test]
 fn submit_vote_rejects_an_unregistered_signer() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
-
+    with_coen840_oracle(|_storage, oracle, _pair| {
         let stranger = Address::new([0x99; 20]);
         let err = oracle
             .submit_vote(stranger, &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)])
@@ -64,13 +42,8 @@ fn submit_vote_rejects_an_unregistered_signer() {
 
 #[test]
 fn submit_vote_rejects_a_validator_that_is_no_longer_active() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
-
-        let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, native_coen(100));
+    with_coen840_oracle(|storage, oracle, _pair| {
+        let validator = register_voter(&storage);
         outbe_validatorset::contract::ValidatorSet::new(storage)
             .deactivate_validator(Address::ZERO, validator)
             .unwrap();
@@ -89,14 +62,11 @@ fn submit_vote_rejects_a_validator_that_is_no_longer_active() {
 
 #[test]
 fn submit_vote_rejects_the_reverse_of_the_registered_direction() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
+    with_oracle(|storage, oracle| {
         let registered = AddressPair::from_addresses(ETH, usd());
         oracle.register_pair(registered).unwrap();
 
-        let validator = Address::new([0x11; 20]);
-        register_validator(storage, validator, native_coen(100));
+        let validator = register_voter(&storage);
         let err = oracle
             .submit_vote(
                 validator,
@@ -120,18 +90,12 @@ fn submit_vote_rejects_the_reverse_of_the_registered_direction() {
 
 #[test]
 fn submit_vote_rejects_a_duplicated_pair() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
+    with_coen_usdt_oracle(|storage, oracle| {
         oracle
             .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
 
-        let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, native_coen(100));
+        let validator = register_voter(&storage);
         let rate = fixed18(50);
         let volume = fixed18(1000);
         // Two tuples naming the same pair: within the pair-count bound, so the
@@ -149,12 +113,7 @@ fn submit_vote_rejects_a_duplicated_pair() {
 
 #[test]
 fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
+    with_coen_usdt_oracle(|storage, oracle| {
         oracle
             .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
@@ -162,8 +121,7 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
             .deactivate_vote_target(Address::ZERO, ETH, USDT)
             .unwrap();
 
-        let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, native_coen(100));
+        let validator = register_voter(&storage);
         let rate = fixed18(50);
         let volume = fixed18(1000);
         // A submission that is both untargeted and duplicated reports the
@@ -188,11 +146,7 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
 /// the index in registration order lands each pair on its own rate.
 #[test]
 fn walking_the_registry_by_index_pairs_each_market_with_its_own_rate() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         oracle
             .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
@@ -242,11 +196,7 @@ fn walking_the_registry_by_index_pairs_each_market_with_its_own_rate() {
 
 #[test]
 fn get_vote_targets_lists_only_active_pairs() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         oracle
             .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
@@ -267,8 +217,7 @@ fn get_vote_targets_lists_only_active_pairs() {
 
 #[test]
 fn get_vote_targets_returns_empty_without_registered_pairs() {
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let (bases, quotes) = oracle.get_vote_targets().unwrap();
         assert!(bases.is_empty() && quotes.is_empty());
     });
@@ -276,18 +225,12 @@ fn get_vote_targets_returns_empty_without_registered_pairs() {
 
 #[test]
 fn get_aggregate_vote_returns_the_stored_tuples() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
+    with_coen_usdt_oracle(|storage, oracle| {
         oracle
             .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
 
-        let validator = Address::new([0x11; 20]);
-        register_validator(storage.clone(), validator, native_coen(100));
+        let validator = register_voter(&storage);
         let rate1 = fixed18(50);
         let rate2 = fixed18(3000);
         let vol1 = fixed18(100);
@@ -314,8 +257,7 @@ fn get_aggregate_vote_returns_the_stored_tuples() {
 
 #[test]
 fn get_aggregate_vote_reports_absent_for_a_non_voter() {
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let validator = Address::new([0x11; 20]);
 
         let (exists, bases, quotes, rates, volumes) =
@@ -329,21 +271,22 @@ fn get_aggregate_vote_reports_absent_for_a_non_voter() {
 
 #[test]
 fn get_slash_window_progress_reports_counters_with_the_window_length() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-
-        let validator = Address::new([0x11; 20]);
-
-        oracle.increment_success(&validator).unwrap();
-        oracle.increment_success(&validator).unwrap();
-        oracle.increment_abstain(&validator).unwrap();
-        oracle.increment_miss(&validator).unwrap();
-        oracle.increment_miss(&validator).unwrap();
-        oracle.increment_miss(&validator).unwrap();
+    with_oracle(|_storage, oracle| {
+        record_outcomes(
+            oracle,
+            &FIRST_VOTER,
+            &[
+                Penalty::Success,
+                Penalty::Success,
+                Penalty::Abstain,
+                Penalty::Miss,
+                Penalty::Miss,
+                Penalty::Miss,
+            ],
+        );
 
         let (success, abstain, miss, slash_window) =
-            oracle.get_slash_window_progress(&validator).unwrap();
+            oracle.get_slash_window_progress(&FIRST_VOTER).unwrap();
         assert_eq!(success, 2);
         assert_eq!(abstain, 1);
         assert_eq!(miss, 3);
@@ -352,16 +295,8 @@ fn get_slash_window_progress_reports_counters_with_the_window_length() {
 }
 #[test]
 fn delegate_feeder_round_trips_and_revokes_on_the_zero_address() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
-        let validator = Address::new([0x11; 20]);
+    with_coen_usdt_voter(|_storage, oracle, validator| {
         let feeder = Address::new([0x22; 20]);
-        register_validator(storage.clone(), validator, native_coen(100));
 
         // Delegate
         oracle.delegate_feeder(validator, feeder).unwrap();

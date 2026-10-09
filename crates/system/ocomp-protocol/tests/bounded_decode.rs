@@ -5,7 +5,7 @@ use outbe_ocomp_protocol::{
     codec::{CanonicalReader, CodecLimits},
     common::BoundedBytes,
     control::PreparedVoteTransactionV1,
-    vote::OcompVoteAccountabilityV1,
+    vote::{OcompVoteAccountabilityV1, VoteAccountabilitySeed},
     SchemaLimits,
 };
 
@@ -46,9 +46,15 @@ fn prepared_vote_cap_plus_one_rejects_before_body_encode() {
 
 #[test]
 fn vote_state_rejects_slot_count_different_from_declared_n_before_crypto_work() {
-    let mut accountability =
-        OcompVoteAccountabilityV1::empty([1; 32].into(), 1, [2; 32].into(), [3; 32].into(), 4, 3)
-            .unwrap();
+    let mut accountability = OcompVoteAccountabilityV1::empty(VoteAccountabilitySeed {
+        job_id: [1; 32].into(),
+        result_validator_set_epoch: 1,
+        result_committee_set_hash: [2; 32].into(),
+        result_ocomp_binding_hash: [3; 32].into(),
+        member_count: 4,
+        quorum_threshold: 3,
+    })
+    .unwrap();
     accountability.slots.push(None);
     let error = accountability
         .validate_semantics(&LIMITS)

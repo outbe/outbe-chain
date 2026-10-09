@@ -5,42 +5,25 @@
 
 use alloy_primitives::{address, Address, B256, U256};
 use blst::min_pk::SecretKey;
-use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_utils::ordered::Set;
 use outbe_consensus::proof::{finalize_namespace, notarize_namespace, nullify_namespace};
-use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_consensus::test_harness::committee_entries;
+use outbe_primitives::storage::StorageHandle;
 use outbe_slashindicator::schema::SlashIndicator;
+use outbe_slashindicator::test_signing;
+use outbe_slashindicator::test_signing::nullify_payload as nullify_bytes;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot};
-use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
+use outbe_validatorset::state::CommitteeSnapshot;
+use outbe_validatorset::test_support::{test_lifecycle_of, StorageOverrides};
+use outbe_validatorset::ValidatorLifecycle;
 
-const CHAIN_ID: u64 = 1;
+mod support;
+use support::{register_active_submitter, with_storage};
+
 const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
 const ACCUSED: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
-
-fn leb128(mut v: u64, out: &mut Vec<u8>) {
-    loop {
-        let b = (v & 0x7F) as u8;
-        v >>= 7;
-        if v == 0 {
-            out.push(b);
-            break;
-        }
-        out.push(b | 0x80);
-    }
-}
-
-fn signed_payload(ns: &[u8], proposal: &[u8]) -> Vec<u8> {
-    let mut p = Vec::new();
-    leb128(ns.len() as u64, &mut p);
-    p.extend_from_slice(ns);
-    p.extend_from_slice(proposal);
-    p
-}
-
 /// The test committee: the vote namespaces bind this set. `setup` writes
 /// its snapshot into the ring for every retained epoch, so the evidence verifier
 /// rebuilds the same committee and derives the same namespace.
@@ -53,21 +36,9 @@ fn committee_set() -> Set<bls12381::PublicKey> {
 }
 
 fn committee_snapshot() -> CommitteeSnapshot {
-    let committee = committee_keys()
-        .iter()
-        .enumerate()
-        .map(|(i, k)| {
-            let encoded = k.public_key().encode();
-            let mut consensus_pubkey = [0u8; 48];
-            consensus_pubkey.copy_from_slice(encoded.as_ref());
-            CommitteeEntry {
-                address: Address::with_last_byte(i as u8 + 1),
-                consensus_pubkey,
-            }
-        })
-        .collect();
+    let public_keys: Vec<_> = committee_keys().iter().map(|k| k.public_key()).collect();
     CommitteeSnapshot {
-        committee,
+        committee: committee_entries(public_keys.iter()),
         vrf_material_version: 1,
         vrf_group_public_key_bytes: vec![0x11; 96],
         vrf_public_polynomial_hash: B256::ZERO,
@@ -88,30 +59,12 @@ fn ns_with(suffix: &[u8]) -> Vec<u8> {
 
 /// Build an `EvidenceBlock`: `pubkey[48] || sig[96] || proposal_bytes`.
 fn evidence_block(sk: &SecretKey, ns: &[u8], proposal: &[u8]) -> Vec<u8> {
-    let sig = sk.sign(&signed_payload(ns, proposal), DST, &[]);
-    let mut block = Vec::new();
-    block.extend_from_slice(&sk.sk_to_pk().to_bytes());
-    block.extend_from_slice(&sig.to_bytes());
-    block.extend_from_slice(proposal);
-    block
+    test_signing::signed_evidence(sk, &sk.sk_to_pk(), ns, proposal, test_signing::POP_DST)
 }
 
 /// `epoch || view || parent || digest[32]`.
 fn proposal_bytes(epoch: u64, view: u64, parent: u64, digest: u8) -> Vec<u8> {
-    let mut p = Vec::new();
-    leb128(epoch, &mut p);
-    leb128(view, &mut p);
-    leb128(parent, &mut p);
-    p.extend_from_slice(&[digest; 32]);
-    p
-}
-
-/// `epoch || view` (a nullify round).
-fn nullify_bytes(epoch: u64, view: u64) -> Vec<u8> {
-    let mut p = Vec::new();
-    leb128(epoch, &mut p);
-    leb128(view, &mut p);
-    p
+    test_signing::proposal(epoch, view, parent, [digest; 32])
 }
 
 fn accused_sk() -> SecretKey {
@@ -120,59 +73,27 @@ fn accused_sk() -> SecretKey {
 
 fn setup(storage: StorageHandle, sk: &SecretKey) {
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.config_owner.write(OWNER).unwrap();
-    vs.set_config_max_validators(100).unwrap();
+    vs.test_configure_registry(OWNER).unwrap();
     let mut epoch = vs.epoch_snapshot().unwrap();
     epoch.number = U256::from(1u64);
     vs.test_set_epoch_snapshot(epoch).unwrap();
     let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
-    vs.test_register_validator_without_pop(ACCUSED, &pk)
-        .unwrap();
-    vs.test_set_stake_projection(
-        ACCUSED,
-        StakeProjection::new(U256::from(1_000_000u64), None),
-    )
-    .unwrap();
-    vs.activate_validator_via_boundary_for_test(ACCUSED)
+    vs.test_register_active_validator(ACCUSED, &pk, U256::from(1_000_000u64))
         .unwrap();
 
     // evidence precompiles require an ACTIVE-validator submitter.
-    let mut sub_pk = [0u8; 48];
-    sub_pk[0] = 0x77;
-    vs.test_register_validator_without_pop(SUBMITTER, &sub_pk)
-        .unwrap();
-    vs.test_set_stake_projection(SUBMITTER, StakeProjection::new(U256::from(1), None))
-        .unwrap();
-    vs.activate_validator_via_boundary_for_test(SUBMITTER)
-        .unwrap();
+    register_active_submitter(&mut vs, SUBMITTER, Some(U256::from(1))).unwrap();
 
     // the evidence verifier resolves the committee for the vote's epoch via
     // the snapshot ring. Seed it across the retained ring window so any test
     // epoch resolves to the committee the evidence is signed against.
-    let snapshot = committee_snapshot();
-    for member in &snapshot.committee {
-        if !vs.is_validator(member.address).unwrap() {
-            vs.register_validator(OWNER, member.address, &member.consensus_pubkey)
-                .unwrap();
-            vs.activate_validator_via_boundary_for_test(member.address)
-                .unwrap();
-        }
-    }
-    for epoch in 0..outbe_validatorset::state::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS {
-        write_committee_snapshot(storage.clone(), epoch, &snapshot).unwrap();
-    }
-}
-
-fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_block_number(1);
-    storage.enter(f)
+    vs.test_seed_committee_ring(OWNER, &committee_snapshot())
+        .unwrap();
 }
 
 fn assert_jailed_once(storage: &StorageHandle) {
-    let vs = ValidatorSet::new(storage.clone());
     assert!(matches!(
-        vs.validator_lifecycle(ACCUSED).unwrap(),
+        test_lifecycle_of(storage.clone(), ACCUSED).unwrap(),
         ValidatorLifecycle::JailRetained(_)
     ));
     let si = SlashIndicator::new(storage.clone());

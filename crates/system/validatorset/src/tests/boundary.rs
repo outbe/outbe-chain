@@ -13,11 +13,7 @@ fn test_update_epoch() {
     let val_addr = address!("0x0000000000000000000000000000000000000091");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(91))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(val_addr)
-            .unwrap();
-        vs.val_has_bls_share.write(&val_addr, true).unwrap();
+        register_participant(vs, val_addr, 91).unwrap();
 
         // Accumulate some stats
         vs.record_proposer(val_addr).unwrap();
@@ -91,12 +87,7 @@ fn test_consensus_set() {
     let group_key = B256::with_last_byte(0xFF);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val1, &dummy_consensus_pubkey(0xC1))
-            .unwrap();
-        vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xC2))
-            .unwrap();
-        vs.register_validator(OWNER, val3, &dummy_consensus_pubkey(0xC3))
-            .unwrap();
+        register_validators(vs, &[(val1, 0xC1), (val2, 0xC2), (val3, 0xC3)]).unwrap();
 
         // All start as REGISTERED
         assert_eq!(vs.val_status.read(&val1).unwrap(), status::REGISTERED);
@@ -145,10 +136,7 @@ fn test_exiting_to_unbonding_via_reshare() {
     let group_key = B256::with_last_byte(0xFE);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val1, &dummy_consensus_pubkey(0xD1))
-            .unwrap();
-        vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xD2))
-            .unwrap();
+        register_validators(vs, &[(val1, 0xD1), (val2, 0xD2)]).unwrap();
         admit_pending(vs, val1, 0xD1);
         admit_pending(vs, val2, 0xD2);
 
@@ -184,10 +172,7 @@ fn test_deactivated_validator_stays_current_consensus_participant_until_reshare(
     let val2 = address!("0x0000000000000000000000000000000000000CD2");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val1, &dummy_consensus_pubkey(0xD1))
-            .unwrap();
-        vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xD2))
-            .unwrap();
+        register_validators(vs, &[(val1, 0xD1), (val2, 0xD2)]).unwrap();
         activate_for_test(vs, val1);
         activate_for_test(vs, val2);
         vs.activate_reshared_set(&[val1, val2], B256::with_last_byte(0xD1))
@@ -224,10 +209,7 @@ fn test_force_exited_validator_stays_current_consensus_participant_until_reshare
     let val2 = address!("0x0000000000000000000000000000000000000CF2");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val1, &dummy_consensus_pubkey(0xF1))
-            .unwrap();
-        vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xF2))
-            .unwrap();
+        register_validators(vs, &[(val1, 0xF1), (val2, 0xF2)]).unwrap();
         activate_for_test(vs, val1);
         activate_for_test(vs, val2);
         vs.activate_reshared_set(&[val1, val2], B256::with_last_byte(0xF1))
@@ -259,20 +241,12 @@ fn test_force_exited_validator_stays_current_consensus_participant_until_reshare
 fn post_freeze_exit_is_retained_then_excluded_at_a_later_boundary() {
     let survivor = address!("0x0000000000000000000000000000000000000E11");
     let exiting = address!("0x0000000000000000000000000000000000000E12");
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = registry_storage(11, 10).unwrap();
     // The target was frozen at height 10; the exit request lands afterwards.
-    storage.set_block_number(11);
-
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut vs = ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(10).unwrap();
-        vs.register_validator(OWNER, survivor, &dummy_consensus_pubkey(0xE1))
-            .unwrap();
-        vs.register_validator(OWNER, exiting, &dummy_consensus_pubkey(0xE2))
-            .unwrap();
-        activate_staked_for_test(&mut vs, survivor);
-        activate_staked_for_test(&mut vs, exiting);
+    at_height(&mut storage, 11, |vs| {
+        register_validators(vs, &[(survivor, 0xE1), (exiting, 0xE2)]).unwrap();
+        activate_staked_for_test(vs, survivor);
+        activate_staked_for_test(vs, exiting);
 
         vs.deactivate_validator(OWNER, exiting).unwrap();
         assert!(matches!(
@@ -335,20 +309,12 @@ fn post_freeze_exit_is_retained_then_excluded_at_a_later_boundary() {
 fn post_freeze_jail_is_retained_then_excluded_at_a_later_boundary() {
     let survivor = address!("0x0000000000000000000000000000000000000A11");
     let jailed = address!("0x0000000000000000000000000000000000000A12");
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = registry_storage(11, 10).unwrap();
     // The target was frozen at height 10; punishment lands afterwards.
-    storage.set_block_number(11);
-
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut vs = ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(10).unwrap();
-        vs.register_validator(OWNER, survivor, &dummy_consensus_pubkey(0xA1))
-            .unwrap();
-        vs.register_validator(OWNER, jailed, &dummy_consensus_pubkey(0xA2))
-            .unwrap();
-        activate_staked_for_test(&mut vs, survivor);
-        activate_staked_for_test(&mut vs, jailed);
+    at_height(&mut storage, 11, |vs| {
+        register_validators(vs, &[(survivor, 0xA1), (jailed, 0xA2)]).unwrap();
+        activate_staked_for_test(vs, survivor);
+        activate_staked_for_test(vs, jailed);
 
         vs.jail_validator(jailed).unwrap();
         assert!(matches!(
@@ -409,26 +375,19 @@ fn post_freeze_jail_is_retained_then_excluded_at_a_later_boundary() {
 fn with_frozen_target_joiner(f: impl FnOnce(&mut ValidatorSet<'_>, Address, Address)) {
     let survivor = address!("0x0000000000000000000000000000000000000B11");
     let joiner = address!("0x0000000000000000000000000000000000000B12");
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = registry_storage(11, 10).unwrap();
     // Height 11 is after the freeze snapshot at height 10.
-    storage.set_block_number(11);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut vs = ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER).unwrap();
-        vs.config_max_validators.write(10).unwrap();
-        vs.register_validator(OWNER, survivor, &dummy_consensus_pubkey(0xB1))
-            .unwrap();
-        vs.register_validator(OWNER, joiner, &dummy_consensus_pubkey(0xB2))
-            .unwrap();
-        activate_staked_for_test(&mut vs, survivor);
+    at_height(&mut storage, 11, |vs| {
+        register_validators(vs, &[(survivor, 0xB1), (joiner, 0xB2)]).unwrap();
+        activate_staked_for_test(vs, survivor);
         let minimum = U256::from(1_000u64);
         vs.record_stake_increase(joiner, minimum, minimum).unwrap();
-        confirm_ready(&mut vs, joiner, 0xB2);
+        confirm_ready(vs, joiner, 0xB2);
         assert!(matches!(
             vs.validator_lifecycle(joiner).unwrap(),
             ValidatorLifecycle::Joining(_)
         ));
-        f(&mut vs, survivor, joiner);
+        f(vs, survivor, joiner);
     });
 }
 
@@ -583,8 +542,7 @@ fn test_pending_set_change() {
         assert!(!vs.has_pending_set_change().unwrap());
 
         // Registration triggers pending_set_change
-        vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(0xE1))
-            .unwrap();
+        register_validators(vs, &[(val_addr, 0xE1)]).unwrap();
         assert!(vs.has_pending_set_change().unwrap());
 
         activate_for_test(vs, val_addr);
@@ -612,12 +570,7 @@ fn test_boundary_rejects_missed_active_validator_atomically() {
     let group_key2 = B256::with_last_byte(0xBB);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val1, &dummy_consensus_pubkey(0xA1))
-            .unwrap();
-        vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xA2))
-            .unwrap();
-        vs.register_validator(OWNER, val3, &dummy_consensus_pubkey(0xA3))
-            .unwrap();
+        register_validators(vs, &[(val1, 0xA1), (val2, 0xA2), (val3, 0xA3)]).unwrap();
         admit_pending(vs, val1, 0xA1);
         admit_pending(vs, val2, 0xA2);
         admit_pending(vs, val3, 0xA3);
@@ -657,11 +610,9 @@ fn certified_tee_expiry_demotes_active_and_clears_pending_readiness() {
     with_vs_configured(128, |vs| {
         let active = address!("0x1111111111111111111111111111111111111111");
         let pending = address!("0x2222222222222222222222222222222222222222");
-        vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
-            .unwrap();
+        register_validators(vs, &[(active, 0x01)]).unwrap();
         vs.activate_validator(active).unwrap();
-        vs.register_validator(OWNER, pending, &dummy_consensus_pubkey(0x02))
-            .unwrap();
+        register_validators(vs, &[(pending, 0x02)]).unwrap();
         vs.mark_pending(pending).unwrap();
         confirm_ready(vs, pending, 0x32);
 
@@ -698,8 +649,7 @@ fn certified_tee_expiry_demotes_active_and_clears_pending_readiness() {
 fn ordinary_dkg_omission_without_expiry_proof_is_rejected_atomically() {
     with_vs_configured(128, |vs| {
         let active = address!("0x1111111111111111111111111111111111111111");
-        vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
-            .unwrap();
+        register_validators(vs, &[(active, 0x01)]).unwrap();
         vs.activate_validator(active).unwrap();
         let hash_before = vs.active_consensus_set_hash().unwrap();
         assert!(vs
@@ -722,8 +672,7 @@ fn expiry_branch_rejects_contradictory_duplicate_and_unknown_authority() {
     with_vs_configured(128, |vs| {
         let active = address!("0x1111111111111111111111111111111111111111");
         let unknown = address!("0x9999999999999999999999999999999999999999");
-        vs.register_validator(OWNER, active, &dummy_consensus_pubkey(0x01))
-            .unwrap();
+        register_validators(vs, &[(active, 0x01)]).unwrap();
         vs.activate_validator(active).unwrap();
 
         assert!(vs

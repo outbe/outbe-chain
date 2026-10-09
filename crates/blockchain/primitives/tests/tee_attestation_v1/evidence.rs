@@ -1,5 +1,8 @@
+#[path = "../../../../../testing/fixtures/transition_key_ready.rs"]
+mod transition_key_ready;
+
 use super::*;
-use ed25519_dalek::Signer as _;
+use transition_key_ready::signed_transition_key_ready_proof;
 
 fn dcap_evidence_with_component_bytes(last_component_len: usize) -> AttestationEvidenceV1 {
     let intent = validator_intent(B256::repeat_byte(0x11));
@@ -71,18 +74,13 @@ fn transition_key_ready_proof_roundtrips_and_binds_exact_transition() {
     intent.transition_nonce = 9;
     intent.attestation_ed25519 = attestation.verifying_key().to_bytes();
 
-    let mut proof = TransitionKeyReadyProofV1 {
-        chain_id: intent.chain_id,
-        genesis_hash: intent.genesis_hash,
-        transition_intent_hash: intent.intent_hash().unwrap(),
-        candidate_manifest_hash: B256::repeat_byte(0x72),
-        transition_nonce: intent.transition_nonce,
-        resident_offer_public: [0x73; 32],
-        candidate_attestation_signature: [0; 64],
-    };
-    proof.candidate_attestation_signature = attestation
-        .sign(proof.signing_hash().unwrap().as_slice())
-        .to_bytes();
+    let proof = signed_transition_key_ready_proof(
+        &intent,
+        intent.intent_hash().unwrap(),
+        B256::repeat_byte(0x72),
+        [0x73; 32],
+        &attestation,
+    );
 
     let encoded = proof.encode_canonical().unwrap();
     assert_eq!(encoded.len(), TransitionKeyReadyProofV1::CANONICAL_LEN);
@@ -131,18 +129,13 @@ fn dcap_evidence_requires_transition_proof_only_for_transition() {
         .encode_canonical()
         .is_err());
 
-    let mut proof = TransitionKeyReadyProofV1 {
-        chain_id: transition.intent.chain_id,
-        genesis_hash: transition.intent.genesis_hash,
-        transition_intent_hash: transition.intent.intent_hash().unwrap(),
-        candidate_manifest_hash: B256::repeat_byte(0x78),
-        transition_nonce: transition.intent.transition_nonce,
-        resident_offer_public: [0x79; 32],
-        candidate_attestation_signature: [0; 64],
-    };
-    proof.candidate_attestation_signature = attestation
-        .sign(proof.signing_hash().unwrap().as_slice())
-        .to_bytes();
+    let proof = signed_transition_key_ready_proof(
+        &transition.intent,
+        transition.intent.intent_hash().unwrap(),
+        B256::repeat_byte(0x78),
+        [0x79; 32],
+        &attestation,
+    );
     transition.transition_key_ready_proof = Some(proof);
     let encoded = AttestationEvidenceV1::Dcap(transition.clone())
         .encode_canonical()

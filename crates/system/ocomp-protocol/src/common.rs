@@ -8,58 +8,34 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundedBytes(pub Vec<u8>);
 
-impl NestedCodec for BoundedBytes {
-    fn validate(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
-        require(
-            self.0.len() <= limits.max_bounded_bytes,
-            "bounded byte field cap",
-        )
-    }
-
-    fn encode_nested(
-        &self,
-        output: &mut CanonicalWriter,
-        limits: &SchemaLimits,
-    ) -> Result<(), ProtocolError> {
-        output.write_bounded_bytes(&self.0, limits.max_bounded_bytes)
-    }
-
-    fn decode_nested(
-        input: &mut CanonicalReader<'_>,
-        limits: &SchemaLimits,
-    ) -> Result<Self, ProtocolError> {
-        Ok(Self(
-            input.read_bounded_bytes(limits.max_bounded_bytes)?.to_vec(),
-        ))
-    }
-}
-
 /// Length-prefixed proof bytes governed by the stricter proof cap.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofBytes(pub Vec<u8>);
 
-impl NestedCodec for ProofBytes {
-    fn validate(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
-        require(
-            self.0.len() <= limits.max_proof_bytes,
-            "proof byte field cap",
-        )
-    }
+macro_rules! impl_capped_bytes_codec {
+    ($type:ident, $cap:ident, $label:literal) => {
+        impl NestedCodec for $type {
+            fn validate(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
+                require(self.0.len() <= limits.$cap, $label)
+            }
 
-    fn encode_nested(
-        &self,
-        output: &mut CanonicalWriter,
-        limits: &SchemaLimits,
-    ) -> Result<(), ProtocolError> {
-        output.write_bounded_bytes(&self.0, limits.max_proof_bytes)
-    }
+            fn encode_nested(
+                &self,
+                output: &mut CanonicalWriter,
+                limits: &SchemaLimits,
+            ) -> Result<(), ProtocolError> {
+                output.write_bounded_bytes(&self.0, limits.$cap)
+            }
 
-    fn decode_nested(
-        input: &mut CanonicalReader<'_>,
-        limits: &SchemaLimits,
-    ) -> Result<Self, ProtocolError> {
-        Ok(Self(
-            input.read_bounded_bytes(limits.max_proof_bytes)?.to_vec(),
-        ))
-    }
+            fn decode_nested(
+                input: &mut CanonicalReader<'_>,
+                limits: &SchemaLimits,
+            ) -> Result<Self, ProtocolError> {
+                Ok(Self(input.read_bounded_bytes(limits.$cap)?.to_vec()))
+            }
+        }
+    };
 }
+
+impl_capped_bytes_codec!(BoundedBytes, max_bounded_bytes, "bounded byte field cap");
+impl_capped_bytes_codec!(ProofBytes, max_proof_bytes, "proof byte field cap");

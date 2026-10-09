@@ -131,14 +131,14 @@ pub const fn try_parse_protocol_version_minor_component(
     parse_decimal_range(bytes, 0, bytes.len(), MAX_PROTOCOL_VERSION_MINOR)
 }
 
-pub const fn parse_protocol_version_major_component(input: &str) -> u8 {
+pub(super) const fn parse_protocol_version_major_component(input: &str) -> u8 {
     match try_parse_protocol_version_major_component(input) {
         Ok(value) => value,
         Err(_) => panic!("invalid protocol version major component"),
     }
 }
 
-pub const fn parse_protocol_version_minor_component(input: &str) -> u32 {
+pub(super) const fn parse_protocol_version_minor_component(input: &str) -> u32 {
     match try_parse_protocol_version_minor_component(input) {
         Ok(value) => value,
         Err(_) => panic!("invalid protocol version minor component"),
@@ -154,32 +154,49 @@ pub const fn try_parse_protocol_version(
         return Err(ProtocolVersionParseError::Empty);
     }
 
-    let mut dot_count = 0usize;
-    let mut dot_index = 0usize;
-    let mut index = 0usize;
-    while index < len {
-        if bytes[index] == b'.' {
-            dot_count += 1;
-            if dot_count > 1 {
-                return Err(ProtocolVersionParseError::TooManyComponents);
-            }
-            dot_index = index;
-        }
-        index += 1;
-    }
-
-    if dot_count == 0 {
+    let dot_index = match version_separator(bytes) {
+        Ok(index) => index,
+        Err(err) => return Err(err),
+    };
+    let Some(dot_index) = dot_index else {
         return match parse_decimal_range(bytes, 0, len, u32::MAX) {
             Ok(value) => Ok(ProtocolVersion::from_raw(value)),
             Err(err) => Err(err),
         };
-    }
+    };
 
+    parse_major_minor(bytes, dot_index)
+}
+
+const fn version_separator(bytes: &[u8]) -> Result<Option<usize>, ProtocolVersionParseError> {
+    let mut dot_index = None;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'.' {
+            if dot_index.is_some() {
+                return Err(ProtocolVersionParseError::TooManyComponents);
+            }
+            dot_index = Some(index);
+        }
+        index += 1;
+    }
+    Ok(dot_index)
+}
+
+const fn parse_major_minor(
+    bytes: &[u8],
+    dot_index: usize,
+) -> Result<ProtocolVersion, ProtocolVersionParseError> {
     let major = match parse_decimal_range(bytes, 0, dot_index, u8::MAX as u32) {
         Ok(value) => value as u8,
         Err(err) => return Err(err),
     };
-    let minor = match parse_decimal_range(bytes, dot_index + 1, len, MAX_PROTOCOL_VERSION_MINOR) {
+    let minor = match parse_decimal_range(
+        bytes,
+        dot_index + 1,
+        bytes.len(),
+        MAX_PROTOCOL_VERSION_MINOR,
+    ) {
         Ok(value) => value,
         Err(err) => return Err(err),
     };
@@ -257,6 +274,28 @@ mod tests {
             try_parse_protocol_version("256.0").unwrap_err(),
             ProtocolVersionParseError::Overflow
         );
+    }
+
+    #[test]
+    fn protocol_version_errors_follow_component_scan_then_decimal_order() {
+        use ProtocolVersionParseError::*;
+
+        for (input, expected) in [
+            ("", Empty),
+            (".", Empty),
+            (".a", Empty),
+            ("a.", InvalidDigit),
+            ("256.a", Overflow),
+            ("a.4294967296", InvalidDigit),
+            ("1..a", TooManyComponents),
+            ("a.2.3", TooManyComponents),
+            ("9999999999..", TooManyComponents),
+            ("0.16777216", Overflow),
+            ("4294967296", Overflow),
+            ("4294967296x", Overflow),
+        ] {
+            assert_eq!(try_parse_protocol_version(input), Err(expected), "{input}");
+        }
     }
 
     #[test]

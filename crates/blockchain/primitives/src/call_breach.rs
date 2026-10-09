@@ -107,16 +107,9 @@ pub fn breached_enough(vwaps: &[(u32, Option<U256>)], terms: &BreachTerms) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::call_breach_prices as days;
 
     const DAY: u32 = SECS_PER_DAY;
-
-    fn days(prices: &[Option<u64>]) -> Vec<(u32, Option<U256>)> {
-        prices
-            .iter()
-            .enumerate()
-            .map(|(back, price)| (100 - back as u32, price.map(U256::from)))
-            .collect()
-    }
 
     fn terms(price: u64, window: u32, threshold: u32, start_day: u32) -> BreachTerms {
         BreachTerms {

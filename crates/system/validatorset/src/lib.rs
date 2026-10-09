@@ -47,7 +47,7 @@ pub use state::{
     VRF_MATERIAL_VERSION_GENESIS,
 };
 pub use state_machine::{
-    Active, ConsensusPubkey, Exiting, Inactive, Jail, JailRetained, Joining, P2pInfo,
-    StakeProjection, Unbonding, ValidatorHistory, ValidatorLifecycle, ValidatorState,
+    Active, ConsensusPubkey, Exiting, HistoryCounters, Inactive, Jail, JailRetained, Joining,
+    P2pInfo, StakeProjection, Unbonding, ValidatorHistory, ValidatorLifecycle, ValidatorState,
     WaitingForReadiness, WaitingForStake,
 };

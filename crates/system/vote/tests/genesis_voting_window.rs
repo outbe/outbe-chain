@@ -10,7 +10,7 @@ use outbe_validatorset::contract::ValidatorSet;
 use outbe_vote::{
     handlers::{TargetExecutionOutcome, VoteTargetContext},
     precompile::IVote,
-    Vote, VoteTarget, VoteTargetRegistry,
+    ProposalSubmission, Vote, VoteTarget, VoteTargetRegistry,
 };
 
 struct Target;
@@ -36,133 +36,18 @@ static TARGET: Target = Target;
 static TARGETS: &[&dyn VoteTarget] = &[&TARGET];
 static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(TARGETS);
 
+const REPLAY_CHILD: &str = "OUTBE_GOVERNANCE_REPLAY_CHILD";
+const PROPOSER: Address = Address::repeat_byte(0x11);
+const OWNER: Address = Address::repeat_byte(0xff);
+
 // Each replay gets its own immutable parameters and inherited environment.
 // No process-global environment mutation races with other tests.
 #[test]
 fn governance_deadline_replay_ignores_local_environment() {
-    if let Ok(mode) = std::env::var("OUTBE_GOVERNANCE_REPLAY_CHILD") {
-        let overrides = serde_json::json!({"governance": {"votingWindowBlocks": 20}});
-        let expected_window = if mode == "genesis" {
-            match outbe_chain_constants::initialize(Some(&overrides)) {
-                Ok(()) => 20,
-                Err(outbe_chain_constants::ProtocolConstantsError::UnsupportedInProduction) => {
-                    outbe_chain_constants::initialize(None).unwrap();
-                    86_400
-                }
-                Err(error) => panic!("unexpected initialization failure: {error}"),
-            }
-        } else {
-            outbe_chain_constants::initialize(None).unwrap();
-            86_400
-        };
-        let proposer = Address::repeat_byte(0x11);
-        let owner = Address::repeat_byte(0xff);
-        let mut provider = HashMapStorageProvider::new(outbe_primitives::chain::TESTNET_CHAIN_ID);
-        provider.set_block_number(100);
-        {
-            let storage = StorageHandle::new(&mut provider);
-            let mut validators = ValidatorSet::new(storage.clone());
-            validators.config_owner.write(owner).unwrap();
-            validators.set_config_max_validators(4).unwrap();
-            let mut key = [0u8; 48];
-            key[0] = 1;
-            validators
-                .register_validator(owner, proposer, &key)
-                .unwrap();
-            validators
-                .activate_validator_via_boundary_for_test(proposer)
-                .unwrap();
-            let mut vote = Vote::new(storage.clone());
-            let id = vote
-                .create_proposal(proposer, UPDATE_ADDRESS, "{}", 100, &REGISTRY)
-                .unwrap();
-            let record = vote.proposals.get(id).unwrap().unwrap();
-            assert_eq!(record.voting_deadline_height, 100 + expected_window);
-            println!("witness:record:{record:?}");
-            // The explicit duration uses the same immutable genesis limit. A
-            // rejected duration must not allocate an id or emit an event.
-            let before = vote.proposal_count.read().unwrap();
-            for invalid in [0, expected_window + 1, u64::MAX] {
-                let error = vote
-                    .create_proposal_with_voting_window(
-                        proposer,
-                        UPDATE_ADDRESS,
-                        "{}",
-                        100,
-                        U256::ZERO,
-                        invalid,
-                        &REGISTRY,
-                    )
-                    .unwrap_err();
-                assert!(error.to_string().contains("voting window"), "{error}");
-                assert_eq!(vote.proposal_count.read().unwrap(), before);
-            }
-            // Close the legacy proposal so the same author can create another.
-            let ctx = BlockRuntimeContext::new(
-                outbe_primitives::block::BlockContext::empty_for_tests(
-                    101 + expected_window,
-                    0,
-                    outbe_primitives::chain::TESTNET_CHAIN_ID,
-                ),
-                storage.clone(),
-            );
-            vote.process_begin_block(&ctx, &REGISTRY).unwrap();
-            let start = 102 + expected_window;
-            let window = expected_window.min(1_000);
-            let custom = vote
-                .create_proposal_with_voting_window(
-                    proposer,
-                    UPDATE_ADDRESS,
-                    "{}",
-                    start,
-                    U256::ZERO,
-                    window,
-                    &REGISTRY,
-                )
-                .unwrap();
-            let record = vote.proposals.get(custom).unwrap().unwrap();
-            assert_eq!(record.voting_deadline_height, start + window);
-            println!("witness:custom-record:{record:?}");
-        }
-        let events = provider.get_events(VOTE_ADDRESS);
-        assert_eq!(events.len(), 3);
-        let event = IVote::ProposalCreated::decode_log_data(&events[0]).unwrap();
-        assert_eq!(event.votingDeadlineHeight, 100 + expected_window);
-        let custom = IVote::ProposalCreated::decode_log_data(&events[2]).unwrap();
-        assert_eq!(
-            custom.votingDeadlineHeight,
-            102 + expected_window + expected_window.min(1_000)
-        );
-        println!("witness:events:{events:?}");
-        return;
-    }
     for mode in ["default", "genesis"] {
         let mut baseline = None;
         for environment in [None, Some("6"), Some("17"), Some("0"), Some("invalid")] {
-            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-            command
-                .args([
-                    "--exact",
-                    "governance_deadline_replay_ignores_local_environment",
-                    "--nocapture",
-                ])
-                .env("OUTBE_GOVERNANCE_REPLAY_CHILD", mode)
-                .env_remove("OUTBE_TEST_VOTING_WINDOW_BLOCKS");
-            if let Some(value) = environment {
-                command.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", value);
-            }
-            let output = command.output().unwrap();
-            let stdout = String::from_utf8(output.stdout).unwrap();
-            assert!(
-                output.status.success(),
-                "{stdout}\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let witness = stdout
-                .lines()
-                .filter(|line| line.starts_with("witness:"))
-                .collect::<Vec<_>>()
-                .join("\n");
+            let witness = replay_witness(mode, environment);
             assert!(!witness.is_empty());
             if let Some(expected) = &baseline {
                 assert_eq!(&witness, expected);
@@ -170,5 +55,131 @@ fn governance_deadline_replay_ignores_local_environment() {
                 baseline = Some(witness);
             }
         }
+    }
+}
+
+/// Runs [`governance_deadline_replay_child`] in a child process with replay
+/// `mode` and the optional test voting-window `environment`. Returns the
+/// child's `witness:` lines.
+fn replay_witness(mode: &str, environment: Option<&str>) -> String {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "governance_deadline_replay_child", "--nocapture"])
+        .env(REPLAY_CHILD, mode)
+        .env_remove("OUTBE_TEST_VOTING_WINDOW_BLOCKS");
+    if let Some(value) = environment {
+        command.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", value);
+    }
+    let output = command.output().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        output.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    stdout
+        .lines()
+        .filter(|line| line.starts_with("witness:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Initializes the protocol constants for replay `mode`. Returns the voting
+/// window that the constants must yield.
+fn initialize_constants(mode: &str) -> u64 {
+    if mode != "genesis" {
+        outbe_chain_constants::initialize(None).unwrap();
+        return 86_400;
+    }
+    let overrides = serde_json::json!({"governance": {"votingWindowBlocks": 20}});
+    match outbe_chain_constants::initialize(Some(&overrides)) {
+        Ok(()) => 20,
+        Err(outbe_chain_constants::ProtocolConstantsError::UnsupportedInProduction) => {
+            outbe_chain_constants::initialize(None).unwrap();
+            86_400
+        }
+        Err(error) => panic!("unexpected initialization failure: {error}"),
+    }
+}
+
+/// Checks the deadlines and events of one replay. Outside a replay child
+/// process it does nothing.
+#[test]
+fn governance_deadline_replay_child() {
+    let Ok(mode) = std::env::var(REPLAY_CHILD) else {
+        return;
+    };
+    let expected_window = initialize_constants(&mode);
+    let mut provider = HashMapStorageProvider::new(outbe_primitives::chain::TESTNET_CHAIN_ID);
+    provider.set_block_number(100);
+    {
+        let storage = StorageHandle::new(&mut provider);
+        let mut validators = ValidatorSet::new(storage.clone());
+        validators.config_owner.write(OWNER).unwrap();
+        validators.set_config_max_validators(4).unwrap();
+        let mut key = [0u8; 48];
+        key[0] = 1;
+        validators
+            .register_validator(OWNER, PROPOSER, &key)
+            .unwrap();
+        validators
+            .activate_validator_via_boundary_for_test(PROPOSER)
+            .unwrap();
+        let mut vote = Vote::new(storage.clone());
+        let id = vote
+            .create_proposal(PROPOSER, UPDATE_ADDRESS, "{}", 100, &REGISTRY)
+            .unwrap();
+        let record = vote.proposals.get(id).unwrap().unwrap();
+        assert_eq!(record.voting_deadline_height, 100 + expected_window);
+        println!("witness:record:{record:?}");
+        // The explicit duration uses the same immutable genesis limit. A
+        // rejected duration must not allocate an id or emit an event.
+        let before = vote.proposal_count.read().unwrap();
+        for invalid in [0, expected_window + 1, u64::MAX] {
+            let error = vote
+                .create_proposal_with_voting_window(empty_submission(100), invalid, &REGISTRY)
+                .unwrap_err();
+            assert!(error.to_string().contains("voting window"), "{error}");
+            assert_eq!(vote.proposal_count.read().unwrap(), before);
+        }
+        // Close the legacy proposal so the same author can create another.
+        let ctx = BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(
+                101 + expected_window,
+                0,
+                outbe_primitives::chain::TESTNET_CHAIN_ID,
+            ),
+            storage.clone(),
+        );
+        vote.process_begin_block(&ctx, &REGISTRY).unwrap();
+        let start = 102 + expected_window;
+        let window = expected_window.min(1_000);
+        let custom = vote
+            .create_proposal_with_voting_window(empty_submission(start), window, &REGISTRY)
+            .unwrap();
+        let record = vote.proposals.get(custom).unwrap().unwrap();
+        assert_eq!(record.voting_deadline_height, start + window);
+        println!("witness:custom-record:{record:?}");
+    }
+    let events = provider.get_events(VOTE_ADDRESS);
+    assert_eq!(events.len(), 3);
+    let event = IVote::ProposalCreated::decode_log_data(&events[0]).unwrap();
+    assert_eq!(event.votingDeadlineHeight, 100 + expected_window);
+    let custom = IVote::ProposalCreated::decode_log_data(&events[2]).unwrap();
+    assert_eq!(
+        custom.votingDeadlineHeight,
+        102 + expected_window + expected_window.min(1_000)
+    );
+    println!("witness:events:{events:?}");
+}
+
+/// A `PROPOSER` submission with the empty JSON payload and no value.
+fn empty_submission(created_height: u64) -> ProposalSubmission<'static> {
+    ProposalSubmission {
+        proposer: PROPOSER,
+        target_module: UPDATE_ADDRESS,
+        payload: "{}",
+        created_height,
+        attached_value: U256::ZERO,
     }
 }

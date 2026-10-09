@@ -43,23 +43,11 @@ impl BlockLifecycle for RewardsLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Address;
-    use outbe_primitives::block::BlockContext;
-    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-
-    const CHAIN_ID: u64 = 1;
-    const GENESIS_TS_2024_01_01: u64 = 1_704_067_200;
-
-    fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
-        BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
-    }
+    use crate::test_support::{block_ctx, with_block, GENESIS_TS as GENESIS_TS_2024_01_01};
 
     #[test]
     fn begin_block_locks_in_genesis_utc_day_on_block_zero() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(0, GENESIS_TS_2024_01_01), handle);
-
+        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
             <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx).unwrap();
 
             assert_eq!(runtime::genesis_utc_day(&ctx).unwrap(), 20240101);
@@ -68,22 +56,21 @@ mod tests {
 
     #[test]
     fn begin_block_is_idempotent_across_blocks() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx0 =
-                BlockRuntimeContext::new(block_ctx(0, GENESIS_TS_2024_01_01), handle.clone());
+        with_block(0, GENESIS_TS_2024_01_01, |ctx0| {
             <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx0).unwrap();
 
             // Block 1, slightly later - must not move the locked-in day.
-            let ctx1 =
-                BlockRuntimeContext::new(block_ctx(1, GENESIS_TS_2024_01_01 + 60), handle.clone());
+            let ctx1 = BlockRuntimeContext::new(
+                block_ctx(1, GENESIS_TS_2024_01_01 + 60),
+                ctx0.storage.clone(),
+            );
             <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx1).unwrap();
             assert_eq!(runtime::genesis_utc_day(&ctx1).unwrap(), 20240101);
 
             // Block 100, 30 days later - still 20240101.
             let ctx_later = BlockRuntimeContext::new(
                 block_ctx(100, GENESIS_TS_2024_01_01 + 86_400 * 30),
-                handle,
+                ctx0.storage.clone(),
             );
             <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx_later).unwrap();
             assert_eq!(runtime::genesis_utc_day(&ctx_later).unwrap(), 20240101);

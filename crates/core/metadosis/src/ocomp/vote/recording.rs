@@ -1,4 +1,5 @@
 use super::*;
+use outbe_ocomp_protocol::vote::{HistoricalVoteMember, VoteWindow};
 
 struct VoteInput<'vote> {
     vote: &'vote ResultVoteV1,
@@ -116,12 +117,16 @@ impl MetadosisContract<'_> {
             .verify_historical_member(
                 &record.intent,
                 finalized.job_id,
-                snapshot.member_count,
-                member.key_epoch,
-                &member.ocomp_public_key_sec1,
-                input.inclusion_height,
-                finalized.open_height,
-                finalized.deadline_height,
+                HistoricalVoteMember {
+                    member_count: snapshot.member_count,
+                    key_epoch: member.key_epoch,
+                    ocomp_public_key_sec1: &member.ocomp_public_key_sec1,
+                },
+                VoteWindow {
+                    inclusion_height: input.inclusion_height,
+                    open_height: finalized.open_height,
+                    deadline_height: finalized.deadline_height,
+                },
                 input.limits,
             )
             .map_err(|error| reject(format!("invalid OCOMP result vote: {error}")))?;

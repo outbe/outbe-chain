@@ -1,24 +1,54 @@
 use super::*;
+use crate::test_support::test_seeded_ocomp_registration;
+use outbe_primitives::error::Result;
 
 pub(super) const CHAIN_ID: u64 = 1;
 
 /// Owner address used across tests.
 pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
-/// Convenience: set config_owner and config_max_validators, then run test.
-pub(super) fn with_vs_configured<R>(max: u32, f: impl FnOnce(&mut ValidatorSet) -> R) -> R {
+/// Storage at block `height` with the owner and room for `max` validators.
+pub(super) fn registry_storage(height: u64, max: u32) -> Result<HashMapStorageProvider> {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(height);
+    StorageHandle::enter(&mut storage, |storage| {
+        let mut vs = ValidatorSet::new(storage);
+        vs.config_owner.write(OWNER)?;
+        vs.set_config_max_validators(max)
+    })?;
+    Ok(storage)
+}
+
+/// Moves `storage` to block `height`, then runs `f` on its ValidatorSet.
+pub(super) fn at_height<R>(
+    storage: &mut HashMapStorageProvider,
+    height: u64,
+    f: impl FnOnce(&mut ValidatorSet) -> R,
+) -> R {
+    storage.set_block_number(height);
+    StorageHandle::enter(storage, |storage| f(&mut ValidatorSet::new(storage)))
+}
+
+/// Storage at block 1 with config_owner, config_max_validators and a 10-block
+/// epoch configured.
+pub(super) fn configured_storage(max: u32) -> HashMapStorageProvider {
     // Height zero is the storage sentinel for an absent lifecycle height. Keep
     // semantic transition fixtures at a real block so EXITING/INACTIVE decode
     // through the same path as production records.
-    storage.set_block_number(1);
+    let mut storage = registry_storage(1, max).unwrap();
     StorageHandle::enter(&mut storage, |storage| {
-        let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(max).unwrap();
-        vs.config_epoch_length_blocks.write(10).unwrap();
-        f(&mut vs)
-    })
+        ValidatorSet::new(storage)
+            .config_epoch_length_blocks
+            .write(10)
+            .unwrap();
+    });
+    storage
+}
+
+/// Convenience: set config_owner and config_max_validators, then run test.
+pub(super) fn with_vs_configured<R>(max: u32, f: impl FnOnce(&mut ValidatorSet) -> R) -> R {
+    let mut storage = configured_storage(max);
+    StorageHandle::enter(&mut storage, |storage| f(&mut ValidatorSet::new(storage)))
 }
 
 /// Move a registered validator through the canonical committee-entry path.
@@ -48,40 +78,20 @@ pub(super) fn dummy_consensus_pubkey(seed: u8) -> [u8; 48] {
     pk
 }
 
+/// The canonical OCOMP registration of `validator` signed with the seed key
+/// `key_seed` for this test chain.
 pub(super) fn ocomp_registration(
     validator: Address,
     consensus_pubkey: &[u8; 48],
     key_seed: u8,
 ) -> (OcompKeyRegistrationV1, Vec<u8>) {
-    let signing_key = SigningKey::from_bytes((&[key_seed; 32]).into()).unwrap();
-    let ocomp_public_key_sec1 = signing_key
-        .verifying_key()
-        .to_encoded_point(true)
-        .as_bytes()
-        .try_into()
-        .unwrap();
-    let mut registration = OcompKeyRegistrationV1 {
-        core: OcompKeyRegistrationCoreV1 {
-            chain_id: CHAIN_ID,
-            genesis_hash: B256::ZERO,
-            validator_identity_hash: validator_identity_hash_v1(validator, consensus_pubkey)
-                .unwrap(),
-            ocomp_public_key_sec1,
-            key_epoch: POC_KEY_EPOCH,
-            allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-        },
-        proof_of_possession: [0; 64],
-    };
-    let limits = poc_schema_limits();
-    let digest = registration.proof_of_possession_digest(&limits).unwrap();
-    let signature: Signature = signing_key.sign_prehash(digest.as_slice()).unwrap();
-    registration.proof_of_possession = signature
-        .normalize_s()
-        .unwrap_or(signature)
-        .to_bytes()
-        .into();
-    let encoded = registration.encode_canonical(&limits).unwrap();
-    (registration, encoded)
+    test_seeded_ocomp_registration(
+        validator,
+        consensus_pubkey,
+        key_seed,
+        (CHAIN_ID, B256::ZERO),
+    )
+    .unwrap()
 }
 
 pub(super) fn confirm_ready(vs: &mut ValidatorSet<'_>, validator: Address, key_seed: u8) {
@@ -92,4 +102,38 @@ pub(super) fn confirm_ready(vs: &mut ValidatorSet<'_>, validator: Address, key_s
         .consensus_pubkey;
     let (_, encoded) = ocomp_registration(validator, &consensus_pubkey, key_seed);
     vs.confirm_validator_ready(validator, &encoded).unwrap();
+}
+
+/// Registers each `(validator, key seed)` pair through the owner, in order.
+pub(super) fn register_validators(
+    vs: &mut ValidatorSet,
+    validators: &[(Address, u8)],
+) -> Result<()> {
+    for (validator, seed) in validators {
+        vs.register_validator(OWNER, *validator, &dummy_consensus_pubkey(*seed))?;
+    }
+    Ok(())
+}
+
+/// Registers `validator` through the owner and activates it through the
+/// production boundary hook.
+pub(super) fn register_boundary_active(
+    vs: &mut ValidatorSet,
+    validator: Address,
+    seed: u8,
+) -> Result<()> {
+    register_validators(vs, &[(validator, seed)])?;
+    vs.activate_validator_via_boundary_for_test(validator)?;
+    Ok(())
+}
+
+/// [`register_boundary_active`] with a live BLS share: a current consensus
+/// participant.
+pub(super) fn register_participant(
+    vs: &mut ValidatorSet,
+    validator: Address,
+    seed: u8,
+) -> Result<()> {
+    register_boundary_active(vs, validator, seed)?;
+    vs.val_has_bls_share.write(&validator, true)
 }

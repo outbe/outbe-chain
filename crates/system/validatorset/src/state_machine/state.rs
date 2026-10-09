@@ -128,28 +128,43 @@ pub struct ValidatorHistory {
     pub(super) blocks_proposed: u64,
 }
 
+/// The four activity counters that a validator history retains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryCounters {
+    pub slash_count: u64,
+    pub missed_blocks: u64,
+    pub missed_votes: u64,
+    pub blocks_proposed: u64,
+}
+
+impl HistoryCounters {
+    /// The counters of a validator that has no recorded activity.
+    pub const ZERO: Self = Self {
+        slash_count: 0,
+        missed_blocks: 0,
+        missed_votes: 0,
+        blocks_proposed: 0,
+    };
+}
+
 impl ValidatorHistory {
-    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         joined_at_height: u64,
         last_deactivated_at_height: Option<u64>,
-        slash_count: u64,
-        missed_blocks: u64,
-        missed_votes: u64,
-        blocks_proposed: u64,
+        counters: HistoryCounters,
     ) -> Self {
         Self {
             joined_at_height,
             last_deactivated_at_height,
-            slash_count,
-            missed_blocks,
-            missed_votes,
-            blocks_proposed,
+            slash_count: counters.slash_count,
+            missed_blocks: counters.missed_blocks,
+            missed_votes: counters.missed_votes,
+            blocks_proposed: counters.blocks_proposed,
         }
     }
 
     pub const fn fresh(joined_at_height: u64) -> Self {
-        Self::new(joined_at_height, None, 0, 0, 0, 0)
+        Self::new(joined_at_height, None, HistoryCounters::ZERO)
     }
 
     pub const fn joined_at_height(&self) -> u64 {
@@ -191,12 +206,17 @@ impl ValidatorHistory {
     }
 
     pub const fn is_zero(&self) -> bool {
-        self.joined_at_height == 0
-            && self.last_deactivated_at_height.is_none()
-            && self.slash_count == 0
-            && self.missed_blocks == 0
-            && self.missed_votes == 0
-            && self.blocks_proposed == 0
+        matches!(
+            self,
+            Self {
+                joined_at_height: 0,
+                last_deactivated_at_height: None,
+                slash_count: 0,
+                missed_blocks: 0,
+                missed_votes: 0,
+                blocks_proposed: 0,
+            }
+        )
     }
 }
 

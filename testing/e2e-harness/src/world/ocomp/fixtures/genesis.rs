@@ -321,9 +321,11 @@ pub(in crate::world::ocomp) fn schedule_public_measurement_day(
             storage.clone(),
             Address::ZERO,
             pair,
-            qualification_rate,
-            1,
-            genesis_timestamp,
+            outbe_oracle::api::RateObservation {
+                rate: qualification_rate,
+                block_number: 1,
+                timestamp: genesis_timestamp,
+            },
         )?;
         let day_limit = U256::from(500) * outbe_primitives::units::SCALE_1E6_U256;
         let report = FreshDevnetGenesisBuilder::new()

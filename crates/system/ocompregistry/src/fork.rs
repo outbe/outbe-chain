@@ -96,10 +96,8 @@ impl OcompForkInstallV1 {
         let mut identities = BTreeSet::new();
         let mut keys = BTreeSet::new();
         for registration in &self.founder_registrations {
-            if registration.core.chain_id != self.request_profile.chain_id
-                || registration.core.genesis_hash != self.request_profile.genesis_hash
-                || registration.core.validator_identity_hash.is_zero()
-                || !identities.insert(registration.core.validator_identity_hash)
+            self.validate_founder_identity(registration)?;
+            if !identities.insert(registration.core.validator_identity_hash)
                 || !keys.insert(registration.core.ocomp_public_key_sec1)
             {
                 return Err(corruption(
@@ -109,6 +107,18 @@ impl OcompForkInstallV1 {
             registration
                 .validate_proof_of_possession(limits)
                 .map_err(protocol_error)?;
+        }
+        Ok(())
+    }
+
+    fn validate_founder_identity(&self, registration: &OcompKeyRegistrationV1) -> Result<()> {
+        if registration.core.chain_id != self.request_profile.chain_id
+            || registration.core.genesis_hash != self.request_profile.genesis_hash
+            || registration.core.validator_identity_hash.is_zero()
+        {
+            return Err(corruption(
+                "invalid or duplicate OCOMP founder registration",
+            ));
         }
         Ok(())
     }

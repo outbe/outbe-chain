@@ -54,16 +54,19 @@ fn a_timestamp_before_the_first_slot_yields_the_offset() {
 
 #[test]
 fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
+    const COALESCING: [TriggerId; 9] = [
+        TriggerId::AuctionClearing,
+        TriggerId::AuctionAdvance,
+        TriggerId::ProtocolCycle,
+        TriggerId::NodCallDaily,
+        TriggerId::CredisCallDaily,
+        TriggerId::IntexDaily,
+        TriggerId::GemDaily,
+        TriggerId::IntexDrainParked,
+        TriggerId::IntexVwapPush,
+    ];
     for spec in ACTIVE_TRIGGERS {
-        let coalesces = spec.id == TriggerId::AuctionClearing.as_u32()
-            || spec.id == TriggerId::AuctionAdvance.as_u32()
-            || spec.id == TriggerId::ProtocolCycle.as_u32()
-            || spec.id == TriggerId::NodCallDaily.as_u32()
-            || spec.id == TriggerId::CredisCallDaily.as_u32()
-            || spec.id == TriggerId::IntexDaily.as_u32()
-            || spec.id == TriggerId::GemDaily.as_u32()
-            || spec.id == TriggerId::IntexDrainParked.as_u32()
-            || spec.id == TriggerId::IntexVwapPush.as_u32();
+        let coalesces = COALESCING.iter().any(|id| id.as_u32() == spec.id);
         assert_eq!(
             spec.coalesces_backlog, coalesces,
             "{} must not change its backlog policy",
@@ -72,17 +75,27 @@ fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
     }
 }
 
+/// Position of trigger `id` in the dispatch order.
+fn dispatch_position(id: TriggerId) -> usize {
+    ACTIVE_TRIGGERS
+        .iter()
+        .position(|spec| spec.id == id.as_u32())
+        .expect("trigger registered")
+}
+
+#[test]
+fn auction_advance_runs_after_emission_limit_1() {
+    assert!(
+        dispatch_position(TriggerId::AuctionAdvance) > dispatch_position(TriggerId::ProtocolCycle),
+        "auction_advance must dispatch after emission_limit_1 so the same-slot brief starts the auction"
+    );
+}
+
 #[test]
 fn the_clearing_poll_runs_after_the_stage_schedule() {
-    let position = |id: u32| {
-        ACTIVE_TRIGGERS
-            .iter()
-            .position(|spec| spec.id == id)
-            .expect("trigger registered")
-    };
     assert!(
-        position(TriggerId::AuctionClearing.as_u32())
-            > position(TriggerId::AuctionAdvance.as_u32()),
+        dispatch_position(TriggerId::AuctionClearing)
+            > dispatch_position(TriggerId::AuctionAdvance),
         "auction_clearing must dispatch after auction_advance so a day armed this slot can clear in it"
     );
 }

@@ -63,9 +63,11 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
             storage,
             Address::ZERO,
             outbe_oracle::api::DAY_TYPE_PAIR,
-            SCALE_1E6_U256,
-            0,
-            0,
+            outbe_oracle::api::RateObservation {
+                rate: SCALE_1E6_U256,
+                block_number: 0,
+                timestamp: 0,
+            },
         )
         .unwrap();
     });

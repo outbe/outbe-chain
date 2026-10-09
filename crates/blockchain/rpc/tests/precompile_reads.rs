@@ -224,10 +224,13 @@ fn eth_call_get_vote_proposal() {
         let mut vote = Vote::new(storage.clone());
         let proposal_id = vote
             .write_proposal(
-                PROPOSER,
-                UPDATE_ADDRESS,
-                &payload,
-                100,
+                &outbe_vote::ProposalSubmission {
+                    proposer: PROPOSER,
+                    target_module: UPDATE_ADDRESS,
+                    payload: &payload,
+                    created_height: 100,
+                    attached_value: U256::ZERO,
+                },
                 200,
                 ProposalStatus::Pending,
             )

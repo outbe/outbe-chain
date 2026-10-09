@@ -12,18 +12,14 @@ use outbe_ocomp_protocol::{
     common::BoundedBytes,
     control::{FinalizedJobSpecV1, FinalizedJobSummaryV1},
     hash::hash_framed,
-    intent::{
-        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
-    },
+    intent::{DayType, FrozenMetadosisValuesV1, JobIntentV1},
     profile::poc_schema_limits,
     registry::HashDomain,
     result::{
         lysis_v1_empty_semantic_event_root, CarryOverCreditActionV1, CarryOverReason,
-        CompletionStatus, ConservationTotalsV1, ExactCountsV1, LysisArithmeticSummaryV1,
-        LysisResultV1, MetadosisCompletionSummaryV1, ResultRootsV1,
+        CompletionStatus, LysisResultV1, MetadosisCompletionSummaryV1,
     },
+    test_utils::fixed_activation_preconditions,
 };
 
 fn hash(byte: u8) -> B256 {
@@ -67,34 +63,7 @@ fn fixture() -> (EndpointIdentity, B256, FinalizedJobSpecV1, LysisResultV1) {
         },
         logical_evaluation_height: 100,
         logical_evaluation_time: 1_000,
-        activation_preconditions: ActivationPreconditionsV1 {
-            tribute: TributeInputBindingV1 {
-                wwd: 7,
-                source_generation: 3,
-                collection_key: hash(30),
-                sealed_collection_root: hash(31),
-                exact_count: 1,
-                exact_nominal_total: U256::ZERO,
-            },
-            nod: NodTargetPreconditionV1 {
-                wwd: 7,
-                target_generation: 5,
-                namespace_root_before: hash(32),
-                max_nod_count: 1,
-            },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: 7,
-                expected_series_version: 8,
-                max_contributor_count: 1,
-                max_eligible_nominal_total: U256::ZERO,
-            },
-            metadosis: MetadosisAttemptPreconditionV1 {
-                wwd: 7,
-                pending_nonce: 0,
-                expected_status: MetadosisExpectedStatus::OffchainPending,
-                state_version: 12,
-            },
-        },
+        activation_preconditions: fixed_activation_preconditions(),
         result_validator_set_epoch: 1,
         result_committee_set_hash: hash(70),
         result_ocomp_binding_hash: hash(71),
@@ -105,43 +74,10 @@ fn fixture() -> (EndpointIdentity, B256, FinalizedJobSpecV1, LysisResultV1) {
     let block_hash = hash(90);
     let state_root = hash(91);
     let job_id = intent.job_id(block_hash, state_root, &limits).unwrap();
-    let roots = ResultRootsV1 {
-        nod_root: hash(50),
-        bucket_root: hash(51),
-        contributor_root: hash(52),
-        output_manifest_root: hash(53),
-    };
-    let counts = ExactCountsV1 {
-        tribute_count: 1,
-        nod_count: 1,
-        bucket_count: 0,
-        contributor_count: 0,
-        semantic_event_count: 0,
-    };
-    let conservation = ConservationTotalsV1 {
-        tribute_nominal_total: U256::ZERO,
-        eligible_nominal_total: U256::ZERO,
-        day_limit: U256::ZERO,
-        gratis_demand: U256::ZERO,
-        day_gratis_limit_minor: U256::ZERO,
-        lysis_limit_minor: U256::ZERO,
-        desis_limit_minor: U256::ZERO,
-        lysis_allocation_minor: U256::ZERO,
-        unused_lysis_limit_minor: U256::ZERO,
-        carry_over_credit: U256::ZERO,
-        nod_cost_total: U256::ZERO,
-    };
-    let summary = LysisArithmeticSummaryV1 {
-        input_manifest_hash: hash(54),
-        plan_hash: hash(55),
-        unit_artifact_root: hash(56),
-        fidelity_fraction_root: hash(57),
-        gratis_prefix_root: hash(58),
-        roots: roots.clone(),
-        counts: counts.clone(),
-        conservation: conservation.clone(),
-        first_error_ordinal: None,
-    };
+    let summary = outbe_ocomp_protocol::test_utils::fixed_lysis_arithmetic_summary();
+    let roots = summary.roots.clone();
+    let counts = summary.counts.clone();
+    let conservation = summary.conservation.clone();
     let result = LysisResultV1 {
         protocol_bundle_hash: intent.protocol_bundle_hash,
         job_id,

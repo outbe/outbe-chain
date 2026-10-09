@@ -45,53 +45,109 @@ pub fn poc_schema_limits() -> SchemaLimits {
 
 pub(crate) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<()> {
     let capacity = &profile.capacity_profile;
-    if profile.chain_id == 0
-        || profile.genesis_hash.is_zero()
-        || profile.fork_id.is_zero()
-        || profile.protocol_bundle_hash.is_zero()
-        || profile.correctness_profile_id.is_zero()
-        || profile.source_availability_policy_id.is_zero()
-        || capacity.profile_id.is_zero()
-        || capacity.generated_limits_manifest_hash.is_zero()
-    {
+    if has_reserved_zero_identity(profile) {
         return Err(corruption(
             "OCOMP request profile contains a reserved zero identity",
         ));
     }
 
-    let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
-    let max_tributes_per_work_shard = u32::try_from(candidate.max_tributes_per_work_shard)
-        .map_err(|_| corruption("generated unit size exceeds u32"))?;
-    let max_reference_currencies = u16::try_from(candidate.max_oracle_openings)
-        .map_err(|_| corruption("generated reference-currency cap exceeds u16"))?;
-    let max_oracle_entries = u32::try_from(candidate.max_oracle_wwd_pair_entries)
-        .map_err(|_| corruption("generated Oracle entry cap exceeds u32"))?;
-    let max_active_scurve_entries = u32::try_from(candidate.max_active_scurve_entries)
-        .map_err(|_| corruption("generated S-curve entry cap exceeds u32"))?;
-
-    if capacity.max_tributes_per_work_shard != max_tributes_per_work_shard
-        || capacity.max_workers_per_domain != 4
-        || capacity.max_intents_per_block != 1
-        || capacity.max_activations_per_block != 1
-        || capacity.max_ready_inspections_per_block != 1
-        || capacity.max_expirations_per_block != 1
-        || capacity.ready_backoff_blocks != 1
-        || capacity.max_reference_currencies == 0
-        || capacity.max_reference_currencies > max_reference_currencies
-        || capacity.max_oracle_wwd_pair_entries == 0
-        || capacity.max_oracle_wwd_pair_entries > max_oracle_entries
-        || capacity.max_active_scurve_entries == 0
-        || capacity.max_active_scurve_entries > max_active_scurve_entries
-        || capacity.result_deadline_blocks == 0
-        || capacity.result_deadline_blocks > DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS
-        || capacity.source_retention_after_terminal_blocks
-            != candidate.source_retention_after_terminal_blocks
-    {
+    let bounds = PocCapacityBounds::generated()?;
+    if !matches_frozen_poc_policy(capacity, &bounds) {
         return Err(corruption(
             "OCOMP request profile violates frozen PoC bounds",
         ));
     }
     Ok(())
+}
+
+fn has_reserved_zero_identity(profile: &OcompRequestProfile) -> bool {
+    profile.chain_id == 0
+        || [
+            &profile.genesis_hash,
+            &profile.fork_id,
+            &profile.protocol_bundle_hash,
+            &profile.correctness_profile_id,
+            &profile.source_availability_policy_id,
+            &profile.capacity_profile.profile_id,
+            &profile.capacity_profile.generated_limits_manifest_hash,
+        ]
+        .into_iter()
+        .any(B256::is_zero)
+}
+
+struct PocCapacityBounds {
+    max_tributes_per_work_shard: u32,
+    max_reference_currencies: u16,
+    max_oracle_entries: u32,
+    max_active_scurve_entries: u32,
+    source_retention_after_terminal_blocks: u64,
+}
+
+impl PocCapacityBounds {
+    fn generated() -> Result<Self> {
+        let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
+        Ok(Self {
+            max_tributes_per_work_shard: u32::try_from(candidate.max_tributes_per_work_shard)
+                .map_err(|_| corruption("generated unit size exceeds u32"))?,
+            max_reference_currencies: u16::try_from(candidate.max_oracle_openings)
+                .map_err(|_| corruption("generated reference-currency cap exceeds u16"))?,
+            max_oracle_entries: u32::try_from(candidate.max_oracle_wwd_pair_entries)
+                .map_err(|_| corruption("generated Oracle entry cap exceeds u32"))?,
+            max_active_scurve_entries: u32::try_from(candidate.max_active_scurve_entries)
+                .map_err(|_| corruption("generated S-curve entry cap exceeds u32"))?,
+            source_retention_after_terminal_blocks: candidate
+                .source_retention_after_terminal_blocks,
+        })
+    }
+}
+
+fn has_frozen_shard_policy(capacity: &CapacityProfileV1, bounds: &PocCapacityBounds) -> bool {
+    capacity.max_tributes_per_work_shard == bounds.max_tributes_per_work_shard
+        && capacity.max_workers_per_domain == 4
+}
+
+fn has_frozen_block_policy(capacity: &CapacityProfileV1) -> bool {
+    [
+        capacity.max_intents_per_block,
+        capacity.max_activations_per_block,
+        capacity.max_ready_inspections_per_block,
+        capacity.max_expirations_per_block,
+    ] == [1; 4]
+}
+
+fn has_bounded_opening_policy(capacity: &CapacityProfileV1, bounds: &PocCapacityBounds) -> bool {
+    positive_at_most(
+        capacity.max_reference_currencies,
+        bounds.max_reference_currencies,
+    ) && positive_at_most(
+        capacity.max_oracle_wwd_pair_entries,
+        bounds.max_oracle_entries,
+    ) && positive_at_most(
+        capacity.max_active_scurve_entries,
+        bounds.max_active_scurve_entries,
+    )
+}
+
+fn positive_at_most<T: Ord + From<u8>>(value: T, maximum: T) -> bool {
+    value > T::from(0) && value <= maximum
+}
+
+fn matches_frozen_poc_policy(capacity: &CapacityProfileV1, bounds: &PocCapacityBounds) -> bool {
+    if !has_frozen_shard_policy(capacity, bounds)
+        || !has_frozen_block_policy(capacity)
+        || capacity.ready_backoff_blocks != 1
+    {
+        return false;
+    }
+    if !has_bounded_opening_policy(capacity, bounds)
+        || !positive_at_most(
+            capacity.result_deadline_blocks,
+            DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+        )
+    {
+        return false;
+    }
+    capacity.source_retention_after_terminal_blocks == bounds.source_retention_after_terminal_blocks
 }
 
 fn encode_request_profile(profile: &OcompRequestProfile, limits: &SchemaLimits) -> Result<Vec<u8>> {

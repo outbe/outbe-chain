@@ -1,75 +1,135 @@
 use super::*;
-use crate::v1::{NodeHostAssociationV1, VerifiedIntentV1};
+use crate::v1::NodeHostAssociationV1;
+
+/// Asserts the rejections that both node roles share for the initial intent
+/// `initial`, in this order: a signature of `other_enclave` over the intent
+/// hash, the stale intent `signed_stale` with `stale_message`, and a wrong
+/// measurement.
+fn assert_shared_initial_rejections(
+    registry: &mut TeeRegistry<'_>,
+    initial: &SignedIntent<'_>,
+    other_enclave: &ed25519_dalek::SigningKey,
+    signed_stale: &SignedIntent<'_>,
+    stale_message: &str,
+) {
+    let wrong_enclave = SignedIntent {
+        enclave_signature: other_enclave
+            .sign(initial.intent.intent_hash().unwrap().as_slice())
+            .to_bytes(),
+        ..*initial
+    };
+    assert_reverts(
+        registry.register_enclave_after_verifier_for_test(
+            wrong_enclave.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+        ),
+        "enclave proof",
+    );
+    assert_reverts(
+        registry.register_enclave_after_verifier_for_test(
+            signed_stale.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+        ),
+        stale_message,
+    );
+    let mut wrong_measurement = verdict(DcapPlatformTcbStatusV1::UpToDate);
+    wrong_measurement.mrenclave = B256::repeat_byte(0x99);
+    assert_reverts(
+        registry.register_enclave_after_verifier_for_test(initial.with_verdict(wrong_measurement)),
+        "measurement rule",
+    );
+}
+
+/// Asserts that a registration of `signed` with `node_signature` in place of
+/// its node signature reverts at the node proof.
+fn assert_node_proof_rejected(
+    registry: &mut TeeRegistry<'_>,
+    signed: &SignedIntent<'_>,
+    node_signature: [u8; 65],
+) {
+    let forged = SignedIntent {
+        node_signature,
+        ..*signed
+    };
+    assert_reverts(
+        registry.register_enclave_after_verifier_for_test(
+            forged.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+        ),
+        "node proof",
+    );
+}
+
+/// `initial` with the renewal nonce 1. An initial registration must not carry
+/// a renewal nonce.
+fn stale_initial_intent(initial: &RegistrationIntentV1) -> RegistrationIntentV1 {
+    let mut stale = initial.clone();
+    stale.renewal_nonce = 1;
+    stale
+}
+
+/// Asserts that `other` binds the enclave of the `existing` intent and that
+/// its registration reverts because that enclave is already bound to another
+/// node.
+fn assert_enclave_bound_to_other_node(
+    registry: &mut TeeRegistry<'_>,
+    other: &SignedIntent<'_>,
+    existing: &RegistrationIntentV1,
+) {
+    assert_eq!(other.intent.enclave_id, existing.enclave_id);
+    assert_reverts(
+        registry.register_enclave_after_verifier_for_test(
+            other.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+        ),
+        "already bound to another node",
+    );
+}
+
+/// Asserts that `registry` has no binding for the node of `intent` and no node
+/// for `validator`.
+fn assert_node_registration_rolled_back(
+    registry: &TeeRegistry<'_>,
+    intent: &RegistrationIntentV1,
+    validator: Address,
+) {
+    assert!(registry
+        .node_host_enclave_binding_v1(intent.node_id.reth_p2p_public)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        registry.validator_v1_node_hash.read(&validator).unwrap(),
+        B256::ZERO
+    );
+}
 
 #[test]
 fn initial_role_neutral_registration_atomically_records_the_address_association_without_a_role() {
     let genesis_hash = B256::repeat_byte(0xA1);
-    let active_policy = policy(
-        genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    let full_node = LifecycleFullNode::new(
+        hardening_policy(genesis_hash),
+        0xA3,
+        0xA4,
+        EnclaveBindingSeeds::new(0xA5, 0xA6),
     );
     let validator_signer = OutbeEvmSigner::from_secret_bytes([0xA2; 32]).unwrap();
-    let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0xA3; 32]).into()).unwrap();
-    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0xA4; 32]);
-    let intent =
-        full_node_registration_intent(&active_policy, &node_signer, &enclave_signer, 0xA5, 0xA6);
-    let (node_registration_signature, enclave_signature) =
-        full_node_signatures(&intent, &node_signer, &enclave_signer);
-    let node_id_hash = intent.node_id.node_id_hash().unwrap();
-    let (binding, validator_signature, node_binding_signature) =
-        validator_node_binding_authorization_for_p2p_node(&intent, &validator_signer, &node_signer);
-    let mut provider = storage(genesis_hash);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut registry = TeeRegistry::new(storage.clone());
-        registry.install_initial_policy_v1(&active_policy).unwrap();
-        assert_eq!(
-            registry
-                .register_enclave_and_bind_after_verifier_for_test(
-                    VerifiedIntentV1 {
-                        intent: &intent,
-                        node_signature: &node_registration_signature,
-                        enclave_signature: &enclave_signature,
-                        capability: PostVerifierDcapCapabilityV1::new(verdict(
-                            DcapPlatformTcbStatusV1::UpToDate,
-                        ))
-                    },
-                    NodeHostAssociationV1 {
-                        binding: &binding,
-                        validator_signature: &validator_signature,
-                        node_binding_signature: &node_binding_signature
-                    }
+    let signed_intent = full_node.signed_initial();
+    let node_id_hash = full_node.initial.node_id.node_id_hash().unwrap();
+    let association = full_node.association(&validator_signer);
+    full_node.run_installed(|storage, mut registry| {
+        assert_created_then_idempotent(
+            &mut registry,
+            |registry| {
+                registry.register_enclave_and_bind_after_verifier_for_test(
+                    signed_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                    association.input(),
                 )
-                .unwrap(),
-            V1RegistrationOutcome::Created
-        );
-
-        assert!(ValidatorSet::new(storage.clone())
-            .get_validator(validator_signer.address())
-            .unwrap()
-            .is_none());
-        assert!(!registry
-            .is_validator_enclave_ready_v1(validator_signer.address())
-            .unwrap());
-        assert_eq!(
-            registry
-                .register_enclave_and_bind_after_verifier_for_test(
-                    VerifiedIntentV1 {
-                        intent: &intent,
-                        node_signature: &node_registration_signature,
-                        enclave_signature: &enclave_signature,
-                        capability: PostVerifierDcapCapabilityV1::new(verdict(
-                            DcapPlatformTcbStatusV1::UpToDate,
-                        ))
-                    },
-                    NodeHostAssociationV1 {
-                        binding: &binding,
-                        validator_signature: &validator_signature,
-                        node_binding_signature: &node_binding_signature
-                    }
-                )
-                .unwrap(),
-            V1RegistrationOutcome::Idempotent
+            },
+            |registry| {
+                assert!(ValidatorSet::new(storage.clone())
+                    .get_validator(validator_signer.address())
+                    .unwrap()
+                    .is_none());
+                assert!(!registry
+                    .is_validator_enclave_ready_v1(validator_signer.address())
+                    .unwrap());
+            },
         );
         register_validator(storage, &validator_signer, CONSENSUS_KEY);
         assert!(registry
@@ -88,110 +148,61 @@ fn initial_role_neutral_registration_atomically_records_the_address_association_
 #[test]
 fn atomic_initial_registration_is_active_idempotent_and_expires_without_relay_authority() {
     let genesis_hash = B256::repeat_byte(0x11);
-    let active_policy = policy(
-        genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    let validator = LifecycleValidator::new(
+        hardening_policy(genesis_hash),
+        0x61,
+        0x62,
+        EnclaveBindingSeeds::new(0x41, 0x51),
     );
-    let node_signer = OutbeEvmSigner::from_secret_bytes([0x61; 32]).unwrap();
-    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x62; 32]);
-    let intent = registration_intent(
-        &active_policy,
-        &node_signer,
-        CONSENSUS_KEY,
-        &enclave_signer,
-        0x41,
-        0x51,
-    );
-    let (node_signature, enclave_signature) = signatures(&intent, &node_signer, &enclave_signer);
-    let (binding, validator_signature, node_binding_signature) =
-        validator_node_binding_authorization_for_evm_node(&intent, &node_signer, &node_signer);
+    let signed_intent = validator.signed_initial();
+    let association = validator.association(&validator.initial);
     let accepted_verdict = verdict(DcapPlatformTcbStatusV1::SWHardeningNeeded);
-    let mut provider = storage(genesis_hash);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
-        let mut registry = TeeRegistry::new(storage.clone());
-        registry.install_initial_policy_v1(&active_policy).unwrap();
+    let provider = validator.run_as_validator(|storage, mut registry| {
         assert!(!registry
-            .is_validator_enclave_ready_v1(node_signer.address())
+            .is_validator_enclave_ready_v1(validator.node_signer.address())
             .unwrap());
 
-        assert_eq!(
-            registry
-                .register_enclave_and_bind_after_verifier_for_test(
-                    VerifiedIntentV1 {
-                        intent: &intent,
-                        node_signature: &node_signature,
-                        enclave_signature: &enclave_signature,
-                        capability: PostVerifierDcapCapabilityV1::new(accepted_verdict.clone())
-                    },
-                    NodeHostAssociationV1 {
-                        binding: &binding,
-                        validator_signature: &validator_signature,
-                        node_binding_signature: &node_binding_signature
-                    }
+        assert_created_then_idempotent(
+            &mut registry,
+            |registry| {
+                registry.register_enclave_and_bind_after_verifier_for_test(
+                    signed_intent.with_verdict(accepted_verdict.clone()),
+                    association.input(),
                 )
-                .unwrap(),
-            V1RegistrationOutcome::Created
-        );
-        assert!(registry
-            .is_validator_enclave_ready_v1(node_signer.address())
-            .unwrap());
-        let stored_binding = registry
-            .validator_enclave_binding_v1(node_signer.address())
-            .unwrap()
-            .unwrap();
-        assert_eq!(stored_binding.enclave_id, intent.enclave_id);
-        assert_eq!(stored_binding.binding_id, intent.binding_id);
-        assert_eq!(stored_binding.intent_hash, intent.intent_hash().unwrap());
-        assert_eq!(stored_binding.evidence_hash, B256::repeat_byte(0xEC));
-        assert_eq!(stored_binding.valid_until, intent.requested_valid_until);
-        assert_ne!(stored_binding.verdict_hash, B256::ZERO);
-
-        assert_eq!(
-            registry
-                .register_enclave_and_bind_after_verifier_for_test(
-                    VerifiedIntentV1 {
-                        intent: &intent,
-                        node_signature: &node_signature,
-                        enclave_signature: &enclave_signature,
-                        capability: PostVerifierDcapCapabilityV1::new(accepted_verdict.clone())
-                    },
-                    NodeHostAssociationV1 {
-                        binding: &binding,
-                        validator_signature: &validator_signature,
-                        node_binding_signature: &node_binding_signature
-                    }
-                )
-                .unwrap(),
-            V1RegistrationOutcome::Idempotent
+            },
+            |registry| {
+                assert!(registry
+                    .is_validator_enclave_ready_v1(validator.node_signer.address())
+                    .unwrap());
+                let stored_binding = validator.stored_binding(registry);
+                assert_eq!(stored_binding.enclave_id, validator.initial.enclave_id);
+                assert_eq!(stored_binding.binding_id, validator.initial.binding_id);
+                assert_eq!(
+                    stored_binding.intent_hash,
+                    validator.initial.intent_hash().unwrap()
+                );
+                assert_eq!(stored_binding.evidence_hash, B256::repeat_byte(0xEC));
+                assert_eq!(
+                    stored_binding.valid_until,
+                    validator.initial.requested_valid_until
+                );
+                assert_ne!(stored_binding.verdict_hash, B256::ZERO);
+            },
         );
 
-        let conflict = registry
-            .register_enclave_and_bind_after_verifier_for_test(
-                VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &node_signature,
-                    enclave_signature: &enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::with_evidence_hash(
-                        accepted_verdict,
-                        B256::repeat_byte(0xED),
-                    ),
-                },
-                NodeHostAssociationV1 {
-                    binding: &binding,
-                    validator_signature: &validator_signature,
-                    node_binding_signature: &node_binding_signature,
-                },
-            )
-            .unwrap_err();
-        assert!(revert_message(conflict).contains("not an exact evidence replay"));
+        assert_reverts(
+            registry.register_enclave_and_bind_after_verifier_for_test(
+                signed_intent.with_conflicting_evidence(accepted_verdict),
+                association.input(),
+            ),
+            "not an exact evidence replay",
+        );
 
         storage
-            .set_block_timestamp(U256::from(intent.requested_valid_until))
+            .set_block_timestamp(U256::from(validator.initial.requested_valid_until))
             .unwrap();
         assert!(!registry
-            .is_validator_enclave_ready_v1(node_signer.address())
+            .is_validator_enclave_ready_v1(validator.node_signer.address())
             .unwrap());
     });
 
@@ -207,66 +218,48 @@ fn atomic_initial_registration_is_active_idempotent_and_expires_without_relay_au
 #[test]
 fn bootstrap_fixture_registers_exactly_thirty_two_validators_after_private_verifier() {
     let genesis_hash = B256::repeat_byte(0x19);
-    let active_policy = policy(
-        genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
-    );
-    let fixtures = (1_u8..=32)
+    let active_policy = hardening_policy(genesis_hash);
+    let validators = (1_u8..=32)
         .map(|index| {
-            let node_signer = OutbeEvmSigner::from_secret_bytes([index; 32]).unwrap();
-            let enclave_signer =
-                ed25519_dalek::SigningKey::from_bytes(&[index.wrapping_add(64); 32]);
-            let consensus_key = [index; 48];
-            let intent = registration_intent(
-                &active_policy,
-                &node_signer,
-                consensus_key,
-                &enclave_signer,
+            LifecycleValidator::new(
+                active_policy.clone(),
                 index,
-                index.wrapping_add(96),
-            );
-            let (node_signature, enclave_signature) =
-                signatures(&intent, &node_signer, &enclave_signer);
-            (
-                node_signer,
-                consensus_key,
-                intent,
-                node_signature,
-                enclave_signature,
+                index.wrapping_add(64),
+                EnclaveBindingSeeds::new(index, index.wrapping_add(96)),
             )
         })
+        .collect::<Vec<_>>();
+    let signed_intents = validators
+        .iter()
+        .map(LifecycleValidator::signed_initial)
         .collect::<Vec<_>>();
     let mut provider = storage(genesis_hash);
     provider.set_block_number(1);
 
     StorageHandle::enter(&mut provider, |storage| {
-        for (node_signer, consensus_key, ..) in &fixtures {
-            register_validator(storage.clone(), node_signer, *consensus_key);
+        for (validator, index) in validators.iter().zip(1_u8..) {
+            register_validator(storage.clone(), &validator.node_signer, [index; 48]);
         }
-        let mut registry = TeeRegistry::new(storage.clone());
-        registry.install_initial_policy_v1(&active_policy).unwrap();
+        let mut registry = installed_registry(storage.clone(), &active_policy);
 
         let started = std::time::Instant::now();
-        for (index, (node_signer, _, intent, node_signature, enclave_signature)) in
-            fixtures.iter().enumerate()
+        for (index, (validator, signed_intent)) in
+            validators.iter().zip(&signed_intents).enumerate()
         {
             assert_eq!(
                 register_same_key_node_for_lifecycle_test(
                     &mut registry,
-                    intent,
-                    node_signer,
-                    node_signature,
-                    enclave_signature,
-                    PostVerifierDcapCapabilityV1::with_evidence_hash(
+                    &validator.node_signer,
+                    signed_intent.verified(PostVerifierDcapCapabilityV1::with_evidence_hash(
                         verdict(DcapPlatformTcbStatusV1::UpToDate),
                         B256::repeat_byte(u8::try_from(index + 1).unwrap()),
-                    ),
+                    ))
                 )
                 .unwrap(),
                 V1RegistrationOutcome::Created
             );
             assert!(registry
-                .is_validator_enclave_ready_v1(node_signer.address())
+                .is_validator_enclave_ready_v1(validator.node_signer.address())
                 .unwrap());
         }
         assert!(
@@ -279,167 +272,72 @@ fn bootstrap_fixture_registers_exactly_thirty_two_validators_after_private_verif
 #[test]
 fn invalid_or_conflicting_initial_association_rolls_back_the_node_registration() {
     let genesis_hash = B256::repeat_byte(0x21);
-    let active_policy = policy(
-        genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
-    );
+    let active_policy = hardening_policy(genesis_hash);
     let admission_signer = OutbeEvmSigner::from_secret_bytes([0x22; 32]).unwrap();
-    let first_node = k256::ecdsa::SigningKey::from_bytes((&[0x23; 32]).into()).unwrap();
-    let second_node = k256::ecdsa::SigningKey::from_bytes((&[0x24; 32]).into()).unwrap();
-    let first_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x25; 32]);
-    let second_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x26; 32]);
-    let first_intent =
-        full_node_registration_intent(&active_policy, &first_node, &first_enclave, 0x27, 0x28);
-    let second_intent =
-        full_node_registration_intent(&active_policy, &second_node, &second_enclave, 0x29, 0x2A);
-    let (first_node_signature, first_enclave_signature) =
-        full_node_signatures(&first_intent, &first_node, &first_enclave);
-    let (second_node_signature, second_enclave_signature) =
-        full_node_signatures(&second_intent, &second_node, &second_enclave);
-    let (first_binding, first_validator_signature, first_binding_node_signature) =
-        validator_node_binding_authorization_for_p2p_node(
-            &first_intent,
-            &admission_signer,
-            &first_node,
-        );
-    let (second_binding, second_validator_signature, second_binding_node_signature) =
-        validator_node_binding_authorization_for_p2p_node(
-            &second_intent,
-            &admission_signer,
-            &second_node,
-        );
-    let second_admission_signer = OutbeEvmSigner::from_secret_bytes([0x2B; 32]).unwrap();
-    let (
-        second_node_own_binding,
-        second_node_own_validator_signature,
-        second_node_own_binding_signature,
-    ) = validator_node_binding_authorization_for_p2p_node(
-        &second_intent,
-        &second_admission_signer,
-        &second_node,
+    let first = LifecycleFullNode::new(
+        active_policy.clone(),
+        0x23,
+        0x25,
+        EnclaveBindingSeeds::new(0x27, 0x28),
     );
-    let first_node_hash = first_intent.node_id.node_id_hash().unwrap();
-    let second_node_hash = second_intent.node_id.node_id_hash().unwrap();
-    let mut provider = storage(genesis_hash);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut registry = TeeRegistry::new(storage);
-        registry.install_initial_policy_v1(&active_policy).unwrap();
-
-        let mut invalid_validator_signature = first_validator_signature;
+    let second = LifecycleFullNode::new(
+        active_policy.clone(),
+        0x24,
+        0x26,
+        EnclaveBindingSeeds::new(0x29, 0x2A),
+    );
+    let signed_first_intent = first.signed_initial();
+    let signed_second_intent = second.signed_initial();
+    let first_association = first.association(&admission_signer);
+    let second_association = second.association(&admission_signer);
+    let second_admission_signer = OutbeEvmSigner::from_secret_bytes([0x2B; 32]).unwrap();
+    let second_node_own_association = second.association(&second_admission_signer);
+    let first_node_hash = first.initial.node_id.node_id_hash().unwrap();
+    let second_node_hash = second.initial.node_id.node_id_hash().unwrap();
+    first.run_installed(|_storage, mut registry| {
+        let mut invalid_validator_signature = first_association.validator_signature;
         invalid_validator_signature[0] ^= 1;
-        let invalid = registry
-            .register_enclave_and_bind_after_verifier_for_test(
-                VerifiedIntentV1 {
-                    intent: &first_intent,
-                    node_signature: &first_node_signature,
-                    enclave_signature: &first_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    )),
-                },
+        assert_reverts(
+            registry.register_enclave_and_bind_after_verifier_for_test(
+                signed_first_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
                 NodeHostAssociationV1 {
-                    binding: &first_binding,
+                    binding: &first_association.binding,
                     validator_signature: &invalid_validator_signature,
-                    node_binding_signature: &first_binding_node_signature,
+                    node_binding_signature: &first_association.node_binding_signature,
                 },
-            )
-            .unwrap_err();
-        assert!(revert_message(invalid).contains("proof of possession"));
-        assert!(registry
-            .node_host_enclave_binding_v1(first_intent.node_id.reth_p2p_public)
-            .unwrap()
-            .is_none());
-        assert_eq!(
-            registry
-                .validator_v1_node_hash
-                .read(&admission_signer.address())
-                .unwrap(),
-            B256::ZERO
+            ),
+            "proof of possession",
         );
+        assert_node_registration_rolled_back(&registry, &first.initial, admission_signer.address());
 
         registry
             .register_enclave_and_bind_after_verifier_for_test(
-                VerifiedIntentV1 {
-                    intent: &second_intent,
-                    node_signature: &second_node_signature,
-                    enclave_signature: &second_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    )),
-                },
-                NodeHostAssociationV1 {
-                    binding: &second_node_own_binding,
-                    validator_signature: &second_node_own_validator_signature,
-                    node_binding_signature: &second_node_own_binding_signature,
-                },
+                signed_second_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                second_node_own_association.input(),
             )
             .unwrap();
-        let mismatched_target = registry
-            .register_enclave_and_bind_after_verifier_for_test(
-                VerifiedIntentV1 {
-                    intent: &first_intent,
-                    node_signature: &first_node_signature,
-                    enclave_signature: &first_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    )),
-                },
-                NodeHostAssociationV1 {
-                    binding: &second_binding,
-                    validator_signature: &second_validator_signature,
-                    node_binding_signature: &second_binding_node_signature,
-                },
-            )
-            .unwrap_err();
-        assert!(revert_message(mismatched_target).contains("same NodeHost"));
-        assert!(registry
-            .node_host_enclave_binding_v1(first_intent.node_id.reth_p2p_public)
-            .unwrap()
-            .is_none());
-        assert_eq!(
-            registry
-                .validator_v1_node_hash
-                .read(&admission_signer.address())
-                .unwrap(),
-            B256::ZERO
+        assert_reverts(
+            registry.register_enclave_and_bind_after_verifier_for_test(
+                signed_first_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                second_association.input(),
+            ),
+            "same NodeHost",
         );
+        assert_node_registration_rolled_back(&registry, &first.initial, admission_signer.address());
 
         registry
             .register_enclave_and_bind_after_verifier_for_test(
-                VerifiedIntentV1 {
-                    intent: &first_intent,
-                    node_signature: &first_node_signature,
-                    enclave_signature: &first_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    )),
-                },
-                NodeHostAssociationV1 {
-                    binding: &first_binding,
-                    validator_signature: &first_validator_signature,
-                    node_binding_signature: &first_binding_node_signature,
-                },
+                signed_first_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                first_association.input(),
             )
             .unwrap();
-        let conflict = registry
-            .register_enclave_and_bind_after_verifier_for_test(
-                VerifiedIntentV1 {
-                    intent: &second_intent,
-                    node_signature: &second_node_signature,
-                    enclave_signature: &second_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    )),
-                },
-                NodeHostAssociationV1 {
-                    binding: &second_binding,
-                    validator_signature: &second_validator_signature,
-                    node_binding_signature: &second_binding_node_signature,
-                },
-            )
-            .unwrap_err();
-        assert!(revert_message(conflict).contains("not associated with the existing NodeHost"));
+        assert_reverts(
+            registry.register_enclave_and_bind_after_verifier_for_test(
+                signed_second_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                second_association.input(),
+            ),
+            "not associated with the existing NodeHost",
+        );
         assert_eq!(
             registry
                 .validator_v1_node_hash
@@ -449,7 +347,7 @@ fn invalid_or_conflicting_initial_association_rolls_back_the_node_registration()
         );
         assert_ne!(first_node_hash, second_node_hash);
         assert!(registry
-            .node_host_enclave_binding_v1(second_intent.node_id.reth_p2p_public)
+            .node_host_enclave_binding_v1(second.initial.node_id.reth_p2p_public)
             .unwrap()
             .is_some());
         assert_eq!(
@@ -465,198 +363,96 @@ fn invalid_or_conflicting_initial_association_rolls_back_the_node_registration()
 #[test]
 fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
     let genesis_hash = B256::repeat_byte(0x19);
-    let active_policy = policy(
-        genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    let full_node = LifecycleFullNode::new(
+        hardening_policy(genesis_hash),
+        0x6A,
+        0x6B,
+        EnclaveBindingSeeds::new(0x49, 0x59),
     );
-    let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x6A; 32]).into()).unwrap();
     let other_node = k256::ecdsa::SigningKey::from_bytes((&[0x6C; 32]).into()).unwrap();
     let validator_signer = OutbeEvmSigner::from_secret_bytes([0x6D; 32]).unwrap();
-    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x6B; 32]);
     let other_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x6E; 32]);
-    let intent =
-        full_node_registration_intent(&active_policy, &node_signer, &enclave_signer, 0x49, 0x59);
-    let reth_p2p_public = full_node_public(&intent);
-    let (node_signature, enclave_signature) =
-        full_node_signatures(&intent, &node_signer, &enclave_signer);
-    let mut provider = storage(genesis_hash);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut registry = TeeRegistry::new(storage.clone());
-        registry.install_initial_policy_v1(&active_policy).unwrap();
+    let reth_p2p_public = full_node_public(&full_node.initial);
+    let signed_intent = full_node.signed_initial();
+    let provider = full_node.run_installed(|storage, mut registry| {
         assert!(!registry
             .is_node_host_enclave_ready_v1(reth_p2p_public)
             .unwrap());
-        assert_eq!(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &node_signature,
-                    enclave_signature: &enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::SWHardeningNeeded,
-                    ))
-                })
-                .unwrap(),
-            V1RegistrationOutcome::Created
-        );
-        assert!(registry
-            .is_node_host_enclave_ready_v1(reth_p2p_public)
-            .unwrap());
-        let binding = registry
-            .node_host_enclave_binding_v1(reth_p2p_public)
-            .unwrap()
-            .unwrap();
-        assert_eq!(binding.enclave_id, intent.enclave_id);
-        assert_eq!(binding.intent_hash, intent.intent_hash().unwrap());
-
-        assert_eq!(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &node_signature,
-                    enclave_signature: &enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::SWHardeningNeeded,
-                    ))
-                })
-                .unwrap(),
-            V1RegistrationOutcome::Idempotent
+        assert_created_then_idempotent(
+            &mut registry,
+            |registry| {
+                registry.register_enclave_after_verifier_for_test(
+                    signed_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::SWHardeningNeeded)),
+                )
+            },
+            |registry| {
+                assert!(registry
+                    .is_node_host_enclave_ready_v1(reth_p2p_public)
+                    .unwrap());
+                let binding = full_node.stored_binding(registry);
+                assert_eq!(binding.enclave_id, full_node.initial.enclave_id);
+                assert_eq!(
+                    binding.intent_hash,
+                    full_node.initial.intent_hash().unwrap()
+                );
+            },
         );
 
-        let (wrong_p2p_signature, _) = full_node_signatures(&intent, &other_node, &enclave_signer);
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &wrong_p2p_signature,
-                    enclave_signature: &enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("node proof"));
+        let (wrong_p2p_signature, _) =
+            full_node_signatures(&full_node.initial, &other_node, &full_node.enclave_signer);
+        assert_node_proof_rejected(&mut registry, &signed_intent, wrong_p2p_signature);
 
         let validator_signature = validator_signer
-            .sign_hash(&intent.intent_hash().unwrap())
+            .sign_hash(&full_node.initial.intent_hash().unwrap())
             .unwrap();
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &validator_signature,
-                    enclave_signature: &enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("node proof"));
+        assert_node_proof_rejected(&mut registry, &signed_intent, validator_signature);
 
-        let wrong_enclave_signature = other_enclave
-            .sign(intent.intent_hash().unwrap().as_slice())
-            .to_bytes();
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &node_signature,
-                    enclave_signature: &wrong_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("enclave proof"));
+        let stale = stale_initial_intent(&full_node.initial);
+        let signed_stale = full_node.sign(&stale);
+        assert_shared_initial_rejections(
+            &mut registry,
+            &signed_intent,
+            &other_enclave,
+            &signed_stale,
+            "must renew",
+        );
 
-        let mut stale = intent.clone();
-        stale.renewal_nonce = 1;
-        let (stale_node_signature, stale_enclave_signature) =
-            full_node_signatures(&stale, &node_signer, &enclave_signer);
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &stale,
-                    node_signature: &stale_node_signature,
-                    enclave_signature: &stale_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("must renew"));
+        let mut excessive_lease = full_node.initial.clone();
+        excessive_lease.requested_valid_until = NOW + full_node.policy.maximum_lease + 1;
+        let signed_excessive_lease = full_node.sign(&excessive_lease);
+        assert_reverts(
+            registry.register_enclave_after_verifier_for_test(
+                signed_excessive_lease.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+            ),
+            "must renew",
+        );
 
-        let mut wrong_measurement = verdict(DcapPlatformTcbStatusV1::UpToDate);
-        wrong_measurement.mrenclave = B256::repeat_byte(0x99);
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &node_signature,
-                    enclave_signature: &enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(wrong_measurement)
-                })
-                .unwrap_err()
-        )
-        .contains("measurement rule"));
+        let same_enclave_other_node = full_node_registration_intent(
+            &full_node.policy,
+            &other_node,
+            &full_node.enclave_signer,
+            EnclaveBindingSeeds::new(0x4B, 0x59),
+        );
+        let signed_same_enclave_other_node = SignedIntent::by_full_node(
+            &same_enclave_other_node,
+            &other_node,
+            &full_node.enclave_signer,
+        );
+        assert_enclave_bound_to_other_node(
+            &mut registry,
+            &signed_same_enclave_other_node,
+            &full_node.initial,
+        );
 
-        let mut excessive_lease = intent.clone();
-        excessive_lease.requested_valid_until = NOW + active_policy.maximum_lease + 1;
-        let (lease_node_signature, lease_enclave_signature) =
-            full_node_signatures(&excessive_lease, &node_signer, &enclave_signer);
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &excessive_lease,
-                    node_signature: &lease_node_signature,
-                    enclave_signature: &lease_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("must renew"));
-
-        let same_enclave_other_node =
-            full_node_registration_intent(&active_policy, &other_node, &enclave_signer, 0x4B, 0x59);
-        assert_eq!(same_enclave_other_node.enclave_id, intent.enclave_id);
-        let (other_node_signature, same_enclave_signature) =
-            full_node_signatures(&same_enclave_other_node, &other_node, &enclave_signer);
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &same_enclave_other_node,
-                    node_signature: &other_node_signature,
-                    enclave_signature: &same_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("already bound to another node"));
-
-        let conflict = registry
-            .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                intent: &intent,
-                node_signature: &node_signature,
-                enclave_signature: &enclave_signature,
-                capability: PostVerifierDcapCapabilityV1::with_evidence_hash(
-                    verdict(DcapPlatformTcbStatusV1::UpToDate),
-                    B256::repeat_byte(0xED),
-                ),
-            })
-            .unwrap_err();
-        assert!(revert_message(conflict).contains("not an exact evidence replay"));
+        assert_reverts(
+            registry.register_enclave_after_verifier_for_test(
+                signed_intent.with_conflicting_evidence(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+            ),
+            "not an exact evidence replay",
+        );
 
         storage
-            .set_block_timestamp(U256::from(intent.requested_valid_until))
+            .set_block_timestamp(U256::from(full_node.initial.requested_valid_until))
             .unwrap();
         assert!(!registry
             .is_node_host_enclave_ready_v1(reth_p2p_public)
@@ -673,116 +469,41 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
 
 #[test]
 fn role_neutral_registration_rejects_node_enclave_nonce_and_measurement_errors() {
-    let genesis_hash = B256::repeat_byte(0x12);
-    let active_policy = policy(
-        genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    let validator = LifecycleValidator::new(
+        hardening_policy(B256::repeat_byte(0x12)),
+        0x63,
+        0x65,
+        EnclaveBindingSeeds::new(0x42, 0x52),
     );
-    let node_signer = OutbeEvmSigner::from_secret_bytes([0x63; 32]).unwrap();
     let other_node = OutbeEvmSigner::from_secret_bytes([0x64; 32]).unwrap();
-    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x65; 32]);
     let other_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x66; 32]);
-    let intent = registration_intent(
-        &active_policy,
-        &node_signer,
-        CONSENSUS_KEY,
-        &enclave_signer,
-        0x42,
-        0x52,
-    );
-    let (node_signature, enclave_signature) = signatures(&intent, &node_signer, &enclave_signer);
-    let mut provider = storage(genesis_hash);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
-        let mut registry = TeeRegistry::new(storage);
-        registry.install_initial_policy_v1(&active_policy).unwrap();
-
+    let signed_intent = validator.signed_initial();
+    validator.run_as_validator(|_storage, mut registry| {
         let wrong_node_signature = other_node
-            .sign_hash(&intent.intent_hash().unwrap())
+            .sign_hash(&validator.initial.intent_hash().unwrap())
             .unwrap();
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &wrong_node_signature,
-                    enclave_signature: &enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("node proof"));
+        assert_node_proof_rejected(&mut registry, &signed_intent, wrong_node_signature);
 
         let full_node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x6E; 32]).into()).unwrap();
-        let (full_node_signature, _) =
-            full_node_signatures(&intent, &full_node_signer, &enclave_signer);
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &full_node_signature,
-                    enclave_signature: &enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("node proof"));
+        let (full_node_signature, _) = full_node_signatures(
+            &validator.initial,
+            &full_node_signer,
+            &validator.enclave_signer,
+        );
+        assert_node_proof_rejected(&mut registry, &signed_intent, full_node_signature);
 
-        let wrong_enclave_signature = other_enclave
-            .sign(intent.intent_hash().unwrap().as_slice())
-            .to_bytes();
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &node_signature,
-                    enclave_signature: &wrong_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("enclave proof"));
-
-        let mut stale = intent.clone();
-        stale.renewal_nonce = 1;
-        let (stale_node_signature, stale_enclave_signature) =
-            signatures(&stale, &node_signer, &enclave_signer);
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &stale,
-                    node_signature: &stale_node_signature,
-                    enclave_signature: &stale_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("versions and nonces"));
-
-        let mut wrong_measurement = verdict(DcapPlatformTcbStatusV1::UpToDate);
-        wrong_measurement.mrenclave = B256::repeat_byte(0x99);
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &intent,
-                    node_signature: &node_signature,
-                    enclave_signature: &enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(wrong_measurement)
-                })
-                .unwrap_err()
-        )
-        .contains("measurement rule"));
+        let stale = stale_initial_intent(&validator.initial);
+        let signed_stale = validator.sign(&stale);
+        assert_shared_initial_rejections(
+            &mut registry,
+            &signed_intent,
+            &other_enclave,
+            &signed_stale,
+            "versions and nonces",
+        );
 
         assert!(registry
-            .validator_enclave_binding_v1(node_signer.address())
+            .validator_enclave_binding_v1(validator.node_signer.address())
             .unwrap()
             .is_none());
     });
@@ -791,129 +512,84 @@ fn role_neutral_registration_rejects_node_enclave_nonce_and_measurement_errors()
 #[test]
 fn one_to_one_binding_and_strict_platform_policy_reject_conflicts() {
     let genesis_hash = B256::repeat_byte(0x13);
-    let broad_policy = policy(
-        genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    let first_validator = LifecycleValidator::new(
+        hardening_policy(genesis_hash),
+        0x67,
+        0x69,
+        EnclaveBindingSeeds::new(0x44, 0x54),
     );
-    let first_node = OutbeEvmSigner::from_secret_bytes([0x67; 32]).unwrap();
     let second_node = OutbeEvmSigner::from_secret_bytes([0x68; 32]).unwrap();
-    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x69; 32]);
     let replacement_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x6a; 32]);
-    let first = registration_intent(
-        &broad_policy,
-        &first_node,
-        CONSENSUS_KEY,
-        &enclave_signer,
-        0x44,
-        0x54,
-    );
-    let (first_node_signature, first_enclave_signature) =
-        signatures(&first, &first_node, &enclave_signer);
-    let mut provider = storage(genesis_hash);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        register_validator(storage.clone(), &first_node, CONSENSUS_KEY);
-        register_validator(storage.clone(), &second_node, [0x34; 48]);
-        let mut registry = TeeRegistry::new(storage);
-        registry.install_initial_policy_v1(&broad_policy).unwrap();
-        registry
-            .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                intent: &first,
-                node_signature: &first_node_signature,
-                enclave_signature: &first_enclave_signature,
-                capability: PostVerifierDcapCapabilityV1::new(verdict(
-                    DcapPlatformTcbStatusV1::UpToDate,
-                )),
-            })
-            .unwrap();
-
-        let second_enclave = registration_intent(
-            &broad_policy,
-            &first_node,
-            CONSENSUS_KEY,
-            &replacement_enclave,
-            0x45,
-            0x55,
-        );
-        let (second_enclave_node_sig, second_enclave_sig) =
-            signatures(&second_enclave, &first_node, &replacement_enclave);
-        assert!(revert_message(
+    let signed_first = first_validator.signed_initial();
+    first_validator.run_with_second_validator(
+        &second_node,
+        [0x34; 48],
+        |_storage, mut registry| {
             registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &second_enclave,
-                    node_signature: &second_enclave_node_sig,
-                    enclave_signature: &second_enclave_sig,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("must renew"));
+                .register_enclave_after_verifier_for_test(
+                    signed_first.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                )
+                .unwrap();
 
-        let mut same_enclave_other_node = registration_intent(
-            &broad_policy,
-            &second_node,
-            [0x34; 48],
-            &enclave_signer,
-            0x46,
-            0x54,
-        );
-        same_enclave_other_node.recipient_x25519 = first.recipient_x25519;
-        same_enclave_other_node.noise_responder_x25519 = first.noise_responder_x25519;
-        same_enclave_other_node.node_host_authorization_hash = first.node_host_authorization_hash;
-        same_enclave_other_node.enclave_id = same_enclave_other_node.derived_enclave_id().unwrap();
-        assert_eq!(same_enclave_other_node.enclave_id, first.enclave_id);
-        let (second_node_signature, same_enclave_signature) =
-            signatures(&same_enclave_other_node, &second_node, &enclave_signer);
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &same_enclave_other_node,
-                    node_signature: &second_node_signature,
-                    enclave_signature: &same_enclave_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("already bound to another node"));
-    });
+            let second_enclave = registration_intent(
+                &first_validator.policy,
+                &first_validator.node_signer,
+                &replacement_enclave,
+                EnclaveBindingSeeds::new(0x45, 0x55),
+            );
+            let signed_second_enclave =
+                first_validator.sign_with_enclave(&second_enclave, &replacement_enclave);
+            assert_reverts(
+                registry.register_enclave_after_verifier_for_test(
+                    signed_second_enclave.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                ),
+                "must renew",
+            );
 
-    let strict_policy = policy(genesis_hash, PlatformTcbStatusSetV1::UpToDateOnly);
-    let strict_node = OutbeEvmSigner::from_secret_bytes([0x6b; 32]).unwrap();
-    let strict_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x6c; 32]);
-    let strict_intent = registration_intent(
-        &strict_policy,
-        &strict_node,
-        CONSENSUS_KEY,
-        &strict_enclave,
-        0x47,
-        0x57,
+            let mut same_enclave_other_node = registration_intent(
+                &first_validator.policy,
+                &second_node,
+                &first_validator.enclave_signer,
+                EnclaveBindingSeeds::new(0x46, 0x54),
+            );
+            same_enclave_other_node.recipient_x25519 = first_validator.initial.recipient_x25519;
+            same_enclave_other_node.noise_responder_x25519 =
+                first_validator.initial.noise_responder_x25519;
+            same_enclave_other_node.node_host_authorization_hash =
+                first_validator.initial.node_host_authorization_hash;
+            same_enclave_other_node.enclave_id =
+                same_enclave_other_node.derived_enclave_id().unwrap();
+            let signed_same_enclave_other_node = SignedIntent::by_validator(
+                &same_enclave_other_node,
+                &second_node,
+                &first_validator.enclave_signer,
+            );
+            assert_enclave_bound_to_other_node(
+                &mut registry,
+                &signed_same_enclave_other_node,
+                &first_validator.initial,
+            );
+        },
     );
-    let (strict_node_signature, strict_enclave_signature) =
-        signatures(&strict_intent, &strict_node, &strict_enclave);
-    let mut strict_provider = storage(genesis_hash);
-    StorageHandle::enter(&mut strict_provider, |storage| {
-        register_validator(storage.clone(), &strict_node, CONSENSUS_KEY);
-        let mut registry = TeeRegistry::new(storage);
-        registry.install_initial_policy_v1(&strict_policy).unwrap();
+
+    let strict_validator = LifecycleValidator::new(
+        policy(genesis_hash, PlatformTcbStatusSetV1::UpToDateOnly),
+        0x6b,
+        0x6c,
+        EnclaveBindingSeeds::new(0x47, 0x57),
+    );
+    let signed_strict_intent = strict_validator.signed_initial();
+    strict_validator.run_as_validator(|_storage, mut registry| {
         for status in [
             DcapPlatformTcbStatusV1::SWHardeningNeeded,
             DcapPlatformTcbStatusV1::ConfigurationAndSWHardeningNeeded,
         ] {
-            assert!(revert_message(
-                registry
-                    .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                        intent: &strict_intent,
-                        node_signature: &strict_node_signature,
-                        enclave_signature: &strict_enclave_signature,
-                        capability: PostVerifierDcapCapabilityV1::new(verdict(status))
-                    })
-                    .unwrap_err()
-            )
-            .contains("stricter than active policy"));
+            assert_reverts(
+                registry.register_enclave_after_verifier_for_test(
+                    signed_strict_intent.with_verdict(verdict(status)),
+                ),
+                "stricter than active policy",
+            );
         }
     });
 }

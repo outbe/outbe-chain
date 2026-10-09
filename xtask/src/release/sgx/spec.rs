@@ -64,10 +64,7 @@ impl SgxReleaseNetwork {
 
     #[must_use]
     pub const fn authorization_scope(self) -> &'static str {
-        match self {
-            Self::Testnet => "testnet",
-            Self::Mainnet => "mainnet",
-        }
+        self.dcap_artifact_set().label()
     }
 
     #[must_use]
@@ -80,10 +77,7 @@ impl SgxReleaseNetwork {
 
     #[must_use]
     pub const fn bundle_manifest_path(self) -> &'static str {
-        match self {
-            Self::Testnet => "metadata/testnet-sgx-bundle.json",
-            Self::Mainnet => "metadata/mainnet-sgx-bundle.json",
-        }
+        self.dcap_artifact_set().bundle_manifest_path()
     }
 
     #[must_use]

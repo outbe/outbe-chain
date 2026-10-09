@@ -125,9 +125,11 @@ pub(super) fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
         ctx.storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        U256::from(2_000_000u64),
-        ctx.block.block_number,
-        ctx.block.timestamp,
+        outbe_oracle::api::RateObservation {
+            rate: U256::from(2_000_000u64),
+            block_number: ctx.block.block_number,
+            timestamp: ctx.block.timestamp,
+        },
     )
     .unwrap();
     let oracle = ctx
@@ -270,4 +272,174 @@ pub(super) fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle
     )
     .unwrap();
     outbe_ccaregistry::api::position_opened(storage, cca, 20240101, U256::ONE).unwrap();
+}
+
+/// Runs the first dispatcher block (block 1 at `timestamp`) after the genesis
+/// anchor. Every trigger anchors at `timestamp` without firing.
+pub(super) fn anchor_at(handle: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'_> {
+    anchor_with(handle, timestamp, |_| {})
+}
+
+/// [`anchor_at`] with `seed` run on the anchor block after the genesis anchor
+/// and before the dispatcher.
+pub(super) fn anchor_with<'s>(
+    handle: StorageHandle<'s>,
+    timestamp: u64,
+    seed: impl FnOnce(&BlockRuntimeContext<'s>),
+) -> BlockRuntimeContext<'s> {
+    let ctx = genesis_block(handle, timestamp);
+    seed(&ctx);
+    dispatch_triggers(&ctx).unwrap();
+    ctx
+}
+
+/// Runs the dispatcher at `block_number` and `timestamp` after Phase 1 has
+/// accounted the parent block.
+pub(super) fn dispatch_at(
+    handle: StorageHandle<'_>,
+    block_number: u64,
+    timestamp: u64,
+) -> BlockRuntimeContext<'_> {
+    let ctx = BlockRuntimeContext::new(block_ctx(block_number, timestamp), handle);
+    account_parent(&ctx, block_number);
+    dispatch_triggers(&ctx).unwrap();
+    ctx
+}
+
+/// Day-0 emission allocation of `sink`.
+pub(super) fn day_zero_allocation(sink: outbe_emissionlimit::allocation::EmissionSinkId) -> U256 {
+    outbe_emissionlimit::allocation::allocate_emission(
+        outbe_emissionlimit::day_emission::day_emission_limit(0),
+    )
+    .unwrap()
+    .iter()
+    .find(|allocation| allocation.id == sink)
+    .unwrap()
+    .amount
+}
+
+/// Checked sum of the day-0 emission allocations of `sinks`.
+pub(super) fn day_zero_allocation_sum(
+    sinks: &[outbe_emissionlimit::allocation::EmissionSinkId],
+) -> U256 {
+    sinks
+        .iter()
+        .try_fold(U256::ZERO, |sum, sink| {
+            sum.checked_add(day_zero_allocation(*sink))
+        })
+        .unwrap()
+}
+
+/// A capacity scenario before the victim's process time.
+pub(super) struct CapacityScenario {
+    pub(super) storage: HashMapStorageProvider,
+    /// The victim WorldwideDay after its offering window closed.
+    pub(super) victim: outbe_metadosis::WwdProjection,
+    /// Next free block number.
+    pub(super) next_block: u64,
+}
+
+/// Seeds `retained` ready and sealed WorldwideDays, forms `victim` with
+/// `day_limit`, and advances it past its forming, lookback and offering ends.
+pub(super) fn capacity_scenario(
+    retained: &[outbe_primitives::time::WorldwideDay],
+    victim: outbe_primitives::time::WorldwideDay,
+    day_limit: U256,
+) -> CapacityScenario {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        outbe_tribute::TributeContract::new(handle)
+            .initialize_fresh_ocomp_profile()
+            .unwrap();
+    });
+    storage.enter(|handle| {
+        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
+            handle.clone(),
+            retained,
+        )
+        .unwrap();
+        let mut tribute = outbe_tribute::TributeContract::new(handle);
+        for day in retained {
+            tribute.seal_day(*day).unwrap();
+        }
+    });
+
+    let mut next_block = 2_u64;
+    storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
+    let projection =
+        storage.enter(|handle| form_worldwide_day(handle, next_block, victim, day_limit));
+    next_block += 1;
+    for boundary in [
+        projection.forming_end,
+        projection.lookback_end,
+        projection.offering_end,
+    ] {
+        advance_metadosis_only(&mut storage, next_block, boundary).unwrap();
+        next_block += 1;
+    }
+    CapacityScenario {
+        storage,
+        victim: projection,
+        next_block,
+    }
+}
+
+/// Forms `wwd` with `day_limit` in block `block_number`, two hours after the
+/// day starts. Returns the projection of the formed day.
+pub(super) fn form_worldwide_day(
+    handle: StorageHandle<'_>,
+    block_number: u64,
+    wwd: outbe_primitives::time::WorldwideDay,
+    day_limit: U256,
+) -> outbe_metadosis::WwdProjection {
+    let ctx = BlockRuntimeContext::new(
+        block_ctx(block_number, wwd.start_timestamp() + 2 * 3_600),
+        handle.clone(),
+    );
+    outbe_metadosis::commands::apply_cycle_day_limit(&ctx, day_limit).unwrap();
+    outbe_metadosis::api::worldwide_day(handle, wwd)
+        .unwrap()
+        .unwrap()
+}
+
+/// Block time of the dispatcher anchor in [`with_anchored_cycle`].
+pub(super) const ANCHOR_TS: u64 = GENESIS_TS + 60;
+
+/// Runs `f` on fresh Cycle storage after the dispatcher anchored at
+/// [`ANCHOR_TS`].
+pub(super) fn with_anchored_cycle(f: impl FnOnce(StorageHandle<'_>)) {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        anchor_at(handle.clone(), ANCHOR_TS);
+        f(handle);
+    });
+}
+
+/// `last_executed_at` of the ProtocolCycle trigger.
+pub(super) fn last_executed_at(ctx: &BlockRuntimeContext<'_>) -> u64 {
+    ctx.storage
+        .contract::<Cycle<'_>>()
+        .last_executed_at
+        .read(&EMISSION_LIMIT_1_ID)
+        .unwrap()
+}
+
+/// Block 1 at `timestamp` after the Rewards genesis anchor.
+pub(super) fn genesis_block(handle: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'_> {
+    let ctx = BlockRuntimeContext::new(block_ctx(1, timestamp), handle);
+    anchor_genesis(&ctx);
+    ctx
+}
+
+/// Runs `run` on `storage` and asserts that it writes no storage slot and
+/// emits no event.
+pub(super) fn assert_storage_unchanged(
+    storage: &mut HashMapStorageProvider,
+    run: impl FnOnce(StorageHandle<'_>),
+) {
+    let storage_before = storage.storage.clone();
+    let events_before = storage.events.clone();
+    storage.enter(run);
+    assert_eq!(storage.storage, storage_before);
+    assert_eq!(storage.events, events_before);
 }

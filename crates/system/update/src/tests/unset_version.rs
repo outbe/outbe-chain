@@ -8,7 +8,7 @@ use crate::payload::encode_schedule_update_json;
 use crate::schema::Update;
 use crate::ProtocolVersion;
 
-use super::{with_update, V1_2};
+use super::{with_active_version, with_update, V1_2};
 
 #[test]
 fn get_active_version_returns_zero_on_fresh_chain() {
@@ -65,9 +65,7 @@ fn schedule_update_rejects_zero_version() {
 
 #[test]
 fn set_active_version_makes_helpers_return_version() {
-    with_update(|storage| {
-        let mut update = Update::new(storage.clone());
-        update.set_active_version(V1_2, 500).unwrap();
+    with_active_version(V1_2, 500, |storage, _update| {
         assert_eq!(get_active_version(storage.clone()).unwrap(), V1_2);
         assert_eq!(resolve_active_version(storage.clone()).unwrap(), V1_2);
         assert_eq!(version_at_height(storage.clone(), 500).unwrap(), V1_2);

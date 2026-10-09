@@ -29,6 +29,7 @@ tempfile = { workspace = true, optional = true }
 x25519-dalek = { workspace = true, optional = true }
 
 [dev-dependencies]
+outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 postcard.workspace = true
 tempfile.workspace = true
 x25519-dalek.workspace = true

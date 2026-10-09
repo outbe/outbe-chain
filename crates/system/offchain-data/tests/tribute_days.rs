@@ -1,143 +1,27 @@
-use std::sync::Arc;
+#[path = "../../../../testing/fixtures/nod_day_item.rs"]
+mod nod_day_item;
+#[path = "../../../../testing/fixtures/tribute_day_projection.rs"]
+mod tribute_day_projection;
+use nod_day_item::nod_day_item;
+use tribute_day_projection::tribute_body::tribute_commitment as commitment;
+use tribute_day_projection::{projection, stored_log, tribute, Store};
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
-    body_commitment, derive_poseidon_entity_id, encode_tribute_v1, ACTIVE_COMMITMENT_SCHEME,
-    BODY_SCHEMA_V1,
-};
-use outbe_nod::NodItemState;
 use outbe_offchain_data::{
-    DayDatabaseRoute, FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection,
-    ProjectionConfig, ProjectionError, TributeRetentionSelector, PROJECTION_STATE_KEY,
-    PROJECTION_STATE_NAMESPACE,
+    DayDatabaseRoute, FinalizedBlock, FinalizedLog, FinalizedReceipt, ProjectionConfig,
+    ProjectionError, PROJECTION_STATE_KEY, PROJECTION_STATE_NAMESPACE,
 };
-use outbe_offchain_storage::{
-    DayDatabases, Key, Namespace, RocksDbStorage, ScanRequest, StorageReader, StorageWriter,
-};
+use outbe_offchain_storage::{Key, Namespace, ScanRequest, StorageReader, StorageWriter};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{
-    canonical_body, precompile::ITribute, read_tribute_day_mark, write_tribute_day_mark,
-    RetainedTributePin, RetainedTributeReader, RetainedTributeWriter, TributeData, TributeDayMark,
-    TributeRepositoryReader,
+    precompile::ITribute, read_tribute_day_mark, write_tribute_day_mark, RetainedTributePin,
+    RetainedTributeReader, RetainedTributeWriter, TributeDayMark, TributeRepositoryReader,
 };
 
-struct Store {
-    _dir: tempfile::TempDir,
-    databases: Arc<DayDatabases>,
-    shared: Arc<RocksDbStorage>,
-}
-
-fn open() -> Store {
-    let dir = tempfile::tempdir().unwrap();
-    let databases = Arc::new(DayDatabases::open(dir.path()).unwrap());
-    let shared = Arc::new(databases.directory().open_shared().unwrap());
-    Store {
-        _dir: dir,
-        databases,
-        shared,
-    }
-}
-
-fn projection(store: &Store, start: u64) -> OffchainDataProjection {
-    let mut projection = outbe_offchain_data::open_projection(
-        ProjectionConfig {
-            chain_id: 91,
-            genesis_hash: B256::repeat_byte(0x91),
-            start_block: start,
-        },
-        store.shared.clone(),
-        store.shared.clone(),
-    )
-    .unwrap();
-    projection
-        .set_day_route(DayDatabaseRoute {
-            databases: store.databases.clone(),
-            durable_reader: store.shared.clone(),
-            durable_writer: store.shared.clone(),
-        })
-        .unwrap();
-    projection
-}
-
-fn projection_with_pin(store: &Store, pin: RetainedTributePin) -> OffchainDataProjection {
-    let mut projection = outbe_offchain_data::open_projection_with_retention_selector(
-        ProjectionConfig {
-            chain_id: 91,
-            genesis_hash: B256::repeat_byte(0x91),
-            start_block: 5,
-        },
-        store.shared.clone(),
-        store.shared.clone(),
-        Arc::new(FixedPin(pin)),
-    )
-    .unwrap();
-    projection
-        .set_day_route(DayDatabaseRoute {
-            databases: store.databases.clone(),
-            durable_reader: store.shared.clone(),
-            durable_writer: store.shared.clone(),
-        })
-        .unwrap();
-    projection
-}
-
-struct FixedPin(RetainedTributePin);
-
-impl TributeRetentionSelector for FixedPin {
-    fn active_pin_for(
-        &self,
-        worldwide_day: WorldwideDay,
-    ) -> Result<Option<RetainedTributePin>, String> {
-        Ok((self.0.worldwide_day == worldwide_day).then_some(self.0))
-    }
-}
-
-fn tribute(owner: Address, day: u32) -> TributeData {
-    let tribute_id = derive_poseidon_entity_id(owner, WorldwideDay::new(day)).unwrap();
-    TributeData {
-        tribute_id,
-        owner,
-        worldwide_day: WorldwideDay::new(day),
-        issuance_amount_minor: U256::from(10),
-        issuance_currency: 840,
-        nominal_amount_minor: U256::from(11),
-        reference_currency: 978,
-        tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: true,
-    }
-}
-
-fn commitment(body: &TributeData) -> B256 {
-    let payload = encode_tribute_v1(&canonical_body(body)).unwrap();
-    B256::from(
-        *body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
-            body.tribute_id,
-            &payload,
-        )
-        .unwrap()
-        .as_bytes(),
-    )
-}
-
-fn stored_log(body: &TributeData) -> FinalizedLog {
-    let payload = encode_tribute_v1(&canonical_body(body)).unwrap();
-    FinalizedLog {
-        log_index: 0,
-        emitter: TRIBUTE_ADDRESS,
-        data: ITribute::TributeBodyStored {
-            tributeId: body.tribute_id.to_u256(),
-            commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
-            schemaVersion: BODY_SCHEMA_V1,
-            previousCommitment: B256::ZERO,
-            newCommitment: commitment(body),
-            canonicalPayload: Bytes::from(payload),
-        }
-        .encode_log_data(),
-    }
+fn open() -> Store<tempfile::TempDir> {
+    tribute_day_projection::open(tempfile::tempdir().unwrap())
 }
 
 fn retired_log(day: u32, index: u64) -> FinalizedLog {
@@ -161,30 +45,10 @@ fn block(number: u64, logs: Vec<FinalizedLog>) -> FinalizedBlock {
     }
 }
 
-fn nod(owner: Address, day: u32) -> NodItemState {
-    let worldwide_day = WorldwideDay::new(day);
-    let entry = U256::from(13u64);
-    outbe_nod::test_support::item(
-        outbe_nod::test_support::NodItemFixture {
-            is_settled: false,
-            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day).unwrap(),
-            owner,
-            gratis_load_minor: U256::from(11u64),
-            worldwide_day,
-            league_id: 4,
-            bucket_key: outbe_nod::identity::bucket_key(worldwide_day, entry, 840),
-            issuance_currency: 840,
-            reference_currency: 840,
-            issued_at: 1_752_534_000,
-        },
-        U256::from(5),
-    )
-}
-
 #[test]
 fn retirement_drops_tribute_day_and_keeps_nod_day() {
     let store = open();
-    let mut projection = projection(&store, 5);
+    let mut projection = projection(&store, 5, None);
     let owner = Address::repeat_byte(0x11);
     let body = tribute(owner, 7);
     projection
@@ -192,7 +56,7 @@ fn retirement_drops_tribute_day_and_keeps_nod_day() {
         .unwrap();
     outbe_nod::nod_writer(store.shared.clone(), store.shared.clone())
         .with_days(store.databases.clone())
-        .put_nod(&nod(owner, 7))
+        .put_nod(&nod_day_item(owner, 7, U256::from(5)))
         .unwrap();
 
     projection
@@ -220,7 +84,7 @@ fn replay_after_day_commit_rewrites_the_same_day() {
     let store = open();
     let owner = Address::repeat_byte(0x12);
     let body = tribute(owner, 7);
-    let mut first = projection(&store, 5);
+    let mut first = projection(&store, 5, None);
     first
         .project_block(&block(5, vec![stored_log(&body)]))
         .unwrap();
@@ -231,7 +95,7 @@ fn replay_after_day_commit_rewrites_the_same_day() {
     )
     .unwrap();
 
-    let mut replay = projection(&store, 5);
+    let mut replay = projection(&store, 5, None);
     replay
         .project_block(&block(5, vec![stored_log(&body)]))
         .unwrap();
@@ -248,7 +112,7 @@ fn replay_after_day_commit_rewrites_the_same_day() {
 #[test]
 fn replay_after_drop_reaches_checkpoint() {
     let store = open();
-    let mut projection = projection(&store, 5);
+    let mut projection = projection(&store, 5, None);
     let body = tribute(Address::repeat_byte(0x13), 7);
     projection
         .project_block(&block(5, vec![stored_log(&body)]))
@@ -272,7 +136,7 @@ fn replay_after_drop_reaches_checkpoint() {
 #[test]
 fn open_sweeps_drop_pending_directory() {
     let store = open();
-    let mut projection = projection(&store, 5);
+    let mut projection = projection(&store, 5, None);
     let body = tribute(Address::repeat_byte(0x14), 7);
     projection
         .project_block(&block(5, vec![stored_log(&body)]))
@@ -309,7 +173,7 @@ fn open_sweeps_drop_pending_directory() {
 #[test]
 fn unmarked_directory_stays() {
     let store = open();
-    let mut projection = projection(&store, 5);
+    let mut projection = projection(&store, 5, None);
     let body = tribute(Address::repeat_byte(0x15), 7);
     projection
         .project_block(&block(5, vec![stored_log(&body)]))
@@ -330,7 +194,7 @@ fn pinned_day_stays_until_lease_release() {
         input_lease_id: B256::repeat_byte(0x51),
         worldwide_day: day,
     };
-    let mut projection = projection_with_pin(&store, pin);
+    let mut projection = projection(&store, 5, Some(pin));
     let body = tribute(Address::repeat_byte(0x16), 7);
     projection
         .project_block(&block(5, vec![stored_log(&body)]))
@@ -374,7 +238,7 @@ fn pinned_day_stays_until_lease_release() {
 #[test]
 fn store_after_retirement_in_the_same_block_does_not_checkpoint() {
     let store = open();
-    let mut projection = projection(&store, 5);
+    let mut projection = projection(&store, 5, None);
     let first = tribute(Address::repeat_byte(0x17), 7);
     projection
         .project_block(&block(5, vec![stored_log(&first)]))
@@ -397,7 +261,7 @@ fn store_after_retirement_in_the_same_block_does_not_checkpoint() {
 #[test]
 fn certified_event_alone_does_not_drop() {
     let store = open();
-    let mut projection = projection(&store, 5);
+    let mut projection = projection(&store, 5, None);
     let body = tribute(Address::repeat_byte(0x19), 7);
     projection
         .project_block(&block(5, vec![stored_log(&body)]))

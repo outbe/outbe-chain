@@ -12,7 +12,10 @@ use outbe_ocomp::{
     sign_once::{SignOnceError, SignOnceStore, SignOnceSubjectV1},
     vote_submitter::{VoteBlockV1, VoteReceiptV1, VoteSubmissionRpcV1},
 };
-use outbe_ocomp_protocol::committee::verify_low_s_prehash;
+use outbe_ocomp_protocol::{
+    committee::verify_low_s_prehash,
+    vote::{ResultVotePrefixV1, VoteSigningDomain},
+};
 use outbe_primitives::{projection::ProjectionCheckpoint, signer::OutbeEvmSigner};
 use std::{
     collections::BTreeMap,
@@ -455,17 +458,21 @@ fn copied_public_files_preserve_own_real_signatures_and_equivocation_guard_throu
     // A typed resident signing subject, not a claim of an authenticated
     // canonical Completed job or an on-chain result vote.
     let subject = SignOnceSubjectV1 {
-        chain_id: copied_native::chain().chain().id(),
-        genesis_hash: copied_native::chain().genesis_hash(),
-        fork_id: image.fixture.bundle.bundle().fork_id,
-        job_id: image.fixture.job_id,
-        attempt: 0,
-        protocol_bundle_hash: image.fixture.bundle.hash(),
-        result_validator_set_epoch: 1,
-        result_committee_set_hash: hash(0x81),
-        result_ocomp_binding_hash: hash(0x82),
-        ocomp_key_hash: keccak256(signer.public_key_sec1()),
-        key_epoch: signer.key_epoch(),
+        domain: VoteSigningDomain {
+            chain_id: copied_native::chain().chain().id(),
+            genesis_hash: copied_native::chain().genesis_hash(),
+            fork_id: image.fixture.bundle.bundle().fork_id,
+        },
+        prefix: ResultVotePrefixV1 {
+            job_id: image.fixture.job_id,
+            attempt: 0,
+            protocol_bundle_hash: image.fixture.bundle.hash(),
+            result_validator_set_epoch: 1,
+            result_committee_set_hash: hash(0x81),
+            result_ocomp_binding_hash: hash(0x82),
+            ocomp_key_hash: keccak256(signer.public_key_sec1()),
+            key_epoch: signer.key_epoch(),
+        },
         result_digest: keccak256(built.batch.encode_canonical(&poc_schema_limits()).unwrap()),
     };
     let sign_root = public.join("supervisor-v1/sign-once");

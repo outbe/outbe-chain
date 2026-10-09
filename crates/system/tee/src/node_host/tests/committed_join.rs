@@ -22,19 +22,33 @@ fn finalized_join_anchor(fixture: &ReplacementFixture) -> FinalizedJoinAdmission
     }
 }
 
+/// Promote the DirectDev candidate, then persist its committed-join
+/// submission from the registration caller 0x42.
+fn promote_and_persist_join_submission(
+    fixture: &ReplacementFixture,
+    evidence: &AttestationEvidenceV1,
+    node_signature: &[u8; 65],
+    enclave_signature: &[u8; 64],
+) -> CommittedJoinSubmissionV1 {
+    promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
+    persist_committed_join_submission(
+        &fixture.node_data_dir,
+        Address::repeat_byte(0x42),
+        evidence,
+        node_signature,
+        enclave_signature,
+    )
+    .unwrap()
+}
+
 #[test]
 fn committed_join_submission_round_trips_exact_registration_material() {
-    let fixture = replacement_fixture_for_mode(
-        AttestationOperationV1::RegisterEnclave,
-        AttestationMode::GramineDirectDev,
-    );
-    let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
-        .unwrap()
-        .unwrap();
-    let evidence =
-        AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
-    let node_signature = *candidate_submission.node_signature();
-    let enclave_signature = *candidate_submission.enclave_signature();
+    let DirectDevRegistration {
+        fixture,
+        evidence,
+        node_signature,
+        enclave_signature,
+    } = direct_dev_registration();
     let registration_caller = Address::repeat_byte(0x42);
     promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
 
@@ -46,6 +60,24 @@ fn committed_join_submission_round_trips_exact_registration_material() {
         &enclave_signature,
     )
     .unwrap();
+    let mut expected_bytes = vec![1];
+    expected_bytes.extend_from_slice(registration_caller.as_slice());
+    expected_bytes.extend_from_slice(
+        &u32::try_from(durable.evidence().len())
+            .unwrap()
+            .to_be_bytes(),
+    );
+    expected_bytes.extend_from_slice(durable.evidence());
+    expected_bytes.extend_from_slice(durable.node_signature());
+    expected_bytes.extend_from_slice(durable.enclave_signature());
+    assert_eq!(
+        std::fs::read(&fixture.paths.committed_join_submission).unwrap(),
+        expected_bytes
+    );
+    assert_eq!(
+        durable.submission_hash().unwrap(),
+        keccak256(&expected_bytes)
+    );
     assert_eq!(durable.registration_caller(), registration_caller);
     assert_eq!(
         load_committed_join_submission(&fixture.node_data_dir)
@@ -78,26 +110,13 @@ fn committed_join_submission_round_trips_exact_registration_material() {
 
 #[test]
 fn committed_join_relay_round_trips_exact_raw_transaction_and_scan_origin() {
-    let fixture = replacement_fixture_for_mode(
-        AttestationOperationV1::RegisterEnclave,
-        AttestationMode::GramineDirectDev,
-    );
-    let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
-        .unwrap()
-        .unwrap();
-    let evidence =
-        AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
-    let node_signature = *candidate_submission.node_signature();
-    let enclave_signature = *candidate_submission.enclave_signature();
-    promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
-    persist_committed_join_submission(
-        &fixture.node_data_dir,
-        Address::repeat_byte(0x42),
-        &evidence,
-        &node_signature,
-        &enclave_signature,
-    )
-    .unwrap();
+    let DirectDevRegistration {
+        fixture,
+        evidence,
+        node_signature,
+        enclave_signature,
+    } = direct_dev_registration();
+    promote_and_persist_join_submission(&fixture, &evidence, &node_signature, &enclave_signature);
 
     let raw_transaction = [0x91, 0x92, 0x93];
     let relay = persist_committed_join_relay(
@@ -107,6 +126,18 @@ fn committed_join_relay_round_trips_exact_raw_transaction_and_scan_origin() {
         &raw_transaction,
     )
     .unwrap();
+    let submission_bytes = std::fs::read(&fixture.paths.committed_join_submission).unwrap();
+    let mut expected_bytes = vec![1];
+    expected_bytes.extend_from_slice(keccak256(submission_bytes).as_slice());
+    expected_bytes.extend_from_slice(B256::repeat_byte(0x90).as_slice());
+    expected_bytes.extend_from_slice(keccak256(raw_transaction).as_slice());
+    expected_bytes.extend_from_slice(&77_u64.to_be_bytes());
+    expected_bytes.extend_from_slice(&u32::try_from(raw_transaction.len()).unwrap().to_be_bytes());
+    expected_bytes.extend_from_slice(&raw_transaction);
+    assert_eq!(
+        std::fs::read(&fixture.paths.committed_join_relay).unwrap(),
+        expected_bytes
+    );
     assert_eq!(relay.transaction_hash(), keccak256(raw_transaction));
     assert_eq!(relay.from_block(), 77);
     assert_eq!(relay.raw_transaction(), raw_transaction);
@@ -155,34 +186,24 @@ fn committed_join_relay_round_trips_exact_raw_transaction_and_scan_origin() {
 
 #[test]
 fn committed_join_restart_recovers_only_fsynced_next_checkpoints() {
-    let fixture = replacement_fixture_for_mode(
-        AttestationOperationV1::RegisterEnclave,
-        AttestationMode::GramineDirectDev,
-    );
-    let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
-        .unwrap()
-        .unwrap();
-    let evidence =
-        AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
-    let node_signature = *candidate_submission.node_signature();
-    let enclave_signature = *candidate_submission.enclave_signature();
-    promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
-    let submission = persist_committed_join_submission(
-        &fixture.node_data_dir,
-        Address::repeat_byte(0x42),
+    let DirectDevRegistration {
+        fixture,
+        evidence,
+        node_signature,
+        enclave_signature,
+    } = direct_dev_registration();
+    let submission = promote_and_persist_join_submission(
+        &fixture,
         &evidence,
         &node_signature,
         &enclave_signature,
-    )
-    .unwrap();
-    let submission_bytes = std::fs::read(&fixture.paths.committed_join_submission).unwrap();
-    std::fs::remove_file(&fixture.paths.committed_join_submission).unwrap();
-    write_bytes_once(
+    );
+    stage_existing_record_as_next(
+        &fixture.paths.committed_join_submission,
         &fixture.paths.committed_join_submission_next,
-        &submission_bytes,
         &fixture.paths.root,
-    )
-    .unwrap();
+        DirectorySync::Skip,
+    );
     assert_eq!(
         load_committed_join_submission(&fixture.node_data_dir)
             .unwrap()
@@ -197,14 +218,12 @@ fn committed_join_restart_recovers_only_fsynced_next_checkpoints() {
         &[0x83, 0x84],
     )
     .unwrap();
-    let relay_bytes = std::fs::read(&fixture.paths.committed_join_relay).unwrap();
-    std::fs::remove_file(&fixture.paths.committed_join_relay).unwrap();
-    write_bytes_once(
+    stage_existing_record_as_next(
+        &fixture.paths.committed_join_relay,
         &fixture.paths.committed_join_relay_next,
-        &relay_bytes,
         &fixture.paths.root,
-    )
-    .unwrap();
+        DirectorySync::Skip,
+    );
     assert_eq!(
         load_committed_join_relay(&fixture.node_data_dir)
             .unwrap()
@@ -217,30 +236,17 @@ fn committed_join_restart_recovers_only_fsynced_next_checkpoints() {
 
 #[test]
 fn committed_join_cleanup_requires_the_exact_intent_and_is_idempotent() {
-    let fixture = replacement_fixture_for_mode(
-        AttestationOperationV1::RegisterEnclave,
-        AttestationMode::GramineDirectDev,
-    );
-    let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
-        .unwrap()
-        .unwrap();
-    let evidence =
-        AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
+    let DirectDevRegistration {
+        fixture,
+        evidence,
+        node_signature,
+        enclave_signature,
+    } = direct_dev_registration();
     let intent_hash = match &evidence {
         AttestationEvidenceV1::Dcap(value) => value.intent.intent_hash().unwrap(),
         AttestationEvidenceV1::GramineDirectDev(value) => value.intent.intent_hash().unwrap(),
     };
-    let node_signature = *candidate_submission.node_signature();
-    let enclave_signature = *candidate_submission.enclave_signature();
-    promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
-    persist_committed_join_submission(
-        &fixture.node_data_dir,
-        Address::repeat_byte(0x42),
-        &evidence,
-        &node_signature,
-        &enclave_signature,
-    )
-    .unwrap();
+    promote_and_persist_join_submission(&fixture, &evidence, &node_signature, &enclave_signature);
     persist_committed_join_relay(
         &fixture.node_data_dir,
         B256::repeat_byte(0x81),
@@ -268,30 +274,111 @@ fn committed_join_cleanup_requires_the_exact_intent_and_is_idempotent() {
 
 #[test]
 fn corrupt_committed_join_checkpoint_is_retained_and_rejected() {
-    let fixture = replacement_fixture_for_mode(
-        AttestationOperationV1::RegisterEnclave,
-        AttestationMode::GramineDirectDev,
-    );
-    let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
-        .unwrap()
-        .unwrap();
-    let evidence =
-        AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
-    let node_signature = *candidate_submission.node_signature();
-    let enclave_signature = *candidate_submission.enclave_signature();
-    promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
-    persist_committed_join_submission(
-        &fixture.node_data_dir,
-        Address::repeat_byte(0x42),
-        &evidence,
-        &node_signature,
-        &enclave_signature,
-    )
-    .unwrap();
+    let DirectDevRegistration {
+        fixture,
+        evidence,
+        node_signature,
+        enclave_signature,
+    } = direct_dev_registration();
+    promote_and_persist_join_submission(&fixture, &evidence, &node_signature, &enclave_signature);
     std::fs::write(&fixture.paths.committed_join_submission, [0xff, 0x00]).unwrap();
 
     assert!(load_committed_join_submission(&fixture.node_data_dir).is_err());
     assert!(fixture.paths.committed_join_submission.exists());
+}
+
+struct EncodedCommittedJoinFixture {
+    fixture: ReplacementFixture,
+    submission: Vec<u8>,
+    relay: Vec<u8>,
+}
+
+fn encoded_committed_join_fixture() -> Result<EncodedCommittedJoinFixture, TransportError> {
+    let fixture = replacement_fixture_for_operation(AttestationOperationV1::RegisterEnclave);
+    let replacement = std::fs::read(&fixture.paths.replacement_submission)?;
+    let mut submission = vec![1];
+    submission.extend_from_slice(Address::repeat_byte(0x42).as_slice());
+    submission.extend_from_slice(&replacement[1..]);
+    write_bytes_once(
+        &fixture.paths.committed_join_submission,
+        &submission,
+        &fixture.paths.root,
+    )?;
+    read_committed_join_submission(&fixture.paths.committed_join_submission)?;
+
+    let raw_transaction = [0x91, 0x92];
+    let mut relay = vec![1];
+    relay.extend_from_slice(keccak256(&submission).as_slice());
+    relay.extend_from_slice(B256::repeat_byte(0x90).as_slice());
+    relay.extend_from_slice(keccak256(raw_transaction).as_slice());
+    relay.extend_from_slice(&77_u64.to_be_bytes());
+    relay.extend_from_slice(&2_u32.to_be_bytes());
+    relay.extend_from_slice(&raw_transaction);
+    write_bytes_once(
+        &fixture.paths.committed_join_relay,
+        &relay,
+        &fixture.paths.root,
+    )?;
+    read_committed_join_relay(&fixture.paths.committed_join_relay)?;
+    Ok(EncodedCommittedJoinFixture {
+        fixture,
+        submission,
+        relay,
+    })
+}
+
+#[test]
+fn committed_join_submission_decode_preserves_first_error() {
+    let EncodedCommittedJoinFixture {
+        fixture,
+        submission,
+        ..
+    } = encoded_committed_join_fixture().unwrap();
+
+    let mut invalid_frame = submission.clone();
+    invalid_frame[0] = 2;
+    invalid_frame[21..25].fill(0);
+    std::fs::write(&fixture.paths.committed_join_submission, invalid_frame).unwrap();
+    assert_eq!(
+        read_committed_join_submission(&fixture.paths.committed_join_submission)
+            .unwrap_err()
+            .to_string(),
+        "codec error: committed join submission framing is invalid"
+    );
+
+    let mut invalid_length = submission.clone();
+    invalid_length[1..21].fill(0);
+    invalid_length[21..25].fill(0);
+    std::fs::write(&fixture.paths.committed_join_submission, invalid_length).unwrap();
+    assert_eq!(
+        read_committed_join_submission(&fixture.paths.committed_join_submission)
+            .unwrap_err()
+            .to_string(),
+        "codec error: committed join evidence length is non-canonical"
+    );
+
+    let mut zero_caller = submission;
+    zero_caller[1..21].fill(0);
+    zero_caller[25] = 0xff;
+    std::fs::write(&fixture.paths.committed_join_submission, zero_caller).unwrap();
+    assert_eq!(
+        read_committed_join_submission(&fixture.paths.committed_join_submission)
+            .unwrap_err()
+            .to_string(),
+        "codec error: committed join registration caller is zero"
+    );
+}
+
+#[test]
+fn committed_join_relay_decode_preserves_first_error() {
+    let EncodedCommittedJoinFixture { fixture, relay, .. } =
+        encoded_committed_join_fixture().unwrap();
+    super::fixtures::assert_relay_decode_precedence(
+        &fixture.paths,
+        &relay,
+        super::fixtures::RelayRecordKind::CommittedJoin,
+    )
+    .unwrap();
 }
 
 #[test]

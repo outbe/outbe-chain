@@ -3,7 +3,7 @@ use alloy_primitives::{B256, U256};
 use crate::{
     activation::ActivationCallCoreV1,
     error::ProtocolError,
-    hash::hash_framed,
+    hash::{framed_identity_hash, hash_framed},
     intent::{
         ContributorTargetPreconditionV1, DayType, NodTargetPreconditionV1, TributeInputBindingV1,
     },
@@ -183,18 +183,26 @@ wire_struct! {
 impl_top_level_codec!(AggregateActivationReceiptV1, AggregateActivationReceiptV1);
 
 impl EffectBindingV1 {
+    fn matches_call_origin(&self, call: &ActivationCallCoreV1) -> bool {
+        self.intent_id == call.intent_id
+            && self.job_id == call.job_id
+            && self.attempt == call.attempt
+            && self.protocol_bundle_hash == call.protocol_bundle_hash
+    }
+
+    fn matches_call_result(&self, call: &ActivationCallCoreV1) -> bool {
+        self.result_digest == call.result_digest
+            && self.activation_preconditions_hash == call.activation_preconditions_hash
+    }
+
     pub fn validate_call(
         &self,
         call: &ActivationCallCoreV1,
         limits: &SchemaLimits,
     ) -> Result<(), ProtocolError> {
         require(
-            self.intent_id == call.intent_id
-                && self.job_id == call.job_id
-                && self.attempt == call.attempt
-                && self.protocol_bundle_hash == call.protocol_bundle_hash
-                && self.result_digest == call.result_digest
-                && self.activation_preconditions_hash == call.activation_preconditions_hash
+            self.matches_call_origin(call)
+                && self.matches_call_result(call)
                 && self.activation_call_id == call.activation_call_id(limits)?,
             "effect binding activation call",
         )
@@ -255,9 +263,7 @@ pub fn carry_over_state_event_digest(
 macro_rules! receipt_hash {
     ($type:ty, $method:ident, $domain:ident) => {
         impl $type {
-            pub fn $method(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-                hash_framed(HashDomain::$domain, &self.encode_canonical(limits)?)
-            }
+            framed_identity_hash!($method, $domain);
         }
     };
 }
@@ -305,23 +311,22 @@ validate_projection_digest!(
 );
 
 impl AggregateActivationReceiptV1 {
-    pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
-        let all_present = self.nod_receipt_hash.is_some()
+    fn owner_receipts_present(&self) -> bool {
+        self.nod_receipt_hash.is_some()
             && self.contributor_receipt_hash.is_some()
             && self.tribute_receipt_hash.is_some()
             && self.carry_over_receipt_hash.is_some()
-            && self.active_generation_hash.is_some();
-        let all_absent = self.nod_receipt_hash.is_none()
+    }
+
+    fn owner_receipts_absent(&self) -> bool {
+        self.nod_receipt_hash.is_none()
             && self.contributor_receipt_hash.is_none()
             && self.tribute_receipt_hash.is_none()
             && self.carry_over_receipt_hash.is_none()
-            && self.active_generation_hash.is_none();
-        require(
-            (self.outcome == ActivationOutcome::Applied && all_present)
-                || (self.outcome == ActivationOutcome::ConflictResolved && all_absent),
-            "aggregate receipt outcome shape",
-        )?;
-        let expected = if self.outcome == ActivationOutcome::Applied {
+    }
+
+    fn expected_effect_commitment(&self) -> Result<B256, ProtocolError> {
+        if self.outcome == ActivationOutcome::Applied {
             let (Some(nod), Some(contributor), Some(tribute), Some(carry_over)) = (
                 self.nod_receipt_hash,
                 self.contributor_receipt_hash,
@@ -337,11 +342,24 @@ impl AggregateActivationReceiptV1 {
             payload.extend_from_slice(contributor.as_slice());
             payload.extend_from_slice(tribute.as_slice());
             payload.extend_from_slice(carry_over.as_slice());
-            hash_framed(HashDomain::Effects, &payload)?
+            hash_framed(HashDomain::Effects, &payload)
         } else {
-            hash_framed(HashDomain::Effects, &[])?
-        };
-        require(expected == self.effect_commitment, "effect commitment")?;
+            hash_framed(HashDomain::Effects, &[])
+        }
+    }
+
+    pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
+        let all_present = self.owner_receipts_present() && self.active_generation_hash.is_some();
+        let all_absent = self.owner_receipts_absent() && self.active_generation_hash.is_none();
+        require(
+            (self.outcome == ActivationOutcome::Applied && all_present)
+                || (self.outcome == ActivationOutcome::ConflictResolved && all_absent),
+            "aggregate receipt outcome shape",
+        )?;
+        require(
+            self.expected_effect_commitment()? == self.effect_commitment,
+            "effect commitment",
+        )?;
         if self.outcome == ActivationOutcome::ConflictResolved {
             require(
                 self.event_summary_hash == empty_apply_event_summary_hash()?,
@@ -366,10 +384,7 @@ impl AggregateActivationReceiptV1 {
         )
     }
 
-    pub fn terminal_receipt_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_semantics()?;
-        hash_framed(HashDomain::TerminalReceipt, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(terminal_receipt_hash, TerminalReceipt, validate_semantics());
 }
 
 pub fn apply_event_summary_hash(owner_digests: [B256; 4]) -> Result<B256, ProtocolError> {

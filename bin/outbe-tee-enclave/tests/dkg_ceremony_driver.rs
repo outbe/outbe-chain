@@ -12,7 +12,9 @@ use alloy_primitives::B256;
 use tokio::sync::mpsc;
 
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
-use outbe_tee::tee_dkg::{run_tee_dkg_ceremony, CeremonyError, DkgGossip, DkgWireMessage};
+use outbe_tee::tee_dkg::{
+    run_tee_dkg_ceremony, CeremonyError, DkgGossip, DkgWireMessage, FoundingCeremonyParameters,
+};
 use outbe_tee::{CeremonyCoordinator, EnclaveClient};
 use outbe_tee_enclave::keys::EnclaveKeys;
 use outbe_tee_enclave::transport::serve_connection_for_network_test;
@@ -142,7 +144,17 @@ fn ceremony_driver_completes_over_in_memory_gossip() {
                 receiver: receivers.remove(0),
             };
             tasks.push(context.child("ceremony").spawn(move |_ctx| async move {
-                run_tee_dkg_ceremony(&coord, &mut client, &mut gossip, N, chain_id, 0).await
+                run_tee_dkg_ceremony(
+                    &coord,
+                    &mut client,
+                    &mut gossip,
+                    FoundingCeremonyParameters {
+                        participant_count: N,
+                        chain_id,
+                        tribute_offer_epoch: 0,
+                    },
+                )
+                .await
             }));
         }
 

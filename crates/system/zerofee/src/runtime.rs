@@ -26,9 +26,12 @@
 //! The caller detects the EIP-7702 designator
 //! `0xef0100 ++ ZEROFEE_ADDRESS` without storage I/O.
 
+use core::fmt;
+
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
+use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 use outbe_primitives::{
     addresses::{TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS},
     storage::StorageHandle,
@@ -46,7 +49,7 @@ use crate::{
 };
 
 /// Execution-layer independent view of a possible first ZeroFee delegation.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct BootstrapTransactionView<'a> {
     /// Recovered signer of the outer EIP-7702 transaction.
     pub signer: Address,
@@ -56,22 +59,27 @@ pub struct BootstrapTransactionView<'a> {
     pub network_chain_id: u64,
     /// Outer transaction nonce before REVM increments the sender.
     pub nonce: u64,
-    /// Outer call target.
-    pub to: Option<Address>,
-    /// Native value attached to the outer call.
-    pub value: U256,
-    /// Outer calldata.
-    pub input: &'a [u8],
-    /// Outer gas limit.
-    pub gas_limit: u64,
-    /// EIP-1559 max fee per gas.
-    pub max_fee_per_gas: u128,
-    /// EIP-1559 priority fee per gas.
-    pub max_priority_fee_per_gas: Option<u128>,
+    /// Call fields of the outer transaction.
+    pub call: TransactionCallFields<'a>,
     /// Whether the EIP-2930 access list is empty.
     pub access_list_empty: bool,
     /// Signed EIP-7702 authorization list.
     pub authorization_list: &'a [SignedAuthorization],
+}
+
+/// The text form keeps the call fields flat, as before they moved to `call`.
+impl fmt::Debug for BootstrapTransactionView<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut out = f.debug_struct("BootstrapTransactionView");
+        out.field("signer", &self.signer)
+            .field("tx_chain_id", &self.tx_chain_id)
+            .field("network_chain_id", &self.network_chain_id)
+            .field("nonce", &self.nonce);
+        self.call.debug_fields(&mut out);
+        out.field("access_list_empty", &self.access_list_empty)
+            .field("authorization_list", &self.authorization_list)
+            .finish()
+    }
 }
 
 /// A transaction whose signed shape exactly matches the bootstrap protocol.
@@ -101,38 +109,56 @@ pub struct BootstrapAccountView {
 /// turn a merely similar transaction into a new consensus-visible ZeroFee
 /// failure class.
 pub fn classify_bootstrap(tx: &BootstrapTransactionView<'_>) -> Option<BootstrapCandidate> {
-    if tx.tx_chain_id != Some(tx.network_chain_id)
-        || tx.to != Some(ZEROFEE_ADDRESS)
-        || tx.value != U256::ZERO
-        || tx.gas_limit > FREE_TX_BOOTSTRAP_GAS_LIMIT
-        || tx.max_fee_per_gas < MIN_FREE_TX_MAX_FEE_PER_GAS
-        || tx.max_priority_fee_per_gas != Some(0)
-        || !tx.access_list_empty
-    {
+    if !tx.has_bootstrap_envelope() {
         return None;
     }
-
-    let [authorization] = tx.authorization_list else {
-        return None;
-    };
-    let authorization_nonce = tx.nonce.checked_add(1)?;
-    if authorization.chain_id != U256::from(tx.network_chain_id)
-        || authorization.address != ZEROFEE_ADDRESS
-        || authorization.nonce != authorization_nonce
-        || authorization.recover_authority().ok()? != tx.signer
-    {
-        return None;
-    }
+    tx.self_authorization()?;
 
     let expected_input = IZeroFee::authorizeSponsorshipCall { signer: tx.signer }.abi_encode();
-    if tx.input != expected_input.as_slice() {
-        return None;
-    }
-
-    Some(BootstrapCandidate {
+    (tx.call.input == expected_input.as_slice()).then_some(BootstrapCandidate {
         signer: tx.signer,
         nonce: tx.nonce,
     })
+}
+
+impl BootstrapTransactionView<'_> {
+    /// The outer transaction calls ZeroFee on this network, with the bootstrap
+    /// fee shape and without value or access list.
+    fn has_bootstrap_envelope(&self) -> bool {
+        self.targets_zerofee_on_network() && self.has_bootstrap_fee_shape() && self.is_bare_call()
+    }
+
+    fn targets_zerofee_on_network(&self) -> bool {
+        self.tx_chain_id == Some(self.network_chain_id) && self.call.to == Some(ZEROFEE_ADDRESS)
+    }
+
+    fn has_bootstrap_fee_shape(&self) -> bool {
+        let fee_cap_ok = self.call.max_fee_per_gas >= MIN_FREE_TX_MAX_FEE_PER_GAS;
+        self.call.gas_limit <= FREE_TX_BOOTSTRAP_GAS_LIMIT
+            && fee_cap_ok
+            && self.call.max_priority_fee_per_gas == Some(0)
+    }
+
+    fn is_bare_call(&self) -> bool {
+        self.call.value == U256::ZERO && self.access_list_empty
+    }
+
+    /// Returns the only authorization when the signer uses it to delegate
+    /// itself to ZeroFee on this network at the next account nonce.
+    ///
+    /// Signature recovery runs last because it is the most expensive check.
+    fn self_authorization(&self) -> Option<&SignedAuthorization> {
+        let [authorization] = self.authorization_list else {
+            return None;
+        };
+        let authorization_nonce = self.nonce.checked_add(1)?;
+        let delegates_to_zerofee = authorization.chain_id == U256::from(self.network_chain_id)
+            && authorization.address == ZEROFEE_ADDRESS;
+        if !delegates_to_zerofee || authorization.nonce != authorization_nonce {
+            return None;
+        }
+        (authorization.recover_authority().ok()? == self.signer).then_some(authorization)
+    }
 }
 
 /// Rechecks the stateful positive-balance, empty-code bootstrap requirements.
@@ -158,47 +184,54 @@ pub fn authorize_bootstrap(candidate: BootstrapCandidate, account: BootstrapAcco
 /// On `Ok(())`, the policy accepts the transaction shape. On `Err(_)`, the
 /// caller must reject with the matching error code.
 pub fn classify_sponsorship(tx: &ZeroFeeTransaction<'_>) -> Result<(), ZeroFeePolicyError> {
-    if tx.value != U256::ZERO {
+    if tx.call.value != U256::ZERO {
         return Err(ZeroFeePolicyError::FreeTxDailyValueNotZero);
     }
 
-    if tx.max_priority_fee_per_gas != Some(0) {
-        // The oracle hook shares the fee shape rule (zero priority fee
-        // is the explicit sponsored opt-in). Reusing `FeeCapTooLow`
-        // keeps a single code for that condition.
+    // The oracle hook shares the fee shape rule (zero priority fee is the
+    // explicit sponsored opt-in). A wrong priority fee and a low fee cap both
+    // use `FeeCapTooLow`, so the condition keeps a single code.
+    if tx.call.max_priority_fee_per_gas != Some(0)
+        || tx.call.max_fee_per_gas < MIN_FREE_TX_MAX_FEE_PER_GAS
+    {
         return Err(ZeroFeePolicyError::FeeCapTooLow {
-            max_fee_per_gas: tx.max_fee_per_gas,
+            max_fee_per_gas: tx.call.max_fee_per_gas,
             minimum: MIN_FREE_TX_MAX_FEE_PER_GAS,
         });
     }
 
-    if tx.max_fee_per_gas < MIN_FREE_TX_MAX_FEE_PER_GAS {
-        return Err(ZeroFeePolicyError::FeeCapTooLow {
-            max_fee_per_gas: tx.max_fee_per_gas,
-            minimum: MIN_FREE_TX_MAX_FEE_PER_GAS,
-        });
-    }
+    check_sponsored_budget(tx)?;
+    check_sponsored_target(tx.call.to)
+}
 
-    let gas_limit = if tx.to == Some(TRIBUTE_FACTORY_ADDRESS) {
+/// Checks the gas limit and the calldata size of a sponsored transaction.
+///
+/// The TributeFactory has a larger gas limit than every other target.
+fn check_sponsored_budget(tx: &ZeroFeeTransaction<'_>) -> Result<(), ZeroFeePolicyError> {
+    let gas_limit = if tx.call.to == Some(TRIBUTE_FACTORY_ADDRESS) {
         FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT
     } else {
         FREE_TX_DAILY_GAS_LIMIT
     };
-    if tx.gas_limit > gas_limit {
+    if tx.call.gas_limit > gas_limit {
         return Err(ZeroFeePolicyError::FreeTxDailyGasLimitExceeded {
-            gas_limit: tx.gas_limit,
+            gas_limit: tx.call.gas_limit,
             limit: gas_limit,
         });
     }
 
-    if tx.input.len() > FREE_TX_DAILY_CALLDATA_BYTES {
+    if tx.call.input.len() > FREE_TX_DAILY_CALLDATA_BYTES {
         return Err(ZeroFeePolicyError::FreeTxDailyCalldataTooLarge {
-            size: tx.input.len(),
+            size: tx.call.input.len(),
             limit: FREE_TX_DAILY_CALLDATA_BYTES,
         });
     }
+    Ok(())
+}
 
-    let Some(to) = tx.to else {
+/// Rejects contract creation and every target outside the sponsored whitelist.
+fn check_sponsored_target(to: Option<Address>) -> Result<(), ZeroFeePolicyError> {
+    let Some(to) = to else {
         return Err(ZeroFeePolicyError::FreeTxDailyContractCreationForbidden);
     };
 
@@ -315,6 +348,18 @@ mod tests {
     const BLOCK_TS: u64 = 1_775_001_600;
     const BLOCK_DAY: u32 = 20_260_401;
 
+    /// The call fields of a valid self-authorization bootstrap transaction.
+    fn bootstrap_call_fields(input: &[u8]) -> TransactionCallFields<'_> {
+        TransactionCallFields {
+            to: Some(ZEROFEE_ADDRESS),
+            value: U256::ZERO,
+            input,
+            gas_limit: FREE_TX_BOOTSTRAP_GAS_LIMIT,
+            max_fee_per_gas: MIN_FREE_TX_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas: Some(0),
+        }
+    }
+
     #[test]
     fn classify_bootstrap_accepts_exact_self_authorization() {
         let nonce = 7;
@@ -333,12 +378,7 @@ mod tests {
             tx_chain_id: Some(chain_id),
             network_chain_id: chain_id,
             nonce,
-            to: Some(ZEROFEE_ADDRESS),
-            value: U256::ZERO,
-            input: &input,
-            gas_limit: FREE_TX_BOOTSTRAP_GAS_LIMIT,
-            max_fee_per_gas: MIN_FREE_TX_MAX_FEE_PER_GAS,
-            max_priority_fee_per_gas: Some(0),
+            call: bootstrap_call_fields(&input),
             access_list_empty: true,
             authorization_list: &authorizations,
         };
@@ -367,12 +407,7 @@ mod tests {
             tx_chain_id: Some(chain_id),
             network_chain_id: chain_id,
             nonce,
-            to: Some(ZEROFEE_ADDRESS),
-            value: U256::ZERO,
-            input: &input,
-            gas_limit: FREE_TX_BOOTSTRAP_GAS_LIMIT,
-            max_fee_per_gas: MIN_FREE_TX_MAX_FEE_PER_GAS,
-            max_priority_fee_per_gas: Some(0),
+            call: bootstrap_call_fields(&input),
             access_list_empty: true,
             authorization_list: &authorizations,
         };
@@ -381,22 +416,22 @@ mod tests {
         invalid.tx_chain_id = None;
         assert_eq!(classify_bootstrap(&invalid), None);
         invalid = exact;
-        invalid.to = Some(Address::ZERO);
+        invalid.call.to = Some(Address::ZERO);
         assert_eq!(classify_bootstrap(&invalid), None);
         invalid = exact;
-        invalid.value = U256::from(1);
+        invalid.call.value = U256::from(1);
         assert_eq!(classify_bootstrap(&invalid), None);
         invalid = exact;
-        invalid.input = &[];
+        invalid.call.input = &[];
         assert_eq!(classify_bootstrap(&invalid), None);
         invalid = exact;
-        invalid.gas_limit = FREE_TX_BOOTSTRAP_GAS_LIMIT + 1;
+        invalid.call.gas_limit = FREE_TX_BOOTSTRAP_GAS_LIMIT + 1;
         assert_eq!(classify_bootstrap(&invalid), None);
         invalid = exact;
-        invalid.max_fee_per_gas = MIN_FREE_TX_MAX_FEE_PER_GAS - 1;
+        invalid.call.max_fee_per_gas = MIN_FREE_TX_MAX_FEE_PER_GAS - 1;
         assert_eq!(classify_bootstrap(&invalid), None);
         invalid = exact;
-        invalid.max_priority_fee_per_gas = Some(1);
+        invalid.call.max_priority_fee_per_gas = Some(1);
         assert_eq!(classify_bootstrap(&invalid), None);
         invalid = exact;
         invalid.access_list_empty = false;
@@ -415,12 +450,7 @@ mod tests {
             tx_chain_id: Some(chain_id),
             network_chain_id: chain_id,
             nonce,
-            to: Some(ZEROFEE_ADDRESS),
-            value: U256::ZERO,
-            input: &input,
-            gas_limit: FREE_TX_BOOTSTRAP_GAS_LIMIT,
-            max_fee_per_gas: MIN_FREE_TX_MAX_FEE_PER_GAS,
-            max_priority_fee_per_gas: Some(0),
+            call: bootstrap_call_fields(&input),
             access_list_empty: true,
             authorization_list: authorizations,
         })
@@ -553,12 +583,14 @@ mod tests {
     fn ok_envelope<'a>(input: &'a [u8]) -> ZeroFeeTransaction<'a> {
         ZeroFeeTransaction {
             signer: SIGNER,
-            to: Some(sponsored_target()),
-            value: U256::ZERO,
-            input,
-            gas_limit: 100_000,
-            max_fee_per_gas: MIN_FREE_TX_MAX_FEE_PER_GAS,
-            max_priority_fee_per_gas: Some(0),
+            call: TransactionCallFields {
+                to: Some(sponsored_target()),
+                value: U256::ZERO,
+                input,
+                gas_limit: 100_000,
+                max_fee_per_gas: MIN_FREE_TX_MAX_FEE_PER_GAS,
+                max_priority_fee_per_gas: Some(0),
+            },
         }
     }
 
@@ -573,7 +605,7 @@ mod tests {
     #[test]
     fn classify_rejects_non_zero_value() {
         let mut tx = ok_envelope(&[]);
-        tx.value = U256::from(1);
+        tx.call.value = U256::from(1);
         assert_eq!(
             classify_sponsorship(&tx),
             Err(ZeroFeePolicyError::FreeTxDailyValueNotZero)
@@ -583,7 +615,7 @@ mod tests {
     #[test]
     fn classify_rejects_non_zero_priority_fee() {
         let mut tx = ok_envelope(&[]);
-        tx.max_priority_fee_per_gas = Some(1);
+        tx.call.max_priority_fee_per_gas = Some(1);
         let err = classify_sponsorship(&tx).unwrap_err();
         assert_eq!(
             err.code(),
@@ -595,7 +627,7 @@ mod tests {
     #[test]
     fn classify_rejects_low_fee_cap() {
         let mut tx = ok_envelope(&[]);
-        tx.max_fee_per_gas = 0;
+        tx.call.max_fee_per_gas = 0;
         let err = classify_sponsorship(&tx).unwrap_err();
         assert_eq!(err.code(), 105);
     }
@@ -603,7 +635,7 @@ mod tests {
     #[test]
     fn classify_rejects_oversized_gas_limit() {
         let mut tx = ok_envelope(&[]);
-        tx.gas_limit = crate::FREE_TX_DAILY_GAS_LIMIT + 1;
+        tx.call.gas_limit = crate::FREE_TX_DAILY_GAS_LIMIT + 1;
         let err = classify_sponsorship(&tx).unwrap_err();
         assert_eq!(err.code(), 114, "free-tx gas overflow -> code 114");
     }
@@ -611,8 +643,8 @@ mod tests {
     #[test]
     fn classify_accepts_tribute_factory_zk_gas_limit() {
         let mut tx = ok_envelope(&[]);
-        tx.to = Some(TRIBUTE_FACTORY_ADDRESS);
-        tx.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT;
+        tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
+        tx.call.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT;
 
         assert!(classify_sponsorship(&tx).is_ok());
     }
@@ -620,8 +652,8 @@ mod tests {
     #[test]
     fn classify_rejects_tribute_factory_above_zk_gas_limit() {
         let mut tx = ok_envelope(&[]);
-        tx.to = Some(TRIBUTE_FACTORY_ADDRESS);
-        tx.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT + 1;
+        tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
+        tx.call.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT + 1;
 
         assert_eq!(
             classify_sponsorship(&tx),
@@ -643,7 +675,7 @@ mod tests {
     #[test]
     fn classify_rejects_contract_creation() {
         let mut tx = ok_envelope(&[]);
-        tx.to = None;
+        tx.call.to = None;
         let err = classify_sponsorship(&tx).unwrap_err();
         assert_eq!(err.code(), 112);
     }
@@ -653,7 +685,7 @@ mod tests {
         let mut tx = ok_envelope(&[]);
         // ZEROFEE_ADDRESS itself is intentionally NOT on the whitelist,
         // so it doubles as a guaranteed-rejected target for this test.
-        tx.to = Some(ZEROFEE_ADDRESS);
+        tx.call.to = Some(ZEROFEE_ADDRESS);
         let err = classify_sponsorship(&tx).unwrap_err();
         assert_eq!(err.code(), 116, "non-whitelisted target -> code 116");
     }
@@ -780,7 +812,7 @@ mod tests {
         // AGENT_REWARD_ADDRESS is in the whitelist. Sanity-check the
         // positive case so the test name reads consistently.
         let mut tx = ok_envelope(&[]);
-        tx.to = Some(AGENT_REWARD_ADDRESS);
+        tx.call.to = Some(AGENT_REWARD_ADDRESS);
         assert!(classify_sponsorship(&tx).is_ok());
     }
 
@@ -798,8 +830,8 @@ mod tests {
         // (code 113 FreeTxDailyValueNotZero), not the contract-creation
         // check (code 112).
         let mut tx = ok_envelope(&[]);
-        tx.to = None;
-        tx.value = U256::from(1);
+        tx.call.to = None;
+        tx.call.value = U256::from(1);
         assert_eq!(
             classify_sponsorship(&tx).unwrap_err().code(),
             113,
@@ -814,8 +846,8 @@ mod tests {
         // TargetNotWhitelisted (116) because the policy checks the fee
         // shape earlier. This order keeps the receipt deterministic.
         let mut tx = ok_envelope(&[]);
-        tx.max_priority_fee_per_gas = Some(1);
-        tx.to = Some(ZEROFEE_ADDRESS);
+        tx.call.max_priority_fee_per_gas = Some(1);
+        tx.call.to = Some(ZEROFEE_ADDRESS);
         assert_eq!(classify_sponsorship(&tx).unwrap_err().code(), 105);
     }
 

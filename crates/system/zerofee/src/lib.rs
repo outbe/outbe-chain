@@ -23,6 +23,9 @@
 //!    serves oracle votes.
 
 pub mod constants;
+mod envelope;
+#[cfg(test)]
+mod hook_registry_tests;
 pub mod hooks;
 mod hyperlane;
 mod intexfactory;
@@ -31,6 +34,8 @@ pub mod precompile;
 pub mod runtime;
 pub mod schema;
 pub mod state;
+#[cfg(test)]
+mod test_support;
 mod transaction;
 
 pub use constants::{

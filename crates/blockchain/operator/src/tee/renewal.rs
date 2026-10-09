@@ -166,7 +166,6 @@ mod tests {
     use alloy_eips::eip2718::Decodable2718 as _;
     use alloy_primitives::{Address, Bytes, TxKind};
     use ed25519_dalek::Signer as _;
-    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
     use outbe_primitives::{
         chain::DEVNET_CHAIN_ID,
         tee_attestation_v1::{
@@ -176,6 +175,7 @@ mod tests {
         tee_genesis_v1::{initial_tee_policy_v1, InitialTeeProfileV1, ProductionSgxMeasurementV1},
         tee_operator_v1::TeeRenewalScheduleV1,
         tee_registry_abi_v1::NodeEnclaveBindingV1View,
+        tee_test_utils::sign_node_host_hash_for_test,
     };
 
     fn renewal_services<'a, R, E, N>(
@@ -587,13 +587,7 @@ mod tests {
         let requested_valid_until = source.valid_until + policy.maximum_lease;
         let intent = replay_intent(identity);
         let intent_hash = intent.intent_hash().unwrap();
-        let (node_signature_body, node_recovery): (
-            k256::ecdsa::Signature,
-            k256::ecdsa::RecoveryId,
-        ) = node_signer.sign_prehash(intent_hash.as_slice()).unwrap();
-        let mut node_signature = [0_u8; 65];
-        node_signature[..64].copy_from_slice(node_signature_body.to_bytes().as_slice());
-        node_signature[64] = node_recovery.to_byte();
+        let node_signature = sign_node_host_hash_for_test(node_signer, intent_hash);
         let enclave_signature = enclave_signer.sign(intent_hash.as_slice()).to_bytes();
         let (evidence, evidence_hash) = replay_evidence(mode, &intent, enclave_signature);
         let calldata = ITeeRegistryV1::renewEnclaveCall {

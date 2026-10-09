@@ -1,7 +1,7 @@
 //! Owner-local opening of the padded Fidelity cohort record with a view key.
 use crate::offer_encrypt::hkdf_sha256;
+use crate::owner_local_open::{open_local_ciphertext, LocalOpen};
 use alloy_primitives::Address;
-use ring::aead;
 use zeroize::Zeroizing;
 
 pub fn decrypt_fidelity_cohorts(
@@ -23,24 +23,13 @@ pub fn decrypt_fidelity_cohorts(
         &context,
         b"outbe/fidelity/cohort-key/v2",
     )?);
-    let nonce_material = Zeroizing::new(hkdf_sha256(
-        &*key,
-        &context,
-        b"outbe/fidelity/cohort-nonce/v2",
-    )?);
-    let mut nonce = [0; 12];
-    nonce.copy_from_slice(&nonce_material[..12]);
-    let opening = aead::LessSafeKey::new(
-        aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &*key)
-            .map_err(|_| "invalid Fidelity view key")?,
-    );
-    let mut bytes = Zeroizing::new(blob[44..].to_vec());
-    let plaintext = opening
-        .open_in_place(
-            aead::Nonce::assume_unique_for_key(nonce),
-            aead::Aad::empty(),
-            &mut bytes,
-        )
-        .map_err(|_| "Fidelity cohort decryption failed")?;
-    Ok(plaintext.to_vec())
+    let opened = open_local_ciphertext(LocalOpen {
+        key: &key,
+        nonce_context: &context,
+        nonce_info: b"outbe/fidelity/cohort-nonce/v2",
+        ciphertext: &blob[44..],
+        invalid_key_error: "invalid Fidelity view key",
+        decryption_error: "Fidelity cohort decryption failed",
+    })?;
+    Ok(opened.as_slice().to_vec())
 }

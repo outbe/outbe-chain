@@ -3,19 +3,19 @@
 //! This binary is available only with `dcap-fixture-tool`. The build never links
 //! it into the consensus library or the production enclave process.
 
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-};
+use std::{env, path::PathBuf};
 
-use alloy_primitives::B256;
+use alloy_primitives::{hex, B256};
 use outbe_primitives::tee_attestation_v1::{
     AttestationMode, AttestationOperationV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
-    RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1,
+    RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1, INTEL_QE_VENDOR_ID,
 };
 
 #[path = "outbe-dcap-fixture/assemble.rs"]
 mod assemble;
+#[path = "outbe-dcap-fixture/cli.rs"]
+mod cli;
+use cli::{argument, ensure_empty_directory, parse_u64, write_new};
 
 const INTEL_ROOT_DER_SHA256: &str =
     "44a0196b2b99f889b8e149e95b807a350e7424964399e885a7cbb8ccfab674d3";
@@ -66,11 +66,11 @@ fn prepare(arguments: &[String]) -> Result<(), String> {
     let metadata = serde_json::to_vec_pretty(&serde_json::json!({
         "schema_version": 1,
         "capture_timestamp": timestamp,
-        "mrenclave": encode_hex(&mrenclave),
-        "mrsigner": encode_hex(&mrsigner),
+        "mrenclave": hex::encode(mrenclave),
+        "mrsigner": hex::encode(mrsigner),
         "isv_prod_id": isv_prod_id,
         "isv_svn": isv_svn,
-        "report_data": encode_hex(&report_data),
+        "report_data": hex::encode(report_data),
     }))
     .map_err(|error| format!("encode capture metadata: {error}"))?;
     let mut metadata_with_newline = metadata;
@@ -98,10 +98,7 @@ fn policy(
         quote_version: 3,
         tee_type: 0,
         attestation_key_type: 2,
-        qe_vendor_id: [
-            0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f,
-            0x06, 0x07,
-        ],
+        qe_vendor_id: INTEL_QE_VENDOR_ID,
         certification_data_type: 5,
         tcb_info_schema_version: 3,
         qe_identity_schema_version: 2,
@@ -156,27 +153,10 @@ fn intent(policy: &TeePolicyV1, timestamp: u64) -> Result<RegistrationIntentV1, 
     })
 }
 
-fn argument(arguments: &[String], name: &str) -> Result<String, String> {
-    let index = arguments
-        .iter()
-        .position(|argument| argument == name)
-        .ok_or_else(|| format!("missing {name}"))?;
-    arguments
-        .get(index + 1)
-        .cloned()
-        .ok_or_else(|| format!("missing value for {name}"))
-}
-
 fn parse_u16(value: &str, label: &str) -> Result<u16, String> {
     value
         .parse()
         .map_err(|_| format!("{label} is not a canonical u16"))
-}
-
-fn parse_u64(value: &str, label: &str) -> Result<u64, String> {
-    value
-        .parse()
-        .map_err(|_| format!("{label} is not a canonical u64"))
 }
 
 fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
@@ -198,39 +178,4 @@ fn hex_nibble(value: u8) -> Result<u8, String> {
         b'A'..=b'F' => Ok(value - b'A' + 10),
         _ => Err("invalid hexadecimal digit".to_owned()),
     }
-}
-
-fn encode_hex(value: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(value.len() * 2);
-    for byte in value {
-        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
-    }
-    encoded
-}
-
-fn ensure_empty_directory(path: &Path) -> Result<(), String> {
-    if path.exists() {
-        let mut entries =
-            fs::read_dir(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-        if entries.next().is_some() {
-            return Err(format!("output directory is not empty: {}", path.display()));
-        }
-        return Ok(());
-    }
-    fs::create_dir_all(path).map_err(|error| format!("create {}: {error}", path.display()))
-}
-
-fn write_new(path: &Path, value: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-
-    let mut output = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| format!("create {}: {error}", path.display()))?;
-    output
-        .write_all(value)
-        .map_err(|error| format!("write {}: {error}", path.display()))
 }

@@ -255,11 +255,13 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
             let mut vote = Vote::new(storage);
             let proposal_id = vote
                 .create_proposal_with_value(
-                    issuer,
-                    STABLECOIN_FACTORY_ADDRESS,
-                    payload,
-                    CREATION_BLOCK,
-                    STABLECOIN_CREATE_BOND,
+                    outbe_vote::ProposalSubmission {
+                        proposer: issuer,
+                        target_module: STABLECOIN_FACTORY_ADDRESS,
+                        payload,
+                        created_height: CREATION_BLOCK,
+                        attached_value: STABLECOIN_CREATE_BOND,
+                    },
                     crate::handlers::vote::registry(),
                 )
                 .unwrap();

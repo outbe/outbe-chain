@@ -411,14 +411,16 @@ fn seed_late_credit_escrow(
     );
     outbe_rewards::late_settlement::escrow_block_fee(
         &seed_ctx,
-        settle_target,
-        settle_fb_hash,
+        &outbe_rewards::late_settlement::FinalizedBlockBinding {
+            number: settle_target,
+            hash: settle_fb_hash,
+            committee_size: settle_committee as u32,
+            epoch,
+            view: 0, // canonical_view (block N is pre-seeded + settled, not live-credited)
+            parent_view: 0, // canonical_parent_view
+            committee_set_hash: csh,
+        },
         settle_fee,
-        settle_committee as u32,
-        epoch,
-        0, // canonical_view (block N is pre-seeded + settled, not live-credited)
-        0, // canonical_parent_view
-        csh,
         &[],
     )?;
     seed_ctx

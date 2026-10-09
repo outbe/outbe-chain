@@ -59,32 +59,6 @@ impl Update<'_> {
         self.waiting_for_activation_proposal_ids.read_all()
     }
 
-    /// Reads the active protocol version (`0` = baseline / pre-upgrade chain).
-    pub fn get_active_version(&self) -> Result<ProtocolVersion> {
-        self.active_version.read()
-    }
-
-    /// Reads the activation height of the current active version.
-    pub fn get_active_version_height(&self) -> Result<u64> {
-        self.active_version_height.read()
-    }
-
-    /// Reads the version recorded at `height` (`0` when no upgrade was recorded there).
-    pub fn version_at_height(&self, height: u64) -> Result<ProtocolVersion> {
-        self.version_history.read(&height)
-    }
-
-    /// Writes the active protocol version and records it in `version_history`.
-    pub fn set_active_version(&mut self, version: ProtocolVersion, height: u64) -> Result<()> {
-        if version.is_zero() {
-            return Err(UpdateError::InvalidVersion.into());
-        }
-        self.active_version.write(version)?;
-        self.active_version_height.write(height)?;
-        self.version_history.write(&height, version)?;
-        Ok(())
-    }
-
     /// Persists a pending scheduled update and indexes it for activation.
     pub fn write_scheduled_update(
         &mut self,
@@ -136,16 +110,7 @@ impl Update<'_> {
     }
 
     fn remove_waiting_for_activation_proposal_id(&mut self, proposal_id: U256) -> Result<()> {
-        Self::remove_proposal_id_from_list(
-            &mut self.waiting_for_activation_proposal_ids,
-            proposal_id,
-        )
-    }
-
-    fn remove_proposal_id_from_list(
-        list: &mut outbe_primitives::storage::dsl::List<U256>,
-        proposal_id: U256,
-    ) -> Result<()> {
+        let list = &mut self.waiting_for_activation_proposal_ids;
         let ids = list.read_all()?;
         let Some(removed_idx) = ids.iter().position(|p| *p == proposal_id) else {
             warn!("proposal {proposal_id} not found in list");

@@ -1,11 +1,11 @@
 use alloy_primitives::{Address, B256, U256};
+use outbe_ocomp_protocol::test_utils::nod_action_population;
 use outbe_ocomp_protocol::{
     abi::{
         encode_materialize_certified_nods_calldata,
         encode_protected_materialize_certified_nods_calldata, NOD_FACTORY_ADDRESS,
     },
     common::BoundedBytes,
-    list::{ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits},
     nod_materialization::{
         verify_nod_materialization_batch, NodMaterializationBatchV1, NodMaterializationHeadV1,
         ProtectedNodMaterializationV2,
@@ -17,7 +17,7 @@ use outbe_ocomp_protocol::{
         OcompSystemCarrierView, MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
         OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
     },
-    ListKind,
+    transaction_call::TransactionCallFields,
 };
 
 const WWD: u32 = 20_260_812;
@@ -56,30 +56,8 @@ fn action(ordinal: u32) -> NodActionV1 {
 }
 
 fn population(count: u32) -> (Vec<NodActionV1>, B256, Vec<Vec<B256>>) {
-    let limits = poc_schema_limits();
     let actions = (0..count).map(action).collect::<Vec<_>>();
-    let encoded = actions
-        .iter()
-        .map(|action| action.encode_canonical_record(&limits).unwrap())
-        .collect::<Vec<_>>();
-    let root = ordered_list_root(
-        ListKind::NodActions,
-        &encoded,
-        OrderedListLimits::new(512, limits.max_bounded_bytes, 1 << 20),
-    )
-    .unwrap();
-    let proofs = (0..count)
-        .map(|ordinal| {
-            streaming_ordered_list_membership_proof(
-                ListKind::NodActions,
-                count,
-                ordinal,
-                encoded.iter(),
-                limits.max_bounded_bytes,
-            )
-            .unwrap()
-        })
-        .collect();
+    let (root, proofs) = nod_action_population(&actions);
     (actions, root, proofs)
 }
 
@@ -97,18 +75,32 @@ fn head(root: B256, count: u32, cursor: u32) -> NodMaterializationHeadV1 {
     }
 }
 
+struct BatchFixtureSpec {
+    ordinals: std::ops::Range<u32>,
+    subtree_height: usize,
+}
+
+impl BatchFixtureSpec {
+    fn new(ordinals: std::ops::Range<u32>, subtree_height: usize) -> Self {
+        Self {
+            ordinals,
+            subtree_height,
+        }
+    }
+}
+
 fn batch(
     actions: &[NodActionV1],
     proofs: &[Vec<B256>],
-    first: u32,
-    count: usize,
-    subtree_height: usize,
+    spec: BatchFixtureSpec,
 ) -> NodMaterializationBatchV1 {
+    let first = spec.ordinals.start as usize;
+    let end = spec.ordinals.end as usize;
     NodMaterializationBatchV1 {
         queue_sequence: 1,
-        first_nod_ordinal: first,
-        actions: actions[first as usize..first as usize + count].to_vec(),
-        root_path: proofs[first as usize][subtree_height..].to_vec(),
+        first_nod_ordinal: spec.ordinals.start,
+        actions: actions[first..end].to_vec(),
+        root_path: proofs[first][spec.subtree_height..].to_vec(),
     }
 }
 
@@ -117,7 +109,7 @@ fn canonical_batch_and_head_roundtrip_without_redundant_authority_fields() {
     let limits = poc_schema_limits();
     let (actions, root, proofs) = population(10);
     let head = head(root, 10, 0);
-    let batch = batch(&actions, &proofs, 0, 8, 3);
+    let batch = batch(&actions, &proofs, BatchFixtureSpec::new(0..8, 3));
 
     assert_eq!(
         NodMaterializationHeadV1::decode_canonical(
@@ -161,12 +153,12 @@ fn shared_root_path_verifies_a_full_batch_and_a_padded_final_remainder() {
     let limits = poc_schema_limits();
     let (actions, root, proofs) = population(10);
 
-    let first = batch(&actions, &proofs, 0, 8, 3);
+    let first = batch(&actions, &proofs, BatchFixtureSpec::new(0..8, 3));
     let verified = verify_nod_materialization_batch(&first, &head(root, 10, 0), 3, &limits)
         .expect("full batch");
     assert_eq!(verified.actions(), &actions[..8]);
 
-    let final_batch = batch(&actions, &proofs, 8, 2, 3);
+    let final_batch = batch(&actions, &proofs, BatchFixtureSpec::new(8..10, 3));
     let verified = verify_nod_materialization_batch(&final_batch, &head(root, 10, 8), 3, &limits)
         .expect("final padded remainder");
     assert_eq!(verified.actions(), &actions[8..]);
@@ -177,7 +169,11 @@ fn configured_height_is_a_ceiling_for_smaller_aligned_certified_subtrees() {
     let limits = poc_schema_limits();
     let (actions, root, proofs) = population(10);
     for (first, count, height) in [(0, 4, 2), (4, 2, 1), (6, 1, 0), (8, 2, 2)] {
-        let smaller = batch(&actions, &proofs, first, count, height);
+        let smaller = batch(
+            &actions,
+            &proofs,
+            BatchFixtureSpec::new(first..first + count as u32, height),
+        );
         let verified =
             verify_nod_materialization_batch(&smaller, &head(root, 10, first), 3, &limits).unwrap();
         assert_eq!(
@@ -187,7 +183,7 @@ fn configured_height_is_a_ceiling_for_smaller_aligned_certified_subtrees() {
     }
     let (actions, root, proofs) = population(256);
     verify_nod_materialization_batch(
-        &batch(&actions, &proofs, 0, 256, 8),
+        &batch(&actions, &proofs, BatchFixtureSpec::new(0..256, 8)),
         &head(root, 256, 0),
         8,
         &limits,
@@ -200,10 +196,26 @@ fn smaller_subtrees_still_reject_excess_height_misalignment_count_and_path() {
     let limits = poc_schema_limits();
     let (actions, root, proofs) = population(17);
     for (candidate, cursor, maximum) in [
-        (batch(&actions, &proofs, 0, 8, 3), 0, 2),
-        (batch(&actions, &proofs, 2, 4, 2), 2, 3),
-        (batch(&actions, &proofs, 0, 3, 2), 0, 3),
-        (batch(&actions, &proofs, 0, 5, 2), 0, 3),
+        (
+            batch(&actions, &proofs, BatchFixtureSpec::new(0..8, 3)),
+            0,
+            2,
+        ),
+        (
+            batch(&actions, &proofs, BatchFixtureSpec::new(2..6, 2)),
+            2,
+            3,
+        ),
+        (
+            batch(&actions, &proofs, BatchFixtureSpec::new(0..3, 2)),
+            0,
+            3,
+        ),
+        (
+            batch(&actions, &proofs, BatchFixtureSpec::new(0..5, 2)),
+            0,
+            3,
+        ),
     ] {
         assert!(verify_nod_materialization_batch(
             &candidate,
@@ -213,10 +225,10 @@ fn smaller_subtrees_still_reject_excess_height_misalignment_count_and_path() {
         )
         .is_err());
     }
-    let mut candidate = batch(&actions, &proofs, 0, 1, 0);
+    let mut candidate = batch(&actions, &proofs, BatchFixtureSpec::new(0..1, 0));
     candidate.root_path.push(B256::ZERO);
     assert!(verify_nod_materialization_batch(&candidate, &head(root, 17, 0), 3, &limits).is_err());
-    let mut candidate = batch(&actions, &proofs, 0, 2, 1);
+    let mut candidate = batch(&actions, &proofs, BatchFixtureSpec::new(0..2, 1));
     candidate.root_path[0] = B256::ZERO;
     assert!(verify_nod_materialization_batch(&candidate, &head(root, 17, 0), 3, &limits).is_err());
 }
@@ -226,19 +238,19 @@ fn short_nonfinal_misaligned_unordered_and_bad_root_batches_are_rejected() {
     let limits = poc_schema_limits();
     let (actions, root, proofs) = population(17);
 
-    let short = batch(&actions, &proofs, 0, 7, 3);
+    let short = batch(&actions, &proofs, BatchFixtureSpec::new(0..7, 3));
     assert!(verify_nod_materialization_batch(&short, &head(root, 17, 0), 3, &limits).is_err());
 
-    let misaligned = batch(&actions, &proofs, 8, 8, 3);
+    let misaligned = batch(&actions, &proofs, BatchFixtureSpec::new(8..16, 3));
     assert!(
         verify_nod_materialization_batch(&misaligned, &head(root, 17, 7), 3, &limits,).is_err()
     );
 
-    let mut unordered = batch(&actions, &proofs, 0, 8, 3);
+    let mut unordered = batch(&actions, &proofs, BatchFixtureSpec::new(0..8, 3));
     unordered.actions.swap(0, 1);
     assert!(verify_nod_materialization_batch(&unordered, &head(root, 17, 0), 3, &limits,).is_err());
 
-    let mut bad_root_path = batch(&actions, &proofs, 0, 8, 3);
+    let mut bad_root_path = batch(&actions, &proofs, BatchFixtureSpec::new(0..8, 3));
     bad_root_path.root_path[0] = B256::repeat_byte(0xff);
     assert!(
         verify_nod_materialization_batch(&bad_root_path, &head(root, 17, 0), 3, &limits,).is_err()
@@ -253,12 +265,14 @@ fn materialization_uses_the_existing_strict_ocomp_system_carrier_lane() {
     let candidate = classify_ocomp_system_carrier(
         OcompSystemCarrierView {
             is_eip1559: true,
-            to: Some(NOD_FACTORY_ADDRESS),
-            value: U256::ZERO,
-            input: &input,
-            gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-            max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
-            max_priority_fee_per_gas: Some(0),
+            call: TransactionCallFields {
+                to: Some(NOD_FACTORY_ADDRESS),
+                value: U256::ZERO,
+                input: &input,
+                gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+                max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+                max_priority_fee_per_gas: Some(0),
+            },
         },
         &limits,
     )
@@ -281,17 +295,22 @@ fn materialization_carrier_rejects_every_noncanonical_envelope_field() {
         encode_protected_materialize_certified_nods_calldata(&protected_batch(), &limits).unwrap();
     let canonical = OcompSystemCarrierView {
         is_eip1559: true,
-        to: Some(NOD_FACTORY_ADDRESS),
-        value: U256::ZERO,
-        input: &input,
-        gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-        max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
-        max_priority_fee_per_gas: Some(0),
+        call: TransactionCallFields {
+            to: Some(NOD_FACTORY_ADDRESS),
+            value: U256::ZERO,
+            input: &input,
+            gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+            max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas: Some(0),
+        },
     };
 
     assert!(classify_ocomp_system_carrier(
         OcompSystemCarrierView {
-            to: Some(Address::repeat_byte(0xaa)),
+            call: TransactionCallFields {
+                to: Some(Address::repeat_byte(0xaa)),
+                ..canonical.call
+            },
             ..canonical
         },
         &limits,
@@ -308,7 +327,10 @@ fn materialization_carrier_rejects_every_noncanonical_envelope_field() {
     .is_err_and(|error| matches!(error, OcompSystemCarrierError::NotEip1559)));
     assert!(classify_ocomp_system_carrier(
         OcompSystemCarrierView {
-            value: U256::from(1),
+            call: TransactionCallFields {
+                value: U256::from(1),
+                ..canonical.call
+            },
             ..canonical
         },
         &limits,
@@ -316,7 +338,10 @@ fn materialization_carrier_rejects_every_noncanonical_envelope_field() {
     .is_err_and(|error| matches!(error, OcompSystemCarrierError::NonZeroValue)));
     assert!(classify_ocomp_system_carrier(
         OcompSystemCarrierView {
-            gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT + 1,
+            call: TransactionCallFields {
+                gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT + 1,
+                ..canonical.call
+            },
             ..canonical
         },
         &limits,
@@ -324,7 +349,10 @@ fn materialization_carrier_rejects_every_noncanonical_envelope_field() {
     .is_err_and(|error| matches!(error, OcompSystemCarrierError::WrongGasLimit { .. })));
     assert!(classify_ocomp_system_carrier(
         OcompSystemCarrierView {
-            max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS - 1,
+            call: TransactionCallFields {
+                max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS - 1,
+                ..canonical.call
+            },
             ..canonical
         },
         &limits,
@@ -332,7 +360,10 @@ fn materialization_carrier_rejects_every_noncanonical_envelope_field() {
     .is_err_and(|error| matches!(error, OcompSystemCarrierError::FeeCapTooLow { .. })));
     assert!(classify_ocomp_system_carrier(
         OcompSystemCarrierView {
-            max_priority_fee_per_gas: Some(1),
+            call: TransactionCallFields {
+                max_priority_fee_per_gas: Some(1),
+                ..canonical.call
+            },
             ..canonical
         },
         &limits,
@@ -342,7 +373,10 @@ fn materialization_carrier_rejects_every_noncanonical_envelope_field() {
     let malformed = &input[..4];
     assert!(classify_ocomp_system_carrier(
         OcompSystemCarrierView {
-            input: malformed,
+            call: TransactionCallFields {
+                input: malformed,
+                ..canonical.call
+            },
             ..canonical
         },
         &limits,
@@ -354,18 +388,22 @@ fn materialization_carrier_rejects_every_noncanonical_envelope_field() {
 fn plaintext_calculation_batches_are_not_public_materialization_carriers() {
     let limits = poc_schema_limits();
     let (actions, _root, proofs) = population(8);
-    let input =
-        encode_materialize_certified_nods_calldata(&batch(&actions, &proofs, 0, 8, 3), &limits)
-            .unwrap();
+    let input = encode_materialize_certified_nods_calldata(
+        &batch(&actions, &proofs, BatchFixtureSpec::new(0..8, 3)),
+        &limits,
+    )
+    .unwrap();
     assert!(classify_ocomp_system_carrier(
         OcompSystemCarrierView {
             is_eip1559: true,
-            to: Some(NOD_FACTORY_ADDRESS),
-            value: U256::ZERO,
-            input: &input,
-            gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-            max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
-            max_priority_fee_per_gas: Some(0),
+            call: TransactionCallFields {
+                to: Some(NOD_FACTORY_ADDRESS),
+                value: U256::ZERO,
+                input: &input,
+                gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+                max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+                max_priority_fee_per_gas: Some(0),
+            },
         },
         &limits
     )

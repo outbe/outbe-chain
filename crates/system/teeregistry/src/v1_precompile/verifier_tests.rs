@@ -192,6 +192,12 @@ impl PreparedVerifierCall<'_, '_> {
             node_signature,
             enclave_signature,
         } = self;
+        let verified = VerifiedIntentV1 {
+            intent,
+            node_signature: &node_signature,
+            enclave_signature: &enclave_signature,
+            capability,
+        };
         match kind {
             RegistryMutatorV1::PrepareEnclaveUpgrade => Err(PrecompileError::Fatal(
                 "prepare tests use the public verified-evidence path".into(),
@@ -204,12 +210,7 @@ impl PreparedVerifierCall<'_, '_> {
                 } = validator_authorization(&preflight)?;
                 registry.register_enclave_and_bind_after_verifier_for_test_as(
                     caller,
-                    VerifiedIntentV1 {
-                        intent,
-                        node_signature: &node_signature,
-                        enclave_signature: &enclave_signature,
-                        capability,
-                    },
+                    verified,
                     NodeHostAssociationV1 {
                         binding: &binding,
                         validator_signature: &validator_signature,
@@ -219,36 +220,15 @@ impl PreparedVerifierCall<'_, '_> {
             }
             RegistryMutatorV1::RenewEnclave => registry
                 .renew_enclave_after_verifier_with_active_policy_for_test(
-                    caller,
-                    VerifiedIntentV1 {
-                        intent,
-                        node_signature: &node_signature,
-                        enclave_signature: &enclave_signature,
-                        capability,
-                    },
-                    &policy,
+                    caller, verified, &policy,
                 ),
             RegistryMutatorV1::ReplaceEnclaveBinding => registry
                 .replace_enclave_binding_after_verifier_with_active_policy_for_test(
-                    caller,
-                    VerifiedIntentV1 {
-                        intent,
-                        node_signature: &node_signature,
-                        enclave_signature: &enclave_signature,
-                        capability,
-                    },
-                    &policy,
+                    caller, verified, &policy,
                 ),
-            RegistryMutatorV1::TransitionEnclaveMeasurement => registry
-                .transition_enclave_measurement_after_verifier_for_test(
-                    caller,
-                    VerifiedIntentV1 {
-                        intent,
-                        node_signature: &node_signature,
-                        enclave_signature: &enclave_signature,
-                        capability,
-                    },
-                ),
+            RegistryMutatorV1::TransitionEnclaveMeasurement => {
+                registry.transition_enclave_measurement_after_verifier_for_test(caller, verified)
+            }
         }
     }
 }

@@ -65,10 +65,30 @@ impl TeeRegistry<'_> {
         }
         let height = self.storage.block_number()?;
         if hash == upgrade.successor_policy_hash {
-            return Ok(hash == self.active_v1_policy_hash.read()?
-                || (height < upgrade.activation_height
-                    && hash == self.staged_v1_policy_hash.read()?));
+            return self.successor_policy_hash_admitted_v1(hash, &upgrade, height);
         }
+        self.predecessor_policy_hash_admitted_v1(hash, transition, &upgrade, height)
+    }
+
+    #[cfg(feature = "tee-attestation-v1")]
+    fn successor_policy_hash_admitted_v1(
+        &self,
+        hash: B256,
+        upgrade: &EnclaveUpgradeV1,
+        height: u64,
+    ) -> Result<bool> {
+        Ok(hash == self.active_v1_policy_hash.read()?
+            || (height < upgrade.activation_height && hash == self.staged_v1_policy_hash.read()?))
+    }
+
+    #[cfg(feature = "tee-attestation-v1")]
+    fn predecessor_policy_hash_admitted_v1(
+        &self,
+        hash: B256,
+        transition: bool,
+        upgrade: &EnclaveUpgradeV1,
+        height: u64,
+    ) -> Result<bool> {
         Ok(!transition
             && height < upgrade.activation_height
             && hash == upgrade.predecessor_policy_hash

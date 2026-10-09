@@ -402,7 +402,9 @@ impl ProtectedNodPreparationError {
 mod tests {
     use super::*;
     use alloy_primitives::B256;
-    use outbe_ocomp_protocol::{common::BoundedBytes, profile::poc_schema_limits};
+    use outbe_ocomp_protocol::{
+        common::BoundedBytes, profile::poc_schema_limits, test_utils::nod_action_population,
+    };
 
     fn carrier() -> ProtectedNodMaterializationV2 {
         ProtectedNodMaterializationV2 {
@@ -422,10 +424,6 @@ mod tests {
         Vec<Vec<B256>>,
     ) {
         use alloy_primitives::{Address, U256};
-        use outbe_ocomp_protocol::list::{
-            ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits,
-        };
-        let limits = poc_schema_limits();
         let day = 20_260_812_u32;
         let id = |ordinal: u32| {
             let mut bytes = [0_u8; 32];
@@ -448,28 +446,7 @@ mod tests {
                 reference_currency: 840,
             })
             .collect();
-        let encoded: Vec<_> = actions
-            .iter()
-            .map(|action| action.encode_canonical_record(&limits).unwrap())
-            .collect();
-        let root = ordered_list_root(
-            ListKind::NodActions,
-            &encoded,
-            OrderedListLimits::new(512, limits.max_bounded_bytes, 1 << 20),
-        )
-        .unwrap();
-        let proofs = (0..count)
-            .map(|ordinal| {
-                streaming_ordered_list_membership_proof(
-                    ListKind::NodActions,
-                    count,
-                    ordinal,
-                    encoded.iter(),
-                    limits.max_bounded_bytes,
-                )
-                .unwrap()
-            })
-            .collect();
+        let (root, proofs) = nod_action_population(&actions);
         let head = NodMaterializationHeadV1 {
             queue_sequence: 1,
             job_id: B256::repeat_byte(1),

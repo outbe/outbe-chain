@@ -1,5 +1,11 @@
 use alloy_primitives::{Address, B256};
-use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_primitives::{
+    error::Result,
+    storage::{
+        finalized_guard_ring::{FinalizedGuardRing, FINALIZED_GUARD_RETAIN},
+        StorageHandle,
+    },
+};
 
 use crate::schema::ValidatorSet;
 use crate::state::{self, CommitteeSnapshot};
@@ -98,20 +104,27 @@ pub fn record_finalized_participation(
     // the K-block late-finalize window can never be replayed. Clearing the guard
     // flag of the block RETAIN records ago therefore reclaims its slot. This does
     // not weaken the replay protection for any block still inside the window.
-    let seq = vs.finalized_participation_ring_seq.read()?;
-    let idx = seq % FINALIZED_PARTICIPATION_RETAIN;
-    let evicted = vs.finalized_participation_ring.read(&idx)?;
-    if evicted != B256::ZERO && evicted != fb_hash {
-        vs.finalized_participation_recorded.write(&evicted, false)?;
-    }
-    vs.finalized_participation_ring.write(&idx, fb_hash)?;
-    vs.finalized_participation_ring_seq
-        .write(seq.checked_add(1).ok_or_else(|| {
+    vs.participation_prune_ring().record(
+        fb_hash,
+        |evicted| vs.finalized_participation_recorded.write(&evicted, false),
+        || {
             outbe_primitives::error::PrecompileError::Fatal(
                 "finalized participation ring sequence overflow".into(),
             )
-        })?)?;
-    Ok(())
+        },
+    )
+}
+
+impl<'storage> ValidatorSet<'storage> {
+    /// The prune ring of the participation guard: the ring entries (slot 45)
+    /// and the write cursor (slot 46). The hook and the tests use this
+    /// binding.
+    pub(crate) fn participation_prune_ring(&self) -> FinalizedGuardRing<'_, 'storage> {
+        FinalizedGuardRing {
+            entries: &self.finalized_participation_ring,
+            cursor: &self.finalized_participation_ring_seq,
+        }
+    }
 }
 
 /// Number of recent finalized blocks whose participation guard (slot 30) stays
@@ -119,7 +132,7 @@ pub fn record_finalized_participation(
 /// last `FINALIZED_PARTICIPATION_RETAIN` blocks is generous.
 /// [`record_finalized_participation`] prunes older guard flags. Changing it is a
 /// hard fork.
-pub const FINALIZED_PARTICIPATION_RETAIN: u64 = 64;
+pub const FINALIZED_PARTICIPATION_RETAIN: u64 = FINALIZED_GUARD_RETAIN;
 
 /// Inputs for the V2 atomic boundary activation hook.
 ///

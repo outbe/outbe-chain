@@ -292,10 +292,6 @@ impl TeePolicyV1 {
     }
 
     fn validate_dcap_profile(&self) -> Result<(), CodecError> {
-        const INTEL_QE_VENDOR_ID: [u8; 16] = [
-            0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f,
-            0x06, 0x07,
-        ];
         if (
             self.quote_version,
             self.tee_type,
@@ -525,6 +521,12 @@ impl TeePolicyScheduleV1 {
         Ok(())
     }
 }
+
+/// Vendor ID of Intel's SGX quoting enclave. The SGX DCAP policy profile admits
+/// only this value. Canonical policy bytes contain it, so do not change it.
+pub const INTEL_QE_VENDOR_ID: [u8; 16] = [
+    0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f, 0x06, 0x07,
+];
 
 pub const MAX_TEE_POLICY_SCHEDULE_BYTES: usize =
     1 + 32 + 32 + 2 + MAX_TEE_POLICY_SCHEDULE_ENTRIES * (8 + 4 + MAX_TEE_POLICY_BYTES + 32);

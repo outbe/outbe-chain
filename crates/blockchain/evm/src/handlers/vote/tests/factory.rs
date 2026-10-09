@@ -21,11 +21,13 @@ fn real_factory_vote_approval_creates_token_refunds_once_and_preserves_surplus()
         let (expected_id, expected_token) = factory.predict_token_address(issuer, "EXUSD").unwrap();
         proposal_id = vote
             .create_proposal_with_value(
-                issuer,
-                STABLECOIN_FACTORY_ADDRESS,
-                raw,
-                7,
-                STABLECOIN_CREATE_BOND,
+                outbe_vote::ProposalSubmission {
+                    proposer: issuer,
+                    target_module: STABLECOIN_FACTORY_ADDRESS,
+                    payload: raw,
+                    created_height: 7,
+                    attached_value: STABLECOIN_CREATE_BOND,
+                },
                 registry(),
             )
             .unwrap();
@@ -109,11 +111,13 @@ fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
         let mut vote = Vote::new(storage.clone());
         proposal_id = vote
             .create_proposal_with_value(
-                issuer,
-                STABLECOIN_FACTORY_ADDRESS,
-                raw,
-                7,
-                STABLECOIN_CREATE_BOND,
+                outbe_vote::ProposalSubmission {
+                    proposer: issuer,
+                    target_module: STABLECOIN_FACTORY_ADDRESS,
+                    payload: raw,
+                    created_height: 7,
+                    attached_value: STABLECOIN_CREATE_BOND,
+                },
                 registry(),
             )
             .unwrap();
@@ -179,11 +183,13 @@ fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
         let mut vote = Vote::new(storage.clone());
         let retry_id = vote
             .create_proposal_with_value(
-                issuer,
-                STABLECOIN_FACTORY_ADDRESS,
-                raw,
-                7 + VOTING_WINDOW_BLOCKS + 2,
-                STABLECOIN_CREATE_BOND,
+                outbe_vote::ProposalSubmission {
+                    proposer: issuer,
+                    target_module: STABLECOIN_FACTORY_ADDRESS,
+                    payload: raw,
+                    created_height: 7 + VOTING_WINDOW_BLOCKS + 2,
+                    attached_value: STABLECOIN_CREATE_BOND,
+                },
                 registry(),
             )
             .unwrap();
@@ -222,11 +228,13 @@ fn pfs_010_06_execution_error_refunds_bond_once_and_retains_reservation() {
         let mut vote = Vote::new(storage.clone());
         let proposal_id = vote
             .create_proposal_with_value(
-                issuer,
-                STABLECOIN_FACTORY_ADDRESS,
-                raw,
-                7,
-                STABLECOIN_CREATE_BOND,
+                outbe_vote::ProposalSubmission {
+                    proposer: issuer,
+                    target_module: STABLECOIN_FACTORY_ADDRESS,
+                    payload: raw,
+                    created_height: 7,
+                    attached_value: STABLECOIN_CREATE_BOND,
+                },
                 registry(),
             )
             .unwrap();
@@ -329,21 +337,25 @@ fn real_factory_vote_rejects_global_ticker_collision_before_allocation() {
     let mut vote = Vote::new(storage.clone());
     let first = vote
         .create_proposal_with_value(
-            issuer_a,
-            STABLECOIN_FACTORY_ADDRESS,
-            core::str::from_utf8(&raw_a).unwrap(),
-            7,
-            STABLECOIN_CREATE_BOND,
+            outbe_vote::ProposalSubmission {
+                proposer: issuer_a,
+                target_module: STABLECOIN_FACTORY_ADDRESS,
+                payload: core::str::from_utf8(&raw_a).unwrap(),
+                created_height: 7,
+                attached_value: STABLECOIN_CREATE_BOND,
+            },
             registry(),
         )
         .unwrap();
     assert!(vote
         .create_proposal_with_value(
-            issuer_b,
-            STABLECOIN_FACTORY_ADDRESS,
-            core::str::from_utf8(&raw_b).unwrap(),
-            7,
-            STABLECOIN_CREATE_BOND,
+            outbe_vote::ProposalSubmission {
+                proposer: issuer_b,
+                target_module: STABLECOIN_FACTORY_ADDRESS,
+                payload: core::str::from_utf8(&raw_b).unwrap(),
+                created_height: 7,
+                attached_value: STABLECOIN_CREATE_BOND,
+            },
             registry(),
         )
         .is_err());
@@ -506,11 +518,13 @@ fn pfs_010_08_fatal_creation_rolls_back_the_containing_block() {
         let mut vote = Vote::new(storage.clone());
         let proposal_id = vote
             .create_proposal_with_value(
-                issuer,
-                STABLECOIN_FACTORY_ADDRESS,
-                raw_text,
-                7,
-                STABLECOIN_CREATE_BOND,
+                outbe_vote::ProposalSubmission {
+                    proposer: issuer,
+                    target_module: STABLECOIN_FACTORY_ADDRESS,
+                    payload: raw_text,
+                    created_height: 7,
+                    attached_value: STABLECOIN_CREATE_BOND,
+                },
                 registry(),
             )
             .unwrap();

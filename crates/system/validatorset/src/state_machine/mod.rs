@@ -4,9 +4,10 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use adapter::StoredValidatorFields;
 pub use state::{
-    Active, ConsensusPubkey, Exiting, Inactive, Jail, JailRetained, Joining, P2pInfo,
-    StakeProjection, Unbonding, ValidatorHistory, ValidatorLifecycle, ValidatorState,
+    Active, ConsensusPubkey, Exiting, HistoryCounters, Inactive, Jail, JailRetained, Joining,
+    P2pInfo, StakeProjection, Unbonding, ValidatorHistory, ValidatorLifecycle, ValidatorState,
     WaitingForReadiness, WaitingForStake,
 };
 
@@ -137,27 +138,31 @@ pub fn demote_joining(
 
 /// Keeps a joiner who lost eligibility after the reshare freeze in the
 /// certified committee until the next boundary can drop them.
-fn exit_demoted_joiner(
-    registry_index: NonZeroU64,
-    consensus_pubkey: ConsensusPubkey,
-    p2p: P2pInfo,
-    stake: StakeProjection,
-    history: ValidatorHistory,
-    deactivated_at_height: u64,
-) -> Result<Exiting> {
-    require_canonical_stake(stake)?;
+fn exit_demoted_joiner(joiner: JoinerPayload, deactivated_at_height: u64) -> Result<Exiting> {
+    require_canonical_stake(joiner.stake)?;
     if deactivated_at_height == 0 {
         return Err(PrecompileError::Fatal(
             "validator deactivation height must be non-zero".into(),
         ));
     }
     Ok(Exiting {
-        registry_index,
-        consensus_pubkey,
-        p2p,
-        stake,
-        history: history.with_last_deactivated_at_height(Some(deactivated_at_height)),
+        registry_index: joiner.registry_index,
+        consensus_pubkey: joiner.consensus_pubkey,
+        p2p: joiner.p2p,
+        stake: joiner.stake,
+        history: joiner
+            .history
+            .with_last_deactivated_at_height(Some(deactivated_at_height)),
     })
+}
+
+/// The payload of a frozen joiner that lost eligibility after the freeze.
+struct JoinerPayload {
+    registry_index: NonZeroU64,
+    consensus_pubkey: ConsensusPubkey,
+    p2p: P2pInfo,
+    stake: StakeProjection,
+    history: ValidatorHistory,
 }
 
 /// Boundary retain for a frozen joiner now persisted as `WaitingForStake`.
@@ -166,11 +171,13 @@ pub fn exit_waiting_for_stake_at_boundary(
     deactivated_at_height: u64,
 ) -> Result<Exiting> {
     exit_demoted_joiner(
-        state.registry_index,
-        state.consensus_pubkey,
-        state.p2p,
-        state.stake,
-        state.history,
+        JoinerPayload {
+            registry_index: state.registry_index,
+            consensus_pubkey: state.consensus_pubkey,
+            p2p: state.p2p,
+            stake: state.stake,
+            history: state.history,
+        },
         deactivated_at_height,
     )
 }
@@ -182,11 +189,13 @@ pub fn exit_waiting_for_readiness_at_boundary(
     deactivated_at_height: u64,
 ) -> Result<Exiting> {
     exit_demoted_joiner(
-        state.registry_index,
-        state.consensus_pubkey,
-        state.p2p,
-        state.stake,
-        state.history,
+        JoinerPayload {
+            registry_index: state.registry_index,
+            consensus_pubkey: state.consensus_pubkey,
+            p2p: state.p2p,
+            stake: state.stake,
+            history: state.history,
+        },
         deactivated_at_height,
     )
 }
@@ -386,6 +395,9 @@ pub(crate) fn with_stake(
     stake: StakeProjection,
 ) -> Result<ValidatorLifecycle> {
     require_canonical_stake(stake)?;
+    if let Some(rejection) = stake_target_rejection(&lifecycle) {
+        return Err(rejection);
+    }
     match &mut lifecycle {
         ValidatorLifecycle::WaitingForStake(state) => state.stake = stake,
         ValidatorLifecycle::WaitingForReadiness(state) => state.stake = stake,
@@ -395,18 +407,29 @@ pub(crate) fn with_stake(
         ValidatorLifecycle::Jail(state) => state.stake = stake,
         ValidatorLifecycle::Exiting(state) => state.stake = stake,
         ValidatorLifecycle::Unbonding(state) => state.stake = stake,
-        ValidatorLifecycle::Absent => {
-            return Err(PrecompileError::Revert(
-                "cannot stake before validator registration".into(),
-            ));
-        }
-        ValidatorLifecycle::Inactive(_) => {
-            return Err(PrecompileError::Revert(
-                "inactive validator must re-register before staking".into(),
-            ));
-        }
+        ValidatorLifecycle::Absent | ValidatorLifecycle::Inactive(_) => {}
     }
     Ok(lifecycle)
+}
+
+/// The rejection of a stake update for a lifecycle that cannot hold stake:
+/// an absent address or an inactive registry entry.
+pub(crate) fn stake_target_rejection(lifecycle: &ValidatorLifecycle) -> Option<PrecompileError> {
+    match lifecycle {
+        ValidatorLifecycle::Absent => Some(PrecompileError::Revert(
+            "cannot stake before validator registration".into(),
+        )),
+        ValidatorLifecycle::Inactive(_) => Some(PrecompileError::Revert(
+            "inactive validator must re-register before staking".into(),
+        )),
+        _ => None,
+    }
+}
+
+/// Replaces the stake mirror of an UNBONDING validator.
+pub(crate) fn with_unbonding_stake(state: Unbonding, stake: StakeProjection) -> Result<Unbonding> {
+    require_canonical_stake(stake)?;
+    Ok(Unbonding { stake, ..state })
 }
 
 /// Updates informational P2P data without changing lifecycle eligibility.
@@ -441,63 +464,61 @@ pub(crate) fn with_history(
             "deactivation height must not use the zero sentinel".into(),
         ));
     }
-    match &mut lifecycle {
-        ValidatorLifecycle::WaitingForStake(state) => state.history = history,
-        ValidatorLifecycle::WaitingForReadiness(state) => state.history = history,
-        ValidatorLifecycle::Joining(state) => state.history = history,
-        ValidatorLifecycle::Active(state) => {
-            if history.last_deactivated_at_height.is_some() {
-                return Err(PrecompileError::Fatal(
-                    "active history must not contain a deactivation height".into(),
-                ));
-            }
-            state.history = history;
-        }
-        ValidatorLifecycle::JailRetained(state) => {
-            if history.last_deactivated_at_height != Some(state.jailed_at) {
-                return Err(PrecompileError::Fatal(
-                    "retained jail history must match the jail height".into(),
-                ));
-            }
-            state.history = history;
-        }
-        ValidatorLifecycle::Jail(state) => {
-            if history.last_deactivated_at_height != Some(state.jailed_at) {
-                return Err(PrecompileError::Fatal(
-                    "jail history must match the jail height".into(),
-                ));
-            }
-            state.history = history;
-        }
-        ValidatorLifecycle::Exiting(state) => {
-            if history.last_deactivated_at_height.is_none() {
-                return Err(PrecompileError::Fatal(
-                    "exiting history requires a deactivation height".into(),
-                ));
-            }
-            state.history = history;
-        }
-        ValidatorLifecycle::Unbonding(state) => {
-            if history.last_deactivated_at_height.is_none() {
-                return Err(PrecompileError::Fatal(
-                    "unbonding history requires a deactivation height".into(),
-                ));
-            }
-            state.history = history;
-        }
-        ValidatorLifecycle::Inactive(state) => {
-            if history.last_deactivated_at_height.is_none() {
-                return Err(PrecompileError::Fatal(
-                    "inactive history requires a deactivation height".into(),
-                ));
-            }
-            state.history = history;
-        }
-        ValidatorLifecycle::Absent => {
-            return Err(PrecompileError::Revert("validator not registered".into()));
-        }
+    if let Some(rejection) = history_rejection(&lifecycle, &history) {
+        return Err(rejection);
+    }
+    if let Some(retained) = history_mut(&mut lifecycle) {
+        *retained = history;
     }
     Ok(lifecycle)
+}
+
+/// The rejection of a history that contradicts the lifecycle variant.
+fn history_rejection(
+    lifecycle: &ValidatorLifecycle,
+    history: &ValidatorHistory,
+) -> Option<PrecompileError> {
+    let deactivated_at = history.last_deactivated_at_height;
+    let rule = match lifecycle {
+        ValidatorLifecycle::Absent => {
+            return Some(PrecompileError::Revert("validator not registered".into()));
+        }
+        ValidatorLifecycle::Active(_) if deactivated_at.is_some() => {
+            "active history must not contain a deactivation height"
+        }
+        ValidatorLifecycle::JailRetained(state) if deactivated_at != Some(state.jailed_at) => {
+            "retained jail history must match the jail height"
+        }
+        ValidatorLifecycle::Jail(state) if deactivated_at != Some(state.jailed_at) => {
+            "jail history must match the jail height"
+        }
+        ValidatorLifecycle::Exiting(_) if deactivated_at.is_none() => {
+            "exiting history requires a deactivation height"
+        }
+        ValidatorLifecycle::Unbonding(_) if deactivated_at.is_none() => {
+            "unbonding history requires a deactivation height"
+        }
+        ValidatorLifecycle::Inactive(_) if deactivated_at.is_none() => {
+            "inactive history requires a deactivation height"
+        }
+        _ => return None,
+    };
+    Some(PrecompileError::Fatal(rule.into()))
+}
+
+fn history_mut(lifecycle: &mut ValidatorLifecycle) -> Option<&mut ValidatorHistory> {
+    match lifecycle {
+        ValidatorLifecycle::Absent => None,
+        ValidatorLifecycle::WaitingForStake(state) => Some(&mut state.history),
+        ValidatorLifecycle::WaitingForReadiness(state) => Some(&mut state.history),
+        ValidatorLifecycle::Joining(state) => Some(&mut state.history),
+        ValidatorLifecycle::Active(state) => Some(&mut state.history),
+        ValidatorLifecycle::JailRetained(state) => Some(&mut state.history),
+        ValidatorLifecycle::Jail(state) => Some(&mut state.history),
+        ValidatorLifecycle::Exiting(state) => Some(&mut state.history),
+        ValidatorLifecycle::Unbonding(state) => Some(&mut state.history),
+        ValidatorLifecycle::Inactive(state) => Some(&mut state.history),
+    }
 }
 
 fn require_at_least_minimum(stake: StakeProjection, minimum: U256) -> Result<()> {

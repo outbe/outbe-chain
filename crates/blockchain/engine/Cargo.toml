@@ -79,6 +79,7 @@ thiserror.workspace = true
 jsonrpsee = { version = "0.26", default-features = false, features = ["http-client"] }
 
 [dev-dependencies]
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 reth-chain-state = { workspace = true, features = ["test-utils"] }
 reth-db.workspace = true
 reth-primitives-traits.workspace = true

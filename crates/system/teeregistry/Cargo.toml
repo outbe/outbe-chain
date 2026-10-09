@@ -18,6 +18,7 @@ default = []
 tee-attestation-v1 = []
 
 [dev-dependencies]
+outbe-tee = { workspace = true, features = ["test-utils"] }
 ed25519-dalek.workspace = true
 k256.workspace = true
 outbe-tee-enclave = { workspace = true, features = ["mock"] }

@@ -1,9 +1,13 @@
 use super::*;
-use crate::v1::{NodeHostAssociationV1, VerifiedIntentV1};
+use crate::v1::{NodeEnclaveBindingV1, VerifiedIntentV1};
 
-fn transition_evidence(
+/// The canonical DCAP evidence of `intent` with a key-ready proof for the
+/// resident offer key `resident_offer_public`. `enclave_signer` signs the
+/// proof.
+fn transition_evidence_with_offer(
     intent: &RegistrationIntentV1,
     enclave_signer: &ed25519_dalek::SigningKey,
+    resident_offer_public: [u8; 32],
 ) -> Vec<u8> {
     let candidate_manifest = initialization_manifest_for_intent(intent, [0xa7; 32]);
     let mut proof = TransitionKeyReadyProofV1 {
@@ -12,25 +16,24 @@ fn transition_evidence(
         transition_intent_hash: intent.intent_hash().unwrap(),
         candidate_manifest_hash: candidate_manifest.authorization_hash().unwrap(),
         transition_nonce: intent.transition_nonce,
-        resident_offer_public: OFFER_PUBLIC,
+        resident_offer_public,
         candidate_attestation_signature: [0; 64],
     };
     proof.candidate_attestation_signature = enclave_signer
         .sign(proof.signing_hash().unwrap().as_slice())
         .to_bytes();
-    AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
-        intent: intent.clone(),
-        quote: vec![0x51],
-        components: (1_u8..=8)
-            .map(|kind| DcapCollateralComponentV1 {
-                kind: DcapCollateralKind::try_from(kind).unwrap(),
-                bytes: vec![kind],
-            })
-            .collect(),
-        transition_key_ready_proof: Some(proof),
-    })
-    .encode_canonical()
-    .unwrap()
+    synthetic_dcap_evidence(intent, vec![0x51], Some(proof))
+        .encode_canonical()
+        .unwrap()
+}
+
+/// [`transition_evidence_with_offer`] for the installed offer key
+/// [`OFFER_PUBLIC`].
+fn transition_evidence(
+    intent: &RegistrationIntentV1,
+    enclave_signer: &ed25519_dalek::SigningKey,
+) -> Vec<u8> {
+    transition_evidence_with_offer(intent, enclave_signer, OFFER_PUBLIC)
 }
 
 fn install_offer_key(registry: &mut TeeRegistry<'_>, policy: &TeePolicyV1) {
@@ -48,307 +51,223 @@ fn install_offer_key(registry: &mut TeeRegistry<'_>, policy: &TeePolicyV1) {
         .unwrap();
 }
 
+/// The `transitionEnclaveMeasurement` calldata for `signed` with `evidence`.
+fn transition_calldata(evidence: &[u8], signed: &SignedIntent<'_>) -> Vec<u8> {
+    evidence_mutator_calldata(
+        RegistryMutatorV1::TransitionEnclaveMeasurement,
+        evidence,
+        signed,
+    )
+}
+
+/// Asserts that `binding` is the first measurement transition to the enclave of
+/// `transition` with `mrenclave` under the `successor` policy.
+fn assert_transitioned_binding(
+    binding: &NodeEnclaveBindingV1,
+    transition: &RegistrationIntentV1,
+    mrenclave: B256,
+    successor: &TeePolicyV1,
+) {
+    assert_eq!(binding.enclave_id, transition.enclave_id);
+    assert_eq!(binding.mrenclave, mrenclave);
+    assert_eq!(binding.transition_nonce, 1);
+    assert_eq!(binding.policy_hash, successor.policy_hash().unwrap());
+}
+
+/// Runs `test` on a new chain where `validator` is a registered validator with
+/// the policy and the offer key installed, in this order, and then with its
+/// initial binding from `initial`. The measurement transition in `test` reads
+/// the offer key (`validate_transition_key_ready_proof_v1`). The order (offer
+/// key, then binding) is the order of the original test.
+fn run_with_offer_key_and_binding(
+    validator: &LifecycleValidator,
+    initial: VerifiedIntentV1<'_>,
+    test: impl FnOnce(StorageHandle<'_>, TeeRegistry<'_>),
+) {
+    validator.run_as_validator(|storage, mut registry| {
+        install_offer_key(&mut registry, &validator.policy);
+        register_same_key_node_for_lifecycle_test(&mut registry, &validator.node_signer, initial)
+            .unwrap();
+        test(storage, registry);
+    });
+}
+
 #[test]
 fn existing_validator_transitions_to_staged_measurement_before_activation() {
-    let genesis_hash = B256::repeat_byte(0x16);
-    let current = policy(
-        genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    let validator = LifecycleValidator::new(
+        hardening_policy(B256::repeat_byte(0x16)),
+        0x31,
+        0x32,
+        EnclaveBindingSeeds::new(0x51, 0x61),
     );
-    let mut successor = current.clone();
-    successor.policy_version = 2;
-    successor.activation_height = 50;
-    successor.predecessor_policy_hash = current.policy_hash().unwrap();
-    for rule in &mut successor.measurement_rules {
-        rule.mrenclave = B256::repeat_byte(0x92);
-        rule.admit_from_height = 50;
-        rule.admit_until_height_exclusive = 500;
-    }
+    let successor = measurement_successor(&validator.policy, B256::repeat_byte(0x92));
 
-    let node_signer = OutbeEvmSigner::from_secret_bytes([0x31; 32]).unwrap();
-    let old_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x32; 32]);
     let new_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x33; 32]);
-    let initial = registration_intent(
-        &current,
-        &node_signer,
-        CONSENSUS_KEY,
-        &old_enclave,
-        0x51,
-        0x61,
+    let transition = measurement_transition_intent(
+        &validator.initial,
+        &successor,
+        &new_enclave,
+        EnclaveBindingSeeds::new(0x52, 0x62),
+        NOW + 3_600,
     );
-    let transition =
-        measurement_transition_intent(&initial, &successor, &new_enclave, 0x52, 0x62, NOW + 3_600);
-    let (initial_node, initial_enclave) = signatures(&initial, &node_signer, &old_enclave);
-    let (transition_node, transition_enclave) = signatures(&transition, &node_signer, &new_enclave);
+    let signed_initial = validator.signed_initial();
+    let signed_transition = validator.sign_with_enclave(&transition, &new_enclave);
     let transition_evidence = transition_evidence(&transition, &new_enclave);
-    let call = IRegisterEnclaveV1Test::transitionEnclaveMeasurementCall {
-        evidence: transition_evidence.clone().into(),
-        nodeSignature: transition_node.to_vec().into(),
-        enclaveSignature: transition_enclave.to_vec().into(),
-    }
-    .abi_encode();
+    let call = transition_calldata(&transition_evidence, &signed_transition);
     let mut next_verdict = verdict(DcapPlatformTcbStatusV1::UpToDate);
     next_verdict.mrenclave = B256::repeat_byte(0x92);
-    let mut provider = storage(genesis_hash);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
-        let mut registry = TeeRegistry::new(storage.clone());
-        registry.install_initial_policy_v1(&current).unwrap();
-        install_offer_key(&mut registry, &current);
-        register_same_key_node_for_lifecycle_test(
-            &mut registry,
-            &initial,
-            &node_signer,
-            &initial_node,
-            &initial_enclave,
-            PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-        )
-        .unwrap();
-        registry
-            .stage_successor_policy_v1(U256::from(7), &successor)
-            .unwrap();
-
-        let mut wrong_offer =
-            AttestationEvidenceV1::decode_canonical(&transition_evidence).unwrap();
-        let AttestationEvidenceV1::Dcap(wrong_offer) = &mut wrong_offer else {
-            unreachable!();
-        };
-        let proof = wrong_offer.transition_key_ready_proof.as_mut().unwrap();
-        proof.resident_offer_public = [0xc1; 32];
-        proof.candidate_attestation_signature = new_enclave
-            .sign(proof.signing_hash().unwrap().as_slice())
-            .to_bytes();
-        let wrong_call = IRegisterEnclaveV1Test::transitionEnclaveMeasurementCall {
-            evidence: AttestationEvidenceV1::Dcap(wrong_offer.clone())
-                .encode_canonical()
-                .unwrap()
-                .into(),
-            nodeSignature: transition_node.to_vec().into(),
-            enclaveSignature: transition_enclave.to_vec().into(),
-        }
-        .abi_encode();
-        assert!(dispatch_transition_after_verifier_for_test(
-            storage.clone(),
-            node_signer.address(),
-            &wrong_call,
-            &transition,
-            PostVerifierDcapCapabilityV1::new(next_verdict.clone()),
-        )
-        .is_err());
-        assert_eq!(
+    run_with_offer_key_and_binding(
+        &validator,
+        signed_initial.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+        |storage, mut registry| {
             registry
-                .validator_enclave_binding_v1(node_signer.address())
-                .unwrap()
-                .unwrap()
-                .enclave_id,
-            initial.enclave_id
-        );
-        dispatch_transition_after_verifier_for_test(
-            storage.clone(),
-            node_signer.address(),
-            &call,
-            &transition,
-            PostVerifierDcapCapabilityV1::new(next_verdict),
-        )
-        .unwrap();
+                .stage_successor_policy_v1(U256::from(7), &successor)
+                .unwrap();
 
-        let registry = TeeRegistry::new(storage);
-        let binding = registry
-            .validator_enclave_binding_v1(node_signer.address())
-            .unwrap()
+            let wrong_call = transition_calldata(
+                &transition_evidence_with_offer(&transition, &new_enclave, [0xc1; 32]),
+                &signed_transition,
+            );
+            assert_reverts(
+                dispatch_transition_after_verifier_for_test(
+                    storage.clone(),
+                    validator.node_signer.address(),
+                    &wrong_call,
+                    &transition,
+                    PostVerifierDcapCapabilityV1::new(next_verdict.clone()),
+                ),
+                "measurement transition key-ready proof is invalid",
+            );
+            assert_eq!(
+                validator.stored_binding(&registry).enclave_id,
+                validator.initial.enclave_id
+            );
+            dispatch_transition_after_verifier_for_test(
+                storage.clone(),
+                validator.node_signer.address(),
+                &call,
+                &transition,
+                PostVerifierDcapCapabilityV1::new(next_verdict),
+            )
             .unwrap();
-        assert_eq!(binding.enclave_id, transition.enclave_id);
-        assert_eq!(binding.mrenclave, B256::repeat_byte(0x92));
-        assert_eq!(binding.transition_nonce, 1);
-        assert_eq!(binding.policy_hash, successor.policy_hash().unwrap());
-        assert_eq!(registry.active_policy_v1().unwrap(), current);
-    });
+
+            let registry = TeeRegistry::new(storage);
+            let binding = validator.stored_binding(&registry);
+            assert_transitioned_binding(&binding, &transition, B256::repeat_byte(0x92), &successor);
+            assert_eq!(registry.active_policy_v1().unwrap(), validator.policy);
+        },
+    );
 }
 
 #[test]
 fn activation_preserves_old_lease_but_old_policy_cannot_register_renew_or_replace() {
     let genesis_hash = B256::repeat_byte(0x19);
-    let current = policy(
-        genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    let validator = LifecycleValidator::new(
+        hardening_policy(genesis_hash),
+        0x37,
+        0x38,
+        EnclaveBindingSeeds::new(0x55, 0x65),
     );
-    let mut successor = current.clone();
-    successor.policy_version = 2;
-    successor.activation_height = 50;
-    successor.predecessor_policy_hash = current.policy_hash().unwrap();
-    for rule in &mut successor.measurement_rules {
-        rule.mrenclave = B256::repeat_byte(0x94);
-        rule.admit_from_height = 50;
-        rule.admit_until_height_exclusive = 500;
-    }
+    let successor = measurement_successor(&validator.policy, B256::repeat_byte(0x94));
     let proposal_id = U256::from(10);
-    let node_signer = OutbeEvmSigner::from_secret_bytes([0x37; 32]).unwrap();
-    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x38; 32]);
-    let initial = registration_intent(
-        &current,
-        &node_signer,
-        CONSENSUS_KEY,
-        &enclave_signer,
-        0x55,
-        0x65,
-    );
-    let renewal = renewal_intent(&initial, NOW + 6_000);
+    let renewal = renewal_intent(&validator.initial, NOW + 6_000);
     let replacement_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x39; 32]);
-    let replacement = replacement_intent(&initial, &replacement_enclave, 0x56, 0x66, NOW + 6_000);
-    let newcomer_signer = OutbeEvmSigner::from_secret_bytes([0x3c; 32]).unwrap();
-    let newcomer_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x3d; 32]);
-    let newcomer_consensus_key = [0x3e; 48];
-    let newcomer = registration_intent(
-        &current,
-        &newcomer_signer,
-        newcomer_consensus_key,
-        &newcomer_enclave,
-        0x57,
-        0x67,
+    let replacement = replacement_intent(
+        &validator.initial,
+        &replacement_enclave,
+        EnclaveBindingSeeds::new(0x56, 0x66),
+        NOW + 6_000,
     );
-    let (initial_node, initial_enclave) = signatures(&initial, &node_signer, &enclave_signer);
-    let (renewal_node, renewal_enclave) = signatures(&renewal, &node_signer, &enclave_signer);
-    let (replacement_node, replacement_signature) =
-        signatures(&replacement, &node_signer, &replacement_enclave);
-    let (newcomer_node, newcomer_signature) =
-        signatures(&newcomer, &newcomer_signer, &newcomer_enclave);
-    let mut provider = storage(genesis_hash);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
-        let mut registry = TeeRegistry::new(storage);
-        registry.install_initial_policy_v1(&current).unwrap();
-        register_same_key_node_for_lifecycle_test(
-            &mut registry,
-            &initial,
-            &node_signer,
-            &initial_node,
-            &initial_enclave,
-            PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
-        )
-        .unwrap();
-        registry
-            .stage_successor_policy_v1(proposal_id, &successor)
-            .unwrap();
-    });
+    let newcomer = LifecycleValidator::new(
+        validator.policy.clone(),
+        0x3c,
+        0x3d,
+        EnclaveBindingSeeds::new(0x57, 0x67),
+    );
+    let newcomer_consensus_key = [0x3e; 48];
+    let signed_initial = validator.signed_initial();
+    let signed_renewal = validator.sign(&renewal);
+    let signed_replacement = validator.sign_with_enclave(&replacement, &replacement_enclave);
+    let signed_newcomer = newcomer.signed_initial();
+    let mut provider = validator.run_as_validator_with_binding(
+        signed_initial.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+        |_storage, mut registry| {
+            registry
+                .stage_successor_policy_v1(proposal_id, &successor)
+                .unwrap();
+        },
+    );
 
     provider.set_block_number(50);
     StorageHandle::enter(&mut provider, |storage| {
-        register_validator(storage.clone(), &newcomer_signer, newcomer_consensus_key);
+        register_validator(
+            storage.clone(),
+            &newcomer.node_signer,
+            newcomer_consensus_key,
+        );
         let mut registry = TeeRegistry::new(storage);
         registry
             .promote_staged_successor_policy_v1(proposal_id, 50)
             .unwrap();
         assert!(registry
-            .is_validator_enclave_ready_v1(node_signer.address())
+            .is_validator_enclave_ready_v1(validator.node_signer.address())
             .unwrap());
-        assert!(revert_message(
-            registry
-                .register_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &newcomer,
-                    node_signature: &newcomer_node,
-                    enclave_signature: &newcomer_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("authoritative V1 policy"));
-        assert!(revert_message(
-            registry
-                .renew_enclave_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &renewal,
-                    node_signature: &renewal_node,
-                    enclave_signature: &renewal_enclave,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("authoritative V1 policy"));
-        assert!(revert_message(
-            registry
-                .replace_enclave_binding_after_verifier_for_test(VerifiedIntentV1 {
-                    intent: &replacement,
-                    node_signature: &replacement_node,
-                    enclave_signature: &replacement_signature,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    ))
-                })
-                .unwrap_err()
-        )
-        .contains("authoritative V1 policy"));
+        assert_reverts(
+            registry.register_enclave_after_verifier_for_test(
+                signed_newcomer.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+            ),
+            "authoritative V1 policy",
+        );
+        assert_reverts(
+            registry.renew_enclave_after_verifier_for_test(
+                signed_renewal.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+            ),
+            "authoritative V1 policy",
+        );
+        assert_reverts(
+            registry.replace_enclave_binding_after_verifier_for_test(
+                signed_replacement.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+            ),
+            "authoritative V1 policy",
+        );
     });
 }
 
 #[test]
 fn full_node_uses_the_same_bounded_transition_abi_and_staged_policy() {
     let genesis_hash = B256::repeat_byte(0x18);
-    let current = policy(
-        genesis_hash,
-        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    let full_node = LifecycleFullNode::new(
+        hardening_policy(genesis_hash),
+        0x34,
+        0x35,
+        EnclaveBindingSeeds::new(0x53, 0x63),
     );
-    let mut successor = current.clone();
-    successor.policy_version = 2;
-    successor.activation_height = 50;
-    successor.predecessor_policy_hash = current.policy_hash().unwrap();
-    for rule in &mut successor.measurement_rules {
-        rule.mrenclave = B256::repeat_byte(0x93);
-        rule.admit_from_height = 50;
-        rule.admit_until_height_exclusive = 500;
-    }
+    let successor = measurement_successor(&full_node.policy, B256::repeat_byte(0x93));
 
-    let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x34; 32]).into()).unwrap();
     let admission_signer = OutbeEvmSigner::from_secret_bytes([0x37; 32]).unwrap();
-    let old_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x35; 32]);
     let new_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x36; 32]);
-    let initial = full_node_registration_intent(&current, &node_signer, &old_enclave, 0x53, 0x63);
-    let transition =
-        measurement_transition_intent(&initial, &successor, &new_enclave, 0x54, 0x64, NOW + 3_600);
-    let (initial_node, initial_enclave) =
-        full_node_signatures(&initial, &node_signer, &old_enclave);
-    let (node_binding, validator_signature, node_binding_signature) =
-        validator_node_binding_authorization_for_p2p_node(
-            &initial,
-            &admission_signer,
-            &node_signer,
-        );
-    let (transition_node, transition_enclave) =
-        full_node_signatures(&transition, &node_signer, &new_enclave);
-    let call = IRegisterEnclaveV1Test::transitionEnclaveMeasurementCall {
-        evidence: transition_evidence(&transition, &new_enclave).into(),
-        nodeSignature: transition_node.to_vec().into(),
-        enclaveSignature: transition_enclave.to_vec().into(),
-    }
-    .abi_encode();
+    let transition = measurement_transition_intent(
+        &full_node.initial,
+        &successor,
+        &new_enclave,
+        EnclaveBindingSeeds::new(0x54, 0x64),
+        NOW + 3_600,
+    );
+    let signed_initial = full_node.signed_initial();
+    let association = full_node.association(&admission_signer);
+    let signed_transition = full_node.sign_with_enclave(&transition, &new_enclave);
+    let call = transition_calldata(
+        &transition_evidence(&transition, &new_enclave),
+        &signed_transition,
+    );
     let mut next_verdict = verdict(DcapPlatformTcbStatusV1::UpToDate);
     next_verdict.mrenclave = B256::repeat_byte(0x93);
-    let p2p_public = full_node_public(&initial);
-    let mut provider = storage(genesis_hash);
-
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut registry = TeeRegistry::new(storage.clone());
-        registry.install_initial_policy_v1(&current).unwrap();
-        install_offer_key(&mut registry, &current);
+    full_node.run_installed(|storage, mut registry| {
+        install_offer_key(&mut registry, &full_node.policy);
         registry
             .register_enclave_and_bind_after_verifier_for_test(
-                VerifiedIntentV1 {
-                    intent: &initial,
-                    node_signature: &initial_node,
-                    enclave_signature: &initial_enclave,
-                    capability: PostVerifierDcapCapabilityV1::new(verdict(
-                        DcapPlatformTcbStatusV1::UpToDate,
-                    )),
-                },
-                NodeHostAssociationV1 {
-                    binding: &node_binding,
-                    validator_signature: &validator_signature,
-                    node_binding_signature: &node_binding_signature,
-                },
+                signed_initial.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+                association.input(),
             )
             .unwrap();
         registry
@@ -363,13 +282,7 @@ fn full_node_uses_the_same_bounded_transition_abi_and_staged_policy() {
         )
         .unwrap();
 
-        let binding = TeeRegistry::new(storage)
-            .node_host_enclave_binding_v1(p2p_public)
-            .unwrap()
-            .unwrap();
-        assert_eq!(binding.enclave_id, transition.enclave_id);
-        assert_eq!(binding.mrenclave, B256::repeat_byte(0x93));
-        assert_eq!(binding.transition_nonce, 1);
-        assert_eq!(binding.policy_hash, successor.policy_hash().unwrap());
+        let binding = full_node.stored_binding(&TeeRegistry::new(storage));
+        assert_transitioned_binding(&binding, &transition, B256::repeat_byte(0x93), &successor);
     });
 }

@@ -3,15 +3,17 @@ use std::collections::BTreeSet;
 use alloy_primitives::{B256, U256};
 
 use crate::{
-    codec::{require_canonical_reencoding, CanonicalReader, CanonicalWriter},
     common::BoundedBytes,
     error::ProtocolError,
-    hash::hash_framed,
+    hash::{framed_identity_hash, hash_framed},
     list::{ordered_list_root, OrderedListLimits},
     opening::{LysisOpeningsProofV1, RawContractOpeningProofV1},
     profile::ProtocolBundleV1,
     registry::{HashDomain, ListKind},
-    schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, NestedCodec, SchemaLimits},
+    schema::{
+        impl_nested_record_codec, impl_top_level_codec, require, wire_enum_u8, wire_struct,
+        NestedCodec, SchemaLimits,
+    },
 };
 
 const MAX_ORACLE_SETTLEMENT_ISOS: usize = 256;
@@ -119,47 +121,11 @@ impl AuthenticatedInputChunkV1 {
     }
 }
 
-impl InputChunkRefV1 {
-    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
-        <Self as NestedCodec>::validate(self, limits)?;
-        let mut writer = CanonicalWriter::new(limits.codec);
-        self.encode_nested(&mut writer, limits)?;
-        Ok(writer.into_bytes())
-    }
+impl_nested_record_codec!(InputChunkRefV1);
 
-    pub fn decode_canonical_record(
-        encoded: &[u8],
-        limits: &SchemaLimits,
-    ) -> Result<Self, ProtocolError> {
-        let mut reader = CanonicalReader::new(encoded, limits.codec)?;
-        let reference = Self::decode_nested(&mut reader, limits)?;
-        reader.finish()?;
-        <Self as NestedCodec>::validate(&reference, limits)?;
-        require_canonical_reencoding(encoded, &reference.encode_canonical_record(limits)?)?;
-        Ok(reference)
-    }
-}
+impl_nested_record_codec!(AuthenticatedOpeningV1);
 
 impl AuthenticatedOpeningV1 {
-    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
-        <Self as NestedCodec>::validate(self, limits)?;
-        let mut writer = CanonicalWriter::new(limits.codec);
-        self.encode_nested(&mut writer, limits)?;
-        Ok(writer.into_bytes())
-    }
-
-    pub fn decode_canonical_record(
-        encoded: &[u8],
-        limits: &SchemaLimits,
-    ) -> Result<Self, ProtocolError> {
-        let mut reader = CanonicalReader::new(encoded, limits.codec)?;
-        let opening = Self::decode_nested(&mut reader, limits)?;
-        reader.finish()?;
-        <Self as NestedCodec>::validate(&opening, limits)?;
-        require_canonical_reencoding(encoded, &opening.encode_canonical_record(limits)?)?;
-        Ok(opening)
-    }
-
     pub fn validate_against_bundle(
         &self,
         bundle: &ProtocolBundleV1,
@@ -408,23 +374,26 @@ fn canonical_raw_opening(
 }
 
 impl InputManifestV1 {
+    fn has_committed_record_population(&self) -> bool {
+        self.tribute_count > 0
+            && self.input_chunk_count > 0
+            && self.exact_record_count >= self.tribute_count
+    }
+
+    fn has_committed_bytes_and_root(&self) -> bool {
+        self.exact_encoded_bytes > 0 && !self.input_chunk_list_root.is_zero()
+    }
+
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         require(
-            self.tribute_count > 0
-                && self.input_chunk_count > 0
-                && self.exact_record_count >= self.tribute_count
-                && self.exact_encoded_bytes > 0
-                && !self.input_chunk_list_root.is_zero(),
+            self.has_committed_record_population() && self.has_committed_bytes_and_root(),
             "input manifest committed population",
         )?;
         let _ = limits;
         Ok(())
     }
 
-    pub fn manifest_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_semantics(limits)?;
-        hash_framed(HashDomain::InputManifest, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(manifest_hash, InputManifest, validate_semantics(limits));
 
     pub fn validate_against_bundle(
         &self,
@@ -461,18 +430,26 @@ fn validate_authenticated_opening(
     )
 }
 
+fn has_ordered_chunk_keys(reference: &InputChunkRefV1) -> bool {
+    !reference.first_key.0.is_empty()
+        && !reference.last_key_inclusive.0.is_empty()
+        && reference.first_key.0 <= reference.last_key_inclusive.0
+}
+
+fn has_chunk_bytes_and_digests(reference: &InputChunkRefV1) -> bool {
+    reference.encoded_bytes > 0
+        && !reference.semantic_digest.is_zero()
+        && !reference.transport_digest.is_zero()
+}
+
 fn validate_input_chunk_ref(
     reference: &InputChunkRefV1,
     _limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
     require(
         reference.record_count > 0
-            && !reference.first_key.0.is_empty()
-            && !reference.last_key_inclusive.0.is_empty()
-            && reference.first_key.0 <= reference.last_key_inclusive.0
-            && reference.encoded_bytes > 0
-            && !reference.semantic_digest.is_zero()
-            && !reference.transport_digest.is_zero(),
+            && has_ordered_chunk_keys(reference)
+            && has_chunk_bytes_and_digests(reference),
         "input chunk reference committed range",
     )
 }

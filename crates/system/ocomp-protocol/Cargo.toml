@@ -12,6 +12,7 @@ test-utils = ["dep:alloy-rlp", "dep:alloy-trie"]
 alloy-rlp = { workspace = true, optional = true }
 alloy-trie = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
+alloy-consensus.workspace = true
 alloy-eips.workspace = true
 k256.workspace = true
 rustix.workspace = true

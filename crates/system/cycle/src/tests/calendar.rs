@@ -1,5 +1,7 @@
 //! UTC-day calendar transitions: contiguous settlement and multi-day halt forfeiture.
 
+use outbe_rewards::schema::Rewards;
+
 use super::*;
 
 #[test]
@@ -8,18 +10,13 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
     storage.enter(|handle| {
         let anchor_ts = GENESIS_TS + 60;
-        let anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle.clone());
-        anchor_genesis(&anchor);
+        let anchor = genesis_block(handle.clone(), anchor_ts);
         run_cycle_lifecycle(&anchor).unwrap();
 
         let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 3_600;
-        let fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
-        account_parent(&fire, 2);
-        dispatch_triggers(&fire).unwrap();
+        let fire = dispatch_at(handle, 2, fire_ts);
 
-        let rewards = fire
-            .storage
-            .contract::<outbe_rewards::schema::Rewards<'_>>();
+        let rewards = fire.storage.contract::<Rewards<'_>>();
         for day in [20_240_101, 20_240_102, 20_240_103] {
             assert!(!rewards.daily_settled.read(&day).unwrap());
             assert!(!rewards.daily_topup_settled.read(&day).unwrap());
@@ -64,14 +61,8 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
             .is_some(),
             "the one current WWD flow must still run after the gap"
         );
-        assert_eq!(
-            fire.storage
-                .contract::<Cycle<'_>>()
-                .active_utc_day
-                .read()
-                .unwrap(),
-            20_240_104
-        );
+        let cycle = fire.storage.contract::<Cycle<'_>>();
+        assert_eq!(cycle.active_utc_day.read().unwrap(), 20_240_104);
     });
 }
 
@@ -81,8 +72,7 @@ fn a_day_whose_limit_a_multi_day_halt_skipped_misses_its_offering() {
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
     let lookback_end = storage.enter(|handle| {
-        let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
-        anchor_genesis(&anchor);
+        let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_lifecycle(&anchor).unwrap();
 
         let fire = BlockRuntimeContext::new(
@@ -121,8 +111,7 @@ fn contiguous_day_settlement_failure_preserves_the_calendar_cursor() {
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
     storage.enter(|handle| {
-        let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
-        anchor_genesis(&anchor);
+        let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_lifecycle(&anchor).unwrap();
 
         // Create only the Metadosis half of day 1's idempotency pair. The
@@ -158,8 +147,7 @@ fn a_multi_day_halt_issues_no_emission_and_credits_no_capacity_or_native_balance
     let mut storage = cycle_storage();
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
     storage.enter(|handle| {
-        let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
-        anchor_genesis(&anchor);
+        let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_lifecycle(&anchor).unwrap();
 
         let promis_limit_before = outbe_promislimit::PromisLimitContract::new(handle.clone())

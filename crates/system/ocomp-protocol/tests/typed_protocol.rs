@@ -1,5 +1,9 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
+use outbe_ocomp_protocol::test_utils::{
+    keccak_selector as selector, minimal_protocol_bundle as bundle,
+    FINALITY_INPUT_TEST_LIMITS as LIMITS,
+};
 use outbe_ocomp_protocol::{
     abi::{
         GET_ACTIVE_LYSIS_GENERATION_SELECTOR, GET_LYSIS_TERMINAL_RECEIPT_SELECTOR,
@@ -26,10 +30,8 @@ use outbe_ocomp_protocol::{
     hash::hash_framed,
     input::{CheckpointIdentityV1, Compression, InputManifestV1},
     intent::{
-        ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
-        ContributorTargetPreconditionV1, DayType, FinalizedIntentProofV1, FrozenMetadosisValuesV1,
-        JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
-        NodTargetPreconditionV1, ParentProofKind, PreAdmissionEnvelopeV1, TributeInputBindingV1,
+        ActivationPreconditionsV1, DayType, FinalizedIntentProofV1, JobIntentV1,
+        PreAdmissionEnvelopeV1,
     },
     opening::OpeningSubjectsV1,
     profile::{CapacityProfileV1, CorrectnessProfileV1, ProgramId, ProtocolBundleV1},
@@ -43,8 +45,7 @@ use outbe_ocomp_protocol::{
     result::{
         lysis_v1_empty_semantic_event_root, wwd_allocation_ceiling, ActivationPayloadV1,
         CarryOverCreditActionV1, CarryOverReason, CompletionStatus, ConservationTotalsV1,
-        ExactCountsV1, LysisArithmeticSummaryV1, LysisResultV1, MetadosisCompletionSummaryV1,
-        ResultChunkV1, ResultRootsV1,
+        LysisArithmeticSummaryV1, LysisResultV1, MetadosisCompletionSummaryV1, ResultChunkV1,
     },
     shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
     state::{
@@ -56,29 +57,18 @@ use outbe_ocomp_protocol::{
         OcompSystemCarrierView, MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES,
         MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS, OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
     },
+    transaction_call::TransactionCallFields,
     unit::{
         BinaryReducerNode, EntityIdHalfOpenRange, PlanCommitmentV1, UnitArtifactV1, UnitInterval,
         UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
     },
     vote::{
         decode_submit_lysis_result, decode_submit_lysis_result_prefix, EquivocationEvidenceV1,
-        OcompAccountabilitySummaryV1, OcompQuorumV1, OcompVoteAccountabilityV1,
-        RecordVoteOutcomeV1, ResultVoteSigningSubjectV1, ResultVoteSlotV1, ResultVoteV1,
+        HistoricalVoteMember, OcompAccountabilitySummaryV1, OcompQuorumV1,
+        OcompVoteAccountabilityV1, RecordVoteOutcomeV1, ResultVoteSigningSubjectV1,
+        ResultVoteSlotV1, ResultVoteV1, VoteAccountabilitySeed, VoteWindow,
     },
     ProtocolError, SchemaLimits,
-};
-
-const LIMITS: SchemaLimits = SchemaLimits {
-    codec: CodecLimits::new(1_048_576, 4_096, 2_097_152),
-    max_bounded_bytes: 262_144,
-    max_proof_bytes: 262_144,
-    max_opening_bytes: 262_144,
-    max_collection_items: 4_096,
-    max_action_items: 4_096,
-    max_chunk_items: 4_096,
-    max_unit_inputs: 64,
-    max_result_chunk_bytes: 524_288,
-    max_control_body_bytes: 262_144,
 };
 
 fn hash(byte: u8) -> B256 {
@@ -103,117 +93,12 @@ impl TestCommittee {
     }
 }
 
-fn bundle() -> ProtocolBundleV1 {
-    ProtocolBundleV1 {
-        protocol_version: 1,
-        fork_id: hash(1),
-        intent_codec_id: hash(2),
-        finalized_intent_proof_codec_id: hash(3),
-        tribute_body_codec_id: outbe_ocomp_protocol::registry::TRIBUTE_BODY_CODEC_ID,
-        fidelity_opening_codec_id: outbe_ocomp_protocol::registry::FIDELITY_OPENING_CODEC_ID,
-        oracle_opening_codec_id: outbe_ocomp_protocol::registry::ORACLE_OPENING_CODEC_ID,
-        result_codec_id: hash(4),
-        action_codec_id: hash(5),
-        activation_codec_id: hash(6),
-        evidence_codec_id: hash(7),
-        request_semantics_version: 1,
-        lysis_program_semantics_hash: hash(8),
-        planner_spec_version: 1,
-        reducer_spec_version: 1,
-        activation_apply_semantics_hash: hash(9),
-        effect_contract_registry_hash: hash(10),
-        object_codec_registry_hash: hash(11),
-        correctness_profile_id: hash(12),
-        capacity_profile_id: hash(13),
-        result_signature_profile_id: hash(14),
-        finality_verifier_and_vote_domain_id: hash(15),
-        consensus_committee_history_schema_version: 1,
-        ocomp_committee_schema_version: 1,
-        proof_system_and_verifier_key_id: None,
-        da_codec_and_binding_verifier_id: None,
-        anti_equivocation_journal_schema_hash: hash(16),
-        mode_pause_revocation_semantics_hash: hash(17),
-        upgrade_fsm_semantics_hash: hash(18),
-        release_requirement_catalog_sequence: 1,
-        release_requirement_catalog_hash: hash(19),
-        release_requirement_catalog_parent_hash: hash(20),
-        release_gate_authority_envelope_hash: hash(21),
-        release_approval_policy_hash: hash(22),
-        release_validator_command_artifact_hash: hash(23),
-        consensus_state_schema_version: 1,
-        migration_manifest_hash: hash(24),
-        required_upgrade_handler_set_hash: hash(25),
-    }
-}
-
 fn preconditions() -> ActivationPreconditionsV1 {
-    ActivationPreconditionsV1 {
-        tribute: TributeInputBindingV1 {
-            wwd: 7,
-            source_generation: 3,
-            collection_key: hash(30),
-            sealed_collection_root: hash(31),
-            exact_count: 1,
-            exact_nominal_total: U256::ZERO,
-        },
-        nod: NodTargetPreconditionV1 {
-            wwd: 7,
-            target_generation: 5,
-            namespace_root_before: hash(32),
-            max_nod_count: 1,
-        },
-        contributors: ContributorTargetPreconditionV1 {
-            worldwide_day: 7,
-            expected_series_version: 8,
-            max_contributor_count: 1,
-            max_eligible_nominal_total: U256::ZERO,
-        },
-        metadosis: MetadosisAttemptPreconditionV1 {
-            wwd: 7,
-            pending_nonce: 0,
-            expected_status: MetadosisExpectedStatus::OffchainPending,
-            state_version: 12,
-        },
-    }
+    outbe_ocomp_protocol::test_utils::fixed_activation_preconditions()
 }
 
 fn intent() -> JobIntentV1 {
-    JobIntentV1 {
-        chain_id: 42,
-        genesis_hash: hash(40),
-        fork_id: hash(1),
-        wwd: 7,
-        pending_nonce: 0,
-        attempt: 0,
-        protocol_bundle_hash: hash(41),
-        ce_sealed_root: hash(42),
-        sealed_tribute_collection_key: hash(30),
-        sealed_tribute_collection_root: hash(31),
-        authenticated_day_count: 1,
-        authenticated_day_nominal: U256::ZERO,
-        pre_admission_envelope_hash: hash(43),
-        source_availability_policy_id: hash(44),
-        frozen_metadosis_values: FrozenMetadosisValuesV1 {
-            day_type: DayType::Green,
-            day_limit: U256::ZERO,
-            previous_vwap: U256::ZERO,
-            current_vwap: U256::ZERO,
-            gratis_demand: U256::ZERO,
-            day_gratis_limit_minor: U256::ZERO,
-            lysis_limit_minor: U256::ZERO,
-            desis_limit_minor: U256::ZERO,
-            request_limit_split_receipt_hash: hash(113),
-        },
-        logical_evaluation_height: 100,
-        logical_evaluation_time: 1_000,
-        activation_preconditions: preconditions(),
-        result_validator_set_epoch: 1,
-        result_committee_set_hash: hash(45),
-        result_ocomp_binding_hash: hash(46),
-        result_member_count: 4,
-        result_quorum_threshold: 3,
-        custody_committee_epoch_hash: None,
-    }
+    outbe_ocomp_protocol::test_utils::fixed_job_intent()
 }
 
 #[test]
@@ -247,21 +132,7 @@ fn finality_proof() -> FinalizedIntentProofV1 {
         fork_id: intent.fork_id,
         protocol_bundle_hash: intent.protocol_bundle_hash,
         canonical_request_header_rlp: ProofBytes(vec![1, 2]),
-        parent_accounting: CertifiedParentAccountingMetadataV2 {
-            finalized_block_number: 90,
-            finalized_block_hash: hash(46),
-            finalized_epoch: 2,
-            finalized_view: 3,
-            parent_view: 2,
-            ordered_committee: vec![BoundedBytes(vec![1])],
-            signer_bitmap: BoundedBytes(vec![1]),
-            canonical_commonware_finalization_proof: ProofBytes(vec![2]),
-            committee_set_hash: hash(47),
-            vrf_material_version: 1,
-            vrf_group_public_key_hash: hash(48),
-            proof_kind: ParentProofKind::Finalization,
-            missed_proposers: Vec::new(),
-        },
+        parent_accounting: outbe_ocomp_protocol::test_utils::certified_parent_accounting(90),
         historical_committee_membership_proof: ProofBytes(vec![3]),
         canonical_job_intent: BoundedBytes(intent.encode_canonical(&LIMITS).unwrap()),
         intent_account_proof: ProofBytes(vec![4]),
@@ -292,43 +163,10 @@ fn result() -> LysisResultV1 {
         logical_evaluation_height: 100,
         logical_evaluation_time: 1_000,
     };
-    let roots = ResultRootsV1 {
-        nod_root: hash(50),
-        bucket_root: hash(51),
-        contributor_root: hash(52),
-        output_manifest_root: hash(53),
-    };
-    let counts = ExactCountsV1 {
-        tribute_count: 1,
-        nod_count: 1,
-        bucket_count: 0,
-        contributor_count: 0,
-        semantic_event_count: 0,
-    };
-    let conservation = ConservationTotalsV1 {
-        tribute_nominal_total: U256::ZERO,
-        eligible_nominal_total: U256::ZERO,
-        day_limit: U256::ZERO,
-        gratis_demand: U256::ZERO,
-        day_gratis_limit_minor: U256::ZERO,
-        lysis_limit_minor: U256::ZERO,
-        desis_limit_minor: U256::ZERO,
-        lysis_allocation_minor: U256::ZERO,
-        unused_lysis_limit_minor: U256::ZERO,
-        carry_over_credit: U256::ZERO,
-        nod_cost_total: U256::ZERO,
-    };
-    let summary = LysisArithmeticSummaryV1 {
-        input_manifest_hash: hash(54),
-        plan_hash: hash(55),
-        unit_artifact_root: hash(56),
-        fidelity_fraction_root: hash(57),
-        gratis_prefix_root: hash(58),
-        roots: roots.clone(),
-        counts: counts.clone(),
-        conservation: conservation.clone(),
-        first_error_ordinal: None,
-    };
+    let summary = outbe_ocomp_protocol::test_utils::fixed_lysis_arithmetic_summary();
+    let roots = summary.roots.clone();
+    let counts = summary.counts.clone();
+    let conservation = summary.conservation.clone();
     let arithmetic_commitment = hash_framed(
         HashDomain::LysisArithmetic,
         &summary.encode_canonical(&LIMITS).unwrap(),
@@ -534,14 +372,14 @@ fn dynamic_accountability_uses_supplied_n_quorum_and_lsb0_bitmaps() {
     finalized_intent.result_ocomp_binding_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
     let job_id = hash(59);
     let matching_result = vote_result(job_id, 120);
-    let mut accountability = OcompVoteAccountabilityV1::empty(
+    let mut accountability = OcompVoteAccountabilityV1::empty(VoteAccountabilitySeed {
         job_id,
-        finalized_intent.result_validator_set_epoch,
-        finalized_intent.result_committee_set_hash,
-        finalized_intent.result_ocomp_binding_hash,
-        9,
-        7,
-    )
+        result_validator_set_epoch: finalized_intent.result_validator_set_epoch,
+        result_committee_set_hash: finalized_intent.result_committee_set_hash,
+        result_ocomp_binding_hash: finalized_intent.result_ocomp_binding_hash,
+        member_count: 9,
+        quorum_threshold: 7,
+    })
     .unwrap();
 
     for validator_index in 0_u16..7 {
@@ -662,12 +500,14 @@ fn ocomp_system_carrier_classifier_is_exact_and_fail_closed() {
         outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(&vote, &LIMITS).unwrap();
     let canonical = OcompSystemCarrierView {
         is_eip1559: true,
-        to: Some(outbe_ocomp_protocol::abi::METADOSIS_ADDRESS),
-        value: U256::ZERO,
-        input: &calldata,
-        gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-        max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
-        max_priority_fee_per_gas: Some(0),
+        call: TransactionCallFields {
+            to: Some(outbe_ocomp_protocol::abi::METADOSIS_ADDRESS),
+            value: U256::ZERO,
+            input: &calldata,
+            gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+            max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas: Some(0),
+        },
     };
 
     let candidate = classify_ocomp_system_carrier(canonical, &LIMITS)
@@ -682,7 +522,10 @@ fn ocomp_system_carrier_classifier_is_exact_and_fail_closed() {
     assert!(matches!(
         classify_ocomp_system_carrier(
             OcompSystemCarrierView {
-                gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT - 1,
+                call: TransactionCallFields {
+                    gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT - 1,
+                    ..canonical.call
+                },
                 ..canonical
             },
             &LIMITS,
@@ -692,7 +535,10 @@ fn ocomp_system_carrier_classifier_is_exact_and_fail_closed() {
     assert!(matches!(
         classify_ocomp_system_carrier(
             OcompSystemCarrierView {
-                max_priority_fee_per_gas: Some(1),
+                call: TransactionCallFields {
+                    max_priority_fee_per_gas: Some(1),
+                    ..canonical.call
+                },
                 ..canonical
             },
             &LIMITS,
@@ -716,7 +562,10 @@ fn ocomp_system_carrier_classifier_is_exact_and_fail_closed() {
     assert!(matches!(
         classify_ocomp_system_carrier(
             OcompSystemCarrierView {
-                input: &oversized,
+                call: TransactionCallFields {
+                    input: &oversized,
+                    ..canonical.call
+                },
                 ..canonical
             },
             &LIMITS,
@@ -726,7 +575,10 @@ fn ocomp_system_carrier_classifier_is_exact_and_fail_closed() {
 
     assert!(classify_ocomp_system_carrier(
         OcompSystemCarrierView {
-            to: Some(Address::ZERO),
+            call: TransactionCallFields {
+                to: Some(Address::ZERO),
+                ..canonical.call
+            },
             ..canonical
         },
         &LIMITS,
@@ -736,7 +588,10 @@ fn ocomp_system_carrier_classifier_is_exact_and_fail_closed() {
     assert!(matches!(
         classify_ocomp_system_carrier(
             OcompSystemCarrierView {
-                input: &outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR,
+                call: TransactionCallFields {
+                    input: &outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR,
+                    ..canonical.call
+                },
                 ..canonical
             },
             &LIMITS,
@@ -791,9 +646,7 @@ fn verify_vote(
     finalized_intent: &JobIntentV1,
     job_id: B256,
     snapshot: &TestCommittee,
-    inclusion_height: u64,
-    open_height: u64,
-    deadline_height: u64,
+    window: VoteWindow,
 ) -> Result<(), ProtocolError> {
     if finalized_intent.result_ocomp_binding_hash != snapshot.snapshot_hash(&LIMITS)? {
         return Err(ProtocolError::InvalidInvariant(
@@ -809,12 +662,12 @@ fn verify_vote(
     vote.verify_historical_member(
         finalized_intent,
         job_id,
-        u16::try_from(snapshot.ordered_members.len()).unwrap(),
-        member.key_epoch,
-        &member.ocomp_public_key_sec1,
-        inclusion_height,
-        open_height,
-        deadline_height,
+        HistoricalVoteMember {
+            member_count: u16::try_from(snapshot.ordered_members.len()).unwrap(),
+            key_epoch: member.key_epoch,
+            ocomp_public_key_sec1: &member.ocomp_public_key_sec1,
+        },
+        window,
         &LIMITS,
     )
 }
@@ -1196,43 +1049,63 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         ordered_nod_actions: Vec::new(),
         ordered_eligible_contributors: Vec::new(),
     };
-    assert_round_trip!(result_chunk, ResultChunkV1, ResultChunkV1);
-    assert_round_trip!(result.clone(), LysisResultV1, LysisResultV1);
-    assert_round_trip!(activation_payload, ActivationPayloadV1, ActivationPayloadV1);
-    assert_round_trip!(
-        registration(0),
-        OcompKeyRegistrationV1,
-        OcompKeyRegistrationV1
-    );
-    assert_round_trip!(active_generation, ActiveGenerationV1, ActiveGenerationV1);
-    assert_round_trip!(
-        aggregate,
-        AggregateActivationReceiptV1,
-        AggregateActivationReceiptV1
-    );
-    assert_round_trip!(nod_receipt, NodBatchReceiptV1, NodBatchReceiptV1);
-    assert_round_trip!(
-        contributor_receipt,
-        ContributorReceiptV1,
-        ContributorReceiptV1
-    );
-    assert_round_trip!(tribute_receipt, TributeReceiptV1, TributeReceiptV1);
-    assert_round_trip!(
-        request_limit_split_receipt,
-        RequestLimitSplitReceiptV1,
-        RequestLimitSplitReceiptV1
-    );
-    assert_round_trip!(carry_over_receipt, CarryOverReceiptV1, CarryOverReceiptV1);
-    assert_round_trip!(sign_once, SignOnceRecordV1, SignOnceRecordV1);
-    assert_round_trip!(activation_call, ActivationCallCoreV1, ActivationCallCoreV1);
+    let assert_result_artifacts = || {
+        assert_round_trip!(result_chunk, ResultChunkV1, ResultChunkV1);
+        assert_round_trip!(result.clone(), LysisResultV1, LysisResultV1);
+        assert_round_trip!(activation_payload, ActivationPayloadV1, ActivationPayloadV1);
+    };
+    assert_result_artifacts();
+
+    let assert_registration_and_generation = || {
+        assert_round_trip!(
+            registration(0),
+            OcompKeyRegistrationV1,
+            OcompKeyRegistrationV1
+        );
+        assert_round_trip!(active_generation, ActiveGenerationV1, ActiveGenerationV1);
+        assert_round_trip!(
+            aggregate,
+            AggregateActivationReceiptV1,
+            AggregateActivationReceiptV1
+        );
+    };
+    assert_registration_and_generation();
+
+    let assert_settlement_receipts = || {
+        assert_round_trip!(nod_receipt, NodBatchReceiptV1, NodBatchReceiptV1);
+        assert_round_trip!(
+            contributor_receipt,
+            ContributorReceiptV1,
+            ContributorReceiptV1
+        );
+        assert_round_trip!(tribute_receipt, TributeReceiptV1, TributeReceiptV1);
+        assert_round_trip!(
+            request_limit_split_receipt,
+            RequestLimitSplitReceiptV1,
+            RequestLimitSplitReceiptV1
+        );
+        assert_round_trip!(carry_over_receipt, CarryOverReceiptV1, CarryOverReceiptV1);
+    };
+    assert_settlement_receipts();
+
+    let assert_activation_records = || {
+        assert_round_trip!(sign_once, SignOnceRecordV1, SignOnceRecordV1);
+        assert_round_trip!(activation_call, ActivationCallCoreV1, ActivationCallCoreV1);
+    };
+    assert_activation_records();
+
     assert_round_trip!(
         result.arithmetic_summary(),
         LysisArithmeticSummaryV1,
         LysisArithmeticSummaryV1
     );
-    assert_round_trip!(job_record, OcompJobRecordV1, OcompJobRecordV1);
-    assert_round_trip!(shuffle_run, ShuffleRunArtifactV1, ShuffleRunArtifactV1);
-    assert_round_trip!(terminal, LysisTerminalV1, LysisTerminalV1);
+
+    let assert_job_artifacts = || {
+        assert_round_trip!(job_record, OcompJobRecordV1, OcompJobRecordV1);
+        assert_round_trip!(shuffle_run, ShuffleRunArtifactV1, ShuffleRunArtifactV1);
+        assert_round_trip!(terminal, LysisTerminalV1, LysisTerminalV1);
+    };
+    assert_job_artifacts();
     let mut vote_intent = intent();
     vote_intent.result_validator_set_epoch = snapshot.snapshot_epoch;
     vote_intent.result_ocomp_binding_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
@@ -1290,14 +1163,14 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         OcompAccountabilitySummaryV1,
         OcompAccountabilitySummaryV1
     );
-    let accountability = OcompVoteAccountabilityV1::empty(
-        hash(59),
-        vote_intent.result_validator_set_epoch,
-        vote_intent.result_committee_set_hash,
-        vote_intent.result_ocomp_binding_hash,
-        vote_intent.result_member_count,
-        vote_intent.result_quorum_threshold,
-    )
+    let accountability = OcompVoteAccountabilityV1::empty(VoteAccountabilitySeed {
+        job_id: hash(59),
+        result_validator_set_epoch: vote_intent.result_validator_set_epoch,
+        result_committee_set_hash: vote_intent.result_committee_set_hash,
+        result_ocomp_binding_hash: vote_intent.result_ocomp_binding_hash,
+        member_count: vote_intent.result_member_count,
+        quorum_threshold: vote_intent.result_quorum_threshold,
+    })
     .unwrap();
     assert_round_trip!(
         accountability,
@@ -1315,14 +1188,14 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
     let job_id = hash(59);
     let matching_result = vote_result(job_id, 120);
     let result_digest = matching_result.result_digest(&LIMITS).unwrap();
-    let mut accountability = OcompVoteAccountabilityV1::empty(
+    let mut accountability = OcompVoteAccountabilityV1::empty(VoteAccountabilitySeed {
         job_id,
-        finalized_intent.result_validator_set_epoch,
-        finalized_intent.result_committee_set_hash,
-        finalized_intent.result_ocomp_binding_hash,
-        finalized_intent.result_member_count,
-        finalized_intent.result_quorum_threshold,
-    )
+        result_validator_set_epoch: finalized_intent.result_validator_set_epoch,
+        result_committee_set_hash: finalized_intent.result_committee_set_hash,
+        result_ocomp_binding_hash: finalized_intent.result_ocomp_binding_hash,
+        member_count: finalized_intent.result_member_count,
+        quorum_threshold: finalized_intent.result_quorum_threshold,
+    })
     .unwrap();
 
     for validator_index in 0..3 {
@@ -1338,9 +1211,11 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
             &finalized_intent,
             job_id,
             &snapshot,
-            106 + u64::from(validator_index),
-            106,
-            120,
+            VoteWindow {
+                inclusion_height: 106 + u64::from(validator_index),
+                open_height: 106,
+                deadline_height: 120,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1373,9 +1248,11 @@ fn direct_result_votes_freeze_supplied_quorum_and_keep_late_accountability_separ
         &finalized_intent,
         job_id,
         &snapshot,
-        109,
-        106,
-        120,
+        VoteWindow {
+            inclusion_height: 109,
+            open_height: 106,
+            deadline_height: 120,
+        },
     )
     .unwrap();
     accountability
@@ -1593,12 +1470,17 @@ fn result_vote_verification_requires_the_finalized_intent_binding() {
         job_id,
         &snapshot,
     );
-    verify_vote(&vote, &finalized_intent, job_id, &snapshot, 106, 106, 120).unwrap();
+    let window = VoteWindow {
+        inclusion_height: 106,
+        open_height: 106,
+        deadline_height: 120,
+    };
+    verify_vote(&vote, &finalized_intent, job_id, &snapshot, window).unwrap();
 
     let mut wrong_intent = finalized_intent;
     wrong_intent.fork_id = hash(99);
     assert!(matches!(
-        verify_vote(&vote, &wrong_intent, job_id, &snapshot, 106, 106, 120),
+        verify_vote(&vote, &wrong_intent, job_id, &snapshot, window),
         Err(ProtocolError::InvalidSignature)
     ));
 }
@@ -1853,6 +1735,34 @@ fn conflict_receipt_requires_the_empty_apply_event_summary() {
 }
 
 #[test]
+fn aggregate_receipt_reports_shape_before_effect_and_summary() {
+    let mut malformed = conflict_receipt();
+    malformed.nod_receipt_hash = Some(hash(0x21));
+    malformed.effect_commitment = hash(0x22);
+    malformed.event_summary_hash = hash(0x23);
+    assert!(matches!(
+        malformed.validate_semantics(),
+        Err(ProtocolError::InvalidInvariant(
+            "aggregate receipt outcome shape"
+        ))
+    ));
+
+    malformed.nod_receipt_hash = None;
+    assert!(matches!(
+        malformed.validate_semantics(),
+        Err(ProtocolError::InvalidInvariant("effect commitment"))
+    ));
+
+    malformed.effect_commitment = conflict_receipt().effect_commitment;
+    assert!(matches!(
+        malformed.validate_semantics(),
+        Err(ProtocolError::InvalidInvariant(
+            "conflict receipt empty apply event summary"
+        ))
+    ));
+}
+
+#[test]
 fn applied_receipt_validates_the_fixed_owner_event_order() {
     let owner_digests = [hash(110), hash(111), hash(112), hash(115)];
     let receipt_hashes = [hash(120), hash(121), hash(122), hash(123)];
@@ -2074,6 +1984,21 @@ fn prepared_vote_transaction_carries_bounded_vote_and_raw_transaction() {
 }
 
 #[test]
+fn prepared_vote_reports_its_envelope_invariant_for_multiple_invalid_fields() {
+    let response = PreparedVoteTransactionV1 {
+        canonical_vote: BoundedBytes(Vec::new()),
+        raw_transaction: BoundedBytes(Vec::new()),
+        transaction_hash: B256::ZERO,
+    };
+    assert!(matches!(
+        response.encode_body(&LIMITS),
+        Err(ProtocolError::InvalidInvariant(
+            "prepared vote transaction response"
+        ))
+    ));
+}
+
+#[test]
 fn snapshot_export_control_pages_job_scoped_leases_and_manifests() {
     let job_id = hash(0xa1);
     let checkpoint = CheckpointIdentityV1 {
@@ -2266,10 +2191,6 @@ fn snapshot_export_control_pages_job_scoped_leases_and_manifests() {
     ] {
         assert!(invalid);
     }
-}
-
-fn selector(signature: &str) -> [u8; 4] {
-    keccak256(signature.as_bytes()).0[..4].try_into().unwrap()
 }
 
 #[test]

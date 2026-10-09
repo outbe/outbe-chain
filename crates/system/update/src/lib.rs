@@ -3,6 +3,7 @@
 //! Vote owns proposal lifecycle; update stores scheduled upgrades and
 //! activates them at `activationHeight` via begin-block processing.
 
+mod active_version;
 pub mod api;
 pub mod constants;
 pub mod errors;

@@ -102,10 +102,7 @@ fn test_register_max_validators() {
         let addr2 = address!("0x0000000000000000000000000000000000000022");
         let addr3 = address!("0x0000000000000000000000000000000000000033");
 
-        vs.register_validator(OWNER, addr1, &dummy_consensus_pubkey(11))
-            .unwrap();
-        vs.register_validator(OWNER, addr2, &dummy_consensus_pubkey(22))
-            .unwrap();
+        register_validators(vs, &[(addr1, 11), (addr2, 22)]).unwrap();
 
         let result = vs.register_validator(OWNER, addr3, &dummy_consensus_pubkey(33));
         assert!(result.is_err(), "should fail when max validators reached");
@@ -122,12 +119,7 @@ fn test_get_active_validators() {
     let val3 = address!("0x00000000000000000000000000000000000000A3");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val1, &dummy_consensus_pubkey(0xA1))
-            .unwrap();
-        vs.register_validator(OWNER, val2, &dummy_consensus_pubkey(0xA2))
-            .unwrap();
-        vs.register_validator(OWNER, val3, &dummy_consensus_pubkey(0xA3))
-            .unwrap();
+        register_validators(vs, &[(val1, 0xA1), (val2, 0xA2), (val3, 0xA3)]).unwrap();
 
         // Activate only val1 and val3
         vs.activate_validator_via_boundary_for_test(val1).unwrap();
@@ -155,8 +147,7 @@ fn test_is_validator() {
         assert!(!vs.is_validator(registered).unwrap());
         assert!(!vs.is_validator(stranger).unwrap());
 
-        vs.register_validator(OWNER, registered, &dummy_consensus_pubkey(0xB1))
-            .unwrap();
+        register_validators(vs, &[(registered, 0xB1)]).unwrap();
 
         assert!(vs.is_validator(registered).unwrap());
         assert!(!vs.is_validator(stranger).unwrap());
@@ -330,10 +321,7 @@ fn test_reregister_active_fails() {
     let val_addr = address!("0x2222222222222222222222222222222222222222");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(0x21))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(val_addr)
-            .unwrap();
+        register_boundary_active(vs, val_addr, 0x21).unwrap();
 
         // Re-registration of ACTIVE validator must fail
         let result = vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(0x22));

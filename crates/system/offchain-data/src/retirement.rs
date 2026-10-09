@@ -33,20 +33,24 @@ pub(super) fn collect_ids_for_retired_day(
     Ok(())
 }
 
+pub(super) struct RetiredPartition<'a> {
+    pub(super) tribute_ids: &'a [WwdEntityId],
+    pub(super) worldwide_day: WorldwideDay,
+    pub(super) retention_pin: Option<RetainedTributePin>,
+}
+
 pub(super) fn plan_retired_partition(
     tributes: &mut TributeProjectionSession,
     retained_tribute_reader: &RetainedTributeReader,
-    tribute_ids: &[WwdEntityId],
-    worldwide_day: WorldwideDay,
-    retention_pin: Option<RetainedTributePin>,
+    partition: RetiredPartition<'_>,
     batch: &mut AtomicWriteBatch,
 ) -> Result<(), ProjectionError> {
-    for tribute_id in tribute_ids {
+    for tribute_id in partition.tribute_ids {
         let belongs_to_partition = tributes
             .current(*tribute_id)?
-            .is_some_and(|tribute| tribute.worldwide_day == worldwide_day);
+            .is_some_and(|tribute| tribute.worldwide_day == partition.worldwide_day);
         if belongs_to_partition {
-            let planned = match retention_pin {
+            let planned = match partition.retention_pin {
                 Some(pin) => {
                     tributes.retain_then_delete(retained_tribute_reader, pin, *tribute_id)?
                 }

@@ -17,9 +17,11 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
             storage.clone(),
             Address::ZERO,
             eur_pair,
-            six_decimal_unit(),
-            1,
-            T_NOW,
+            outbe_oracle::api::RateObservation {
+                rate: six_decimal_unit(),
+                block_number: 1,
+                timestamp: T_NOW,
+            },
         )
         .unwrap();
         OracleContract::new(storage.clone())

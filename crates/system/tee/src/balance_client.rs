@@ -55,49 +55,198 @@ fn validate_response(
     attestation_pub: &[u8; 32],
     response: &EnclaveResponse,
 ) -> Result<()> {
-    let actual_hash = match (operation, response) {
+    match (operation, response) {
         (BalanceOperation::Gratis, EnclaveResponse::GratisOpApplied { result }) => {
-            result.inputs_canonical_hash
+            let actual_hash = result.inputs_canonical_hash;
+            check_canonical_hash(expected_hash, actual_hash)?;
+            crate::verify_gratis_op_attestation(
+                attestation_pub,
+                actual_hash,
+                result,
+                &result.attestation_tag,
+            )
+            .map_err(|error| {
+                PrecompileError::Fatal(format!("tee_gratis_attestation_invalid: {error}"))
+            })
         }
         (BalanceOperation::Promis, EnclaveResponse::PromisOpApplied { result }) => {
-            result.inputs_canonical_hash
+            let actual_hash = result.inputs_canonical_hash;
+            check_canonical_hash(expected_hash, actual_hash)?;
+            crate::verify_promis_op_attestation(
+                attestation_pub,
+                actual_hash,
+                result,
+                &result.attestation_tag,
+            )
+            .map_err(|error| {
+                PrecompileError::Fatal(format!("tee_promis_attestation_invalid: {error}"))
+            })
         }
-        (_, EnclaveResponse::Error { message }) => {
-            return Err(PrecompileError::Fatal(format!(
-                "enclave {} error: {message}",
-                operation.name(),
-            )))
-        }
-        _ => {
-            return Err(PrecompileError::Fatal(format!(
-                "unexpected enclave response: {response:?}"
-            )))
-        }
-    };
+        (_, EnclaveResponse::Error { message }) => Err(PrecompileError::Fatal(format!(
+            "enclave {} error: {message}",
+            operation.name(),
+        ))),
+        _ => Err(PrecompileError::Fatal(format!(
+            "unexpected enclave response: {response:?}"
+        ))),
+    }
+}
+
+fn check_canonical_hash(expected_hash: B256, actual_hash: B256) -> Result<()> {
     if actual_hash != expected_hash {
         return Err(PrecompileError::Fatal(
             "tee_enclave_nondeterminism".to_string(),
         ));
     }
-    match response {
-        EnclaveResponse::GratisOpApplied { result } => crate::verify_gratis_op_attestation(
-            attestation_pub,
-            actual_hash,
-            result,
-            &result.attestation_tag,
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{
+        gratis_op_attestation_preimage, promis_op_attestation_preimage, GratisOpResult,
+        GratisOpStatus, PromisOpResult, PromisOpStatus,
+    };
+    use alloy_primitives::U256;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn gratis_result(hash: B256) -> GratisOpResult {
+        GratisOpResult {
+            status: GratisOpStatus::Applied,
+            new_balance: Vec::new(),
+            new_pledged: Vec::new(),
+            event_amount: U256::ZERO,
+            next_op_nonce: 0,
+            fidelity: None,
+            inputs_canonical_hash: hash,
+            attestation_tag: Vec::new(),
+        }
+    }
+
+    fn promis_result(hash: B256) -> PromisOpResult {
+        PromisOpResult {
+            status: PromisOpStatus::Applied,
+            new_balance: Vec::new(),
+            event_amount: U256::ZERO,
+            next_op_nonce: 0,
+            inputs_canonical_hash: hash,
+            attestation_tag: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn enclave_error_and_wrong_variant_precede_hash_validation() {
+        let hash = B256::repeat_byte(7);
+        let key = [0; 32];
+        let response = EnclaveResponse::Error {
+            message: "denied".into(),
+        };
+        for (operation, name) in [
+            (BalanceOperation::Gratis, "ApplyGratisOp"),
+            (BalanceOperation::Promis, "ApplyPromisOp"),
+        ] {
+            let expected = format!("enclave {name} error: denied");
+            assert!(matches!(
+                validate_response(operation, hash, &key, &response),
+                Err(PrecompileError::Fatal(message)) if message == expected
+            ));
+        }
+
+        let wrong_for_gratis = EnclaveResponse::PromisOpApplied {
+            result: Box::new(promis_result(B256::ZERO)),
+        };
+        let expected = format!("unexpected enclave response: {wrong_for_gratis:?}");
+        assert!(matches!(
+            validate_response(BalanceOperation::Gratis, hash, &key, &wrong_for_gratis),
+            Err(PrecompileError::Fatal(message)) if message == expected
+        ));
+        let wrong_for_promis = EnclaveResponse::GratisOpApplied {
+            result: Box::new(gratis_result(B256::ZERO)),
+        };
+        let expected = format!("unexpected enclave response: {wrong_for_promis:?}");
+        assert!(matches!(
+            validate_response(BalanceOperation::Promis, hash, &key, &wrong_for_promis),
+            Err(PrecompileError::Fatal(message)) if message == expected
+        ));
+    }
+
+    #[test]
+    fn canonical_hash_mismatch_precedes_attestation_verification() {
+        let expected_hash = B256::repeat_byte(7);
+        let key = [0; 32];
+        let responses = [
+            (
+                BalanceOperation::Gratis,
+                EnclaveResponse::GratisOpApplied {
+                    result: Box::new(gratis_result(B256::ZERO)),
+                },
+            ),
+            (
+                BalanceOperation::Promis,
+                EnclaveResponse::PromisOpApplied {
+                    result: Box::new(promis_result(B256::ZERO)),
+                },
+            ),
+        ];
+        for (operation, response) in responses {
+            assert!(matches!(
+                validate_response(operation, expected_hash, &key, &response),
+                Err(PrecompileError::Fatal(message)) if message == "tee_enclave_nondeterminism"
+            ));
+        }
+    }
+
+    #[test]
+    fn matching_hash_uses_operation_specific_attestation() {
+        let hash = B256::repeat_byte(7);
+        let key = [0; 32];
+        let gratis = EnclaveResponse::GratisOpApplied {
+            result: Box::new(gratis_result(hash)),
+        };
+        assert!(matches!(
+            validate_response(BalanceOperation::Gratis, hash, &key, &gratis),
+            Err(PrecompileError::Fatal(message))
+                if message.starts_with("tee_gratis_attestation_invalid:")
+        ));
+        let promis = EnclaveResponse::PromisOpApplied {
+            result: Box::new(promis_result(hash)),
+        };
+        assert!(matches!(
+            validate_response(BalanceOperation::Promis, hash, &key, &promis),
+            Err(PrecompileError::Fatal(message))
+                if message.starts_with("tee_promis_attestation_invalid:")
+        ));
+
+        let signer = SigningKey::from_bytes(&[7; 32]);
+        let attestation_pub = signer.verifying_key().to_bytes();
+        let mut gratis_result = gratis_result(hash);
+        gratis_result.attestation_tag = signer
+            .sign(&gratis_op_attestation_preimage(hash, &gratis_result))
+            .to_bytes()
+            .to_vec();
+        assert!(validate_response(
+            BalanceOperation::Gratis,
+            hash,
+            &attestation_pub,
+            &EnclaveResponse::GratisOpApplied {
+                result: Box::new(gratis_result),
+            },
         )
-        .map_err(|error| {
-            PrecompileError::Fatal(format!("tee_gratis_attestation_invalid: {error}"))
-        }),
-        EnclaveResponse::PromisOpApplied { result } => crate::verify_promis_op_attestation(
-            attestation_pub,
-            actual_hash,
-            result,
-            &result.attestation_tag,
+        .is_ok());
+        let mut promis_result = promis_result(hash);
+        promis_result.attestation_tag = signer
+            .sign(&promis_op_attestation_preimage(hash, &promis_result))
+            .to_bytes()
+            .to_vec();
+        assert!(validate_response(
+            BalanceOperation::Promis,
+            hash,
+            &attestation_pub,
+            &EnclaveResponse::PromisOpApplied {
+                result: Box::new(promis_result),
+            },
         )
-        .map_err(|error| {
-            PrecompileError::Fatal(format!("tee_promis_attestation_invalid: {error}"))
-        }),
-        _ => unreachable!("response kind was checked before its canonical hash"),
+        .is_ok());
     }
 }

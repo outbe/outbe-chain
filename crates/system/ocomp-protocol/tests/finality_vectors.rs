@@ -9,41 +9,29 @@
 #[path = "finality_vectors/public_builder.rs"]
 mod public_builder;
 
-use outbe_ocomp_protocol::test_utils::{proof_nodes_for_target, storage_trie};
+#[path = "../../../../testing/ocomp_finality_fixture.rs"]
+mod shared_finality_fixture;
+
+use shared_finality_fixture::{
+    assemble_finalized_intent_proof, awaiting_finality_record, FinalizationCoordinates,
+    FinalizedIntentAssembly, FinalizedIntentAssemblyInput,
+};
+
+use outbe_ocomp_protocol::test_utils::{
+    account_mpt_with_proofs as account_trie, activation_preconditions_fixture, job_intent_fixture,
+    storage_trie, ActivationFixtureSource, ActivationFixtureTargets, JobIntentFixtureValues,
+    FINALITY_INPUT_TEST_LIMITS as LIMITS,
+};
 use std::collections::BTreeMap;
 
-use alloy_consensus::Header;
 use alloy_eips::{BlockHashOrNumber, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_rlp::Encodable as _;
-use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount, KECCAK_EMPTY};
-use commonware_codec::Encode as _;
-use commonware_consensus::{
-    simplex::types::{Finalization, Proposal},
-    types::{Epoch, Round, View},
-};
-use commonware_cryptography::{
-    bls12381::{
-        primitives::{
-            ops::{aggregate, keypair, sign_message},
-            variant::{MinPk, MinSig, Variant},
-        },
-        PrivateKey, PublicKey,
-    },
-    certificate::Signers,
-    sha256::Digest as Sha256Digest,
-    Signer as _,
-};
-use commonware_utils::{ordered::Set, Participant};
+use alloy_trie::{TrieAccount, KECCAK_EMPTY};
 use outbe_consensus::{
     block::ConsensusBlock,
     finalization::parent_cert_store::{
         CertifiedParentProofRecord, CertifiedParentProofStore, FinalizedParentCertStore, ProofKind,
-    },
-    hybrid::HybridScheme,
-    proof::{
-        constants::finalize_namespace, hybrid_seed_namespace, CommitteeEntry, CommitteeSnapshot,
-        HybridCertificate, VrfProof,
     },
 };
 use outbe_metadosis::proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT;
@@ -55,29 +43,28 @@ use outbe_node::ocomp::retention::{
     CandidatePinV1, FinalizedInputProofSource, RethFinalizedInputProofSource,
 };
 use outbe_ocomp_protocol::{
-    codec::CodecLimits,
     common::{BoundedBytes, ProofBytes},
     control::{FinalizedIntentProofResponseV1, SnapshotHandoffV1},
     input::CheckpointIdentityV1,
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
-        ContributorTargetPreconditionV1, DayType, ExpectedFinalizedIntentBindingV1,
+        intent_storage_key, DayType, ExpectedFinalizedIntentBindingV1,
         FinalizedIntentAuthorityError, FinalizedIntentProofV1, FinalizedIntentVerificationError,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, ParentProofKind, TributeInputBindingV1,
+        FrozenMetadosisValuesV1, JobIntentV1,
     },
-    state::{OcompJobRecordV1, OcompJobStatus},
-    SchemaLimits,
+    state::{
+        LysisTerminalV1, OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus,
+        OcompTerminalOutcome,
+    },
+    ProtocolError,
 };
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, VALIDATOR_SET_ADDRESS},
     header::OutbeHeader,
     storage::types::StorageKey as _,
-    OutbeBlock, OutbeReceipt,
+    OutbeReceipt,
 };
-use rand_commonware::{rngs::StdRng, SeedableRng as _};
 use reth_chainspec::ChainInfo;
-use reth_primitives_traits::{Account, SealedBlock};
+use reth_primitives_traits::Account;
 use reth_storage_api::{
     errors::provider::ProviderResult, BlockHashReader, BlockIdReader, BlockNumReader,
     HeaderProvider, ReceiptProvider, StateProofProvider, StateProviderBox, StateProviderFactory,
@@ -85,18 +72,6 @@ use reth_storage_api::{
 use reth_trie::{AccountProof, StorageProof, TrieInput};
 use std::ops::{RangeBounds, RangeInclusive};
 
-const LIMITS: SchemaLimits = SchemaLimits {
-    codec: CodecLimits::new(1_048_576, 4_096, 2_097_152),
-    max_bounded_bytes: 262_144,
-    max_proof_bytes: 262_144,
-    max_opening_bytes: 262_144,
-    max_collection_items: 4_096,
-    max_action_items: 4_096,
-    max_chunk_items: 4_096,
-    max_unit_inputs: 64,
-    max_result_chunk_bytes: 524_288,
-    max_control_body_bytes: 262_144,
-};
 const FINALIZED_BLOCK_NUMBER: u64 = 1;
 const FINALIZED_EPOCH: u64 = 2;
 const FINALIZED_VIEW: u64 = 3;
@@ -108,163 +83,55 @@ fn hash(byte: u8) -> B256 {
 }
 
 fn intent() -> JobIntentV1 {
-    JobIntentV1 {
-        chain_id: 42,
-        genesis_hash: hash(1),
-        fork_id: hash(2),
-        wwd: 7,
-        pending_nonce: 0,
-        attempt: 0,
-        protocol_bundle_hash: hash(3),
-        ce_sealed_root: hash(4),
-        sealed_tribute_collection_key: hash(5),
-        sealed_tribute_collection_root: hash(6),
-        authenticated_day_count: 0,
-        authenticated_day_nominal: U256::ZERO,
-        pre_admission_envelope_hash: hash(7),
-        source_availability_policy_id: hash(8),
-        frozen_metadosis_values: FrozenMetadosisValuesV1 {
-            day_type: DayType::Green,
-            day_limit: U256::from(1_000),
-            previous_vwap: U256::from(90),
-            current_vwap: U256::from(100),
-            gratis_demand: U256::from(25),
-            day_gratis_limit_minor: U256::from(20),
-            lysis_limit_minor: U256::from(300),
-            desis_limit_minor: U256::from(700),
-            request_limit_split_receipt_hash: hash(9),
+    let activation_preconditions = activation_preconditions_fixture(
+        ActivationFixtureSource {
+            wwd: 7,
+            pending_nonce: 0,
+            tribute_source_generation: 1,
+            collection_key: hash(5),
+            sealed_collection_root: hash(6),
+            exact_count: 0,
+            exact_nominal_total: U256::ZERO,
         },
-        logical_evaluation_height: FINALIZED_BLOCK_NUMBER,
-        logical_evaluation_time: 1_000,
-        activation_preconditions: ActivationPreconditionsV1 {
-            tribute: TributeInputBindingV1 {
-                wwd: 7,
-                source_generation: 1,
-                collection_key: hash(5),
-                sealed_collection_root: hash(6),
-                exact_count: 0,
-                exact_nominal_total: U256::ZERO,
-            },
-            nod: NodTargetPreconditionV1 {
-                wwd: 7,
-                target_generation: 1,
-                namespace_root_before: hash(10),
-                max_nod_count: 0,
-            },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: 7,
-                expected_series_version: 1,
-                max_contributor_count: 0,
-                max_eligible_nominal_total: U256::ZERO,
-            },
-            metadosis: MetadosisAttemptPreconditionV1 {
-                wwd: 7,
-                pending_nonce: 0,
-                expected_status: MetadosisExpectedStatus::OffchainPending,
-                state_version: 1,
-            },
+        ActivationFixtureTargets {
+            nod_target_generation: 1,
+            namespace_root_before: hash(10),
+            contributor_series_version: 1,
+            metadosis_state_version: 1,
         },
-        result_validator_set_epoch: 1,
-        result_committee_set_hash: hash(11),
-        result_ocomp_binding_hash: hash(12),
-        result_member_count: 4,
-        result_quorum_threshold: 3,
-        custody_committee_epoch_hash: None,
-    }
-}
-
-struct Dkg {
-    keys: Vec<PrivateKey>,
-    vrf_group_public_key: <MinSig as Variant>::Public,
-    vrf_threshold_private: commonware_cryptography::bls12381::primitives::group::Private,
-}
-
-fn build_dkg() -> Dkg {
-    let keys = (1..=4).map(PrivateKey::from_seed).collect();
-    let mut rng = StdRng::seed_from_u64(13);
-    let (vrf_threshold_private, vrf_group_public_key) = keypair::<_, MinSig>(&mut rng);
-    Dkg {
-        keys,
-        vrf_group_public_key,
-        vrf_threshold_private,
-    }
-}
-
-fn build_snapshot(dkg: &Dkg) -> CommitteeSnapshot {
-    let committee = dkg
-        .keys
-        .iter()
-        .enumerate()
-        .map(|(index, key)| {
-            let encoded = key.public_key().encode();
-            let mut consensus_pubkey = [0_u8; 48];
-            consensus_pubkey.copy_from_slice(encoded.as_ref());
-            CommitteeEntry {
-                address: Address::with_last_byte((index + 1) as u8),
-                consensus_pubkey,
-            }
-        })
-        .collect();
-    CommitteeSnapshot {
-        committee,
-        vrf_material_version: VRF_MATERIAL_VERSION,
-        vrf_group_public_key_bytes: dkg.vrf_group_public_key.encode().to_vec(),
-        vrf_public_polynomial_hash: B256::ZERO,
-    }
-}
-
-fn proposal(header_hash: B256) -> Proposal<Sha256Digest> {
-    Proposal::new(
-        Round::new(Epoch::new(FINALIZED_EPOCH), View::new(FINALIZED_VIEW)),
-        View::new(PARENT_VIEW),
-        Sha256Digest(header_hash.0),
+    );
+    job_intent_fixture(
+        activation_preconditions,
+        JobIntentFixtureValues {
+            chain_id: 42,
+            genesis_hash: hash(1),
+            fork_id: hash(2),
+            attempt: 0,
+            protocol_bundle_hash: hash(3),
+            ce_sealed_root: hash(4),
+            pre_admission_envelope_hash: hash(7),
+            source_availability_policy_id: hash(8),
+            frozen_metadosis_values: FrozenMetadosisValuesV1 {
+                day_type: DayType::Green,
+                day_limit: U256::from(1_000),
+                previous_vwap: U256::from(90),
+                current_vwap: U256::from(100),
+                gratis_demand: U256::from(25),
+                day_gratis_limit_minor: U256::from(20),
+                lysis_limit_minor: U256::from(300),
+                desis_limit_minor: U256::from(700),
+                request_limit_split_receipt_hash: hash(9),
+            },
+            logical_evaluation_height: FINALIZED_BLOCK_NUMBER,
+            logical_evaluation_time: 1_000,
+            result_validator_set_epoch: 1,
+            result_committee_set_hash: hash(11),
+            result_ocomp_binding_hash: hash(12),
+            result_member_count: 4,
+            result_quorum_threshold: 3,
+            custody_committee_epoch_hash: None,
+        },
     )
-}
-
-fn finalization_bytes(dkg: &Dkg, signer_indices: &[u32], header_hash: B256) -> Vec<u8> {
-    let proposal = proposal(header_hash);
-    let committee = Set::<PublicKey>::from_iter_dedup(dkg.keys.iter().map(PrivateKey::public_key));
-    let namespace = finalize_namespace(&committee);
-    let vote_message = proposal.encode().to_vec();
-    let signatures = signer_indices
-        .iter()
-        .map(|index| dkg.keys[*index as usize].sign(&namespace, &vote_message))
-        .collect::<Vec<_>>();
-    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
-        commonware_utils::iter::NonEmpty::try_new(signatures.iter().map(AsRef::as_ref)).unwrap(),
-    );
-    let seed_message = proposal.round.encode().to_vec();
-    let threshold_signature = sign_message::<MinSig>(
-        &dkg.vrf_threshold_private,
-        &hybrid_seed_namespace(),
-        &seed_message,
-    );
-    let certificate = HybridCertificate::<MinSig> {
-        signers: Signers::new(
-            dkg.keys.len() as u32,
-            signer_indices.iter().copied().map(Participant::new),
-        )
-        .unwrap(),
-        bls_aggregated_vote,
-        vrf_proof: VrfProof {
-            material_version: VRF_MATERIAL_VERSION,
-            threshold_signature,
-        },
-    };
-    Finalization::<HybridScheme<MinSig>, Sha256Digest> {
-        proposal,
-        certificate,
-    }
-    .encode()
-    .to_vec()
-}
-
-fn signer_bitmap(signer_indices: &[u32]) -> Vec<u8> {
-    let mut bitmap = vec![0_u8; 4];
-    for index in signer_indices {
-        bitmap[*index as usize] = 1;
-    }
-    bitmap
 }
 
 fn independent_storage_slots(logical_key: B256, encoded_record: &[u8]) -> Vec<(U256, U256)> {
@@ -327,177 +194,62 @@ fn independent_bytes_oracle_matches_literal_boundary_words() {
     }
 }
 
-fn account_trie(accounts: &[(Address, TrieAccount)]) -> (B256, BTreeMap<Address, Vec<Bytes>>) {
-    let targets = accounts
-        .iter()
-        .map(|(address, _)| (*address, Nibbles::unpack(keccak256(address))))
-        .collect::<BTreeMap<_, _>>();
-    let retainer = ProofRetainer::from_iter(targets.values().copied());
-    let mut builder = HashBuilder::default().with_proof_retainer(retainer);
-    let mut leaves = accounts
-        .iter()
-        .map(|(address, account)| (targets[address], alloy_rlp::encode(*account)))
-        .collect::<Vec<_>>();
-    leaves.sort_by_key(|(path, _)| *path);
-    for (path, value) in leaves {
-        builder.add_leaf(path, &value);
+#[test]
+fn ocm_fin_001_trie_root_and_proof_bytes_characterization() {
+    fn append_proof(encoded: &mut Vec<u8>, proof: &[Bytes]) {
+        encoded.extend_from_slice(&(proof.len() as u32).to_be_bytes());
+        for node in proof {
+            encoded.extend_from_slice(&(node.len() as u32).to_be_bytes());
+            encoded.extend_from_slice(node);
+        }
     }
-    let root = builder.root();
-    let retained = builder.take_proof_nodes();
-    let proofs = targets
-        .into_iter()
-        .map(|(address, target)| {
-            let proof = proof_nodes_for_target(&retained, &target);
-            (address, proof)
-        })
-        .collect();
-    (root, proofs)
-}
 
-fn push_nodes(encoded: &mut Vec<u8>, nodes: &[Bytes]) {
-    encoded.extend_from_slice(
-        &u32::try_from(nodes.len())
-            .expect("vector node count fits u32")
-            .to_be_bytes(),
-    );
-    for node in nodes {
-        encoded.extend_from_slice(
-            &u32::try_from(node.len())
-                .expect("vector node length fits u32")
-                .to_be_bytes(),
-        );
-        encoded.extend_from_slice(node);
-    }
-}
-
-fn account_witness(account: TrieAccount, nodes: &[Bytes]) -> Vec<u8> {
-    let mut encoded = Vec::new();
-    encoded.extend_from_slice(b"OAPI");
-    encoded.extend_from_slice(&1_u16.to_be_bytes());
-    encoded.extend_from_slice(&account.nonce.to_be_bytes());
-    encoded.extend_from_slice(&account.balance.to_be_bytes::<32>());
-    encoded.extend_from_slice(account.storage_root.as_slice());
-    encoded.extend_from_slice(account.code_hash.as_slice());
-    push_nodes(&mut encoded, nodes);
-    encoded
-}
-
-fn storage_witness(proofs: &[Vec<Bytes>]) -> Vec<u8> {
-    let mut encoded = Vec::new();
-    encoded.extend_from_slice(b"OSPI");
-    encoded.extend_from_slice(&1_u16.to_be_bytes());
-    encoded.extend_from_slice(
-        &u32::try_from(proofs.len())
-            .expect("vector proof count fits u32")
-            .to_be_bytes(),
-    );
-    for proof in proofs {
-        push_nodes(&mut encoded, proof);
-    }
-    encoded
-}
-
-fn independent_snapshot_key(epoch: u64, committee_set_hash: B256) -> B256 {
-    let mut preimage = Vec::new();
-    preimage.extend_from_slice(b"OUTBE_COMMITTEE_SNAPSHOT_KEY_V2");
-    preimage.extend_from_slice(&epoch.to_be_bytes());
-    preimage.extend_from_slice(committee_set_hash.as_slice());
-    keccak256(preimage)
-}
-
-fn committee_storage_slots(
-    snapshot: &CommitteeSnapshot,
-    epoch: u64,
-    committee_set_hash: B256,
-) -> Vec<(U256, U256)> {
-    let key = independent_snapshot_key(epoch, committee_set_hash);
-    let mapped = |slot: u64| key.mapping_slot(U256::from(slot));
-    let nested = |slot: u64, index: u64| index.mapping_slot(mapped(slot));
-    let mut slots = vec![
-        (mapped(31), U256::from(1)),
-        (mapped(32), U256::from(snapshot.committee.len())),
+    let slots = [
+        (U256::from(1), U256::from(11)),
+        (U256::from(2), U256::ZERO),
+        (U256::from(3), U256::from(33)),
     ];
-    for (index, entry) in snapshot.committee.iter().enumerate() {
-        let index = index as u64;
-        let mut high = [0_u8; 32];
-        high[..16].copy_from_slice(&entry.consensus_pubkey[32..]);
-        slots.extend([
-            (
-                nested(33, index),
-                U256::from_be_slice(entry.address.as_slice()),
-            ),
-            (
-                nested(34, index),
-                U256::from_be_bytes::<32>(entry.consensus_pubkey[..32].try_into().unwrap()),
-            ),
-            (nested(35, index), U256::from_be_bytes(high)),
-        ]);
-    }
-    slots.extend([
-        (mapped(36), U256::from(snapshot.vrf_material_version)),
-        (
-            mapped(37),
-            U256::from_be_bytes(keccak256(&snapshot.vrf_group_public_key_bytes).0),
-        ),
-        (
-            mapped(38),
-            U256::from(snapshot.vrf_group_public_key_bytes.len()),
-        ),
-    ]);
-    for (index, chunk) in snapshot.vrf_group_public_key_bytes.chunks(32).enumerate() {
-        let mut word = [0_u8; 32];
-        word[..chunk.len()].copy_from_slice(chunk);
-        slots.push((nested(39, index as u64), U256::from_be_bytes(word)));
-    }
-    slots.push((
-        mapped(47),
-        U256::from_be_bytes(snapshot.vrf_public_polynomial_hash.0),
-    ));
-    slots
-}
+    let (storage_root, storage_proofs) = storage_trie(&slots);
+    let (without_zero_root, _) = storage_trie(&[slots[0], slots[2]]);
+    assert_eq!(storage_root, without_zero_root);
 
-fn historical_committee_witness(
-    snapshot: &CommitteeSnapshot,
-    validator_account: TrieAccount,
-    account_nodes: &[Bytes],
-    storage_proofs: &[Vec<Bytes>],
-) -> Vec<u8> {
+    let first = TrieAccount {
+        nonce: 1,
+        balance: U256::from(7),
+        storage_root,
+        code_hash: KECCAK_EMPTY,
+    };
+    let second = TrieAccount {
+        nonce: 2,
+        balance: U256::from(9),
+        storage_root: KECCAK_EMPTY,
+        code_hash: KECCAK_EMPTY,
+    };
+    let accounts = [
+        (Address::repeat_byte(0x20), first),
+        (Address::repeat_byte(0x10), second),
+    ];
+    let (account_root, account_proofs) = account_trie(&accounts);
+    let (reverse_root, reverse_proofs) = account_trie(&[accounts[1], accounts[0]]);
+    assert_eq!(account_root, reverse_root);
+    assert_eq!(account_proofs, reverse_proofs);
+
     let mut encoded = Vec::new();
-    encoded.extend_from_slice(b"OCHI");
-    encoded.extend_from_slice(&1_u16.to_be_bytes());
-    encoded.extend_from_slice(
-        &u32::try_from(snapshot.committee.len())
-            .expect("committee length fits u32")
-            .to_be_bytes(),
-    );
-    for entry in &snapshot.committee {
-        encoded.extend_from_slice(entry.address.as_slice());
-        encoded.extend_from_slice(&entry.consensus_pubkey);
+    encoded.extend_from_slice(storage_root.as_slice());
+    encoded.extend_from_slice(&(storage_proofs.len() as u32).to_be_bytes());
+    for proof in &storage_proofs {
+        append_proof(&mut encoded, proof);
     }
-    encoded.extend_from_slice(&snapshot.vrf_material_version.to_be_bytes());
-    encoded.extend_from_slice(
-        &u32::try_from(snapshot.vrf_group_public_key_bytes.len())
-            .expect("VRF key length fits u32")
-            .to_be_bytes(),
+    encoded.extend_from_slice(account_root.as_slice());
+    encoded.extend_from_slice(&(account_proofs.len() as u32).to_be_bytes());
+    for (address, proof) in &account_proofs {
+        encoded.extend_from_slice(address.as_slice());
+        append_proof(&mut encoded, proof);
+    }
+    assert_eq!(
+        keccak256(encoded),
+        alloy_primitives::b256!("b5aef948eafaddaf632d2090b06090fe858c921e7590414509112bbfea254511"),
     );
-    encoded.extend_from_slice(&snapshot.vrf_group_public_key_bytes);
-    encoded.extend_from_slice(snapshot.vrf_public_polynomial_hash.as_slice());
-
-    let account = account_witness(validator_account, account_nodes);
-    encoded.extend_from_slice(
-        &u32::try_from(account.len())
-            .expect("account witness length fits u32")
-            .to_be_bytes(),
-    );
-    encoded.extend_from_slice(&account);
-    let storage = storage_witness(storage_proofs);
-    encoded.extend_from_slice(
-        &u32::try_from(storage.len())
-            .expect("storage witness length fits u32")
-            .to_be_bytes(),
-    );
-    encoded.extend_from_slice(&storage);
-    encoded
 }
 
 type FixtureStateProvider =
@@ -746,66 +498,45 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
     let canonical_job_intent = intent.encode_canonical(&LIMITS).unwrap();
     let intent_id = intent.intent_id(&LIMITS).unwrap();
     let logical_key = intent_storage_key(intent_id).unwrap();
-    let record = OcompJobRecordV1 {
-        intent: intent.clone(),
-        intent_height: intent.logical_evaluation_height,
-        status: OcompJobStatus::AwaitingFinality,
-        finalized: None,
-        terminal: None,
-    };
-    let slots = independent_storage_slots(logical_key, &record.encode_canonical(&LIMITS).unwrap());
-    let (intent_storage_root, intent_storage_proofs) = storage_trie(&slots);
-    let intent_account = TrieAccount {
-        nonce: 0,
-        balance: U256::ZERO,
-        storage_root: intent_storage_root,
-        code_hash: KECCAK_EMPTY,
-    };
-
-    let dkg = build_dkg();
-    let snapshot = build_snapshot(&dkg);
-    let committee_set_hash = snapshot.committee_set_hash_v2(FINALIZED_EPOCH);
-    let committee_slots = committee_storage_slots(&snapshot, FINALIZED_EPOCH, committee_set_hash);
-    let mut validator_slots = committee_slots.clone();
-    // The public builder authenticates the retained snapshot's ring entry first.
-    // Keep it outside the canonical committee witness, which contains snapshot slots only.
-    let ring_slot = U256::from(FINALIZED_EPOCH % 8).mapping_slot(U256::from(44));
-    let snapshot_key = independent_snapshot_key(FINALIZED_EPOCH, committee_set_hash);
-    validator_slots.push((ring_slot, U256::from_be_bytes(snapshot_key.0)));
-    let (validator_storage_root, all_validator_storage_proofs) = storage_trie(&validator_slots);
-    let validator_storage_proofs = &all_validator_storage_proofs[..committee_slots.len()];
-    let validator_account = TrieAccount {
-        nonce: 0,
-        balance: U256::ZERO,
-        storage_root: validator_storage_root,
-        code_hash: KECCAK_EMPTY,
-    };
-    let (state_root, account_proofs) = account_trie(&[
-        (METADOSIS_ADDRESS, intent_account),
-        (VALIDATOR_SET_ADDRESS, validator_account),
-    ]);
-    let header = OutbeHeader::new(Header {
-        number: FINALIZED_BLOCK_NUMBER,
-        state_root,
-        ..Header::default()
+    let encoded_record = awaiting_finality_record(&intent)
+        .encode_canonical(&LIMITS)
+        .unwrap();
+    let assembly = assemble_finalized_intent_proof(FinalizedIntentAssemblyInput {
+        intent: &intent,
+        canonical_job_intent,
+        logical_key,
+        encoded_record: &encoded_record,
+        extra_metadosis_slots: &[],
+        extra_state_account: None,
+        signer_indices,
+        coordinates: FinalizationCoordinates {
+            epoch: FINALIZED_EPOCH,
+            view: FINALIZED_VIEW,
+            parent_view: PARENT_VIEW,
+            vrf_material_version: VRF_MATERIAL_VERSION,
+        },
+        finalized_block_number: FINALIZED_BLOCK_NUMBER,
     });
-    let mut canonical_header = Vec::new();
-    header.encode(&mut canonical_header);
-    let header_hash = keccak256(&canonical_header);
-    let block = ConsensusBlock::from_sealed(SealedBlock::seal_slow(OutbeBlock {
-        header: header.clone(),
-        body: Default::default(),
-    }));
-    assert_eq!(block.block_hash(), header_hash);
-
-    let finalization = finalization_bytes(&dkg, signer_indices, header_hash);
-    let bitmap = signer_bitmap(signer_indices);
-    let ordered_committee = snapshot
-        .committee
-        .iter()
-        .map(|entry| entry.address)
-        .collect::<Vec<_>>();
-    let vrf_group_public_key_hash = keccak256(&snapshot.vrf_group_public_key_bytes);
+    let intent_storage_proofs = assembly.intent_storage_proofs().to_vec();
+    let FinalizedIntentAssembly {
+        intent_slots: slots,
+        intent_account,
+        validator_slots,
+        validator_storage_proofs: all_validator_storage_proofs,
+        validator_account,
+        state_root,
+        account_proofs,
+        header,
+        header_hash,
+        block,
+        finalization,
+        signer_bitmap: bitmap,
+        ordered_committee,
+        committee_set_hash,
+        vrf_group_public_key_hash,
+        proof,
+        ..
+    } = assembly;
     let finalization_record = CertifiedParentProofRecord {
         kind: ProofKind::Finalization {
             finalized_block_number: FINALIZED_BLOCK_NUMBER,
@@ -817,48 +548,11 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
         committee_set_hash,
         vrf_material_version: VRF_MATERIAL_VERSION,
         vrf_group_public_key_hash,
-        ordered_committee: ordered_committee.clone(),
-        signer_bitmap: bitmap.clone(),
-        encoded_proof: Bytes::from(finalization.clone()),
+        ordered_committee,
+        signer_bitmap: bitmap,
+        encoded_proof: Bytes::from(finalization),
+        stored_at_height: FINALIZED_BLOCK_NUMBER,
         ..CertifiedParentProofRecord::default()
-    };
-    let parent_accounting = CertifiedParentAccountingMetadataV2 {
-        finalized_block_number: FINALIZED_BLOCK_NUMBER,
-        finalized_block_hash: header_hash,
-        finalized_epoch: FINALIZED_EPOCH,
-        finalized_view: FINALIZED_VIEW,
-        parent_view: PARENT_VIEW,
-        ordered_committee: ordered_committee
-            .iter()
-            .map(|address| BoundedBytes(address.as_slice().to_vec()))
-            .collect(),
-        signer_bitmap: BoundedBytes(bitmap),
-        canonical_commonware_finalization_proof: ProofBytes(finalization),
-        committee_set_hash,
-        vrf_material_version: VRF_MATERIAL_VERSION as u16,
-        vrf_group_public_key_hash,
-        proof_kind: ParentProofKind::Finalization,
-        missed_proposers: Vec::new(),
-    };
-    let proof = FinalizedIntentProofV1 {
-        chain_id: intent.chain_id,
-        genesis_hash: intent.genesis_hash,
-        fork_id: intent.fork_id,
-        protocol_bundle_hash: intent.protocol_bundle_hash,
-        canonical_request_header_rlp: ProofBytes(canonical_header),
-        parent_accounting,
-        historical_committee_membership_proof: ProofBytes(historical_committee_witness(
-            &snapshot,
-            validator_account,
-            &account_proofs[&VALIDATOR_SET_ADDRESS],
-            validator_storage_proofs,
-        )),
-        canonical_job_intent: BoundedBytes(canonical_job_intent),
-        intent_account_proof: ProofBytes(account_witness(
-            intent_account,
-            &account_proofs[&METADOSIS_ADDRESS],
-        )),
-        intent_storage_proof: ProofBytes(storage_witness(&intent_storage_proofs)),
     };
     let account = |trie: TrieAccount| Account {
         nonce: trie.nonce,
@@ -1323,4 +1017,137 @@ fn ocm_fin_001_rejects_finality_committee_and_mpt_rebinding() {
         baseline.verify(&missed_proposer),
         Err(FinalizedIntentVerificationError::NonEmptyMissedProposers)
     );
+}
+
+#[test]
+fn finalized_intent_preflight_preserves_first_rejection() {
+    let baseline = fixture(&[0, 1, 2]);
+    let mut wrong_chain = baseline.proof.clone();
+    wrong_chain.chain_id += 1;
+    let mut wrong_genesis = baseline.proof.clone();
+    wrong_genesis.genesis_hash = hash(0xa1);
+    let mut wrong_fork = baseline.proof.clone();
+    wrong_fork.fork_id = hash(0xa2);
+    let mut wrong_bundle = baseline.proof.clone();
+    wrong_bundle.protocol_bundle_hash = hash(0xa3);
+    let mut missed = baseline.proof.clone();
+    missed.parent_accounting.missed_proposers.push(hash(0xa4));
+    for (proof, expected) in [
+        (
+            wrong_chain.clone(),
+            FinalizedIntentVerificationError::WrongChain,
+        ),
+        (
+            wrong_genesis,
+            FinalizedIntentVerificationError::WrongGenesis,
+        ),
+        (wrong_fork, FinalizedIntentVerificationError::WrongFork),
+        (
+            wrong_bundle,
+            FinalizedIntentVerificationError::WrongProtocolBundle,
+        ),
+        (
+            missed,
+            FinalizedIntentVerificationError::NonEmptyMissedProposers,
+        ),
+    ] {
+        assert_eq!(baseline.verify(&proof), Err(expected));
+    }
+
+    // The chain rejection precedes header decoding and all authority calls.
+    wrong_chain.canonical_request_header_rlp = ProofBytes(vec![0xff]);
+    assert_eq!(
+        baseline.verify(&wrong_chain),
+        Err(FinalizedIntentVerificationError::WrongChain)
+    );
+}
+
+#[test]
+fn activation_precondition_groups_preserve_first_error() {
+    let intent = intent();
+    let mut preconditions = intent.activation_preconditions.clone();
+    preconditions.tribute.wwd += 1;
+    preconditions.metadosis.pending_nonce += 1;
+    preconditions.tribute.exact_count += 1;
+    assert_eq!(
+        preconditions.validate_for_intent(&intent),
+        Err(ProtocolError::InvalidInvariant(
+            "activation precondition day binding"
+        ))
+    );
+    preconditions.tribute.wwd = intent.wwd;
+    assert_eq!(
+        preconditions.validate_for_intent(&intent),
+        Err(ProtocolError::InvalidInvariant(
+            "activation precondition nonce binding"
+        ))
+    );
+    preconditions.metadosis.pending_nonce = intent.pending_nonce;
+    assert_eq!(
+        preconditions.validate_for_intent(&intent),
+        Err(ProtocolError::InvalidInvariant(
+            "activation precondition source bounds"
+        ))
+    );
+}
+
+#[test]
+fn job_status_matrix_preserves_errors_without_mutation() {
+    let intent = intent();
+    let block_hash = hash(0xb1);
+    let state_root = hash(0xb2);
+    let finalized = OcompFinalizedJobV1 {
+        job_id: intent.job_id(block_hash, state_root, &LIMITS).unwrap(),
+        finalized_request_block_hash: block_hash,
+        finalized_request_state_root: state_root,
+        finality_recorded_height: 102,
+        open_height: 106,
+        deadline_height: 110,
+        quorum: None,
+    };
+    let terminal = LysisTerminalV1 {
+        outcome: OcompTerminalOutcome::Expired,
+        terminal_height: 110,
+        terminal_time: 1_100,
+        completed_binding: None,
+    };
+    let base = OcompJobRecordV1 {
+        intent,
+        intent_height: FINALIZED_BLOCK_NUMBER,
+        status: OcompJobStatus::AwaitingFinality,
+        finalized: None,
+        terminal: None,
+    };
+    base.validate_semantics(&LIMITS).unwrap();
+    let mut expired = base.clone();
+    expired.status = OcompJobStatus::Expired;
+    expired.finalized = Some(finalized.clone());
+    expired.terminal = Some(terminal.clone());
+    expired.validate_semantics(&LIMITS).unwrap();
+
+    let mut wrong_shape = base.clone();
+    wrong_shape.terminal = Some(terminal.clone());
+    let mut wrong_expired = expired.clone();
+    wrong_expired.terminal.as_mut().unwrap().outcome = OcompTerminalOutcome::Failed;
+    let mut wrong_failed = expired.clone();
+    wrong_failed.status = OcompJobStatus::Failed;
+    let mut wrong_completed = expired.clone();
+    wrong_completed.status = OcompJobStatus::Completed;
+    let mut missing_binding = expired.clone();
+    missing_binding.status = OcompJobStatus::Completed;
+    missing_binding.terminal.as_mut().unwrap().outcome = OcompTerminalOutcome::Completed;
+    for (record, expected) in [
+        (wrong_shape, "job status terminal shape"),
+        (wrong_expired, "expired terminal shape"),
+        (wrong_failed, "failed terminal shape"),
+        (wrong_completed, "completed terminal shape"),
+        (missing_binding, "completed binding present"),
+    ] {
+        let before = record.clone();
+        assert_eq!(
+            record.validate_semantics(&LIMITS),
+            Err(ProtocolError::InvalidInvariant(expected))
+        );
+        assert_eq!(record, before);
+    }
 }

@@ -9,28 +9,17 @@ use alloy_primitives::{address, b256, Bytes, B256, U256};
 use outbe_emissionlimit::allocation::{
     CCA_REWARD_PCT, PERCENT_DENOMINATOR, SRA_REWARD_PCT, VALIDATOR_REWARD_PCT, WAA_REWARD_PCT,
 };
-use outbe_primitives::{
-    block::{BlockContext, BlockRuntimeContext},
-    consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
-    storage::hashmap::HashMapStorageProvider,
+use outbe_primitives::consensus_metadata::{
+    CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
 use outbe_rewards::runtime::{
     check_and_record_metadata_fingerprint, compute_metadata_fingerprint,
     MetadataFingerprintOutcome, VALIDATOR_REWARD_PERCENT,
 };
 
-const CHAIN_ID: u64 = 1;
-const GENESIS_TS: u64 = 1_704_067_200;
+mod support;
 
-fn block_ctx(block_number: u64) -> BlockContext {
-    BlockContext::new(
-        block_number,
-        GENESIS_TS + 60,
-        CHAIN_ID,
-        alloy_primitives::Address::ZERO,
-        Vec::new(),
-    )
-}
+use support::with_block;
 
 fn base_metadata(proof_kind: ParentParticipationProof) -> CertifiedParentAccountingMetadata {
     CertifiedParentAccountingMetadata {
@@ -103,9 +92,7 @@ fn certified_notarization_participation_economics_pinned_by_chainspec() {
 
 #[test]
 fn late_local_votes_do_not_add_credit_beyond_block_carried_certificate() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.enter(|handle| {
-        let ctx = BlockRuntimeContext::new(block_ctx(2), handle);
+    with_block(2, |ctx| {
         // First metadata-tx: only the canonical quorum bits set.
         let m1 = base_metadata(ParentParticipationProof::Finalization);
         let outcome =
@@ -157,9 +144,7 @@ fn late_local_votes_do_not_add_credit_beyond_block_carried_certificate() {
 
 #[test]
 fn insufficient_rewards_backing_rejects_phase1_and_leaves_progress_unchanged() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.enter(|handle| {
-        let ctx = BlockRuntimeContext::new(block_ctx(2), handle);
+    with_block(2, |ctx| {
         let m1 = base_metadata(ParentParticipationProof::Finalization);
         let _ =
             check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(0u64), VRF_HASH).unwrap();

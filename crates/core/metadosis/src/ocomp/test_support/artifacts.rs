@@ -29,46 +29,14 @@ pub(super) fn capacity_profile() -> CapacityProfileV1 {
 }
 
 pub(super) fn bundle() -> ProtocolBundleV1 {
-    ProtocolBundleV1 {
-        protocol_version: 1,
-        fork_id: hash(21),
-        intent_codec_id: hash(2),
-        finalized_intent_proof_codec_id: hash(3),
-        tribute_body_codec_id: outbe_ocomp_protocol::registry::TRIBUTE_BODY_CODEC_ID,
-        fidelity_opening_codec_id: outbe_ocomp_protocol::registry::FIDELITY_OPENING_CODEC_ID,
-        oracle_opening_codec_id: outbe_ocomp_protocol::registry::ORACLE_OPENING_CODEC_ID,
-        result_codec_id: hash(4),
-        action_codec_id: hash(5),
-        activation_codec_id: hash(6),
-        evidence_codec_id: hash(7),
-        request_semantics_version: 1,
-        lysis_program_semantics_hash: hash(8),
-        planner_spec_version: 1,
-        reducer_spec_version: 1,
-        activation_apply_semantics_hash: hash(9),
-        effect_contract_registry_hash: hash(10),
-        object_codec_registry_hash: hash(11),
-        correctness_profile_id: hash(12),
-        capacity_profile_id: hash(13),
-        result_signature_profile_id: hash(14),
-        finality_verifier_and_vote_domain_id: hash(15),
-        consensus_committee_history_schema_version: 1,
-        ocomp_committee_schema_version: 1,
-        proof_system_and_verifier_key_id: None,
-        da_codec_and_binding_verifier_id: None,
-        anti_equivocation_journal_schema_hash: hash(16),
-        mode_pause_revocation_semantics_hash: hash(17),
-        upgrade_fsm_semantics_hash: hash(18),
-        release_requirement_catalog_sequence: 1,
-        release_requirement_catalog_hash: hash(19),
-        release_requirement_catalog_parent_hash: hash(20),
-        release_gate_authority_envelope_hash: hash(22),
-        release_approval_policy_hash: hash(24),
-        release_validator_command_artifact_hash: hash(25),
-        consensus_state_schema_version: 1,
-        migration_manifest_hash: hash(26),
-        required_upgrade_handler_set_hash: hash(27),
-    }
+    let mut bundle = outbe_ocomp_protocol::test_utils::minimal_protocol_bundle();
+    bundle.fork_id = hash(21);
+    bundle.release_gate_authority_envelope_hash = hash(22);
+    bundle.release_approval_policy_hash = hash(24);
+    bundle.release_validator_command_artifact_hash = hash(25);
+    bundle.migration_manifest_hash = hash(26);
+    bundle.required_upgrade_handler_set_hash = hash(27);
+    bundle
 }
 
 /// Builds a fully valid immutable fork-install artifact for behavioral tests.
@@ -463,21 +431,7 @@ pub(super) fn finality_proof(
         fork_id: intent.fork_id,
         protocol_bundle_hash: intent.protocol_bundle_hash,
         canonical_request_header_rlp: ProofBytes(vec![1, 2]),
-        parent_accounting: CertifiedParentAccountingMetadataV2 {
-            finalized_block_number: 9,
-            finalized_block_hash: hash(46),
-            finalized_epoch: 2,
-            finalized_view: 3,
-            parent_view: 2,
-            ordered_committee: vec![BoundedBytes(vec![1])],
-            signer_bitmap: BoundedBytes(vec![1]),
-            canonical_commonware_finalization_proof: ProofBytes(vec![2]),
-            committee_set_hash: hash(47),
-            vrf_material_version: 1,
-            vrf_group_public_key_hash: hash(48),
-            proof_kind: ParentProofKind::Finalization,
-            missed_proposers: Vec::new(),
-        },
+        parent_accounting: outbe_ocomp_protocol::test_utils::certified_parent_accounting(9),
         historical_committee_membership_proof: ProofBytes(vec![3]),
         canonical_job_intent: BoundedBytes(intent.encode_canonical(limits).unwrap()),
         intent_account_proof: ProofBytes(vec![4]),

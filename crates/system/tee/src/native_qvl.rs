@@ -188,6 +188,14 @@ struct RawResult {
     qe_tcb_evaluation_data_number: u32,
 }
 
+struct NativeQvlCall<'a> {
+    quote: &'a [u8],
+    quote_size: u32,
+    collateral: &'a RawCollateral,
+    block_timestamp: i64,
+    output: &'a mut RawResult,
+}
+
 impl Default for RawResult {
     fn default() -> Self {
         Self {
@@ -209,6 +217,21 @@ impl Default for RawResult {
             qe_status: 0,
             qe_tcb_evaluation_data_number: 0,
         }
+    }
+}
+
+impl RawResult {
+    fn has_consistent_dates(&self) -> bool {
+        if self.earliest_issue_date <= 0 {
+            return false;
+        }
+        if self.latest_issue_date < self.earliest_issue_date {
+            return false;
+        }
+        if self.earliest_expiration_date <= self.latest_issue_date {
+            return false;
+        }
+        self.earliest_expiration_date > 0
     }
 }
 
@@ -268,7 +291,13 @@ pub fn verify_quote_native(
     };
     let mut output = RawResult::default();
 
-    let wrapper_status = call_native(quote, quote_size, &raw, block_timestamp, &mut output);
+    let wrapper_status = call_native(NativeQvlCall {
+        quote,
+        quote_size,
+        collateral: &raw,
+        block_timestamp,
+        output: &mut output,
+    });
     match wrapper_status {
         0 => convert_output(output),
         1 => Err(NativeQvlError::InvalidInput),
@@ -282,48 +311,35 @@ pub fn verify_quote_native(
 /// wrapper's unsupported-ABI status so every verification fails closed instead
 /// of requiring the SGX toolchain on hosts that never verify a quote.
 #[cfg(not(native_qvl_linked))]
-fn call_native(
-    _quote: &[u8],
-    _quote_size: u32,
-    _collateral: &RawCollateral,
-    _block_timestamp: i64,
-    _output: &mut RawResult,
-) -> c_int {
+fn call_native(_call: NativeQvlCall<'_>) -> c_int {
     2
 }
 
 #[cfg(native_qvl_linked)]
 #[allow(unsafe_code)]
-fn call_native(
-    quote: &[u8],
-    quote_size: u32,
-    collateral: &RawCollateral,
-    block_timestamp: i64,
-    output: &mut RawResult,
-) -> c_int {
+fn call_native(call: NativeQvlCall<'_>) -> c_int {
     // SAFETY: every pointer is valid for its checked length throughout this
     // call. The C wrapper is compiled against the pinned Intel headers and
     // writes only the fixed-size `RawResult` structure.
     unsafe {
         outbe_qvl_verify_quote_v1(
-            quote.as_ptr(),
-            quote_size,
-            collateral,
-            block_timestamp,
-            output,
+            call.quote.as_ptr(),
+            call.quote_size,
+            call.collateral,
+            call.block_timestamp,
+            call.output,
         )
     }
 }
 
 fn convert_output(output: RawResult) -> Result<NativeQvlVerdict, NativeQvlError> {
-    if output.supplemental_major_version != 3
-        || output.supplemental_minor_version != 0
-        || output.earliest_issue_date <= 0
-        || output.latest_issue_date < output.earliest_issue_date
-        || output.earliest_expiration_date <= output.latest_issue_date
-        || output.earliest_expiration_date <= 0
-        || output.collateral_expiration_status > 1
-    {
+    if output.supplemental_major_version != 3 || output.supplemental_minor_version != 0 {
+        return Err(NativeQvlError::MalformedSupplemental);
+    }
+    if !output.has_consistent_dates() {
+        return Err(NativeQvlError::MalformedSupplemental);
+    }
+    if output.collateral_expiration_status > 1 {
         return Err(NativeQvlError::MalformedSupplemental);
     }
     Ok(NativeQvlVerdict {
@@ -453,5 +469,222 @@ mod tests {
             convert_output(qe_output),
             Err(NativeQvlError::UnsupportedResult)
         );
+    }
+
+    #[test]
+    fn malformed_supplemental_fields_reject_before_status_decoding() {
+        let malformed = [
+            RawResult {
+                supplemental_major_version: 2,
+                ..valid_raw_result()
+            },
+            RawResult {
+                supplemental_minor_version: 1,
+                ..valid_raw_result()
+            },
+            RawResult {
+                earliest_issue_date: 0,
+                ..valid_raw_result()
+            },
+            RawResult {
+                latest_issue_date: 99,
+                ..valid_raw_result()
+            },
+            RawResult {
+                earliest_expiration_date: 200,
+                ..valid_raw_result()
+            },
+            RawResult {
+                earliest_expiration_date: 0,
+                ..valid_raw_result()
+            },
+            RawResult {
+                collateral_expiration_status: 2,
+                ..valid_raw_result()
+            },
+        ];
+
+        for mut output in malformed {
+            output.aggregate_status = u32::MAX;
+            assert_eq!(
+                convert_output(output),
+                Err(NativeQvlError::MalformedSupplemental)
+            );
+        }
+    }
+}
+
+/// Characterization of the C wrapper contract that the Rust layer cannot reach
+/// through `verify_quote_native`, because that layer rejects empty inputs
+/// first. It calls the wrapper through the existing `call_native` seam.
+#[cfg(all(test, native_qvl_linked))]
+mod wrapper_contract {
+    use super::*;
+
+    const QUOTE: &[u8] =
+        include_bytes!("../tests/fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin");
+    /// A non-empty, NUL-terminated stand-in for every collateral component.
+    const COMPONENT: &[u8] = b"outbe-wrapper-contract-component\0";
+    const SENTINEL: u8 = 0xA5;
+
+    fn present_collateral() -> RawCollateral {
+        let size = COMPONENT.len() as u32;
+        RawCollateral {
+            pck_crl_issuer_chain: COMPONENT.as_ptr(),
+            pck_crl_issuer_chain_size: size,
+            root_ca_crl: COMPONENT.as_ptr(),
+            root_ca_crl_size: size,
+            pck_crl: COMPONENT.as_ptr(),
+            pck_crl_size: size,
+            tcb_info_issuer_chain: COMPONENT.as_ptr(),
+            tcb_info_issuer_chain_size: size,
+            tcb_info: COMPONENT.as_ptr(),
+            tcb_info_size: size,
+            qe_identity_issuer_chain: COMPONENT.as_ptr(),
+            qe_identity_issuer_chain_size: size,
+            qe_identity: COMPONENT.as_ptr(),
+            qe_identity_size: size,
+        }
+    }
+
+    /// `present_collateral` with component `index` (structure order) missing
+    /// its bytes, or missing its size.
+    fn missing_component(index: usize, missing_bytes: bool) -> RawCollateral {
+        let mut collateral = present_collateral();
+        let (bytes, size) = match index {
+            0 => (
+                &mut collateral.pck_crl_issuer_chain,
+                &mut collateral.pck_crl_issuer_chain_size,
+            ),
+            1 => (
+                &mut collateral.root_ca_crl,
+                &mut collateral.root_ca_crl_size,
+            ),
+            2 => (&mut collateral.pck_crl, &mut collateral.pck_crl_size),
+            3 => (
+                &mut collateral.tcb_info_issuer_chain,
+                &mut collateral.tcb_info_issuer_chain_size,
+            ),
+            4 => (&mut collateral.tcb_info, &mut collateral.tcb_info_size),
+            5 => (
+                &mut collateral.qe_identity_issuer_chain,
+                &mut collateral.qe_identity_issuer_chain_size,
+            ),
+            _ => (
+                &mut collateral.qe_identity,
+                &mut collateral.qe_identity_size,
+            ),
+        };
+        if missing_bytes {
+            *bytes = std::ptr::null();
+        } else {
+            *size = 0;
+        }
+        collateral
+    }
+
+    fn sentinel_result() -> RawResult {
+        let word = u32::from_ne_bytes([SENTINEL; 4]);
+        RawResult {
+            aggregate_status: word,
+            collateral_expiration_status: word,
+            supplemental_major_version: u16::from_ne_bytes([SENTINEL; 2]),
+            supplemental_minor_version: u16::from_ne_bytes([SENTINEL; 2]),
+            earliest_issue_date: i64::from_ne_bytes([SENTINEL; 8]),
+            latest_issue_date: i64::from_ne_bytes([SENTINEL; 8]),
+            earliest_expiration_date: i64::from_ne_bytes([SENTINEL; 8]),
+            tcb_evaluation_data_number: word,
+            pce_id: u16::from_ne_bytes([SENTINEL; 2]),
+            tee_type: word,
+            sgx_type: SENTINEL,
+            dynamic_platform: i32::from_ne_bytes([SENTINEL; 4]),
+            cached_keys: i32::from_ne_bytes([SENTINEL; 4]),
+            smt_enabled: i32::from_ne_bytes([SENTINEL; 4]),
+            advisory_ids: [SENTINEL; 450],
+            qe_status: word,
+            qe_tcb_evaluation_data_number: word,
+        }
+    }
+
+    /// The status fields, then every supplemental field, as wide integers.
+    fn scalars(output: &RawResult) -> [i128; 17] {
+        [
+            output.aggregate_status.into(),
+            output.collateral_expiration_status.into(),
+            output.supplemental_major_version.into(),
+            output.supplemental_minor_version.into(),
+            output.earliest_issue_date.into(),
+            output.latest_issue_date.into(),
+            output.earliest_expiration_date.into(),
+            output.tcb_evaluation_data_number.into(),
+            output.pce_id.into(),
+            output.tee_type.into(),
+            output.sgx_type.into(),
+            output.dynamic_platform.into(),
+            output.cached_keys.into(),
+            output.smt_enabled.into(),
+            output.qe_status.into(),
+            output.qe_tcb_evaluation_data_number.into(),
+            i128::from(output.advisory_ids.iter().any(|byte| *byte != 0)),
+        ]
+    }
+
+    fn call(quote_size: u32, collateral: &RawCollateral, output: &mut RawResult) -> c_int {
+        call_native(NativeQvlCall {
+            quote: QUOTE,
+            quote_size,
+            collateral,
+            block_timestamp: 1_751_000_000,
+            output,
+        })
+    }
+
+    #[test]
+    fn missing_quote_or_component_is_an_invalid_parameter_before_output_is_cleared() {
+        let untouched = scalars(&sentinel_result());
+        let mut output = sentinel_result();
+        assert_eq!(
+            call(0, &present_collateral(), &mut output),
+            1,
+            "empty quote"
+        );
+        assert_eq!(scalars(&output), untouched, "empty quote");
+        assert!(output.advisory_ids.iter().all(|byte| *byte == SENTINEL));
+
+        for index in 0..7 {
+            for missing_bytes in [true, false] {
+                let mut output = sentinel_result();
+                let collateral = missing_component(index, missing_bytes);
+                let case = format!("component {index}, missing bytes {missing_bytes}");
+                assert_eq!(
+                    call(QUOTE.len() as u32, &collateral, &mut output),
+                    1,
+                    "{case}"
+                );
+                assert_eq!(scalars(&output), untouched, "{case}");
+                assert!(output.advisory_ids.iter().all(|byte| *byte == SENTINEL));
+            }
+        }
+    }
+
+    #[test]
+    fn qvl_error_writes_the_status_fields_and_no_supplemental_value() {
+        let mut output = sentinel_result();
+        // The stand-in collateral is not valid Intel collateral, so the QVL
+        // rejects the verification.
+        assert_eq!(
+            call(QUOTE.len() as u32, &present_collateral(), &mut output),
+            3
+        );
+        let fields = scalars(&output);
+        // The wrapper cleared the whole result before the QVL call, and copied
+        // no supplemental value after the error.
+        assert_eq!(fields[2..], [0; 15]);
+        // It wrote the aggregate and collateral-expiration status after the
+        // QVL call: the QVL value, or the wrapper default (UNSPECIFIED and
+        // UINT32_MAX) when the QVL left them unchanged.
+        let word = i128::from(u32::from_ne_bytes([SENTINEL; 4]));
+        assert_ne!(fields[..2], [word, word]);
+        assert_ne!(fields[..2], [0, 0]);
     }
 }

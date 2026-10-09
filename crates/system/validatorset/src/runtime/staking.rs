@@ -19,17 +19,10 @@ impl ValidatorSet<'_> {
     ) -> Result<()> {
         let before = self.validator_state(addr)?;
         let stake = StakeProjection::new(bonded, before.unbonding_end_hint());
+        if let Some(rejection) = state_machine::stake_target_rejection(before.lifecycle()) {
+            return Err(rejection);
+        }
         let (lifecycle, became_pending) = match before.lifecycle().clone() {
-            ValidatorLifecycle::Absent => {
-                return Err(PrecompileError::Revert(
-                    "cannot stake before validator registration".into(),
-                ));
-            }
-            ValidatorLifecycle::Inactive(_) => {
-                return Err(PrecompileError::Revert(
-                    "inactive validator must re-register before staking".into(),
-                ));
-            }
             ValidatorLifecycle::Exiting(_) | ValidatorLifecycle::Unbonding(_) => {
                 return Err(PrecompileError::Revert(
                     "cannot increase stake while validator is exiting or unbonding".into(),
@@ -45,12 +38,7 @@ impl ValidatorSet<'_> {
         };
         let after = before.clone().with_lifecycle(lifecycle)?;
 
-        let guard = self.storage.checkpoint_guard();
-        self.persist_validator_state_delta(&before, &after)?;
-        if became_pending {
-            self.pending_set_change.write(true)?;
-        }
-        guard.commit();
+        self.commit_transition(&before, &after, became_pending)?;
         if became_pending {
             crate::metrics::record_validator_status(addr, status::PENDING);
             crate::metrics::record_pending_set_change(true);
@@ -112,12 +100,7 @@ impl ValidatorSet<'_> {
         };
         let after = before.clone().with_lifecycle(next)?;
 
-        let guard = self.storage.checkpoint_guard();
-        self.persist_validator_state_delta(&before, &after)?;
-        if set_change {
-            self.pending_set_change.write(true)?;
-        }
-        guard.commit();
+        self.commit_transition(&before, &after, set_change)?;
         if set_change {
             crate::metrics::record_pending_set_change(true);
         }
@@ -167,12 +150,7 @@ impl ValidatorSet<'_> {
         };
         let after = before.clone().with_lifecycle(next)?;
 
-        let guard = self.storage.checkpoint_guard();
-        self.persist_validator_state_delta(&before, &after)?;
-        if set_change {
-            self.pending_set_change.write(true)?;
-        }
-        guard.commit();
+        self.commit_transition(&before, &after, set_change)?;
         if set_change {
             crate::metrics::record_pending_set_change(true);
         }
@@ -187,20 +165,14 @@ impl ValidatorSet<'_> {
             ValidatorLifecycle::Unbonding(unbonding) => unbonding,
             _ => return Ok(()),
         };
-        let cleared = match state_machine::with_stake(
-            ValidatorLifecycle::Unbonding(unbonding),
+        let cleared = state_machine::with_unbonding_stake(
+            unbonding,
             StakeProjection::new(before.bonded_stake(), None),
-        )? {
-            ValidatorLifecycle::Unbonding(unbonding) => unbonding,
-            _ => unreachable!("with_stake preserves lifecycle variant"),
-        };
+        )?;
         let inactive = state_machine::complete_unbonding(cleared)?;
         let after = before
             .clone()
             .with_lifecycle(ValidatorLifecycle::Inactive(inactive))?;
-        let guard = self.storage.checkpoint_guard();
-        self.persist_validator_state_delta(&before, &after)?;
-        guard.commit();
-        Ok(())
+        self.commit_transition(&before, &after, false)
     }
 }

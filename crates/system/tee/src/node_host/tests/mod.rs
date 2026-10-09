@@ -22,20 +22,20 @@ use std::path::PathBuf;
 
 use super::*;
 use ed25519_dalek::Signer as _;
-use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1,
-    TransitionKeyReadyProofV1,
-};
+use outbe_primitives::tee_attestation_v1::{AttestationMode, DcapEvidenceV1};
 
 mod fixtures;
 use fixtures::{
-    replacement_fixture, replacement_fixture_for_mode, replacement_fixture_for_operation,
-    ReplacementFixture,
+    direct_dev_registration, replacement_fixture, replacement_fixture_for_mode,
+    replacement_fixture_for_operation, stage_existing_record_as_next, DirectDevRegistration,
+    DirectorySync, ReplacementFixture,
 };
 
 mod committed_join;
+mod durable_preflight;
 
 mod replacement;
 
 mod locking;
+
+mod filesystem_contract;

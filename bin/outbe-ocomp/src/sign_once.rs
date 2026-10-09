@@ -18,7 +18,7 @@ use std::{
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
     activation::{SignOncePurpose, SignOnceRecordV1},
-    vote::ResultVoteSigningSubjectV1,
+    vote::{ResultVotePrefixV1, ResultVoteSigningSubjectV1, VoteSigningDomain},
     ProtocolError, SchemaLimits,
 };
 
@@ -32,73 +32,45 @@ const MAX_RECORD_BYTES: u64 = 512;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SignOnceSubjectV1 {
-    pub chain_id: u64,
-    pub genesis_hash: B256,
-    pub fork_id: B256,
-    pub job_id: B256,
-    pub attempt: u32,
-    pub protocol_bundle_hash: B256,
-    pub result_validator_set_epoch: u64,
-    pub result_committee_set_hash: B256,
-    pub result_ocomp_binding_hash: B256,
-    pub ocomp_key_hash: B256,
-    pub key_epoch: u64,
+    pub domain: VoteSigningDomain,
+    pub prefix: ResultVotePrefixV1,
     pub result_digest: B256,
 }
 
 impl SignOnceSubjectV1 {
     pub(crate) fn signing_digest(self) -> Result<B256, ProtocolError> {
-        ResultVoteSigningSubjectV1 {
-            chain_id: self.chain_id,
-            genesis_hash: self.genesis_hash,
-            fork_id: self.fork_id,
-            protocol_bundle_hash: self.protocol_bundle_hash,
-            job_id: self.job_id,
-            attempt: self.attempt,
-            result_validator_set_epoch: self.result_validator_set_epoch,
-            result_committee_set_hash: self.result_committee_set_hash,
-            result_ocomp_binding_hash: self.result_ocomp_binding_hash,
-            ocomp_key_hash: self.ocomp_key_hash,
-            key_epoch: self.key_epoch,
-            purpose: SignOncePurpose::ResultSignature as u8,
-            result_digest: self.result_digest,
-        }
+        ResultVoteSigningSubjectV1::from_prefix(
+            self.domain,
+            self.prefix,
+            SignOncePurpose::ResultSignature as u8,
+            self.result_digest,
+        )
         .signing_digest()
     }
 
     fn record(self, signature_rs: [u8; 64]) -> SignOnceRecordV1 {
         SignOnceRecordV1 {
-            chain_id: self.chain_id,
-            genesis_hash: self.genesis_hash,
-            fork_id: self.fork_id,
+            chain_id: self.domain.chain_id,
+            genesis_hash: self.domain.genesis_hash,
+            fork_id: self.domain.fork_id,
             purpose: SignOncePurpose::ResultSignature,
-            job_id: self.job_id,
-            attempt: self.attempt,
-            protocol_bundle_hash: self.protocol_bundle_hash,
-            result_validator_set_epoch: self.result_validator_set_epoch,
-            result_committee_set_hash: self.result_committee_set_hash,
-            result_ocomp_binding_hash: self.result_ocomp_binding_hash,
-            ocomp_key_hash: self.ocomp_key_hash,
-            key_epoch: self.key_epoch,
+            job_id: self.prefix.job_id,
+            attempt: self.prefix.attempt,
+            protocol_bundle_hash: self.prefix.protocol_bundle_hash,
+            result_validator_set_epoch: self.prefix.result_validator_set_epoch,
+            result_committee_set_hash: self.prefix.result_committee_set_hash,
+            result_ocomp_binding_hash: self.prefix.result_ocomp_binding_hash,
+            ocomp_key_hash: self.prefix.ocomp_key_hash,
+            key_epoch: self.prefix.key_epoch,
             result_digest: self.result_digest,
             signature_rs,
         }
     }
 
+    // The stored signature is compared with itself. All other fields must be
+    // equal to the subject, and the purpose must be ResultSignature.
     fn matches(self, record: &SignOnceRecordV1) -> bool {
-        record.chain_id == self.chain_id
-            && record.genesis_hash == self.genesis_hash
-            && record.fork_id == self.fork_id
-            && record.purpose == SignOncePurpose::ResultSignature
-            && record.job_id == self.job_id
-            && record.attempt == self.attempt
-            && record.protocol_bundle_hash == self.protocol_bundle_hash
-            && record.result_validator_set_epoch == self.result_validator_set_epoch
-            && record.result_committee_set_hash == self.result_committee_set_hash
-            && record.result_ocomp_binding_hash == self.result_ocomp_binding_hash
-            && record.ocomp_key_hash == self.ocomp_key_hash
-            && record.key_epoch == self.key_epoch
-            && record.result_digest == self.result_digest
+        *record == self.record(record.signature_rs)
     }
 }
 
@@ -275,8 +247,8 @@ impl SignOnceStore {
             Ok(())
         } else {
             Err(SignOnceError::Equivocation {
-                job_id: subject.job_id,
-                attempt: subject.attempt,
+                job_id: subject.prefix.job_id,
+                attempt: subject.prefix.attempt,
                 recorded_digest: reservation.result_digest,
                 requested_digest: subject.result_digest,
             })
@@ -293,8 +265,8 @@ impl SignOnceStore {
             Ok(existing)
         } else {
             Err(SignOnceError::Equivocation {
-                job_id: subject.job_id,
-                attempt: subject.attempt,
+                job_id: subject.prefix.job_id,
+                attempt: subject.prefix.attempt,
                 recorded_digest: existing.result_digest,
                 requested_digest: subject.result_digest,
             })

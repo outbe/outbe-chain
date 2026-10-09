@@ -1,13 +1,17 @@
 use alloy_primitives::{address, b256, Address, B256, U256};
 use outbe_primitives::addresses::STAKING_ADDRESS;
-use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_primitives::error::PrecompileError;
+use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
+use outbe_primitives::storage::hashmap::{HashMapStorageProvider, MutationPrefixViews};
 use outbe_primitives::storage::StorageHandle;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
+use outbe_validatorset::test_support::test_lifecycle_of;
 use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 
 use crate::hooks;
 use crate::schema::SlashIndicator;
+use crate::test_signing::{self, signed_evidence, POP_DST};
 
 const CHAIN_ID: u64 = 1;
 
@@ -48,8 +52,7 @@ fn register_and_activate_with_pubkey_and_stake(
     stake_amount: U256,
 ) {
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.config_owner.write(OWNER).unwrap();
-    vs.set_config_max_validators(100).unwrap();
+    vs.test_configure_registry(OWNER).unwrap();
     register_active_fixture(&mut vs, validator, consensus_pubkey, stake_amount);
 
     // Give the validator some stake so slash_stake has an effect
@@ -85,11 +88,7 @@ fn register_active_fixture(
     consensus_pubkey: &[u8; 48],
     stake: U256,
 ) {
-    vs.test_register_validator_without_pop(validator, consensus_pubkey)
-        .unwrap();
-    vs.test_set_stake_projection(validator, StakeProjection::new(stake, None))
-        .unwrap();
-    vs.activate_validator_via_boundary_for_test(validator)
+    vs.test_register_active_validator(validator, consensus_pubkey, stake)
         .unwrap();
 }
 
@@ -115,8 +114,9 @@ fn test_slash_proposer_misdemeanor() {
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
 
         // Validator status must still be ACTIVE (not force-exited)
-        let vs = ValidatorSet::new(storage.clone());
-        assert!(vs.validator_lifecycle(VAL_A).unwrap().is_active_status());
+        assert!(test_lifecycle_of(storage.clone(), VAL_A)
+            .unwrap()
+            .is_active_status());
     });
 }
 
@@ -145,9 +145,8 @@ fn test_slash_proposer_felony() {
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
 
         // Validator must be forced out
-        let vs = ValidatorSet::new(storage.clone());
         assert!(matches!(
-            vs.validator_lifecycle(VAL_A).unwrap(),
+            test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
             ValidatorLifecycle::JailRetained(_)
         ));
 
@@ -188,10 +187,9 @@ fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
             Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
             U256::from(950u64)
         );
-        let vs = ValidatorSet::new(storage.clone());
         assert!(
             matches!(
-                vs.validator_lifecycle(VAL_A).unwrap(),
+                test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
                 ValidatorLifecycle::JailRetained(_)
             ),
             "jail-before-slash must keep JAILED even when the slash drops below min_stake"
@@ -322,17 +320,13 @@ fn test_evidence_reward() {
 
     StorageHandle::enter(&mut storage, |storage| {
         // Generate a BLS keypair for the validator
-        use blst::min_pk::SecretKey;
-        let ikm = [99u8; 32];
-        let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-        let pk = sk.sk_to_pk();
+        let (sk, pk) = test_signing::keypair(99).unwrap();
         let pk_bytes: [u8; 48] = pk.to_bytes();
 
         // Register validator with this pubkey
         let validator = VAL_A;
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(100).unwrap();
+        vs.test_configure_registry(OWNER).unwrap();
         register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
@@ -349,8 +343,8 @@ fn test_evidence_reward() {
             .unwrap();
 
         // Create two different proposals for the same round
-        let proposal1 = build_test_proposal(1, 5, 0, [0xAA; 32]);
-        let proposal2 = build_test_proposal(1, 5, 0, [0xBB; 32]);
+        let proposal1 = test_signing::proposal(1, 5, 0, [0xAA; 32]);
+        let proposal2 = test_signing::proposal(1, 5, 0, [0xBB; 32]);
 
         // Sign both with BLS
         let ev1_data = sign_notarize_evidence(&sk, &pk, &proposal1);
@@ -391,16 +385,12 @@ fn test_conflicting_vote_evidence() {
     storage.set_balance(STAKING_ADDRESS, U256::from(10_000_000u64));
 
     StorageHandle::enter(&mut storage, |storage| {
-        use blst::min_pk::SecretKey;
-        let ikm = [77u8; 32];
-        let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-        let pk = sk.sk_to_pk();
+        let (sk, pk) = test_signing::keypair(77).unwrap();
         let pk_bytes: [u8; 48] = pk.to_bytes();
 
         let validator = VAL_B;
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(100).unwrap();
+        vs.test_configure_registry(OWNER).unwrap();
         register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
@@ -416,11 +406,11 @@ fn test_conflicting_vote_evidence() {
             .unwrap();
 
         // Create a notarize proposal (epoch=3, view=7)
-        let proposal = build_test_proposal(3, 7, 0, [0xCC; 32]);
+        let proposal = test_signing::proposal(3, 7, 0, [0xCC; 32]);
         let notarize_data = sign_notarize_evidence(&sk, &pk, &proposal);
 
         // Create a nullify vote for the same round (epoch=3, view=7)
-        let nullify_payload = build_test_nullify_payload(3, 7);
+        let nullify_payload = test_signing::nullify_payload(3, 7);
         let nullify_data = sign_nullify_evidence(&sk, &pk, &nullify_payload);
 
         write_test_committee(&storage);
@@ -456,16 +446,12 @@ fn test_conflicting_vote_evidence_reversed_order() {
     storage.set_balance(STAKING_ADDRESS, U256::from(10_000_000u64));
 
     StorageHandle::enter(&mut storage, |storage| {
-        use blst::min_pk::SecretKey;
-        let ikm = [88u8; 32];
-        let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-        let pk = sk.sk_to_pk();
+        let (sk, pk) = test_signing::keypair(88).unwrap();
         let pk_bytes: [u8; 48] = pk.to_bytes();
 
         let validator = VAL_A;
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(100).unwrap();
+        vs.test_configure_registry(OWNER).unwrap();
         register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
@@ -480,10 +466,10 @@ fn test_conflicting_vote_evidence_reversed_order() {
         vs.test_set_stake_projection(validator, StakeProjection::new(stake, None))
             .unwrap();
 
-        let proposal = build_test_proposal(2, 4, 0, [0xDD; 32]);
+        let proposal = test_signing::proposal(2, 4, 0, [0xDD; 32]);
         let notarize_data = sign_notarize_evidence(&sk, &pk, &proposal);
 
-        let nullify_payload = build_test_nullify_payload(2, 4);
+        let nullify_payload = test_signing::nullify_payload(2, 4);
         let nullify_data = sign_nullify_evidence(&sk, &pk, &nullify_payload);
 
         write_test_committee(&storage);
@@ -504,16 +490,12 @@ fn test_conflicting_vote_evidence_reversed_order() {
 #[test]
 fn test_conflicting_vote_same_type_fails() {
     with_storage(|storage| {
-        use blst::min_pk::SecretKey;
-        let ikm = [66u8; 32];
-        let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-        let pk = sk.sk_to_pk();
+        let (sk, pk) = test_signing::keypair(66).unwrap();
         let pk_bytes: [u8; 48] = pk.to_bytes();
 
         let validator = VAL_A;
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(100).unwrap();
+        vs.test_configure_registry(OWNER).unwrap();
         register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
@@ -522,8 +504,8 @@ fn test_conflicting_vote_same_type_fails() {
         }
 
         // Two notarize proposals for the same round
-        let proposal1 = build_test_proposal(1, 1, 0, [0x11; 32]);
-        let proposal2 = build_test_proposal(1, 1, 0, [0x22; 32]);
+        let proposal1 = test_signing::proposal(1, 1, 0, [0x11; 32]);
+        let proposal2 = test_signing::proposal(1, 1, 0, [0x22; 32]);
         let ev1 = sign_notarize_evidence(&sk, &pk, &proposal1);
         let ev2 = sign_notarize_evidence(&sk, &pk, &proposal2);
 
@@ -631,9 +613,8 @@ fn test_full_lifecycle_integration() {
     storage.set_timestamp(U256::from(200_000u64));
     StorageHandle::enter(&mut storage, |storage| {
         let validator = VAL_A;
-        let vs = ValidatorSet::new(storage.clone());
         assert!(matches!(
-            vs.validator_lifecycle(validator).unwrap(),
+            test_lifecycle_of(storage.clone(), validator).unwrap(),
             ValidatorLifecycle::JailRetained(_)
         ));
     });
@@ -655,17 +636,18 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         for _ in 0..149 {
             si.slash_voter(VAL_A).unwrap();
         }
-        let vs = ValidatorSet::new(storage.clone());
         assert_eq!(si.get_voter_miss_count(VAL_A).unwrap(), 149);
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
-        assert!(vs.validator_lifecycle(VAL_A).unwrap().is_active_status());
+        assert!(test_lifecycle_of(storage.clone(), VAL_A)
+            .unwrap()
+            .is_active_status());
 
         // 150th miss crosses the felony threshold -> jail + 5% stake slash.
         si.slash_voter(VAL_A).unwrap();
         assert_eq!(si.get_voter_miss_count(VAL_A).unwrap(), 150);
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
         assert!(matches!(
-            vs.validator_lifecycle(VAL_A).unwrap(),
+            test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
             ValidatorLifecycle::JailRetained(_)
         ));
 
@@ -705,11 +687,10 @@ fn already_jailed_voter_is_not_re_slashed() {
         // First felony at count==2: JAIL + 5% slash (1_000_000 -> 950_000).
         si.slash_voter(VAL_A).unwrap();
         si.slash_voter(VAL_A).unwrap();
-        let vs = ValidatorSet::new(storage.clone());
         let staking = Staking::new(storage.clone());
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
         assert!(matches!(
-            vs.validator_lifecycle(VAL_A).unwrap(),
+            test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
             ValidatorLifecycle::JailRetained(_)
         ));
         assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(950_000u64));
@@ -729,7 +710,7 @@ fn already_jailed_voter_is_not_re_slashed() {
             "no second felony while already JAILED"
         );
         assert!(matches!(
-            vs.validator_lifecycle(VAL_A).unwrap(),
+            test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
             ValidatorLifecycle::JailRetained(_)
         ));
         assert_eq!(
@@ -752,8 +733,9 @@ fn slash_voter_below_threshold_is_not_punitive() {
 
         assert_eq!(si.get_voter_miss_count(VAL_B).unwrap(), 1);
         assert_eq!(si.get_felony_count(VAL_B).unwrap(), 0);
-        let vs = ValidatorSet::new(storage.clone());
-        assert!(vs.validator_lifecycle(VAL_B).unwrap().is_active_status());
+        assert!(test_lifecycle_of(storage.clone(), VAL_B)
+            .unwrap()
+            .is_active_status());
         let staking = Staking::new(storage.clone());
         assert_eq!(staking.get_stake(VAL_B).unwrap(), U256::from(1_000_000u64));
     });
@@ -763,24 +745,6 @@ fn slash_voter_below_threshold_is_not_punitive() {
 // Test helpers
 // ===========================================================================
 
-/// Builds a test proposal: varint(epoch) || varint(view) || varint(parent) || digest[32]
-fn build_test_proposal(epoch: u64, view: u64, parent: u64, digest: [u8; 32]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    write_test_leb128(&mut buf, epoch);
-    write_test_leb128(&mut buf, view);
-    write_test_leb128(&mut buf, parent);
-    buf.extend_from_slice(&digest);
-    buf
-}
-
-/// Builds a test nullify payload: varint(epoch) || varint(view)
-fn build_test_nullify_payload(epoch: u64, view: u64) -> Vec<u8> {
-    let mut buf = Vec::new();
-    write_test_leb128(&mut buf, epoch);
-    write_test_leb128(&mut buf, view);
-    buf
-}
-
 /// Signs proposal bytes with the notarize namespace and returns evidence data.
 fn sign_notarize_evidence(
     sk: &blst::min_pk::SecretKey,
@@ -788,15 +752,7 @@ fn sign_notarize_evidence(
     proposal_bytes: &[u8],
 ) -> Vec<u8> {
     let ns = build_test_namespace(b"_NOTARIZE");
-    let signed_payload = build_test_signed_payload(&ns, proposal_bytes);
-    let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
-    let sig = sk.sign(&signed_payload, dst, &[]);
-
-    let mut data = Vec::new();
-    data.extend_from_slice(&pk.to_bytes());
-    data.extend_from_slice(&sig.to_bytes());
-    data.extend_from_slice(proposal_bytes);
-    data
+    signed_evidence(sk, pk, &ns, proposal_bytes, POP_DST)
 }
 
 /// Signs payload bytes with the nullify namespace and returns evidence data.
@@ -806,102 +762,36 @@ fn sign_nullify_evidence(
     payload_bytes: &[u8],
 ) -> Vec<u8> {
     let ns = build_test_namespace(b"_NULLIFY");
-    let signed_payload = build_test_signed_payload(&ns, payload_bytes);
-    let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
-    let sig = sk.sign(&signed_payload, dst, &[]);
-
-    let mut data = Vec::new();
-    data.extend_from_slice(&pk.to_bytes());
-    data.extend_from_slice(&sig.to_bytes());
-    data.extend_from_slice(payload_bytes);
-    data
-}
-
-/// The fixed test committee. The vote namespaces bind it; evidence tests
-/// seed its snapshot into the ring via [`write_test_committee`] so the verifier
-/// rebuilds the same committee.
-fn test_committee_set(
-) -> commonware_utils::ordered::Set<commonware_cryptography::bls12381::PublicKey> {
-    use commonware_cryptography::Signer as _;
-    commonware_utils::ordered::Set::from_iter_dedup(
-        (1u64..=4)
-            .map(|s| commonware_cryptography::bls12381::PrivateKey::from_seed(s).public_key()),
-    )
+    signed_evidence(sk, pk, &ns, payload_bytes, POP_DST)
 }
 
 /// Seed the committee snapshot into the ring for every retained epoch, so any
 /// evidence epoch resolves to the test committee.
 fn write_test_committee(storage: &StorageHandle) {
-    use commonware_codec::Encode as _;
-    use commonware_cryptography::Signer as _;
-    let committee = (1u64..=4)
-        .map(commonware_cryptography::bls12381::PrivateKey::from_seed)
-        .enumerate()
-        .map(|(i, k)| {
-            let encoded = k.public_key().encode();
-            let mut consensus_pubkey = [0u8; 48];
-            consensus_pubkey.copy_from_slice(encoded.as_ref());
-            outbe_validatorset::state::CommitteeEntry {
-                address: Address::with_last_byte(i as u8 + 1),
-                consensus_pubkey,
-            }
-        })
-        .collect();
     let snapshot = outbe_validatorset::state::CommitteeSnapshot {
-        committee,
+        committee: outbe_consensus::test_harness::committee_entries(
+            test_signing::committee_public_keys().iter(),
+        ),
         vrf_material_version: 1,
         vrf_group_public_key_bytes: vec![0x11; 96],
         vrf_public_polynomial_hash: B256::ZERO,
     };
     let mut validators = ValidatorSet::new(storage.clone());
-    validators.config_owner.write(OWNER).unwrap();
-    validators.set_config_max_validators(100).unwrap();
-    for member in &snapshot.committee {
-        if !validators.is_validator(member.address).unwrap() {
-            validators
-                .register_validator(OWNER, member.address, &member.consensus_pubkey)
-                .unwrap();
-            validators
-                .activate_validator_via_boundary_for_test(member.address)
-                .unwrap();
-        }
-    }
-    drop(validators);
-    for epoch in 0..outbe_validatorset::state::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS {
-        outbe_validatorset::state::write_committee_snapshot(storage.clone(), epoch, &snapshot)
-            .unwrap();
-    }
+    validators.test_configure_registry(OWNER).unwrap();
+    validators
+        .test_seed_committee_ring(OWNER, &snapshot)
+        .unwrap();
 }
 
 fn build_test_namespace(suffix: &[u8]) -> Vec<u8> {
     // Committee-bound: the evidence verifier derives the same bytes from
     // the epoch's committee snapshot.
-    let c = test_committee_set();
+    let c = test_signing::committee();
     match suffix {
         b"_NOTARIZE" => outbe_consensus::proof::notarize_namespace(&c),
         b"_NULLIFY" => outbe_consensus::proof::nullify_namespace(&c),
         b"_FINALIZE" => outbe_consensus::proof::finalize_namespace(&c),
         other => panic!("unexpected sub-namespace suffix {other:?}"),
-    }
-}
-
-fn build_test_signed_payload(namespace: &[u8], payload: &[u8]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    write_test_leb128(&mut buf, namespace.len() as u64);
-    buf.extend_from_slice(namespace);
-    buf.extend_from_slice(payload);
-    buf
-}
-
-fn write_test_leb128(buf: &mut Vec<u8>, mut value: u64) {
-    loop {
-        let byte = (value & 0x7F) as u8;
-        value >>= 7;
-        if value == 0 {
-            buf.push(byte);
-            break;
-        }
-        buf.push(byte | 0x80);
     }
 }
 
@@ -912,17 +802,13 @@ fn write_test_leb128(buf: &mut Vec<u8>, mut value: u64) {
 /// Same evidence submitted twice - second must be rejected.
 #[test]
 fn test_evidence_dedup_rejects_duplicate() {
-    use blst::min_pk::SecretKey;
-
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_block_number(1);
     storage.set_balance(STAKING_ADDRESS, U256::from(10_000_000u64));
     storage.set_timestamp(U256::from(100_000u64));
 
     StorageHandle::enter(&mut storage, |storage| {
-        let ikm = [99u8; 32];
-        let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-        let pk = sk.sk_to_pk();
+        let (sk, pk) = test_signing::keypair(99).unwrap();
 
         let pk_bytes: [u8; 48] = pk.to_bytes();
         register_and_activate_with_pubkey_and_stake(
@@ -933,8 +819,8 @@ fn test_evidence_dedup_rejects_duplicate() {
         );
 
         // Build two different proposals for the same round
-        let prop1 = build_test_proposal(1, 5, 0, [0xAA; 32]);
-        let prop2 = build_test_proposal(1, 5, 0, [0xBB; 32]);
+        let prop1 = test_signing::proposal(1, 5, 0, [0xAA; 32]);
+        let prop2 = test_signing::proposal(1, 5, 0, [0xBB; 32]);
 
         let ev1 = sign_notarize_evidence(&sk, &pk, &prop1);
         let ev2 = sign_notarize_evidence(&sk, &pk, &prop2);
@@ -1061,74 +947,126 @@ fn slash_window_proposers_processes_list_once() {
     });
 }
 
-#[test]
-fn prune_slash_guards_evicts_old_window_guards() {
-    fn fb(i: u64) -> B256 {
-        let mut b = [0u8; 32];
-        b[24..].copy_from_slice(&i.to_be_bytes());
-        B256::from(b)
+/// The window guards of one block and the ring position.
+#[derive(Debug, PartialEq)]
+struct SlashRingView {
+    voter_guard: bool,
+    proposer_guard: bool,
+    ring: RingPosition,
+}
+
+/// The view with `guards` = [voter guard, proposer guard].
+fn slash_view(guards: [bool; 2], entry: B256, seq: u64) -> SlashRingView {
+    SlashRingView {
+        voter_guard: guards[0],
+        proposer_guard: guards[1],
+        ring: RingPosition { entry, seq },
     }
-    with_storage(|storage| {
-        let victim = fb(1);
-        let survivor = fb(2);
-        {
-            let si = SlashIndicator::new(storage.clone());
-            for h in [victim, survivor] {
-                si.voter_window_slashed.write(&h, true).unwrap();
-                si.proposer_window_slashed.write(&h, true).unwrap();
-            }
-        }
+}
 
-        // Record victim then survivor, then fill the ring with RETAIN-1 more
-        // fresh finalized blocks so victim (and only victim) hits the eviction
-        // slot.
-        hooks::prune_slash_guards(storage.clone(), victim).unwrap();
-        hooks::prune_slash_guards(storage.clone(), survivor).unwrap();
-        for i in 0..(hooks::SLASH_GUARD_RETAIN - 1) {
-            hooks::prune_slash_guards(storage.clone(), fb(1000 + i)).unwrap();
+/// Storage after seeding the ring cursor `seq`, the entry at `seq % RETAIN`
+/// and both window guards of every block in `guarded`.
+fn seeded_slash_ring(seq: u64, entry: B256, guarded: &[B256]) -> HashMapStorageProvider {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    provider.enter(|storage| {
+        let si = SlashIndicator::new(storage);
+        si.slash_prune_ring().seed_for_test(seq, entry).unwrap();
+        for hash in guarded {
+            si.voter_window_slashed.write(hash, true).unwrap();
+            si.proposer_window_slashed.write(hash, true).unwrap();
         }
-
-        let si = SlashIndicator::new(storage.clone());
-        assert!(
-            !si.voter_window_slashed.read(&victim).unwrap(),
-            "evicted block's voter window guard is cleared"
-        );
-        assert!(!si.proposer_window_slashed.read(&victim).unwrap());
-        // Survivor is still inside the retention window.
-        assert!(si.voter_window_slashed.read(&survivor).unwrap());
-        assert!(si.proposer_window_slashed.read(&survivor).unwrap());
     });
+    provider
+}
+
+fn slash_ring_view(
+    provider: &mut HashMapStorageProvider,
+    guarded: B256,
+    idx: u64,
+) -> SlashRingView {
+    provider.enter(|storage| {
+        let si = SlashIndicator::new(storage);
+        SlashRingView {
+            voter_guard: si.voter_window_slashed.read(&guarded).unwrap(),
+            proposer_guard: si.proposer_window_slashed.read(&guarded).unwrap(),
+            ring: si.slash_prune_ring().position_for_test(idx).unwrap(),
+        }
+    })
+}
+
+/// Characterizes the write order of one prune at a wrapped cursor: the voter
+/// guard, then the proposer guard of the evicted block, then the ring entry,
+/// then the cursor. A failure before write `n` leaves exactly the first `n`
+/// writes applied.
+#[test]
+fn prune_slash_guards_write_order_at_a_wrapped_cursor() {
+    let evicted = test_ring_hash(1);
+    let fb_hash = test_ring_hash(2);
+    let seq = hooks::SLASH_GUARD_RETAIN + 5;
+    let views = HashMapStorageProvider::mutation_prefix_views(
+        || seeded_slash_ring(seq, evicted, &[evicted]),
+        |storage| hooks::prune_slash_guards(storage, fb_hash),
+        |provider| slash_ring_view(provider, evicted, 5),
+    )
+    .unwrap();
+    assert_eq!(
+        views,
+        MutationPrefixViews {
+            before_mutation: vec![
+                slash_view([true, true], evicted, seq),
+                slash_view([false, true], evicted, seq),
+                slash_view([false, false], evicted, seq),
+                slash_view([false, false], fb_hash, seq),
+            ],
+            complete: slash_view([false, false], fb_hash, seq + 1),
+            mutations: 4,
+        }
+    );
+}
+
+/// At the last cursor value the prune still evicts and writes the ring entry.
+/// Then it reverts with the original message and leaves the cursor unchanged.
+#[test]
+fn prune_slash_guards_cursor_overflow_reverts_after_the_ring_write() {
+    let evicted = test_ring_hash(1);
+    let fb_hash = test_ring_hash(2);
+    let mut provider = seeded_slash_ring(u64::MAX, evicted, &[evicted]);
+    let result = provider.enter(|storage| hooks::prune_slash_guards(storage, fb_hash));
+    assert!(
+        matches!(&result, Err(PrecompileError::Revert(message)) if message == "slash_guard_ring_seq overflow"),
+        "{result:?}"
+    );
+    assert_eq!(
+        slash_ring_view(&mut provider, evicted, u64::MAX % hooks::SLASH_GUARD_RETAIN),
+        slash_view([false, false], fb_hash, u64::MAX)
+    );
 }
 
 /// Evidence signed with the old NUL_ DST must fail verification.
 #[test]
 fn test_evidence_wrong_dst_rejected() {
     use crate::evidence::EvidenceBlock;
-    use blst::min_pk::SecretKey;
 
-    let ikm = [0x02u8; 32];
-    let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-    let pk = sk.sk_to_pk();
+    let (sk, pk) = test_signing::keypair(0x02).unwrap();
 
-    let proposal = build_test_proposal(1, 5, 0, [0xAA; 32]);
     let ns = build_test_namespace(b"_NOTARIZE");
-    let signed_payload = build_test_signed_payload(&ns, &proposal);
-
     // Sign with the OLD incorrect DST (NUL_ instead of POP_)
     let wrong_dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-    let sig = sk.sign(&signed_payload, wrong_dst, &[]);
-
-    let mut data = Vec::new();
-    data.extend_from_slice(&pk.to_bytes());
-    data.extend_from_slice(&sig.to_bytes());
-    data.extend_from_slice(&proposal);
+    let data = signed_evidence(
+        &sk,
+        &pk,
+        &ns,
+        &test_signing::proposal(1, 5, 0, [0xAA; 32]),
+        wrong_dst,
+    );
 
     let block = EvidenceBlock::parse(&data).unwrap();
 
     // Verification with POP_ DST must fail for NUL_-signed evidence
     assert!(
         block
-            .verify_notarize_signature(&test_committee_set())
+            .verify_notarize_signature(&test_signing::committee())
             .is_err(),
         "evidence signed with wrong DST (NUL_) must be rejected"
     );

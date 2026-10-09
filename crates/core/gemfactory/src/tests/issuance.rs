@@ -191,9 +191,11 @@ fn issue_rejects_a_stale_oracle_rate_before_writing_a_gem() {
             storage.clone(),
             Address::ZERO,
             outbe_oracle::api::DAY_TYPE_PAIR,
-            rate,
-            1,
-            T_NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
+            outbe_oracle::api::RateObservation {
+                rate,
+                block_number: 1,
+                timestamp: T_NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
+            },
         )
         .unwrap();
 

@@ -1,44 +1,29 @@
 use std::collections::BTreeMap;
 
-use alloy_consensus::Header;
-use alloy_primitives::{keccak256, B256, U256};
-use alloy_rlp::Encodable as _;
-use alloy_trie::{TrieAccount, KECCAK_EMPTY};
+use alloy_primitives::{B256, U256};
 use commonware_codec::Encode as _;
 use outbe_compressed_entities::TributeBodyV1;
-use outbe_consensus::block::ConsensusBlock;
 use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicBlockViewV1, PublicStorageProofV1};
 use outbe_ocomp_protocol::{
-    common::{BoundedBytes, ProofBytes},
-    intent::{
-        intent_storage_key, CertifiedParentAccountingMetadataV2, FinalizedIntentProofV1,
-        JobIntentV1, ParentProofKind,
-    },
+    intent::{intent_storage_key, JobIntentV1},
     opening::OpeningSubjectsV1,
-    state::{OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
+use outbe_primitives::addresses::{METADOSIS_ADDRESS, NOD_ADDRESS, VALIDATOR_SET_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, NOD_ADDRESS, VALIDATOR_SET_ADDRESS},
-    header::OutbeHeader,
-    storage::types::StorageKey as _,
-    OutbeBlock,
-};
-use reth_primitives_traits::{Account, SealedBlock};
+use reth_primitives_traits::Account;
 use reth_trie::{AccountProof, StorageProof};
 
 use super::proof::{
-    account_trie, account_witness, build_dkg, build_snapshot, committee_storage_slots,
-    dynamic_bytes_storage_slots, finalization_bytes, historical_committee_witness,
-    independent_snapshot_key, lysis_contracts, signer_bitmap, storage_trie, storage_witness,
+    assemble_finalized_intent_proof, awaiting_finality_record, lysis_contracts,
+    FinalizationCoordinates, FinalizedIntentAssembly, FinalizedIntentAssemblyInput,
     OpeningContractFixture,
 };
 use super::provider::{
     CanonicalHistoryFixture, FinalizedIntentProofFixture, FinalizedLysisInputFixture,
     LysisOpeningProvider, LysisOpeningState, PublicExactBlockFixtureV1,
 };
-use super::{FINALIZED_EPOCH, FINALIZED_VIEW, PARENT_VIEW, VRF_MATERIAL_VERSION};
+use super::{FINALIZED_EPOCH, FINALIZED_VIEW, PARENT_VIEW, SIGNER_INDICES, VRF_MATERIAL_VERSION};
 
 /// Builds a real q=3/4 finality certificate and real account/storage MPT paths.
 ///
@@ -100,56 +85,56 @@ fn build_finalized_intent_proof_fixture(
         .expect("fixture JobIntent is canonical");
     let intent_id = intent.intent_id(limits).expect("fixture IntentId");
     let logical_key = intent_storage_key(intent_id).expect("fixture intent storage key");
-    let record = OcompJobRecordV1 {
-        intent: intent.clone(),
-        intent_height: intent.logical_evaluation_height,
-        status: OcompJobStatus::AwaitingFinality,
-        finalized: None,
-        terminal: None,
-    };
-    let encoded_record = record
+    let encoded_record = awaiting_finality_record(&intent)
         .encode_canonical(limits)
         .expect("fixture job record is canonical");
-    let intent_slots = dynamic_bytes_storage_slots(logical_key, &encoded_record);
     // The Fidelity league snapshot now lives in Metadosis storage, so its slots
     // share the intent account's storage trie under one storage root. The intent
     // finality proof and the league opening are two paths in the same trie.
-    let mut metadosis_slots = intent_slots.clone();
-    metadosis_slots.extend(
-        fidelity_league_slots
-            .iter()
-            .map(|(slot, value)| (U256::from_be_bytes(slot.0), *value)),
-    );
-    let (metadosis_storage_root, metadosis_storage_proofs) = storage_trie(&metadosis_slots);
-    let intent_storage_proofs = metadosis_storage_proofs[..intent_slots.len()].to_vec();
-    let fidelity_storage_proofs = metadosis_storage_proofs[intent_slots.len()..].to_vec();
-    let intent_account = TrieAccount {
-        nonce: 0,
-        balance: U256::ZERO,
-        storage_root: metadosis_storage_root,
-        code_hash: KECCAK_EMPTY,
-    };
-
-    let dkg = build_dkg();
-    let snapshot = build_snapshot(&dkg);
-    let committee_set_hash = snapshot.committee_set_hash_v2(FINALIZED_EPOCH);
-    let committee_slots = committee_storage_slots(&snapshot, committee_set_hash);
-    let snapshot_key = independent_snapshot_key(committee_set_hash);
-    let ring_slot = U256::from(FINALIZED_EPOCH % 8).mapping_slot(U256::from(44));
-    let mut validator_slots = committee_slots.clone();
-    validator_slots.push((ring_slot, U256::from_be_bytes(snapshot_key.0)));
-    let (validator_storage_root, validator_storage_proofs) = storage_trie(&validator_slots);
-    let validator_account = TrieAccount {
-        nonce: 0,
-        balance: U256::ZERO,
-        storage_root: validator_storage_root,
-        code_hash: KECCAK_EMPTY,
-    };
+    let fidelity_slot_words = fidelity_league_slots
+        .iter()
+        .map(|(slot, value)| (U256::from_be_bytes(slot.0), *value))
+        .collect::<Vec<_>>();
     // The Fidelity league opening shares the Metadosis intent account, so it is
     // NOT a distinct state account. Only Oracle adds one. When the caller requests
     // no openings (proof-only fixtures), Metadosis and ValidatorSet are the only
     // accounts and the fixture produces no opening provider.
-    let (state_accounts, opening_contracts) = match oracle_contract {
+    let assembly = assemble_finalized_intent_proof(FinalizedIntentAssemblyInput {
+        intent: &intent,
+        canonical_job_intent,
+        logical_key,
+        encoded_record: &encoded_record,
+        extra_metadosis_slots: &fidelity_slot_words,
+        extra_state_account: oracle_contract
+            .as_ref()
+            .map(|oracle_contract| (NOD_ADDRESS, oracle_contract.account)),
+        signer_indices: &SIGNER_INDICES,
+        coordinates: FinalizationCoordinates {
+            epoch: FINALIZED_EPOCH,
+            view: FINALIZED_VIEW,
+            parent_view: PARENT_VIEW,
+            vrf_material_version: VRF_MATERIAL_VERSION,
+        },
+        finalized_block_number: intent.logical_evaluation_height,
+    });
+    let intent_storage_proofs = assembly.intent_storage_proofs().to_vec();
+    let fidelity_storage_proofs =
+        assembly.metadosis_storage_proofs[assembly.intent_slots.len()..].to_vec();
+    let FinalizedIntentAssembly {
+        intent_slots,
+        intent_account,
+        validator_slots,
+        validator_storage_proofs,
+        validator_account,
+        state_root,
+        account_proofs,
+        header_hash,
+        block,
+        finalization,
+        proof,
+        ..
+    } = assembly;
+    let opening_contracts = match oracle_contract {
         Some(oracle_contract) => {
             let fidelity_opening = OpeningContractFixture {
                 address: METADOSIS_ADDRESS,
@@ -157,83 +142,9 @@ fn build_finalized_intent_proof_fixture(
                 account: intent_account,
                 storage_proofs: fidelity_storage_proofs,
             };
-            (
-                vec![
-                    (METADOSIS_ADDRESS, intent_account),
-                    (VALIDATOR_SET_ADDRESS, validator_account),
-                    (NOD_ADDRESS, oracle_contract.account),
-                ],
-                vec![fidelity_opening, oracle_contract],
-            )
+            vec![fidelity_opening, oracle_contract]
         }
-        None => (
-            vec![
-                (METADOSIS_ADDRESS, intent_account),
-                (VALIDATOR_SET_ADDRESS, validator_account),
-            ],
-            Vec::new(),
-        ),
-    };
-    let (state_root, account_proofs) = account_trie(&state_accounts);
-    let header = OutbeHeader::new(Header {
-        number: intent.logical_evaluation_height,
-        state_root,
-        ..Header::default()
-    });
-    let mut canonical_header = Vec::new();
-    header.encode(&mut canonical_header);
-    let header_hash = keccak256(&canonical_header);
-    let block = ConsensusBlock::from_sealed(SealedBlock::seal_slow(OutbeBlock {
-        header,
-        body: Default::default(),
-    }));
-    assert_eq!(block.block_hash(), header_hash);
-
-    let finalization = finalization_bytes(&dkg, header_hash);
-    let signer_bitmap = signer_bitmap();
-    let ordered_committee = snapshot
-        .committee
-        .iter()
-        .map(|entry| entry.address)
-        .collect::<Vec<_>>();
-    let vrf_group_public_key_hash = keccak256(&snapshot.vrf_group_public_key_bytes);
-    let parent_accounting = CertifiedParentAccountingMetadataV2 {
-        finalized_block_number: intent.logical_evaluation_height,
-        finalized_block_hash: header_hash,
-        finalized_epoch: FINALIZED_EPOCH,
-        finalized_view: FINALIZED_VIEW,
-        parent_view: PARENT_VIEW,
-        ordered_committee: ordered_committee
-            .iter()
-            .map(|address| BoundedBytes(address.as_slice().to_vec()))
-            .collect(),
-        signer_bitmap: BoundedBytes(signer_bitmap),
-        canonical_commonware_finalization_proof: ProofBytes(finalization.clone()),
-        committee_set_hash,
-        vrf_material_version: VRF_MATERIAL_VERSION as u16,
-        vrf_group_public_key_hash,
-        proof_kind: ParentProofKind::Finalization,
-        missed_proposers: Vec::new(),
-    };
-    let proof = FinalizedIntentProofV1 {
-        chain_id: intent.chain_id,
-        genesis_hash: intent.genesis_hash,
-        fork_id: intent.fork_id,
-        protocol_bundle_hash: intent.protocol_bundle_hash,
-        canonical_request_header_rlp: ProofBytes(canonical_header),
-        parent_accounting,
-        historical_committee_membership_proof: ProofBytes(historical_committee_witness(
-            &snapshot,
-            validator_account,
-            &account_proofs[&VALIDATOR_SET_ADDRESS],
-            &validator_storage_proofs[..committee_slots.len()],
-        )),
-        canonical_job_intent: BoundedBytes(canonical_job_intent),
-        intent_account_proof: ProofBytes(account_witness(
-            intent_account,
-            &account_proofs[&METADOSIS_ADDRESS],
-        )),
-        intent_storage_proof: ProofBytes(storage_witness(&intent_storage_proofs)),
+        None => Vec::new(),
     };
     let job_id = intent
         .job_id(header_hash, state_root, limits)

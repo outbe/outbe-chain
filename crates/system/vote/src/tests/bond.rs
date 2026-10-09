@@ -8,7 +8,7 @@ use crate::errors::VoteError;
 use crate::schema::{BondSettlement, ProposalRecord, ProposalStatus, Vote};
 
 use super::{
-    create_proposal_test, empty_update_payload, with_vote, VoteTestExt, PROPOSER, VOTER_A,
+    assert_bond_closed, create_update_proposal, with_vote, VoteTestExt, PROPOSER, VOTER_A,
 };
 
 #[test]
@@ -77,11 +77,7 @@ fn raw_v0_proposal_reads_as_no_bond_and_tallies_after_the_append() {
 
         let mut vote = Vote::new(storage.clone());
         vote.pending_proposal_ids.push(proposal_id).unwrap();
-        assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::NoBond
-        );
-        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+        assert_bond_closed(&vote, proposal_id, BondSettlement::NoBond);
 
         vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
             .unwrap();
@@ -108,14 +104,7 @@ fn raw_v0_proposal_reads_as_no_bond_and_tallies_after_the_append() {
 fn bond_accounting_is_checked_and_exactly_once() {
     with_vote(|storage| {
         let mut vote = Vote::new(storage);
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(10),
-            10,
-        )
-        .unwrap();
+        let proposal_id = create_update_proposal(&mut vote, PROPOSER, 10).unwrap();
 
         vote.record_proposal_bond(proposal_id, U256::from(10u64))
             .unwrap();
@@ -147,14 +136,7 @@ fn bond_accounting_is_checked_and_exactly_once() {
 
     with_vote(|storage| {
         let mut vote = Vote::new(storage);
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(10),
-            10,
-        )
-        .unwrap();
+        let proposal_id = create_update_proposal(&mut vote, PROPOSER, 10).unwrap();
         vote.unsettled_bond_liabilities.write(U256::MAX).unwrap();
         assert!(matches!(
             vote.record_proposal_bond(proposal_id, U256::from(1u64)),
@@ -169,14 +151,7 @@ fn bond_accounting_is_checked_and_exactly_once() {
 
     with_vote(|storage| {
         let mut vote = Vote::new(storage);
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(10),
-            10,
-        )
-        .unwrap();
+        let proposal_id = create_update_proposal(&mut vote, PROPOSER, 10).unwrap();
         vote.record_proposal_bond(proposal_id, U256::from(10u64))
             .unwrap();
         vote.unsettled_bond_liabilities
@@ -203,14 +178,7 @@ fn invalid_bond_enum_and_proposal_counter_exhaustion_are_typed() {
 
     with_vote(|storage| {
         let mut vote = Vote::new(storage);
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(10),
-            10,
-        )
-        .unwrap();
+        let proposal_id = create_update_proposal(&mut vote, PROPOSER, 10).unwrap();
         vote.proposal_bond_settlement
             .write(&proposal_id, 4)
             .unwrap();
@@ -229,13 +197,7 @@ fn invalid_bond_enum_and_proposal_counter_exhaustion_are_typed() {
                 if message == VoteError::ProposalCounterExhausted.to_string()
         ));
         assert!(matches!(
-            create_proposal_test(
-                &mut vote,
-                PROPOSER,
-                UPDATE_ADDRESS,
-                &empty_update_payload(10),
-                10,
-            ),
+            create_update_proposal(&mut vote, PROPOSER, 10),
             Err(PrecompileError::Revert(message))
                 if message == VoteError::ProposalCounterExhausted.to_string()
         ));

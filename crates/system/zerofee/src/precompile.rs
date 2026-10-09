@@ -107,6 +107,7 @@ mod tests {
     use outbe_primitives::{
         addresses::ZEROFEE_ADDRESS,
         storage::{hashmap::HashMapStorageProvider, StorageHandle},
+        test_utils::sol_interface::sol_function_canonical,
     };
 
     use crate::schema::{pack_counter, ZeroFeeContract};
@@ -266,63 +267,5 @@ mod tests {
             assert_eq!(canon.is_view, is_view, "{name}: view-modifier differs");
             assert_eq!(canon.ret_types, ret_types, "{name}: return types differ");
         }
-    }
-
-    struct SolFnCanonical {
-        arg_types: String,
-        is_view: bool,
-        ret_types: String,
-    }
-
-    /// Parses one `function NAME(...) ... returns (...)` declaration out of a
-    /// Solidity interface body into a comparable canonical form.
-    fn sol_function_canonical(sol: &str, name: &str) -> Option<SolFnCanonical> {
-        let needle = format!("function {name}(");
-        let start = sol.find(&needle)? + needle.len() - 1;
-        let bytes = sol.as_bytes();
-        let mut depth = 0i32;
-        let mut args_end = start;
-        for (i, b) in bytes[start..].iter().enumerate() {
-            match b {
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        args_end = start + i;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let args_raw = &sol[start + 1..args_end];
-        let arg_types = canonical_type_list(args_raw);
-
-        let tail_end = sol[args_end..].find(';')? + args_end;
-        let tail = &sol[args_end + 1..tail_end];
-        let is_view = tail.split_whitespace().any(|t| t == "view");
-        let ret_types = match tail.find("returns") {
-            Some(idx) => {
-                let after = &tail[idx + "returns".len()..];
-                let lparen = after.find('(')?;
-                let rparen = after.rfind(')')?;
-                canonical_type_list(&after[lparen + 1..rparen])
-            }
-            None => String::new(),
-        };
-        Some(SolFnCanonical {
-            arg_types,
-            is_view,
-            ret_types,
-        })
-    }
-
-    /// Reduces a Solidity parameter list to a comma-separated list of types.
-    fn canonical_type_list(list: &str) -> String {
-        list.split(',')
-            .map(|part| part.split_whitespace().next().unwrap_or("").to_string())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(",")
     }
 }

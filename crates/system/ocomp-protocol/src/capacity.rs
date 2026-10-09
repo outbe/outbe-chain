@@ -22,6 +22,24 @@ use crate::{
 /// No process launcher applies it as a production CAS cap.
 pub const OCOMP_POC_CAS_QUOTA_BYTES: u64 = 8_589_934_592;
 
+macro_rules! capacity_dimension_values {
+    ($value:expr) => {
+        [
+            ($value).transaction_bytes,
+            ($value).block_bytes,
+            ($value).gas,
+            ($value).internal_work,
+            ($value).cpu_micros,
+            ($value).network_bytes,
+            ($value).assigned_memory_bytes,
+            ($value).disk_write_bytes,
+            ($value).cas_bytes,
+            ($value).block_processing_micros,
+            ($value).finality_latency_micros,
+        ]
+    };
+}
+
 /// Resource dimensions measured for one maximum-shaped public-path run.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -41,21 +59,9 @@ pub struct CapacityWorkBillV1 {
 
 impl CapacityWorkBillV1 {
     fn all_positive(self) -> bool {
-        [
-            self.transaction_bytes,
-            self.block_bytes,
-            self.gas,
-            self.internal_work,
-            self.cpu_micros,
-            self.network_bytes,
-            self.assigned_memory_bytes,
-            self.disk_write_bytes,
-            self.cas_bytes,
-            self.block_processing_micros,
-            self.finality_latency_micros,
-        ]
-        .into_iter()
-        .all(|value| value > 0)
+        capacity_dimension_values!(self)
+            .into_iter()
+            .all(|value| value > 0)
     }
 
     fn component_max(self, other: Self) -> Self {
@@ -98,21 +104,9 @@ pub struct CapacityBudgetV1 {
 
 impl CapacityBudgetV1 {
     fn all_positive(self) -> bool {
-        [
-            self.transaction_bytes,
-            self.block_bytes,
-            self.gas,
-            self.internal_work,
-            self.cpu_micros,
-            self.network_bytes,
-            self.assigned_memory_bytes,
-            self.disk_write_bytes,
-            self.cas_bytes,
-            self.block_processing_micros,
-            self.finality_latency_micros,
-        ]
-        .into_iter()
-        .all(|value| value > 0)
+        capacity_dimension_values!(self)
+            .into_iter()
+            .all(|value| value > 0)
     }
 }
 
@@ -234,34 +228,48 @@ impl CapacityHistoricalReplayBindingV1 {
             .target_block_number
             .checked_sub(self.first_missing_block_number)
             .and_then(|span| span.checked_add(1));
-        let generation = &self.recovered_generation;
-        if usize::from(self.validator_index) >= run.validator_block_processing.len()
-            || self.first_missing_block_number == 0
-            || self.first_missing_block_number > run.q_forming_block_number
-            || self.target_block_number < run.finalized_block_number
-            || self.target_block_hash.is_zero()
-            || expected_count != Some(self.replayed_block_count)
-            || self.elapsed_micros == 0
-            || self.recovered_result_digest != run.result_digest
-            || generation.worldwide_day == 0
-            || generation.generation == 0
-            || generation.job_id != run.job_id
-            || generation.program_semantics_hash.is_zero()
-            || generation.nod_root.is_zero()
-            || generation.bucket_root.is_zero()
-            || generation.output_manifest_root.is_zero()
-            || u64::from(generation.tribute_count) != run.tribute_count
-            || u64::from(generation.nod_count) != run.nod_count
-            || generation.bucket_count == 0
-            || generation.nod_amount_total.is_zero()
-            || generation.issued_at == 0
-            || generation.result_evidence_hash.is_zero()
-            || generation.block_number != run.q_forming_block_number
-            || generation.block_hash != run.q_forming_block_hash
-        {
+        if !self.replay_matches(run, expected_count) || !self.generation_matches(run) {
             return Err(CapacityEvidenceError::InvalidHistoricalReplayBinding { ordinal: 0 });
         }
         Ok(())
+    }
+
+    fn replay_matches(&self, run: &CapacityRunBindingV1, expected_count: Option<u64>) -> bool {
+        [
+            usize::from(self.validator_index) < run.validator_block_processing.len(),
+            self.first_missing_block_number != 0,
+            self.first_missing_block_number <= run.q_forming_block_number,
+            self.target_block_number >= run.finalized_block_number,
+            !self.target_block_hash.is_zero(),
+            expected_count == Some(self.replayed_block_count),
+            self.elapsed_micros != 0,
+            self.recovered_result_digest == run.result_digest,
+        ]
+        .into_iter()
+        .all(|matches| matches)
+    }
+
+    fn generation_matches(&self, run: &CapacityRunBindingV1) -> bool {
+        let generation = &self.recovered_generation;
+        [
+            generation.worldwide_day != 0,
+            generation.generation != 0,
+            generation.job_id == run.job_id,
+            !generation.program_semantics_hash.is_zero(),
+            !generation.nod_root.is_zero(),
+            !generation.bucket_root.is_zero(),
+            !generation.output_manifest_root.is_zero(),
+            u64::from(generation.tribute_count) == run.tribute_count,
+            u64::from(generation.nod_count) == run.nod_count,
+            generation.bucket_count != 0,
+            !generation.nod_amount_total.is_zero(),
+            generation.issued_at != 0,
+            !generation.result_evidence_hash.is_zero(),
+            generation.block_number == run.q_forming_block_number,
+            generation.block_hash == run.q_forming_block_hash,
+        ]
+        .into_iter()
+        .all(|matches| matches)
     }
 }
 
@@ -299,20 +307,7 @@ impl CapacityRunBindingV1 {
         {
             return Err(CapacityEvidenceError::MissingIdentity);
         }
-        if self.q_forming_block_number == 0
-            || self.finalized_block_number < self.q_forming_block_number
-            || self.validator_block_processing.is_empty()
-            || self
-                .validator_block_processing
-                .iter()
-                .enumerate()
-                .any(|(index, observation)| {
-                    usize::from(observation.validator_index) != index
-                        || observation.block_number != self.q_forming_block_number
-                        || observation.block_hash != self.q_forming_block_hash
-                        || observation.elapsed_micros == 0
-                })
-        {
+        if !self.public_block_observations_match() {
             return Err(CapacityEvidenceError::InvalidPublicCapacityBinding { ordinal: 0 });
         }
         let shard_capacity =
@@ -321,14 +316,37 @@ impl CapacityRunBindingV1 {
         let expected_population = u64::from(shard_capacity)
             .checked_add(1)
             .ok_or(CapacityEvidenceError::GeneratedLimitOverflow)?;
-        if self.tribute_count != expected_population
-            || self.nod_count != expected_population
-            || self.worker_shard_count != worker_shard_count(expected_population, shard_capacity)?
-        {
+        if self.tribute_count != expected_population || self.nod_count != expected_population {
+            return Err(CapacityEvidenceError::InvalidPublicCapacityBinding { ordinal: 0 });
+        }
+        if self.worker_shard_count != worker_shard_count(expected_population, shard_capacity)? {
             return Err(CapacityEvidenceError::InvalidPublicCapacityBinding { ordinal: 0 });
         }
         self.historical_replay.validate(self)?;
         Ok(())
+    }
+
+    fn public_block_observations_match(&self) -> bool {
+        [
+            self.q_forming_block_number != 0,
+            self.finalized_block_number >= self.q_forming_block_number,
+            !self.validator_block_processing.is_empty(),
+            self.validator_block_processing
+                .iter()
+                .enumerate()
+                .all(|(index, observation)| {
+                    [
+                        usize::from(observation.validator_index) == index,
+                        observation.block_number == self.q_forming_block_number,
+                        observation.block_hash == self.q_forming_block_hash,
+                        observation.elapsed_micros != 0,
+                    ]
+                    .into_iter()
+                    .all(|matches| matches)
+                }),
+        ]
+        .into_iter()
+        .all(|matches| matches)
     }
 }
 
@@ -389,83 +407,145 @@ impl CapacityEvidenceV1 {
             return Err(CapacityEvidenceError::MissingIdentity);
         }
 
-        let mut ordinals = BTreeSet::new();
-        let mut namespaces = BTreeSet::new();
-        let mut scenario_evidence = BTreeSet::new();
-        let mut worst = first.work;
+        let mut audit = CapacityRunAudit::new(first, expected_runs, self.budget);
         for run in &self.runs {
-            if !ordinals.insert(run.ordinal) {
-                return Err(CapacityEvidenceError::DuplicateRunOrdinal);
-            }
-            if run.ordinal == 0 || usize::from(run.ordinal) > expected_runs {
-                return Err(CapacityEvidenceError::InvalidRunOrdinal);
-            }
-            if run.source_revision != first.source_revision
-                || run.artifact_set_hash != first.artifact_set_hash
-            {
-                return Err(CapacityEvidenceError::MixedArtifactSet);
-            }
-            if run.cold_namespace_hash.is_zero() || !namespaces.insert(run.cold_namespace_hash) {
-                return Err(CapacityEvidenceError::ReusedColdNamespace);
-            }
-            if !scenario_evidence.insert(run.binding.scenario_evidence_sha256) {
-                return Err(CapacityEvidenceError::ReusedScenarioEvidence);
-            }
-            if let Err(error) = run.binding.validate() {
-                return Err(match error {
-                    CapacityEvidenceError::InvalidPublicCapacityBinding { .. } => {
-                        CapacityEvidenceError::InvalidPublicCapacityBinding {
-                            ordinal: run.ordinal,
-                        }
-                    }
-                    CapacityEvidenceError::InvalidHistoricalReplayBinding { .. } => {
-                        CapacityEvidenceError::InvalidHistoricalReplayBinding {
-                            ordinal: run.ordinal,
-                        }
-                    }
-                    other => other,
-                });
-            }
-            if !run.succeeded {
-                return Err(CapacityEvidenceError::FailedRun {
-                    ordinal: run.ordinal,
-                });
-            }
-            if run.retried {
-                return Err(CapacityEvidenceError::RetriedRun {
-                    ordinal: run.ordinal,
-                });
-            }
-            if !run.work.all_positive() {
-                return Err(CapacityEvidenceError::ZeroWorkBill {
-                    ordinal: run.ordinal,
-                });
-            }
-            if run
-                .binding
-                .validator_block_processing
-                .iter()
-                .map(|observation| observation.elapsed_micros)
-                .max()
-                != Some(run.work.block_processing_micros)
-            {
-                return Err(CapacityEvidenceError::InvalidPublicCapacityBinding {
-                    ordinal: run.ordinal,
-                });
-            }
-            verify_headroom(run.ordinal, run.work, self.budget)?;
-            worst = worst.component_max(run.work);
+            audit.observe(run)?;
         }
-        if ordinals.len() != expected_runs
-            || !(1..=expected_runs).all(|ordinal| ordinals.contains(&(ordinal as u8)))
+        audit.finish()
+    }
+}
+
+struct CapacityRunAudit {
+    source_revision: B256,
+    artifact_set_hash: B256,
+    expected_runs: usize,
+    budget: CapacityBudgetV1,
+    ordinals: BTreeSet<u8>,
+    namespaces: BTreeSet<B256>,
+    scenario_evidence: BTreeSet<B256>,
+    worst_work: CapacityWorkBillV1,
+}
+
+impl CapacityRunAudit {
+    fn new(first: &CapacityColdRunV1, expected_runs: usize, budget: CapacityBudgetV1) -> Self {
+        Self {
+            source_revision: first.source_revision,
+            artifact_set_hash: first.artifact_set_hash,
+            expected_runs,
+            budget,
+            ordinals: BTreeSet::new(),
+            namespaces: BTreeSet::new(),
+            scenario_evidence: BTreeSet::new(),
+            worst_work: first.work,
+        }
+    }
+
+    fn observe(&mut self, run: &CapacityColdRunV1) -> Result<(), CapacityEvidenceError> {
+        self.check_identity(run)?;
+        self.check_measurement(run)?;
+        self.worst_work = self.worst_work.component_max(run.work);
+        Ok(())
+    }
+
+    fn check_ordinal(&mut self, run: &CapacityColdRunV1) -> Result<(), CapacityEvidenceError> {
+        if !self.ordinals.insert(run.ordinal) {
+            return Err(CapacityEvidenceError::DuplicateRunOrdinal);
+        }
+        if run.ordinal == 0 || usize::from(run.ordinal) > self.expected_runs {
+            return Err(CapacityEvidenceError::InvalidRunOrdinal);
+        }
+        Ok(())
+    }
+
+    fn check_artifact_set(&self, run: &CapacityColdRunV1) -> Result<(), CapacityEvidenceError> {
+        if run.source_revision != self.source_revision
+            || run.artifact_set_hash != self.artifact_set_hash
+        {
+            return Err(CapacityEvidenceError::MixedArtifactSet);
+        }
+        Ok(())
+    }
+
+    fn check_namespace(&mut self, run: &CapacityColdRunV1) -> Result<(), CapacityEvidenceError> {
+        if run.cold_namespace_hash.is_zero() || !self.namespaces.insert(run.cold_namespace_hash) {
+            return Err(CapacityEvidenceError::ReusedColdNamespace);
+        }
+        Ok(())
+    }
+
+    fn check_scenario(&mut self, run: &CapacityColdRunV1) -> Result<(), CapacityEvidenceError> {
+        if !self
+            .scenario_evidence
+            .insert(run.binding.scenario_evidence_sha256)
+        {
+            return Err(CapacityEvidenceError::ReusedScenarioEvidence);
+        }
+        Ok(())
+    }
+
+    fn check_identity(&mut self, run: &CapacityColdRunV1) -> Result<(), CapacityEvidenceError> {
+        self.check_ordinal(run)?;
+        self.check_artifact_set(run)?;
+        self.check_namespace(run)?;
+        self.check_scenario(run)
+    }
+
+    fn check_measurement(&self, run: &CapacityColdRunV1) -> Result<(), CapacityEvidenceError> {
+        if let Err(error) = run.binding.validate() {
+            return Err(match error {
+                CapacityEvidenceError::InvalidPublicCapacityBinding { .. } => {
+                    CapacityEvidenceError::InvalidPublicCapacityBinding {
+                        ordinal: run.ordinal,
+                    }
+                }
+                CapacityEvidenceError::InvalidHistoricalReplayBinding { .. } => {
+                    CapacityEvidenceError::InvalidHistoricalReplayBinding {
+                        ordinal: run.ordinal,
+                    }
+                }
+                other => other,
+            });
+        }
+        if !run.succeeded {
+            return Err(CapacityEvidenceError::FailedRun {
+                ordinal: run.ordinal,
+            });
+        }
+        if run.retried {
+            return Err(CapacityEvidenceError::RetriedRun {
+                ordinal: run.ordinal,
+            });
+        }
+        if !run.work.all_positive() {
+            return Err(CapacityEvidenceError::ZeroWorkBill {
+                ordinal: run.ordinal,
+            });
+        }
+        if run
+            .binding
+            .validator_block_processing
+            .iter()
+            .map(|observation| observation.elapsed_micros)
+            .max()
+            != Some(run.work.block_processing_micros)
+        {
+            return Err(CapacityEvidenceError::InvalidPublicCapacityBinding {
+                ordinal: run.ordinal,
+            });
+        }
+        verify_headroom(run.ordinal, run.work, self.budget)
+    }
+
+    fn finish(self) -> Result<VerifiedCapacityEvidenceV1, CapacityEvidenceError> {
+        if self.ordinals.len() != self.expected_runs
+            || !(1..=self.expected_runs).all(|ordinal| self.ordinals.contains(&(ordinal as u8)))
         {
             return Err(CapacityEvidenceError::InvalidRunOrdinal);
         }
-
         Ok(VerifiedCapacityEvidenceV1 {
-            source_revision: first.source_revision,
-            artifact_set_hash: first.artifact_set_hash,
-            worst_work: worst,
+            source_revision: self.source_revision,
+            artifact_set_hash: self.artifact_set_hash,
+            worst_work: self.worst_work,
         })
     }
 }

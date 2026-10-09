@@ -5,85 +5,36 @@
 //! Binding and missed_proposers rules are covered.
 
 use commonware_codec::Encode;
-use commonware_cryptography::{
-    bls12381::{
-        primitives::{
-            ops::{aggregate, keypair, sign_message},
-            variant::{MinPk, MinSig, Variant},
-        },
-        PrivateKey, PublicKey,
-    },
-    certificate::Signers,
-    Signer,
-};
-use commonware_utils::{Faults as _, N3f1, Participant};
+use commonware_cryptography::bls12381::primitives::variant::MinSig;
+use commonware_utils::{Faults as _, N3f1};
 use outbe_consensus::proof::{
     verify_v2_proof_low_level, CommitteeSnapshotView, HybridCertificate, V2VerifyError,
-    VoteBinding, VoteSubject, VrfProof,
+    VoteBinding, VoteSubject,
 };
-use rand_commonware::rngs::ChaCha20Rng;
-use rand_commonware::SeedableRng;
+use outbe_consensus::test_harness::{vrf_test_committee, CertificateMessages, VrfTestCommittee};
 
 const VOTE_NAMESPACE: &[u8] = b"outbe_FINALIZE";
 const VOTE_MESSAGE: &[u8] = b"finalize-proposal-message";
 const SEED_MESSAGE: &[u8] = b"seed-round-1";
 
-struct Committee {
-    keys: Vec<PrivateKey>,
-    pubkeys: Vec<PublicKey>,
-    vrf_group_public_key: <MinSig as Variant>::Public,
-    vrf_threshold_private: commonware_cryptography::bls12381::primitives::group::Private,
-}
-
-fn build_committee(n: u32) -> Committee {
-    let keys: Vec<PrivateKey> = (0..n)
-        .map(|i| PrivateKey::from_seed(i as u64 + 1))
-        .collect();
-    let pubkeys: Vec<PublicKey> = keys.iter().cloned().map(PublicKey::from).collect();
-    let mut rng = ChaCha20Rng::seed_from_u64(13);
-    let (vrf_threshold_private, vrf_group_public_key) = keypair::<_, MinSig>(&mut rng);
-    Committee {
-        keys,
-        pubkeys,
-        vrf_group_public_key,
-        vrf_threshold_private,
-    }
-}
-
-fn build_certificate(committee: &Committee, signer_indices: &[u32]) -> HybridCertificate<MinSig> {
-    let participants = committee.keys.len();
-    let signers = Signers::new(
-        participants as u32,
-        signer_indices.iter().copied().map(Participant::new),
-    )
-    .unwrap();
-
-    let sigs: Vec<_> = signer_indices
-        .iter()
-        .map(|&i| committee.keys[i as usize].sign(VOTE_NAMESPACE, VOTE_MESSAGE))
-        .collect();
-    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
-        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
-    );
-
-    let threshold_signature = sign_message::<MinSig>(
-        &committee.vrf_threshold_private,
-        &outbe_consensus::proof::hybrid_seed_namespace(),
-        SEED_MESSAGE,
-    );
-    let vrf_proof = VrfProof::<MinSig> {
-        material_version: 5,
-        threshold_signature,
+fn build_certificate(
+    committee: &VrfTestCommittee,
+    signer_indices: &[u32],
+) -> HybridCertificate<MinSig> {
+    let messages = CertificateMessages {
+        vote_namespace: VOTE_NAMESPACE,
+        vote: VOTE_MESSAGE,
+        seed: SEED_MESSAGE,
     };
-
-    HybridCertificate {
-        signers,
-        bls_aggregated_vote,
-        vrf_proof,
-    }
+    committee.certificate(
+        signer_indices,
+        &messages,
+        &committee.vrf_threshold_private,
+        5,
+    )
 }
 
-fn snapshot<'a>(committee: &'a Committee) -> CommitteeSnapshotView<'a> {
+fn snapshot<'a>(committee: &'a VrfTestCommittee) -> CommitteeSnapshotView<'a> {
     CommitteeSnapshotView {
         participants: committee.pubkeys.as_slice(),
         vrf_group_public_key: committee.vrf_group_public_key,
@@ -102,7 +53,7 @@ fn binding<'a>() -> VoteBinding<'a> {
 
 #[test]
 fn verify_v2_proof_accepts_valid_quorum_certificate() {
-    let committee = build_committee(4);
+    let committee = vrf_test_committee(4);
     let cert = build_certificate(&committee, &[0, 1, 2, 3]);
     let bytes = cert.encode();
     let verified = verify_v2_proof_low_level(&snapshot(&committee), &binding(), bytes.as_ref())
@@ -114,7 +65,7 @@ fn verify_v2_proof_accepts_valid_quorum_certificate() {
 #[test]
 fn verify_v2_proof_rejects_below_quorum() {
     // 4 participants, 2 signers -> N3f1 quorum is 3, so this rejects.
-    let committee = build_committee(4);
+    let committee = vrf_test_committee(4);
     let cert = build_certificate(&committee, &[0, 1]);
     let bytes = cert.encode();
     let err = verify_v2_proof_low_level(&snapshot(&committee), &binding(), bytes.as_ref())
@@ -130,7 +81,7 @@ fn verify_v2_proof_rejects_below_quorum() {
 
 #[test]
 fn verify_v2_proof_rejects_truncated_mandatory_vrf() {
-    let committee = build_committee(4);
+    let committee = vrf_test_committee(4);
     let cert = build_certificate(&committee, &[0, 1, 2, 3]);
     let mut bytes = cert.encode().to_vec();
     bytes.truncate(bytes.len() - 56);
@@ -141,7 +92,7 @@ fn verify_v2_proof_rejects_truncated_mandatory_vrf() {
 
 #[test]
 fn verify_v2_proof_rejects_wrong_vote_message() {
-    let committee = build_committee(4);
+    let committee = vrf_test_committee(4);
     let cert = build_certificate(&committee, &[0, 1, 2, 3]);
     let bytes = cert.encode();
     let mut bad = binding();
@@ -153,7 +104,7 @@ fn verify_v2_proof_rejects_wrong_vote_message() {
 
 #[test]
 fn verify_v2_proof_rejects_wrong_seed_message() {
-    let committee = build_committee(4);
+    let committee = vrf_test_committee(4);
     let cert = build_certificate(&committee, &[0, 1, 2, 3]);
     let bytes = cert.encode();
     let mut bad = binding();

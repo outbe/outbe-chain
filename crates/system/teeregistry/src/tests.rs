@@ -20,11 +20,17 @@ fn sample_data() -> TeeBootstrapData {
     }
 }
 
+fn with_registry(f: impl FnOnce(&mut TeeRegistry<'_>)) {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = TeeRegistry::new(storage.clone());
+        f(&mut registry);
+    });
+}
+
 #[test]
 fn bootstrap_writes_and_reads_back() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut reg = TeeRegistry::new(storage.clone());
+    with_registry(|reg| {
         assert!(!reg.is_bootstrapped().unwrap());
 
         let data = sample_data();
@@ -50,9 +56,7 @@ fn bootstrap_writes_and_reads_back() {
 
 #[test]
 fn bootstrap_is_idempotent_reject() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut reg = TeeRegistry::new(storage.clone());
+    with_registry(|reg| {
         reg.write_bootstrap(&sample_data()).unwrap();
         // A second bootstrap must be rejected (registry no longer empty).
         assert!(reg.write_bootstrap(&sample_data()).is_err());
@@ -61,9 +65,7 @@ fn bootstrap_is_idempotent_reject() {
 
 #[test]
 fn empty_registry_reads_zero() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let reg = TeeRegistry::new(storage.clone());
+    with_registry(|reg| {
         assert!(!reg.is_bootstrapped().unwrap());
         assert_eq!(reg.offer_public_key().unwrap(), B256::ZERO);
     });
@@ -71,9 +73,7 @@ fn empty_registry_reads_zero() {
 
 #[test]
 fn boundary_recipient_keys_recorded_and_overwritten() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut reg = TeeRegistry::new(storage.clone());
+    with_registry(|reg| {
         let val_a = Address::repeat_byte(0x11);
         let val_b = Address::repeat_byte(0x12);
 
@@ -111,9 +111,7 @@ fn boundary_recipient_keys_recorded_and_overwritten() {
 
 #[test]
 fn boundary_recipient_keys_are_independent_of_node_host_binding() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut reg = TeeRegistry::new(storage.clone());
+    with_registry(|reg| {
         let validator = Address::repeat_byte(0x11);
 
         // A boundary announcement does not bootstrap the registry or create a

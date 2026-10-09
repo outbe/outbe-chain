@@ -41,11 +41,13 @@ fn prepare_approved_proposal() -> ApprovedProposalFixture {
             let mut vote = Vote::new(storage);
             let proposal_id = vote
                 .create_proposal_with_value(
-                    issuer,
-                    STABLECOIN_FACTORY_ADDRESS,
-                    payload,
-                    CREATION_BLOCK,
-                    STABLECOIN_CREATE_BOND,
+                    outbe_vote::ProposalSubmission {
+                        proposer: issuer,
+                        target_module: STABLECOIN_FACTORY_ADDRESS,
+                        payload,
+                        created_height: CREATION_BLOCK,
+                        attached_value: STABLECOIN_CREATE_BOND,
+                    },
                     crate::handlers::vote::registry(),
                 )
                 .unwrap();

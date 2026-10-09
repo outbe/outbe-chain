@@ -16,7 +16,7 @@ use crate::{
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, GramineDirectEvidenceV1,
         NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1,
-        TeeMeasurementRuleV1, TeePolicyV1, ValidatorNodeBindingV1,
+        TeeMeasurementRuleV1, TeePolicyV1, ValidatorNodeBindingV1, INTEL_QE_VENDOR_ID,
     },
     tee_bootstrap_v2::{
         TeeBootstrapAuthorityV2, TeeBootstrapParticipantSubmissionV2, TeeBootstrapV2,
@@ -24,14 +24,20 @@ use crate::{
     tee_genesis_v1::tee_attestation_v1_genesis_field,
 };
 
-const INTEL_QE_VENDOR_ID: [u8; 16] = [
-    0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f, 0x06, 0x07,
-];
-
 #[derive(Clone, Copy, Debug)]
 pub struct DevValidatorV1 {
     pub evm_secret: [u8; 32],
     pub bls_minpk_public: [u8; 48],
+}
+
+/// Sign a NodeHost hash with a recoverable secp256k1 test key.
+pub fn sign_node_host_hash_for_test(signer: &k256::ecdsa::SigningKey, hash: B256) -> [u8; 65] {
+    let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
+        signer.sign_prehash(hash.as_slice()).unwrap();
+    let mut encoded = [0_u8; 65];
+    encoded[..64].copy_from_slice(signature.to_bytes().as_slice());
+    encoded[64] = recovery.to_byte();
+    encoded
 }
 
 pub fn gramine_direct_policy_v1(chain_id: u64, genesis_hash: B256) -> Result<TeePolicyV1, String> {

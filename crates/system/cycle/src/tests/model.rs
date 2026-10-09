@@ -28,8 +28,9 @@ use proptest::{
 };
 
 use super::{
-    account_parent, anchor_genesis, block_ctx, cycle_storage, run_cycle_lifecycle,
-    run_cycle_lifecycle_at_activation, GENESIS_TS, SECONDS_PER_DAY,
+    account_parent, anchor_genesis, block_ctx, capacity_scenario, cycle_storage,
+    run_cycle_lifecycle, run_cycle_lifecycle_at_activation, CapacityScenario, GENESIS_TS,
+    SECONDS_PER_DAY,
 };
 
 const GENERATED_OUTER_WWD_SEED: [u8; 32] = *b"metadosis-outer-wwd-model-seed!!";
@@ -172,20 +173,6 @@ fn hourly_fire_at(timestamp: u64) -> u64 {
     timestamp.div_ceil(3_600) * 3_600
 }
 
-fn advance_only(
-    storage: &mut HashMapStorageProvider,
-    block_number: u64,
-    timestamp: u64,
-) -> outbe_primitives::error::Result<()> {
-    storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-    StorageHandle::enter(storage, |handle| {
-        let ctx = RuntimeContext::new(block_ctx(block_number, timestamp), handle);
-        super::with_execution_scope(&ctx, |scope, _| {
-            outbe_metadosis::commands::advance_active_worldwide_days(&ctx, scope)
-        })
-    })
-}
-
 fn cycle_metadosis_snapshot(storage: &HashMapStorageProvider) -> BTreeMap<(Address, U256), U256> {
     storage
         .storage
@@ -235,47 +222,14 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
 fn capacity_history(retained_before: usize, coverage: &mut Coverage) -> TestCaseResult {
     let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
     prop_assert!(retained_before == MAX_RETAINED_WWDS - 1 || retained_before == MAX_RETAINED_WWDS);
-    let mut storage = cycle_storage();
     let victim = WorldwideDay::new(20_260_910);
     let day_limit = U256::from(100);
-    StorageHandle::enter(&mut storage, |handle| {
-        outbe_tribute::TributeContract::new(handle)
-            .initialize_fresh_ocomp_profile()
-            .unwrap();
-    });
-
     let retained = super::retained_days_before(victim, retained_before);
-    StorageHandle::enter(&mut storage, |handle| {
-        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
-            handle.clone(),
-            &retained,
-        )
-        .unwrap();
-        let mut tribute = outbe_tribute::TributeContract::new(handle);
-        for day in &retained {
-            tribute.seal_day(*day).unwrap();
-        }
-    });
-
-    let mut next_block = 2_u64;
-    storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
-    let victim_projection = StorageHandle::enter(&mut storage, |handle| {
-        let ctx = RuntimeContext::new(
-            block_ctx(next_block, victim.start_timestamp() + 2 * 3_600),
-            handle.clone(),
-        );
-        outbe_metadosis::commands::apply_cycle_day_limit(&ctx, day_limit).unwrap();
-        worldwide_day(handle, victim).unwrap().unwrap()
-    });
-    next_block += 1;
-    for boundary in [
-        victim_projection.forming_end,
-        victim_projection.lookback_end,
-        victim_projection.offering_end,
-    ] {
-        advance_only(&mut storage, next_block, boundary).unwrap();
-        next_block += 1;
-    }
+    let CapacityScenario {
+        mut storage,
+        victim: victim_projection,
+        ..
+    } = capacity_scenario(&retained, victim, day_limit);
     let scheduled_process_time = victim_projection.scheduled_process_time;
     let fire_at = hourly_fire_at(scheduled_process_time);
     StorageHandle::enter(&mut storage, |handle| {

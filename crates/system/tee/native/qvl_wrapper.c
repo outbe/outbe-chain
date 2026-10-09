@@ -106,33 +106,62 @@ enum outbe_qvl_wrapper_status {
     OUTBE_QVL_WRAPPER_QVL_ERROR = 3,
 };
 
-static int has_invalid_component(const struct outbe_qvl_collateral_v1 *input) {
-    return input->pck_crl_issuer_chain == NULL || input->pck_crl_issuer_chain_size == 0 ||
-           input->root_ca_crl == NULL || input->root_ca_crl_size == 0 ||
-           input->pck_crl == NULL || input->pck_crl_size == 0 ||
-           input->tcb_info_issuer_chain == NULL ||
-           input->tcb_info_issuer_chain_size == 0 || input->tcb_info == NULL ||
-           input->tcb_info_size == 0 || input->qe_identity_issuer_chain == NULL ||
-           input->qe_identity_issuer_chain_size == 0 || input->qe_identity == NULL ||
-           input->qe_identity_size == 0;
+/* A quote or collateral component is present when it has bytes and a non-zero
+ * size. */
+static int component_present(const uint8_t *bytes, uint32_t size) {
+    return bytes != NULL && size != 0;
 }
 
-int32_t outbe_qvl_verify_quote_v1(
+/* The PCK CRL bundle: its issuer chain, the root CA CRL and the PCK CRL. */
+static int pck_crl_bundle_present(const struct outbe_qvl_collateral_v1 *input) {
+    return component_present(input->pck_crl_issuer_chain, input->pck_crl_issuer_chain_size) &&
+           component_present(input->root_ca_crl, input->root_ca_crl_size) &&
+           component_present(input->pck_crl, input->pck_crl_size);
+}
+
+/* The TCB info and its issuer chain. */
+static int tcb_info_present(const struct outbe_qvl_collateral_v1 *input) {
+    return component_present(input->tcb_info_issuer_chain, input->tcb_info_issuer_chain_size) &&
+           component_present(input->tcb_info, input->tcb_info_size);
+}
+
+/* The QE identity and its issuer chain. */
+static int qe_identity_present(const struct outbe_qvl_collateral_v1 *input) {
+    return component_present(input->qe_identity_issuer_chain,
+                             input->qe_identity_issuer_chain_size) &&
+           component_present(input->qe_identity, input->qe_identity_size);
+}
+
+/* Every collateral component must be present. The checks follow the structure
+ * order and stop at the first missing component. */
+static int has_invalid_component(const struct outbe_qvl_collateral_v1 *input) {
+    return !(pck_crl_bundle_present(input) && tcb_info_present(input) &&
+             qe_identity_present(input));
+}
+
+/* Argument validation, before the output is touched: a missing quote, input,
+ * output or collateral component is an invalid parameter. A platform whose
+ * time_t is not 64 bits is an unsupported ABI. */
+static int32_t validate_arguments(
     const uint8_t *quote,
     uint32_t quote_size,
     const struct outbe_qvl_collateral_v1 *input,
-    int64_t expiration_check_date,
-    struct outbe_qvl_result_v1 *output) {
-    if (quote == NULL || quote_size == 0 || input == NULL || output == NULL ||
-        has_invalid_component(input)) {
+    const struct outbe_qvl_result_v1 *output) {
+    if (!component_present(quote, quote_size) || input == NULL || output == NULL) {
+        return OUTBE_QVL_WRAPPER_INVALID_PARAMETER;
+    }
+    if (has_invalid_component(input)) {
         return OUTBE_QVL_WRAPPER_INVALID_PARAMETER;
     }
     if (sizeof(time_t) != sizeof(int64_t)) {
         return OUTBE_QVL_WRAPPER_UNSUPPORTED_ABI;
     }
+    return OUTBE_QVL_WRAPPER_OK;
+}
 
-    memset(output, 0, sizeof(*output));
-
+/* The Intel QVE collateral view (version 3.1, SGX) of the Outbe collateral.
+ * It borrows the caller's buffers. */
+static sgx_ql_qve_collateral_t intel_collateral(const struct outbe_qvl_collateral_v1 *input) {
     sgx_ql_qve_collateral_t collateral = {
         .major_version = 3,
         .minor_version = 1,
@@ -152,7 +181,40 @@ int32_t outbe_qvl_verify_quote_v1(
         .qe_identity = (char *)input->qe_identity,
         .qe_identity_size = input->qe_identity_size,
     };
+    return collateral;
+}
 
+/* Copies the stable supplemental values of a successful verification. */
+static void project_supplemental(
+    struct outbe_qvl_result_v1 *output,
+    const sgx_ql_qv_supplemental_t *supplemental) {
+    output->supplemental_major_version = supplemental->major_version;
+    output->supplemental_minor_version = supplemental->minor_version;
+    output->earliest_issue_date = (int64_t)supplemental->earliest_issue_date;
+    output->latest_issue_date = (int64_t)supplemental->latest_issue_date;
+    output->earliest_expiration_date = (int64_t)supplemental->earliest_expiration_date;
+    output->tcb_evaluation_data_number = supplemental->tcb_eval_ref_num;
+    output->pce_id = supplemental->pce_id;
+    output->tee_type = supplemental->tee_type;
+    output->sgx_type = supplemental->sgx_type;
+    output->dynamic_platform = (int32_t)supplemental->dynamic_platform;
+    output->cached_keys = (int32_t)supplemental->cached_keys;
+    output->smt_enabled = (int32_t)supplemental->smt_enabled;
+    memcpy(output->advisory_ids, supplemental->sa_list, sizeof(output->advisory_ids));
+    output->qe_status = (uint32_t)supplemental->qe_iden_status;
+    output->qe_tcb_evaluation_data_number = supplemental->qe_iden_tcb_eval_ref_num;
+}
+
+/* The QVL phase between the BEGIN and END trace markers: query the
+ * supplemental size, require the pinned supplemental ABI, verify the quote,
+ * then write the aggregate and collateral-expiration status. The supplemental
+ * values are copied only when verification succeeded. */
+static int32_t verify_with_qvl(
+    const uint8_t *quote,
+    uint32_t quote_size,
+    const sgx_ql_qve_collateral_t *collateral,
+    int64_t expiration_check_date,
+    struct outbe_qvl_result_v1 *output) {
     uint32_t supplemental_size = 0;
     TEST_TRACE_MARKER("OUTBE_QVL_BEGIN\n");
     quote3_error_t qvl_error = sgx_qv_get_quote_supplemental_data_size(&supplemental_size);
@@ -173,7 +235,7 @@ int32_t outbe_qvl_verify_quote_v1(
     qvl_error = sgx_qv_verify_quote(
         quote,
         quote_size,
-        &collateral,
+        collateral,
         (time_t)expiration_check_date,
         &collateral_expiration_status,
         &aggregate_status,
@@ -187,21 +249,22 @@ int32_t outbe_qvl_verify_quote_v1(
     if (qvl_error != SGX_QL_SUCCESS) {
         return OUTBE_QVL_WRAPPER_QVL_ERROR;
     }
-
-    output->supplemental_major_version = supplemental.major_version;
-    output->supplemental_minor_version = supplemental.minor_version;
-    output->earliest_issue_date = (int64_t)supplemental.earliest_issue_date;
-    output->latest_issue_date = (int64_t)supplemental.latest_issue_date;
-    output->earliest_expiration_date = (int64_t)supplemental.earliest_expiration_date;
-    output->tcb_evaluation_data_number = supplemental.tcb_eval_ref_num;
-    output->pce_id = supplemental.pce_id;
-    output->tee_type = supplemental.tee_type;
-    output->sgx_type = supplemental.sgx_type;
-    output->dynamic_platform = (int32_t)supplemental.dynamic_platform;
-    output->cached_keys = (int32_t)supplemental.cached_keys;
-    output->smt_enabled = (int32_t)supplemental.smt_enabled;
-    memcpy(output->advisory_ids, supplemental.sa_list, sizeof(output->advisory_ids));
-    output->qe_status = (uint32_t)supplemental.qe_iden_status;
-    output->qe_tcb_evaluation_data_number = supplemental.qe_iden_tcb_eval_ref_num;
+    project_supplemental(output, &supplemental);
     return OUTBE_QVL_WRAPPER_OK;
+}
+
+int32_t outbe_qvl_verify_quote_v1(
+    const uint8_t *quote,
+    uint32_t quote_size,
+    const struct outbe_qvl_collateral_v1 *input,
+    int64_t expiration_check_date,
+    struct outbe_qvl_result_v1 *output) {
+    int32_t status = validate_arguments(quote, quote_size, input, output);
+    if (status != OUTBE_QVL_WRAPPER_OK) {
+        return status;
+    }
+
+    memset(output, 0, sizeof(*output));
+    sgx_ql_qve_collateral_t collateral = intel_collateral(input);
+    return verify_with_qvl(quote, quote_size, &collateral, expiration_check_date, output);
 }

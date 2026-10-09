@@ -2,8 +2,6 @@
 
 use alloy_primitives::{Address, U256};
 
-use crate::schema::OracleContract;
-
 use super::common::*;
 
 /// Probes the macro-assigned slot for `reference_currencies` so that
@@ -14,8 +12,7 @@ use super::common::*;
 fn reference_currencies_occupies_slot_55() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
 
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         oracle.reference_currencies.push(840).unwrap();
         oracle.reference_currencies.push(978).unwrap();
 
@@ -69,8 +66,7 @@ fn pair_by_index_occupies_slot_43_as_a_two_word_value() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
 
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         oracle
             .pair_by_index
             .write_pair(&1u32, pair_key(USDT, USDC))
@@ -127,8 +123,7 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
         );
     }
 
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         let wwd = outbe_primitives::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
         let iso: u16 = 840;
         // The exact key `openings.rs` derives for a reference ISO. Writing it
@@ -229,8 +224,7 @@ fn worldwide_day_partial_aggregates_occupy_slots_70_through_73() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
 
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         let pair = AddressPair::new_coen_to(840);
         let day = 1_780_012_800u64;
         let markers = [11u64, 12, 13, 14];
@@ -276,10 +270,9 @@ fn retired_settlement_slots_stay_zero_after_genesis() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
 
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig::default_config();
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
+        crate::genesis::init_from_genesis(oracle, &config).unwrap();
 
         // Retired mappings, probed at the key genesis would have used.
         for base in [41u64, 42, 45, 46] {
@@ -312,8 +305,7 @@ fn slot_60_is_retired_and_policy_registry_occupies_slots_74_and_75() {
     use alloy_primitives::keccak256;
     use outbe_primitives::addresses::ORACLE_ADDRESS;
 
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         let iso: u16 = 840;
         let marker = U256::from(0x00AB_CDEFu64);
         oracle.policy_rate_currencies.push(iso).unwrap();
@@ -344,10 +336,9 @@ fn slot_60_is_retired_and_policy_registry_occupies_slots_74_and_75() {
 
 #[test]
 fn genesis_seeds_the_usd_policy_rate() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         crate::genesis::init_from_genesis(
-            &mut oracle,
+            oracle,
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();

@@ -1,5 +1,7 @@
 #![cfg(all(native_qvl_linked, target_arch = "x86_64", target_os = "linux"))]
 
+mod support;
+
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
@@ -7,31 +9,11 @@ use outbe_primitives::tee_attestation_v1::{
     RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1, TeeRegistryGasScheduleV1,
 };
 use outbe_tee::dcap_v1::{verify_dcap_evidence, DcapRejectCodeV1};
-use serde::Deserialize;
+use support::{signed_document, FixtureCollateral, QUOTE};
 
-const QUOTE: &[u8] = include_bytes!("fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin");
-const COLLATERAL_WRAPPER: &str =
-    include_str!("fixtures/intel-dcap-1.26/sgx-processor-collateral-wrapper.json");
 const INTENT_BOUND_PROCESSOR_CAPTURE_TIME: u64 = 1_787_850_648;
 const INTENT_BOUND_PROCESSOR_COLLATERAL_EXPIRES_AT: u64 = 1_790_380_006;
 const PEM_CERTIFICATE_BEGIN: &[u8] = b"-----BEGIN CERTIFICATE-----";
-
-#[derive(Deserialize)]
-struct FixtureCollateral {
-    pck_crl_issuer_chain: String,
-    root_ca_crl: String,
-    pck_crl: String,
-    tcb_info_issuer_chain: String,
-    tcb_info: String,
-    tcb_info_signature: String,
-    qe_identity_issuer_chain: String,
-    qe_identity: String,
-    qe_identity_signature: String,
-}
-
-fn signed_document(field: &str, body: &str, signature: &str) -> Vec<u8> {
-    format!(r#"{{"{field}":{body},"signature":"{signature}"}}"#).into_bytes()
-}
 
 fn embedded_pck_chain() -> Vec<u8> {
     let start = QUOTE
@@ -83,7 +65,7 @@ fn policy() -> TeePolicyV1 {
 }
 
 fn evidence(policy: &TeePolicyV1) -> DcapEvidenceV1 {
-    let collateral: FixtureCollateral = serde_json::from_str(COLLATERAL_WRAPPER).unwrap();
+    let collateral = FixtureCollateral::load();
     let reth_p2p_public = k256::ecdsa::SigningKey::from_bytes((&[0x77; 32]).into())
         .unwrap()
         .verifying_key()

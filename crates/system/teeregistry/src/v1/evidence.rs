@@ -1,9 +1,23 @@
 use super::*;
 
-struct VerifiedDcapClaimsV1 {
+struct VerifiedEvidenceClaimsV1 {
     claims: VerifiedEnclaveClaimsV1,
     evidence_hash: B256,
     artifact: Option<DcapOnboardingArtifactV1>,
+}
+
+struct EvidenceVerificationV1<'a> {
+    expected_operation: AttestationOperationV1,
+    request: EnclaveEvidenceV1<'a>,
+    policy: &'a TeePolicyV1,
+    issue_onboarding_artifact: bool,
+}
+
+struct DcapVerificationContextV1<'a> {
+    expected_operation: AttestationOperationV1,
+    request: EnclaveEvidenceV1<'a>,
+    policy_bytes: &'a [u8],
+    consensus_timestamp: u64,
 }
 
 impl TeeRegistry<'_> {
@@ -26,9 +40,11 @@ impl TeeRegistry<'_> {
         let context = artifact.context;
         let expected_offer_public = self.offer_public_key()?;
         if expected_offer_public.is_zero()
-            || !self.onboarding_identity_matches_v1(&context, node_id_hash)?
-            || !self.onboarding_offer_matches_v1(&context, expected_offer_public)?
-            || !self.onboarding_binding_matches_v1(&context, node_id_hash)?
+            || !self.onboarding_artifact_matches_v1(
+                &context,
+                node_id_hash,
+                expected_offer_public,
+            )?
         {
             return Err(PrecompileError::Fatal(
                 "purpose-bound onboarding artifact does not match committed Registry binding"
@@ -214,32 +230,20 @@ impl TeeRegistry<'_> {
         }
 
         let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
-        let (intent, claims, evidence_hash, onboarding_artifact) = match &decoded {
-            AttestationEvidenceV1::Dcap(dcap) => {
-                let verified = self.verify_dcap_claims_v1(
-                    expected_operation,
-                    request,
-                    policy,
-                    issue_onboarding_artifact,
-                )?;
-                (
-                    dcap.intent.clone(),
-                    verified.claims,
-                    verified.evidence_hash,
-                    verified.artifact,
-                )
-            }
-            AttestationEvidenceV1::GramineDirectDev(dev) => {
-                let (claims, evidence_hash) = self.verify_dev_claims_v1(
-                    dev,
-                    &decoded,
-                    policy,
-                    expected_operation,
-                    enclave_signature,
-                )?;
-                (dev.intent.clone(), claims, evidence_hash, None)
-            }
-        };
+        let (intent, verified) = self.verify_evidence_claims_v1(
+            &decoded,
+            EvidenceVerificationV1 {
+                expected_operation,
+                request,
+                policy,
+                issue_onboarding_artifact,
+            },
+        )?;
+        let VerifiedEvidenceClaimsV1 {
+            claims,
+            evidence_hash,
+            artifact: onboarding_artifact,
+        } = verified;
         let registration = self.apply_verified_claims_mutation_v1(VerifiedClaimsMutationV1 {
             expected_operation,
             caller: Some(caller),
@@ -308,47 +312,19 @@ impl TeeRegistry<'_> {
         request: EnclaveEvidenceV1<'_>,
         policy: &TeePolicyV1,
         issue_onboarding_artifact: bool,
-    ) -> Result<VerifiedDcapClaimsV1> {
-        let EnclaveEvidenceV1 {
-            evidence,
-            node_signature,
-            enclave_signature,
-            ..
-        } = request;
+    ) -> Result<VerifiedEvidenceClaimsV1> {
+        let EnclaveEvidenceV1 { evidence, .. } = request;
         let policy_bytes = policy.encode_canonical().map_err(|error| {
             PrecompileError::Fatal(format!("active V1 policy cannot be encoded: {error}"))
         })?;
         let consensus_timestamp = consensus_timestamp(&self.storage)?;
         let (outcome, onboarding_artifact) = if issue_onboarding_artifact {
-            if expected_operation != AttestationOperationV1::RegisterEnclave {
-                return Err(PrecompileError::Fatal(
-                    "onboarding artifact requested for a non-registration operation".into(),
-                ));
-            }
-            let offer_public = self.offer_public_key()?;
-            if offer_public.is_zero() {
-                return Err(PrecompileError::Fatal(
-                    "DcapRequired registration requires the OST3 offer-key commitment".into(),
-                ));
-            }
-            let result = outbe_tee::verify_dcap_registration_and_seal_v1(
-                outbe_tee::RegistrationVerificationRequest {
-                    evidence,
-                    policy: &policy_bytes,
-                    block_timestamp: consensus_timestamp,
-                    node_signature,
-                    enclave_signature,
-                    expected_tribute_offer_public: offer_public.0,
-                    key_epoch: self.key_epoch()?,
-                    tribute_offer_epoch: self.tribute_offer_epoch()?,
-                },
-            )
-                    .map_err(|error| {
-                        PrecompileError::Fatal(format!(
-                            "purpose-bound DCAP onboarding verifier is unavailable or unauthenticated: {error}"
-                        ))
-                    })?;
-            (result.outcome, result.artifact)
+            self.verify_dcap_registration_claims_v1(DcapVerificationContextV1 {
+                expected_operation,
+                request,
+                policy_bytes: &policy_bytes,
+                consensus_timestamp,
+            })?
         } else {
             (
                         outbe_tee::verify_dcap_evidence_v1(
@@ -379,11 +355,110 @@ impl TeeRegistry<'_> {
                 code.code()
             ))
         })?;
-        Ok(VerifiedDcapClaimsV1 {
+        Ok(VerifiedEvidenceClaimsV1 {
             claims: VerifiedEnclaveClaimsV1::from_dcap(&verdict)?,
             evidence_hash,
             artifact: onboarding_artifact,
         })
+    }
+    fn verify_evidence_claims_v1(
+        &self,
+        decoded: &AttestationEvidenceV1,
+        verification: EvidenceVerificationV1<'_>,
+    ) -> Result<(RegistrationIntentV1, VerifiedEvidenceClaimsV1)> {
+        let EvidenceVerificationV1 {
+            expected_operation,
+            request,
+            policy,
+            issue_onboarding_artifact,
+        } = verification;
+        let enclave_signature = request.enclave_signature;
+        match decoded {
+            AttestationEvidenceV1::Dcap(dcap) => {
+                let verified = self.verify_dcap_claims_v1(
+                    expected_operation,
+                    request,
+                    policy,
+                    issue_onboarding_artifact,
+                )?;
+                Ok((dcap.intent.clone(), verified))
+            }
+            AttestationEvidenceV1::GramineDirectDev(dev) => {
+                let (claims, evidence_hash) = self.verify_dev_claims_v1(
+                    dev,
+                    decoded,
+                    policy,
+                    expected_operation,
+                    enclave_signature,
+                )?;
+                Ok((
+                    dev.intent.clone(),
+                    VerifiedEvidenceClaimsV1 {
+                        claims,
+                        evidence_hash,
+                        artifact: None,
+                    },
+                ))
+            }
+        }
+    }
+
+    fn verify_dcap_registration_claims_v1(
+        &self,
+        context: DcapVerificationContextV1<'_>,
+    ) -> Result<(DcapVerificationOutcomeV1, Option<DcapOnboardingArtifactV1>)> {
+        let DcapVerificationContextV1 {
+            expected_operation,
+            request,
+            policy_bytes,
+            consensus_timestamp,
+        } = context;
+        let EnclaveEvidenceV1 {
+            evidence,
+            node_signature,
+            enclave_signature,
+            ..
+        } = request;
+        if expected_operation != AttestationOperationV1::RegisterEnclave {
+            return Err(PrecompileError::Fatal(
+                "onboarding artifact requested for a non-registration operation".into(),
+            ));
+        }
+        let offer_public = self.offer_public_key()?;
+        if offer_public.is_zero() {
+            return Err(PrecompileError::Fatal(
+                "DcapRequired registration requires the OST3 offer-key commitment".into(),
+            ));
+        }
+        let result = outbe_tee::verify_dcap_registration_and_seal_v1(
+            outbe_tee::RegistrationVerificationRequest {
+                evidence,
+                policy: policy_bytes,
+                block_timestamp: consensus_timestamp,
+                node_signature,
+                enclave_signature,
+                expected_tribute_offer_public: offer_public.0,
+                key_epoch: self.key_epoch()?,
+                tribute_offer_epoch: self.tribute_offer_epoch()?,
+            },
+        )
+        .map_err(|error| {
+            PrecompileError::Fatal(format!(
+                "purpose-bound DCAP onboarding verifier is unavailable or unauthenticated: {error}"
+            ))
+        })?;
+        Ok((result.outcome, result.artifact))
+    }
+
+    fn onboarding_artifact_matches_v1(
+        &self,
+        context: &DcapOnboardingContextV1,
+        node_id_hash: B256,
+        expected_offer_public: B256,
+    ) -> Result<bool> {
+        Ok(self.onboarding_identity_matches_v1(context, node_id_hash)?
+            && self.onboarding_offer_matches_v1(context, expected_offer_public)?
+            && self.onboarding_binding_matches_v1(context, node_id_hash)?)
     }
     fn verify_dev_claims_v1(
         &self,

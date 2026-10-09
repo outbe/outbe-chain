@@ -34,6 +34,7 @@ use outbe_primitives::tee_signatures::recover_signer;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::tee_dkg::{
     run_tee_dkg_ceremony, CeremonyCoordinator, CeremonyError, DkgGossip, DkgWireMessage,
+    FoundingCeremonyParameters,
 };
 use outbe_tee::{acquire_dcap_collateral_v1, RuntimeEnclaveClient};
 

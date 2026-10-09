@@ -86,49 +86,60 @@ pub fn record_late_credit(
     Ok(())
 }
 
-/// Escrow block `N`'s fees (key `fb_hash`) and seed the base 2f+1 CPA signers at
+/// Canonical binding of one finalized block whose fees wait for settlement.
+///
+/// The Late phase authenticates each credit against this binding. A credit
+/// whose aggregate is over a non-canonical view of the same `hash` is rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FinalizedBlockBinding {
+    /// Finalized block number `N`.
+    pub number: u64,
+    /// Finalized block hash. It keys the escrow and the credited voter set.
+    pub hash: B256,
+    /// Number of committee members. It sets the fixed payout denominator.
+    pub committee_size: u32,
+    pub epoch: u64,
+    pub view: u64,
+    pub parent_view: u64,
+    pub committee_set_hash: B256,
+}
+
+/// Escrow block `N`'s fees (key `block.hash`) and seed the base 2f+1 CPA signers at
 /// `k = 0`. Thus a later re-inclusion of a base voter at `k >= 1` cannot worsen its
 /// distance. Idempotent: re-escrowing the same block is a no-op once settled.
 /// Re-seeding a base voter is a no-op (smallest-k rule).
-#[allow(clippy::too_many_arguments)]
 pub fn escrow_block_fee(
     ctx: &BlockRuntimeContext,
-    fb_number: u64,
-    fb_hash: B256,
+    block: &FinalizedBlockBinding,
     fee_sum: U256,
-    committee_size: u32,
-    canonical_epoch: u64,
-    canonical_view: u64,
-    canonical_parent_view: u64,
-    canonical_committee_set_hash: B256,
     base_voters: &[Address],
 ) -> Result<()> {
     let rewards = ctx.storage.contract::<Rewards<'_>>();
-    if rewards.fee_settled.read(&fb_hash)? {
+    if rewards.fee_settled.read(&block.hash)? {
         return Ok(());
     }
-    rewards.pending_fees.write(&fb_hash, fee_sum)?;
+    rewards.pending_fees.write(&block.hash, fee_sum)?;
     // Write the settle-trigger lookup by number, so block N+K can find block N's
     // escrow. Also write the canonical binding that the Late phase authenticates each
     // credit against: number -> {fb_hash, epoch, view, parent_view,
     // committee_set_hash}. This function pins the full signed binding. Thus a credit
     // whose aggregate is over a non-canonical view of the same fb_hash is rejected.
-    rewards.pending_fb_hash_at.write(&fb_number, fb_hash)?;
+    rewards
+        .pending_fb_hash_at
+        .write(&block.number, block.hash)?;
     rewards
         .pending_committee_size_at
-        .write(&fb_number, committee_size)?;
-    rewards
-        .pending_epoch_at
-        .write(&fb_number, canonical_epoch)?;
-    rewards.pending_view_at.write(&fb_number, canonical_view)?;
+        .write(&block.number, block.committee_size)?;
+    rewards.pending_epoch_at.write(&block.number, block.epoch)?;
+    rewards.pending_view_at.write(&block.number, block.view)?;
     rewards
         .pending_parent_view_at
-        .write(&fb_number, canonical_parent_view)?;
+        .write(&block.number, block.parent_view)?;
     rewards
         .pending_committee_set_hash_at
-        .write(&fb_number, canonical_committee_set_hash)?;
+        .write(&block.number, block.committee_set_hash)?;
     for voter in base_voters {
-        record_late_credit(ctx, fb_hash, *voter, 0)?;
+        record_late_credit(ctx, block.hash, *voter, 0)?;
     }
     Ok(())
 }
@@ -195,35 +206,14 @@ pub fn settle_window(
             "late settle denominator is zero (empty committee)".into(),
         ));
     }
+    let window = MaturedWindow {
+        fb_hash,
+        pending,
+        denominator,
+        voter_count: rewards.late_voter_count.read(&fb_hash)?,
+    };
 
-    let count = rewards.late_voter_count.read(&fb_hash)?;
-    let kmap = rewards.late_voter_k_plus1.get_nested(&fb_hash);
-    let at = rewards.late_voter_at.get_nested(&fb_hash);
-
-    let mut distributed = U256::ZERO;
-    for idx in 0..count {
-        let voter = at.read(&idx)?;
-        let stored = kmap.read(&voter)?;
-        if stored == 0 {
-            continue;
-        }
-        let weight = decay_weight(u64::from(stored - 1));
-        if weight.is_zero() {
-            continue;
-        }
-        let payout = pending
-            .checked_mul(weight)
-            .ok_or_else(|| PrecompileError::Revert("late payout multiply overflow".into()))?
-            / denominator;
-        if payout.is_zero() {
-            continue;
-        }
-        ctx.storage
-            .transfer_balance(REWARDS_ADDRESS, voter, payout)?;
-        distributed = distributed
-            .checked_add(payout)
-            .ok_or_else(|| PrecompileError::Revert("late distributed overflow".into()))?;
-    }
+    let distributed = pay_credited_voters(ctx, &rewards, &window)?;
 
     // Solvency: full attendance pays at most the pool (D = N*w_max), so
     // distributed <= pending. checked_sub guards any violation.
@@ -231,24 +221,7 @@ pub fn settle_window(
         PrecompileError::Revert("late settle insolvent: distributed exceeds escrow".into())
     })?;
     if !residue.is_zero() {
-        // The residue is native wei, and the carry-over counts six-decimal units. Thus
-        // only whole units are burned and recycled. The rest waits on REWARDS for the
-        // next window.
-        let native = residue
-            .checked_add(rewards.late_residue_dust_native.read()?)
-            .ok_or_else(|| PrecompileError::Revert("late residue dust overflow".into()))?;
-        let dust = native % NATIVE_UNITS_PER_PROTOCOL_UNIT;
-        let burned = native - dust;
-        let units = native_to_protocol_floor(native);
-        rewards.late_residue_dust_native.write(dust)?;
-        if !units.is_zero() {
-            ctx.storage.decrease_balance(REWARDS_ADDRESS, burned)?;
-            outbe_emissionlimit::block::dispatch_late_settlement_residue_at(
-                ctx,
-                units,
-                ctx.block.timestamp,
-            )?;
-        }
+        recycle_residue(ctx, &rewards, residue)?;
     }
 
     // Parity invariant (checked once): sum payout + residue == pending.
@@ -263,7 +236,88 @@ pub fn settle_window(
     }
 
     rewards.fee_settled.write(&fb_hash, true)?;
+    free_window_state(&rewards, &window)?;
 
+    Ok((distributed, residue))
+}
+
+/// Escrow state of one window at settlement.
+struct MaturedWindow {
+    fb_hash: B256,
+    /// Escrowed fees of the window.
+    pending: U256,
+    /// Fixed payout denominator `D = committee_size * w_max`.
+    denominator: U256,
+    /// Number of credited voters, read once before the payouts.
+    voter_count: u32,
+}
+
+/// Pays each credited voter of `window` its decay-weighted share of the escrow.
+/// Returns the total paid amount.
+fn pay_credited_voters(
+    ctx: &BlockRuntimeContext,
+    rewards: &Rewards<'_>,
+    window: &MaturedWindow,
+) -> Result<U256> {
+    let kmap = rewards.late_voter_k_plus1.get_nested(&window.fb_hash);
+    let at = rewards.late_voter_at.get_nested(&window.fb_hash);
+
+    let mut distributed = U256::ZERO;
+    for idx in 0..window.voter_count {
+        let voter = at.read(&idx)?;
+        let stored = kmap.read(&voter)?;
+        if stored == 0 {
+            continue;
+        }
+        let weight = decay_weight(u64::from(stored - 1));
+        if weight.is_zero() {
+            continue;
+        }
+        let payout = window
+            .pending
+            .checked_mul(weight)
+            .ok_or_else(|| PrecompileError::Revert("late payout multiply overflow".into()))?
+            / window.denominator;
+        if payout.is_zero() {
+            continue;
+        }
+        ctx.storage
+            .transfer_balance(REWARDS_ADDRESS, voter, payout)?;
+        distributed = distributed
+            .checked_add(payout)
+            .ok_or_else(|| PrecompileError::Revert("late distributed overflow".into()))?;
+    }
+    Ok(distributed)
+}
+
+/// Burns the whole protocol units of `residue` plus the carried dust and sends
+/// them to the Metadosis carry-over.
+fn recycle_residue(ctx: &BlockRuntimeContext, rewards: &Rewards<'_>, residue: U256) -> Result<()> {
+    // The residue is native wei, and the carry-over counts six-decimal units. Thus
+    // only whole units are burned and recycled. The rest waits on REWARDS for the
+    // next window.
+    let native = residue
+        .checked_add(rewards.late_residue_dust_native.read()?)
+        .ok_or_else(|| PrecompileError::Revert("late residue dust overflow".into()))?;
+    let dust = native % NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let burned = native - dust;
+    let units = native_to_protocol_floor(native);
+    rewards.late_residue_dust_native.write(dust)?;
+    if !units.is_zero() {
+        ctx.storage.decrease_balance(REWARDS_ADDRESS, burned)?;
+        outbe_emissionlimit::block::dispatch_late_settlement_residue_at(
+            ctx,
+            units,
+            ctx.block.timestamp,
+        )?;
+    }
+    Ok(())
+}
+
+/// Frees the per-window state of a settled window.
+fn free_window_state(rewards: &Rewards<'_>, window: &MaturedWindow) -> Result<()> {
+    let kmap = rewards.late_voter_k_plus1.get_nested(&window.fb_hash);
+    let at = rewards.late_voter_at.get_nested(&window.fb_hash);
     // Free the per-window state now that it is settled. After
     // `fee_settled = true`, `record_late_credit` short-circuits. Thus nothing more
     // is written for this `fb_hash`, and the data is dead. Freeing it here
@@ -279,18 +333,20 @@ pub fn settle_window(
     // at k=0. Thus clearing the guard for each credited voter clears every entry.
     // For any non-counted late voter, the clear is a harmless write of the default
     // `false`.
-    let participation_guard = rewards.participation_counted_for_block.get_nested(&fb_hash);
-    for idx in 0..count {
+    let participation_guard = rewards
+        .participation_counted_for_block
+        .get_nested(&window.fb_hash);
+    for idx in 0..window.voter_count {
         let voter = at.read(&idx)?;
         kmap.write(&voter, 0)?;
         at.write(&idx, Address::ZERO)?;
         participation_guard.write(&voter, false)?;
     }
-    rewards.late_voter_count.write(&fb_hash, 0)?;
-    rewards.pending_fees.write(&fb_hash, U256::ZERO)?;
-    rewards.pending_reward_day.write(&fb_hash, 0)?;
+    rewards.late_voter_count.write(&window.fb_hash, 0)?;
+    rewards.pending_fees.write(&window.fb_hash, U256::ZERO)?;
+    rewards.pending_reward_day.write(&window.fb_hash, 0)?;
 
-    Ok((distributed, residue))
+    Ok(())
 }
 
 /// Canonical binding + full credited voter set for the window maturing at
@@ -411,6 +467,19 @@ mod tests {
         });
     }
 
+    /// Canonical binding of block `number` for a four-member committee in epoch 0.
+    fn block_at(number: u64, hash: B256) -> FinalizedBlockBinding {
+        FinalizedBlockBinding {
+            number,
+            hash,
+            committee_size: 4,
+            epoch: 0,
+            view: 0,
+            parent_view: 0,
+            committee_set_hash: B256::ZERO,
+        }
+    }
+
     fn fund(ctx: &BlockRuntimeContext, amount: U256) {
         ctx.storage
             .increase_balance(REWARDS_ADDRESS, amount)
@@ -425,19 +494,7 @@ mod tests {
             let committee = 4u64;
             let pending = U256::from(committee) * U256::from(1_000u64); // divisible by N
             fund(ctx, pending);
-            escrow_block_fee(
-                ctx,
-                10,
-                FB,
-                pending,
-                4,
-                0,
-                0,
-                0,
-                B256::ZERO,
-                &[V0, V1, V2, V3],
-            )
-            .unwrap();
+            escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0, V1, V2, V3]).unwrap();
 
             let (distributed, residue) = settle_window(ctx, FB, committee).unwrap();
             assert_eq!(distributed, pending);
@@ -467,19 +524,7 @@ mod tests {
             for v in [V0, V1, V2, V3] {
                 guard.write(&v, true).unwrap();
             }
-            escrow_block_fee(
-                ctx,
-                10,
-                FB,
-                pending,
-                4,
-                0,
-                0,
-                0,
-                B256::ZERO,
-                &[V0, V1, V2, V3],
-            )
-            .unwrap();
+            escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0, V1, V2, V3]).unwrap();
 
             settle_window(ctx, FB, committee).unwrap();
 
@@ -502,7 +547,7 @@ mod tests {
             let pending = U256::from(committee) * U256::from(1_000u64);
             fund(ctx, pending);
             // Only 3 of 4 voters credited (one excluded).
-            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0, V1, V2]).unwrap();
+            escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0, V1, V2]).unwrap();
 
             let (distributed, residue) = settle_window(ctx, FB, committee).unwrap();
             let each = pending / U256::from(committee); // unchanged by exclusion
@@ -525,7 +570,7 @@ mod tests {
             let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
             let pending = U256::from(4_000) * unit + U256::from(7);
             fund(ctx, pending);
-            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0, V1, V2]).unwrap();
+            escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0, V1, V2]).unwrap();
 
             let (_, residue) = settle_window(ctx, FB, 4).unwrap();
             assert_eq!(residue, U256::from(1_000) * unit + U256::from(4));
@@ -559,20 +604,8 @@ mod tests {
             let rewards = ctx.storage.contract::<Rewards>();
             rewards.pending_reward_day.write(&second, 19700101).unwrap();
             fund(ctx, pending * U256::from(2));
-            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0, V1, V2]).unwrap();
-            escrow_block_fee(
-                ctx,
-                11,
-                second,
-                pending,
-                4,
-                0,
-                0,
-                0,
-                B256::ZERO,
-                &[V0, V1, V2],
-            )
-            .unwrap();
+            escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0, V1, V2]).unwrap();
+            escrow_block_fee(ctx, &block_at(11, second), pending, &[V0, V1, V2]).unwrap();
             let carry_over = || {
                 PromisLimitContract::new(ctx.storage.clone())
                     .get_total_unallocated()
@@ -616,19 +649,7 @@ mod tests {
             );
             let pending = U256::from(4_000) * unit;
             fund(&ctx, pending);
-            escrow_block_fee(
-                &ctx,
-                153,
-                FB,
-                pending,
-                4,
-                0,
-                0,
-                0,
-                B256::ZERO,
-                &[V0, V1, V2],
-            )
-            .unwrap();
+            escrow_block_fee(&ctx, &block_at(153, FB), pending, &[V0, V1, V2]).unwrap();
 
             let (distributed, residue) = settle_window(&ctx, FB, 4).unwrap();
             assert_eq!(distributed, U256::from(3_000) * unit);
@@ -687,7 +708,7 @@ mod tests {
             let committee = 4u64;
             let pending = U256::from(committee) * U256::from(1_000u64);
             fund(ctx, pending);
-            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0]).unwrap(); // base at k=0
+            escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0]).unwrap(); // base at k=0
             record_late_credit(ctx, FB, V1, 3).unwrap(); // k = K = 3, weight 0
 
             let (distributed, residue) = settle_window(ctx, FB, committee).unwrap();
@@ -703,19 +724,7 @@ mod tests {
     #[test]
     fn base_voter_k0_not_worsened_by_later_inclusion() {
         run(|ctx| {
-            escrow_block_fee(
-                ctx,
-                10,
-                FB,
-                U256::from(4_000u64),
-                4,
-                0,
-                0,
-                0,
-                B256::ZERO,
-                &[V0],
-            )
-            .unwrap();
+            escrow_block_fee(ctx, &block_at(10, FB), U256::from(4_000u64), &[V0]).unwrap();
             record_late_credit(ctx, FB, V0, 2).unwrap(); // attempt to push to k=2
             let rewards = ctx.storage.contract::<Rewards>();
             // Stored k+1 stays 1 (k=0).
@@ -764,19 +773,7 @@ mod tests {
             let committee = 4u64;
             let pending = U256::from(4_000u64);
             fund(ctx, pending);
-            escrow_block_fee(
-                ctx,
-                10,
-                FB,
-                pending,
-                4,
-                0,
-                0,
-                0,
-                B256::ZERO,
-                &[V0, V1, V2, V3],
-            )
-            .unwrap();
+            escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0, V1, V2, V3]).unwrap();
             let (d1, _) = settle_window(ctx, FB, committee).unwrap();
             let bal_after_first = ctx.storage.balance(V0).unwrap();
             let (d2, r2) = settle_window(ctx, FB, committee).unwrap();
@@ -801,19 +798,7 @@ mod tests {
             let pending = U256::from(4_000u64);
             fund(ctx, pending);
             // Escrow block N=10 (committee 4, all 4 base voters at k=0).
-            escrow_block_fee(
-                ctx,
-                10,
-                FB,
-                pending,
-                4,
-                0,
-                0,
-                0,
-                B256::ZERO,
-                &[V0, V1, V2, V3],
-            )
-            .unwrap();
+            escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0, V1, V2, V3]).unwrap();
 
             // Before maturity: block 12 would settle number 9 - nothing escrowed.
             assert_eq!(
@@ -849,7 +834,17 @@ mod tests {
             fund(ctx, pending);
             // Escrow block 10 (committee 4): V0/V1/V2 base at k=0, V3 late at k=1.
             // Non-zero view/parent_view so freeing them at settle is observable.
-            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 9, 8, B256::ZERO, &[V0, V1, V2]).unwrap();
+            escrow_block_fee(
+                ctx,
+                &FinalizedBlockBinding {
+                    view: 9,
+                    parent_view: 8,
+                    ..block_at(10, FB)
+                },
+                pending,
+                &[V0, V1, V2],
+            )
+            .unwrap();
             record_late_credit(ctx, FB, V3, 1).unwrap();
             assert_eq!(
                 ctx.storage

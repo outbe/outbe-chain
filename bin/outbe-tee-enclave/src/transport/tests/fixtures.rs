@@ -78,9 +78,9 @@ pub(in crate::transport::tests) fn signed_initialization_manifest_for_mode(
 pub(in crate::transport::tests) fn intent_bound_processor_fixture_wire_bytes() -> (Vec<u8>, Vec<u8>)
 {
     use outbe_primitives::tee_attestation_v1::{
-        AttestationEvidenceV1, DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1,
-        RegistrationIntentV1,
+        AttestationEvidenceV1, DcapCollateralComponentV1, DcapEvidenceV1, RegistrationIntentV1,
     };
+    use outbe_tee::release_dcap_artifacts::DCAP_COLLATERAL_COMPONENT_FILES;
 
     const ROOT: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -93,34 +93,13 @@ pub(in crate::transport::tests) fn intent_bound_processor_fixture_wire_bytes() -
         "intel-dcap-1.26-intent-bound-processor/intent.bin"
     )))
     .unwrap();
-    let components = [
-        (
-            DcapCollateralKind::PckCertificateChain,
-            "pck-certificate-chain.pem0",
-        ),
-        (DcapCollateralKind::PckCrl, "pck.crl.der"),
-        (
-            DcapCollateralKind::PckCrlIssuerChain,
-            "pck-crl-issuer-chain.pem",
-        ),
-        (DcapCollateralKind::RootCaCrl, "root-ca.crl.der"),
-        (DcapCollateralKind::TcbInfo, "tcb-info.json"),
-        (
-            DcapCollateralKind::TcbInfoIssuerChain,
-            "tcb-info-issuer-chain.pem",
-        ),
-        (DcapCollateralKind::QeIdentity, "qe-identity.json"),
-        (
-            DcapCollateralKind::QeIdentityIssuerChain,
-            "qe-identity-issuer-chain.pem",
-        ),
-    ]
-    .into_iter()
-    .map(|(kind, name)| DcapCollateralComponentV1 {
-        kind,
-        bytes: std::fs::read(format!("{ROOT}{name}")).unwrap(),
-    })
-    .collect();
+    let components = DCAP_COLLATERAL_COMPONENT_FILES
+        .into_iter()
+        .map(|(kind, name)| DcapCollateralComponentV1 {
+            kind,
+            bytes: std::fs::read(format!("{ROOT}{name}")).unwrap(),
+        })
+        .collect();
     let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
         intent,
         quote: std::fs::read(format!("{ROOT}quote.bin")).unwrap(),

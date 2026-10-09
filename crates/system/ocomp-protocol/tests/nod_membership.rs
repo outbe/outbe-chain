@@ -1,6 +1,6 @@
 use alloy_primitives::{address, B256, U256};
 use outbe_ocomp_protocol::{
-    list::streaming_ordered_list_membership_proof,
+    list::{streaming_ordered_list_membership_proof, OrderedListProofTarget},
     profile::poc_schema_limits,
     registry::ListKind,
     result::{ActiveNodSetV1, NodActionV1, NodMembershipProofV1},
@@ -45,9 +45,7 @@ fn fixture() -> (ActiveNodSetV1, NodMembershipProofV1) {
     }
     let nod_root = root.finish().unwrap();
     let membership_siblings = streaming_ordered_list_membership_proof(
-        ListKind::NodActions,
-        3,
-        1,
+        OrderedListProofTarget::new(ListKind::NodActions, 3, 1),
         &canonical_actions,
         limits.codec.max_body_bytes,
     )

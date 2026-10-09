@@ -7,27 +7,16 @@
 //!
 
 use alloy_primitives::{address, b256, Bytes, B256, U256};
-use outbe_primitives::{
-    block::{BlockContext, BlockRuntimeContext},
-    consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
-    storage::hashmap::HashMapStorageProvider,
+use outbe_primitives::consensus_metadata::{
+    CertifiedParentAccountingMetadata, ParentParticipationProof,
 };
 use outbe_rewards::runtime::{
     check_and_record_metadata_fingerprint, compute_metadata_fingerprint, MetadataFingerprintOutcome,
 };
 
-const CHAIN_ID: u64 = 1;
-const GENESIS_TS: u64 = 1_704_067_200;
+mod support;
 
-fn block_ctx(block_number: u64) -> BlockContext {
-    BlockContext::new(
-        block_number,
-        GENESIS_TS + 60,
-        CHAIN_ID,
-        alloy_primitives::Address::ZERO,
-        Vec::new(),
-    )
-}
+use support::with_block;
 
 fn base_metadata() -> CertifiedParentAccountingMetadata {
     CertifiedParentAccountingMetadata {
@@ -82,9 +71,7 @@ fn v2_rewards_fingerprint_changes_on_signer_bitmap_change() {
 
     // End-to-end through the guard: second call with perturbed bitmap
     // for the same fb_hash is contradictory.
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.enter(|handle| {
-        let ctx = BlockRuntimeContext::new(block_ctx(2), handle);
+    with_block(2, |ctx| {
         let outcome =
             check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(100u64), VRF_PROOF_HASH_A)
                 .unwrap();
@@ -177,4 +164,159 @@ fn v2_certificate_fingerprint_includes_valid_vrf_material_and_proof_hash() {
     // fingerprint is deterministic (re-computing returns the same B256).
     let fp_a_again = compute_metadata_fingerprint(&m, U256::from(100u64), vrf_hash_a);
     assert_eq!(fp_a, fp_a_again, "fingerprint must be deterministic");
+}
+
+// ---------------------------------------------------------------------------
+// Fingerprint guard characterization (moved from the `runtime` unit tests).
+// ---------------------------------------------------------------------------
+
+/// [`base_metadata`] without committee and VRF material.
+fn meta_v1() -> CertifiedParentAccountingMetadata {
+    CertifiedParentAccountingMetadata {
+        committee_set_hash: B256::ZERO,
+        vrf_material_version: 0,
+        vrf_group_public_key_hash: B256::ZERO,
+        ..base_metadata()
+    }
+}
+
+#[test]
+fn fingerprint_first_call_is_fresh() {
+    with_block(1, |ctx| {
+        let m = meta_v1();
+        let outcome =
+            check_and_record_metadata_fingerprint(&ctx, &m, U256::from(100u64), B256::ZERO)
+                .unwrap();
+        assert_eq!(outcome, MetadataFingerprintOutcome::Fresh);
+        let stored = ctx
+            .storage
+            .contract::<outbe_rewards::schema::Rewards>()
+            .metadata_fingerprint_for_block
+            .read(&m.finalized_block_hash)
+            .unwrap();
+        assert_ne!(stored, B256::ZERO);
+    });
+}
+
+#[test]
+fn fingerprint_replay_is_identical_replay() {
+    with_block(1, |ctx| {
+        let m = meta_v1();
+        let _ = check_and_record_metadata_fingerprint(&ctx, &m, U256::from(100u64), B256::ZERO)
+            .unwrap();
+        let outcome =
+            check_and_record_metadata_fingerprint(&ctx, &m, U256::from(100u64), B256::ZERO)
+                .unwrap();
+        assert_eq!(outcome, MetadataFingerprintOutcome::IdenticalReplay);
+        let outcome3 =
+            check_and_record_metadata_fingerprint(&ctx, &m, U256::from(100u64), B256::ZERO)
+                .unwrap();
+        assert_eq!(outcome3, MetadataFingerprintOutcome::IdenticalReplay);
+    });
+}
+
+#[test]
+fn fingerprint_mismatch_for_same_fb_hash_is_fatal() {
+    with_block(1, |ctx| {
+        let m1 = meta_v1();
+        let _ = check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(100u64), B256::ZERO)
+            .unwrap();
+
+        // Mutate `missed_proposers` (canonical content) - same fb_hash.
+        let mut m2 = m1.clone();
+        m2.missed_proposers = vec![outbe_primitives::consensus_metadata::MissedProposerEvent {
+            view: 1,
+            validator: address!("0x9999999999999999999999999999999999999999"),
+        }];
+        let err = check_and_record_metadata_fingerprint(&ctx, &m2, U256::from(100u64), B256::ZERO)
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("contradictory consensus metadata"),
+            "expected contradictory-fatal, got: {err}"
+        );
+
+        // Different fee sum, original metadata - also contradictory.
+        let err2 = check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(101u64), B256::ZERO)
+            .unwrap_err();
+        assert!(format!("{err2}").contains("contradictory consensus metadata"));
+    });
+}
+
+/// The V3 fingerprint binds the base certificate's signer bitmap.
+/// Late credits must use their separate authenticated phase, never a
+/// changed bitmap in a replay of the original CPA metadata.
+#[test]
+fn fingerprint_signer_bitmap_variation_is_contradictory_v3() {
+    with_block(1, |ctx| {
+        let m1 = meta_v1();
+        let _ = check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(100u64), B256::ZERO)
+            .unwrap();
+
+        let mut m2 = m1.clone();
+        m2.signer_bitmap = vec![1, 1, 1, 1];
+        let err = check_and_record_metadata_fingerprint(&ctx, &m2, U256::from(100u64), B256::ZERO)
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("contradictory consensus metadata"),
+            "V3: signer_bitmap variation must trigger contradictory-fatal; got: {err}"
+        );
+    });
+}
+
+#[test]
+fn fingerprint_distinct_fb_hashes_are_independent() {
+    with_block(1, |ctx| {
+        let mut m1 = meta_v1();
+        let mut m2 = meta_v1();
+        m2.finalized_block_hash =
+            b256!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        m1.finalized_block_number = 42;
+        m2.finalized_block_number = 43;
+
+        let r1 = check_and_record_metadata_fingerprint(&ctx, &m1, U256::from(100u64), B256::ZERO)
+            .unwrap();
+        let r2 = check_and_record_metadata_fingerprint(&ctx, &m2, U256::from(200u64), B256::ZERO)
+            .unwrap();
+        assert_eq!(r1, MetadataFingerprintOutcome::Fresh);
+        assert_eq!(r2, MetadataFingerprintOutcome::Fresh);
+    });
+}
+
+#[test]
+fn fingerprint_canonical_encoding_is_length_prefix_safe() {
+    // [A,B] || [C] should NOT collide with [A] || [B,C] under our
+    // canonical encoding because both lists carry length prefixes.
+    let a = address!("0x1111111111111111111111111111111111111111");
+    let b = address!("0x2222222222222222222222222222222222222222");
+    let c = address!("0x3333333333333333333333333333333333333333");
+
+    let m_x = CertifiedParentAccountingMetadata {
+        ordered_committee: vec![a, b],
+        missed_proposers: vec![outbe_primitives::consensus_metadata::MissedProposerEvent {
+            view: 1,
+            validator: c,
+        }],
+        ..meta_v1()
+    };
+    let m_y = CertifiedParentAccountingMetadata {
+        ordered_committee: vec![a],
+        missed_proposers: vec![
+            outbe_primitives::consensus_metadata::MissedProposerEvent {
+                view: 1,
+                validator: b,
+            },
+            outbe_primitives::consensus_metadata::MissedProposerEvent {
+                view: 2,
+                validator: c,
+            },
+        ],
+        ..meta_v1()
+    };
+
+    let fp_x = compute_metadata_fingerprint(&m_x, U256::ZERO, B256::ZERO);
+    let fp_y = compute_metadata_fingerprint(&m_y, U256::ZERO, B256::ZERO);
+    assert_ne!(
+        fp_x, fp_y,
+        "length-prefix collision: lists [A,B]||[C] should not equal [A]||[B,C]"
+    );
 }

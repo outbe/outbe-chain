@@ -83,22 +83,26 @@ impl JoinEnclave {
         expected_tribute_offer_epoch: u64,
     ) -> std::result::Result<B256, TransportError> {
         match self {
-            Self::Committed(client) => client.begin_finalized_admission_v1(
-                artifact,
-                anchor_outcome,
-                expected_intent_hash,
-                expected_tribute_offer_public,
-                expected_key_epoch,
-                expected_tribute_offer_epoch,
-            ),
-            Self::Candidate(client) => client.begin_finalized_admission_v1(
-                artifact,
-                anchor_outcome,
-                expected_intent_hash,
-                expected_tribute_offer_public,
-                expected_key_epoch,
-                expected_tribute_offer_epoch,
-            ),
+            Self::Committed(client) => {
+                client.begin_finalized_admission_v1(outbe_tee::FinalizedAdmissionBeginInputV1 {
+                    artifact,
+                    anchor_outcome,
+                    expected_intent_hash,
+                    expected_tribute_offer_public,
+                    expected_key_epoch,
+                    expected_tribute_offer_epoch,
+                })
+            }
+            Self::Candidate(client) => {
+                client.begin_finalized_admission_v1(outbe_tee::FinalizedAdmissionBeginInputV1 {
+                    artifact,
+                    anchor_outcome,
+                    expected_intent_hash,
+                    expected_tribute_offer_public,
+                    expected_key_epoch,
+                    expected_tribute_offer_epoch,
+                })
+            }
             Self::Development(_) => {
                 unreachable!("finalized admission cannot use development transport")
             }

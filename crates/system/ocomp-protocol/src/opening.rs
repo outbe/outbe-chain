@@ -3,10 +3,9 @@ use std::collections::BTreeSet;
 use alloy_primitives::{Address, B256, U256};
 
 use crate::{
-    codec::{require_canonical_reencoding, CanonicalReader, CanonicalWriter},
     common::ProofBytes,
     error::ProtocolError,
-    schema::{require, wire_struct, NestedCodec, SchemaLimits},
+    schema::{impl_nested_record_codec, require, wire_struct, NestedCodec, SchemaLimits},
 };
 
 /// Per-request allocation/proof bound. It is not a total job or Tribute cap.
@@ -62,26 +61,7 @@ impl LysisOpeningsProofV1 {
     }
 }
 
-impl RawContractOpeningProofV1 {
-    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
-        <Self as NestedCodec>::validate(self, limits)?;
-        let mut writer = CanonicalWriter::new(limits.codec);
-        self.encode_nested(&mut writer, limits)?;
-        Ok(writer.into_bytes())
-    }
-
-    pub fn decode_canonical_record(
-        encoded: &[u8],
-        limits: &SchemaLimits,
-    ) -> Result<Self, ProtocolError> {
-        let mut reader = CanonicalReader::new(encoded, limits.codec)?;
-        let opening = Self::decode_nested(&mut reader, limits)?;
-        reader.finish()?;
-        <Self as NestedCodec>::validate(&opening, limits)?;
-        require_canonical_reencoding(encoded, &opening.encode_canonical_record(limits)?)?;
-        Ok(opening)
-    }
-}
+impl_nested_record_codec!(RawContractOpeningProofV1);
 
 /// Partitions one complete canonical owner set into bounded node opening
 /// requests. Every request carries the same complete Oracle ISO subject set.

@@ -23,6 +23,17 @@ use outbe_offchain_storage::{
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::{canonical_body, precompile::ITribute, RetainedTributePin, TributeData};
 
+pub(crate) const FIRST_NOD_PAGE: outbe_nod::NodPageRequest = outbe_nod::NodPageRequest {
+    after: None,
+    limit: 10,
+};
+
+pub(crate) const FIRST_TRIBUTE_PAGE: outbe_tribute::TributePageRequest =
+    outbe_tribute::TributePageRequest {
+        after: None,
+        limit: 10,
+    };
+
 #[derive(Default)]
 pub(crate) struct RecordingStorage {
     pub(crate) inner: MemoryStorage,
@@ -89,6 +100,19 @@ pub(crate) fn receipt(index: u64, hash_byte: u8, logs: Vec<FinalizedLog>) -> Fin
     }
 }
 
+pub(crate) fn single_receipt_block(
+    number: u64,
+    hash_byte: u8,
+    tx_hash_byte: u8,
+    logs: Vec<FinalizedLog>,
+) -> outbe_offchain_data::FinalizedBlock {
+    outbe_offchain_data::FinalizedBlock {
+        number,
+        hash: B256::repeat_byte(hash_byte),
+        receipts: vec![receipt(0, tx_hash_byte, logs)],
+    }
+}
+
 pub(crate) fn log(index: u64, emitter: Address, data: LogData) -> FinalizedLog {
     FinalizedLog {
         log_index: index,
@@ -105,33 +129,7 @@ pub(crate) fn poseidon_entity(owner: Address, day: u32) -> WwdEntityId {
     derive_poseidon_entity_id(owner, WorldwideDay::new(day)).unwrap()
 }
 
-pub(crate) fn tribute_body(tribute_id: WwdEntityId, owner: Address, day: u32) -> TributeData {
-    TributeData {
-        tribute_id,
-        owner,
-        worldwide_day: WorldwideDay::new(day),
-        issuance_amount_minor: U256::from(10),
-        issuance_currency: 840,
-        nominal_amount_minor: U256::from(11),
-        reference_currency: 978,
-        tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: true,
-    }
-}
-
-pub(crate) fn tribute_commitment(body: &TributeData) -> B256 {
-    let payload = encode_tribute_v1(&canonical_body(body)).unwrap();
-    B256::from(
-        *body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            BODY_SCHEMA_V1,
-            body.tribute_id,
-            &payload,
-        )
-        .unwrap()
-        .as_bytes(),
-    )
-}
+pub(crate) use super::entity_support::{tribute_body, tribute_commitment};
 
 pub(crate) fn tribute_stored(tribute_id: WwdEntityId, owner: Address, day: u32) -> LogData {
     tribute_stored_after(tribute_id, owner, day, B256::ZERO)

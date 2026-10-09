@@ -7,6 +7,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::schema::{validator_domain_key, HyperlaneControllerContract};
+use crate::{ControllerBootstrap, SignedCheckpoint};
 
 /// Selectors that accept native value: only `fund`, the top-up of the balance
 /// that pays Interchain Account dispatch fees. The route table binds this list
@@ -36,11 +37,13 @@ pub fn dispatch(
                 initialize(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.initialize(
                         sender,
-                        c.icaRouter,
-                        c.validatorAnnounce,
-                        &c.domains,
-                        &c.isms,
-                        &c.hooks,
+                        &ControllerBootstrap {
+                            ica_router: c.icaRouter,
+                            validator_announce: c.validatorAnnounce,
+                            domains: &c.domains,
+                            isms: &c.isms,
+                            hooks: &c.hooks,
+                        },
                     )
                 }),
                 fund(c) => mutate_void_payable(
@@ -58,11 +61,13 @@ pub fn dispatch(
                 submitCheckpoint(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.submit_checkpoint(
                         sender,
-                        c.domain,
-                        c.root,
-                        c.index,
-                        c.messageId,
-                        &c.signature,
+                        &SignedCheckpoint {
+                            domain: c.domain,
+                            root: c.root,
+                            index: c.index,
+                            message_id: c.messageId,
+                            signature: &c.signature,
+                        },
                     )
                 }),
                 icaRouter(c) => view(c, |_| controller.ica_router.read()),

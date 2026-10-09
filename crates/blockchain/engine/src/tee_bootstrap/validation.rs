@@ -135,7 +135,7 @@ pub(super) fn validate_submission(
 #[cfg(test)]
 mod validation_regression {
     use super::*;
-    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+    use outbe_primitives::tee_test_utils::sign_node_host_hash_for_test;
     fn policy() -> TeePolicyV1 {
         // Canonical golden bytes keep this fixture independent of the submission builder.
         let bytes = hex::decode(concat!(
@@ -167,12 +167,7 @@ mod validation_regression {
 
     fn node_signature(hash: B256) -> [u8; 65] {
         let key = k256::ecdsa::SigningKey::from_bytes((&[0x31; 32]).into()).unwrap();
-        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-            key.sign_prehash(hash.as_slice()).unwrap();
-        let mut encoded = [0; 65];
-        encoded[..64].copy_from_slice(signature.to_bytes().as_slice());
-        encoded[64] = recovery.to_byte();
-        encoded
+        sign_node_host_hash_for_test(&key, hash)
     }
     fn fixture() -> (
         TeeBootstrapParticipantSubmissionV2,

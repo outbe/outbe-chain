@@ -43,70 +43,55 @@ impl ObserverCommitments {
         let Some(signature) = data.topics().first().copied() else {
             return;
         };
-        if emitter == TRIBUTE_ADDRESS && signature == ITribute::TributeBodyStored::SIGNATURE_HASH {
-            let event = ITribute::TributeBodyStored::decode_log_data(data).unwrap();
-            replay_stored(
-                &mut self.tributes,
-                StoredCommitmentUpdate {
-                    identity: WwdEntityId::from(event.tributeId),
-                    scheme: event.commitmentSchemeVersion,
-                    schema: event.schemaVersion,
-                    previous: event.previousCommitment,
-                    new: event.newCommitment,
-                    payload: &event.canonicalPayload,
-                },
-            );
-        } else if emitter == TRIBUTE_ADDRESS
-            && signature == ITribute::TributeBodyDeleted::SIGNATURE_HASH
-        {
-            let event = ITribute::TributeBodyDeleted::decode_log_data(data).unwrap();
-            replay_deleted(
-                &mut self.tributes,
-                WwdEntityId::from(event.tributeId),
-                event.previousCommitment,
-            );
-        } else if emitter == NOD_ADDRESS && signature == INod::NodBodyStored::SIGNATURE_HASH {
-            let event = INod::NodBodyStored::decode_log_data(data).unwrap();
-            replay_stored(
-                &mut self.nod_items,
-                StoredCommitmentUpdate {
-                    identity: WwdEntityId::from(event.nodId),
-                    scheme: event.commitmentSchemeVersion,
-                    schema: event.schemaVersion,
-                    previous: event.previousCommitment,
-                    new: event.newCommitment,
-                    payload: &event.canonicalPayload,
-                },
-            );
-        } else if emitter == NOD_ADDRESS && signature == INod::NodBodyDeleted::SIGNATURE_HASH {
-            let event = INod::NodBodyDeleted::decode_log_data(data).unwrap();
-            replay_deleted(
-                &mut self.nod_items,
-                WwdEntityId::from(event.nodId),
-                event.previousCommitment,
-            );
-        } else if emitter == NOD_ADDRESS && signature == INod::NodBucketBodyStored::SIGNATURE_HASH {
-            let event = INod::NodBucketBodyStored::decode_log_data(data).unwrap();
-            replay_stored(
-                &mut self.nod_buckets,
-                StoredCommitmentUpdate {
-                    identity: WwdEntityId::from(event.bucketId),
-                    scheme: event.commitmentSchemeVersion,
-                    schema: event.schemaVersion,
-                    previous: event.previousCommitment,
-                    new: event.newCommitment,
-                    payload: &event.canonicalPayload,
-                },
-            );
-        } else if emitter == NOD_ADDRESS && signature == INod::NodBucketBodyDeleted::SIGNATURE_HASH
-        {
-            let event = INod::NodBucketBodyDeleted::decode_log_data(data).unwrap();
-            replay_deleted(
-                &mut self.nod_buckets,
-                WwdEntityId::from(event.bucketId),
-                event.previousCommitment,
-            );
+        if emitter == TRIBUTE_ADDRESS {
+            self.replay_tribute_event(signature, data);
+        } else if emitter == NOD_ADDRESS {
+            self.replay_nod_event(signature, data);
         }
+    }
+
+    fn replay_tribute_event(&mut self, signature: B256, data: &LogData) {
+        replay_event_pair::<ITribute::TributeBodyStored, ITribute::TributeBodyDeleted>(
+            &mut self.tributes,
+            signature,
+            data,
+            tribute_update,
+            |event| (WwdEntityId::from(event.tributeId), event.previousCommitment),
+        );
+    }
+
+    fn replay_nod_event(&mut self, signature: B256, data: &LogData) {
+        replay_event_pair::<INod::NodBodyStored, INod::NodBodyDeleted>(
+            &mut self.nod_items,
+            signature,
+            data,
+            nod_item_update,
+            |event| (WwdEntityId::from(event.nodId), event.previousCommitment),
+        );
+        replay_event_pair::<INod::NodBucketBodyStored, INod::NodBucketBodyDeleted>(
+            &mut self.nod_buckets,
+            signature,
+            data,
+            nod_bucket_update,
+            |event| (WwdEntityId::from(event.bucketId), event.previousCommitment),
+        );
+    }
+}
+
+fn replay_event_pair<Stored: SolEvent, Deleted: SolEvent>(
+    commitments: &mut BTreeMap<WwdEntityId, B256>,
+    signature: B256,
+    data: &LogData,
+    stored_update: for<'a> fn(&'a Stored) -> StoredCommitmentUpdate<'a>,
+    deleted_identity: fn(Deleted) -> (WwdEntityId, B256),
+) {
+    if signature == Stored::SIGNATURE_HASH {
+        let event = Stored::decode_log_data(data).unwrap();
+        replay_stored(commitments, stored_update(&event));
+    } else if signature == Deleted::SIGNATURE_HASH {
+        let event = Deleted::decode_log_data(data).unwrap();
+        let (identity, previous) = deleted_identity(event);
+        replay_deleted(commitments, identity, previous);
     }
 }
 
@@ -492,6 +477,39 @@ struct StoredCommitmentUpdate<'a> {
     new: B256,
     payload: &'a [u8],
 }
+fn tribute_update(event: &ITribute::TributeBodyStored) -> StoredCommitmentUpdate<'_> {
+    StoredCommitmentUpdate {
+        identity: WwdEntityId::from(event.tributeId),
+        scheme: event.commitmentSchemeVersion,
+        schema: event.schemaVersion,
+        previous: event.previousCommitment,
+        new: event.newCommitment,
+        payload: &event.canonicalPayload,
+    }
+}
+
+fn nod_item_update(event: &INod::NodBodyStored) -> StoredCommitmentUpdate<'_> {
+    StoredCommitmentUpdate {
+        identity: WwdEntityId::from(event.nodId),
+        scheme: event.commitmentSchemeVersion,
+        schema: event.schemaVersion,
+        previous: event.previousCommitment,
+        new: event.newCommitment,
+        payload: &event.canonicalPayload,
+    }
+}
+
+fn nod_bucket_update(event: &INod::NodBucketBodyStored) -> StoredCommitmentUpdate<'_> {
+    StoredCommitmentUpdate {
+        identity: WwdEntityId::from(event.bucketId),
+        scheme: event.commitmentSchemeVersion,
+        schema: event.schemaVersion,
+        previous: event.previousCommitment,
+        new: event.newCommitment,
+        payload: &event.canonicalPayload,
+    }
+}
+
 struct ReplayEntities {
     tribute_id: WwdEntityId,
     nod_id: WwdEntityId,

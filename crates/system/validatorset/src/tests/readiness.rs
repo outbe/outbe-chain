@@ -1,5 +1,35 @@
 use super::*;
 
+/// Registers, admits and activates `validator` with its OCOMP key, then
+/// returns that registration.
+fn active_with_ocomp(
+    vs: &mut ValidatorSet,
+    validator: Address,
+    consensus_key: &[u8; 48],
+    key_seed: u8,
+) -> outbe_primitives::error::Result<OcompKeyRegistrationV1> {
+    vs.register_validator(OWNER, validator, consensus_key)?;
+    vs.mark_pending(validator)?;
+    let (registration, encoded) = ocomp_registration(validator, consensus_key, key_seed);
+    vs.confirm_validator_ready(validator, &encoded)?;
+    vs.activate_validator_via_boundary_for_test(validator)?;
+    Ok(registration)
+}
+
+/// Removes the OCOMP admission state of an ACTIVE founder: its stored
+/// registration, its key reservation and its readiness flag.
+fn clear_founder_ocomp_state(
+    vs: &mut ValidatorSet,
+    validator: Address,
+    registration: &OcompKeyRegistrationV1,
+) -> outbe_primitives::error::Result<()> {
+    let key_hash = keccak256(registration.core.ocomp_public_key_sec1);
+    vs.val_ocomp_registration.get_bytes(&validator).clear()?;
+    vs.ocomp_key_hash_to_validator
+        .write(&key_hash, Address::ZERO)?;
+    vs.val_join_confirmed.write(&validator, false)
+}
+
 #[test]
 fn founder_key_bootstrap_imports_exact_active_order_and_replays_idempotently() {
     let validators = [Address::repeat_byte(0x61), Address::repeat_byte(0x62)];
@@ -10,30 +40,11 @@ fn founder_key_bootstrap_imports_exact_active_order_and_replays_idempotently() {
         for (index, (validator, consensus_key)) in
             validators.into_iter().zip(consensus_keys).enumerate()
         {
-            vs.register_validator(OWNER, validator, &consensus_key)
-                .unwrap();
-            vs.mark_pending(validator).unwrap();
-            let (registration, encoded) = ocomp_registration(
-                validator,
-                &consensus_key,
-                u8::try_from(index).unwrap().saturating_add(0x71),
-            );
-            vs.confirm_validator_ready(validator, &encoded).unwrap();
-            vs.activate_validator_via_boundary_for_test(validator)
-                .unwrap();
-            registrations.push(registration);
+            let key_seed = u8::try_from(index).unwrap().saturating_add(0x71);
+            registrations.push(active_with_ocomp(vs, validator, &consensus_key, key_seed).unwrap());
         }
-
         for (validator, registration) in validators.into_iter().zip(&registrations) {
-            let key_hash = keccak256(registration.core.ocomp_public_key_sec1);
-            vs.val_ocomp_registration
-                .get_bytes(&validator)
-                .clear()
-                .unwrap();
-            vs.ocomp_key_hash_to_validator
-                .write(&key_hash, Address::ZERO)
-                .unwrap();
-            vs.val_join_confirmed.write(&validator, false).unwrap();
+            clear_founder_ocomp_state(vs, validator, registration).unwrap();
         }
 
         vs.initialize_founder_ocomp_registrations(&registrations)
@@ -135,14 +146,9 @@ fn test_admitted_non_consensus_includes_registered_and_pending_not_active() {
         let pend = address!("0x2222222222222222222222222222222222222222");
         let act = address!("0x3333333333333333333333333333333333333333");
 
-        vs.register_validator(OWNER, reg, &dummy_consensus_pubkey(0x01))
-            .unwrap();
-        vs.register_validator(OWNER, pend, &dummy_consensus_pubkey(0x02))
-            .unwrap();
+        register_validators(vs, &[(reg, 0x01), (pend, 0x02)]).unwrap();
         vs.mark_pending(pend).unwrap();
-        vs.register_validator(OWNER, act, &dummy_consensus_pubkey(0x03))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(act).unwrap();
+        register_boundary_active(vs, act, 0x03).unwrap();
 
         let admitted: Vec<_> = vs
             .get_admitted_non_consensus_validators()
@@ -199,10 +205,7 @@ fn test_confirm_validator_ready_requires_pending() {
     with_vs_configured(128, |vs| {
         let reg = address!("0x1111111111111111111111111111111111111111");
         let act = address!("0x3333333333333333333333333333333333333333");
-        vs.register_validator(OWNER, reg, &dummy_consensus_pubkey(0x01))
-            .unwrap();
-        vs.register_validator(OWNER, act, &dummy_consensus_pubkey(0x03))
-            .unwrap();
+        register_validators(vs, &[(reg, 0x01), (act, 0x03)]).unwrap();
         vs.activate_validator_via_boundary_for_test(act).unwrap();
 
         assert!(
@@ -293,8 +296,7 @@ fn confirm_ready_exact_replay_rejects_ocomp_key_replacement_atomically() {
 fn reshare_target_requires_registration_even_if_readiness_flag_is_set() {
     with_vs_configured(128, |vs| {
         let validator = address!("0x5757575757575757575757575757575757575757");
-        vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(0x57))
-            .unwrap();
+        register_validators(vs, &[(validator, 0x57)]).unwrap();
         vs.mark_pending(validator).unwrap();
 
         // Model a stale/legacy/corrupt flag without the registration whose
@@ -414,8 +416,7 @@ fn full_validator_cleanup_preserves_immutable_ocomp_registration_and_key_pin() {
 fn certified_activation_rejects_registered_and_keyless_pending_members() {
     let registered = Address::repeat_byte(0x5A);
     with_vs_configured(128, |vs| {
-        vs.register_validator(OWNER, registered, &dummy_consensus_pubkey(0x5A))
-            .unwrap();
+        register_validators(vs, &[(registered, 0x5A)]).unwrap();
         let error = vs
             .activate_reshared_set(&[registered], B256::repeat_byte(0xA1))
             .unwrap_err();
@@ -425,8 +426,7 @@ fn certified_activation_rejects_registered_and_keyless_pending_members() {
 
     let pending = Address::repeat_byte(0x5B);
     with_vs_configured(128, |vs| {
-        vs.register_validator(OWNER, pending, &dummy_consensus_pubkey(0x5B))
-            .unwrap();
+        register_validators(vs, &[(pending, 0x5B)]).unwrap();
         vs.mark_pending(pending).unwrap();
         vs.val_join_confirmed.write(&pending, true).unwrap();
         let error = vs

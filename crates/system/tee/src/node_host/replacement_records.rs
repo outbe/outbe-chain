@@ -1,4 +1,10 @@
 use super::codec_error;
+use super::journal_records::{
+    decode_relay_fields, decode_submission_payload, encode_relay_fields, encode_submission_fields,
+    validate_submission_evidence_length, validate_submission_frame, JournalRelayPayload,
+    JournalRelayValidation, JournalSubmissionErrors, JournalSubmissionPayload,
+    JournalSubmissionValidation, RelayMaterial,
+};
 use super::read_owned_bounded_file;
 use super::MAX_INITIALIZATION_MANIFEST_BYTES;
 use crate::remote_session::FinalizedRegistryViewV1;
@@ -7,12 +13,12 @@ use crate::TransportError;
 use alloy_primitives::keccak256;
 
 use alloy_primitives::B256;
-use outbe_primitives::tee_attestation_v1::AttestationEvidenceV1;
 
 use outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1;
 
 use outbe_primitives::tee_attestation_v1::MAX_ATTESTATION_EVIDENCE_BYTES;
 
+use std::fmt;
 use std::path::Path;
 
 const REPLACEMENT_CANDIDATE_VERSION_V1: u8 = 1;
@@ -32,24 +38,69 @@ const REPLACEMENT_PROMOTION_VERSION_V1: u8 = 1;
 
 const REPLACEMENT_PROMOTION_BYTES: u64 = 1 + 32 + 32;
 
+const REPLACEMENT_SUBMISSION_VALIDATION: JournalSubmissionValidation =
+    JournalSubmissionValidation {
+        min_len: 134,
+        max_bytes: MAX_REPLACEMENT_SUBMISSION_BYTES,
+        version: REPLACEMENT_SUBMISSION_VERSION_V1,
+        framing_error: "replacement submission framing is invalid",
+        length_base: 134,
+        length_overflow_error: "replacement submission length overflow",
+        noncanonical_length_error: "replacement submission evidence length is non-canonical",
+        encode_evidence_length_error: "replacement submission evidence length overflow",
+        encode_allocation_error: "replacement submission allocation length overflow",
+        encode_cap_error: None,
+    };
+
+const REPLACEMENT_RELAY_VALIDATION: JournalRelayValidation = JournalRelayValidation {
+    header_len: 101,
+    max_bytes: MAX_REPLACEMENT_RELAY_BYTES,
+    version: REPLACEMENT_RELAY_VERSION_V1,
+    encode_length_overflow_error: "replacement relay length overflow",
+    encode_cap_error: "replacement relay exceeds its fixed cap",
+    raw_len_offset: 97,
+    raw_len_error: "replacement relay length",
+    from_block_offset: None,
+    from_block_error: "replacement relay length",
+    framing_error: "replacement relay framing is invalid",
+    raw_length_error: "replacement relay raw transaction length is invalid",
+    commitments_error: "replacement relay commitments are invalid",
+};
+
 /// Exact durable transaction material returned for relay retries. The evidence
 /// already contains the canonical replacement intent.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ReplacementCandidateSubmissionV1 {
-    pub(super) evidence: Vec<u8>,
-    pub(super) node_signature: [u8; 65],
-    pub(super) enclave_signature: [u8; 64],
+    payload: JournalSubmissionPayload,
 }
 
 /// Exact signed registration transaction persisted before relay. It is bound
 /// to the durable candidate submission so a restart cannot attach another
 /// transaction to already-quoted evidence.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ReplacementCandidateRelayV1 {
-    pub(super) submission_hash: B256,
-    pub(super) calldata_hash: B256,
-    pub(super) transaction_hash: B256,
-    pub(super) raw_transaction: Vec<u8>,
+    payload: JournalRelayPayload,
+}
+
+impl fmt::Debug for ReplacementCandidateSubmissionV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReplacementCandidateSubmissionV1")
+            .field("evidence", &self.payload.evidence)
+            .field("node_signature", &self.payload.node_signature)
+            .field("enclave_signature", &self.payload.enclave_signature)
+            .finish()
+    }
+}
+
+impl fmt::Debug for ReplacementCandidateRelayV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReplacementCandidateRelayV1")
+            .field("submission_hash", &self.payload.submission_hash)
+            .field("calldata_hash", &self.payload.calldata_hash)
+            .field("transaction_hash", &self.payload.transaction_hash)
+            .field("raw_transaction", &self.payload.raw_transaction)
+            .finish()
+    }
 }
 
 /// Opaque authority for one exact finalized registry binding.
@@ -82,19 +133,29 @@ pub struct FinalizedReplacementBindingV1 {
 }
 
 impl ReplacementCandidateSubmissionV1 {
+    pub(super) fn new(
+        evidence: Vec<u8>,
+        node_signature: [u8; 65],
+        enclave_signature: [u8; 64],
+    ) -> Self {
+        Self {
+            payload: JournalSubmissionPayload::new(evidence, node_signature, enclave_signature),
+        }
+    }
+
     #[must_use]
     pub fn evidence(&self) -> &[u8] {
-        &self.evidence
+        &self.payload.evidence
     }
 
     #[must_use]
     pub const fn node_signature(&self) -> &[u8; 65] {
-        &self.node_signature
+        &self.payload.node_signature
     }
 
     #[must_use]
     pub const fn enclave_signature(&self) -> &[u8; 64] {
-        &self.enclave_signature
+        &self.payload.enclave_signature
     }
 
     pub fn submission_hash(&self) -> Result<B256, TransportError> {
@@ -102,126 +163,68 @@ impl ReplacementCandidateSubmissionV1 {
     }
 
     pub(super) fn encode_canonical(&self) -> Result<Vec<u8>, TransportError> {
-        let evidence_len = u32::try_from(self.evidence.len()).map_err(|_| {
-            TransportError::Codec("replacement submission evidence length overflow".into())
-        })?;
-        let capacity = 134_usize.checked_add(self.evidence.len()).ok_or_else(|| {
-            TransportError::Codec("replacement submission allocation length overflow".into())
-        })?;
-        let mut out = Vec::with_capacity(capacity);
-        out.push(REPLACEMENT_SUBMISSION_VERSION_V1);
-        out.extend_from_slice(&evidence_len.to_be_bytes());
-        out.extend_from_slice(&self.evidence);
-        out.extend_from_slice(&self.node_signature);
-        out.extend_from_slice(&self.enclave_signature);
-        Ok(out)
+        encode_submission_fields(&[], &self.payload, &REPLACEMENT_SUBMISSION_VALIDATION)
     }
 
     fn decode_canonical(input: &[u8]) -> Result<Self, TransportError> {
-        if input.len() < 134
-            || u64::try_from(input.len()).unwrap_or(u64::MAX) > MAX_REPLACEMENT_SUBMISSION_BYTES
-            || input[0] != REPLACEMENT_SUBMISSION_VERSION_V1
-        {
-            return Err(TransportError::Codec(
-                "replacement submission framing is invalid".into(),
-            ));
-        }
+        validate_submission_frame(input, &REPLACEMENT_SUBMISSION_VALIDATION)?;
         let evidence_len =
             usize::try_from(u32::from_be_bytes([input[1], input[2], input[3], input[4]])).map_err(
                 |_| TransportError::Codec("replacement evidence length overflow".into()),
             )?;
-        let expected_len = 134_usize.checked_add(evidence_len).ok_or_else(|| {
-            TransportError::Codec("replacement submission length overflow".into())
-        })?;
-        if evidence_len > MAX_ATTESTATION_EVIDENCE_BYTES || input.len() != expected_len {
-            return Err(TransportError::Codec(
-                "replacement submission evidence length is non-canonical".into(),
-            ));
-        }
-        let evidence_end = 5 + evidence_len;
-        let evidence = input[5..evidence_end].to_vec();
-        AttestationEvidenceV1::decode_canonical(&evidence).map_err(codec_error)?;
-        let node_signature = input[evidence_end..evidence_end + 65]
-            .try_into()
-            .map_err(|_| TransportError::Codec("replacement node signature length".into()))?;
-        let enclave_signature = input[evidence_end + 65..]
-            .try_into()
-            .map_err(|_| TransportError::Codec("replacement enclave signature length".into()))?;
-        Ok(Self {
-            evidence,
-            node_signature,
-            enclave_signature,
-        })
+        validate_submission_evidence_length(
+            input.len(),
+            evidence_len,
+            &REPLACEMENT_SUBMISSION_VALIDATION,
+        )?;
+        let payload = decode_submission_payload(
+            input,
+            5,
+            evidence_len,
+            JournalSubmissionErrors {
+                node_signature: "replacement node signature length",
+                enclave_signature: "replacement enclave signature length",
+            },
+        )?;
+        Ok(Self { payload })
     }
 }
 
 impl ReplacementCandidateRelayV1 {
+    pub(super) fn new(submission_hash: B256, material: RelayMaterial) -> Self {
+        Self {
+            payload: JournalRelayPayload::new(submission_hash, material),
+        }
+    }
+
+    pub(super) fn submission_hash(&self) -> B256 {
+        self.payload.submission_hash
+    }
+
     #[must_use]
     pub const fn calldata_hash(&self) -> B256 {
-        self.calldata_hash
+        self.payload.calldata_hash
     }
 
     #[must_use]
     pub const fn transaction_hash(&self) -> B256 {
-        self.transaction_hash
+        self.payload.transaction_hash
     }
 
     #[must_use]
     pub fn raw_transaction(&self) -> &[u8] {
-        &self.raw_transaction
+        &self.payload.raw_transaction
     }
 
     pub(super) fn encode_canonical(&self) -> Result<Vec<u8>, TransportError> {
-        let raw_len = u32::try_from(self.raw_transaction.len())
-            .map_err(|_| TransportError::Codec("replacement relay length overflow".into()))?;
-        let mut out = Vec::with_capacity(101 + self.raw_transaction.len());
-        out.push(REPLACEMENT_RELAY_VERSION_V1);
-        out.extend_from_slice(self.submission_hash.as_slice());
-        out.extend_from_slice(self.calldata_hash.as_slice());
-        out.extend_from_slice(self.transaction_hash.as_slice());
-        out.extend_from_slice(&raw_len.to_be_bytes());
-        out.extend_from_slice(&self.raw_transaction);
-        if u64::try_from(out.len()).unwrap_or(u64::MAX) > MAX_REPLACEMENT_RELAY_BYTES {
-            return Err(TransportError::Codec(
-                "replacement relay exceeds its fixed cap".into(),
-            ));
-        }
-        Ok(out)
+        encode_relay_fields(&self.payload, None, &REPLACEMENT_RELAY_VALIDATION)
     }
 
     fn decode_canonical(input: &[u8]) -> Result<Self, TransportError> {
-        if input.len() < 101
-            || u64::try_from(input.len()).unwrap_or(u64::MAX) > MAX_REPLACEMENT_RELAY_BYTES
-            || input[0] != REPLACEMENT_RELAY_VERSION_V1
-        {
-            return Err(TransportError::Codec(
-                "replacement relay framing is invalid".into(),
-            ));
-        }
-        let raw_len = u32::from_be_bytes(
-            input[97..101]
-                .try_into()
-                .map_err(|_| TransportError::Codec("replacement relay length".into()))?,
-        ) as usize;
-        if input.len() != 101 + raw_len || raw_len == 0 {
-            return Err(TransportError::Codec(
-                "replacement relay raw transaction length is invalid".into(),
-            ));
-        }
+        let fields = decode_relay_fields(input, &REPLACEMENT_RELAY_VALIDATION)?;
         let relay = Self {
-            submission_hash: B256::from_slice(&input[1..33]),
-            calldata_hash: B256::from_slice(&input[33..65]),
-            transaction_hash: B256::from_slice(&input[65..97]),
-            raw_transaction: input[101..].to_vec(),
+            payload: fields.payload,
         };
-        if relay.submission_hash.is_zero()
-            || relay.calldata_hash.is_zero()
-            || relay.transaction_hash != keccak256(&relay.raw_transaction)
-        {
-            return Err(TransportError::Codec(
-                "replacement relay commitments are invalid".into(),
-            ));
-        }
         Ok(relay)
     }
 }

@@ -8,11 +8,10 @@ use outbe_primitives::{
     signer::OutbeEvmSigner,
     storage::{hashmap::HashMapStorageProvider, PrecompileStorageProvider, StorageHandle},
     tee_attestation_v1::{
-        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-        DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1, NodeIdV1,
-        PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1,
-        TeeMeasurementRuleV1, TeePolicyV1, TeeRegistryGasScheduleV1, TransitionKeyReadyProofV1,
-        ValidatorNodeBindingV1,
+        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
+        EnclaveInitializationManifestV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
+        RegistrationIntentV1, RegistryMutatorV1, TeeMeasurementRuleV1, TeePolicyV1,
+        TeeRegistryGasScheduleV1, TransitionKeyReadyProofV1, ValidatorNodeBindingV1,
     },
 };
 use outbe_tee::dcap_protocol::{
@@ -45,13 +44,21 @@ use crate::{
 
 mod fixtures;
 use fixtures::{
-    full_node_public, full_node_registration_intent, full_node_signatures,
-    initialization_manifest_for_intent, measurement_transition_intent, policy,
-    register_same_key_node_for_lifecycle_test, register_validator, registration_intent,
-    renewal_intent, replacement_intent, reth_p2p_public_for_evm_signer, revert_message, signatures,
-    storage, storage_for_chain, validator_node_binding_authorization_for_evm_node,
-    validator_node_binding_authorization_for_p2p_node, verdict, IRegisterEnclaveV1Test,
-    CONSENSUS_KEY, NOW, OFFER_PUBLIC,
+    assert_created_then_idempotent, assert_replicas_match, assert_reverts, capped_lease_policy,
+    evidence_mutator_calldata, fixed_lease_policy, full_node_public, full_node_registration_intent,
+    full_node_signatures, initial_intent_for_manifest, initialization_manifest_for_intent,
+    installed_registry, max_lease_renewal, measurement_successor, measurement_transition_intent,
+    next_binding_intent, policy, register_calldata, register_same_key_node_for_lifecycle_test,
+    register_validator, registration_intent, renewal_intent, replacement_intent,
+    reth_p2p_public_for_evm_signer, run_as_validator_with_binding_of, run_installed,
+    run_on_three_replicas, storage, storage_for_chain, synthetic_dcap_evidence,
+    up_to_date_verdict_until, validator_binding, verdict, windowed_successor, EnclaveBindingSeeds,
+    LifecycleFullNode, LifecycleValidator, NodeAssociation, SignedIntent, CONSENSUS_KEY, NOW,
+    OFFER_PUBLIC,
+};
+pub(crate) use fixtures::{
+    assert_metered_writes, assert_normative_gas, hardening_policy, meter_production_gas,
+    normative_budget, successor_policy, MeteredCall,
 };
 
 mod layout;

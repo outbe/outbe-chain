@@ -16,6 +16,12 @@ use crate::schema::{ScheduledUpdateStatus, Update};
 use crate::version::format_protocol_version;
 use crate::ProtocolVersion;
 
+struct ScheduledUpdateRequest {
+    version: ProtocolVersion,
+    activation_height: u64,
+    info: String,
+}
+
 impl Update<'_> {
     /// Schedules an update from an approved vote proposal payload.
     pub fn schedule_update_from_propose(
@@ -42,9 +48,11 @@ impl Update<'_> {
         };
         self.schedule_update_from_propose_fields_classified(
             proposal_id,
-            version,
-            activation_height,
-            &info,
+            ScheduledUpdateRequest {
+                version,
+                activation_height,
+                info,
+            },
             current_height,
         )
     }
@@ -52,10 +60,35 @@ impl Update<'_> {
     fn schedule_update_from_propose_fields_classified(
         &mut self,
         proposal_id: U256,
-        version: ProtocolVersion,
-        activation_height: u64,
-        info: &str,
+        request: ScheduledUpdateRequest,
         current_height: u64,
+    ) -> Result<std::result::Result<(), UpdateError>> {
+        let ScheduledUpdateRequest {
+            version,
+            activation_height,
+            info,
+        } = request;
+        if let Err(error) = self.validate_new_upgrade(proposal_id, version)? {
+            return Ok(Err(error));
+        }
+        if let Err(error) = self.validate_activation_slot(activation_height, current_height)? {
+            return Ok(Err(error));
+        }
+
+        self.write_scheduled_update(proposal_id, version, activation_height, &info)?;
+        self.emit(IUpdate::ScheduledUpdateCreated {
+            proposalId: proposal_id,
+            version: version.raw(),
+            activationHeight: activation_height,
+            info: info.as_bytes().to_vec().into(),
+        })?;
+        Ok(Ok(()))
+    }
+
+    fn validate_new_upgrade(
+        &self,
+        proposal_id: U256,
+        version: ProtocolVersion,
     ) -> Result<std::result::Result<(), UpdateError>> {
         if self.read_scheduled_update(proposal_id)?.is_some() {
             return Ok(Err(UpdateError::ScheduledUpdateAlreadyExists));
@@ -70,6 +103,14 @@ impl Update<'_> {
             return Ok(Err(UpdateError::DowngradeNotAllowed));
         }
 
+        Ok(Ok(()))
+    }
+
+    fn validate_activation_slot(
+        &self,
+        activation_height: u64,
+        current_height: u64,
+    ) -> Result<std::result::Result<(), UpdateError>> {
         let chain_id = self.storage.chain_id()?;
         let min_activation = current_height.saturating_add(min_activation_buffer(chain_id));
         if activation_height < min_activation {
@@ -85,13 +126,6 @@ impl Update<'_> {
             return Ok(Err(UpdateError::TooManyWaitingForActivation));
         }
 
-        self.write_scheduled_update(proposal_id, version, activation_height, info)?;
-        self.emit(IUpdate::ScheduledUpdateCreated {
-            proposalId: proposal_id,
-            version: version.raw(),
-            activationHeight: activation_height,
-            info: info.as_bytes().to_vec().into(),
-        })?;
         Ok(Ok(()))
     }
 

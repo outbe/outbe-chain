@@ -58,13 +58,10 @@ impl VwapPolicy {
     pub fn validate(&self) -> Result<()> {
         let interval = self.vwap_update_interval_seconds;
         let lookback = self.vwap_lookback_seconds;
-        let supported = self.policy_version > 0
-            && interval > 0
-            && lookback > 0
-            && SECONDS_PER_DAY.is_multiple_of(interval)
-            && lookback.is_multiple_of(interval)
-            && lookback <= MAX_SNAPSHOT_RETENTION_SECONDS;
-        if supported {
+        let positive = self.policy_version > 0 && interval > 0 && lookback > 0;
+        // The cadence divides a day, and whole cadence steps fill the lookback.
+        let aligned = SECONDS_PER_DAY.is_multiple_of(interval) && lookback.is_multiple_of(interval);
+        if positive && aligned && lookback <= MAX_SNAPSHOT_RETENTION_SECONDS {
             Ok(())
         } else {
             Err(OracleError::InvalidVwapPolicy.into())

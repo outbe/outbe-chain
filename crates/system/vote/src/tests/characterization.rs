@@ -12,11 +12,14 @@ use crate::{
     handlers::TargetAdmission,
     precompile::IVote,
     schema::{BondSettlement, ProposalStatus, Vote},
+    state::ProposalSubmission,
 };
 
 use super::targets::*;
 use super::{
-    create_proposal_test, setup_default_validators, test_vote_registry, PROPOSER, VOTER_A,
+    assert_bond_closed, assert_event_counts, assert_finalized_error, count_events,
+    create_proposal_test, proposal_status, setup_default_validators, tally_after_window_with,
+    test_vote_registry, validator_vote, VoteTestExt, PROPOSER,
 };
 
 #[test]
@@ -54,9 +57,7 @@ fn creation_preserves_original_payload_bytes_in_state_and_log() {
 fn target_reservation_failure_rolls_back_proposal_target_state_and_log() {
     let mut provider = super::test_provider();
     {
-        let storage = StorageHandle::new(&mut provider);
-        setup_default_validators(storage.clone());
-        let mut vote = Vote::new(storage.clone());
+        let (storage, mut vote) = validator_vote(&mut provider);
         assert!(vote
             .create_proposal(
                 PROPOSER,
@@ -68,10 +69,7 @@ fn target_reservation_failure_rolls_back_proposal_target_state_and_log() {
             .is_err());
         assert_eq!(vote.proposal_count.read().unwrap(), U256::ZERO);
         assert_eq!(vote.pending_proposal_ids.len().unwrap(), 0);
-        assert_eq!(
-            storage.sload(UPDATE_ADDRESS, U256::from(999u64)).unwrap(),
-            U256::ZERO
-        );
+        assert_eq!(target_marker(&storage, 999), U256::ZERO);
     }
     assert!(provider.get_events(VOTE_ADDRESS).is_empty());
 }
@@ -79,9 +77,7 @@ fn target_reservation_failure_rolls_back_proposal_target_state_and_log() {
 #[test]
 fn execution_receives_original_payload_and_exact_context() {
     let mut provider = super::test_provider();
-    let storage = StorageHandle::new(&mut provider);
-    setup_default_validators(storage.clone());
-    let mut vote = Vote::new(storage.clone());
+    let (_, mut vote) = validator_vote(&mut provider);
     let proposal_id = vote
         .create_proposal(
             PROPOSER,
@@ -91,25 +87,14 @@ fn execution_receives_original_payload_and_exact_context() {
             &RAW_CONTEXT_REGISTRY,
         )
         .unwrap();
-    vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
-        .unwrap();
-    vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
-        .unwrap();
+    approve_by_quorum(&mut vote, proposal_id).unwrap();
 
     let finalize_height = 10 + VOTING_WINDOW_BLOCKS + 1;
-    vote.process_begin_block(
-        &block_context(storage, finalize_height),
-        &RAW_CONTEXT_REGISTRY,
-    )
-    .unwrap();
+    vote.begin_block_with(finalize_height, &RAW_CONTEXT_REGISTRY)
+        .unwrap();
 
     assert_eq!(
-        vote.proposals
-            .get(proposal_id)
-            .unwrap()
-            .unwrap()
-            .proposal_status()
-            .unwrap(),
+        proposal_status(&vote, proposal_id),
         ProposalStatus::Approved
     );
 }
@@ -140,11 +125,13 @@ fn public_bonded_admission_records_only_its_exact_liability() {
     let proposal_id = {
         let mut vote = Vote::new(storage);
         vote.create_proposal_with_value(
-            Address::repeat_byte(0x99),
-            UPDATE_ADDRESS,
-            RAW_PAYLOAD,
-            10,
-            U256::from(123u64),
+            ProposalSubmission {
+                proposer: Address::repeat_byte(0x99),
+                target_module: UPDATE_ADDRESS,
+                payload: RAW_PAYLOAD,
+                created_height: 10,
+                attached_value: U256::from(123u64),
+            },
             &PUBLIC_BONDED_REGISTRY,
         )
         .unwrap()
@@ -159,10 +146,20 @@ fn public_bonded_admission_records_only_its_exact_liability() {
     assert_eq!(provider.get_balance(VOTE_ADDRESS), U256::from(130u64));
 }
 
-#[test]
-fn public_bonded_value_identity_and_global_caps_fail_before_allocation() {
-    let outsider = Address::repeat_byte(0x99);
+/// A raw-payload public bonded submission of `proposer` at height 10.
+fn raw_bonded_submission(proposer: Address, attached_value: U256) -> ProposalSubmission<'static> {
+    ProposalSubmission {
+        proposer,
+        target_module: UPDATE_ADDRESS,
+        payload: RAW_PAYLOAD,
+        created_height: 10,
+        attached_value,
+    }
+}
 
+#[test]
+fn public_bonded_wrong_value_fails_before_allocation() {
+    let outsider = Address::repeat_byte(0x99);
     let mut invalid_provider = super::test_provider();
     {
         let storage = StorageHandle::new(&mut invalid_provider);
@@ -170,11 +167,7 @@ fn public_bonded_value_identity_and_global_caps_fail_before_allocation() {
         for actual in [U256::ZERO, U256::from(122u64), U256::from(124u64)] {
             match vote
                 .create_proposal_with_value(
-                    outsider,
-                    UPDATE_ADDRESS,
-                    RAW_PAYLOAD,
-                    10,
-                    actual,
+                    raw_bonded_submission(outsider, actual),
                     &PUBLIC_BONDED_REGISTRY,
                 )
                 .unwrap_err()
@@ -190,72 +183,55 @@ fn public_bonded_value_identity_and_global_caps_fail_before_allocation() {
     }
     assert!(invalid_provider.storage.is_empty());
     assert!(invalid_provider.get_events(VOTE_ADDRESS).is_empty());
+}
 
+#[test]
+fn public_bonded_second_pending_proposal_of_a_proposer_fails() {
+    let outsider = Address::repeat_byte(0x99);
     let mut identity_provider = super::test_provider();
     identity_provider.set_balance(VOTE_ADDRESS, U256::from(246u64));
-    {
-        let storage = StorageHandle::new(&mut identity_provider);
-        let mut vote = Vote::new(storage);
-        vote.create_proposal_with_value(
-            outsider,
-            UPDATE_ADDRESS,
-            RAW_PAYLOAD,
-            10,
-            U256::from(123u64),
-            &PUBLIC_BONDED_REGISTRY,
-        )
+    let storage = StorageHandle::new(&mut identity_provider);
+    let mut vote = Vote::new(storage);
+    let submission = raw_bonded_submission(outsider, U256::from(123u64));
+    vote.create_proposal_with_value(submission, &PUBLIC_BONDED_REGISTRY)
         .unwrap();
-        assert!(matches!(
-            vote.create_proposal_with_value(
-                outsider,
-                UPDATE_ADDRESS,
-                RAW_PAYLOAD,
-                10,
-                U256::from(123u64),
-                &PUBLIC_BONDED_REGISTRY,
-            ),
-            Err(PrecompileError::Revert(message))
-                if message == "proposer already has a pending public bonded proposal"
-        ));
-        assert_eq!(vote.proposal_count.read().unwrap(), U256::from(1u64));
-        assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
-    }
+    assert!(matches!(
+        vote.create_proposal_with_value(submission, &PUBLIC_BONDED_REGISTRY),
+        Err(PrecompileError::Revert(message))
+            if message == "proposer already has a pending public bonded proposal"
+    ));
+    assert_eq!(vote.proposal_count.read().unwrap(), U256::from(1u64));
+    assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
+}
 
+#[test]
+fn public_bonded_global_cap_fails_before_allocation() {
     let mut cap_provider = super::test_provider();
     let cap = MAX_PENDING_PUBLIC_BONDED_PROPOSALS;
     cap_provider.set_balance(VOTE_ADDRESS, U256::from(123u64) * U256::from(cap + 1));
-    {
-        let storage = StorageHandle::new(&mut cap_provider);
-        let mut vote = Vote::new(storage);
-        for index in 0..cap {
-            vote.create_proposal_with_value(
-                Address::from_word(U256::from(index + 1).into()),
-                UPDATE_ADDRESS,
-                RAW_PAYLOAD,
-                10,
-                U256::from(123u64),
-                &PUBLIC_BONDED_REGISTRY,
-            )
-            .unwrap();
-        }
-        assert!(matches!(
-            vote.create_proposal_with_value(
-                Address::repeat_byte(0xaa),
-                UPDATE_ADDRESS,
-                RAW_PAYLOAD,
-                10,
-                U256::from(123u64),
-                &PUBLIC_BONDED_REGISTRY,
-            ),
-            Err(PrecompileError::Revert(message))
-                if message == "too many pending public bonded proposals"
-        ));
-        assert_eq!(vote.proposal_count.read().unwrap(), U256::from(cap));
-        assert_eq!(
-            vote.bond_liabilities().unwrap(),
-            U256::from(123u64) * U256::from(cap)
-        );
+    let storage = StorageHandle::new(&mut cap_provider);
+    let mut vote = Vote::new(storage);
+    for index in 0..cap {
+        let proposer = Address::from_word(U256::from(index + 1).into());
+        vote.create_proposal_with_value(
+            raw_bonded_submission(proposer, U256::from(123u64)),
+            &PUBLIC_BONDED_REGISTRY,
+        )
+        .unwrap();
     }
+    assert!(matches!(
+        vote.create_proposal_with_value(
+            raw_bonded_submission(Address::repeat_byte(0xaa), U256::from(123u64)),
+            &PUBLIC_BONDED_REGISTRY,
+        ),
+        Err(PrecompileError::Revert(message))
+            if message == "too many pending public bonded proposals"
+    ));
+    assert_eq!(vote.proposal_count.read().unwrap(), U256::from(cap));
+    assert_eq!(
+        vote.bond_liabilities().unwrap(),
+        U256::from(123u64) * U256::from(cap)
+    );
 }
 
 #[test]
@@ -267,20 +243,19 @@ fn public_reservation_failure_rolls_back_proposal_liability_and_logs() {
         let mut vote = Vote::new(storage.clone());
         assert!(vote
             .create_proposal_with_value(
-                Address::repeat_byte(0x99),
-                UPDATE_ADDRESS,
-                "fail",
-                10,
-                U256::from(123u64),
+                ProposalSubmission {
+                    proposer: Address::repeat_byte(0x99),
+                    target_module: UPDATE_ADDRESS,
+                    payload: "fail",
+                    created_height: 10,
+                    attached_value: U256::from(123u64),
+                },
                 &PUBLIC_BONDED_REGISTRY,
             )
             .is_err());
         assert_eq!(vote.proposal_count.read().unwrap(), U256::ZERO);
         assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
-        assert_eq!(
-            storage.sload(UPDATE_ADDRESS, U256::from(998u64)).unwrap(),
-            U256::ZERO
-        );
+        assert_eq!(target_marker(&storage, 998), U256::ZERO);
     }
     assert!(provider.storage.is_empty());
     assert!(provider.get_events(VOTE_ADDRESS).is_empty());
@@ -290,61 +265,26 @@ fn public_reservation_failure_rolls_back_proposal_liability_and_logs() {
 fn public_bonded_execution_error_rolls_back_target_refunds_bond_and_keeps_reservation() {
     let mut provider = super::test_provider();
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
-    let storage = StorageHandle::new(&mut provider);
-    setup_default_validators(storage.clone());
-    let mut vote = Vote::new(storage.clone());
-    let proposal_id = vote
-        .create_proposal_with_value(
-            Address::repeat_byte(0x99),
-            UPDATE_ADDRESS,
-            "execution-error",
-            10,
-            U256::from(123u64),
-            &PUBLIC_BONDED_REGISTRY,
-        )
-        .unwrap();
-    vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
-        .unwrap();
-    vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
-        .unwrap();
+    let (storage, mut vote) = validator_vote(&mut provider);
+    let proposal_id =
+        approved_bonded_proposal(&mut vote, Address::repeat_byte(0x99), "execution-error").unwrap();
 
-    let deadline = 10 + VOTING_WINDOW_BLOCKS;
-    vote.process_begin_block(
-        &block_context(storage.clone(), deadline + 1),
-        &PUBLIC_BONDED_REGISTRY,
-    )
-    .unwrap();
+    tally_after_window_with(&mut vote, 10, &PUBLIC_BONDED_REGISTRY).unwrap();
 
-    assert_eq!(
-        vote.proposals
-            .get(proposal_id)
-            .unwrap()
-            .unwrap()
-            .proposal_status()
-            .unwrap(),
-        ProposalStatus::Error
-    );
-    assert_eq!(
-        vote.list_pending_proposal_ids().unwrap(),
-        Vec::<U256>::new()
-    );
-    assert_eq!(
-        vote.proposal_bond(proposal_id).unwrap().settlement,
-        BondSettlement::Refunded
-    );
-    assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+    assert_finalized_error(&vote, proposal_id);
+    assert_bond_closed(&vote, proposal_id, BondSettlement::Refunded);
     assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);
     assert_eq!(
         storage.balance(Address::repeat_byte(0x99)).unwrap(),
         U256::from(123u64)
     );
     assert_eq!(
-        storage.sload(UPDATE_ADDRESS, U256::from(997u64)).unwrap(),
+        target_marker(&storage, 997),
         proposal_id,
         "admission reservation must survive target execution rollback"
     );
     assert_eq!(
-        storage.sload(UPDATE_ADDRESS, U256::from(996u64)).unwrap(),
+        target_marker(&storage, 996),
         U256::ZERO,
         "partial target execution must roll back"
     );
@@ -360,55 +300,25 @@ fn approved_public_bond_refunds_once_and_preserves_forced_surplus() {
     provider.set_balance(owner, starting_owner_balance);
     let proposal_id;
     {
-        let storage = StorageHandle::new(&mut provider);
-        setup_default_validators(storage.clone());
-        let mut vote = Vote::new(storage.clone());
-        proposal_id = vote
-            .create_proposal_with_value(
-                owner,
-                UPDATE_ADDRESS,
-                RAW_PAYLOAD,
-                10,
-                U256::from(123u64),
-                &PUBLIC_BONDED_REGISTRY,
-            )
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
-            .unwrap();
+        let (storage, mut vote) = validator_vote(&mut provider);
+        proposal_id = approved_bonded_proposal(&mut vote, owner, RAW_PAYLOAD).unwrap();
 
         let deadline = 10 + VOTING_WINDOW_BLOCKS;
-        vote.process_begin_block(
-            &block_context(storage.clone(), deadline + 1),
-            &PUBLIC_BONDED_REGISTRY,
-        )
-        .unwrap();
+        vote.begin_block_with(deadline + 1, &PUBLIC_BONDED_REGISTRY)
+            .unwrap();
         assert_eq!(
-            vote.proposals
-                .get(proposal_id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
+            proposal_status(&vote, proposal_id),
             ProposalStatus::Approved
         );
-        assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Refunded
-        );
-        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+        assert_bond_closed(&vote, proposal_id, BondSettlement::Refunded);
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
         assert_eq!(
             storage.balance(owner).unwrap(),
             starting_owner_balance + U256::from(123u64)
         );
 
-        vote.process_begin_block(
-            &block_context(storage.clone(), deadline + 2),
-            &PUBLIC_BONDED_REGISTRY,
-        )
-        .unwrap();
+        vote.begin_block_with(deadline + 2, &PUBLIC_BONDED_REGISTRY)
+            .unwrap();
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
         assert_eq!(
             storage.balance(owner).unwrap(),
@@ -436,48 +346,30 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64) + forced_surplus);
     let proposal_id;
     {
-        let storage = StorageHandle::new(&mut provider);
-        setup_default_validators(storage.clone());
-        let mut vote = Vote::new(storage.clone());
+        let (storage, mut vote) = validator_vote(&mut provider);
         proposal_id = vote
             .create_proposal_with_value(
-                owner,
-                UPDATE_ADDRESS,
-                RAW_PAYLOAD,
-                10,
-                U256::from(123u64),
+                ProposalSubmission {
+                    proposer: owner,
+                    target_module: UPDATE_ADDRESS,
+                    payload: RAW_PAYLOAD,
+                    created_height: 10,
+                    attached_value: U256::from(123u64),
+                },
                 &PUBLIC_BONDED_REGISTRY,
             )
             .unwrap();
 
         let deadline = 10 + VOTING_WINDOW_BLOCKS;
-        vote.process_begin_block(
-            &block_context(storage.clone(), deadline + 1),
-            &PUBLIC_BONDED_REGISTRY,
-        )
-        .unwrap();
-        assert_eq!(
-            vote.proposals
-                .get(proposal_id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
-            ProposalStatus::Expired
-        );
-        assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Burned
-        );
-        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+        vote.begin_block_with(deadline + 1, &PUBLIC_BONDED_REGISTRY)
+            .unwrap();
+        assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Expired);
+        assert_bond_closed(&vote, proposal_id, BondSettlement::Burned);
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
         assert_eq!(storage.balance(owner).unwrap(), U256::ZERO);
 
-        vote.process_begin_block(
-            &block_context(storage.clone(), deadline + 2),
-            &PUBLIC_BONDED_REGISTRY,
-        )
-        .unwrap();
+        vote.begin_block_with(deadline + 2, &PUBLIC_BONDED_REGISTRY)
+            .unwrap();
         assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
     }
 
@@ -500,44 +392,17 @@ fn insufficient_escrow_rolls_back_target_status_index_accounting_and_events() {
     provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
     let proposal_id;
     {
-        let storage = StorageHandle::new(&mut provider);
-        setup_default_validators(storage.clone());
-        let mut vote = Vote::new(storage.clone());
-        proposal_id = vote
-            .create_proposal_with_value(
-                owner,
-                UPDATE_ADDRESS,
-                "applied-write",
-                10,
-                U256::from(123u64),
-                &PUBLIC_BONDED_REGISTRY,
-            )
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
-            .unwrap();
+        let (storage, mut vote) = validator_vote(&mut provider);
+        proposal_id = approved_bonded_proposal(&mut vote, owner, "applied-write").unwrap();
         storage
             .decrease_balance(VOTE_ADDRESS, U256::from(1u64))
             .unwrap();
 
-        let deadline = 10 + VOTING_WINDOW_BLOCKS;
         assert!(matches!(
-            vote.process_begin_block(
-                &block_context(storage.clone(), deadline + 1),
-                &PUBLIC_BONDED_REGISTRY,
-            ),
+            tally_after_window_with(&mut vote, 10, &PUBLIC_BONDED_REGISTRY),
             Err(PrecompileError::Fatal(_))
         ));
-        assert_eq!(
-            vote.proposals
-                .get(proposal_id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
-            ProposalStatus::Pending
-        );
+        assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Pending);
         assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
         assert_eq!(
             vote.proposal_bond(proposal_id).unwrap().settlement,
@@ -545,12 +410,12 @@ fn insufficient_escrow_rolls_back_target_status_index_accounting_and_events() {
         );
         assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
         assert_eq!(
-            storage.sload(UPDATE_ADDRESS, U256::from(994u64)).unwrap(),
+            target_marker(&storage, 994),
             proposal_id,
             "admission reservation must survive failed settlement"
         );
         assert_eq!(
-            storage.sload(UPDATE_ADDRESS, U256::from(995u64)).unwrap(),
+            target_marker(&storage, 995),
             U256::ZERO,
             "target execution must roll back with failed settlement"
         );
@@ -558,129 +423,46 @@ fn insufficient_escrow_rolls_back_target_status_index_accounting_and_events() {
         assert_eq!(storage.balance(owner).unwrap(), U256::ZERO);
     }
 
-    let logs = provider.get_events(VOTE_ADDRESS);
-    assert_eq!(
-        logs.iter()
-            .filter(|log| {
-                log.topics().first() == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
-            })
-            .count(),
-        0
-    );
-    assert_eq!(
-        logs.iter()
-            .filter(|log| log.topics().first() == Some(&IVote::ProposalApproved::SIGNATURE_HASH))
-            .count(),
-        0
+    assert_event_counts(
+        &provider,
+        &[
+            (IVote::ProposalBondRefunded::SIGNATURE_HASH, 0),
+            (IVote::ProposalApproved::SIGNATURE_HASH, 0),
+        ],
     );
 }
 
 #[test]
 fn failure_after_every_approved_finalization_mutation_rolls_back_everything() {
-    let (mut baseline, baseline_id, deadline) = public_bonded_finalization_fixture();
-    {
-        let storage = StorageHandle::new(&mut baseline);
-        Vote::new(storage.clone())
-            .process_begin_block(
-                &block_context(storage, deadline + 1),
-                &PUBLIC_BONDED_REGISTRY,
-            )
-            .unwrap();
-    }
-    let mutation_count = baseline.clear_mutation_failure();
-    assert!(mutation_count > 0);
-    assert_eq!(baseline_id, U256::from(1u64));
-
-    for failure_point in 0..mutation_count {
-        let (mut provider, proposal_id, deadline) = public_bonded_finalization_fixture();
-        provider.fail_after_mutation_at(failure_point);
-        {
-            let storage = StorageHandle::new(&mut provider);
-            let error = Vote::new(storage.clone())
-                .process_begin_block(
-                    &block_context(storage, deadline + 1),
-                    &PUBLIC_BONDED_REGISTRY,
-                )
-                .unwrap_err();
-            assert!(
-                matches!(error, PrecompileError::Storage(_)),
-                "failure point {failure_point} returned {error:?}"
+    let baseline_id = assert_every_finalization_mutation_rolls_back(
+        public_bonded_finalization_fixture,
+        PendingBond {
+            liabilities: U256::from(123u64),
+            vote_balance: U256::from(130u64),
+        },
+        |storage, proposal_id, failure_point| {
+            assert_eq!(
+                storage.balance(Address::repeat_byte(0x99)).unwrap(),
+                U256::from(11u64),
+                "failure point {failure_point}"
             );
-        }
-        provider.clear_mutation_failure();
-
-        let storage = StorageHandle::new(&mut provider);
-        let vote = Vote::new(storage.clone());
-        assert_eq!(
-            vote.proposals
-                .get(proposal_id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
-            ProposalStatus::Pending,
-            "failure point {failure_point}"
-        );
-        assert_eq!(
-            vote.list_pending_proposal_ids().unwrap(),
-            vec![proposal_id],
-            "failure point {failure_point}"
-        );
-        assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Unsettled,
-            "failure point {failure_point}"
-        );
-        assert_eq!(
-            vote.bond_liabilities().unwrap(),
-            U256::from(123u64),
-            "failure point {failure_point}"
-        );
-        assert_eq!(
-            storage.balance(VOTE_ADDRESS).unwrap(),
-            U256::from(130u64),
-            "failure point {failure_point}"
-        );
-        assert_eq!(
-            storage.balance(Address::repeat_byte(0x99)).unwrap(),
-            U256::from(11u64),
-            "failure point {failure_point}"
-        );
-        assert_eq!(
-            storage.sload(UPDATE_ADDRESS, U256::from(994u64)).unwrap(),
-            proposal_id,
-            "failure point {failure_point}"
-        );
-        assert_eq!(
-            storage.sload(UPDATE_ADDRESS, U256::from(995u64)).unwrap(),
-            U256::ZERO,
-            "failure point {failure_point}"
-        );
-        drop(vote);
-        drop(storage);
-        assert_eq!(
-            provider
-                .get_events(VOTE_ADDRESS)
-                .iter()
-                .filter(|log| {
-                    log.topics().first() == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
-                })
-                .count(),
-            0,
-            "failure point {failure_point}"
-        );
-        assert_eq!(
-            provider
-                .get_events(VOTE_ADDRESS)
-                .iter()
-                .filter(|log| {
-                    log.topics().first() == Some(&IVote::ProposalApproved::SIGNATURE_HASH)
-                })
-                .count(),
-            0,
-            "failure point {failure_point}"
-        );
-    }
+            assert_eq!(
+                target_marker(storage, 994),
+                proposal_id,
+                "failure point {failure_point}"
+            );
+            assert_eq!(
+                target_marker(storage, 995),
+                U256::ZERO,
+                "failure point {failure_point}"
+            );
+        },
+        &[
+            IVote::ProposalBondRefunded::SIGNATURE_HASH,
+            IVote::ProposalApproved::SIGNATURE_HASH,
+        ],
+    );
+    assert_eq!(baseline_id, U256::from(1u64));
 }
 
 #[test]
@@ -688,56 +470,19 @@ fn approved_handler_failure_rolls_back_target_and_records_error_without_replay()
     let mut provider = super::test_provider();
     let proposal_id;
     {
-        let storage = StorageHandle::new(&mut provider);
-        setup_default_validators(storage.clone());
-        let mut vote = Vote::new(storage.clone());
-        proposal_id = vote
-            .create_proposal(
-                PROPOSER,
-                UPDATE_ADDRESS,
-                "{\"kind\":\"legacy\"}",
-                10,
-                &REJECTING_REGISTRY,
-            )
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
-            .unwrap();
+        let (storage, mut vote) = validator_vote(&mut provider);
+        proposal_id = approved_legacy_proposal(&mut vote, &REJECTING_REGISTRY).unwrap();
 
         let deadline = 10 + VOTING_WINDOW_BLOCKS;
-        vote.process_begin_block(
-            &block_context(storage.clone(), deadline + 1),
-            &REJECTING_REGISTRY,
-        )
-        .unwrap();
-        assert_eq!(
-            vote.proposals
-                .get(proposal_id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
-            ProposalStatus::Error
-        );
-        assert_eq!(
-            vote.list_pending_proposal_ids().unwrap(),
-            Vec::<U256>::new()
-        );
-        assert_eq!(
-            storage.sload(UPDATE_ADDRESS, U256::from(999u64)).unwrap(),
-            U256::ZERO
-        );
+        tally_after_window_with(&mut vote, 10, &REJECTING_REGISTRY).unwrap();
+        assert_finalized_error(&vote, proposal_id);
+        assert_eq!(target_marker(&storage, 999), U256::ZERO);
 
-        vote.process_begin_block(&block_context(storage, deadline + 2), &REJECTING_REGISTRY)
+        vote.begin_block_with(deadline + 2, &REJECTING_REGISTRY)
             .unwrap();
     }
 
-    let errored_count = provider
-        .get_events(VOTE_ADDRESS)
-        .iter()
-        .filter(|log| log.topics().first() == Some(&IVote::ProposalErrored::SIGNATURE_HASH))
-        .count();
+    let errored_count = count_events(&provider, IVote::ProposalErrored::SIGNATURE_HASH);
     assert_eq!(errored_count, 1, "error replay emitted a second log");
 }
 
@@ -746,59 +491,22 @@ fn infrastructure_failure_rolls_back_target_and_aborts_without_changing_proposal
     let mut provider = super::test_provider();
     let proposal_id;
     {
-        let storage = StorageHandle::new(&mut provider);
-        setup_default_validators(storage.clone());
-        let mut vote = Vote::new(storage.clone());
-        proposal_id = vote
-            .create_proposal(
-                PROPOSER,
-                UPDATE_ADDRESS,
-                "{\"kind\":\"legacy\"}",
-                10,
-                &TECHNICALLY_FAILING_REGISTRY,
-            )
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
-            .unwrap();
-
-        let deadline = 10 + VOTING_WINDOW_BLOCKS;
-        let err = vote
-            .process_begin_block(
-                &block_context(storage.clone(), deadline + 1),
-                &TECHNICALLY_FAILING_REGISTRY,
-            )
-            .unwrap_err();
+        let (storage, mut vote) = validator_vote(&mut provider);
+        proposal_id = approved_legacy_proposal(&mut vote, &TECHNICALLY_FAILING_REGISTRY).unwrap();
+        let err =
+            tally_after_window_with(&mut vote, 10, &TECHNICALLY_FAILING_REGISTRY).unwrap_err();
         assert!(matches!(err, PrecompileError::Fatal(_)));
-        assert_eq!(
-            vote.proposals
-                .get(proposal_id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
-            ProposalStatus::Pending
-        );
+        assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Pending);
         assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
-        assert_eq!(
-            storage.sload(UPDATE_ADDRESS, U256::from(999u64)).unwrap(),
-            U256::ZERO
-        );
+        assert_eq!(target_marker(&storage, 999), U256::ZERO);
     }
 
-    let logs = provider.get_events(VOTE_ADDRESS);
-    assert_eq!(
-        logs.iter()
-            .filter(|log| log.topics().first() == Some(&IVote::ProposalErrored::SIGNATURE_HASH))
-            .count(),
-        0
-    );
-    assert_eq!(
-        logs.iter()
-            .filter(|log| log.topics().first() == Some(&IVote::ProposalApproved::SIGNATURE_HASH))
-            .count(),
-        0
+    assert_event_counts(
+        &provider,
+        &[
+            (IVote::ProposalErrored::SIGNATURE_HASH, 0),
+            (IVote::ProposalApproved::SIGNATURE_HASH, 0),
+        ],
     );
 }
 
@@ -807,9 +515,7 @@ fn outer_hook_checkpoint_revert_restores_pending_state_index_and_logs() {
     let mut provider = super::test_provider();
     let proposal_id;
     {
-        let storage = StorageHandle::new(&mut provider);
-        setup_default_validators(storage.clone());
-        let mut vote = Vote::new(storage.clone());
+        let (storage, mut vote) = validator_vote(&mut provider);
         proposal_id = create_proposal_test(
             &mut vote,
             PROPOSER,
@@ -818,17 +524,9 @@ fn outer_hook_checkpoint_revert_restores_pending_state_index_and_logs() {
             10,
         )
         .unwrap();
-        vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
-            .unwrap();
-        vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
-            .unwrap();
-
-        let deadline = 10 + VOTING_WINDOW_BLOCKS;
+        approve_by_quorum(&mut vote, proposal_id).unwrap();
         let result: Result<()> = storage.with_checkpoint(|| {
-            vote.process_begin_block(
-                &block_context(storage.clone(), deadline + 1),
-                test_vote_registry(),
-            )?;
+            tally_after_window_with(&mut vote, 10, test_vote_registry())?;
             assert_eq!(
                 vote.proposals
                     .get(proposal_id)?
@@ -839,30 +537,16 @@ fn outer_hook_checkpoint_revert_restores_pending_state_index_and_logs() {
             Err(PrecompileError::Fatal("forced late hook failure".into()))
         });
         assert!(matches!(result, Err(PrecompileError::Fatal(_))));
-        assert_eq!(
-            vote.proposals
-                .get(proposal_id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
-            ProposalStatus::Pending
-        );
+        assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Pending);
         assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
     }
 
-    let logs = provider.get_events(VOTE_ADDRESS);
-    assert_eq!(
-        logs.iter()
-            .filter(|log| log.topics().first() == Some(&IVote::ProposalApproved::SIGNATURE_HASH))
-            .count(),
-        0
-    );
-    assert_eq!(
-        logs.iter()
-            .filter(|log| log.topics().first() == Some(&IVote::ProposalCreated::SIGNATURE_HASH))
-            .count(),
-        1
+    assert_event_counts(
+        &provider,
+        &[
+            (IVote::ProposalApproved::SIGNATURE_HASH, 0),
+            (IVote::ProposalCreated::SIGNATURE_HASH, 1),
+        ],
     );
 }
 

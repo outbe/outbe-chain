@@ -1,8 +1,9 @@
 use crate::world::rpc::*;
 
 impl Rpc {
-    /// Read and verify the Metadosis and Nod generation projections at the
-    /// exact finalized activation block.
+    /// Read a certified generation at the exact finalized activation block.
+    /// This reader checks both owner projections at `activation.block_number`.
+    /// It uses no off-chain storage field to construct the result.
     #[cfg(feature = "ocomp-integration")]
     pub fn finalized_ocomp_certified_generation_on(
         &self,
@@ -108,26 +109,5 @@ impl Rpc {
     }
 }
 
-/// Finalized, cross-owner authority for one proof-backed Nod generation.
-///
-/// Both owner projections are read at `block_number`. Off-chain storage never supplies
-/// any field in this record.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompCertifiedGenerationV1 {
-    pub worldwide_day: u32,
-    pub generation: u64,
-    pub job_id: B256,
-    pub program_semantics_hash: B256,
-    pub nod_root: B256,
-    pub bucket_root: B256,
-    pub output_manifest_root: B256,
-    pub tribute_count: u32,
-    pub nod_count: u32,
-    pub bucket_count: u32,
-    pub nod_amount_total: U256,
-    pub lysis_allocation_minor: U256,
-    pub issued_at: u64,
-    pub result_evidence_hash: B256,
-    pub block_number: u64,
-    pub block_hash: B256,
-}
+/// Reuse the canonical generation record in the harness.
+pub use outbe_ocomp_protocol::capacity::CapacityRecoveredGenerationBindingV1 as OcompCertifiedGenerationV1;

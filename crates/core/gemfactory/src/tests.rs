@@ -123,17 +123,7 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         oracle.reference_currencies.push(840u16).unwrap();
         oracle.config_lookback_duration.write(86_400).unwrap();
         if let Some(rate) = rate {
-            outbe_oracle::api::register_pair(handle.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
-                .unwrap();
-            outbe_oracle::api::set_exchange_rate(
-                handle.clone(),
-                Address::ZERO,
-                outbe_oracle::api::DAY_TYPE_PAIR,
-                rate,
-                1,
-                T_NOW,
-            )
-            .unwrap();
+            outbe_oracle::test_support::publish_day_type_rate(&handle, rate, 1, T_NOW).unwrap();
         }
     });
     storage
@@ -226,8 +216,17 @@ fn seed_qualifying_day(storage: &StorageHandle<'_>, gem_id: U256) {
 fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
     let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
     outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-    outbe_oracle::api::set_exchange_rate(storage.clone(), Address::ZERO, pair, rate, 1, T_NOW)
-        .unwrap();
+    outbe_oracle::api::set_exchange_rate(
+        storage.clone(),
+        Address::ZERO,
+        pair,
+        outbe_oracle::api::RateObservation {
+            rate,
+            block_number: 1,
+            timestamp: T_NOW,
+        },
+    )
+    .unwrap();
     OracleContract::new(storage.clone())
         .reference_currencies
         .push(iso)

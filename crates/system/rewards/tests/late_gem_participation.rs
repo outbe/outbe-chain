@@ -7,6 +7,11 @@ use outbe_primitives::{
 };
 use outbe_rewards::{api, finalized_metadata_hook::on_finalized_metadata, late_settlement};
 
+#[path = "support/coen840.rs"]
+mod coen840;
+
+use coen840::{one_coen840, publish_coen840_quote, record_coen840_day_vwap};
+
 const DAY: u32 = 20240101;
 const MIDNIGHT: u64 = 1_704_153_600;
 const HASH: B256 = B256::repeat_byte(0x42);
@@ -44,24 +49,12 @@ fn seed(ctx: &BlockRuntimeContext) {
     };
     // This seam consumes already-verified CPA. Cryptographic checks live in EVM.
     on_finalized_metadata(ctx, &metadata, U256::ZERO, MIDNIGHT - 1, &VOTERS[..3]).unwrap();
-    outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+    publish_coen840_quote(&ctx.storage, one_coen840(), 11, MIDNIGHT);
+    outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
+        .utc_day_vwap_last_finalized
+        .write(DAY)
         .unwrap();
-    outbe_oracle::api::set_exchange_rate(
-        ctx.storage.clone(),
-        Address::ZERO,
-        outbe_oracle::api::DAY_TYPE_PAIR,
-        U256::from(1_000_000),
-        11,
-        MIDNIGHT,
-    )
-    .unwrap();
-    let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
-    oracle.reference_currencies.push(840).unwrap();
-    oracle.utc_day_vwap_last_finalized.write(DAY).unwrap();
-    let (_, index) = outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
-    oracle
-        .record_utc_day_vwap(DAY, index, U256::from(1_000_000))
-        .unwrap();
+    record_coen840_day_vwap(&ctx.storage, DAY, one_coen840());
 }
 
 #[test]

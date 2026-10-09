@@ -1,6 +1,8 @@
 #[path = "../../../../testing/fixtures/storage_failures.rs"]
 mod storage_failures;
-use outbe_offchain_data::{runtime_body_readers, supervised_runtime_body_readers};
+use outbe_offchain_data::{
+    runtime_body_readers, supervised_runtime_body_readers, RuntimeBodyReaders,
+};
 use std::{sync::Arc, time::Duration};
 use storage_failures::FailingStorageReader;
 
@@ -119,12 +121,18 @@ fn bucket(bucket_key: B256) -> NodBucketState {
     }
 }
 
-#[test]
-fn typed_readers_share_one_memory_adapter() {
+/// One memory adapter: its reader, its writer and the runtime readers on it.
+fn memory_runtime() -> (StorageReaderHandle, StorageWriterHandle, RuntimeBodyReaders) {
     let storage = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = storage.clone();
     let writer: StorageWriterHandle = storage;
     let readers = runtime_body_readers(reader.clone());
+    (reader, writer, readers)
+}
+
+#[test]
+fn typed_readers_share_one_memory_adapter() {
+    let (reader, writer, readers) = memory_runtime();
 
     let tribute_id = entity(1);
     let nod_id = entity(2);
@@ -152,10 +160,7 @@ fn typed_readers_share_one_memory_adapter() {
 
 #[test]
 fn parent_body_source_gets_exact_bodies_and_lists_strict_id_pages() {
-    let storage = Arc::new(MemoryStorage::new());
-    let reader: StorageReaderHandle = storage.clone();
-    let writer: StorageWriterHandle = storage;
-    let readers = runtime_body_readers(reader.clone());
+    let (reader, writer, readers) = memory_runtime();
     let tribute_owner = Address::repeat_byte(0x11);
     let nod_owner = Address::repeat_byte(0x22);
     let tribute_ids = [entity(1), entity(2), entity(3)];
@@ -173,40 +178,7 @@ fn parent_body_source_gets_exact_bodies_and_lists_strict_id_pages() {
     }
     nod_writer.put_bucket(&bucket(bucket_key)).unwrap();
 
-    let stored_tribute = ParentBodySource::get(&readers, EntityRef::Tribute(tribute_ids[0]))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        decode_stored_tribute_v1(&stored_tribute.encode())
-            .unwrap()
-            .tribute_id,
-        tribute_ids[0]
-    );
-    let stored_nod = ParentBodySource::get(&readers, EntityRef::NodItem(nod_ids[0]))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        decode_stored_nod_item_v2(&stored_nod.encode())
-            .unwrap()
-            .encrypted
-            .terms
-            .nod_id,
-        nod_ids[0]
-    );
-    let stored_bucket = ParentBodySource::get(&readers, EntityRef::NodBucket(bucket_id))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        decode_stored_nod_bucket_v1(&stored_bucket.encode())
-            .unwrap()
-            .entity_id(),
-        bucket_id
-    );
-    assert!(
-        ParentBodySource::get(&readers, EntityRef::Tribute(entity(99)))
-            .unwrap()
-            .is_none()
-    );
+    assert_exact_bodies(&readers, tribute_ids[0], nod_ids[0], bucket_id);
 
     for (query, expected) in [
         (QueryRef::TributeByOwner(tribute_owner), &tribute_ids[..]),
@@ -217,29 +189,79 @@ fn parent_body_source_gets_exact_bodies_and_lists_strict_id_pages() {
         (QueryRef::NodByOwner(nod_owner), &nod_ids[..]),
         (QueryRef::NodAll, &nod_ids[..]),
     ] {
-        let first = ParentBodySource::list(
-            &readers,
-            query,
-            IdPageRequest {
-                after: None,
-                limit: 2,
-            },
-        )
-        .unwrap();
-        assert_eq!(first.ids, expected[..2]);
-        assert_eq!(first.next_after, Some(expected[1]));
-        let second = ParentBodySource::list(
-            &readers,
-            query,
-            IdPageRequest {
-                after: first.next_after,
-                limit: 2,
-            },
-        )
-        .unwrap();
-        assert_eq!(second.ids, expected[2..]);
-        assert_eq!(second.next_after, None);
+        assert_strict_id_pages(&readers, query, expected);
     }
+}
+
+fn assert_exact_bodies(
+    readers: &impl ParentBodySource,
+    tribute_id: WwdEntityId,
+    nod_id: WwdEntityId,
+    bucket_id: WwdEntityId,
+) {
+    let stored_tribute = ParentBodySource::get(readers, EntityRef::Tribute(tribute_id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        decode_stored_tribute_v1(&stored_tribute.encode())
+            .unwrap()
+            .tribute_id,
+        tribute_id
+    );
+    let stored_nod = ParentBodySource::get(readers, EntityRef::NodItem(nod_id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        decode_stored_nod_item_v2(&stored_nod.encode())
+            .unwrap()
+            .encrypted
+            .terms
+            .nod_id,
+        nod_id
+    );
+    let stored_bucket = ParentBodySource::get(readers, EntityRef::NodBucket(bucket_id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        decode_stored_nod_bucket_v1(&stored_bucket.encode())
+            .unwrap()
+            .entity_id(),
+        bucket_id
+    );
+    assert!(
+        ParentBodySource::get(readers, EntityRef::Tribute(entity(99)))
+            .unwrap()
+            .is_none()
+    );
+}
+
+fn assert_strict_id_pages(
+    readers: &impl ParentBodySource,
+    query: QueryRef,
+    expected: &[WwdEntityId],
+) {
+    let first = ParentBodySource::list(
+        readers,
+        query,
+        IdPageRequest {
+            after: None,
+            limit: 2,
+        },
+    )
+    .unwrap();
+    assert_eq!(first.ids, expected[..2]);
+    assert_eq!(first.next_after, Some(expected[1]));
+    let second = ParentBodySource::list(
+        readers,
+        query,
+        IdPageRequest {
+            after: first.next_after,
+            limit: 2,
+        },
+    )
+    .unwrap();
+    assert_eq!(second.ids, expected[2..]);
+    assert_eq!(second.next_after, None);
 }
 
 #[derive(Clone)]
@@ -360,10 +382,7 @@ fn parent_body_source_classifies_backend_absence_and_canonical_failures() {
 
 #[test]
 fn cloned_bundle_observes_later_writes_through_typed_readers() {
-    let storage = Arc::new(MemoryStorage::new());
-    let reader: StorageReaderHandle = storage.clone();
-    let writer: StorageWriterHandle = storage;
-    let readers = runtime_body_readers(reader.clone());
+    let (reader, writer, readers) = memory_runtime();
     let cloned = readers.clone();
     let tribute_id = entity(9);
 

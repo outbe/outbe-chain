@@ -156,16 +156,23 @@ fn ensure_continuous_binding(
             "renewal targets a superseded or different enclave identity".into(),
         ));
     }
-    if claims.mrenclave != current.mrenclave
-        || claims.mrsigner != current.mrsigner
-        || claims.isv_prod_id != current.isv_prod_id
-        || claims.isv_svn != current.isv_svn
-    {
+    if !matches_current_measurement(current, claims) {
         return Err(PrecompileError::Revert(
             "renewal cannot replace the admitted enclave measurement".into(),
         ));
     }
     Ok(())
+}
+
+#[cfg(feature = "tee-attestation-v1")]
+fn matches_current_measurement(
+    current: &NodeEnclaveBindingV1,
+    claims: &VerifiedEnclaveClaimsV1,
+) -> bool {
+    claims.mrenclave == current.mrenclave
+        && claims.mrsigner == current.mrsigner
+        && claims.isv_prod_id == current.isv_prod_id
+        && claims.isv_svn == current.isv_svn
 }
 
 #[cfg(feature = "tee-attestation-v1")]

@@ -37,22 +37,16 @@ use commonware_consensus::{
     types::{Epoch, Round, View},
 };
 use commonware_cryptography::{
-    bls12381::{
-        primitives::{
-            ops::{aggregate, keypair, sign_message},
-            variant::{MinPk, MinSig, Variant},
-        },
-        PrivateKey, PublicKey,
-    },
-    certificate::Signers,
+    bls12381::primitives::{ops::keypair, variant::MinSig},
     sha256::Digest as Sha256Digest,
-    Signer,
 };
-use commonware_utils::Participant;
 use outbe_consensus::hybrid::HybridScheme;
 use outbe_consensus::proof::{
-    constants::finalize_namespace, hybrid_seed_namespace, invalid_vrf_evidence_hash_v2,
-    HybridCertificate, V2VerifyError, VrfProof,
+    constants::finalize_namespace, invalid_vrf_evidence_hash_v2, HybridCertificate, V2VerifyError,
+};
+use outbe_consensus::test_harness::{
+    finalize_messages, test_fully_signed_metadata, vrf_test_committee, CertificateMessages,
+    TestFinalizedParent, VrfTestCommittee,
 };
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::consensus_metadata::{
@@ -66,9 +60,8 @@ use outbe_slashindicator::schema::SlashIndicator;
 use outbe_slashindicator::vrf_evidence::{InvalidVrfProofEvidence, MAGIC, VERSION};
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::state::{
-    committee_set_hash_v2, write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
-};
+use outbe_validatorset::state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot};
+use outbe_validatorset::test_support::{test_lifecycle_of, StorageOverrides};
 use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 use rand_commonware::rngs::ChaCha20Rng;
 use rand_commonware::SeedableRng;
@@ -88,6 +81,16 @@ const VRF_MATERIAL_VERSION: u64 = 5;
 
 const PARENT_BLOCK_HASH: B256 =
     b256!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+/// The finalized parent that every metadata fixture describes.
+const PARENT: TestFinalizedParent = TestFinalizedParent {
+    block_number: PARENT_BLOCK_NUMBER,
+    block_hash: PARENT_BLOCK_HASH,
+    epoch: CHILD_EPOCH,
+    view: FINALIZED_VIEW,
+    parent_view: PARENT_VIEW,
+    vrf_material_version: VRF_MATERIAL_VERSION,
+    proof_kind: ParentParticipationProof::Finalization,
+};
 const CHILD_BLOCK_HASH: B256 =
     b256!("0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
 
@@ -113,29 +116,7 @@ fn relaxed_schedule() -> OutbeProtocolSchedule {
 // DKG + cert + committee snapshot helpers (mirroring v3_fingerprint_end_to_end.rs)
 // ---------------------------------------------------------------------------
 
-struct Dkg {
-    keys: Vec<PrivateKey>,
-    pubkeys: Vec<PublicKey>,
-    vrf_group_public_key: <MinSig as Variant>::Public,
-    vrf_threshold_private: commonware_cryptography::bls12381::primitives::group::Private,
-}
-
-fn build_dkg(n: u32) -> Dkg {
-    let keys: Vec<PrivateKey> = (0..n)
-        .map(|i| PrivateKey::from_seed(i as u64 + 1))
-        .collect();
-    let pubkeys: Vec<PublicKey> = keys.iter().cloned().map(PublicKey::from).collect();
-    let mut rng = ChaCha20Rng::seed_from_u64(13);
-    let (vrf_threshold_private, vrf_group_public_key) = keypair::<_, MinSig>(&mut rng);
-    Dkg {
-        keys,
-        pubkeys,
-        vrf_group_public_key,
-        vrf_threshold_private,
-    }
-}
-
-fn build_snapshot(dkg: &Dkg, proposer_addr: Address) -> CommitteeSnapshot {
+fn build_snapshot(dkg: &VrfTestCommittee, proposer_addr: Address) -> CommitteeSnapshot {
     // Slot 0 = the proposer (the validator we'll be accusing). Other
     // slots get distinct placeholder addresses so the committee
     // membership check is non-trivial.
@@ -165,61 +146,28 @@ fn build_snapshot(dkg: &Dkg, proposer_addr: Address) -> CommitteeSnapshot {
     }
 }
 
-fn proposal_bytes(parent_hash: B256) -> (Round, Vec<u8>, Vec<u8>) {
-    let round = Round::new(Epoch::new(CHILD_EPOCH), View::new(FINALIZED_VIEW));
-    let payload = Sha256Digest(parent_hash.0);
-    let proposal: Proposal<Sha256Digest> = Proposal::new(round, View::new(PARENT_VIEW), payload);
-    let vote_message = proposal.encode().to_vec();
-    let seed_message = round.encode().to_vec();
-    (round, vote_message, seed_message)
-}
-
 /// Builds a cert whose BLS aggregate is real, and lets the caller choose a
 /// valid or cryptographically invalid mandatory `VrfProof`.
 fn build_cert(
-    dkg: &Dkg,
+    dkg: &VrfTestCommittee,
     signer_indices: &[u32],
     parent_hash: B256,
     valid_vrf: bool,
 ) -> HybridCertificate<MinSig> {
-    let participants = dkg.keys.len();
-    let signers = Signers::new(
-        participants as u32,
-        signer_indices.iter().copied().map(Participant::new),
-    )
-    .unwrap();
-
-    let (_, vote_message, seed_message) = proposal_bytes(parent_hash);
-    // Finalize votes bind the ordered committee. Build the canonical `Set`
-    // from the DKG committee (matches the snapshot the verifier reads).
-    let committee_set: commonware_utils::ordered::Set<PublicKey> =
-        commonware_utils::ordered::Set::from_iter_dedup(dkg.pubkeys.iter().cloned());
-    let sigs: Vec<_> = signer_indices
-        .iter()
-        .map(|&i| dkg.keys[i as usize].sign(&finalize_namespace(&committee_set), &vote_message))
-        .collect();
-    let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(
-        commonware_utils::iter::NonEmpty::try_new(sigs.iter().map(|s| s.as_ref())).unwrap(),
-    );
-
+    let (_, vote, seed) = finalize_messages(CHILD_EPOCH, FINALIZED_VIEW, PARENT_VIEW, parent_hash);
+    let vote_namespace = finalize_namespace(&dkg.committee_set());
     let vrf_signer = if valid_vrf {
         dkg.vrf_threshold_private.clone()
     } else {
         let mut rng = ChaCha20Rng::seed_from_u64(0x0BAD_5EED);
         keypair::<_, MinSig>(&mut rng).0
     };
-    let threshold_signature =
-        sign_message::<MinSig>(&vrf_signer, &hybrid_seed_namespace(), &seed_message);
-    let vrf_proof = VrfProof::<MinSig> {
-        material_version: VRF_MATERIAL_VERSION,
-        threshold_signature,
+    let messages = CertificateMessages {
+        vote_namespace: &vote_namespace,
+        vote: &vote,
+        seed: &seed,
     };
-
-    HybridCertificate {
-        signers,
-        bls_aggregated_vote,
-        vrf_proof,
-    }
+    dkg.certificate(signer_indices, &messages, &vrf_signer, VRF_MATERIAL_VERSION)
 }
 
 fn proof_envelope_bytes(cert: &HybridCertificate<MinSig>, parent_hash: B256) -> Vec<u8> {
@@ -238,29 +186,7 @@ fn build_metadata(
     snapshot: &CommitteeSnapshot,
     proof_bytes: &[u8],
 ) -> CertifiedParentAccountingMetadata {
-    let ordered_committee: Vec<Address> = snapshot
-        .committee
-        .iter()
-        .map(|entry| entry.address)
-        .collect();
-    let signer_bitmap = vec![1u8; snapshot.committee.len()];
-    let committee_set_hash = committee_set_hash_v2(CHILD_EPOCH, snapshot);
-    let vrf_group_public_key_hash = keccak256(&snapshot.vrf_group_public_key_bytes);
-    CertifiedParentAccountingMetadata {
-        finalized_block_number: PARENT_BLOCK_NUMBER,
-        finalized_block_hash: PARENT_BLOCK_HASH,
-        finalized_epoch: CHILD_EPOCH,
-        finalized_view: FINALIZED_VIEW,
-        parent_view: PARENT_VIEW,
-        ordered_committee,
-        signer_bitmap,
-        proof: Bytes::copy_from_slice(proof_bytes),
-        committee_set_hash,
-        vrf_material_version: VRF_MATERIAL_VERSION,
-        vrf_group_public_key_hash,
-        proof_kind: ParentParticipationProof::Finalization,
-        missed_proposers: Vec::new(),
-    }
+    test_fully_signed_metadata(&PARENT, snapshot, proof_bytes)
 }
 
 // ---------------------------------------------------------------------------
@@ -323,8 +249,7 @@ fn setup_storage(
     current_epoch: u64,
 ) {
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.config_owner.write(OWNER).unwrap();
-    vs.set_config_max_validators(100).unwrap();
+    vs.test_configure_registry(OWNER).unwrap();
     set_current_epoch(&mut vs, current_epoch);
     let stake = U256::from(STAKE_AMOUNT);
     let proposer_pubkey = snapshot
@@ -385,8 +310,7 @@ fn register_submitter_as_active(storage: StorageHandle) {
     let mut vs = ValidatorSet::new(storage);
     let mut pk = [0u8; 48];
     pk[0] = 0x77;
-    vs.config_owner.write(OWNER).unwrap();
-    vs.set_config_max_validators(100).unwrap();
+    vs.test_configure_registry(OWNER).unwrap();
     vs.register_validator(OWNER, SUBMITTER, &pk).unwrap();
     vs.activate_validator_via_boundary_for_test(SUBMITTER)
         .unwrap();
@@ -491,8 +415,7 @@ fn invalid_vrf_evidence_rejects_non_active_submitter() {
         let mut vs = ValidatorSet::new(storage.clone());
         let mut pk = [0u8; 48];
         pk[0] = 0x44;
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(100).unwrap();
+        vs.test_configure_registry(OWNER).unwrap();
         vs.register_validator(OWNER, SUBMITTER, &pk).unwrap();
         vs.activate_validator_via_boundary_for_test(SUBMITTER)
             .unwrap();
@@ -616,7 +539,7 @@ fn evidence_with_phase1_tx_not_eip2718_envelope_rejected() {
 fn evidence_with_phase1_tx_trailing_bytes_rejected() {
     with_storage(|storage| {
         let (signer, _) = signer_with_address();
-        let dkg = build_dkg(4);
+        let dkg = vrf_test_committee(4);
         let snapshot = build_snapshot(&dkg, signer.address());
         let cert = build_cert(&dkg, &[0, 1, 2, 3], PARENT_BLOCK_HASH, false);
         let cert_bytes = proof_envelope_bytes(&cert, PARENT_BLOCK_HASH);
@@ -642,7 +565,7 @@ fn evidence_with_phase1_tx_trailing_bytes_rejected() {
 fn evidence_with_missing_committee_snapshot_rejected() {
     with_storage_at(CHILD_BLOCK_NUMBER + 1, |storage| {
         let (signer, proposer) = signer_with_address();
-        let dkg = build_dkg(4);
+        let dkg = vrf_test_committee(4);
         let snapshot = build_snapshot(&dkg, proposer);
         let cert = build_cert(&dkg, &[0, 1, 2, 3], PARENT_BLOCK_HASH, false);
         let cert_bytes = proof_envelope_bytes(&cert, PARENT_BLOCK_HASH);
@@ -675,7 +598,7 @@ fn evidence_with_missing_committee_snapshot_rejected() {
 fn invalid_vrf_evidence_without_child_proposer_attribution_rejects() {
     with_storage_at(CHILD_BLOCK_NUMBER + 1, |storage| {
         let (signer, _proposer) = signer_with_address();
-        let dkg = build_dkg(4);
+        let dkg = vrf_test_committee(4);
         // Build a snapshot whose committee does NOT contain the
         // proposer-derived address. Use a different placeholder for
         // slot 0 (setup_storage registers + stakes the same
@@ -706,7 +629,7 @@ fn invalid_vrf_evidence_without_child_proposer_attribution_rejects() {
 fn evidence_with_valid_proof_rejected_as_not_slashable() {
     with_storage_at(CHILD_BLOCK_NUMBER + 1, |storage| {
         let (signer, proposer) = signer_with_address();
-        let dkg = build_dkg(4);
+        let dkg = vrf_test_committee(4);
         let snapshot = build_snapshot(&dkg, proposer);
         let cert = build_cert(
             &dkg,
@@ -737,7 +660,7 @@ fn evidence_with_valid_proof_rejected_as_not_slashable() {
 fn invalid_vrf_evidence_for_non_vrf_failure_class_rejects() {
     with_storage_at(CHILD_BLOCK_NUMBER + 1, |storage| {
         let (signer, proposer) = signer_with_address();
-        let dkg = build_dkg(4);
+        let dkg = vrf_test_committee(4);
         let snapshot = build_snapshot(&dkg, proposer);
         // Build a cert with the WRONG signer_indices in the BLS
         // aggregate (sign with all 4 keys but claim only signers
@@ -785,7 +708,7 @@ fn invalid_vrf_evidence_for_non_vrf_failure_class_rejects() {
 fn invalid_vrf_proof_evidence_slashes_child_proposer() {
     with_storage_at(CHILD_BLOCK_NUMBER + 1, |storage| {
         let (signer, proposer) = signer_with_address();
-        let dkg = build_dkg(4);
+        let dkg = vrf_test_committee(4);
         let snapshot = build_snapshot(&dkg, proposer);
         // false => the mandatory proof is present but signed by the wrong key.
         let cert = build_cert(&dkg, &[0, 1, 2, 3], PARENT_BLOCK_HASH, false);
@@ -806,10 +729,9 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
             .unwrap();
 
         // (a) Validator JAILED (felony, not force-exited).
-        let vs = ValidatorSet::new(storage.clone());
         assert!(
             matches!(
-                vs.validator_lifecycle(proposer).unwrap(),
+                test_lifecycle_of(storage.clone(), proposer).unwrap(),
                 ValidatorLifecycle::JailRetained(_)
             ),
             "proposer must be jailed"
@@ -866,7 +788,7 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
 fn invalid_vrf_evidence_deduplicates_by_canonical_hash() {
     with_storage_at(CHILD_BLOCK_NUMBER + 1, |storage| {
         let (signer, proposer) = signer_with_address();
-        let dkg = build_dkg(4);
+        let dkg = vrf_test_committee(4);
         let snapshot = build_snapshot(&dkg, proposer);
         let cert = build_cert(&dkg, &[0, 1, 2, 3], PARENT_BLOCK_HASH, false);
         let cert_bytes = proof_envelope_bytes(&cert, PARENT_BLOCK_HASH);
@@ -1051,7 +973,7 @@ fn evidence_admissibility_reads_current_epoch_from_validator_set_storage() {
 fn multiple_evidence_with_different_failure_codes_for_same_child_apply_at_most_one_slash() {
     with_storage_at(CHILD_BLOCK_NUMBER + 1, |storage| {
         let (signer, proposer) = signer_with_address();
-        let dkg = build_dkg(4);
+        let dkg = vrf_test_committee(4);
         let snapshot = build_snapshot(&dkg, proposer);
         let cert = build_cert(&dkg, &[0, 1, 2, 3], PARENT_BLOCK_HASH, false);
         let cert_bytes = proof_envelope_bytes(&cert, PARENT_BLOCK_HASH);
@@ -1109,7 +1031,7 @@ fn multiple_evidence_with_different_failure_codes_for_same_child_apply_at_most_o
 fn invalid_vrf_evidence_uses_existing_evidence_felony_economics() {
     with_storage_at(CHILD_BLOCK_NUMBER + 1, |storage| {
         let (signer, proposer) = signer_with_address();
-        let dkg = build_dkg(4);
+        let dkg = vrf_test_committee(4);
         let snapshot = build_snapshot(&dkg, proposer);
         let cert = build_cert(&dkg, &[0, 1, 2, 3], PARENT_BLOCK_HASH, false);
         let cert_bytes = proof_envelope_bytes(&cert, PARENT_BLOCK_HASH);
@@ -1207,7 +1129,7 @@ fn invalid_vrf_proof_evidence_with_non_canonical_parent_rejects() {
 fn slashindicator_dedup_retains_invalid_vrf_evidence_seen_hash() {
     with_storage_at(CHILD_BLOCK_NUMBER + 1, |storage| {
         let (signer, proposer) = signer_with_address();
-        let dkg = build_dkg(4);
+        let dkg = vrf_test_committee(4);
         let snapshot = build_snapshot(&dkg, proposer);
         let cert = build_cert(&dkg, &[0, 1, 2, 3], PARENT_BLOCK_HASH, false);
         let cert_bytes = proof_envelope_bytes(&cert, PARENT_BLOCK_HASH);

@@ -1,11 +1,13 @@
 //! Finalized entity projection through the same ports used by the node.
 use super::support::*;
 use alloy_primitives::{Address, B256};
-use outbe_offchain_data::{entity_partition_routing, FinalizedBlock, FinalizedLog};
+use outbe_offchain_data::{
+    entity_partition_routing, FinalizedBlock, FinalizedLog, OffchainDataProjection,
+};
 use outbe_offchain_storage::partitioned::adapters::{
     MemoryPartitionDataSource, RocksPartitionDataSource, RocksPartitionReadView,
 };
-use outbe_offchain_storage::{PartitionDataSource, PartitionedStorage};
+use outbe_offchain_storage::{AtomicWriteBatch, PartitionDataSource, PartitionedStorage};
 use outbe_primitives::{
     addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS},
     time::WorldwideDay,
@@ -55,18 +57,7 @@ fn exercise(source: Arc<dyn PartitionDataSource>, retained: bool) {
         .unwrap();
     let tribute = TributeRepositoryReader::new(storage.clone());
     let before = tribute.get_stored_body(tribute_id).unwrap().unwrap();
-    let prepared = projection
-        .prepare_block(&FinalizedBlock {
-            number: 11,
-            hash: B256::repeat_byte(11),
-            receipts: vec![receipt(
-                0,
-                12,
-                vec![log(0, TRIBUTE_ADDRESS, tribute_partition_retired(day))],
-            )],
-        })
-        .unwrap();
-    let (_, batch) = projection.apply_prepared_with_batch(prepared).unwrap();
+    let batch = retire_partition(&mut projection, day);
     // Without a retention pin, bulk retirement needs no body or index enumeration.
     if !retained {
         assert_eq!(batch.operations().len(), 2);
@@ -91,6 +82,22 @@ fn exercise(source: Arc<dyn PartitionDataSource>, retained: bool) {
             .unwrap();
         assert_eq!(body.encode(), before.encode());
     }
+}
+
+fn retire_partition(projection: &mut OffchainDataProjection, day: u32) -> AtomicWriteBatch {
+    let prepared = projection
+        .prepare_block(&FinalizedBlock {
+            number: 11,
+            hash: B256::repeat_byte(11),
+            receipts: vec![receipt(
+                0,
+                12,
+                vec![log(0, TRIBUTE_ADDRESS, tribute_partition_retired(day))],
+            )],
+        })
+        .unwrap();
+    let (_, batch) = projection.apply_prepared_with_batch(prepared).unwrap();
+    batch
 }
 
 #[test]

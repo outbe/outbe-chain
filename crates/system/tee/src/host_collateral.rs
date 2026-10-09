@@ -170,6 +170,14 @@ pub fn acquire_dcap_collateral_v1(
         ));
     }
 
+    copy_canonical_components(collateral, minor_version, quote)
+}
+
+fn copy_canonical_components(
+    collateral: &QuoteCollateral,
+    minor_version: u16,
+    quote: &[u8],
+) -> Result<Vec<DcapCollateralComponentV1>, TransportError> {
     let pck_chain = extract_type5_pck_chain(quote)?;
     let pck_crl = canonical_crl(
         copy_component(collateral.pck_crl, collateral.pck_crl_size, "PCK CRL")?,
@@ -297,6 +305,20 @@ fn verify_pinned_library(
 }
 
 fn extract_type5_pck_chain(quote: &[u8]) -> Result<Vec<u8>, TransportError> {
+    validate_complete_sgx_quote_v3(quote)?;
+    let pck_chain = type5_certification_data(quote)?.to_vec();
+    if !pck_chain.starts_with(b"-----BEGIN CERTIFICATE-----\n")
+        || !pck_chain.ends_with(&[0])
+        || pck_chain[..pck_chain.len() - 1].contains(&0)
+    {
+        return Err(TransportError::Attestation(
+            "type-5 PCK chain is not canonical PEM plus NUL".into(),
+        ));
+    }
+    Ok(pck_chain)
+}
+
+fn validate_complete_sgx_quote_v3(quote: &[u8]) -> Result<(), TransportError> {
     let minimum = FIXED_QUOTE_SIZE
         .checked_add(FIXED_AUTHENTICATION_SIZE)
         .and_then(|value| value.checked_add(8))
@@ -318,6 +340,10 @@ fn extract_type5_pck_chain(quote: &[u8]) -> Result<Vec<u8>, TransportError> {
             "SGX quote has trailing or truncated authentication bytes".into(),
         ));
     }
+    Ok(())
+}
+
+fn type5_certification_data(quote: &[u8]) -> Result<&[u8], TransportError> {
     let mut cursor = FIXED_QUOTE_SIZE + FIXED_AUTHENTICATION_SIZE;
     let qe_auth_size = usize::from(u16::from_le_bytes(
         quote
@@ -346,16 +372,7 @@ fn extract_type5_pck_chain(quote: &[u8]) -> Result<Vec<u8>, TransportError> {
             "quote does not contain exact type-5 PCK certification data".into(),
         ));
     }
-    let pck_chain = quote[cursor..end].to_vec();
-    if !pck_chain.starts_with(b"-----BEGIN CERTIFICATE-----\n")
-        || !pck_chain.ends_with(&[0])
-        || pck_chain[..pck_chain.len() - 1].contains(&0)
-    {
-        return Err(TransportError::Attestation(
-            "type-5 PCK chain is not canonical PEM plus NUL".into(),
-        ));
-    }
-    Ok(pck_chain)
+    Ok(&quote[cursor..end])
 }
 
 #[allow(unsafe_code)]
@@ -434,5 +451,73 @@ fn dynamic_loader_error() -> String {
         unsafe { CStr::from_ptr(error) }
             .to_string_lossy()
             .into_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PROCESSOR_QUOTE: &[u8] =
+        include_bytes!("../tests/fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin");
+
+    #[test]
+    fn type5_chain_is_copied_exactly_from_the_processor_quote() {
+        let chain = extract_type5_pck_chain(PROCESSOR_QUOTE).expect("valid type-5 chain");
+        let begin = b"-----BEGIN CERTIFICATE-----\n";
+        let start = PROCESSOR_QUOTE
+            .windows(begin.len())
+            .position(|window| window == begin)
+            .expect("fixture contains PEM chain");
+        assert_eq!(chain, PROCESSOR_QUOTE[start..]);
+        assert_eq!(chain.last(), Some(&0));
+    }
+
+    #[test]
+    fn malformed_quote_sections_fail_at_the_original_boundary() {
+        let mut wrong_version = PROCESSOR_QUOTE.to_vec();
+        wrong_version[0] = 4;
+        assert!(matches!(
+            extract_type5_pck_chain(&wrong_version),
+            Err(TransportError::Attestation(message))
+                if message == "quote is not a complete SGX quote v3"
+        ));
+
+        let mut truncated = PROCESSOR_QUOTE.to_vec();
+        truncated.pop();
+        assert!(matches!(
+            extract_type5_pck_chain(&truncated),
+            Err(TransportError::Attestation(message))
+                if message == "SGX quote has trailing or truncated authentication bytes"
+        ));
+
+        let mut wrong_certification_type = PROCESSOR_QUOTE.to_vec();
+        let qe_auth_len_offset = FIXED_QUOTE_SIZE + FIXED_AUTHENTICATION_SIZE;
+        let qe_auth_len = usize::from(u16::from_le_bytes(
+            wrong_certification_type[qe_auth_len_offset..qe_auth_len_offset + 2]
+                .try_into()
+                .expect("fixture QE auth size"),
+        ));
+        let type_offset = qe_auth_len_offset + 2 + qe_auth_len;
+        wrong_certification_type[type_offset] = 4;
+        wrong_certification_type[type_offset + 1] = 0;
+        assert!(matches!(
+            extract_type5_pck_chain(&wrong_certification_type),
+            Err(TransportError::Attestation(message))
+                if message == "quote does not contain exact type-5 PCK certification data"
+        ));
+
+        let mut noncanonical_pem = PROCESSOR_QUOTE.to_vec();
+        let begin = b"-----BEGIN CERTIFICATE-----\n";
+        let start = noncanonical_pem
+            .windows(begin.len())
+            .position(|window| window == begin)
+            .expect("fixture contains PEM chain");
+        noncanonical_pem[start] = b'!';
+        assert!(matches!(
+            extract_type5_pck_chain(&noncanonical_pem),
+            Err(TransportError::Attestation(message))
+                if message == "type-5 PCK chain is not canonical PEM plus NUL"
+        ));
     }
 }

@@ -131,9 +131,11 @@ where
         &coord,
         client,
         &mut gossip,
-        n,
-        chain_id,
-        tribute_offer_epoch,
+        FoundingCeremonyParameters {
+            participant_count: n,
+            chain_id,
+            tribute_offer_epoch,
+        },
     )
     .await
     .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;

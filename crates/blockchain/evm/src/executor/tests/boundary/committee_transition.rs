@@ -1,5 +1,6 @@
 use super::super::*;
 use super::fixtures::*;
+use outbe_validatorset::test_support::StorageOverrides;
 /// Task 01 test: activate_reshared_set() runs AFTER participation decode.
 ///
 /// Simulates the executor's finish() hook order:
@@ -211,10 +212,12 @@ fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
             ValidatorHistory::new(
                 record.joined_at_height,
                 (record.deactivated_at_height != 0).then_some(record.deactivated_at_height),
-                record.slash_count,
-                7,
-                8,
-                9,
+                HistoryCounters {
+                    slash_count: record.slash_count,
+                    missed_blocks: 7,
+                    missed_votes: 8,
+                    blocks_proposed: 9,
+                },
             ),
         )
         .unwrap();
@@ -286,10 +289,12 @@ fn failed_boundary_snapshot_write_rolls_back_epoch_membership_and_counters() {
             ValidatorHistory::new(
                 record.joined_at_height,
                 (record.deactivated_at_height != 0).then_some(record.deactivated_at_height),
-                record.slash_count,
-                7,
-                record.missed_votes,
-                record.blocks_proposed,
+                HistoryCounters {
+                    slash_count: record.slash_count,
+                    missed_blocks: 7,
+                    missed_votes: record.missed_votes,
+                    blocks_proposed: record.blocks_proposed,
+                },
             ),
         )
         .unwrap();

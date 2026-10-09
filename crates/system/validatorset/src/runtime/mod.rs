@@ -9,6 +9,7 @@ mod cleanup;
 mod lifecycle;
 mod ocomp_recovery;
 mod participation;
+mod queries;
 mod readiness;
 mod records;
 mod registration;

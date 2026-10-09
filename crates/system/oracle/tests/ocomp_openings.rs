@@ -81,7 +81,8 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
             ]
         );
 
-        let plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 3, 2).unwrap();
+        let plan =
+            oracle_opening_slot_plan_v1(day, &[840, 978], &self::counts(2, &[1, 2], 3, 2)).unwrap();
         let raw_slots = plan
             .slots
             .iter()
@@ -159,7 +160,8 @@ fn oracle_opening_rejects_an_iso_outside_the_on_chain_reference_list() {
             .write(&AddressPair::new_coen_to(826), 3)
             .unwrap();
 
-        let plan = oracle_opening_slot_plan_v1(day, &[826, 840, 978], 2, &[3, 1, 2], 3, 2).unwrap();
+        let plan = oracle_opening_slot_plan_v1(day, &[826, 840, 978], &counts(2, &[3, 1, 2], 3, 2))
+            .unwrap();
         let raw_slots = plan
             .slots
             .iter()
@@ -181,35 +183,45 @@ fn oracle_opening_plan_checks_every_cap_before_detail_allocation() {
     assert!(oracle_opening_slot_plan_v1(
         day,
         &isos,
-        MAX_OCOMP_REFERENCE_CURRENCIES,
-        &[1],
-        MAX_OCOMP_ACTIVE_SCURVE_ENTRIES,
-        0,
+        &counts(
+            MAX_OCOMP_REFERENCE_CURRENCIES,
+            &[1],
+            MAX_OCOMP_ACTIVE_SCURVE_ENTRIES,
+            0
+        )
     )
     .is_ok());
     assert_eq!(
-        oracle_opening_slot_plan_v1(day, &isos, MAX_OCOMP_REFERENCE_CURRENCIES + 1, &[1], 0, 0),
+        oracle_opening_slot_plan_v1(
+            day,
+            &isos,
+            &counts(MAX_OCOMP_REFERENCE_CURRENCIES + 1, &[1], 0, 0)
+        ),
         Err(OracleOcompError::ReferenceCurrencyCountExceedsCap {
             actual: 257,
             cap: 256,
         })
     );
     assert_eq!(
-        oracle_opening_slot_plan_v1(day, &isos, 1, &[1, 2], 0, 0),
+        oracle_opening_slot_plan_v1(day, &isos, &counts(1, &[1, 2], 0, 0)),
         Err(OracleOcompError::PairIndexCountMismatch {
             actual: 2,
             expected: 1,
         })
     );
     assert_eq!(
-        oracle_opening_slot_plan_v1(day, &isos, 1, &[1], MAX_OCOMP_ACTIVE_SCURVE_ENTRIES + 1, 0),
+        oracle_opening_slot_plan_v1(
+            day,
+            &isos,
+            &counts(1, &[1], MAX_OCOMP_ACTIVE_SCURVE_ENTRIES + 1, 0)
+        ),
         Err(OracleOcompError::ActiveScurveCountExceedsCap {
             actual: 257,
             cap: 256,
         })
     );
     assert_eq!(
-        oracle_opening_slot_plan_v1(day, &isos, 1, &[1], 2, 3),
+        oracle_opening_slot_plan_v1(day, &isos, &counts(1, &[1], 2, 3)),
         Err(OracleOcompError::ScurveOldestExceedsCount {
             oldest: 3,
             count: 2,
@@ -235,7 +247,8 @@ fn oracle_opening_prices_a_pair_registered_after_the_day_was_written() {
             .unwrap();
         oracle.reference_currencies.push(826).unwrap();
 
-        let plan = oracle_opening_slot_plan_v1(day, &[826, 840, 978], 3, &[3, 1, 2], 3, 2).unwrap();
+        let plan = oracle_opening_slot_plan_v1(day, &[826, 840, 978], &counts(3, &[3, 1, 2], 3, 2))
+            .unwrap();
         let raw_slots = plan
             .slots
             .iter()
@@ -254,4 +267,19 @@ fn oracle_opening_prices_a_pair_registered_after_the_day_was_written() {
             Some(scaled(200, COEN_ISO_SCALE))
         );
     });
+}
+
+/// Round-one counts for a slot plan.
+fn counts(
+    reference_currency_count: u32,
+    pair_indices: &[u32],
+    scurve_count: u32,
+    scurve_oldest: u32,
+) -> outbe_oracle::OracleOpeningCountsV1 {
+    outbe_oracle::OracleOpeningCountsV1 {
+        reference_currency_count,
+        pair_indices: pair_indices.to_vec(),
+        scurve_count,
+        scurve_oldest,
+    }
 }

@@ -1,6 +1,7 @@
 use super::*;
 use std::cell::RefCell;
 
+use commonware_codec::Encode as _;
 use outbe_node::ocomp::finality::{
     PublicAccountProofV1, PublicBlockViewV1, PublicExactBlockProofSourceV1,
     PublicFinalizationBytesV1, PublicFinalizedIntentProofBuildError,

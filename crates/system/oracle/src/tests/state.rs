@@ -2,15 +2,11 @@
 
 use alloy_primitives::{Address, U256};
 
-use crate::schema::OracleContract;
-
 use super::common::*;
 
 #[test]
 fn register_pair_assigns_sequential_ids_and_marks_vote_targets() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-
+    with_bare_oracle(|_storage, oracle| {
         // Register first pair
         assert_eq!(
             oracle
@@ -51,12 +47,7 @@ fn register_pair_assigns_sequential_ids_and_marks_vote_targets() {
 
 #[test]
 fn register_pair_rejects_the_inverse_of_a_registered_pair() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         // The key is order-independent, so the inverse is the same pair.
         assert!(oracle
             .register_pair(AddressPair::from_addresses(USDT, COEN))
@@ -66,8 +57,7 @@ fn register_pair_rejects_the_inverse_of_a_registered_pair() {
 
 #[test]
 fn register_pair_rejects_an_asset_paired_with_itself() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         assert!(oracle
             .register_pair(AddressPair::from_addresses(USDT, USDT))
             .is_err());
@@ -79,8 +69,7 @@ fn register_pair_rejects_an_asset_paired_with_itself() {
 
 #[test]
 fn register_pair_preserves_a_generic_market_orientation() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         // The ISO address sorts below every token stand-in. So this proves that the
         // registry value is the configured orientation, not the sorted storage-key
         // orientation.
@@ -99,8 +88,7 @@ fn register_pair_preserves_a_generic_market_orientation() {
 
 #[test]
 fn register_pair_rejects_iso_to_coen_but_accepts_coen_to_iso() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let reverse = AddressPair::from_addresses(usd(), COEN);
 
         assert!(oracle.register_pair(reverse).is_err());
@@ -114,8 +102,7 @@ fn register_pair_rejects_iso_to_coen_but_accepts_coen_to_iso() {
 
 #[test]
 fn reciprocal_read_is_relative_to_the_registered_generic_orientation() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let registered = AddressPair::from_addresses(ETH, usd());
         let rate = fixed18(4);
         oracle.register_pair(registered).unwrap();
@@ -137,12 +124,7 @@ fn reciprocal_read_is_relative_to_the_registered_generic_orientation() {
 
 #[test]
 fn require_pair_rejects_a_pair_quoted_in_the_wrong_direction() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         assert_eq!(
             oracle.require_pair_from(COEN, USDT).unwrap(),
             pair_key(COEN, USDT)
@@ -164,8 +146,7 @@ fn require_pair_rejects_a_pair_quoted_in_the_wrong_direction() {
 /// entry preserves exactly the configured orientation.
 #[test]
 fn one_market_is_one_registration_reachable_from_either_quote() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let registered = AddressPair::from_addresses(usd(), ETH);
         assert_eq!(oracle.register_pair(registered).unwrap(), 1);
 
@@ -192,11 +173,7 @@ fn one_market_is_one_registration_reachable_from_either_quote() {
 
 #[test]
 fn every_pair_read_agrees_on_the_market_whichever_way_it_is_quoted() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         let rate = fixed18(4);
         oracle
             .set_exchange_rate(
@@ -235,11 +212,7 @@ fn every_pair_read_agrees_on_the_market_whichever_way_it_is_quoted() {
 
 #[test]
 fn a_backwards_quote_prices_at_the_reciprocal() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         // 2.5 COEN per USDT.
         let rate = U256::from(2_500_000_000_000_000_000u128);
         oracle
@@ -265,8 +238,7 @@ fn a_backwards_quote_prices_at_the_reciprocal() {
 
 #[test]
 fn every_coen_iso_backwards_quote_uses_the_six_decimal_reciprocal() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         for iso in [840, 978] {
             let quote: Address = AssetType::IsoCurrency(iso).into();
             let pair = AddressPair::new_coen_to(iso);
@@ -285,12 +257,7 @@ fn every_coen_iso_backwards_quote_uses_the_six_decimal_reciprocal() {
 
 #[test]
 fn an_unpublished_rate_reads_as_zero_from_either_side() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         // No reciprocal exists for zero; inverting must not divide by it.
         assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap(), U256::ZERO);
         assert_eq!(oracle.get_exchange_rate(USDT, COEN).unwrap(), U256::ZERO);
@@ -299,8 +266,7 @@ fn an_unpublished_rate_reads_as_zero_from_either_side() {
 
 #[test]
 fn a_rate_read_still_requires_a_registered_market() {
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         assert!(oracle.get_exchange_rate(COEN, USDT).is_err());
         assert!(oracle.get_exchange_rate(USDT, COEN).is_err());
         assert!(!oracle.is_vote_target(COEN, USDT).unwrap());
@@ -309,12 +275,7 @@ fn a_rate_read_still_requires_a_registered_market() {
 
 #[test]
 fn require_pair_at_rejects_an_index_outside_the_registry() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         assert_eq!(oracle.require_pair_at(1).unwrap(), pair_key(COEN, USDT));
         // Index 0 and one past the end both read back as the zero pair, which is
         // a plausible-looking COEN/COEN registration rather than an obvious miss.
@@ -342,12 +303,7 @@ fn a_pair_is_deterministic_direction_sensitive_and_distinct_per_market() {
 
 #[test]
 fn set_exchange_rate_round_trips_rate_block_and_timestamp() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         // Set rate (system call)
         let rate = U256::from(1_500_000_000_000_000_000u128); // 1.5
         oracle
@@ -361,21 +317,16 @@ fn set_exchange_rate_round_trips_rate_block_and_timestamp() {
             .unwrap();
 
         // Read back
-        let (r, block, ts) = oracle.get_exchange_rate_data(COEN, USDT).unwrap();
-        assert_eq!(r, rate);
-        assert_eq!(block, 100);
-        assert_eq!(ts, 1200);
+        assert_eq!(
+            oracle.get_exchange_rate_data(COEN, USDT).unwrap(),
+            (rate, 100, 1200)
+        );
     });
 }
 
 #[test]
 fn set_exchange_rate_rejects_a_non_system_caller() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
-
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         let caller = Address::new([1u8; 20]);
         let result = oracle.set_exchange_rate(
             caller,
@@ -390,8 +341,7 @@ fn set_exchange_rate_rejects_a_non_system_caller() {
 
 #[test]
 fn get_exchange_rate_reverts_for_an_unregistered_pair() {
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         assert!(oracle.get_exchange_rate(BTC, USDT).is_err());
     });
 }
@@ -406,8 +356,7 @@ fn the_rate_columns_are_keyed_by_the_registry_index() {
     use outbe_primitives::addresses::ORACLE_ADDRESS;
     use outbe_primitives::storage::types::StorageKey;
 
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         let index = oracle
             .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
@@ -449,11 +398,7 @@ fn the_rate_columns_are_keyed_by_the_registry_index() {
 /// would wipe the wrong column.
 #[test]
 fn remove_excess_feeds_clears_only_the_deactivated_pairs_rate() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle
-            .register_pair(AddressPair::from_addresses(COEN, USDT))
-            .unwrap();
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
         oracle
             .register_pair(AddressPair::from_addresses(ETH, USDT))
             .unwrap();
@@ -494,9 +439,7 @@ fn remove_excess_feeds_clears_only_the_deactivated_pairs_rate() {
 
 #[test]
 fn config_slots_round_trip_every_genesis_parameter() {
-    with_storage(|storage| {
-        let oracle = OracleContract::new(storage.clone());
-
+    with_bare_oracle(|_storage, oracle| {
         oracle.config_vote_period.write(2).unwrap();
         oracle
             .config_reward_band
@@ -521,22 +464,35 @@ fn config_slots_round_trip_every_genesis_parameter() {
 
 #[test]
 fn penalty_counters_increment_per_outcome_and_reset_together() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        let validator = Address::new([0x11; 20]);
+    with_bare_oracle(|_storage, oracle| {
+        record_outcomes(
+            oracle,
+            &FIRST_VOTER,
+            &[
+                Penalty::Success,
+                Penalty::Success,
+                Penalty::Miss,
+                Penalty::Abstain,
+            ],
+        );
 
-        oracle.increment_success(&validator).unwrap();
-        oracle.increment_success(&validator).unwrap();
-        oracle.increment_miss(&validator).unwrap();
-        oracle.increment_abstain(&validator).unwrap();
+        assert_penalty_counters(
+            oracle,
+            &[
+                (FIRST_VOTER, Penalty::Success, 2),
+                (FIRST_VOTER, Penalty::Miss, 1),
+                (FIRST_VOTER, Penalty::Abstain, 1),
+            ],
+        );
 
-        assert_eq!(oracle.penalty_success_count.read(&validator).unwrap(), 2);
-        assert_eq!(oracle.penalty_miss_count.read(&validator).unwrap(), 1);
-        assert_eq!(oracle.penalty_abstain_count.read(&validator).unwrap(), 1);
-
-        oracle.reset_penalty_counter(&validator).unwrap();
-        assert_eq!(oracle.penalty_success_count.read(&validator).unwrap(), 0);
-        assert_eq!(oracle.penalty_miss_count.read(&validator).unwrap(), 0);
-        assert_eq!(oracle.penalty_abstain_count.read(&validator).unwrap(), 0);
+        oracle.reset_penalty_counter(&FIRST_VOTER).unwrap();
+        assert_penalty_counters(
+            oracle,
+            &[
+                (FIRST_VOTER, Penalty::Success, 0),
+                (FIRST_VOTER, Penalty::Miss, 0),
+                (FIRST_VOTER, Penalty::Abstain, 0),
+            ],
+        );
     });
 }

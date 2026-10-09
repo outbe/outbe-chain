@@ -134,9 +134,11 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
         storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        oracle_rate(),
-        1,
-        CREATED_AT,
+        outbe_oracle::api::RateObservation {
+            rate: oracle_rate(),
+            block_number: 1,
+            timestamp: CREATED_AT,
+        },
     )
     .map_err(|error| error.to_string())?;
     OracleContract::new(storage.clone())

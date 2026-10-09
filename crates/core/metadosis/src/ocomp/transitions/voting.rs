@@ -6,7 +6,7 @@ use crate::{errors::storage_corruption_message, schema::MetadosisContract};
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
     state::{OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus},
-    vote::OcompVoteAccountabilityV1,
+    vote::{OcompVoteAccountabilityV1, VoteAccountabilitySeed},
     SchemaLimits,
 };
 use outbe_primitives::error::Result;
@@ -43,14 +43,14 @@ impl MetadosisContract<'_> {
                     deadline_height: finalized.deadline_height,
                 })
                 .map_err(|error| storage_corruption_message(error.to_string()))?;
-            let accountability = OcompVoteAccountabilityV1::empty(
-                finalized.job_id,
-                record.intent.result_validator_set_epoch,
-                record.intent.result_committee_set_hash,
-                record.intent.result_ocomp_binding_hash,
-                record.intent.result_member_count,
-                record.intent.result_quorum_threshold,
-            )
+            let accountability = OcompVoteAccountabilityV1::empty(VoteAccountabilitySeed {
+                job_id: finalized.job_id,
+                result_validator_set_epoch: record.intent.result_validator_set_epoch,
+                result_committee_set_hash: record.intent.result_committee_set_hash,
+                result_ocomp_binding_hash: record.intent.result_ocomp_binding_hash,
+                member_count: record.intent.result_member_count,
+                quorum_threshold: record.intent.result_quorum_threshold,
+            })
             .map_err(|error| {
                 storage_corruption_message(format!("create OCOMP vote slots: {error}"))
             })?;

@@ -328,11 +328,13 @@ fn seed_factory_boundary(
         StablecoinFactoryContract::new(storage.clone()).predict_token_address(issuer, "PARUSD")?;
     let mut vote = Vote::new(storage.clone());
     let proposal_id = vote.create_proposal_with_value(
-        issuer,
-        STABLECOIN_FACTORY_ADDRESS,
-        payload,
-        CREATION_BLOCK,
-        STABLECOIN_CREATE_BOND,
+        outbe_vote::ProposalSubmission {
+            proposer: issuer,
+            target_module: STABLECOIN_FACTORY_ADDRESS,
+            payload,
+            created_height: CREATION_BLOCK,
+            attached_value: STABLECOIN_CREATE_BOND,
+        },
         crate::handlers::vote::registry(),
     )?;
     match boundary {

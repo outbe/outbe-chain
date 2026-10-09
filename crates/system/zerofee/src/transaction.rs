@@ -2,18 +2,14 @@
 use crate::{BootstrapTransactionView, ZeroFeeTransaction};
 use alloy_consensus::Transaction;
 use alloy_primitives::Address;
+use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 
 impl<'a> ZeroFeeTransaction<'a> {
     /// Adapt an immutable transaction. The caller supplies its recovered signer.
     pub fn from_transaction<T: Transaction + ?Sized>(tx: &'a T, signer: Address) -> Self {
         Self {
             signer,
-            to: tx.to(),
-            value: tx.value(),
-            input: tx.input().as_ref(),
-            gas_limit: tx.gas_limit(),
-            max_fee_per_gas: tx.max_fee_per_gas(),
-            max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+            call: TransactionCallFields::from_transaction(tx),
         }
     }
 }
@@ -35,12 +31,7 @@ impl<'a> BootstrapTransactionView<'a> {
             tx_chain_id,
             network_chain_id,
             nonce,
-            to: transaction.to,
-            value: transaction.value,
-            input: transaction.input,
-            gas_limit: transaction.gas_limit,
-            max_fee_per_gas: transaction.max_fee_per_gas,
-            max_priority_fee_per_gas: transaction.max_priority_fee_per_gas,
+            call: transaction.call,
             access_list_empty: tx.access_list().is_some_and(|list| list.is_empty()),
             authorization_list,
         })

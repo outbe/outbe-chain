@@ -19,6 +19,7 @@ use std::sync::{Mutex, OnceLock};
 use alloy_primitives::B256;
 
 use crate::client::{AuthorizedEnclaveClient, EnclaveClient, GeneratedDcapQuoteV1};
+pub use crate::dcap_protocol::RegistrationVerificationRequest;
 use crate::dcap_protocol::{
     DcapOnboardingArtifactV1, DcapOnboardingContextV1, DcapOnboardingVerificationResultV1,
     DcapVerificationOutcomeV1,
@@ -223,34 +224,13 @@ pub fn generate_dcap_quote_v1(
     result
 }
 
-/// Evidence and signatures for a purpose-bound registration verification.
-pub struct RegistrationVerificationRequest<'a> {
-    pub evidence: &'a [u8],
-    pub policy: &'a [u8],
-    pub block_timestamp: u64,
-    pub node_signature: &'a [u8; 65],
-    pub enclave_signature: &'a [u8; 64],
-    pub expected_tribute_offer_public: [u8; 32],
-    pub key_epoch: u64,
-    pub tribute_offer_epoch: u64,
-}
-
 /// Verify registration evidence and obtain its one-time onboarding artifact.
 pub fn verify_dcap_registration_and_seal_v1(
     request: RegistrationVerificationRequest<'_>,
 ) -> Result<DcapOnboardingVerificationResultV1, TransportError> {
-    let Some(result) = try_with_enclave(|session| {
-        session.verify_dcap_registration_and_seal_v1(
-            request.evidence,
-            request.policy,
-            request.block_timestamp,
-            request.node_signature,
-            request.enclave_signature,
-            request.expected_tribute_offer_public,
-            request.key_epoch,
-            request.tribute_offer_epoch,
-        )
-    }) else {
+    let Some(result) =
+        try_with_enclave(|session| session.verify_dcap_registration_and_seal_v1(request))
+    else {
         return Err(TransportError::DcapVerification(
             "production enclave client is not configured".into(),
         ));

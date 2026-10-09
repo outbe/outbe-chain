@@ -2,7 +2,7 @@ use alloy_primitives::B256;
 
 use crate::{
     error::ProtocolError,
-    hash::hash_framed,
+    hash::{framed_identity_hash, hash_framed},
     intent::JobIntentV1,
     receipts::{ActivationOutcome, AggregateActivationReceiptV1},
     registry::HashDomain,
@@ -111,6 +111,19 @@ impl ActiveGenerationV1 {
 }
 
 impl OcompCompletedBindingV1 {
+    fn matches_receipt_identity(&self) -> bool {
+        self.job_id == self.terminal_receipt.binding.job_id
+            && self.activation_call_id == self.terminal_receipt.binding.activation_call_id
+            && self.result_digest == self.terminal_receipt.binding.result_digest
+    }
+
+    fn matches_quorum_identity(&self, quorum: &OcompQuorumV1) -> bool {
+        self.result_digest == quorum.result_digest
+            && self.quorum_height == quorum.quorum_height
+            && self.quorum_signer_bitmap == quorum.signer_bitmap
+            && self.quorum_evidence_hash == quorum.evidence_hash
+    }
+
     pub fn validate_semantics(
         &self,
         quorum: &OcompQuorumV1,
@@ -121,13 +134,7 @@ impl OcompCompletedBindingV1 {
             "completed binding receipt outcome",
         )?;
         require(
-            self.job_id == self.terminal_receipt.binding.job_id
-                && self.activation_call_id == self.terminal_receipt.binding.activation_call_id
-                && self.result_digest == self.terminal_receipt.binding.result_digest
-                && self.result_digest == quorum.result_digest
-                && self.quorum_height == quorum.quorum_height
-                && self.quorum_signer_bitmap == quorum.signer_bitmap
-                && self.quorum_evidence_hash == quorum.evidence_hash,
+            self.matches_receipt_identity() && self.matches_quorum_identity(quorum),
             "completed binding receipt binding",
         )?;
         require(
@@ -162,10 +169,7 @@ impl OcompFinalizedJobV1 {
 }
 
 impl LysisTerminalV1 {
-    pub fn terminal_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_shape()?;
-        hash_framed(HashDomain::LysisTerminal, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(terminal_hash, LysisTerminal, validate_shape());
 
     pub fn validate_shape(&self) -> Result<(), ProtocolError> {
         match (&self.outcome, &self.completed_binding) {
@@ -179,6 +183,46 @@ impl LysisTerminalV1 {
 }
 
 impl OcompJobRecordV1 {
+    fn validate_completed_status(
+        finalized: &OcompFinalizedJobV1,
+        terminal: &LysisTerminalV1,
+        limits: &SchemaLimits,
+    ) -> Result<(), ProtocolError> {
+        require(
+            terminal.outcome == OcompTerminalOutcome::Completed,
+            "completed terminal shape",
+        )?;
+        let binding = terminal
+            .completed_binding
+            .as_ref()
+            .ok_or(ProtocolError::InvalidInvariant("completed binding present"))?;
+        let quorum = finalized
+            .quorum
+            .as_ref()
+            .ok_or(ProtocolError::InvalidInvariant("completed quorum present"))?;
+        binding.validate_semantics(quorum, limits)?;
+        require(
+            binding.terminal_receipt.outcome == ActivationOutcome::Applied,
+            "completed applied receipt",
+        )
+    }
+
+    fn validate_terminal_without_quorum(
+        finalized: &Option<OcompFinalizedJobV1>,
+        terminal: &LysisTerminalV1,
+        outcome: OcompTerminalOutcome,
+        error: &'static str,
+    ) -> Result<(), ProtocolError> {
+        require(
+            finalized
+                .as_ref()
+                .is_none_or(|finalized| finalized.quorum.is_none())
+                && terminal.outcome == outcome
+                && terminal.completed_binding.is_none(),
+            error,
+        )
+    }
+
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         self.intent.validate_semantics()?;
         require(
@@ -206,48 +250,29 @@ impl OcompJobRecordV1 {
                 require(finalized.quorum.is_none(), "voting-open quorum absent")
             }
             (OcompJobStatus::Completed, Some(finalized), Some(terminal)) => {
-                require(
-                    terminal.outcome == OcompTerminalOutcome::Completed,
-                    "completed terminal shape",
-                )?;
-                let binding = terminal
-                    .completed_binding
-                    .as_ref()
-                    .ok_or(ProtocolError::InvalidInvariant("completed binding present"))?;
-                let quorum = finalized
-                    .quorum
-                    .as_ref()
-                    .ok_or(ProtocolError::InvalidInvariant("completed quorum present"))?;
-                binding.validate_semantics(quorum, limits)?;
-                require(
-                    binding.terminal_receipt.outcome == ActivationOutcome::Applied,
-                    "completed applied receipt",
+                Self::validate_completed_status(finalized, terminal, limits)
+            }
+            (OcompJobStatus::Expired, finalized, Some(terminal)) => {
+                Self::validate_terminal_without_quorum(
+                    finalized,
+                    terminal,
+                    OcompTerminalOutcome::Expired,
+                    "expired terminal shape",
                 )
             }
-            (OcompJobStatus::Expired, finalized, Some(terminal)) => require(
-                finalized
-                    .as_ref()
-                    .is_none_or(|finalized| finalized.quorum.is_none())
-                    && terminal.outcome == OcompTerminalOutcome::Expired
-                    && terminal.completed_binding.is_none(),
-                "expired terminal shape",
-            ),
-            (OcompJobStatus::Failed, finalized, Some(terminal)) => require(
-                finalized
-                    .as_ref()
-                    .is_none_or(|finalized| finalized.quorum.is_none())
-                    && terminal.outcome == OcompTerminalOutcome::Failed
-                    && terminal.completed_binding.is_none(),
-                "failed terminal shape",
-            ),
+            (OcompJobStatus::Failed, finalized, Some(terminal)) => {
+                Self::validate_terminal_without_quorum(
+                    finalized,
+                    terminal,
+                    OcompTerminalOutcome::Failed,
+                    "failed terminal shape",
+                )
+            }
             _ => Err(ProtocolError::InvalidInvariant("job status terminal shape")),
         }
     }
 
-    pub fn job_record_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_semantics(limits)?;
-        hash_framed(HashDomain::JobRecord, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(job_record_hash, JobRecord, validate_semantics(limits));
 }
 
 fn validate_active_generation(

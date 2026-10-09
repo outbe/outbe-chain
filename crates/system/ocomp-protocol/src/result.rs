@@ -3,14 +3,16 @@ use std::collections::BTreeSet;
 use alloy_primitives::{Address, B256, U256};
 
 use crate::{
-    codec::{require_canonical_reencoding, CanonicalReader, CanonicalWriter},
     control::CasObjectRefV1,
     error::ProtocolError,
-    hash::hash_framed,
+    hash::{framed_identity_hash, hash_framed},
     intent::{DayType, JobIntentV1},
-    list::verify_ordered_list_membership,
+    list::{verify_ordered_list_membership, OrderedListProofTarget},
     registry::{HashDomain, ListKind, ObjectKind},
-    schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, NestedCodec, SchemaLimits},
+    schema::{
+        impl_nested_record_codec, impl_top_level_codec, require, wire_enum_u8, wire_struct,
+        NestedCodec, SchemaLimits,
+    },
 };
 
 wire_enum_u8! {
@@ -323,76 +325,45 @@ impl ResultChunkV1 {
         Ok(())
     }
 
-    pub fn result_chunk_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_semantics(limits)?;
-        hash_framed(HashDomain::ResultChunk, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(result_chunk_hash, ResultChunk, validate_semantics(limits));
 }
 
-impl OutputManifestEntryV1 {
-    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
-        <Self as NestedCodec>::validate(self, limits)?;
-        let mut writer = CanonicalWriter::new(limits.codec);
-        self.encode_nested(&mut writer, limits)?;
-        Ok(writer.into_bytes())
-    }
+impl_nested_record_codec!(OutputManifestEntryV1);
 
-    pub fn decode_canonical_record(
-        encoded: &[u8],
-        limits: &SchemaLimits,
-    ) -> Result<Self, ProtocolError> {
-        let mut reader = CanonicalReader::new(encoded, limits.codec)?;
-        let entry = Self::decode_nested(&mut reader, limits)?;
-        reader.finish()?;
-        <Self as NestedCodec>::validate(&entry, limits)?;
-        require_canonical_reencoding(encoded, &entry.encode_canonical_record(limits)?)?;
-        Ok(entry)
-    }
-}
-
-impl NodActionV1 {
-    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
-        <Self as NestedCodec>::validate(self, limits)?;
-        let mut writer = CanonicalWriter::new(limits.codec);
-        self.encode_nested(&mut writer, limits)?;
-        Ok(writer.into_bytes())
-    }
-}
+impl_nested_record_codec!(NodActionV1, encode_only);
 
 impl ActiveNodSetV1 {
     fn validate(&self) -> Result<(), ProtocolError> {
+        self.validate_identity()?;
+        self.validate_generation()?;
+        self.validate_population()
+    }
+
+    fn validate_identity(&self) -> Result<(), ProtocolError> {
         require(
-            !self.job_id.is_zero()
-                && !self.program_semantics_hash.is_zero()
-                && self.worldwide_day != 0
-                && self.generation != 0
-                && !self.nod_root.is_zero()
-                && self.nod_count != 0,
+            !self.job_id.is_zero() && !self.program_semantics_hash.is_zero(),
+            "active Nod set authority",
+        )
+    }
+
+    fn validate_generation(&self) -> Result<(), ProtocolError> {
+        require(
+            self.worldwide_day != 0 && self.generation != 0,
+            "active Nod set authority",
+        )
+    }
+
+    fn validate_population(&self) -> Result<(), ProtocolError> {
+        require(
+            !self.nod_root.is_zero() && self.nod_count != 0,
             "active Nod set authority",
         )
     }
 }
 
+impl_nested_record_codec!(NodMembershipProofV1);
+
 impl NodMembershipProofV1 {
-    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
-        <Self as NestedCodec>::validate(self, limits)?;
-        let mut writer = CanonicalWriter::new(limits.codec);
-        self.encode_nested(&mut writer, limits)?;
-        Ok(writer.into_bytes())
-    }
-
-    pub fn decode_canonical_record(
-        encoded: &[u8],
-        limits: &SchemaLimits,
-    ) -> Result<Self, ProtocolError> {
-        let mut reader = CanonicalReader::new(encoded, limits.codec)?;
-        let proof = Self::decode_nested(&mut reader, limits)?;
-        reader.finish()?;
-        <Self as NestedCodec>::validate(&proof, limits)?;
-        require_canonical_reencoding(encoded, &proof.encode_canonical_record(limits)?)?;
-        Ok(proof)
-    }
-
     /// Verifies the complete public read against authority obtained separately
     /// from finalized chain state.
     pub fn verify_against<'action>(
@@ -416,25 +387,46 @@ impl NodMembershipProofV1 {
         )?;
         let canonical_action = self.action.encode_canonical_record(limits)?;
         verify_ordered_list_membership(
-            ListKind::NodActions,
-            authority.nod_count,
-            self.nod_ordinal,
+            OrderedListProofTarget::new(
+                ListKind::NodActions,
+                authority.nod_count,
+                self.nod_ordinal,
+            ),
             &canonical_action,
             &self.membership_siblings,
             authority.nod_root,
         )?;
         Ok(&self.action)
     }
-}
 
-impl ContributorActionV1 {
-    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
-        <Self as NestedCodec>::validate(self, limits)?;
-        let mut writer = CanonicalWriter::new(limits.codec);
-        self.encode_nested(&mut writer, limits)?;
-        Ok(writer.into_bytes())
+    fn validate_shape_identity(&self) -> Result<(), ProtocolError> {
+        require(
+            !self.job_id.is_zero() && !self.program_semantics_hash.is_zero(),
+            "Nod membership proof shape",
+        )
+    }
+
+    fn validate_shape_generation(&self) -> Result<(), ProtocolError> {
+        require(
+            self.worldwide_day != 0 && self.generation != 0,
+            "Nod membership proof shape",
+        )
+    }
+
+    fn validate_shape_bounds(
+        &self,
+        proof_bytes: usize,
+        limits: &SchemaLimits,
+    ) -> Result<(), ProtocolError> {
+        require(
+            self.membership_siblings.len() <= u32::BITS as usize
+                && proof_bytes <= limits.max_proof_bytes,
+            "Nod membership proof shape",
+        )
     }
 }
+
+impl_nested_record_codec!(ContributorActionV1, encode_only);
 
 fn validate_nod_membership_proof(
     proof: &NodMembershipProofV1,
@@ -447,15 +439,9 @@ fn validate_nod_membership_proof(
         .ok_or(ProtocolError::IntegerOverflow {
             what: "Nod membership proof bytes",
         })?;
-    require(
-        !proof.job_id.is_zero()
-            && !proof.program_semantics_hash.is_zero()
-            && proof.worldwide_day != 0
-            && proof.generation != 0
-            && proof.membership_siblings.len() <= u32::BITS as usize
-            && proof_bytes <= limits.max_proof_bytes,
-        "Nod membership proof shape",
-    )
+    proof.validate_shape_identity()?;
+    proof.validate_shape_generation()?;
+    proof.validate_shape_bounds(proof_bytes, limits)
 }
 
 impl LysisResultV1 {
@@ -475,19 +461,42 @@ impl LysisResultV1 {
     }
 
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
+        self.validate_population()?;
+        validate_lysis_v1_event_commitment(&self.counts, self.event_summary_hash)?;
+        self.validate_day_limit_conservation()?;
+        self.validate_lysis_limit_conservation()?;
+        self.validate_carry_over_conservation()?;
+        self.validate_completion_conservation()?;
+        self.validate_arithmetic_commitment(limits)
+    }
+
+    fn validate_population(&self) -> Result<(), ProtocolError> {
         require(
             self.result_chunk_count > 0 && !self.result_chunk_list_root.is_zero(),
             "result committed chunk population",
         )?;
+        self.validate_exact_counts()?;
+        self.validate_bounded_counts()
+    }
+
+    fn validate_exact_counts(&self) -> Result<(), ProtocolError> {
         require(
             self.tribute_count > 0
                 && self.tribute_count == self.counts.tribute_count
-                && self.tribute_count == self.counts.nod_count
-                && self.counts.contributor_count <= self.tribute_count
+                && self.tribute_count == self.counts.nod_count,
+            "result exact counts",
+        )
+    }
+
+    fn validate_bounded_counts(&self) -> Result<(), ProtocolError> {
+        require(
+            self.counts.contributor_count <= self.tribute_count
                 && self.counts.bucket_count <= self.tribute_count,
             "result exact counts",
-        )?;
-        validate_lysis_v1_event_commitment(&self.counts, self.event_summary_hash)?;
+        )
+    }
+
+    fn validate_day_limit_conservation(&self) -> Result<(), ProtocolError> {
         require(
             self.tribute_nominal_total == self.conservation.tribute_nominal_total
                 && self.unused_lysis_limit_minor == self.conservation.unused_lysis_limit_minor,
@@ -504,7 +513,10 @@ impl LysisResultV1 {
         require(
             split_sum <= self.conservation.day_limit,
             "day limit conservation",
-        )?;
+        )
+    }
+
+    fn validate_lysis_limit_conservation(&self) -> Result<(), ProtocolError> {
         let lysis_sum = self
             .conservation
             .lysis_allocation_minor
@@ -520,28 +532,57 @@ impl LysisResultV1 {
             self.conservation.lysis_allocation_minor,
             self.conservation.desis_limit_minor,
             self.conservation.tribute_nominal_total,
-        )?;
+        )
+    }
+
+    fn validate_carry_over_conservation(&self) -> Result<(), ProtocolError> {
         require(
             self.conservation.carry_over_credit == self.unused_lysis_limit_minor
                 && self.carry_over_credit.reason == CarryOverReason::UnusedLysis
                 && self.carry_over_credit.amount == self.unused_lysis_limit_minor
                 && self.carry_over_credit.source_wwd == self.metadosis_completion_summary.wwd,
             "carry-over conservation",
-        )?;
+        )
+    }
+
+    fn validate_completion_conservation(&self) -> Result<(), ProtocolError> {
+        self.validate_completion_day_values()?;
+        self.validate_completion_limit_values()?;
+        self.validate_completion_allocation_values()
+    }
+
+    fn validate_completion_day_values(&self) -> Result<(), ProtocolError> {
         let completion = &self.metadosis_completion_summary;
         require(
             completion.tribute_nominal_total == self.tribute_nominal_total
                 && completion.day_limit == self.conservation.day_limit
-                && completion.gratis_demand == self.conservation.gratis_demand
-                && completion.day_gratis_limit_minor == self.conservation.day_gratis_limit_minor
+                && completion.gratis_demand == self.conservation.gratis_demand,
+            "Metadosis completion conservation binding",
+        )
+    }
+
+    fn validate_completion_limit_values(&self) -> Result<(), ProtocolError> {
+        let completion = &self.metadosis_completion_summary;
+        require(
+            completion.day_gratis_limit_minor == self.conservation.day_gratis_limit_minor
                 && completion.lysis_limit_minor == self.conservation.lysis_limit_minor
-                && completion.desis_limit_minor == self.conservation.desis_limit_minor
-                && completion.lysis_allocation_minor == self.conservation.lysis_allocation_minor
+                && completion.desis_limit_minor == self.conservation.desis_limit_minor,
+            "Metadosis completion conservation binding",
+        )
+    }
+
+    fn validate_completion_allocation_values(&self) -> Result<(), ProtocolError> {
+        let completion = &self.metadosis_completion_summary;
+        require(
+            completion.lysis_allocation_minor == self.conservation.lysis_allocation_minor
                 && completion.unused_lysis_limit_minor
                     == self.conservation.unused_lysis_limit_minor
                 && completion.carry_over_credit == self.conservation.carry_over_credit,
             "Metadosis completion conservation binding",
-        )?;
+        )
+    }
+
+    fn validate_arithmetic_commitment(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         let arithmetic = self.arithmetic_summary();
         let commitment = hash_framed(
             HashDomain::LysisArithmetic,
@@ -553,25 +594,27 @@ impl LysisResultV1 {
         )
     }
 
-    /// Canonical semantic identity of the complete constant-size Lysis result.
-    ///
-    /// The digest deliberately covers fields that were not present in the
-    /// superseded activation payload (manifest/plan/unit roots, carry-over
-    /// action, completion summary and explicit Tribute totals).
-    pub fn result_digest(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_semantics(limits)?;
-        hash_framed(HashDomain::Result, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(
+        /// Canonical semantic identity of the complete constant-size Lysis result.
+        ///
+        /// The digest deliberately covers fields that were not present in the
+        /// superseded activation payload (manifest/plan/unit roots, carry-over
+        /// action, completion summary and explicit Tribute totals).
+        result_digest,
+        Result,
+        validate_semantics(limits)
+    );
 
-    /// Canonical evidence object retained by the applied generation.
-    ///
-    /// Unlike the result digest's signing domain, this domain identifies the
-    /// complete result as terminal evidence. Quorum metadata is retained
-    /// separately in `OcompCompletedBindingV1`.
-    pub fn result_evidence_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_semantics(limits)?;
-        hash_framed(HashDomain::ResultEvidence, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(
+        /// Canonical evidence object retained by the applied generation.
+        ///
+        /// Unlike the result digest's signing domain, this domain identifies the
+        /// complete result as terminal evidence. Quorum metadata is retained
+        /// separately in `OcompCompletedBindingV1`.
+        result_evidence_hash,
+        ResultEvidence,
+        validate_semantics(limits)
+    );
 
     pub fn activation_payload(
         &self,
@@ -593,22 +636,79 @@ impl LysisResultV1 {
     }
 
     pub fn validate_finalized_intent(&self, intent: &JobIntentV1) -> Result<(), ProtocolError> {
-        let completion = &self.metadosis_completion_summary;
-        let frozen = &intent.frozen_metadosis_values;
+        self.validate_finalized_identity(intent)?;
+        self.validate_finalized_metadosis(intent)?;
+        self.validate_finalized_completion(intent)
+    }
+
+    fn validate_finalized_identity(&self, intent: &JobIntentV1) -> Result<(), ProtocolError> {
         require(
             self.protocol_bundle_hash == intent.protocol_bundle_hash
                 && self.attempt == intent.attempt
                 && self.tribute_count == intent.authenticated_day_count
-                && self.tribute_nominal_total == intent.authenticated_day_nominal
-                && completion.wwd == intent.wwd
+                && self.tribute_nominal_total == intent.authenticated_day_nominal,
+            "result finalized intent binding",
+        )
+    }
+
+    fn validate_finalized_metadosis(&self, intent: &JobIntentV1) -> Result<(), ProtocolError> {
+        self.validate_finalized_metadosis_identity(intent)?;
+        self.validate_finalized_metadosis_limits(intent)
+    }
+
+    fn validate_finalized_metadosis_identity(
+        &self,
+        intent: &JobIntentV1,
+    ) -> Result<(), ProtocolError> {
+        let completion = &self.metadosis_completion_summary;
+        let frozen = &intent.frozen_metadosis_values;
+        require(
+            completion.wwd == intent.wwd
                 && completion.pending_nonce == intent.pending_nonce
-                && completion.day_type == frozen.day_type
-                && completion.day_limit == frozen.day_limit
+                && completion.day_type == frozen.day_type,
+            "result finalized intent binding",
+        )
+    }
+
+    fn validate_finalized_metadosis_limits(
+        &self,
+        intent: &JobIntentV1,
+    ) -> Result<(), ProtocolError> {
+        let completion = &self.metadosis_completion_summary;
+        let frozen = &intent.frozen_metadosis_values;
+        require(
+            completion.day_limit == frozen.day_limit
                 && completion.gratis_demand == frozen.gratis_demand
-                && completion.day_gratis_limit_minor == frozen.day_gratis_limit_minor
-                && completion.lysis_limit_minor == frozen.lysis_limit_minor
-                && completion.desis_limit_minor == frozen.desis_limit_minor
-                && completion.status == CompletionStatus::Completed
+                && completion.day_gratis_limit_minor == frozen.day_gratis_limit_minor,
+            "result finalized intent binding",
+        )
+    }
+
+    fn validate_finalized_completion(&self, intent: &JobIntentV1) -> Result<(), ProtocolError> {
+        self.validate_finalized_completion_limits(intent)?;
+        self.validate_finalized_completion_clock(intent)
+    }
+
+    fn validate_finalized_completion_limits(
+        &self,
+        intent: &JobIntentV1,
+    ) -> Result<(), ProtocolError> {
+        let completion = &self.metadosis_completion_summary;
+        let frozen = &intent.frozen_metadosis_values;
+        require(
+            completion.lysis_limit_minor == frozen.lysis_limit_minor
+                && completion.desis_limit_minor == frozen.desis_limit_minor,
+            "result finalized intent binding",
+        )
+    }
+
+    fn validate_finalized_completion_clock(
+        &self,
+        intent: &JobIntentV1,
+    ) -> Result<(), ProtocolError> {
+        let completion = &self.metadosis_completion_summary;
+        require(
+            completion.status == CompletionStatus::Completed
                 && completion.logical_evaluation_height == intent.logical_evaluation_height
                 && completion.logical_evaluation_time == intent.logical_evaluation_time,
             "result finalized intent binding",

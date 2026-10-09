@@ -22,6 +22,7 @@ thiserror.workspace = true
 base64 = "0.22"
 
 [dev-dependencies]
+outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 # Drive the confidential Promis mint path in tests via the in-process enclave.

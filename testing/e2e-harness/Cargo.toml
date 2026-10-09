@@ -15,7 +15,6 @@ ocomp-finality-fixture = [
     "dep:outbe-metadosis",
     "dep:outbe-nod",
     "dep:outbe-node",
-    "dep:outbe-ocomp-protocol",
     "dep:outbe-ocompregistry",
     "dep:outbe-oracle",
     "dep:reth-chainspec",
@@ -26,6 +25,7 @@ tribute-day-directory = [
 ]
 ocomp-integration = [
     "ocomp-finality-fixture",
+    "outbe-ocomp-protocol/test-utils",
     "dep:outbe-ocomp",
     "dep:k256",
     "outbe-metadosis/test-utils",
@@ -75,6 +75,8 @@ outbe-primitives.workspace = true
 outbe-protocol.workspace = true
 outbe-protocol-derive.workspace = true
 outbe-radicle.workspace = true
+# The signer-side evidence encoder that the SlashIndicator tests also use.
+outbe-slashindicator = { workspace = true, features = ["test-utils"] }
 # Read-only Heartwood policy/COB storage; same revision as heartwood-outbe-radicle.
 radicle = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
 outbe-tee.workspace = true
@@ -90,7 +92,7 @@ outbe-nod = { workspace = true, optional = true }
 outbe-nodfactory = { workspace = true, optional = true }
 outbe-node = { workspace = true, optional = true }
 outbe-ocomp = { workspace = true, optional = true }
-outbe-ocomp-protocol = { workspace = true, optional = true }
+outbe-ocomp-protocol.workspace = true
 outbe-ocompregistry = { workspace = true, optional = true }
 outbe-offchain-data.workspace = true
 outbe-offchain-storage.workspace = true
@@ -138,6 +140,7 @@ rustix.workspace = true
 [dev-dependencies]
 commonware-parallel.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }
+outbe-ocomp = { workspace = true, features = ["test-utils"] }
 
 [[bin]]
 name = "outbe-e2e"

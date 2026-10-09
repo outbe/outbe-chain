@@ -34,6 +34,7 @@ use outbe_ocomp_protocol::unit::UnitArtifactV1;
 use outbe_ocomp_protocol::unit::UnitPhase;
 use outbe_ocomp_protocol::unit::UnitSpecV1;
 
+use outbe_ocomp_protocol::list::OrderedListProofTarget;
 use outbe_ocomp_protocol::verify_ordered_list_membership;
 use outbe_ocomp_protocol::ListKind;
 use outbe_ocomp_protocol::ObjectKind;
@@ -102,9 +103,11 @@ pub(super) fn execute_claimed_unit(
     )?;
     if spec.phase == UnitPhase::Enumerate {
         verify_ordered_list_membership(
-            ListKind::UnitSpecificationsArtifacts,
-            plan.primary_work_unit_count,
-            request.unit_index,
+            OrderedListProofTarget::new(
+                ListKind::UnitSpecificationsArtifacts,
+                plan.primary_work_unit_count,
+                request.unit_index,
+            ),
             &request.canonical_unit_spec.0,
             &request.unit_membership_siblings,
             plan.primary_work_unit_root,

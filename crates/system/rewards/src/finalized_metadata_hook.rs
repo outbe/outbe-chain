@@ -23,6 +23,7 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::{PrecompileError, Result},
+    storage::finalized_guard_ring::{FinalizedGuardRing, FINALIZED_GUARD_RETAIN},
     time::{previous_date_key, timestamp_to_date_key},
 };
 
@@ -35,7 +36,7 @@ use crate::schema::Rewards;
 /// ([`LATE_FINALIZE_WINDOW_K`](outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K) = 3).
 /// Thus, a retention of the last 64 finalized blocks is generous. [`prune_block_guards`]
 /// prunes older guard flags. A change to this value is a hard fork.
-pub const BLOCK_GUARD_RETAIN: u64 = 64;
+pub const BLOCK_GUARD_RETAIN: u64 = FINALIZED_GUARD_RETAIN;
 
 /// Record `fb_hash` in the prune ring and clear the four per-`fb_hash` guard
 /// maps of the finalized block evicted `BLOCK_GUARD_RETAIN` records ago.
@@ -49,23 +50,22 @@ pub const BLOCK_GUARD_RETAIN: u64 = 64;
 /// instead (see `late_settlement::settle_window`), where the credited voter
 /// set is known.
 fn prune_block_guards(rewards: &Rewards<'_>, fb_hash: B256) -> Result<()> {
-    let seq = rewards.block_guard_ring_seq.read()?;
-    let idx = seq % BLOCK_GUARD_RETAIN;
-    let evicted = rewards.block_guard_ring.read(&idx)?;
-    if evicted != B256::ZERO && evicted != fb_hash {
-        rewards.block_metadata_counted.write(&evicted, false)?;
-        rewards
-            .metadata_fingerprint_for_block
-            .write(&evicted, B256::ZERO)?;
-        rewards.fee_dust_counted_for_block.write(&evicted, false)?;
-        rewards.fee_settled.write(&evicted, false)?;
+    FinalizedGuardRing {
+        entries: &rewards.block_guard_ring,
+        cursor: &rewards.block_guard_ring_seq,
     }
-    rewards.block_guard_ring.write(&idx, fb_hash)?;
-    rewards.block_guard_ring_seq.write(
-        seq.checked_add(1)
-            .ok_or_else(|| PrecompileError::Revert("block_guard_ring_seq overflow".into()))?,
-    )?;
-    Ok(())
+    .record(
+        fb_hash,
+        |evicted| {
+            rewards.block_metadata_counted.write(&evicted, false)?;
+            rewards
+                .metadata_fingerprint_for_block
+                .write(&evicted, B256::ZERO)?;
+            rewards.fee_dust_counted_for_block.write(&evicted, false)?;
+            rewards.fee_settled.write(&evicted, false)
+        },
+        || PrecompileError::Revert("block_guard_ring_seq overflow".into()),
+    )
 }
 
 /// Per-block fee escrow and participation/cap accumulation.
@@ -138,18 +138,16 @@ pub fn on_finalized_metadata(
     // Committee size = ordered_committee length, bounded by MAX_VALIDATORS (256).
     // Thus, it always fits u32 (the clamp is a defensive no-panic guard, never hit).
     let committee_size = u32::try_from(metadata.ordered_committee.len()).unwrap_or(u32::MAX);
-    crate::late_settlement::escrow_block_fee(
-        ctx,
-        metadata.finalized_block_number,
-        fb_hash,
-        validator_fee_sum,
+    let binding = crate::late_settlement::FinalizedBlockBinding {
+        number: metadata.finalized_block_number,
+        hash: fb_hash,
         committee_size,
-        metadata.finalized_epoch,
-        metadata.finalized_view,
-        metadata.parent_view,
-        metadata.committee_set_hash,
-        voters,
-    )?;
+        epoch: metadata.finalized_epoch,
+        view: metadata.finalized_view,
+        parent_view: metadata.parent_view,
+        committee_set_hash: metadata.committee_set_hash,
+    };
+    crate::late_settlement::escrow_block_fee(ctx, &binding, validator_fee_sum, voters)?;
 
     // Base and authenticated late voters share one per-block participation guard.
     for voter in voters {
@@ -222,65 +220,31 @@ pub(crate) fn record_reward_participation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime;
-    use alloy_primitives::{address, b256, Bytes, B256};
+    use crate::test_support::{
+        block_ctx, bootstrap_genesis, fund_rewards, meta_with_hash, record_genesis_day_parent,
+        with_block, with_funded_genesis_block, with_genesis_block, CHAIN_ID, FB_HASH_A, FB_HASH_B,
+        GENESIS_TS, SECONDS_PER_DAY, VAL_X, VAL_Y, VAL_Z,
+    };
+    use alloy_primitives::B256;
     use outbe_primitives::addresses::REWARDS_ADDRESS;
-    use outbe_primitives::block::BlockContext;
-    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
+    use outbe_primitives::storage::hashmap::{HashMapStorageProvider, MutationPrefixViews};
+    use outbe_primitives::storage::StorageHandle;
 
-    const CHAIN_ID: u64 = 1;
-    // Genesis at midnight UTC of 2024-01-01.
-    const GENESIS_TS: u64 = 1_704_067_200;
-    const SECONDS_PER_DAY: u64 = 86_400;
-
-    fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
-        BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
+    /// Records genesis-day parent `fb_hash` at height `fb_number` with a fee
+    /// of 100, voted by `VAL_X` and then `VAL_Y`.
+    fn record_parent_xy(ctx: &BlockRuntimeContext, fb_hash: B256, fb_number: u64) {
+        record_genesis_day_parent(
+            ctx,
+            &meta_with_hash(fb_hash, fb_number),
+            100,
+            &[VAL_X, VAL_Y],
+        );
     }
-
-    fn meta_with_hash(fb_hash: B256, fb_number: u64) -> CertifiedParentAccountingMetadata {
-        CertifiedParentAccountingMetadata {
-            finalized_block_number: fb_number,
-            finalized_block_hash: fb_hash,
-            finalized_epoch: 1,
-            finalized_view: 1,
-            parent_view: 0,
-            ordered_committee: vec![],
-            signer_bitmap: vec![],
-            proof: Bytes::new(),
-            committee_set_hash: B256::ZERO,
-            vrf_material_version: 0,
-            vrf_group_public_key_hash: B256::ZERO,
-            proof_kind:
-                outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization,
-            missed_proposers: vec![],
-        }
-    }
-
-    /// Lock in genesis_utc_day so day_number_since_genesis works in the hook
-    /// (kept in test setup for forward-compat with day-based settlement).
-    fn bootstrap_genesis(ctx: &BlockRuntimeContext) {
-        runtime::ensure_genesis_anchor(ctx).unwrap();
-    }
-
-    /// Pre-fund REWARDS_ADDRESS with `amount` so transfer_balance succeeds.
-    fn fund_rewards(ctx: &BlockRuntimeContext, amount: U256) {
-        ctx.storage
-            .increase_balance(REWARDS_ADDRESS, amount)
-            .unwrap();
-    }
-
-    const FB_HASH_A: B256 =
-        b256!("0x1111111111111111111111111111111111111111111111111111111111111111");
-    const FB_HASH_B: B256 =
-        b256!("0x2222222222222222222222222222222222222222222222222222222222222222");
-    const VAL_X: Address = address!("0x00000000000000000000000000000000000000A1");
-    const VAL_Y: Address = address!("0x00000000000000000000000000000000000000B2");
 
     #[test]
     fn late_vote_across_midnight_counts_once_for_the_original_reward_day() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(11, GENESIS_TS + SECONDS_PER_DAY), handle);
+        with_block(11, GENESIS_TS + SECONDS_PER_DAY, |ctx| {
             on_finalized_metadata(
                 &ctx,
                 &meta_with_hash(FB_HASH_A, 10),
@@ -304,11 +268,7 @@ mod tests {
 
     #[test]
     fn escrows_block_fees_and_seeds_base_voters_at_k0() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-
+        with_genesis_block(|ctx| {
             let fees = U256::from(101u64);
             fund_rewards(&ctx, fees);
 
@@ -342,20 +302,8 @@ mod tests {
 
     #[test]
     fn records_per_voter_participation_and_voter_list() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-            fund_rewards(&ctx, U256::from(100u64));
-
-            on_finalized_metadata(
-                &ctx,
-                &meta_with_hash(FB_HASH_A, 1),
-                U256::from(100u64),
-                GENESIS_TS,
-                &[VAL_X, VAL_Y],
-            )
-            .unwrap();
+        with_funded_genesis_block(100, |ctx| {
+            record_parent_xy(&ctx, FB_HASH_A, 1);
 
             let rewards = ctx.storage.contract::<Rewards>();
             let day_participation = rewards.daily_participation.get_nested(&20240101);
@@ -376,31 +324,12 @@ mod tests {
 
     #[test]
     fn replay_for_same_fb_hash_is_idempotent() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-            fund_rewards(&ctx, U256::from(100u64));
-
-            on_finalized_metadata(
-                &ctx,
-                &meta_with_hash(FB_HASH_A, 1),
-                U256::from(100u64),
-                GENESIS_TS,
-                &[VAL_X, VAL_Y],
-            )
-            .unwrap();
+        with_funded_genesis_block(100, |ctx| {
+            record_parent_xy(&ctx, FB_HASH_A, 1);
 
             // Replay: escrow, base-voter seeding, raw-fee and participation are
             // all idempotent.
-            on_finalized_metadata(
-                &ctx,
-                &meta_with_hash(FB_HASH_A, 1),
-                U256::from(100u64),
-                GENESIS_TS,
-                &[VAL_X, VAL_Y],
-            )
-            .unwrap();
+            record_parent_xy(&ctx, FB_HASH_A, 1);
 
             // No eager payout. The escrow holds the full fee once.
             assert_eq!(ctx.storage.balance(VAL_X).unwrap(), U256::ZERO);
@@ -431,28 +360,9 @@ mod tests {
 
     #[test]
     fn distinct_fb_hashes_for_same_day_aggregate() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-            fund_rewards(&ctx, U256::from(200u64));
-
-            on_finalized_metadata(
-                &ctx,
-                &meta_with_hash(FB_HASH_A, 1),
-                U256::from(100u64),
-                GENESIS_TS,
-                &[VAL_X, VAL_Y],
-            )
-            .unwrap();
-            on_finalized_metadata(
-                &ctx,
-                &meta_with_hash(FB_HASH_B, 2),
-                U256::from(100u64),
-                GENESIS_TS,
-                &[VAL_X, VAL_Y],
-            )
-            .unwrap();
+        with_funded_genesis_block(200, |ctx| {
+            record_parent_xy(&ctx, FB_HASH_A, 1);
+            record_parent_xy(&ctx, FB_HASH_B, 2);
 
             let rewards = ctx.storage.contract::<Rewards>();
             // Both blocks contributed 100 -> 200 raw (emission-cap input).
@@ -490,11 +400,7 @@ mod tests {
 
     #[test]
     fn first_call_initializes_last_settled_utc_day_to_previous_day() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-
+        with_genesis_block(|ctx| {
             let rewards = ctx.storage.contract::<Rewards>();
             assert_eq!(rewards.last_settled_utc_day.read().unwrap(), 0);
 
@@ -515,11 +421,7 @@ mod tests {
 
     #[test]
     fn metadata_for_settled_day_is_not_fatal_under_sync_phase_ordering() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-
+        with_genesis_block(|ctx| {
             // `daily_settled` is a Cycle-owned completion marker.
             // makes finalized metadata synchronous Phase 1 input before Cycle
             // runs, so the old late-after-settle fatal guard is gone.
@@ -529,14 +431,7 @@ mod tests {
                 .write(&20240101, true)
                 .unwrap();
 
-            on_finalized_metadata(
-                &ctx,
-                &meta_with_hash(FB_HASH_A, 1),
-                U256::ZERO,
-                GENESIS_TS,
-                &[VAL_X],
-            )
-            .unwrap();
+            record_genesis_day_parent(&ctx, &meta_with_hash(FB_HASH_A, 1), 0, &[VAL_X]);
 
             let rewards = ctx.storage.contract::<Rewards>();
             assert!(rewards.block_metadata_counted.read(&FB_HASH_A).unwrap());
@@ -553,19 +448,8 @@ mod tests {
 
     #[test]
     fn no_voters_escrows_full_fee_with_no_base_seed() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-
-            on_finalized_metadata(
-                &ctx,
-                &meta_with_hash(FB_HASH_A, 1),
-                U256::from(100u64),
-                GENESIS_TS,
-                &[],
-            )
-            .unwrap();
+        with_genesis_block(|ctx| {
+            record_genesis_day_parent(&ctx, &meta_with_hash(FB_HASH_A, 1), 100, &[]);
 
             let rewards = ctx.storage.contract::<Rewards>();
             assert_eq!(
@@ -594,21 +478,9 @@ mod tests {
         // `max_observed_finalized_day` watermark. The new Cycle orchestrator owns
         // the day-boundary settle. The settle fires via
         // `crate::api::prepare_daily_validator_gem_batch`, not from this hook.
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-            fund_rewards(&ctx, U256::from(200u64));
-
+        with_funded_genesis_block(200, |ctx| {
             // Block from day D=20240101.
-            on_finalized_metadata(
-                &ctx,
-                &meta_with_hash(FB_HASH_A, 1),
-                U256::from(100u64),
-                GENESIS_TS,
-                &[VAL_X, VAL_Y],
-            )
-            .unwrap();
+            record_parent_xy(&ctx, FB_HASH_A, 1);
             // Block from day D+2=20240103.
             on_finalized_metadata(
                 &ctx,
@@ -738,8 +610,6 @@ mod tests {
         voter_mask: [bool; 3], // which of (VAL_X, VAL_Y, VAL_Z) signed
     }
 
-    const VAL_Z: Address = address!("0x00000000000000000000000000000000000000C3");
-
     fn voters_for(mask: [bool; 3]) -> Vec<Address> {
         let pool = [VAL_X, VAL_Y, VAL_Z];
         pool.iter()
@@ -864,58 +734,138 @@ mod tests {
         }
     }
 
-    /// The prune ring clears all four per-`fb_hash` guard maps of a finalized block
-    /// that it evicts. Blocks still inside the retention window keep their guards.
-    #[test]
-    fn block_guard_ring_evicts_and_clears_old_guards() {
-        fn fb(i: u64) -> B256 {
-            let mut b = [0u8; 32];
-            b[24..].copy_from_slice(&i.to_be_bytes());
-            B256::from(b)
-        }
+    /// The fingerprint that the seeded guards of a block carry.
+    const SEEDED_FINGERPRINT: B256 = B256::repeat_byte(0xFE);
 
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            let rewards = ctx.storage.contract::<Rewards>();
+    /// The four per-block guards of one block and the ring position.
+    #[derive(Debug, PartialEq)]
+    struct BlockRingView {
+        metadata_counted: bool,
+        fingerprint: B256,
+        dust_counted: bool,
+        settled: bool,
+        ring: RingPosition,
+    }
 
-            // `victim` carries all four live per-fb_hash guards. `survivor` is a
-            // block recorded one step later that must stay live.
-            let victim = fb(1);
-            let survivor = fb(2);
-            for h in [victim, survivor] {
-                rewards.block_metadata_counted.write(&h, true).unwrap();
-                rewards
-                    .metadata_fingerprint_for_block
-                    .write(&h, fb(0xdead))
-                    .unwrap();
-                rewards.fee_dust_counted_for_block.write(&h, true).unwrap();
-                rewards.fee_settled.write(&h, true).unwrap();
-            }
-
-            // Record victim, then survivor, then fill the ring with RETAIN-1 more
-            // fresh blocks so victim (and only victim) reaches the eviction slot.
-            prune_block_guards(&rewards, victim).unwrap();
-            prune_block_guards(&rewards, survivor).unwrap();
-            for i in 0..(BLOCK_GUARD_RETAIN - 1) {
-                prune_block_guards(&rewards, fb(1000 + i)).unwrap();
-            }
-
-            // Victim evicted -> every guard reset to its default.
-            assert!(!rewards.block_metadata_counted.read(&victim).unwrap());
-            assert_eq!(
-                rewards
-                    .metadata_fingerprint_for_block
-                    .read(&victim)
-                    .unwrap(),
+    /// The guards of a block in `guards_live` state, with `entry` and `seq`.
+    fn block_ring_view(guards_live: [bool; 4], entry: B256, seq: u64) -> BlockRingView {
+        BlockRingView {
+            metadata_counted: guards_live[0],
+            fingerprint: if guards_live[1] {
+                SEEDED_FINGERPRINT
+            } else {
                 B256::ZERO
-            );
-            assert!(!rewards.fee_dust_counted_for_block.read(&victim).unwrap());
-            assert!(!rewards.fee_settled.read(&victim).unwrap());
+            },
+            dust_counted: guards_live[2],
+            settled: guards_live[3],
+            ring: RingPosition { entry, seq },
+        }
+    }
 
-            // Survivor is still inside the window -> guards intact.
-            assert!(rewards.block_metadata_counted.read(&survivor).unwrap());
-            assert!(rewards.fee_settled.read(&survivor).unwrap());
+    /// Storage after seeding the ring cursor `seq`, the entry at
+    /// `seq % RETAIN` and the four guards of every block in `guarded`.
+    fn seeded_block_ring(seq: u64, entry: B256, guarded: &[B256]) -> HashMapStorageProvider {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.enter(|storage| {
+            let rewards = Rewards::new(storage);
+            block_guard_ring(&rewards)
+                .seed_for_test(seq, entry)
+                .unwrap();
+            for hash in guarded {
+                rewards.block_metadata_counted.write(hash, true).unwrap();
+                rewards
+                    .metadata_fingerprint_for_block
+                    .write(hash, SEEDED_FINGERPRINT)
+                    .unwrap();
+                rewards
+                    .fee_dust_counted_for_block
+                    .write(hash, true)
+                    .unwrap();
+                rewards.fee_settled.write(hash, true).unwrap();
+            }
         });
+        provider
+    }
+
+    fn read_block_ring(
+        provider: &mut HashMapStorageProvider,
+        guarded: B256,
+        idx: u64,
+    ) -> BlockRingView {
+        provider.enter(|storage| {
+            let rewards = Rewards::new(storage);
+            BlockRingView {
+                metadata_counted: rewards.block_metadata_counted.read(&guarded).unwrap(),
+                fingerprint: rewards
+                    .metadata_fingerprint_for_block
+                    .read(&guarded)
+                    .unwrap(),
+                dust_counted: rewards.fee_dust_counted_for_block.read(&guarded).unwrap(),
+                settled: rewards.fee_settled.read(&guarded).unwrap(),
+                ring: block_guard_ring(&rewards).position_for_test(idx).unwrap(),
+            }
+        })
+    }
+
+    fn block_guard_ring<'a, 's>(rewards: &'a Rewards<'s>) -> FinalizedGuardRing<'a, 's> {
+        FinalizedGuardRing {
+            entries: &rewards.block_guard_ring,
+            cursor: &rewards.block_guard_ring_seq,
+        }
+    }
+
+    fn prune(storage: StorageHandle, fb_hash: B256) -> Result<()> {
+        prune_block_guards(&Rewards::new(storage), fb_hash)
+    }
+
+    /// Characterizes the write order of one prune at a wrapped cursor: the
+    /// four guards of the evicted block in schema order, then the ring entry,
+    /// then the cursor. A failure before write `n` leaves exactly the first
+    /// `n` writes applied.
+    #[test]
+    fn block_guard_ring_write_order_at_a_wrapped_cursor() {
+        let evicted = test_ring_hash(1);
+        let fb_hash = test_ring_hash(2);
+        let seq = BLOCK_GUARD_RETAIN + 5;
+        let views = HashMapStorageProvider::mutation_prefix_views(
+            || seeded_block_ring(seq, evicted, &[evicted]),
+            |storage| prune(storage, fb_hash),
+            |provider| read_block_ring(provider, evicted, 5),
+        )
+        .unwrap();
+        assert_eq!(
+            views,
+            MutationPrefixViews {
+                before_mutation: vec![
+                    block_ring_view([true, true, true, true], evicted, seq),
+                    block_ring_view([false, true, true, true], evicted, seq),
+                    block_ring_view([false, false, true, true], evicted, seq),
+                    block_ring_view([false, false, false, true], evicted, seq),
+                    block_ring_view([false, false, false, false], evicted, seq),
+                    block_ring_view([false, false, false, false], fb_hash, seq),
+                ],
+                complete: block_ring_view([false, false, false, false], fb_hash, seq + 1),
+                mutations: 6,
+            }
+        );
+    }
+
+    /// At the last cursor value the prune still evicts and writes the ring
+    /// entry. Then it reverts with the original message and leaves the cursor
+    /// unchanged.
+    #[test]
+    fn block_guard_ring_cursor_overflow_reverts_after_the_ring_write() {
+        let evicted = test_ring_hash(1);
+        let fb_hash = test_ring_hash(2);
+        let mut provider = seeded_block_ring(u64::MAX, evicted, &[evicted]);
+        let result = provider.enter(|storage| prune(storage, fb_hash));
+        assert!(
+            matches!(&result, Err(PrecompileError::Revert(message)) if message == "block_guard_ring_seq overflow"),
+            "{result:?}"
+        );
+        assert_eq!(
+            read_block_ring(&mut provider, evicted, u64::MAX % BLOCK_GUARD_RETAIN),
+            block_ring_view([false, false, false, false], fb_hash, u64::MAX)
+        );
     }
 }

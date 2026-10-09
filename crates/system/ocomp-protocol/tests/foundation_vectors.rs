@@ -148,30 +148,39 @@ fn production_reader_round_trips_every_scalar_and_collection() {
         .unwrap();
 
     let mut reader = CanonicalReader::new(writer.as_slice(), CODEC_LIMITS).unwrap();
-    assert_eq!(reader.read_u8().unwrap(), 1);
-    assert_eq!(reader.read_u16().unwrap(), 2);
-    assert_eq!(reader.read_u32().unwrap(), 3);
-    assert_eq!(reader.read_u64().unwrap(), 4);
-    assert_eq!(reader.read_u128().unwrap(), 5);
-    assert_eq!(reader.read_u256().unwrap(), U256::from(6));
-    assert_eq!(reader.read_b256().unwrap(), B256::repeat_byte(7));
-    assert_eq!(
-        reader.read_address20().unwrap(),
-        address!("0808080808080808080808080808080808080808")
-    );
-    assert_eq!(reader.read_b256().unwrap(), B256::from([9; 32]));
-    assert!(reader.read_bool().unwrap());
-    assert_eq!(
-        reader.read_option(CanonicalReader::read_u16).unwrap(),
-        Some(10)
-    );
-    assert_eq!(reader.read_utf8(32).unwrap(), "tribute");
-    assert_eq!(reader.read_ascii(32).unwrap(), "NOD");
-    assert_eq!(
-        reader.read_vec(2, 4, CanonicalReader::read_u32).unwrap(),
-        [11, 12]
-    );
+    assert_decoded_scalar_values(&mut reader);
+    assert_decoded_fixed_values(&mut reader);
+    assert_decoded_optional_text_and_collection(&mut reader);
     assert_eq!(reader.finish().unwrap().reservations, 1);
+}
+
+fn assert_decoded_scalar_values(reader: &mut CanonicalReader<'_>) {
+    assert_eq!(reader.read_u8(), Ok(1));
+    assert_eq!(reader.read_u16(), Ok(2));
+    assert_eq!(reader.read_u32(), Ok(3));
+    assert_eq!(reader.read_u64(), Ok(4));
+    assert_eq!(reader.read_u128(), Ok(5));
+    assert_eq!(reader.read_u256(), Ok(U256::from(6)));
+}
+
+fn assert_decoded_fixed_values(reader: &mut CanonicalReader<'_>) {
+    assert_eq!(reader.read_b256(), Ok(B256::repeat_byte(7)));
+    assert_eq!(
+        reader.read_address20(),
+        Ok(address!("0808080808080808080808080808080808080808"))
+    );
+    assert_eq!(reader.read_b256(), Ok(B256::from([9; 32])));
+}
+
+fn assert_decoded_optional_text_and_collection(reader: &mut CanonicalReader<'_>) {
+    assert_eq!(reader.read_bool(), Ok(true));
+    assert_eq!(reader.read_option(CanonicalReader::read_u16), Ok(Some(10)));
+    assert_eq!(reader.read_utf8(32), Ok("tribute"));
+    assert_eq!(reader.read_ascii(32), Ok("NOD"));
+    assert_eq!(
+        reader.read_vec(2, 4, CanonicalReader::read_u32),
+        Ok(vec![11, 12])
+    );
 }
 
 #[test]
@@ -519,29 +528,31 @@ fn generated_registry_is_complete_and_unique() {
     assert_eq!(ObjectKind::ALL.len(), 36);
     assert_eq!(HashDomain::ALL.len(), 50);
     assert_eq!(ListKind::ALL.len(), 13);
-    assert_eq!(ObjectKind::ProtocolBundleV1.tag(), 0x0001);
-    assert_eq!(ObjectKind::OcompJobRecordV1.tag(), 0x001e);
-    assert_eq!(ObjectKind::NodMaterializationBatchV1.tag(), 0x0027);
-    assert_eq!(ObjectKind::NodMaterializationHeadV1.tag(), 0x0028);
-    assert_eq!(
-        ObjectKind::try_from(0x000f),
-        Err(ProtocolError::UnknownObjectKind(0x000f))
-    );
-    assert_eq!(
-        ObjectKind::try_from(0x0011),
-        Err(ProtocolError::UnknownObjectKind(0x0011))
-    );
-    assert_eq!(
-        ObjectKind::try_from(0x001a),
-        Err(ProtocolError::UnknownObjectKind(0x001a))
-    );
-    assert_eq!(ListKind::NodActions.id(), 1);
-    assert_eq!(ListKind::RawTributeCoverage.id(), 8);
-    assert_eq!(ListKind::FidelityOpenings.id(), 9);
-    assert_eq!(ListKind::OracleOpenings.id(), 10);
-    assert_eq!(ListKind::ResultChunkHashes.id(), 11);
-    assert_eq!(ListKind::LysisLeagueFractions.id(), 12);
-    assert_eq!(ListKind::LysisGratisLeafPrefixes.id(), 13);
+    for (kind, tag) in [
+        (ObjectKind::ProtocolBundleV1, 0x0001),
+        (ObjectKind::OcompJobRecordV1, 0x001e),
+        (ObjectKind::NodMaterializationBatchV1, 0x0027),
+        (ObjectKind::NodMaterializationHeadV1, 0x0028),
+    ] {
+        assert_eq!(kind.tag(), tag);
+    }
+    for tag in [0x000f, 0x0011, 0x001a] {
+        assert_eq!(
+            ObjectKind::try_from(tag),
+            Err(ProtocolError::UnknownObjectKind(tag))
+        );
+    }
+    for (kind, id) in [
+        (ListKind::NodActions, 1),
+        (ListKind::RawTributeCoverage, 8),
+        (ListKind::FidelityOpenings, 9),
+        (ListKind::OracleOpenings, 10),
+        (ListKind::ResultChunkHashes, 11),
+        (ListKind::LysisLeagueFractions, 12),
+        (ListKind::LysisGratisLeafPrefixes, 13),
+    ] {
+        assert_eq!(kind.id(), id);
+    }
     assert_eq!(
         ObjectKind::try_from(0xffff),
         Err(ProtocolError::UnknownObjectKind(0xffff))

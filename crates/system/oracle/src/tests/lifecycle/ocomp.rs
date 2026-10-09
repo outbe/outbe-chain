@@ -75,8 +75,7 @@ fn ocomp_oracle_profile_initialization_is_exact_and_idempotent() {
 
 #[test]
 fn ocomp_state_version_overflow_rejects_before_oracle_mutation() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         oracle.ocomp_state_version.write(u64::MAX).unwrap();
@@ -158,15 +157,14 @@ fn prefork_oracle_event_failures_preserve_historical_best_effort_mutations() {
 
 #[test]
 fn scurve_count_overflow_rejects_before_any_owner_write() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         oracle.scurve_count.write(u32::MAX).unwrap();
         let version_before = oracle.ocomp_state_version.read().unwrap();
 
         assert!(crate::scurve::store_scurve_entry(
-            &mut oracle,
+            oracle,
             pair_key(COEN, usd()),
             ATOMIC_DAY_START,
             coen_iso(125),

@@ -11,7 +11,7 @@ use outbe_ocomp_protocol::{
     intent::JobIntentV1,
     local_control::EndpointIdentity,
     result::LysisResultV1,
-    vote::ResultVoteV1,
+    vote::{ResultVotePrefixV1, ResultVoteV1, VoteSigningDomain},
     ProtocolError, SchemaLimits,
 };
 use thiserror::Error;
@@ -84,17 +84,21 @@ impl LocalResultVoteAttesterV1 {
         }
         let result_digest = result.result_digest(&self.limits)?;
         let subject = SignOnceSubjectV1 {
-            chain_id: self.identity.chain_id,
-            genesis_hash: self.identity.genesis_hash,
-            fork_id: self.fork_id,
-            job_id: result.job_id,
-            attempt: result.attempt,
-            protocol_bundle_hash: result.protocol_bundle_hash,
-            result_validator_set_epoch: intent.result_validator_set_epoch,
-            result_committee_set_hash: intent.result_committee_set_hash,
-            result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
-            ocomp_key_hash: self.ocomp_key_hash,
-            key_epoch: self.signer.key_epoch(),
+            domain: VoteSigningDomain {
+                chain_id: self.identity.chain_id,
+                genesis_hash: self.identity.genesis_hash,
+                fork_id: self.fork_id,
+            },
+            prefix: ResultVotePrefixV1 {
+                job_id: result.job_id,
+                attempt: result.attempt,
+                protocol_bundle_hash: result.protocol_bundle_hash,
+                result_validator_set_epoch: intent.result_validator_set_epoch,
+                result_committee_set_hash: intent.result_committee_set_hash,
+                result_ocomp_binding_hash: intent.result_ocomp_binding_hash,
+                ocomp_key_hash: self.ocomp_key_hash,
+                key_epoch: self.signer.key_epoch(),
+            },
             result_digest,
         };
         let expected_signing_digest = subject.signing_digest()?;

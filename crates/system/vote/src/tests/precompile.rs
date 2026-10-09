@@ -10,8 +10,9 @@ use crate::precompile::{dispatch_with_handlers, IVote};
 use crate::schema::{BondSettlement, Vote};
 
 use super::{
-    create_proposal_test, empty_update_payload, setup_default_validators,
-    targets::PUBLIC_BONDED_REGISTRY, test_vote_registry, PROPOSER, VOTER_A, VOTER_B,
+    assert_reverts_with, create_proposal_test, create_update_proposal, empty_update_payload,
+    proposal_status, setup_default_validators, targets::PUBLIC_BONDED_REGISTRY, test_vote_registry,
+    PROPOSER, VOTER_A, VOTER_B,
 };
 
 fn dispatch(
@@ -76,24 +77,14 @@ fn custom_window_persists_deadline_and_tallies_only_after_it() {
             vote.process_begin_block(&ctx, test_vote_registry())
                 .unwrap();
             assert_eq!(
-                vote.proposals
-                    .get(id)
-                    .unwrap()
-                    .unwrap()
-                    .proposal_status()
-                    .unwrap(),
+                proposal_status(&vote, id),
                 crate::state::ProposalStatus::Pending
             );
             let ctx = super::block_ctx(storage.clone(), 101 + window);
             vote.process_begin_block(&ctx, test_vote_registry())
                 .unwrap();
             assert_eq!(
-                vote.proposals
-                    .get(id)
-                    .unwrap()
-                    .unwrap()
-                    .proposal_status()
-                    .unwrap(),
+                proposal_status(&vote, id),
                 crate::state::ProposalStatus::Approved
             );
         });
@@ -134,12 +125,7 @@ fn custom_window_does_not_change_existing_proposal_or_quorum() {
         vote.process_begin_block(&super::block_ctx(storage, 1101), test_vote_registry())
             .unwrap();
         assert_eq!(
-            vote.proposals
-                .get(id)
-                .unwrap()
-                .unwrap()
-                .proposal_status()
-                .unwrap(),
+            proposal_status(&vote, id),
             crate::state::ProposalStatus::Expired
         );
         let old = vote.proposals.get(old_id).unwrap().unwrap();
@@ -291,14 +277,7 @@ fn dispatch_create_proposal_accepts_exact_public_bond_only() {
 fn dispatch_cast_vote_emits_event() {
     let provider = with_vote_provider(100, |storage| {
         let mut governance = Vote::new(storage.clone());
-        let proposal_id = create_proposal_test(
-            &mut governance,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(100),
-            100,
-        )
-        .unwrap();
+        let proposal_id = create_update_proposal(&mut governance, PROPOSER, 100).unwrap();
 
         let data = IVote::castVoteCall {
             proposalId: proposal_id,
@@ -318,11 +297,10 @@ fn dispatch_rejects_non_zero_value() {
             proposalId: U256::from(1),
         }
         .abi_encode();
-        let err = dispatch(storage, &data, PROPOSER, U256::from(1)).unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("non-payable")
-        ));
+        assert_reverts_with(
+            dispatch(storage, &data, PROPOSER, U256::from(1)),
+            "non-payable",
+        );
     });
 }
 
@@ -330,14 +308,7 @@ fn dispatch_rejects_non_zero_value() {
 fn bond_views_return_legacy_no_bond_and_recorded_liability() {
     with_vote_provider(100, |storage| {
         let mut vote = Vote::new(storage.clone());
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(100),
-            100,
-        )
-        .unwrap();
+        let proposal_id = create_update_proposal(&mut vote, PROPOSER, 100).unwrap();
         let bond_data = IVote::getProposalBondCall {
             proposalId: proposal_id,
         }
@@ -447,25 +418,17 @@ fn dispatch_create_proposal_rejects_non_zero_value_before_state_change() {
 fn dispatch_cast_vote_rejects_non_zero_value_before_state_change() {
     with_vote_provider(100, |storage| {
         let mut vote = Vote::new(storage.clone());
-        let proposal_id = create_proposal_test(
-            &mut vote,
-            PROPOSER,
-            UPDATE_ADDRESS,
-            &empty_update_payload(100),
-            100,
-        )
-        .unwrap();
+        let proposal_id = create_update_proposal(&mut vote, PROPOSER, 100).unwrap();
         let voters_before = vote.read_proposal_voters(proposal_id).unwrap().len();
         let data = IVote::castVoteCall {
             proposalId: proposal_id,
             approve: true,
         }
         .abi_encode();
-        let err = dispatch(storage.clone(), &data, VOTER_A, U256::from(1)).unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("non-payable")
-        ));
+        assert_reverts_with(
+            dispatch(storage.clone(), &data, VOTER_A, U256::from(1)),
+            "non-payable",
+        );
         assert_eq!(
             vote.read_proposal_voters(proposal_id).unwrap().len(),
             voters_before

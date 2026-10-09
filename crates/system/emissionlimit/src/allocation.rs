@@ -126,19 +126,14 @@ fn validate_sink_specs(specs: &[EmissionSinkSpec]) -> Result<()> {
     let mut terminal_index = None;
 
     for (idx, spec) in specs.iter().enumerate() {
-        match spec.pct {
-            Some(pct) => {
-                fixed_pct_sum = fixed_pct_sum.checked_add(pct).ok_or_else(|| {
-                    PrecompileError::Revert("emission fixed percentage overflow".into())
-                })?;
-            }
-            None => {
-                if terminal_index.replace(idx).is_some() {
-                    return Err(PrecompileError::Revert(
-                        "emission sink table must have one terminal sink".into(),
-                    ));
-                }
-            }
+        if let Some(pct) = spec.pct {
+            fixed_pct_sum = fixed_pct_sum.checked_add(pct).ok_or_else(|| {
+                PrecompileError::Revert("emission fixed percentage overflow".into())
+            })?;
+        } else if terminal_index.replace(idx).is_some() {
+            return Err(PrecompileError::Revert(
+                "emission sink table must have one terminal sink".into(),
+            ));
         }
     }
 
@@ -264,6 +259,36 @@ mod tests {
             },
         ];
         assert!(allocate_emission_with_specs(U256::from(100u64), &over_allocated).is_err());
+    }
+
+    #[test]
+    fn allocation_validation_preserves_first_error() {
+        let fixed = |pct| EmissionSinkSpec {
+            id: EmissionSinkId::Validator,
+            pct: Some(pct),
+        };
+        let terminal = EmissionSinkSpec {
+            id: EmissionSinkId::Metadosis,
+            pct: None,
+        };
+        let cases = [
+            (
+                vec![fixed(u64::MAX), fixed(1)],
+                "emission fixed percentage overflow",
+            ),
+            (
+                vec![fixed(101), terminal, terminal],
+                "emission sink table must have one terminal sink",
+            ),
+            (
+                vec![fixed(101)],
+                "emission terminal sink must be the final sink",
+            ),
+        ];
+        for (specs, expected) in cases {
+            let error = allocate_emission_with_specs(U256::ZERO, &specs).unwrap_err();
+            assert!(matches!(error, PrecompileError::Revert(message) if message == expected));
+        }
     }
 
     #[test]

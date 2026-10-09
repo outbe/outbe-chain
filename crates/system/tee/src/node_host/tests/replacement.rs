@@ -28,6 +28,19 @@ fn expired_rejoin_registration_reuses_the_finalized_candidate_workflow() {
     let submission = load_replacement_candidate_submission(&fixture.node_data_dir)
         .unwrap()
         .unwrap();
+    let mut expected_submission = vec![1];
+    expected_submission.extend_from_slice(
+        &u32::try_from(submission.evidence().len())
+            .unwrap()
+            .to_be_bytes(),
+    );
+    expected_submission.extend_from_slice(submission.evidence());
+    expected_submission.extend_from_slice(submission.node_signature());
+    expected_submission.extend_from_slice(submission.enclave_signature());
+    assert_eq!(
+        std::fs::read(&fixture.paths.replacement_submission).unwrap(),
+        expected_submission
+    );
     let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence()).unwrap();
     let AttestationEvidenceV1::Dcap(evidence) = evidence else {
         panic!("expected DCAP registration evidence")
@@ -43,6 +56,16 @@ fn expired_rejoin_registration_reuses_the_finalized_candidate_workflow() {
         &raw_transaction,
     )
     .unwrap();
+    let mut expected_relay = vec![1];
+    expected_relay.extend_from_slice(submission.submission_hash().unwrap().as_slice());
+    expected_relay.extend_from_slice(B256::repeat_byte(0x90).as_slice());
+    expected_relay.extend_from_slice(keccak256(&raw_transaction).as_slice());
+    expected_relay.extend_from_slice(&u32::try_from(raw_transaction.len()).unwrap().to_be_bytes());
+    expected_relay.extend_from_slice(&raw_transaction);
+    assert_eq!(
+        std::fs::read(&fixture.paths.replacement_relay).unwrap(),
+        expected_relay
+    );
     assert_eq!(relay.transaction_hash(), keccak256(&raw_transaction));
     assert_eq!(
         persist_replacement_candidate_relay(
@@ -77,15 +100,52 @@ fn expired_rejoin_registration_reuses_the_finalized_candidate_workflow() {
 }
 
 #[test]
-fn development_expired_rejoin_uses_the_same_durable_promotion_journal() {
-    let fixture = replacement_fixture_for_mode(
-        AttestationOperationV1::RegisterEnclave,
-        AttestationMode::GramineDirectDev,
+fn replacement_record_decode_preserves_first_error() {
+    let fixture = replacement_fixture_for_operation(AttestationOperationV1::RegisterEnclave);
+    persist_replacement_candidate_relay(
+        &fixture.node_data_dir,
+        B256::repeat_byte(0x81),
+        &[0x82, 0x83],
+    )
+    .unwrap();
+    let submission = std::fs::read(&fixture.paths.replacement_submission).unwrap();
+    let relay = std::fs::read(&fixture.paths.replacement_relay).unwrap();
+
+    let mut invalid_frame = submission.clone();
+    invalid_frame[0] = 2;
+    invalid_frame[1..5].fill(0);
+    std::fs::write(&fixture.paths.replacement_submission, invalid_frame).unwrap();
+    assert_eq!(
+        read_replacement_submission(&fixture.paths.replacement_submission)
+            .unwrap_err()
+            .to_string(),
+        "codec error: replacement submission framing is invalid"
     );
-    let submission = load_replacement_candidate_submission(&fixture.node_data_dir)
-        .unwrap()
-        .unwrap();
-    let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence()).unwrap();
+
+    let mut invalid_length = submission;
+    invalid_length[1..5].fill(0);
+    invalid_length[5] = 0xff;
+    std::fs::write(&fixture.paths.replacement_submission, invalid_length).unwrap();
+    assert_eq!(
+        read_replacement_submission(&fixture.paths.replacement_submission)
+            .unwrap_err()
+            .to_string(),
+        "codec error: replacement submission evidence length is non-canonical"
+    );
+
+    super::fixtures::assert_relay_decode_precedence(
+        &fixture.paths,
+        &relay,
+        super::fixtures::RelayRecordKind::Replacement,
+    )
+    .unwrap();
+}
+
+#[test]
+fn development_expired_rejoin_uses_the_same_durable_promotion_journal() {
+    let DirectDevRegistration {
+        fixture, evidence, ..
+    } = direct_dev_registration();
     assert!(matches!(
         evidence,
         AttestationEvidenceV1::GramineDirectDev(_)
@@ -105,15 +165,12 @@ fn restart_commits_only_the_exact_fsynced_candidate_relay_checkpoint() {
         &[0x82, 0x83],
     )
     .unwrap();
-    let bytes = std::fs::read(&fixture.paths.replacement_relay).unwrap();
-    std::fs::remove_file(&fixture.paths.replacement_relay).unwrap();
-    File::open(&fixture.paths.root).unwrap().sync_all().unwrap();
-    write_bytes_once(
+    let bytes = stage_existing_record_as_next(
+        &fixture.paths.replacement_relay,
         &fixture.paths.replacement_relay_next,
-        &bytes,
         &fixture.paths.root,
-    )
-    .unwrap();
+        DirectorySync::Sync,
+    );
 
     assert_eq!(
         load_replacement_candidate_relay(&fixture.node_data_dir)
@@ -165,6 +222,87 @@ fn finalized_exact_candidate_promotes_atomically_and_idempotently() {
         read_manifest(&fixture.paths.manifest).unwrap(),
         fixture.candidate
     );
+}
+
+fn assert_committed_identity_loaders(
+    fixture: &ReplacementFixture,
+    expected: &EnclaveInitializationManifestV1,
+) {
+    assert_eq!(
+        &load_committed_enclave_manifest_v1(&fixture.node_data_dir).unwrap(),
+        expected
+    );
+    let (manifest, key) = committed_node_host_session_material(&fixture.node_data_dir).unwrap();
+    assert_eq!(&manifest, expected);
+    assert_eq!(key.public(), fixture.node_host_public);
+}
+
+fn assert_committed_identity_loader_error(fixture: &ReplacementFixture, expected: &str) {
+    assert_eq!(
+        load_committed_enclave_manifest_v1(&fixture.node_data_dir)
+            .err()
+            .unwrap()
+            .to_string(),
+        expected
+    );
+    assert_eq!(
+        committed_node_host_session_material(&fixture.node_data_dir)
+            .err()
+            .unwrap()
+            .to_string(),
+        expected
+    );
+}
+
+#[test]
+fn committed_identity_loaders_read_the_active_manifest_and_key() {
+    let fixture = replacement_fixture();
+    assert_committed_identity_loaders(&fixture, &fixture.active);
+
+    promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
+    assert_committed_identity_loaders(&fixture, &fixture.candidate);
+}
+
+#[test]
+fn committed_identity_loader_guards_precede_key_reads_and_recovery() {
+    let expected = "codec error: one committed production NodeHost manifest is required";
+
+    let missing_manifest = replacement_fixture();
+    std::fs::remove_file(&missing_manifest.paths.manifest).unwrap();
+    std::fs::write(&missing_manifest.paths.noise_key, b"bad key").unwrap();
+    assert_committed_identity_loader_error(&missing_manifest, expected);
+
+    let missing_key = replacement_fixture();
+    std::fs::remove_file(&missing_key.paths.noise_key).unwrap();
+    assert_committed_identity_loader_error(&missing_key, expected);
+
+    let pending = replacement_fixture();
+    write_bytes_once(
+        &pending.paths.pending_manifest,
+        &pending.active.encode_canonical().unwrap(),
+        &pending.paths.root,
+    )
+    .unwrap();
+    std::fs::write(&pending.paths.noise_key, b"bad key").unwrap();
+    assert_committed_identity_loader_error(&pending, expected);
+}
+
+#[test]
+fn committed_identity_loaders_reject_manifest_key_mismatch() {
+    let fixture = replacement_fixture();
+    std::fs::remove_file(&fixture.paths.replacement_submission).unwrap();
+    std::fs::remove_file(&fixture.paths.replacement_candidate).unwrap();
+    File::open(&fixture.paths.root).unwrap().sync_all().unwrap();
+    let mut manifest = fixture.active.clone();
+    manifest.node_host_noise_x25519 = [0x99; 32];
+    std::fs::write(
+        &fixture.paths.manifest,
+        manifest.encode_canonical().unwrap(),
+    )
+    .unwrap();
+
+    let expected = "codec error: committed manifest does not match the persistent NodeHost key";
+    assert_committed_identity_loader_error(&fixture, expected);
 }
 
 #[test]

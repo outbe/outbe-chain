@@ -18,20 +18,7 @@ fn init_from_genesis_default_config_matches_the_hardcoded_state() {
     with_storage(|storage| {
         // Reference: manually-written init (mirrors the old executor code).
         let mut expected = OracleContract::new(storage.clone());
-        expected.config_vote_period.write(2).unwrap();
-        expected
-            .config_reward_band
-            .write(U256::from(20_000_000_000_000_000u128))
-            .unwrap();
-        expected.config_slash_window.write(96).unwrap();
-        expected
-            .config_min_valid_per_window
-            .write(U256::from(50_000_000_000_000_000u128))
-            .unwrap();
-        expected.config_slash_fraction.write(U256::ZERO).unwrap();
-        expected.config_lookback_duration.write(86400).unwrap();
-        expected.config_enabled.write(true).unwrap();
-        expected.config_is_initialized.write(true).unwrap();
+        init_oracle(&mut expected);
         expected
             .register_pair(AddressPair::new_coen_to(840))
             .unwrap();
@@ -130,12 +117,7 @@ fn genesis_round_trip_preserves_coen_iso_scale_and_reverse_generic_orientation()
         assert_eq!(oracle.pair_at(1).unwrap(), coen_iso_pair);
         assert_eq!(oracle.pair_at(2).unwrap(), configured);
         assert_eq!(oracle.get_exchange_rate(COEN, usd()).unwrap(), coen_iso(1));
-        assert_eq!(
-            oracle
-                .get_exchange_rate(configured.address1(), configured.address2())
-                .unwrap(),
-            fixed18(2_000)
-        );
+        assert_eq!(pair_rate(&oracle, configured), fixed18(2_000));
         let reexported = crate::genesis::export_genesis(&oracle, &[]).unwrap();
         assert_eq!(reexported.pairs, exported.pairs);
         assert_eq!(reexported.initial_rates, exported.initial_rates);
@@ -232,26 +214,22 @@ fn init_from_genesis_imports_every_custom_config_collection() {
 
 #[test]
 fn init_from_genesis_is_idempotent_on_replay() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig::default_config();
 
         // First init succeeds
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
+        crate::genesis::init_from_genesis(oracle, &config).unwrap();
         assert!(oracle.config_is_initialized.read().unwrap());
         assert_eq!(oracle.pair_count.read().unwrap(), 1);
 
         // Second init is a no-op (idempotent - no error)
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
+        crate::genesis::init_from_genesis(oracle, &config).unwrap();
         assert_eq!(oracle.pair_count.read().unwrap(), 1); // still 1, not 2
     });
 }
 #[test]
 fn precompile_dispatch_returns_the_configured_params() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-
+    with_oracle(|storage, _oracle| {
         // Encode getParams() call
         use crate::precompile::IOracle;
         use alloy_sol_types::SolCall;
@@ -271,10 +249,7 @@ fn precompile_dispatch_returns_the_configured_params() {
 
 #[test]
 fn precompile_dispatch_round_trips_an_exchange_rate() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
-        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
+    with_coen840_oracle(|storage, oracle, _pair| {
         let expected_rate = coen_iso(123);
         oracle
             .set_exchange_rate(
@@ -613,11 +588,11 @@ fn genesis_imports_penalty_counters() {
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
 
-        assert_eq!(oracle.penalty_success_count.read(&v1).unwrap(), 10);
-        assert_eq!(oracle.penalty_abstain_count.read(&v1).unwrap(), 2);
-        assert_eq!(oracle.penalty_miss_count.read(&v1).unwrap(), 3);
-        assert_eq!(oracle.penalty_success_count.read(&v2).unwrap(), 5);
-        assert_eq!(oracle.penalty_miss_count.read(&v2).unwrap(), 1);
+        assert_eq!(penalty_counts(&oracle, &v1), (10, 2, 3));
+        assert_penalty_counters(
+            &oracle,
+            &[(v2, Penalty::Success, 5), (v2, Penalty::Miss, 1)],
+        );
     });
 }
 
@@ -721,9 +696,7 @@ fn genesis_imports_pending_aggregate_votes() {
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
 
-        assert!(oracle.vote_exists.read(&validator).unwrap());
-        assert_eq!(oracle.vote_tuple_count.read(&validator).unwrap(), 2);
-        assert_eq!(oracle.voter_list.len().unwrap(), 1);
+        assert_vote_stored(&oracle, &validator, 2, 1);
         assert_eq!(oracle.voter_list.get(0).unwrap(), Some(validator));
 
         let (exists, bases, quotes, rates, volumes) =
@@ -758,6 +731,39 @@ fn genesis_rejects_a_duplicate_aggregate_vote_pair() {
         assert!(!oracle.vote_exists.read(&validator).unwrap());
         assert_eq!(oracle.voter_list.len().unwrap(), 0);
     });
+}
+
+/// Asserts that `exported` holds the aggregate votes of `config` for
+/// `validators`, in that order.
+fn assert_exported_aggregate_votes(
+    exported: &crate::genesis::OracleGenesisConfig,
+    config: &crate::genesis::OracleGenesisConfig,
+    validators: [Address; 2],
+) {
+    assert_eq!(exported.aggregate_votes.len(), 2);
+    for (index, validator) in validators.into_iter().enumerate() {
+        assert_eq!(exported.aggregate_votes[index].validator, validator);
+        assert_eq!(
+            exported.aggregate_votes[index].entries,
+            config.aggregate_votes[index].entries
+        );
+    }
+}
+
+/// Asserts that `exported` holds the one two-entry snapshot taken at 5000.
+fn assert_exported_snapshot(exported: &crate::genesis::OracleGenesisConfig) {
+    assert_eq!(exported.snapshots.len(), 1);
+    assert_eq!(exported.snapshots[0].timestamp, 5000);
+    assert_eq!(exported.snapshots[0].entries.len(), 2);
+}
+
+/// Asserts that `exported` holds the one COEN/USD S-curve entry that peaked on
+/// day 86400.
+fn assert_exported_scurve_entry(exported: &crate::genesis::OracleGenesisConfig) {
+    assert_eq!(exported.scurve_entries.len(), 1);
+    assert_eq!(exported.scurve_entries[0].base, COEN);
+    assert_eq!(exported.scurve_entries[0].quote, usd());
+    assert_eq!(exported.scurve_entries[0].peak_day, 86400);
 }
 
 #[test]
@@ -821,25 +827,10 @@ fn export_genesis_round_trips_the_full_oracle_state() {
     assert_eq!(exported.pairs, config.pairs);
     assert_eq!(exported.initial_rates, config.initial_rates);
     assert_eq!(exported.feeder_delegations, config.feeder_delegations);
-    assert_eq!(exported.aggregate_votes.len(), 2);
-    assert_eq!(exported.aggregate_votes[0].validator, v1);
-    assert_eq!(
-        exported.aggregate_votes[0].entries,
-        config.aggregate_votes[0].entries
-    );
-    assert_eq!(exported.aggregate_votes[1].validator, v2);
-    assert_eq!(
-        exported.aggregate_votes[1].entries,
-        config.aggregate_votes[1].entries
-    );
+    assert_exported_aggregate_votes(&exported, &config, [v1, v2]);
     assert_eq!(exported.penalty_counters, config.penalty_counters);
-    assert_eq!(exported.snapshots.len(), 1);
-    assert_eq!(exported.snapshots[0].timestamp, 5000);
-    assert_eq!(exported.snapshots[0].entries.len(), 2);
-    assert_eq!(exported.scurve_entries.len(), 1);
-    assert_eq!(exported.scurve_entries[0].base, COEN);
-    assert_eq!(exported.scurve_entries[0].quote, usd());
-    assert_eq!(exported.scurve_entries[0].peak_day, 86400);
+    assert_exported_snapshot(&exported);
+    assert_exported_scurve_entry(&exported);
     assert_eq!(exported.protected_validators, vec![v1]);
 
     let mut storage = HashMapStorageProvider::new(1);
@@ -857,8 +848,10 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         assert_eq!(oracle.get_feeder(&v1).unwrap(), Address::new([0xAAu8; 20]));
         assert_eq!(oracle.get_aggregate_vote(&v1).unwrap().1, vec![COEN, usd()]);
         assert_eq!(oracle.get_aggregate_vote(&v2).unwrap().1, vec![COEN]);
-        assert_eq!(oracle.penalty_success_count.read(&v1).unwrap(), 7);
-        assert_eq!(oracle.penalty_miss_count.read(&v2).unwrap(), 4);
+        assert_penalty_counters(
+            &oracle,
+            &[(v1, Penalty::Success, 7), (v2, Penalty::Miss, 4)],
+        );
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 1);
         assert_eq!(oracle.scurve_count.read().unwrap(), 1);
         assert!(oracle.protected_validator.read(&v1).unwrap());
@@ -898,8 +891,7 @@ fn export_genesis_omits_a_zero_initial_rate() {
 }
 #[test]
 fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260302);
         let start_time = worldwide_day.start_timestamp();
         let end_time = start_time + 50 * 60 * 60;
@@ -1030,10 +1022,7 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
 
 #[test]
 fn worldwide_day_vwap_uses_the_exact_half_open_50_hour_window() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
-        let pair = AddressPair::new_coen_to(840);
-        oracle.register_pair(pair).unwrap();
+    with_bare_coen840_oracle(|oracle, pair| {
         let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260815);
         let start = worldwide_day.start_timestamp();
         let end = start + 50 * 60 * 60;
@@ -1065,10 +1054,7 @@ fn worldwide_day_vwap_uses_the_exact_half_open_50_hour_window() {
 
 #[test]
 fn explicit_long_vwap_uses_daily_interiors_and_exact_raw_edges() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
-        let pair = AddressPair::new_coen_to(840);
-        oracle.register_pair(pair).unwrap();
+    with_bare_coen840_oracle(|oracle, pair| {
         let day = 1_780_012_800u64;
         let start = day + 11 * 60 * 60;
         let end = day + 2 * 86_400 + 60 * 60;
@@ -1094,10 +1080,7 @@ fn explicit_long_vwap_uses_daily_interiors_and_exact_raw_edges() {
 
 #[test]
 fn explicit_long_vwap_rejects_an_evicted_partial_edge_instead_of_approximating() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
-        let pair = AddressPair::new_coen_to(840);
-        oracle.register_pair(pair).unwrap();
+    with_bare_coen840_oracle(|oracle, pair| {
         let day = 1_780_012_800u64;
         let start = day + 11 * 60 * 60 + 600;
         let end = day + 86_400 + 12 * 60 * 60;
@@ -1119,10 +1102,7 @@ fn explicit_long_vwap_rejects_an_evicted_partial_edge_instead_of_approximating()
 
 #[test]
 fn worldwide_day_snapshot_rejects_noncanonical_bounds_without_writes() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
-        let pair = AddressPair::new_coen_to(840);
-        oracle.register_pair(pair).unwrap();
+    with_bare_coen840_oracle(|oracle, pair| {
         let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260815);
         let start = worldwide_day.start_timestamp();
         let end = start + 50 * 60 * 60;
@@ -1228,8 +1208,7 @@ fn utc_day_vwap_for_iso_propagates_storage_errors_unchanged() {
 
 #[test]
 fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle
             .register_pair(AddressPair::from_addresses(usd(), ETH))
@@ -1300,8 +1279,7 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
 
 #[test]
 fn finalize_utc_day_vwap_writes_nothing_for_a_day_without_data() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let utc_day = 20260624u32;
 
@@ -1408,8 +1386,7 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
 
 #[test]
 fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let utc_day = 20260624u32;
         let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
@@ -1509,10 +1486,9 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
 
 #[test]
 fn genesis_seeds_reference_currencies_with_usd() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         crate::genesis::init_from_genesis(
-            &mut oracle,
+            oracle,
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
@@ -1528,13 +1504,12 @@ fn genesis_seeds_reference_currencies_with_usd() {
 
 #[test]
 fn genesis_seeds_custom_reference_currencies() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![392, 840, 978],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
+        crate::genesis::init_from_genesis(oracle, &config).unwrap();
 
         assert_eq!(oracle.reference_currencies.len().unwrap(), 3);
         assert_eq!(oracle.reference_currencies.get(0).unwrap(), Some(392));
@@ -1545,13 +1520,12 @@ fn genesis_seeds_custom_reference_currencies() {
 
 #[test]
 fn init_from_genesis_rejects_a_zero_reference_iso_code() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![0, 840],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        let err = crate::genesis::init_from_genesis(&mut oracle, &config).unwrap_err();
+        let err = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
         let msg = format!("{err:?}");
         assert!(
             msg.contains("reference iso_code must be non-zero"),
@@ -1562,13 +1536,12 @@ fn init_from_genesis_rejects_a_zero_reference_iso_code() {
 
 #[test]
 fn init_from_genesis_rejects_a_duplicate_reference_iso_code() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![840, 840],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        let err = crate::genesis::init_from_genesis(&mut oracle, &config).unwrap_err();
+        let err = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
         let msg = format!("{err:?}");
         assert!(
             msg.contains("duplicate reference iso_code"),
@@ -1579,13 +1552,12 @@ fn init_from_genesis_rejects_a_duplicate_reference_iso_code() {
 
 #[test]
 fn init_from_genesis_rejects_unsorted_reference_currencies() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
+    with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![978, 840],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        let error = crate::genesis::init_from_genesis(&mut oracle, &config).unwrap_err();
+        let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
         assert!(error
             .to_string()
             .contains("reference currencies must be sorted"));
@@ -1594,13 +1566,12 @@ fn init_from_genesis_rejects_unsorted_reference_currencies() {
 
 #[test]
 fn init_from_genesis_rejects_more_than_six_reference_currencies() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
+    with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![36, 124, 156, 344, 392, 826, 840],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        let error = crate::genesis::init_from_genesis(&mut oracle, &config).unwrap_err();
+        let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
         assert!(error
             .to_string()
             .contains("reference currency count exceeds 6"));
@@ -1609,13 +1580,12 @@ fn init_from_genesis_rejects_more_than_six_reference_currencies() {
 
 #[test]
 fn init_from_genesis_requires_usd_in_reference_currencies() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage);
+    with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![156, 344, 392, 826, 978],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        let error = crate::genesis::init_from_genesis(&mut oracle, &config).unwrap_err();
+        let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
         assert!(error
             .to_string()
             .contains("reference currencies must include USD 840"));
@@ -1624,8 +1594,7 @@ fn init_from_genesis_requires_usd_in_reference_currencies() {
 
 #[test]
 fn reference_policy_and_pair_registries_are_independent() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![840, 978],
             policy_rates: vec![crate::genesis::PolicyRate {
@@ -1635,7 +1604,7 @@ fn reference_policy_and_pair_registries_are_independent() {
             pairs: vec![(COEN, AssetType::IsoCurrency(156).into())],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
+        crate::genesis::init_from_genesis(oracle, &config).unwrap();
 
         assert_eq!(
             oracle.reference_currencies.read_all().unwrap(),
@@ -1680,13 +1649,12 @@ fn init_from_genesis_rejects_noncanonical_policy_rates() {
             "policy rates must be sorted",
         ),
     ] {
-        with_storage(|storage| {
-            let mut oracle = OracleContract::new(storage);
+        with_bare_oracle(|_storage, oracle| {
             let config = crate::genesis::OracleGenesisConfig {
                 policy_rates,
                 ..crate::genesis::OracleGenesisConfig::default_config()
             };
-            let error = crate::genesis::init_from_genesis(&mut oracle, &config).unwrap_err();
+            let error = crate::genesis::init_from_genesis(oracle, &config).unwrap_err();
             assert!(error.to_string().contains(expected), "{name}: {error}");
         });
     }
@@ -1694,16 +1662,15 @@ fn init_from_genesis_rejects_noncanonical_policy_rates() {
 
 #[test]
 fn export_genesis_round_trips_reference_currencies() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|_storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![840, 978],
             policy_rates: vec![policy_rate(840)],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
+        crate::genesis::init_from_genesis(oracle, &config).unwrap();
 
-        let exported = crate::genesis::export_genesis(&oracle, &[]).unwrap();
+        let exported = crate::genesis::export_genesis(oracle, &[]).unwrap();
         assert_eq!(exported.reference_currencies, vec![840, 978]);
         assert_eq!(exported.policy_rates, vec![policy_rate(840)]);
     });
@@ -1711,14 +1678,12 @@ fn export_genesis_round_trips_reference_currencies() {
 
 #[test]
 fn check_reference_currency_accepts_a_seeded_code() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         crate::genesis::init_from_genesis(
-            &mut oracle,
+            oracle,
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
-        drop(oracle);
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::new(1, 1, 1, Address::ZERO, Vec::new()),
@@ -1730,14 +1695,12 @@ fn check_reference_currency_accepts_a_seeded_code() {
 
 #[test]
 fn check_reference_currency_rejects_an_unseeded_code() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         crate::genesis::init_from_genesis(
-            &mut oracle,
+            oracle,
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
-        drop(oracle);
 
         let ctx = BlockRuntimeContext::new(
             BlockContext::new(1, 1, 1, Address::ZERO, Vec::new()),
@@ -1754,14 +1717,12 @@ fn check_reference_currency_rejects_an_unseeded_code() {
 
 #[test]
 fn get_reference_currencies_precompile_returns_the_seeded_list() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![840, 978],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
-        drop(oracle);
+        crate::genesis::init_from_genesis(oracle, &config).unwrap();
 
         use crate::precompile::IOracle;
         use alloy_sol_types::SolCall;
@@ -1777,15 +1738,13 @@ fn get_reference_currencies_precompile_returns_the_seeded_list() {
 
 #[test]
 fn get_policy_rate_precompile_returns_the_raw_six_decimal_annual_rate() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             reference_currencies: vec![840],
             policy_rates: vec![policy_rate(840)],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
-        drop(oracle);
+        crate::genesis::init_from_genesis(oracle, &config).unwrap();
 
         use crate::precompile::IOracle;
         use alloy_sol_types::SolCall;
@@ -1801,14 +1760,12 @@ fn get_policy_rate_precompile_returns_the_raw_six_decimal_annual_rate() {
 
 #[test]
 fn policy_rate_precompile_enumerates_and_rejects_absence() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         let config = crate::genesis::OracleGenesisConfig {
             policy_rates: vec![policy_rate(392), policy_rate(840)],
             ..crate::genesis::OracleGenesisConfig::default_config()
         };
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
-        drop(oracle);
+        crate::genesis::init_from_genesis(oracle, &config).unwrap();
 
         use crate::precompile::IOracle;
         use alloy_sol_types::SolCall;
@@ -1872,8 +1829,7 @@ fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
     let day = outbe_primitives::time::WorldwideDay::new(20260302u32);
     let start_time = day.start_timestamp();
 
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
+    with_bare_oracle(|storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
         // COEN is not the base. This pair must not be mistaken for a COEN/<iso> pair.
@@ -1906,20 +1862,10 @@ fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
 
         // A curve on the issuance currency must never brake Tribute pricing.
         // The API returns only the independently selected reference currency curve.
-        crate::scurve::store_scurve_entry(
-            &mut oracle,
-            pair_key(COEN, usd()),
-            start_time,
-            coen_iso(500),
-        )
-        .unwrap();
-        crate::scurve::store_scurve_entry(
-            &mut oracle,
-            pair_key(COEN, eur),
-            start_time,
-            coen_iso(320),
-        )
-        .unwrap();
+        crate::scurve::store_scurve_entry(oracle, pair_key(COEN, usd()), start_time, coen_iso(500))
+            .unwrap();
+        crate::scurve::store_scurve_entry(oracle, pair_key(COEN, eur), start_time, coen_iso(320))
+            .unwrap();
         assert_eq!(
             crate::api::tribute_pricing_inputs(storage.clone(), 840, 978, day).unwrap(),
             Some(crate::api::TributePricingInputs {
@@ -1953,12 +1899,10 @@ fn seed_coen_rate(oracle: &mut OracleContract, iso: u16, rate: u64) {
 
 #[test]
 fn currency_cross_rate_converts_between_currencies() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        init_oracle(&mut oracle);
+    with_oracle(|storage, oracle| {
         // One COEN buys 2 USD or 4 EUR, so a EUR is worth half a USD.
-        seed_coen_rate(&mut oracle, 840, 2);
-        seed_coen_rate(&mut oracle, 978, 4);
+        seed_coen_rate(oracle, 840, 2);
+        seed_coen_rate(oracle, 978, 4);
 
         assert_eq!(
             crate::api::currency_cross_rate(storage.clone(), 840, 978, coen_iso(10)).unwrap(),

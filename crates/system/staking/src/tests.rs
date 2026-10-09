@@ -5,6 +5,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::checked_whole_coen_to_native;
 use outbe_validatorset::contract::ValidatorSet;
+use outbe_validatorset::test_support::test_lifecycle_of;
 use outbe_validatorset::ValidatorLifecycle;
 
 use crate::contract::Staking;
@@ -16,53 +17,56 @@ const MIN_STAKE: u64 = 1_000;
 /// Default large balance seeded to callers so transfer_balance succeeds.
 const DEFAULT_BALANCE: u64 = 1_000_000;
 
-fn with_staking<R>(f: impl FnOnce(StorageHandle, &mut Staking) -> R) -> R {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    // Height zero is the persisted "not set" sentinel for lifecycle heights.
-    // Ordinary staking transactions execute only after genesis.
-    storage.set_block_number(1);
-    StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        // Set a default min stake for tests
-        s.config_min_stake
-            .write(U256::from(MIN_STAKE))
-            .expect("write min_stake");
-        s.config_unbonding_period
-            .write(3600)
-            .expect("write unbonding_period");
-        f(storage, &mut s)
-    })
+pub(crate) fn with_staking<R>(f: impl FnOnce(StorageHandle, &mut Staking) -> R) -> R {
+    with_staking_timed(0, f)
 }
 
 fn with_staking_timed<R>(timestamp: u64, f: impl FnOnce(StorageHandle, &mut Staking) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    // Height zero is the persisted "not set" sentinel for lifecycle heights.
+    // Ordinary staking transactions execute only after genesis.
     storage.set_block_number(1);
     storage.set_timestamp(U256::from(timestamp));
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake
-            .write(U256::from(MIN_STAKE))
-            .expect("write min_stake");
-        s.config_unbonding_period
-            .write(3600)
-            .expect("write unbonding_period");
+        let mut s = staking_with_unbonding_period(storage.clone(), 3600);
         f(storage, &mut s)
     })
 }
 
+/// Staking with the test minimum stake.
+fn staking_with_min_stake(storage: StorageHandle<'_>) -> Staking<'_> {
+    let staking = Staking::new(storage);
+    staking
+        .config_min_stake
+        .write(U256::from(MIN_STAKE))
+        .expect("write min_stake");
+    staking
+}
+
+/// Staking with the test minimum stake, then `unbonding_period`.
+fn staking_with_unbonding_period(storage: StorageHandle<'_>, unbonding_period: u64) -> Staking<'_> {
+    let staking = staking_with_min_stake(storage);
+    staking
+        .config_unbonding_period
+        .write(unbonding_period)
+        .expect("write unbonding_period");
+    staking
+}
+
 /// Seed a caller's native balance so transfer_balance in stake() succeeds.
-fn seed_balance(storage: StorageHandle, addr: Address, amount: u64) {
+pub(crate) fn seed_balance(storage: StorageHandle, addr: Address, amount: u64) {
     let ctx = storage.clone();
     ctx.set_balance(addr, U256::from(amount)).unwrap();
 }
 
 /// Registers a validator in ValidatorSet so cross-calls work correctly.
 /// Uses the explicit test-only bootstrap seam. Production registration requires PoP.
-fn register_validator(storage: StorageHandle, validator: Address) {
+pub(crate) fn register_validator(storage: StorageHandle, validator: Address) {
     let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
     let mut val_set = ValidatorSet::new(storage.clone());
-    val_set.config_owner.write(owner).expect("write owner");
-    val_set.set_config_max_validators(100).expect("write max");
+    val_set
+        .test_configure_registry(owner)
+        .expect("configure registry");
     let mut consensus_pubkey = [0u8; 48];
     consensus_pubkey[..20].copy_from_slice(validator.as_slice());
     val_set
@@ -129,9 +133,8 @@ fn test_stake_with_eighteen_decimal_native_coen_fixture() {
 
         assert_eq!(s.get_stake(validator).unwrap(), amount);
         assert_eq!(s.get_total_staked().unwrap(), amount);
-        let validators = ValidatorSet::new(storage);
         assert!(matches!(
-            validators.validator_lifecycle(validator).unwrap(),
+            test_lifecycle_of(storage, validator).unwrap(),
             ValidatorLifecycle::WaitingForReadiness(_)
         ));
     });
@@ -168,9 +171,8 @@ fn test_stake_marks_registered_validator_pending() {
         register_validator(storage.clone(), validator);
 
         // Check initial status is REGISTERED
-        let val_set = ValidatorSet::new(storage.clone());
         assert!(matches!(
-            val_set.validator_lifecycle(validator).unwrap(),
+            test_lifecycle_of(storage.clone(), validator).unwrap(),
             ValidatorLifecycle::WaitingForStake(_)
         ));
 
@@ -243,25 +245,16 @@ fn test_unstake_below_min_sets_exiting_status() {
         // Stake marks PENDING. Simulate the reshare promotion to ACTIVE so this
         // test exercises the unstake-below-min ACTIVE->EXITING path.
         let mut val_set = ValidatorSet::new(storage.clone());
-        assert!(matches!(
-            val_set.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::WaitingForReadiness(_)
-        ));
         val_set
-            .activate_validator_via_boundary_for_test(validator)
+            .promote_pending_validator_for_test(validator)
             .unwrap();
-        assert!(val_set
-            .validator_lifecycle(validator)
-            .unwrap()
-            .is_active_status());
 
         // Unstake to drop below min_stake
         s.unstake(validator, U256::from(500u64)).unwrap();
 
         // Should now be EXITING (DKG reshare pending to exclude from consensus)
-        let val_set = ValidatorSet::new(storage.clone());
         assert!(matches!(
-            val_set.validator_lifecycle(validator).unwrap(),
+            test_lifecycle_of(storage.clone(), validator).unwrap(),
             ValidatorLifecycle::Exiting(_)
         ));
     });
@@ -276,15 +269,13 @@ fn test_unstake_below_min_reverts_pending_to_registered() {
         seed_staking_balance(storage.clone(), MIN_STAKE);
         stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
         // PENDING joiner (not yet activated) unstaking below min reverts to REGISTERED.
-        let val_set = ValidatorSet::new(storage.clone());
         assert!(matches!(
-            val_set.validator_lifecycle(validator).unwrap(),
+            test_lifecycle_of(storage.clone(), validator).unwrap(),
             ValidatorLifecycle::WaitingForReadiness(_)
         ));
         s.unstake(validator, U256::from(500u64)).unwrap();
-        let val_set = ValidatorSet::new(storage.clone());
         assert!(matches!(
-            val_set.validator_lifecycle(validator).unwrap(),
+            test_lifecycle_of(storage.clone(), validator).unwrap(),
             ValidatorLifecycle::WaitingForStake(_)
         ));
     });
@@ -310,9 +301,8 @@ fn test_unstake_from_jailed_goes_exiting() {
         ));
 
         s.unstake(validator, U256::from(MIN_STAKE)).unwrap();
-        let val_set = ValidatorSet::new(storage.clone());
         assert!(matches!(
-            val_set.validator_lifecycle(validator).unwrap(),
+            test_lifecycle_of(storage.clone(), validator).unwrap(),
             ValidatorLifecycle::Exiting(_)
         ));
     });
@@ -350,10 +340,9 @@ fn test_unjail_requires_min_stake_and_explicit_tx() {
         // Top up to min_stake. This does NOT change the JAILED status by itself.
         seed_staking_balance(storage.clone(), MIN_STAKE);
         stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
-        let val_set = ValidatorSet::new(storage.clone());
         assert!(
             matches!(
-                val_set.validator_lifecycle(validator).unwrap(),
+                test_lifecycle_of(storage.clone(), validator).unwrap(),
                 ValidatorLifecycle::Jail(_)
             ),
             "a stake top-up alone must NOT unjail"
@@ -361,9 +350,8 @@ fn test_unjail_requires_min_stake_and_explicit_tx() {
 
         // Explicit unjail now succeeds -> PENDING.
         s.unjail_validator(validator).unwrap();
-        let val_set = ValidatorSet::new(storage.clone());
         assert!(matches!(
-            val_set.validator_lifecycle(validator).unwrap(),
+            test_lifecycle_of(storage.clone(), validator).unwrap(),
             ValidatorLifecycle::WaitingForReadiness(_)
         ));
     });
@@ -442,17 +430,9 @@ fn test_slash_below_min_stake_transitions_to_exiting() {
         seed_staking_balance(storage.clone(), MIN_STAKE);
         stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
         let mut val_set = ValidatorSet::new(storage.clone());
-        assert!(matches!(
-            val_set.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::WaitingForReadiness(_)
-        ));
         val_set
-            .activate_validator_via_boundary_for_test(validator)
+            .promote_pending_validator_for_test(validator)
             .unwrap();
-        assert!(val_set
-            .validator_lifecycle(validator)
-            .unwrap()
-            .is_active_status());
 
         // Slash 50% - new stake = 500, below min_stake (1000)
         // Now auto-transitions ACTIVE -> EXITING when stake < min_stake
@@ -542,9 +522,7 @@ fn first_ocomp_miss_handles_the_full_u256_bonded_domain() {
             expected_remaining
         );
         assert!(matches!(
-            ValidatorSet::new(storage)
-                .validator_lifecycle(validator)
-                .unwrap(),
+            test_lifecycle_of(storage, validator).unwrap(),
             ValidatorLifecycle::Active(_)
         ));
     });
@@ -556,11 +534,7 @@ fn due_window_is_resolved_before_a_same_height_new_miss() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(1);
     StorageHandle::enter(&mut provider, |storage| {
-        let mut staking = Staking::new(storage.clone());
-        staking
-            .config_min_stake
-            .write(U256::from(MIN_STAKE))
-            .unwrap();
+        let mut staking = staking_with_min_stake(storage.clone());
         register_validator(storage.clone(), validator);
         seed_staking_balance(storage.clone(), 2_000);
         stake_registered(storage.clone(), &mut staking, validator, U256::from(2_000)).unwrap();
@@ -601,12 +575,7 @@ fn ocomp_recovery_is_decided_at_deadline_from_authoritative_bonded_stake() {
     provider.set_block_number(1);
 
     StorageHandle::enter(&mut provider, |storage| {
-        let mut staking = Staking::new(storage.clone());
-        staking
-            .config_min_stake
-            .write(U256::from(MIN_STAKE))
-            .unwrap();
-        staking.config_unbonding_period.write(3_600).unwrap();
+        let mut staking = staking_with_unbonding_period(storage.clone(), 3_600);
         for validator in [restored, underfunded] {
             register_validator(storage.clone(), validator);
             seed_staking_balance(storage.clone(), MIN_STAKE);
@@ -741,9 +710,7 @@ fn open_ocomp_recovery_does_not_weaken_ordinary_slash_policy() {
         assert_eq!(staking.unbonding_amount.read(&0).unwrap(), U256::from(200));
         assert!(staking.unbonding_complete_time.read(&0).unwrap() > complete_before);
         assert!(matches!(
-            ValidatorSet::new(storage)
-                .validator_lifecycle(validator)
-                .unwrap(),
+            test_lifecycle_of(storage, validator).unwrap(),
             ValidatorLifecycle::Exiting(_)
         ));
     });
@@ -782,11 +749,7 @@ fn recovery_sweep_closes_non_active_window_at_deadline_without_reverting() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(1);
     StorageHandle::enter(&mut provider, |storage| {
-        let mut staking = Staking::new(storage.clone());
-        staking
-            .config_min_stake
-            .write(U256::from(MIN_STAKE))
-            .unwrap();
+        let mut staking = staking_with_min_stake(storage.clone());
         register_validator(storage.clone(), validator);
         let mut validators = ValidatorSet::new(storage.clone());
         validators
@@ -849,9 +812,8 @@ fn test_slash_below_min_stake_reverts_pending_to_registered() {
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
         seed_staking_balance(storage.clone(), MIN_STAKE);
         stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
-        let val_set = ValidatorSet::new(storage.clone());
         assert!(matches!(
-            val_set.validator_lifecycle(validator).unwrap(),
+            test_lifecycle_of(storage.clone(), validator).unwrap(),
             ValidatorLifecycle::WaitingForReadiness(_)
         ));
 
@@ -881,9 +843,7 @@ fn test_claim_unbonded() {
     storage.set_timestamp(U256::from(base_time));
 
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         let validator = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
@@ -900,9 +860,7 @@ fn test_claim_unbonded() {
     storage.set_timestamp(U256::from(base_time + unbonding_period + 1));
 
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         let validator = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         s.claim_unbonded(validator).unwrap();
@@ -980,9 +938,7 @@ fn test_process_unbonding_compacts_zeroed() {
 fn test_process_unbonding_hook() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(100).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), 100);
 
         let validator = address!("0xdddddddddddddddddddddddddddddddddddddddd");
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
@@ -1023,9 +979,7 @@ fn test_unbonding_full_flow() {
 
     // 1. Stake
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
         // stake() no longer transfers; seed STAKING_ADDRESS to simulate EVM msg.value.
@@ -1042,9 +996,7 @@ fn test_unbonding_full_flow() {
 
     // 2. Unstake
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         s.unstake(validator, U256::from(unstake_amount)).unwrap();
         assert_eq!(s.unbonding_count.read().unwrap(), 1);
@@ -1064,9 +1016,7 @@ fn test_unbonding_full_flow() {
 
     // 4. claim_unbonded - funds returned to validator
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         s.claim_unbonded(validator).unwrap();
 
@@ -1154,9 +1104,7 @@ fn test_claim_unbonded_linked_list_basic() {
 
     // Unstake 3 times
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
         seed_staking_balance(storage.clone(), 3_000);
@@ -1203,9 +1151,7 @@ fn test_claim_unbonded_partial_maturity() {
     let validator = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(100).unwrap(); // short period
+        let mut s = staking_with_unbonding_period(storage.clone(), 100); // short period
 
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
         seed_staking_balance(storage.clone(), 3_000);
@@ -1219,9 +1165,7 @@ fn test_claim_unbonded_partial_maturity() {
     // Change unbonding period for next unstake - entry 2 will mature much later
     storage.set_timestamp(U256::from(base_time + 50));
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(10_000).unwrap(); // long period
+        let mut s = staking_with_unbonding_period(storage.clone(), 10_000); // long period
 
         // Entry 2: complete at 10050 + 10000 = 20050
         s.unstake(validator, U256::from(300u64)).unwrap();
@@ -1267,9 +1211,7 @@ fn test_claim_unbonded_two_validators() {
     let v2 = address!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         seed_balance(storage.clone(), v1, DEFAULT_BALANCE);
         seed_balance(storage.clone(), v2, DEFAULT_BALANCE);
@@ -1394,9 +1336,7 @@ fn test_slash_reduces_unbonding() {
     let validator = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
         seed_staking_balance(storage.clone(), 10_000);
@@ -1423,9 +1363,7 @@ fn test_slash_reduces_unbonding() {
     // extended withdrawability delay.
     storage.set_timestamp(U256::from(base_time + unbonding_period + 1));
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         s.claim_unbonded(validator).unwrap();
 
@@ -1436,9 +1374,7 @@ fn test_slash_reduces_unbonding() {
     // Claim after slashed withdrawability delay - should receive reduced amount.
     storage.set_timestamp(U256::from(base_time + (unbonding_period * 2) + 1));
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         s.claim_unbonded(validator).unwrap();
 
@@ -1522,9 +1458,7 @@ fn test_self_staker_can_unstake_and_claim() {
     let validator = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
 
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
         seed_staking_balance(storage.clone(), 5_000);
@@ -1537,9 +1471,7 @@ fn test_self_staker_can_unstake_and_claim() {
     // Advance past unbonding and claim
     storage.set_timestamp(U256::from(base_time + unbonding_period + 1));
     StorageHandle::enter(&mut storage, |storage| {
-        let mut s = Staking::new(storage.clone());
-        s.config_min_stake.write(U256::from(MIN_STAKE)).unwrap();
-        s.config_unbonding_period.write(unbonding_period).unwrap();
+        let mut s = staking_with_unbonding_period(storage.clone(), unbonding_period);
 
         s.claim_unbonded(validator).unwrap();
 

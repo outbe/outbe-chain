@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
-    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
-    profile::{CapacityProfileV1, ProtocolBundleV1},
+    profile::ProtocolBundleV1,
+    test_utils::{minimal_capacity_profile, minimal_protocol_bundle},
 };
 use outbe_ocompregistry::{
     poc_schema_limits, OcompProtocolAuthorityV1, OcompRequestProfile, OcompSuccessorV1,
@@ -13,10 +13,10 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::{MIN_ACTIVATION_BUFFER, PROTOCOL_VERSION};
 use crate::handlers::UpgradeHandlerRegistry;
-use crate::payload::encode_schedule_update_json;
+use crate::payload::ScheduleUpdatePayload;
 use crate::schema::Update;
 use crate::{encode_protocol_version, ProtocolVersion};
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use serde_json::Value;
 
 mod events;
@@ -25,6 +25,7 @@ mod lifecycle;
 mod precompile;
 mod records;
 mod scheduled;
+mod tee_fixture;
 mod unset_version;
 mod vote_dispatch;
 
@@ -70,46 +71,14 @@ pub(super) fn min_activation(current: u64) -> u64 {
 
 pub(super) fn ocomp_authority(genesis_hash: B256) -> OcompProtocolAuthorityV1 {
     let hash = B256::repeat_byte;
-    let generated = OCOMP_POC_CANDIDATE_LIMITS_V1;
     let protocol_bundle = ProtocolBundleV1 {
-        protocol_version: 1,
         fork_id: hash(21),
-        intent_codec_id: hash(2),
-        finalized_intent_proof_codec_id: hash(3),
-        tribute_body_codec_id: outbe_ocomp_protocol::registry::TRIBUTE_BODY_CODEC_ID,
-        fidelity_opening_codec_id: outbe_ocomp_protocol::registry::FIDELITY_OPENING_CODEC_ID,
-        oracle_opening_codec_id: outbe_ocomp_protocol::registry::ORACLE_OPENING_CODEC_ID,
-        result_codec_id: hash(4),
-        action_codec_id: hash(5),
-        activation_codec_id: hash(6),
-        evidence_codec_id: hash(7),
-        request_semantics_version: 1,
-        lysis_program_semantics_hash: hash(8),
-        planner_spec_version: 1,
-        reducer_spec_version: 1,
-        activation_apply_semantics_hash: hash(9),
-        effect_contract_registry_hash: hash(10),
-        object_codec_registry_hash: hash(11),
-        correctness_profile_id: hash(12),
-        capacity_profile_id: hash(13),
-        result_signature_profile_id: hash(14),
-        finality_verifier_and_vote_domain_id: hash(15),
-        consensus_committee_history_schema_version: 1,
-        ocomp_committee_schema_version: 1,
-        proof_system_and_verifier_key_id: None,
-        da_codec_and_binding_verifier_id: None,
-        anti_equivocation_journal_schema_hash: hash(16),
-        mode_pause_revocation_semantics_hash: hash(17),
-        upgrade_fsm_semantics_hash: hash(18),
-        release_requirement_catalog_sequence: 1,
-        release_requirement_catalog_hash: hash(19),
-        release_requirement_catalog_parent_hash: hash(20),
         release_gate_authority_envelope_hash: hash(22),
         release_approval_policy_hash: hash(24),
         release_validator_command_artifact_hash: hash(25),
-        consensus_state_schema_version: 1,
         migration_manifest_hash: hash(26),
         required_upgrade_handler_set_hash: hash(27),
+        ..minimal_protocol_bundle()
     };
     let protocol_bundle_hash = protocol_bundle
         .protocol_bundle_hash(&poc_schema_limits())
@@ -121,24 +90,7 @@ pub(super) fn ocomp_authority(genesis_hash: B256) -> OcompProtocolAuthorityV1 {
             fork_id: protocol_bundle.fork_id,
             protocol_bundle_hash,
             correctness_profile_id: protocol_bundle.correctness_profile_id,
-            capacity_profile: CapacityProfileV1 {
-                profile_id: hash(13),
-                max_tributes_per_work_shard: u32::try_from(generated.max_tributes_per_work_shard)
-                    .unwrap(),
-                max_workers_per_domain: 4,
-                max_intents_per_block: 1,
-                max_activations_per_block: 1,
-                max_ready_inspections_per_block: 1,
-                max_expirations_per_block: 1,
-                ready_backoff_blocks: 1,
-                max_reference_currencies: 1,
-                max_oracle_wwd_pair_entries: 1,
-                max_active_scurve_entries: 1,
-                result_deadline_blocks: 10,
-                source_retention_after_terminal_blocks: generated
-                    .source_retention_after_terminal_blocks,
-                generated_limits_manifest_hash: hash(30),
-            },
+            capacity_profile: minimal_capacity_profile(),
             source_availability_policy_id: hash(44),
         },
         protocol_bundle,
@@ -170,20 +122,138 @@ pub(super) fn ocomp_successor(genesis_hash: B256, activation_height: u64) -> Oco
     }
 }
 
-pub(super) fn schedule_update(
+/// The block height from which most tests schedule an update.
+pub(super) const SCHEDULE_HEIGHT: u64 = 100;
+
+/// Schedules `proposal_id` for `version` at `activation` from
+/// [`SCHEDULE_HEIGHT`], without release notes.
+pub(super) fn schedule_version(
     update: &mut Update<'_>,
     proposal_id: U256,
     version: ProtocolVersion,
-    activation_height: u64,
+    activation: u64,
+) -> Result<()> {
+    schedule_update(
+        update,
+        proposal_id,
+        ScheduleUpdatePayload::new(version, activation, ""),
+        SCHEDULE_HEIGHT,
+    )
+}
+
+/// Runs `f` on a new Update contract after it schedules proposal 1 for
+/// `version` at the earliest activation height from [`SCHEDULE_HEIGHT`]. `f`
+/// receives that activation height.
+pub(super) fn with_scheduled_update<F: FnOnce(StorageHandle, &mut Update<'_>, u64)>(
+    version: ProtocolVersion,
+    f: F,
+) {
+    with_scheduled_release(version, "", f);
+}
+
+/// [`with_scheduled_update`] with the release notes `info`.
+pub(super) fn with_scheduled_release<F: FnOnce(StorageHandle, &mut Update<'_>, u64)>(
+    version: ProtocolVersion,
     info: &str,
+    f: F,
+) {
+    with_update(|storage| scheduled_update(storage, version, info, f));
+}
+
+/// [`with_scheduled_release`] that returns the storage provider.
+pub(super) fn scheduled_update_provider<F: FnOnce(StorageHandle, &mut Update<'_>, u64)>(
+    version: ProtocolVersion,
+    info: &str,
+    f: F,
+) -> HashMapStorageProvider {
+    with_update_provider(|storage| scheduled_update(storage, version, info, f))
+}
+
+fn scheduled_update<F: FnOnce(StorageHandle, &mut Update<'_>, u64)>(
+    storage: StorageHandle,
+    version: ProtocolVersion,
+    info: &str,
+    f: F,
+) {
+    let mut update = Update::new(storage.clone());
+    let activation = min_activation(SCHEDULE_HEIGHT);
+    schedule_update(
+        &mut update,
+        U256::from(1),
+        ScheduleUpdatePayload::new(version, activation, info),
+        SCHEDULE_HEIGHT,
+    )
+    .unwrap();
+    f(storage, &mut update, activation);
+}
+
+/// Schedules proposal 1 at the earliest activation height from
+/// [`SCHEDULE_HEIGHT`] and proposal 2 at 500 blocks later, both for
+/// [`PV`]. Returns both activation heights.
+pub(super) fn schedule_early_and_late(update: &mut Update<'_>) -> (u64, u64) {
+    let activation_early = min_activation(SCHEDULE_HEIGHT);
+    let activation_late = activation_early + 500;
+    schedule_version(update, U256::from(1), PV, activation_early).unwrap();
+    schedule_version(update, U256::from(2), PV, activation_late).unwrap();
+    (activation_early, activation_late)
+}
+
+/// Runs `f` on a new Update contract whose active version is `version` from
+/// `height`.
+pub(super) fn with_active_version<F: FnOnce(StorageHandle, &mut Update<'_>)>(
+    version: ProtocolVersion,
+    height: u64,
+    f: F,
+) {
+    with_update(|storage| {
+        let mut update = Update::new(storage.clone());
+        update.set_active_version(version, height).unwrap();
+        f(storage, &mut update);
+    });
+}
+
+/// Asserts that the read helpers report `version` as the active version and
+/// as the version activated at `height`.
+pub(super) fn assert_active_version(
+    storage: &StorageHandle,
+    version: ProtocolVersion,
+    height: u64,
+) {
+    assert_eq!(
+        crate::api::get_active_version(storage.clone()).unwrap(),
+        version
+    );
+    assert_eq!(
+        crate::api::version_at_height(storage.clone(), height).unwrap(),
+        version
+    );
+    assert!(crate::api::is_version_active_eq(storage.clone(), version).unwrap());
+}
+
+/// The status of the scheduled update `proposal_id`, which must exist.
+pub(super) fn scheduled_status(
+    update: &Update<'_>,
+    proposal_id: U256,
+) -> crate::schema::ScheduledUpdateStatus {
+    update
+        .read_scheduled_update(proposal_id)
+        .unwrap()
+        .unwrap()
+        .status
+}
+
+pub(super) fn schedule_update(
+    update: &mut Update<'_>,
+    proposal_id: U256,
+    payload: ScheduleUpdatePayload,
     current_height: u64,
 ) -> Result<()> {
-    let payload: Value = serde_json::from_str(&encode_schedule_update_json(
-        version,
-        activation_height,
-        info,
-    ))
-    .expect("schedule update JSON should parse");
+    let encoded = serde_json::to_string(&payload).map_err(|error| {
+        PrecompileError::Fatal(format!("schedule update JSON should serialize: {error}"))
+    })?;
+    let payload: Value = serde_json::from_str(&encoded).map_err(|error| {
+        PrecompileError::Fatal(format!("schedule update JSON should parse: {error}"))
+    })?;
     update.schedule_update_from_propose(proposal_id, &payload, current_height)
 }
 

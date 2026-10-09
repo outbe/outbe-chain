@@ -3,7 +3,7 @@ use alloy_primitives::{B256, U256};
 use crate::{
     common::{BoundedBytes, ProofBytes},
     error::ProtocolError,
-    hash::hash_framed,
+    hash::{framed_identity_hash, hash_framed},
     registry::HashDomain,
     schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, SchemaLimits},
 };
@@ -185,28 +185,44 @@ wire_struct! {
 impl_top_level_codec!(FinalizedIntentProofV1, FinalizedIntentProofV1);
 
 impl PreAdmissionEnvelopeV1 {
-    pub fn envelope_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        hash_framed(HashDomain::PreAdmission, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(envelope_hash, PreAdmission);
 }
 
 impl ActivationPreconditionsV1 {
-    pub fn activation_preconditions_hash(
-        &self,
-        limits: &SchemaLimits,
-    ) -> Result<B256, ProtocolError> {
-        hash_framed(
-            HashDomain::ActivationPreconditions,
-            &self.encode_canonical(limits)?,
-        )
+    framed_identity_hash!(activation_preconditions_hash, ActivationPreconditions);
+
+    fn day_matches_intent(&self, intent: &JobIntentV1) -> bool {
+        self.tribute.wwd == intent.wwd
+            && self.nod.wwd == intent.wwd
+            && self.metadosis.wwd == intent.wwd
+            && self.contributors.worldwide_day == intent.wwd
+    }
+
+    fn source_counts_match_intent(&self, intent: &JobIntentV1) -> bool {
+        self.tribute.exact_count == intent.authenticated_day_count
+            && self.tribute.exact_nominal_total == intent.authenticated_day_nominal
+    }
+
+    fn source_commitment_matches_intent(&self, intent: &JobIntentV1) -> bool {
+        self.tribute.collection_key == intent.sealed_tribute_collection_key
+            && self.tribute.sealed_collection_root == intent.sealed_tribute_collection_root
+    }
+
+    fn target_bounds_match_tribute(&self) -> bool {
+        self.nod.max_nod_count == self.tribute.exact_count
+            && self.contributors.max_contributor_count == self.tribute.exact_count
+            && self.contributors.max_eligible_nominal_total == self.tribute.exact_nominal_total
+    }
+
+    fn source_bounds_match_intent(&self, intent: &JobIntentV1) -> bool {
+        self.source_counts_match_intent(intent)
+            && self.source_commitment_matches_intent(intent)
+            && self.target_bounds_match_tribute()
     }
 
     pub fn validate_for_intent(&self, intent: &JobIntentV1) -> Result<(), ProtocolError> {
         require(
-            self.tribute.wwd == intent.wwd
-                && self.nod.wwd == intent.wwd
-                && self.metadosis.wwd == intent.wwd
-                && self.contributors.worldwide_day == intent.wwd,
+            self.day_matches_intent(intent),
             "activation precondition day binding",
         )?;
         require(
@@ -214,23 +230,14 @@ impl ActivationPreconditionsV1 {
             "activation precondition nonce binding",
         )?;
         require(
-            self.tribute.exact_count == intent.authenticated_day_count
-                && self.tribute.exact_nominal_total == intent.authenticated_day_nominal
-                && self.tribute.collection_key == intent.sealed_tribute_collection_key
-                && self.tribute.sealed_collection_root == intent.sealed_tribute_collection_root
-                && self.nod.max_nod_count == self.tribute.exact_count
-                && self.contributors.max_contributor_count == self.tribute.exact_count
-                && self.contributors.max_eligible_nominal_total == self.tribute.exact_nominal_total,
+            self.source_bounds_match_intent(intent),
             "activation precondition source bounds",
         )
     }
 }
 
 impl JobIntentV1 {
-    pub fn intent_id(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        self.validate_semantics()?;
-        hash_framed(HashDomain::Intent, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(intent_id, Intent, validate_semantics());
 
     /// Stable authenticated-source identity shared only by attempts that read
     /// byte-identical chain/opening commitments.
@@ -464,18 +471,10 @@ impl FinalizedIntentProofV1 {
         Ok(intent)
     }
 
-    /// Verifies the complete authority chain and derives the one signable
-    /// [`JobIntentV1::job_id`].
-    ///
-    /// Caller-supplied events, committee bytes and storage keys are never
-    /// authority. The adapter must authenticate them against finalized chain
-    /// state. This method closes all protocol-level bindings.
-    pub fn verify(
+    fn validate_chain_binding(
         &self,
         expected: ExpectedFinalizedIntentBindingV1,
-        authority: &impl FinalizedIntentProofAuthority,
-        limits: &SchemaLimits,
-    ) -> Result<VerifiedFinalizedIntentV1, FinalizedIntentVerificationError> {
+    ) -> Result<(), FinalizedIntentVerificationError> {
         if self.chain_id != expected.chain_id {
             return Err(FinalizedIntentVerificationError::WrongChain);
         }
@@ -488,12 +487,33 @@ impl FinalizedIntentProofV1 {
         if self.protocol_bundle_hash != expected.protocol_bundle_hash {
             return Err(FinalizedIntentVerificationError::WrongProtocolBundle);
         }
+        Ok(())
+    }
+
+    fn validate_parent_finalization(&self) -> Result<(), FinalizedIntentVerificationError> {
         if self.parent_accounting.proof_kind != ParentProofKind::Finalization {
             return Err(FinalizedIntentVerificationError::WrongProofKind);
         }
         if !self.parent_accounting.missed_proposers.is_empty() {
             return Err(FinalizedIntentVerificationError::NonEmptyMissedProposers);
         }
+        Ok(())
+    }
+
+    /// Verifies the complete authority chain and derives the one signable
+    /// [`JobIntentV1::job_id`].
+    ///
+    /// Caller-supplied events, committee bytes and storage keys are never
+    /// authority. The adapter must authenticate them against finalized chain
+    /// state. This method closes all protocol-level bindings.
+    pub fn verify(
+        &self,
+        expected: ExpectedFinalizedIntentBindingV1,
+        authority: &impl FinalizedIntentProofAuthority,
+        limits: &SchemaLimits,
+    ) -> Result<VerifiedFinalizedIntentV1, FinalizedIntentVerificationError> {
+        self.validate_chain_binding(expected)?;
+        self.validate_parent_finalization()?;
 
         let intent = self.decoded_intent(limits)?;
         let intent_id = intent.intent_id(limits)?;

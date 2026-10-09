@@ -5,14 +5,16 @@
 //! the OCOMP precompile work. Pool and execution must classify this exact
 //! shape before ordinary Ethereum intrinsic-gas handling.
 
+use core::fmt;
+
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-use alloy_primitives::{Address, U256};
 
 use crate::{
     abi::{
         decode_protected_materialize_certified_nods_calldata, MATERIALIZE_CERTIFIED_NODS_SELECTOR,
         METADOSIS_ADDRESS, NOD_FACTORY_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR,
     },
+    transaction_call::TransactionCallFields,
     vote::{decode_submit_lysis_result_prefix, ResultVotePrefixV1},
     ProtocolError, SchemaLimits,
 };
@@ -36,15 +38,20 @@ pub const MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES: usize = 68
         & !31);
 
 /// Execution-layer-independent view of one signed transaction envelope.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct OcompSystemCarrierView<'a> {
     pub is_eip1559: bool,
-    pub to: Option<Address>,
-    pub value: U256,
-    pub input: &'a [u8],
-    pub gas_limit: u64,
-    pub max_fee_per_gas: u128,
-    pub max_priority_fee_per_gas: Option<u128>,
+    pub call: TransactionCallFields<'a>,
+}
+
+/// The text form keeps the call fields flat, as before they moved to `call`.
+impl fmt::Debug for OcompSystemCarrierView<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut out = f.debug_struct("OcompSystemCarrierView");
+        out.field("is_eip1559", &self.is_eip1559);
+        self.call.debug_fields(&mut out);
+        out.finish()
+    }
 }
 
 /// Canonical routing data retained after stateless carrier classification.
@@ -91,10 +98,10 @@ pub fn classify_ocomp_system_carrier(
     tx: OcompSystemCarrierView<'_>,
     limits: &SchemaLimits,
 ) -> Result<Option<OcompSystemCarrierCandidate>, OcompSystemCarrierError> {
-    let is_vote = tx.to == Some(METADOSIS_ADDRESS)
-        && tx.input.get(..4) == Some(SUBMIT_LYSIS_RESULT_SELECTOR.as_slice());
-    let is_materialization = tx.to == Some(NOD_FACTORY_ADDRESS)
-        && tx.input.get(..4) == Some(MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice());
+    let is_vote = tx.call.to == Some(METADOSIS_ADDRESS)
+        && tx.call.input.get(..4) == Some(SUBMIT_LYSIS_RESULT_SELECTOR.as_slice());
+    let is_materialization = tx.call.to == Some(NOD_FACTORY_ADDRESS)
+        && tx.call.input.get(..4) == Some(MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice());
     if !is_vote && !is_materialization {
         return Ok(None);
     }
@@ -104,18 +111,18 @@ pub fn classify_ocomp_system_carrier(
     } else {
         68 + ((limits.codec.max_body_bytes + 31) & !31)
     };
-    if tx.input.len() > calldata_limit {
+    if tx.call.input.len() > calldata_limit {
         return Err(OcompSystemCarrierError::CalldataTooLarge {
-            actual: tx.input.len(),
+            actual: tx.call.input.len(),
             limit: calldata_limit,
         });
     }
     if is_vote {
-        let prefix = decode_submit_lysis_result_prefix(tx.input, limits)
+        let prefix = decode_submit_lysis_result_prefix(tx.call.input, limits)
             .map_err(OcompSystemCarrierError::MalformedVote)?;
         Ok(Some(OcompSystemCarrierCandidate::ResultVote { prefix }))
     } else {
-        let batch = decode_protected_materialize_certified_nods_calldata(tx.input, limits)
+        let batch = decode_protected_materialize_certified_nods_calldata(tx.call.input, limits)
             .map_err(OcompSystemCarrierError::MalformedMaterialization)?;
         Ok(Some(OcompSystemCarrierCandidate::NodMaterialization {
             queue_sequence: batch.queue_sequence,
@@ -130,21 +137,21 @@ fn validate_carrier_envelope(
     if !tx.is_eip1559 {
         return Err(OcompSystemCarrierError::NotEip1559);
     }
-    if !tx.value.is_zero() {
+    if !tx.call.value.is_zero() {
         return Err(OcompSystemCarrierError::NonZeroValue);
     }
-    if tx.max_priority_fee_per_gas != Some(0) {
+    if tx.call.max_priority_fee_per_gas != Some(0) {
         return Err(OcompSystemCarrierError::NonZeroPriorityFee);
     }
-    if tx.max_fee_per_gas < MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS {
+    if tx.call.max_fee_per_gas < MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS {
         return Err(OcompSystemCarrierError::FeeCapTooLow {
-            actual: tx.max_fee_per_gas,
+            actual: tx.call.max_fee_per_gas,
             minimum: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
         });
     }
-    if tx.gas_limit != OCOMP_SYSTEM_CARRIER_GAS_LIMIT {
+    if tx.call.gas_limit != OCOMP_SYSTEM_CARRIER_GAS_LIMIT {
         return Err(OcompSystemCarrierError::WrongGasLimit {
-            actual: tx.gas_limit,
+            actual: tx.call.gas_limit,
             expected: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
         });
     }

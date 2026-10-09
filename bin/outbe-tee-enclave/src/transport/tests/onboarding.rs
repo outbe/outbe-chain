@@ -205,17 +205,17 @@ fn authenticated_noise_rpc_replays_real_processor_acceptance_through_enclave_qvl
     let server_keys = keys.clone();
     let server_initialization = initialization.clone();
     let server = std::thread::spawn(move || {
-        for _ in 0..2 {
-            let (stream, _) = listener.accept().unwrap();
-            serve_connection_with(
-                stream,
-                &server_keys,
-                &offer_key,
-                Some(&boot),
-                &server_initialization,
-            )
-            .unwrap();
-        }
+        serve_sequential_unix_connections(
+            listener,
+            SequentialTestServerContext {
+                keys: &server_keys,
+                offer_key: &offer_key,
+                boot: &boot,
+                initialization: &server_initialization,
+            },
+            2,
+            serve_connection_with::<UnixStream>,
+        );
     });
 
     let challenge = AuthorizedEnclaveClient::discover_endpoint(&endpoint).unwrap();

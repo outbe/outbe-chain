@@ -6,7 +6,7 @@
 //! resulting path verifies against that authority.
 
 use outbe_ocomp_protocol::{
-    list::try_streaming_ordered_list_membership_proof,
+    list::{try_streaming_ordered_list_membership_proof, OrderedListProofTarget},
     result::{ActiveNodSetV1, NodActionV1, NodMembershipProofV1},
     ListKind, ProtocolError,
 };
@@ -52,9 +52,7 @@ pub fn build_certified_nod_proof<'audit>(
 
     let mut records = ExactNodRecordCursorV1::open(audit, target_ordinal)?;
     let membership_siblings = try_streaming_ordered_list_membership_proof(
-        ListKind::NodActions,
-        authority.nod_count,
-        target_ordinal,
+        OrderedListProofTarget::new(ListKind::NodActions, authority.nod_count, target_ordinal),
         &mut records,
         audit.limits().max_bounded_bytes,
     )?;

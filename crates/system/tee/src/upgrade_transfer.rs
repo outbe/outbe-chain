@@ -20,16 +20,32 @@ pub struct UpgradeKeyProofV1 {
 }
 impl UpgradeKeyProofV1 {
     pub fn validate(&self) -> Result<(), TransportError> {
-        if self.anchor_outcome.is_empty()
-            || self.anchor_outcome.len() > MAX_COMMITTEE_OUTCOME_BYTES
-            || self.committee_transitions.len() > MAX_UPGRADE_COMMITTEES
-            || self.admission.is_empty()
-            || self.admission.len() > MAX_FINALIZED_ADMISSION_RECORD_BYTES
-        {
+        ValidatedUpgradeProof::new(self).map(|_| ())
+    }
+
+    fn has_valid_dimensions(&self) -> bool {
+        let anchor_valid = !self.anchor_outcome.is_empty()
+            && self.anchor_outcome.len() <= MAX_COMMITTEE_OUTCOME_BYTES;
+        let transition_count_valid = self.committee_transitions.len() <= MAX_UPGRADE_COMMITTEES;
+        let admission_valid = !self.admission.is_empty()
+            && self.admission.len() <= MAX_FINALIZED_ADMISSION_RECORD_BYTES;
+        anchor_valid && transition_count_valid && admission_valid
+    }
+}
+
+struct ValidatedUpgradeProof<'a> {
+    anchor_outcome: &'a Bytes,
+    committee_transitions: &'a [Bytes],
+    admission: &'a Bytes,
+}
+
+impl<'a> ValidatedUpgradeProof<'a> {
+    fn new(proof: &'a UpgradeKeyProofV1) -> Result<Self, TransportError> {
+        if !proof.has_valid_dimensions() {
             return Err(invalid("upgrade proof dimensions exceed limits"));
         }
-        let mut total = self.anchor_outcome.len() + self.admission.len();
-        for item in &self.committee_transitions {
+        let mut total = proof.anchor_outcome.len() + proof.admission.len();
+        for item in &proof.committee_transitions {
             if item.is_empty() || item.len() > MAX_COMMITTEE_TRANSITION_RECORD_BYTES {
                 return Err(invalid("invalid upgrade committee record size"));
             }
@@ -40,7 +56,11 @@ impl UpgradeKeyProofV1 {
         if total > MAX_UPGRADE_PROOF_BYTES {
             return Err(invalid("upgrade proof exceeds aggregate limit"));
         }
-        Ok(())
+        Ok(Self {
+            anchor_outcome: &proof.anchor_outcome,
+            committee_transitions: &proof.committee_transitions,
+            admission: &proof.admission,
+        })
     }
 }
 fn invalid(message: &str) -> TransportError {
@@ -64,68 +84,158 @@ pub fn transfer(
     artifact: &[u8],
     export: bool,
 ) -> Result<EnclaveResponse, TransportError> {
-    proof.validate()?;
-    let hash = upgrade_key_transfer_request_hash_v1(artifact, &proof.anchor_outcome, export)
-        .map_err(|e| invalid(&e.to_string()))?;
-    let response = request(&EnclaveRequest::BeginUpgradeKeyTransferV1 {
-        request_hash: hash,
-        artifact: artifact.to_vec(),
-        anchor_outcome: proof.anchor_outcome.to_vec(),
-        export,
-    })?;
-    if !matches!(response, EnclaveResponse::DcapOnboardingArtifactIngestStartedV1 { request_hash } if request_hash == hash)
-    {
-        return Err(TransportError::UnexpectedResponse);
+    PreparedTransfer::new(proof, artifact, export)?
+        .begin(&mut request)?
+        .send_all(&mut request)?
+        .finish(&mut request)
+}
+
+#[derive(Clone, Copy)]
+enum TransferMode {
+    Export,
+    Import,
+}
+
+impl TransferMode {
+    fn from_export(export: bool) -> Self {
+        if export {
+            Self::Export
+        } else {
+            Self::Import
+        }
     }
-    for (kind, record) in proof
-        .committee_transitions
-        .iter()
-        .map(|r| (FinalizedAdmissionRecordKindV1::CommitteeTransition, r))
-        .chain(std::iter::once((
-            FinalizedAdmissionRecordKindV1::Admission,
-            &proof.admission,
-        )))
-    {
-        for (i, bytes) in record.chunks(MAX_ONBOARDING_INGEST_CHUNK_BYTES).enumerate() {
-            let offset = u32::try_from(i * MAX_ONBOARDING_INGEST_CHUNK_BYTES)
-                .map_err(|_| invalid("offset overflow"))?;
-            let next =
-                offset + u32::try_from(bytes.len()).map_err(|_| invalid("chunk overflow"))?;
-            let response = request(&EnclaveRequest::DcapOnboardingArtifactChunkV1 {
-                request_hash: hash,
+
+    fn export(self) -> bool {
+        matches!(self, Self::Export)
+    }
+}
+
+struct PreparedTransfer<'a> {
+    proof: ValidatedUpgradeProof<'a>,
+    artifact: &'a [u8],
+    hash: B256,
+    mode: TransferMode,
+}
+
+impl<'a> PreparedTransfer<'a> {
+    fn new(
+        proof: &'a UpgradeKeyProofV1,
+        artifact: &'a [u8],
+        export: bool,
+    ) -> Result<Self, TransportError> {
+        let proof = ValidatedUpgradeProof::new(proof)?;
+        let hash = upgrade_key_transfer_request_hash_v1(artifact, proof.anchor_outcome, export)
+            .map_err(|e| invalid(&e.to_string()))?;
+        Ok(Self {
+            proof,
+            artifact,
+            hash,
+            mode: TransferMode::from_export(export),
+        })
+    }
+
+    fn begin(
+        self,
+        request: &mut impl FnMut(&EnclaveRequest) -> Result<EnclaveResponse, TransportError>,
+    ) -> Result<StreamingTransfer<'a>, TransportError> {
+        let response = request(&EnclaveRequest::BeginUpgradeKeyTransferV1 {
+            request_hash: self.hash,
+            artifact: self.artifact.to_vec(),
+            anchor_outcome: self.proof.anchor_outcome.to_vec(),
+            export: self.mode.export(),
+        })?;
+        if !matches!(response, EnclaveResponse::DcapOnboardingArtifactIngestStartedV1 { request_hash } if request_hash == self.hash)
+        {
+            return Err(TransportError::UnexpectedResponse);
+        }
+        Ok(StreamingTransfer {
+            proof: self.proof,
+            hash: self.hash,
+            mode: self.mode,
+        })
+    }
+}
+
+struct StreamingTransfer<'a> {
+    proof: ValidatedUpgradeProof<'a>,
+    hash: B256,
+    mode: TransferMode,
+}
+
+impl StreamingTransfer<'_> {
+    fn send_all(
+        self,
+        request: &mut impl FnMut(&EnclaveRequest) -> Result<EnclaveResponse, TransportError>,
+    ) -> Result<CommittedTransfer, TransportError> {
+        for (kind, record) in self
+            .proof
+            .committee_transitions
+            .iter()
+            .map(|r| (FinalizedAdmissionRecordKindV1::CommitteeTransition, r))
+            .chain(std::iter::once((
+                FinalizedAdmissionRecordKindV1::Admission,
+                self.proof.admission,
+            )))
+        {
+            for (i, bytes) in record.chunks(MAX_ONBOARDING_INGEST_CHUNK_BYTES).enumerate() {
+                let offset = u32::try_from(i * MAX_ONBOARDING_INGEST_CHUNK_BYTES)
+                    .map_err(|_| invalid("offset overflow"))?;
+                let next =
+                    offset + u32::try_from(bytes.len()).map_err(|_| invalid("chunk overflow"))?;
+                let response = request(&EnclaveRequest::DcapOnboardingArtifactChunkV1 {
+                    request_hash: self.hash,
+                    kind,
+                    offset,
+                    bytes: bytes.to_vec(),
+                })?;
+                if !matches!(response, EnclaveResponse::DcapOnboardingArtifactChunkAcceptedV1 { request_hash, next_offset } if request_hash == self.hash && next_offset == next)
+                {
+                    return Err(TransportError::UnexpectedResponse);
+                }
+            }
+            let response = request(&EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 {
+                request_hash: self.hash,
                 kind,
-                offset,
-                bytes: bytes.to_vec(),
             })?;
-            if !matches!(response, EnclaveResponse::DcapOnboardingArtifactChunkAcceptedV1 { request_hash, next_offset } if request_hash == hash && next_offset == next)
+            if !matches!(response, EnclaveResponse::DcapOnboardingArtifactRecordAcceptedV1 { request_hash, kind: actual } if request_hash == self.hash && actual == kind)
             {
                 return Err(TransportError::UnexpectedResponse);
             }
         }
-        let response = request(&EnclaveRequest::CommitDcapOnboardingArtifactRecordV1 {
-            request_hash: hash,
-            kind,
+        Ok(CommittedTransfer {
+            hash: self.hash,
+            mode: self.mode,
+        })
+    }
+}
+
+struct CommittedTransfer {
+    hash: B256,
+    mode: TransferMode,
+}
+
+impl CommittedTransfer {
+    fn finish(
+        self,
+        request: &mut impl FnMut(&EnclaveRequest) -> Result<EnclaveResponse, TransportError>,
+    ) -> Result<EnclaveResponse, TransportError> {
+        let response = request(&EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 {
+            request_hash: self.hash,
         })?;
-        if !matches!(response, EnclaveResponse::DcapOnboardingArtifactRecordAcceptedV1 { request_hash, kind: actual } if request_hash == hash && actual == kind)
-        {
+        let matches = match &response {
+            EnclaveResponse::UpgradeKeyExportedV1 { request_hash, .. } => {
+                self.mode.export() && *request_hash == self.hash
+            }
+            EnclaveResponse::FinalizedAdmissionIngestedV1 { request_hash, .. } => {
+                !self.mode.export() && *request_hash == self.hash
+            }
+            _ => false,
+        };
+        if !matches {
             return Err(TransportError::UnexpectedResponse);
         }
+        Ok(response)
     }
-    let response =
-        request(&EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { request_hash: hash })?;
-    let matches = match &response {
-        EnclaveResponse::UpgradeKeyExportedV1 { request_hash, .. } => {
-            export && *request_hash == hash
-        }
-        EnclaveResponse::FinalizedAdmissionIngestedV1 { request_hash, .. } => {
-            !export && *request_hash == hash
-        }
-        _ => false,
-    };
-    if !matches {
-        return Err(TransportError::UnexpectedResponse);
-    }
-    Ok(response)
 }
 
 pub fn export_from_network_source(
@@ -167,19 +277,7 @@ pub fn artifact_context_hash(artifact: &[u8]) -> Result<B256, TransportError> {
 mod tests {
     use super::*;
     fn context() -> DcapOnboardingContextV1 {
-        DcapOnboardingContextV1 {
-            chain_id: [1; 32],
-            genesis_hash: B256::repeat_byte(2),
-            intent_hash: B256::repeat_byte(3),
-            node_id_hash: B256::repeat_byte(4),
-            enclave_id: B256::repeat_byte(5),
-            binding_id: B256::repeat_byte(6),
-            policy_hash: B256::repeat_byte(7),
-            recipient_x25519: [8; 32],
-            tribute_offer_public: [9; 32],
-            key_epoch: 1,
-            tribute_offer_epoch: 2,
-        }
+        crate::test_utils::onboarding_context_fixture([1, 2, 3, 4, 5, 6, 7, 8, 9], 1, 2)
     }
     fn proof() -> UpgradeKeyProofV1 {
         UpgradeKeyProofV1 {

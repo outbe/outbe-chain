@@ -1,6 +1,7 @@
 //! Reserved begin-zone system transactions and OCOMP system carriers.
 
 use super::super::*;
+use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 
 struct ValidatedReservedSystemTx {
     body_index: usize,
@@ -459,12 +460,7 @@ where
         let Some(candidate) = classify_ocomp_system_carrier(
             OcompSystemCarrierView {
                 is_eip1559: tx.tx_type() == alloy_consensus::TxType::Eip1559,
-                to: tx.to(),
-                value: tx.value(),
-                input: tx.input().as_ref(),
-                gas_limit: tx.gas_limit(),
-                max_fee_per_gas: tx.max_fee_per_gas(),
-                max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+                call: TransactionCallFields::from_transaction(tx),
             },
             &outbe_ocomp_protocol::profile::poc_schema_limits(),
         )

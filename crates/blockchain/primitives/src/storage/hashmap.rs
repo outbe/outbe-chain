@@ -359,6 +359,46 @@ impl HashMapStorageProvider {
         std::mem::take(&mut self.mutation_operations)
     }
 
+    /// Characterizes the mutation order of `call`.
+    ///
+    /// It runs `call` once on storage from `seed` and counts its
+    /// persistent-write/event operations. Then, for each operation `n`, it runs
+    /// `call` on new storage from `seed` with a failure injected before
+    /// operation `n`. `view` reads the storage after each run. Each failing run
+    /// must stop with exactly the injected error, else the result is an error.
+    pub fn mutation_prefix_views<T, V>(
+        seed: impl Fn() -> Self,
+        call: impl Fn(StorageHandle) -> Result<T>,
+        view: impl Fn(&mut Self) -> V,
+    ) -> Result<MutationPrefixViews<V>> {
+        let mut provider = seed();
+        provider.clear_mutation_failure();
+        provider.enter(&call)?;
+        let mutations = provider.clear_mutation_failure();
+        let complete = view(&mut provider);
+
+        let mut before_mutation = Vec::with_capacity(mutations);
+        for operation in 0..mutations {
+            let mut provider = seed();
+            provider.fail_mutation_at(operation);
+            let outcome = provider.enter(&call);
+            provider.clear_mutation_failure();
+            let injected =
+                format!("injected storage mutation failure before operation {operation}");
+            if !matches!(&outcome, Err(PrecompileError::Storage(message)) if *message == injected) {
+                return Err(PrecompileError::Storage(format!(
+                    "mutation {operation} did not stop the call with the injected failure"
+                )));
+            }
+            before_mutation.push(view(&mut provider));
+        }
+        Ok(MutationPrefixViews {
+            before_mutation,
+            complete,
+            mutations,
+        })
+    }
+
     fn before_mutation(&mut self, address: Address) -> Result<()> {
         if self.mutation_failure_address == Some(address) {
             return Err(PrecompileError::Storage(format!(
@@ -391,6 +431,18 @@ impl HashMapStorageProvider {
     pub fn enter<R>(&mut self, f: impl FnOnce(StorageHandle) -> R) -> R {
         StorageHandle::enter(self, f)
     }
+}
+
+/// The storage views of one mutation-order characterization. See
+/// [`HashMapStorageProvider::mutation_prefix_views`].
+#[derive(Debug, PartialEq, Eq)]
+pub struct MutationPrefixViews<V> {
+    /// Entry `n` is the view after a failure before mutation `n`.
+    pub before_mutation: Vec<V>,
+    /// The view after the complete call.
+    pub complete: V,
+    /// The persistent-write/event operations of the complete call.
+    pub mutations: usize,
 }
 
 impl PrecompileStorageProvider for HashMapStorageProvider {

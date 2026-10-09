@@ -3,10 +3,10 @@ use alloy_primitives::B256;
 use crate::{
     committee::POC_KEY_EPOCH,
     error::ProtocolError,
-    hash::hash_framed,
+    hash::{framed_identity_hash, hash_framed},
     registry::HashDomain,
-    schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, SchemaLimits},
-    vote::ResultVoteSigningSubjectV1,
+    schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct},
+    vote::{ResultVotePrefixV1, ResultVoteSigningSubjectV1, VoteSigningDomain},
 };
 
 wire_enum_u8! {
@@ -60,27 +60,29 @@ impl SignOnceRecordV1 {
     }
 
     pub fn signing_digest(&self) -> Result<B256, ProtocolError> {
-        ResultVoteSigningSubjectV1 {
-            chain_id: self.chain_id,
-            genesis_hash: self.genesis_hash,
-            fork_id: self.fork_id,
-            protocol_bundle_hash: self.protocol_bundle_hash,
-            job_id: self.job_id,
-            attempt: self.attempt,
-            result_validator_set_epoch: self.result_validator_set_epoch,
-            result_committee_set_hash: self.result_committee_set_hash,
-            result_ocomp_binding_hash: self.result_ocomp_binding_hash,
-            ocomp_key_hash: self.ocomp_key_hash,
-            key_epoch: self.key_epoch,
-            purpose: self.purpose as u8,
-            result_digest: self.result_digest,
-        }
+        ResultVoteSigningSubjectV1::from_prefix(
+            VoteSigningDomain {
+                chain_id: self.chain_id,
+                genesis_hash: self.genesis_hash,
+                fork_id: self.fork_id,
+            },
+            ResultVotePrefixV1 {
+                protocol_bundle_hash: self.protocol_bundle_hash,
+                job_id: self.job_id,
+                attempt: self.attempt,
+                result_validator_set_epoch: self.result_validator_set_epoch,
+                result_committee_set_hash: self.result_committee_set_hash,
+                result_ocomp_binding_hash: self.result_ocomp_binding_hash,
+                ocomp_key_hash: self.ocomp_key_hash,
+                key_epoch: self.key_epoch,
+            },
+            self.purpose as u8,
+            self.result_digest,
+        )
         .signing_digest()
     }
 }
 
 impl ActivationCallCoreV1 {
-    pub fn activation_call_id(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        hash_framed(HashDomain::ActivationCall, &self.encode_canonical(limits)?)
-    }
+    framed_identity_hash!(activation_call_id, ActivationCall);
 }

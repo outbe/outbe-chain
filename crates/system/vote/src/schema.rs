@@ -40,14 +40,11 @@ pub enum BondSettlement {
 }
 
 impl BondSettlement {
+    const VARIANTS: [Self; 4] = [Self::NoBond, Self::Unsettled, Self::Refunded, Self::Burned];
+
     pub fn from_u8(value: u8) -> std::result::Result<Self, VoteError> {
-        match value {
-            0 => Ok(Self::NoBond),
-            1 => Ok(Self::Unsettled),
-            2 => Ok(Self::Refunded),
-            3 => Ok(Self::Burned),
-            _ => Err(VoteError::InvalidBondSettlement),
-        }
+        decode_stored_u8(value, &Self::VARIANTS, Self::to_u8)
+            .ok_or(VoteError::InvalidBondSettlement)
     }
 
     pub const fn to_u8(self) -> u8 {
@@ -56,15 +53,17 @@ impl BondSettlement {
 }
 
 impl ProposalStatus {
+    const VARIANTS: [Self; 5] = [
+        Self::Pending,
+        Self::Approved,
+        Self::Rejected,
+        Self::Expired,
+        Self::Error,
+    ];
+
     pub fn from_u8(value: u8) -> std::result::Result<Self, VoteError> {
-        match value {
-            0 => Ok(Self::Pending),
-            1 => Ok(Self::Approved),
-            2 => Ok(Self::Rejected),
-            3 => Ok(Self::Expired),
-            4 => Ok(Self::Error),
-            _ => Err(VoteError::InvalidProposalStatus),
-        }
+        decode_stored_u8(value, &Self::VARIANTS, Self::to_u8)
+            .ok_or(VoteError::InvalidProposalStatus)
     }
 
     pub const fn to_u8(self) -> u8 {
@@ -80,6 +79,18 @@ impl ProposalStatus {
             Self::Approved | Self::Rejected | Self::Expired | Self::Error
         )
     }
+}
+
+/// Finds the variant with this stored byte. Variant order does not set its value.
+pub(crate) fn decode_stored_u8<T: Copy>(
+    value: u8,
+    variants: &[T],
+    stored: fn(T) -> u8,
+) -> Option<T> {
+    variants
+        .iter()
+        .copied()
+        .find(|variant| stored(*variant) == value)
 }
 
 /// Generic proposal record keyed by `id`.

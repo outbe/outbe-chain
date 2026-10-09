@@ -1,18 +1,22 @@
 use alloy_primitives::{Address, B256};
 use outbe_primitives::{
     error::{PrecompileError, Result},
-    storage::StorageHandle,
+    storage::{
+        finalized_guard_ring::{FinalizedGuardRing, FINALIZED_GUARD_RETAIN},
+        StorageHandle,
+    },
 };
 
+use crate::misses::MissKind;
 use crate::schema::SlashIndicator;
 
 /// Number of recent finalized blocks whose per-`fb_hash` slash-window
 /// guards (`voter_window_slashed`, `proposer_window_slashed`) stay live. The
 /// replay horizon is the K-block late-finalize window, so retaining the last 64
 /// finalized blocks is generous. [`prune_slash_guards`] prunes older guards.
-/// Mirrors `FINALIZED_PARTICIPATION_RETAIN` /
-/// `BLOCK_GUARD_RETAIN`. Changing it is a hard fork.
-pub const SLASH_GUARD_RETAIN: u64 = 64;
+/// It is the [`FINALIZED_GUARD_RETAIN`] that all prune rings share. Changing
+/// it is a hard fork.
+pub const SLASH_GUARD_RETAIN: u64 = FINALIZED_GUARD_RETAIN;
 
 /// Slash every window-close absentee of the finalized block `fb_hash`, exactly
 /// once across metadata replays.
@@ -30,15 +34,7 @@ pub fn slash_window_voters(
     fb_hash: B256,
     absentees: &[Address],
 ) -> Result<()> {
-    let mut si = SlashIndicator::new(storage);
-    if si.voter_window_slashed.read(&fb_hash)? {
-        return Ok(());
-    }
-    for absentee in absentees {
-        si.slash_voter(*absentee)?;
-    }
-    si.voter_window_slashed.write(&fb_hash, true)?;
-    Ok(())
+    slash_window_once(storage, fb_hash, absentees, MissKind::Voter)
 }
 
 /// Slash the missed-proposer events of the finalized block `fb_hash`, exactly
@@ -55,14 +51,26 @@ pub fn slash_window_proposers(
     fb_hash: B256,
     missed: &[Address],
 ) -> Result<()> {
+    slash_window_once(storage, fb_hash, missed, MissKind::Proposer)
+}
+
+/// Records one miss of `kind` per entry of `validators`, unless the window
+/// guard of `fb_hash` shows that this pass already ran. The guard is set
+/// after the last miss.
+fn slash_window_once(
+    storage: StorageHandle,
+    fb_hash: B256,
+    validators: &[Address],
+    kind: MissKind,
+) -> Result<()> {
     let mut si = SlashIndicator::new(storage);
-    if si.proposer_window_slashed.read(&fb_hash)? {
+    if kind.window_guard(&si).read(&fb_hash)? {
         return Ok(());
     }
-    for validator in missed {
-        si.slash_proposer(*validator)?;
+    for validator in validators {
+        si.record_miss(kind, *validator)?;
     }
-    si.proposer_window_slashed.write(&fb_hash, true)?;
+    kind.window_guard(&si).write(&fb_hash, true)?;
     Ok(())
 }
 
@@ -78,19 +86,26 @@ pub fn slash_window_proposers(
 /// any persistent miss rate, forever.
 pub fn prune_slash_guards(storage: StorageHandle, fb_hash: B256) -> Result<()> {
     let si = SlashIndicator::new(storage);
-    let seq = si.slash_guard_ring_seq.read()?;
-    let idx = seq % SLASH_GUARD_RETAIN;
-    let evicted = si.slash_guard_ring.read(&idx)?;
-    if evicted != B256::ZERO && evicted != fb_hash {
-        si.voter_window_slashed.write(&evicted, false)?;
-        si.proposer_window_slashed.write(&evicted, false)?;
+    si.slash_prune_ring().record(
+        fb_hash,
+        |evicted| {
+            si.voter_window_slashed.write(&evicted, false)?;
+            si.proposer_window_slashed.write(&evicted, false)
+        },
+        || PrecompileError::Revert("slash_guard_ring_seq overflow".into()),
+    )
+}
+
+impl<'storage> SlashIndicator<'storage> {
+    /// The prune ring of the slash-window guards: the ring entries (slot 15)
+    /// and the write cursor (slot 16). The hook and the tests use this
+    /// binding.
+    pub(crate) fn slash_prune_ring(&self) -> FinalizedGuardRing<'_, 'storage> {
+        FinalizedGuardRing {
+            entries: &self.slash_guard_ring,
+            cursor: &self.slash_guard_ring_seq,
+        }
     }
-    si.slash_guard_ring.write(&idx, fb_hash)?;
-    si.slash_guard_ring_seq.write(
-        seq.checked_add(1)
-            .ok_or_else(|| PrecompileError::Revert("slash_guard_ring_seq overflow".into()))?,
-    )?;
-    Ok(())
 }
 
 /// Wrapper for [`SlashIndicator::slash_byzantine`].

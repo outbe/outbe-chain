@@ -1,4 +1,5 @@
 use super::*;
+use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 
 mod deadline;
 mod reward_delivery;
@@ -69,12 +70,7 @@ fn executor_adapter_classifies_the_canonical_ocomp_system_carrier_prefix() {
     let candidate = outbe_ocomp_protocol::system_carrier::classify_ocomp_system_carrier(
         outbe_ocomp_protocol::system_carrier::OcompSystemCarrierView {
             is_eip1559: true,
-            to: tx.to(),
-            value: tx.value(),
-            input: tx.input().as_ref(),
-            gas_limit: tx.gas_limit(),
-            max_fee_per_gas: tx.max_fee_per_gas(),
-            max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+            call: TransactionCallFields::from_transaction(&tx),
         },
         &outbe_ocomp_protocol::profile::poc_schema_limits(),
     )
@@ -332,9 +328,11 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
                 storage.clone(),
                 Address::ZERO,
                 outbe_oracle::api::DAY_TYPE_PAIR,
-                U256::from(1_000_000u64),
-                1,
-                TEST_BLOCK_TIMESTAMP_BASE + 1,
+                outbe_oracle::api::RateObservation {
+                    rate: U256::from(1_000_000u64),
+                    block_number: 1,
+                    timestamp: TEST_BLOCK_TIMESTAMP_BASE + 1,
+                },
             )
             .unwrap();
             seed_previous_day_vwap(

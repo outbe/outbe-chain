@@ -1,6 +1,7 @@
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::test_utils::sol_interface::sol_function_canonical;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::units::checked_protocol_to_native;
 
@@ -137,20 +138,7 @@ fn test_address_list_deduplication() {
 
 /// Registers COEN/840 with `price` as its spot and previous-day VWAP.
 fn seed_oracle(storage: &StorageHandle<'_>, price: U256) {
-    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-    outbe_oracle::api::set_exchange_rate(
-        storage.clone(),
-        Address::ZERO,
-        outbe_oracle::api::DAY_TYPE_PAIR,
-        price,
-        1,
-        T_NOW,
-    )
-    .unwrap();
-    outbe_oracle::schema::OracleContract::new(storage.clone())
-        .reference_currencies
-        .push(840u16)
-        .unwrap();
+    outbe_oracle::test_support::publish_day_type_quote(storage, price, 1, T_NOW).unwrap();
     seed_day_vwap(storage, price);
 }
 
@@ -820,66 +808,6 @@ fn iagentreward_sol_matches_contract_public_annotations() {
         assert_eq!(canon.is_view, is_view, "{name}: view-modifier differs");
         assert_eq!(canon.ret_types, ret_types, "{name}: return types differ");
     }
-}
-
-struct SolFnCanonical {
-    arg_types: String,
-    is_view: bool,
-    ret_types: String,
-}
-
-/// Parses one `function NAME(...) ... returns (...)` declaration out of a
-/// Solidity interface body into a comparable canonical form. Tolerates
-/// `external`, `view`, and parameter names. Returns only type lists.
-fn sol_function_canonical(sol: &str, name: &str) -> Option<SolFnCanonical> {
-    let needle = format!("function {name}(");
-    let start = sol.find(&needle)? + needle.len() - 1; // points at '('
-    let bytes = sol.as_bytes();
-    let mut depth = 0i32;
-    let mut args_end = start;
-    for (i, b) in bytes[start..].iter().enumerate() {
-        match b {
-            b'(' => depth += 1,
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    args_end = start + i;
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let args_raw = &sol[start + 1..args_end];
-    let arg_types = canonical_type_list(args_raw);
-
-    let tail_end = sol[args_end..].find(';')? + args_end;
-    let tail = &sol[args_end + 1..tail_end];
-    let is_view = tail.split_whitespace().any(|t| t == "view");
-    let ret_types = match tail.find("returns") {
-        Some(idx) => {
-            let after = &tail[idx + "returns".len()..];
-            let lparen = after.find('(')?;
-            let rparen = after.rfind(')')?;
-            canonical_type_list(&after[lparen + 1..rparen])
-        }
-        None => String::new(),
-    };
-    Some(SolFnCanonical {
-        arg_types,
-        is_view,
-        ret_types,
-    })
-}
-
-/// Reduces a Solidity parameter list (which may carry names, `memory`, or
-/// `calldata` markers) to a comma-separated list of just the leading types.
-fn canonical_type_list(list: &str) -> String {
-    list.split(',')
-        .map(|part| part.split_whitespace().next().unwrap_or("").to_string())
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 #[test]

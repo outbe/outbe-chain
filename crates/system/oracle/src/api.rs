@@ -95,11 +95,25 @@ pub fn currency_cross_rate(
     to_iso: u16,
     amount: U256,
 ) -> Result<U256> {
+    cross_rate_with(from_iso, to_iso, amount, |iso_code| {
+        coen_rate_for(storage.clone(), iso_code)
+    })
+}
+
+/// `amount x rate(to_iso) / rate(from_iso)`, rounded up once, with each leg read
+/// by `coen_rate`: `from_iso` first, then `to_iso`. Equal currencies and zero
+/// amounts return `amount` and read no rate.
+fn cross_rate_with(
+    from_iso: u16,
+    to_iso: u16,
+    amount: U256,
+    coen_rate: impl Fn(u16) -> Result<U256>,
+) -> Result<U256> {
     if from_iso == to_iso || amount.is_zero() {
         return Ok(amount);
     }
-    let rate_from = coen_rate_for(storage.clone(), from_iso)?;
-    let rate_to = coen_rate_for(storage, to_iso)?;
+    let rate_from = coen_rate(from_iso)?;
+    let rate_to = coen_rate(to_iso)?;
     let numerator = amount
         .checked_mul(rate_to)
         .ok_or(OracleError::CrossRateOverflow)?;
@@ -211,15 +225,9 @@ pub fn fresh_currency_cross_rate(
     to_iso: u16,
     amount: U256,
 ) -> Result<U256> {
-    if from_iso == to_iso || amount.is_zero() {
-        return Ok(amount);
-    }
-    let rate_from = fresh_coen_rate_for(storage.clone(), from_iso)?;
-    let rate_to = fresh_coen_rate_for(storage, to_iso)?;
-    let numerator = amount
-        .checked_mul(rate_to)
-        .ok_or(OracleError::CrossRateOverflow)?;
-    Ok(numerator.div_ceil(rate_from))
+    cross_rate_with(from_iso, to_iso, amount, |iso_code| {
+        fresh_coen_rate_for(storage.clone(), iso_code)
+    })
 }
 
 fn fresh_rate_at_index(storage: StorageHandle, index: PairIndex) -> Result<Option<U256>> {
@@ -321,16 +329,31 @@ pub fn tribute_pricing_inputs(
     }))
 }
 
+/// One exchange-rate observation: the rate and the block that produced it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RateObservation {
+    /// Rate in the pair's registered scale.
+    pub rate: U256,
+    pub block_number: u64,
+    pub timestamp: u64,
+}
+
+/// Sets the exchange rate of `pair` from `observation` (system-only bootstrap
+/// write).
 pub fn set_exchange_rate(
     storage: StorageHandle,
     caller: Address,
     pair: AddressPair,
-    rate: U256,
-    block_number: u64,
-    timestamp: u64,
+    observation: RateObservation,
 ) -> Result<()> {
     let mut oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.set_exchange_rate(caller, pair, rate, block_number, timestamp)
+    oracle.set_exchange_rate(
+        caller,
+        pair,
+        observation.rate,
+        observation.block_number,
+        observation.timestamp,
+    )
 }
 
 /// Stored WorldwideDay VWAP for the pair registered under `index`, or `None`

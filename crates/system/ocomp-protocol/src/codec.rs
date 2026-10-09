@@ -552,7 +552,12 @@ pub fn ensure_strictly_increasing<T: Ord>(values: &[T]) -> Result<(), ProtocolEr
     Ok(())
 }
 
-fn check_cap(what: &'static str, limit: usize, actual: usize) -> Result<(), ProtocolError> {
+/// Checks that `actual` does not exceed the cap `limit` of `what`.
+pub(crate) fn check_cap(
+    what: &'static str,
+    limit: usize,
+    actual: usize,
+) -> Result<(), ProtocolError> {
     if actual <= limit {
         Ok(())
     } else {
