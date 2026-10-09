@@ -1178,7 +1178,7 @@
         "properties": {
           "origin": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "destination": {
             "$ref": "#/properties/origin"
@@ -1296,7 +1296,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1317,7 +1317,7 @@
         "properties": {
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "additionalProperties": false,
@@ -1339,7 +1339,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "additionalProperties": false,
@@ -1365,7 +1365,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1386,7 +1386,7 @@
         "properties": {
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "include_all": {
             "type": "boolean"
@@ -1419,7 +1419,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1444,7 +1444,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1473,7 +1473,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "additionalProperties": false,
@@ -1513,7 +1513,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1564,7 +1564,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1597,7 +1597,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1630,7 +1630,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1663,7 +1663,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1692,7 +1692,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "additionalProperties": false,
@@ -1718,7 +1718,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1752,7 +1752,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1786,7 +1786,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1828,7 +1828,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1863,7 +1863,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "required": [
@@ -1892,7 +1892,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           },
           "wait": {
             "type": "boolean",
@@ -1922,7 +1922,7 @@
           },
           "network": {
             "type": "string",
-            "description": "network name (one of: bsc-testnet, outbe-testnet)"
+            "description": "network: outbe, outbe-testnet, bsc-testnet or a chain id (outbe is the connected node)"
           }
         },
         "additionalProperties": false,
@@ -3690,7 +3690,7 @@
         "amount_in": "1"
       },
       "isError": true,
-      "output": "error: unknown network \"mars\"; supported: bsc-testnet, outbe-testnet",
+      "output": "error: unknown network \"mars\"; use outbe, outbe-testnet, bsc-testnet or a chain id",
       "sent": []
     },
     {
@@ -5971,7 +5971,7 @@
         "network": "solana"
       },
       "isError": true,
-      "output": "error: unknown network \"solana\"; supported: bsc-testnet, outbe-testnet",
+      "output": "error: unknown network \"solana\"; use outbe, outbe-testnet, bsc-testnet or a chain id",
       "sent": []
     },
     {

@@ -4,11 +4,12 @@ import type { FakeChain } from "../test/fake-chain.js";
 import { startHarness } from "../test/harness.js";
 import { AUCTION_ABI, intexAddress } from "./registry.js";
 
+const BSC = { name: "bsc-testnet", isOutbe: false };
 const WINDOW = { from_date: 20261007, to_date: 20261009, include_all: true };
 
 async function active(prepare: (chain: FakeChain) => void) {
   const harness = await startHarness((chain) => {
-    chain.register(AUCTION_ABI, intexAddress("bsc-testnet", "auction"));
+    chain.register(AUCTION_ABI, intexAddress(BSC, "auction"));
     prepare(chain);
   });
   try {

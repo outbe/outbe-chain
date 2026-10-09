@@ -25,13 +25,17 @@ export interface Harness {
 }
 
 /** The real MCP server over an in-memory transport, dialing a fake chain. */
-export async function startHarness(prepare: (chain: FakeChain) => void): Promise<Harness> {
-  const chain = new FakeChain({ [OUTBE_RPC]: 54_322_345, [BSC_RPC]: 97 }, SIGNER);
+export async function startHarness(
+  prepare: (chain: FakeChain) => void,
+  { outbeChainId = 54_322_345, env = {} }: { outbeChainId?: number; env?: Record<string, string> } = {},
+): Promise<Harness> {
+  const chain = new FakeChain({ [OUTBE_RPC]: outbeChainId, [BSC_RPC]: 97, ...extraRpcs(env) }, SIGNER);
   prepare(chain);
   const restoreFetch = chain.install();
   const environment = { ...process.env };
   for (const name of Object.keys(process.env).filter((n) => n.startsWith("OUTBE_"))) delete process.env[name];
   process.env.OUTBE_PRIVATE_KEY = SIGNER_KEY;
+  Object.assign(process.env, env);
   const ctx = await createCtx(OUTBE_RPC, SIGNER_KEY);
   const server = new McpServer({ name: "outbe-mcp", version: VERSION });
   registerTools(server, ctx);
@@ -54,4 +58,14 @@ export async function startHarness(prepare: (chain: FakeChain) => void): Promise
       process.env = environment;
     },
   };
+}
+
+/** Every `OUTBE_RPC_<chainId>` URL in `env`, served as that chain. */
+function extraRpcs(env: Record<string, string>): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(env).flatMap(([name, url]) => {
+      const id = /^OUTBE_RPC_(\d+)$/.exec(name)?.[1];
+      return id ? [[url, Number(id)]] : [];
+    }),
+  );
 }

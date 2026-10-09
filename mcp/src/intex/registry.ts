@@ -1,5 +1,4 @@
 import { type Abi, type Address, getAddress } from "viem";
-import { OUTBE_NETWORK } from "../net/chains.js";
 import IDesisJson from "../../../contracts/precompiles/abi-export/IDesis.json";
 import IIntexJson from "../../../contracts/precompiles/abi-export/IIntex.json";
 import IIntexFactoryJson from "../../../contracts/precompiles/abi-export/IIntexFactory.json";
@@ -88,29 +87,35 @@ export function intexNftFromBlock(network: string): bigint {
   return NFT_DEPLOY_BLOCK[network] ?? 0n;
 }
 
+/** What the address book needs to know about a network. */
+export interface IntexChain {
+  name: string;
+  isOutbe: boolean;
+}
+
 /** An Intex contract the network has no address for. */
 export class NotConfiguredError extends Error {}
 
 /** Resolve a contract address for a network, or throw a clear error. */
-export function intexAddress(network: string, key: keyof IntexAddresses): Address {
+export function intexAddress(network: IntexChain, key: keyof IntexAddresses): Address {
   let addr: Address | undefined;
   switch (key) {
     case "auction":
     case "escrow":
-      addr = AUCTION_LIVE.has(network) ? APP[key] : undefined;
+      addr = AUCTION_LIVE.has(network.name) ? APP[key] : undefined;
       break;
     case "nft":
     case "nftBridge":
-      addr = network === OUTBE_NETWORK || AUCTION_LIVE.has(network) ? APP[key] : undefined;
+      addr = network.isOutbe || AUCTION_LIVE.has(network.name) ? APP[key] : undefined;
       break;
     case "paymentToken":
-      addr = PAYMENT_TOKEN[network];
+      addr = PAYMENT_TOKEN[network.name];
       break;
     default:
-      addr = network === OUTBE_NETWORK ? OUTBE_ONLY[key] : undefined;
+      addr = network.isOutbe ? OUTBE_ONLY[key] : undefined;
   }
   if (!addr) {
-    throw new NotConfiguredError(`Intex "${key}" is not configured on "${network}"`);
+    throw new NotConfiguredError(`Intex "${key}" is not configured on "${network.name}"`);
   }
   return addr;
 }

@@ -34,7 +34,7 @@ export function isRevert(error: unknown): boolean {
 }
 
 export function addr(n: Network, key: keyof IntexAddresses): Address {
-  return intexAddress(n.name, key);
+  return intexAddress(n, key);
 }
 
 /** Whether the series has qualified. The outbe factory derives it from finalized daily VWAPs. */

@@ -1,6 +1,6 @@
 import { type Address, type Hex, decodeAbiParameters, formatUnits } from "viem";
 import { formatNativeAmount } from "../chain.js";
-import { NETWORKS } from "../net/chains.js";
+import { KNOWN_CHAINS, OUTBE_NETWORK } from "../net/chains.js";
 import type { Network, NetworkResolver } from "../net/resolver.js";
 import { readDecimals } from "../net/erc20.js";
 import { type OrderData, decodeOrderData, isNative } from "./format.js";
@@ -25,7 +25,7 @@ export interface LoadedOrder {
   originData: Hex;
 }
 
-/** Read openOrders on a hint network, else probe every network. Then decode the order. */
+/** Read openOrders on a hint network, else probe Outbe and every chain with a known RPC. Then decode the order. */
 export async function loadOrder(
   router: Address,
   resolveNetwork: NetworkResolver,
@@ -33,9 +33,9 @@ export async function loadOrder(
   hint: Network,
 ): Promise<LoadedOrder> {
   const candidates: Network[] = [hint];
-  for (const def of NETWORKS) {
+  for (const name of [OUTBE_NETWORK, ...KNOWN_CHAINS.filter((c) => c.rpc).map((c) => c.name)]) {
     try {
-      candidates.push(await resolveNetwork(def.name));
+      candidates.push(await resolveNetwork(name));
     } catch {
       /* network unreachable - probe what we have */
     }

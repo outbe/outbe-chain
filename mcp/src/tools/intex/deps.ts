@@ -34,7 +34,7 @@ export function intexDeps(ctx: Ctx): IntexDeps {
   const metaCache = new Map<string, PaymentMeta>();
   return {
     ctx,
-    resolveNetwork: networkResolver(ctx, loadConfig().privateKey),
+    resolveNetwork: networkResolver(ctx, loadConfig()),
     whoever(explicit) {
       if (explicit) return getAddress(explicit);
       if (ctx.account) return ctx.account.address;

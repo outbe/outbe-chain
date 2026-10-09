@@ -236,7 +236,10 @@ test("every MCP tool keeps its surface and its output against a fixed chain", as
   seedRandomness();
   const harness = await startHarness((chain) => {
     for (const [name, entry] of Object.entries(CONTRACTS)) chain.register(entry.abi, entry.address);
-    for (const network of ["outbe-testnet", "bsc-testnet"]) {
+    for (const network of [
+      { name: "outbe-testnet", isOutbe: true },
+      { name: "bsc-testnet", isOutbe: false },
+    ]) {
       for (const [abi, key] of INTEX_ABIS) {
         try {
           chain.register(abi, intexAddress(network, key));

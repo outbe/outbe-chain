@@ -1,9 +1,11 @@
 import { z } from "zod";
-import { NETWORKS } from "../net/chains.js";
+import { NETWORK_NAMES } from "../net/chains.js";
 
 export const address = z.string().describe("0x-prefixed address");
 
-export const networkName = z.string().describe(`network name (one of: ${NETWORKS.map((d) => d.name).join(", ")})`);
+export const networkName = z
+  .string()
+  .describe(`network: ${NETWORK_NAMES.join(", ")} or a chain id (outbe is the connected node)`);
 
 export const waitFlag = z.boolean().optional().describe("wait for the receipt (default true)");
 

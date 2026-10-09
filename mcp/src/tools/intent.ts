@@ -50,7 +50,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
   const deps: IntentDeps = {
     ctx,
     router: getAddress(config.intentRouter ?? DEFAULT_ROUTER),
-    resolveNetwork: networkResolver(ctx, config.privateKey),
+    resolveNetwork: networkResolver(ctx, config),
   };
   registerOrderOpen(server, deps);
   registerOrderTrack(server, deps);

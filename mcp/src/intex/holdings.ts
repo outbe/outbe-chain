@@ -1,5 +1,4 @@
 import type { Hex } from "viem";
-import { OUTBE_NETWORK } from "../net/chains.js";
 import type { Network } from "../net/resolver.js";
 import { epochIso, intexState, intexStatus, fromSeriesId } from "./format.js";
 import { addr, seriesQualified } from "./reads.js";
@@ -28,7 +27,7 @@ export async function holding(n: Network, tokenId: bigint, balance: bigint) {
     const settlementDeadline =
       Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callTrigger.callNoticePeriod) : 0;
     // Only outbe has the factory that derives it.
-    const qualified = n.name === OUTBE_NETWORK ? await seriesQualified(n, seriesHex) : undefined;
+    const qualified = n.isOutbe ? await seriesQualified(n, seriesHex) : undefined;
     return {
       ...base,
       series: fromSeriesId(seriesHex),

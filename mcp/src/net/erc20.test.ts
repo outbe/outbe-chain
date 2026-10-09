@@ -4,12 +4,13 @@ import { AUCTION_ABI, ERC20_ABI, ESCROW_ABI, intexAddress } from "../intex/regis
 import type { FakeChain } from "../test/fake-chain.js";
 import { startHarness } from "../test/harness.js";
 
+const BSC = { name: "bsc-testnet", isOutbe: false };
 const COMMIT = { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 };
 
 async function commit(prepare: (chain: FakeChain) => void) {
   const harness = await startHarness((chain) => {
-    chain.register(AUCTION_ABI, intexAddress("bsc-testnet", "auction"));
-    chain.register(ESCROW_ABI, intexAddress("bsc-testnet", "escrow"));
+    chain.register(AUCTION_ABI, intexAddress(BSC, "auction"));
+    chain.register(ESCROW_ABI, intexAddress(BSC, "escrow"));
     chain.register(ERC20_ABI);
     chain.reply("allowance", 0n);
     prepare(chain);
