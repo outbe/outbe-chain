@@ -11,11 +11,8 @@ import { registerSettlementTools } from "./intex/settlement.js";
 
 export { wcoenLockAmount } from "../intex/units.js";
 
-/**
- * Intex participant tools: the series ledger, NFT holdings, auctions and bids,
- * escrow funding, the bridge to outbe, and settlement/Promis on outbe. Read
- * tools work without a key. Signing tools require OUTBE_PRIVATE_KEY.
- */
+/** Intex participant tools: series, holdings, auctions and bids, escrow funding, the bridge,
+ *  and settlement/Promis on outbe. Signing tools require OUTBE_PRIVATE_KEY. */
 export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   const deps = intexDeps(ctx);
   registerSeriesTools(server, deps);

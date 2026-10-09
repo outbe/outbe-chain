@@ -27,8 +27,8 @@ import {
 import { ymdRange } from "./dates.js";
 
 export const PROMIS_MINED_EVENT = getAbiItem({ abi: FACTORY_ABI, name: "PromisMined" }) as AbiEvent;
-export const TRANSFER_SINGLE_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferSingle" }) as AbiEvent;
-export const TRANSFER_BATCH_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferBatch" }) as AbiEvent;
+const TRANSFER_SINGLE_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferSingle" }) as AbiEvent;
+const TRANSFER_BATCH_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferBatch" }) as AbiEvent;
 
 /** A contract call the chain answered with a revert, as opposed to a failure to reach it. */
 export function isRevert(error: unknown): boolean {
@@ -54,9 +54,8 @@ export async function seriesQualified(n: Network, series: Hex): Promise<boolean>
   });
 }
 
-/** Token ids the address holds now: candidates from inbound transfer logs, then a live balance read.
- *  ERC-1155 carries no on-chain owner enumeration, so wallets and explorers derive holdings the same
- *  way. The scan starts at the pair's deployment block - see `intexNftFromBlock`. */
+/** Token ids the address holds now: candidates from inbound transfer logs, then a live balance read,
+ *  since ERC-1155 has no owner enumeration. */
 export async function ownedWithBalances(n: Network, owner: Address): Promise<[bigint[], bigint[]]> {
   const address = addr(n, "nft");
   const fromBlock = intexNftFromBlock(n.name);
@@ -95,8 +94,7 @@ export async function ownedWithBalances(n: Network, owner: Address): Promise<[bi
   return [heldIds, heldBalances];
 }
 
-/** Per-token NFT metadata documents for a series.
- *  Undefined when the chain has no NFT deployed. */
+/** Per-token NFT metadata documents for a series; undefined when the chain has no NFT deployed. */
 export async function seriesMetadata(
   n: Network,
   series: Hex,
@@ -124,11 +122,8 @@ export async function seriesMetadata(
     throw error;
   }
 }
-/**
- * Payment tokens a series accepts: the vault router's assets for either of its
- * currencies. An issuance-currency token only settles while the trailing VWAP
- * window prices both COEN legs. `quoteSettlement` answers that question.
- */
+/** Payment tokens a series accepts: the vault router's assets for either of its currencies.
+ *  An issuance-currency token settles only while the trailing VWAP prices both legs. */
 export async function settlementTokens(n: Network, series: Hex): Promise<`0x${string}`[]> {
   const d = await n.client.readContract({
     address: addr(n, "intex"),
@@ -154,15 +149,8 @@ export async function settlementTokens(n: Network, series: Hex): Promise<`0x${st
   return [...seen];
 }
 
-/**
- * What settling `units` Intex of `series` with `token` costs, in that token's
- * minor units, and the ISO 4217 code the payment is denominated in. The chain
- * prices the whole operation, rounds once and applies its one-minor-unit
- * minimum once. So a quote for many units can be well under the per-unit
- * quote times that many. `snapshotId` is the trailing VWAP snapshot an
- * issuance-currency payment must name (zero on the reference rail). It goes
- * stale at the next hourly cutoff.
- */
+/** The cost of settling `units` with `token`, in its minor units, priced and rounded once for the whole batch.
+ *  `snapshotId` is the VWAP snapshot an issuance-currency payment names; it goes stale at the next hour. */
 export async function quoteSettlement(
   n: Network,
   series: Hex,

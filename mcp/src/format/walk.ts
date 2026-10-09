@@ -66,11 +66,7 @@ export function formatParam(param: AbiParameter, value: unknown, context: ParamF
   });
 }
 
-/**
- * Humanize a decoded function result. `result` is what viem returns from
- * `readContract`/`decodeFunctionResult`: a scalar for a single output, an array
- * for multiple outputs.
- */
+/** Humanize a decoded function result: a scalar for one output, an array for several. */
 export function humanizeReturn(fn: AbiFunction, result: unknown, context?: ReturnFormatContext): unknown {
   const outputs = fn.outputs ?? [];
   const marketDecimals = oraclePresentationScale(fn, result, context);

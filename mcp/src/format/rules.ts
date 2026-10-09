@@ -11,16 +11,8 @@ import {
 import { parseDataUri } from "./datauri.js";
 import { epochIso } from "./time.js";
 
-/**
- * Sources of each unit:
- *  - WorldwideDay u32 YYYYMMDD .......... crates/core/common/src/worldwideday.rs
- *  - native COEN amounts at 1e18 ........ explicit contract/function boundaries
- *  - protocol monetary amounts at 1e6 ... crates/blockchain/primitives/src/units.rs
- *  - asset-native amounts, raw .......... the asset's own decimals (Credis, VaultRouter, settlement)
- *  - Credis annual currency rate at 1e6 . Oracle/Credis contract
- *  - generic prices/ratios at 1e18 ...... their owning protocol modules
- *  - status / day_type enums ............ crates/core/metadosis/src/schema.rs
- */
+// Units: days per common/worldwideday.rs, protocol money and Credis rates at 1e6 per primitives/units.rs,
+// native COEN and generic ratios at 1e18, asset amounts raw, enums per metadosis/schema.rs.
 const DATE_RE = /(worldwideday|^wwd$|^wwds$|^date$|^day$)/i;
 const SIX_DECIMAL_AMOUNT_RE = /(minor$|amount|stake|balance|pledged|reward)/i;
 const ASSET_UNIT_AMOUNT_RE =

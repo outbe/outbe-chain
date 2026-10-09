@@ -1,7 +1,5 @@
-// Auction ids are worldwide days (yyyymmdd), one per day. The auction runs weeks
-// after its day, so active ids sit up to ~26 days in the past. Discovery probes
-// getAuctionStage across a date window - a few cheap point reads - rather than
-// scanning logs, which public RPCs range-limit.
+// Auction ids are worldwide days; active ones sit up to ~26 days back, so discovery probes
+// a date window rather than scanning logs, which public RPCs range-limit.
 export const DEFAULT_DAYS_BACK = 30;
 export const DEFAULT_DAYS_AHEAD = 2;
 const DAY_MS = 86_400_000;

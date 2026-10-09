@@ -2,7 +2,7 @@ import type { Account, Address, Hex, TransactionReceipt } from "viem";
 import type { Ctx } from "../chain.js";
 import type { Network } from "./resolver.js";
 
-export const RECEIPT_TIMEOUT_MS = 180_000;
+const RECEIPT_TIMEOUT_MS = 180_000;
 
 export interface Call {
   to: Address;
@@ -18,7 +18,7 @@ export function requireAccount(ctx: Ctx): Account {
 }
 
 /** The node's gas estimate plus a 30% margin. */
-export async function estimateGas(ctx: Ctx, network: Network, call: Call): Promise<bigint> {
+async function estimateGas(ctx: Ctx, network: Network, call: Call): Promise<bigint> {
   const estimate = await network.client.estimateGas({ account: ctx.account?.address, ...call });
   return (estimate * 130n) / 100n;
 }

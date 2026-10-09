@@ -1,9 +1,11 @@
 import type { TransactionReceipt } from "viem";
 import { type Ctx, sendTx } from "../../chain.js";
+import { contextNetwork } from "../../net/resolver.js";
+import { receiptSummary, waitForReceipt } from "../../net/tx.js";
 import { resolveContract } from "../../registry.js";
 import { ok } from "../util.js";
 
-export const GAS_DEFAULT = 3_000_000n;
+const GAS_DEFAULT = 3_000_000n;
 
 export interface Write {
   contract: string;
@@ -24,15 +26,13 @@ export async function submit(ctx: Ctx, write: Write) {
   const entry = resolveContract(contract);
   const hash = await sendTx(ctx, { entry, method, args, gas, value });
   if (!wait) return ok({ txHash: hash, contract, method, ...extra, status: "submitted" });
-  const r = await ctx.publicClient.waitForTransactionReceipt({ hash, timeout: 180_000 });
+  const r = await waitForReceipt(contextNetwork(ctx), hash);
   return ok({
     txHash: hash,
     contract,
     method,
     ...extra,
-    status: r.status,
-    blockNumber: r.blockNumber.toString(),
-    gasUsed: r.gasUsed.toString(),
+    ...receiptSummary(r),
     ...(r.status === "success" && outcome ? outcome(r) : {}),
   });
 }

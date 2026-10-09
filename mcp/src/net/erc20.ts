@@ -12,10 +12,8 @@ export interface Allowance {
   amount: bigint;
 }
 
-/**
- * Approves `spender` for `amount` when the signer's allowance is short and waits for
- * the approval to land. Returns its hash, or null when none was needed.
- */
+/** Approves `spender` for `amount` when the allowance is short and waits for it to land.
+ *  Returns the approval hash, or null when none was needed. */
 export async function ensureAllowance(ctx: Ctx, n: Network, { token, spender, amount }: Allowance): Promise<Hex | null> {
   const owner = requireAccount(ctx).address;
   const allowance = await n.client.readContract({

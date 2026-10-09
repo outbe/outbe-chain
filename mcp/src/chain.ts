@@ -15,6 +15,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { nativeCurrencyForChainId } from "./net/chains.js";
+import { requireAccount } from "./net/tx.js";
 import type { ContractEntry } from "./registry.js";
 
 export interface Ctx {
@@ -139,16 +140,13 @@ export interface PrecompileWrite {
 
 /** Sign + send a state-changing method with an explicit gas limit. */
 export async function sendTx(ctx: Ctx, { entry, method, args: rawArgs, gas, value = 0n }: PrecompileWrite): Promise<Hex> {
-  if (!ctx.walletClient || !ctx.account) {
-    throw new Error(
-      "signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env",
-    );
-  }
+  const account = requireAccount(ctx);
+  if (!ctx.walletClient) throw new Error(`no signer for ${ctx.chain.name}`);
   const fn = abiFn(entry.abi, method);
   const args = coerceArgs(fn, rawArgs);
   const data = encodeFunctionData({ abi: entry.abi, functionName: method, args });
   return ctx.walletClient.sendTransaction({
-    account: ctx.account,
+    account,
     chain: ctx.chain,
     to: entry.address,
     data,

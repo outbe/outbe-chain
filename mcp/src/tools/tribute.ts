@@ -3,7 +3,8 @@ import { type Hex, bytesToHex } from "viem";
 import { z } from "zod";
 import { type Ctx, sendTx } from "../chain.js";
 import { buildPayload, canonicalAmountBase, canonicalAmountMicro, encryptOffer } from "../crypto.js";
-import { RECEIPT_TIMEOUT_MS } from "../net/tx.js";
+import { contextNetwork } from "../net/resolver.js";
+import { receiptSummary, waitForReceipt } from "../net/tx.js";
 import { resolveContract } from "../registry.js";
 import { offerPublicKey, offerTributeArgs, offeringDay } from "../tribute/offer.js";
 import { HEX32, waitFlag } from "./schemas.js";
@@ -145,14 +146,12 @@ export function registerTributeTools(server: McpServer, ctx: Ctx): void {
       };
       if (a.wait === false) return ok({ ...meta, status: "submitted" });
 
-      const r = await ctx.publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+      const r = await waitForReceipt(contextNetwork(ctx), hash);
       const owned =
         r.status === "success" ? await view(ctx, "tribute", "getTributesByOwner", [ctx.account.address]) : null;
       return ok({
         ...meta,
-        status: r.status,
-        blockNumber: r.blockNumber.toString(),
-        gasUsed: r.gasUsed.toString(),
+        ...receiptSummary(r),
         tributesOwned: owned,
       });
     }),
