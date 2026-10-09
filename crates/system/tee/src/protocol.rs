@@ -1496,8 +1496,8 @@ pub enum EnclaveResponse {
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
-    /// The enclave cannot serve requests yet: not initialized, no resident key,
-    /// or an expired session. Unlike `Error`, it never depends on the request.
+    /// The enclave cannot serve this request yet: not initialized, no resident key,
+    /// or an expired session. Unlike `Error`, it reports this enclave's state, not the request's content.
     NotReady {
         message: String,
     },
