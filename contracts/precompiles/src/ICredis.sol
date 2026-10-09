@@ -15,14 +15,6 @@ interface ICredis {
     /// ERC-4906, declared for the standard's shape only: never emitted.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    event PositionCreated(
-        uint256 indexed credisId,
-        address indexed owner,
-        address indexed cca,
-        uint256 principalMinor,
-        uint256 gratisMinor
-    );
-
     event CredisCalled(uint256 indexed credisId, uint64 calledAt, uint64 settlementDeadline);
 
     /// @notice One successful settlement. `interestPaidMinor` is this payment's interest.
@@ -123,10 +115,12 @@ interface ICredis {
     function getApproved(uint256 credisId) external view returns (address);
     function isApprovedForAll(address owner, address operator) external view returns (bool);
 
-    function positionByIndex(uint256 index) external view returns (Credis memory);
+    function credisExists(uint256 credisId) external view returns (bool);
 
+    // ERC-721 Enumerable: ids in issuance order, globally and per owner.
+    function tokenByIndex(uint256 index) external view returns (uint256);
     function balanceOf(address owner) external view returns (uint256 balance);
-    function positionOfAddressByIndex(address owner, uint256 index) external view returns (Credis memory);
+    function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
 
     /// @notice Interest accrued on the outstanding principal since the last
     ///         settlement (simple, ACT/365), evaluated at the current block

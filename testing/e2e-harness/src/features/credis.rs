@@ -376,22 +376,14 @@ fn issue(world: &mut World) {
     let id = U256::from_be_bytes(keccak256(preimage).0);
     assert_receipt_event(
         &receipt,
-        CREDIS_ADDRESS,
-        &ICredis::PositionCreated {
+        CREDIS_FACTORY_ADDRESS,
+        &ICredisFactory::CredisIssued {
             credisId: id,
             owner: f.account,
             cca: f.cca,
+            asset: f.currency.asset,
             principalMinor: PRINCIPAL,
             gratisMinor: f.gratis_minor,
-        },
-    );
-    assert_receipt_event(
-        &receipt,
-        CREDIS_FACTORY_ADDRESS,
-        &ICredisFactory::CredisIssued {
-            smartAccount: f.account,
-            cca: f.cca,
-            principalMinor: PRINCIPAL,
         },
     );
     assert_receipt_event(

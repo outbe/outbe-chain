@@ -222,13 +222,6 @@ impl CredisContract<'_> {
                 to: params.owner,
                 tokenId: credis_id,
             })?;
-            self.emit(ICredis::PositionCreated {
-                credisId: credis_id,
-                owner: params.owner,
-                cca: params.cca,
-                principalMinor: params.principal_minor,
-                gratisMinor: params.gratis_minor,
-            })?;
             Ok(credis_id)
         })
     }
@@ -455,23 +448,23 @@ impl CredisContract<'_> {
     }
 
     /// `account`'s `index`-th Credis, in insertion order.
-    pub fn credis_of_owner_at(&self, account: Address, index: u32) -> Result<Credis> {
+    pub fn token_of_owner_by_index(&self, account: Address, index: u32) -> Result<U256> {
         if index >= self.read_owner_credis_count(account)? {
             return Err(CredisError::IndexOutOfBounds.into());
         }
-        self.load_credis(self.read_owner_credis_id(account, index)?)
+        self.read_owner_credis_id(account, index)
     }
 
     /// The `index`-th Credis ever created, in creation order.
-    pub fn credis_at(&self, index: u64) -> Result<Credis> {
+    pub fn token_by_index(&self, index: u64) -> Result<U256> {
         if index >= self.read_total_credis()? {
             return Err(CredisError::IndexOutOfBounds.into());
         }
-        self.load_credis(self.read_credis_id_at(index)?)
+        self.read_credis_id_at(index)
     }
 
     /// All Credis for `account`, in insertion order. Unbounded, so it stays
-    /// internal: the ABI enumerates through `credis_of_owner_at` instead.
+    /// internal: the ABI enumerates through `token_of_owner_by_index` instead.
     pub(crate) fn get_credis_by_owner(&self, account: Address) -> Result<Vec<Credis>> {
         let count = self.read_owner_credis_count(account)?;
         let mut out = Vec::with_capacity(count as usize);

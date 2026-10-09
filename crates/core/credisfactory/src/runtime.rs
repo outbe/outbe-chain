@@ -106,9 +106,12 @@ pub fn issue_credis(
         storage.emit_event(
             CREDIS_FACTORY_ADDRESS,
             alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisIssued {
-                smartAccount: r.smart_account,
+                credisId: id,
+                owner: r.smart_account,
                 cca: caller,
+                asset: r.asset,
                 principalMinor: r.amount,
+                gratisMinor: r.gratis_minor,
             }),
         )?;
         Ok((id, r.amount))

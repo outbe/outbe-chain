@@ -2,7 +2,14 @@
 pragma solidity ^0.8.30;
 
 interface ICredisFactory {
-    event CredisIssued(address indexed smartAccount, address indexed cca, uint256 principalMinor);
+    event CredisIssued(
+        uint256 indexed credisId,
+        address indexed owner,
+        address indexed cca,
+        address asset,
+        uint256 principalMinor,
+        uint256 gratisMinor
+    );
     /// A newer closed day replaced `skippedDay` while `inFlightDay` was still being swept.
     event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
     /// A reference currency was left out of one day's Call scan because its window
