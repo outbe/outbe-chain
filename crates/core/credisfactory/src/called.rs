@@ -14,7 +14,7 @@
 
 use alloy_sol_types::SolEvent;
 
-use outbe_credis::constants::{CALL_THRESHOLD, CALL_WINDOW};
+use outbe_credis::config::CredisParams;
 use outbe_credis::{CallBins, Credis, CredisContract, CredisState};
 use outbe_oracle::api::get_all_reference_currencies;
 use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
@@ -100,6 +100,7 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
         let currencies = get_all_reference_currencies(ctx)?;
+        let live = outbe_credis::config::read(&ctx.storage)?;
         let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
         let mut budget = SweepBudget::per_block();
         let mut caller = CredisContract::new(ctx.storage.clone());
@@ -123,7 +124,7 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
                 let Some((window, ceiling)) = call_sweep::currency_ceiling(
                     &bins,
                     &mut windows,
-                    || scan_terms(index, iso_code),
+                    || scan_terms(index, iso_code, &live),
                     skipped,
                 )?
                 else {
@@ -169,13 +170,17 @@ fn call_if_breached(
         && credis.mark_called(record.credis_id, now)?)
 }
 
-/// The constants are the live terms: the next Credis is opened with them.
-fn scan_terms(credis: &CredisContract<'_>, reference_currency: u16) -> Result<ScanTerms> {
+/// The live profile is the terms the next Credis is issued with.
+fn scan_terms(
+    credis: &CredisContract<'_>,
+    reference_currency: u16,
+    live: &CredisParams,
+) -> Result<ScanTerms> {
     outbe_primitives::call_breach::scan_terms(
         &credis.max_call_window_seconds,
         &credis.min_call_threshold_seconds,
         reference_currency,
-        CALL_WINDOW,
-        CALL_THRESHOLD,
+        live.call_window_seconds,
+        live.call_threshold_seconds,
     )
 }

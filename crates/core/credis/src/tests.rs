@@ -71,6 +71,11 @@ fn credis_provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ORIGINATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
+        // These tests exercise the production call terms.
+        CredisContract::new(storage.clone())
+            .config_profile
+            .write(crate::config::PROFILE_PROD)
+            .unwrap();
         storage
             .increase_balance(
                 outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
@@ -86,6 +91,18 @@ fn credis_provider() -> HashMapStorageProvider {
         .unwrap();
     });
     storage
+}
+
+/// A bare provider on the production call terms.
+fn prod_provider() -> HashMapStorageProvider {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        CredisContract::new(storage)
+            .config_profile
+            .write(crate::config::PROFILE_PROD)
+            .unwrap();
+    });
+    provider
 }
 
 fn with_credis<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
@@ -1447,7 +1464,7 @@ fn precompile_reports_principal_and_outstanding_together() {
 
 #[test]
 fn precompile_interest_views_use_the_storage_timestamp() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = prod_provider();
     storage.set_timestamp(U256::from(ORIGINATED_AT));
     let id = StorageHandle::enter(&mut storage, |handle| {
         handle
@@ -1755,7 +1772,7 @@ fn precompile_names_the_collection_and_is_soulbound() {
 fn open_credis_announces_the_mint() {
     use alloy_sol_types::SolEvent;
 
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let mut provider = prod_provider();
     provider.set_timestamp(U256::from(ORIGINATED_AT));
     let id = StorageHandle::enter(&mut provider, |storage| {
         bond_test_cca(&storage);
@@ -2066,7 +2083,7 @@ fn the_outcome_identities_hold_through_partial_settlements_and_forfeit() {
 fn metadata_update_marks_call_settlement_and_forfeit() {
     use alloy_sol_types::SolEvent;
 
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let mut provider = prod_provider();
     provider.set_timestamp(U256::from(ORIGINATED_AT));
     let id = StorageHandle::enter(&mut provider, |storage| {
         bond_test_cca(&storage);
@@ -2090,4 +2107,51 @@ fn metadata_update_marks_call_settlement_and_forfeit() {
         .map(|event| event._tokenId)
         .collect();
     assert_eq!(updates, vec![id; 3]);
+}
+
+#[test]
+fn the_profile_selector_resolves_by_network_and_rejects_unknown_values() {
+    use crate::config::{CredisParams, PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
+    let mainnet = outbe_primitives::chain::MAINNET_CHAIN_ID;
+    assert_eq!(
+        CredisParams::from_selector(PROFILE_AUTO, CHAIN_ID).unwrap(),
+        CredisParams::DEV
+    );
+    assert_eq!(
+        CredisParams::from_selector(PROFILE_AUTO, mainnet).unwrap(),
+        CredisParams::PROD
+    );
+    assert_eq!(
+        CredisParams::from_selector(PROFILE_DEV, mainnet).unwrap(),
+        CredisParams::DEV
+    );
+    assert_eq!(
+        CredisParams::from_selector(PROFILE_PROD, CHAIN_ID).unwrap(),
+        CredisParams::PROD
+    );
+    assert!(CredisParams::from_selector(3, CHAIN_ID).is_err());
+}
+
+/// Off mainnet, an unset selector seals the short terms.
+#[test]
+fn issuance_off_mainnet_seals_the_dev_terms() {
+    let mut provider = credis_provider();
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        let mut credis = CredisContract::new(storage);
+        credis
+            .config_profile
+            .write(crate::config::PROFILE_AUTO)
+            .unwrap();
+        let id = open_pos(&mut credis);
+        let record = credis.get_credis(id).unwrap();
+        let dev = crate::config::CredisParams::DEV;
+        assert_eq!(record.call_window_seconds, dev.call_window_seconds);
+        assert_eq!(record.call_threshold_seconds, dev.call_threshold_seconds);
+        assert_eq!(
+            record.call_notice_period_seconds,
+            dev.call_notice_period_seconds
+        );
+        id
+    });
+    assert!(!id.is_zero());
 }

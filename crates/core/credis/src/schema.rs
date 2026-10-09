@@ -103,8 +103,9 @@ pub struct Credis {
     pub entry_price_minor: U256,
 
     /// `call_anchor_price_minor * 164 / 100`, in the reference currency (scale `1e6`).
-    /// The daily scan calls the Credis when 21 of the last 28 finalized
-    /// COEN/`reference_currency` VWAPs are strictly above this price. Immutable.
+    /// The daily scan calls the Credis when `call_threshold_seconds` of its last
+    /// `call_window_seconds` of finalized COEN/`reference_currency` VWAPs are strictly
+    /// above this price. Immutable.
     #[attribute(order = 11)]
     pub call_price_minor: U256,
 
@@ -208,7 +209,7 @@ pub struct CredisContract {
 
     /// Widest `call_window_seconds` ever opened in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
-    /// Credis whose sealed window outruns the current constant.
+    /// Credis whose sealed window outruns the live profile.
     #[attribute(order = 8)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
@@ -270,6 +271,10 @@ pub struct CredisContract {
     /// UTC day waiting behind it. 0 = none.
     #[attribute(order = 30)]
     pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// Genesis profile selector (0 = by network, 1 = dev, 2 = prod). See `crate::config`.
+    #[attribute(order = 31)]
+    pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 }
 
 impl CredisContract<'_> {

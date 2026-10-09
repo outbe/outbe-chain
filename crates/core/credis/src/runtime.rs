@@ -12,9 +12,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 use outbe_primitives::units::SCALE_1E6_U256;
 
-use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, DAYS_PER_YEAR, PRICE_RATE_DEN,
-};
+use crate::constants::{CALL_RATE_PCT, DAYS_PER_YEAR, PRICE_RATE_DEN};
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{Credis, CredisContract, CredisState};
@@ -192,7 +190,7 @@ impl CredisContract<'_> {
     ///
     /// - The call price derives from `call_anchor_price_minor`.
     /// - `policy_rate` is pinned.
-    /// - The four call terms are snapshotted, so a later retune of the constants
+    /// - The call terms are snapshotted from the profile, so a later profile change
     ///   cannot re-term a live Credis.
     ///
     /// Collateral starts fully locked and the interest anchor starts at issuance.
@@ -223,6 +221,7 @@ impl CredisContract<'_> {
             if self.credis_exists(credis_id)? {
                 return Err(CredisError::CredisAlreadyExists.into());
             }
+            let call_terms = crate::config::read_from(self, storage.chain_id()?)?;
 
             let record = Credis {
                 credis_id,
@@ -243,10 +242,10 @@ impl CredisContract<'_> {
                 last_settled_at: params.issued_at,
                 called_at: 0,
                 state: CredisState::Issued as u8,
-                call_notice_period_seconds: CALL_NOTICE_PERIOD,
+                call_notice_period_seconds: call_terms.call_notice_period_seconds,
                 call_rate: CALL_RATE_PCT,
-                call_window_seconds: CALL_WINDOW,
-                call_threshold_seconds: CALL_THRESHOLD,
+                call_window_seconds: call_terms.call_window_seconds,
+                call_threshold_seconds: call_terms.call_threshold_seconds,
                 call_anchor_price_minor: params.call_anchor_price_minor,
                 interest_paid_minor: U256::ZERO,
             };

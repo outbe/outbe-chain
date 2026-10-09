@@ -14,6 +14,11 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 
+[features]
+default = []
+# Short notice period so an e2e run can watch a Credis lapse.
+e2e-test = []
+
 [dev-dependencies]
 base64.workspace = true
 serde_json.workspace = true

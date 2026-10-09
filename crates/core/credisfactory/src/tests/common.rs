@@ -472,6 +472,11 @@ pub fn env() -> HashMapStorageProvider {
         iso_word(6),
     );
     StorageHandle::enter(&mut storage, |handle| {
+        // These tests exercise the production call terms.
+        CredisContract::new(handle.clone())
+            .config_profile
+            .write(outbe_credis::config::PROFILE_PROD)
+            .unwrap();
         handle
             .increase_balance(
                 outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
