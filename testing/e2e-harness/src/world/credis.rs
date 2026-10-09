@@ -59,6 +59,10 @@ pub(crate) struct CredisFixture {
     pub credis_id: U256,
     pub initial_native: U256,
     pub interest_paid: U256,
+    /// The finalized height and unallocated Promis Limit pool before any forfeit.
+    pub pool_before_forfeit: Option<(u64, U256)>,
+    /// The Credis as read once its settlement deadline lapsed.
+    pub lapsed: Option<ICredis::Credis>,
 }
 
 pub(crate) fn actors() -> (Address, String, Address) {
@@ -126,6 +130,13 @@ pub(crate) fn execute<C: SolCall>(
 
 /// Decode exactly one event from its expected emitter. Never accept another contract's log.
 pub(crate) use crate::internal::eth::receipt_event as event;
+
+pub(crate) fn receipt_height(receipt: &serde_json::Value) -> u64 {
+    receipt["blockNumber"]
+        .as_str()
+        .and_then(|hex| u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
+        .expect("receipt block number")
+}
 
 pub(crate) fn read<C: SolCall>(url: &str, to: Address, call: &C, height: u64) -> C::Return
 where

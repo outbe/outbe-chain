@@ -18,6 +18,8 @@ pub mod common;
 #[cfg(feature = "ocomp-integration")]
 pub mod credis;
 #[cfg(feature = "ocomp-integration")]
+mod credis_forfeit;
+#[cfg(feature = "ocomp-integration")]
 pub mod entity_lifecycle;
 #[cfg(feature = "ocomp-integration")]
 pub mod gem_lifecycle;

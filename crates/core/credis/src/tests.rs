@@ -2109,6 +2109,30 @@ fn metadata_update_marks_call_settlement_and_forfeit() {
     assert_eq!(updates, vec![id; 3]);
 }
 
+#[cfg(feature = "e2e-test")]
+#[test]
+fn static_test_arming_is_rejected() {
+    use crate::test_arming::ICredisTestArming;
+    use alloy_sol_types::SolCall;
+    use outbe_primitives::error::PrecompileError;
+    let mut provider = prod_provider();
+    provider.set_static(true);
+    let result = dispatch(
+        StorageHandle::new(&mut provider),
+        &ICredisTestArming::closeCallNoticeForTestCall {
+            credisId: U256::ONE,
+            deadline: 1,
+        }
+        .abi_encode(),
+        alice(),
+        U256::ZERO,
+    );
+    assert!(
+        matches!(result, Err(PrecompileError::WriteProtection)),
+        "{result:?}"
+    );
+}
+
 #[test]
 fn the_profile_selector_resolves_by_network_and_rejects_unknown_values() {
     use crate::config::{CredisParams, PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};

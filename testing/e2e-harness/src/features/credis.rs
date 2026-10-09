@@ -5,11 +5,15 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{keccak256, Address, U256};
 use cucumber::{given, then, when};
+use outbe_oracle::window::VwapSnapshotId;
 use outbe_primitives::addresses::{
-    CCA_REGISTRY_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
+    CCA_REGISTRY_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, ORACLE_ADDRESS,
+    VAULT_ROUTER_ADDRESS,
 };
+use outbe_primitives::math::scaled_math::checked_quote;
 use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 
+use crate::features::entity_lifecycle::markets::coen_rate;
 use crate::features::settlement::{assert_receipt_event, chain_id_b256, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
 use crate::world::credis::{
@@ -19,6 +23,8 @@ use crate::world::credis::{
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::{settlement_currency, test_issuance, World};
+
+const CALL_ANCHOR: U256 = U256::from_limbs([800_000, 0, 0, 0]);
 
 #[given("a prepared Credis localnet with funded actors and vault liquidity")]
 fn prepare(world: &mut World) {
@@ -210,6 +216,8 @@ fn prepare(world: &mut World) {
         credis_id: U256::ZERO,
         initial_native: U256::ZERO,
         interest_paid: U256::ZERO,
+        pool_before_forfeit: None,
+        lapsed: None,
     });
     let state = snapshot(world);
     assert_eq!(state.liquid, INITIAL_GRATIS);
@@ -261,7 +269,33 @@ fn reserve(world: &mut World) {
     assert_eq!(reserved.vault, f.currency.vault);
     assert_eq!(reserved.amount, PRINCIPAL);
     assert!(reserved.expiresAt > receipt_timestamp(&url, &receipt));
+    assert_pledge_valued_on_the_window(&url, &receipt, reserved.id);
     world.state.credis.as_mut().expect("fixture").reservation = reserved.id;
+}
+
+/// The reservation prices the pledge on the eight-hour window current at its block.
+fn assert_pledge_valued_on_the_window(url: &str, receipt: &serde_json::Value, id: U256) {
+    let height = credis::receipt_height(receipt);
+    let reservation = credis::read(
+        url,
+        VAULT_ROUTER_ADDRESS,
+        &eth::IVaultRouter::reservationOfCall { id },
+        height,
+    );
+    let snapshot = credis::read(
+        url,
+        ORACLE_ADDRESS,
+        &eth::IOracle::getVwapSnapshotIdCall {},
+        height,
+    );
+    assert_eq!(reservation.snapshotId, snapshot);
+    let window = VwapSnapshotId::from_u256(snapshot).expect("well-formed VWAP snapshot");
+    assert_eq!(window.policy().vwap_lookback_seconds, 8 * 3_600);
+    assert_eq!(reservation.valuationPriceMinor, coen_rate(USD));
+    assert_eq!(
+        (reservation.gratisMinor, reservation.entryPriceMinor),
+        checked_quote(PRINCIPAL, reservation.assetDecimals, coen_rate(USD)).expect("fixture quote")
+    );
 }
 
 #[then("the reservation holds the requested liquidity for those actors")]
@@ -348,9 +382,9 @@ fn pledge(world: &mut World) {
 #[when("the CCA issues Credis against the pledge and reservation")]
 fn issue(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
-    // The call anchor is the previous closed USD day at issuance: reuse Intex's E2E-only
-    // history fixture. Live current prices come from the feeder.
-    test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, 1, U256::from(1_000_000))
+    // The call anchor is the previous closed USD day at issuance, apart from the
+    // window the pledge was valued on: reuse Intex's E2E-only history fixture.
+    test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, 1, CALL_ANCHOR)
         .expect("previous closed USD VWAP");
     let f = world.state.credis.as_ref().expect("fixture");
     let stake = outbe_primitives::units::checked_protocol_to_native(f.gratis_minor)
@@ -365,10 +399,7 @@ fn issue(world: &mut World) {
         },
         Some(stake),
     );
-    let block = receipt["blockNumber"]
-        .as_str()
-        .and_then(|hex| u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
-        .expect("issuance block number");
+    let block = credis::receipt_height(&receipt);
     let mut preimage = Vec::with_capacity(68);
     preimage.extend_from_slice(f.cca.as_slice());
     preimage.extend_from_slice(f.account.as_slice());
@@ -420,8 +451,8 @@ fn issued(world: &mut World) {
     assert_eq!(p.state, 0);
     assert_eq!(p.lastSettledAt, p.issuedAt);
     assert_eq!(p.entryPriceMinor, U256::from(1_000_000));
-    assert_eq!(p.call.callAnchorPriceMinor, U256::from(1_000_000));
-    assert_eq!(p.call.callPriceMinor, U256::from(1_640_000));
+    assert_eq!(p.call.callAnchorPriceMinor, CALL_ANCHOR);
+    assert_eq!(p.call.callPriceMinor, U256::from(1_312_000));
     assert!(p.policyRate > U256::ZERO);
     // Credis currently pins the issuance currency's official rate with a 1x multiplier.
     assert_eq!(p.policyRate, state.policy_rate);

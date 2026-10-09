@@ -97,7 +97,7 @@ pub fn settlement_deadline(record: &Credis) -> u64 {
         .saturating_add(u64::from(record.call_notice_period_seconds))
 }
 
-/// The state a reader sees at `now`: a Called Credis past its deadline is Forfeit
+/// The state a reader sees at `now`: a Called Credis past its deadline reads Forfeited
 /// before the forfeit sweep reaches it.
 pub fn effective_state(record: &Credis, now: u64) -> Result<CredisState> {
     let state = record.lifecycle_state()?;

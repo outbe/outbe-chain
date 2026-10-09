@@ -34,6 +34,10 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
+    #[cfg(feature = "e2e-test")]
+    if let Some(result) = crate::test_arming::dispatch(&storage, data) {
+        return result;
+    }
     dispatch_call(data, ICredis::ICredisCalls::abi_decode, |call| {
         let contract = CredisContract::new(storage.clone());
         use ICredis::ICredisCalls::*;
