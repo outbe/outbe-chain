@@ -159,26 +159,24 @@ function registerOrderTrack(server: McpServer, { router, resolveNetwork }: Inten
       const orderId = a.order_id as Hex;
       const hint = await resolveNetwork(a.chain);
       const { origin, order } = await loadOrder(router, resolveNetwork, orderId, hint);
-      let destResolved: Network | undefined;
-      try {
-        destResolved = await resolveNetwork(String(order.destinationDomain));
-      } catch {
-        /* destination chain not in NETWORKS - fall back to origin for the read */
-      }
-      const destNet = destResolved ?? origin;
-
+      const destination = await resolveNetwork(String(order.destinationDomain)).catch(() => undefined);
       const [originRaw, destRaw] = await Promise.all([
         origin.client.readContract({ address: router, abi: ROUTER_ABI, functionName: "orderStatus", args: [orderId] }) as Promise<Hex>,
-        destNet.client.readContract({ address: router, abi: ROUTER_ABI, functionName: "destinationOrderStatus", args: [orderId] }) as Promise<Hex>,
+        destination?.client.readContract({
+          address: router,
+          abi: ROUTER_ABI,
+          functionName: "destinationOrderStatus",
+          args: [orderId],
+        }) as Promise<Hex> | undefined,
       ]);
       const originStatus = statusLabel(originRaw) || "UNKNOWN";
-      const destinationStatus = statusLabel(destRaw) || "UNKNOWN";
+      const destinationStatus = (destRaw && statusLabel(destRaw)) || "UNKNOWN";
 
       // The user's own balances (poll twice to see a before/after delta).
       const user = bytes32ToAddress(order.sender);
       const [inputOnOrigin, outputOnDest] = await Promise.all([
         tokenBalance(origin, bytes32ToAddress(order.inputToken), user),
-        tokenBalance(destNet, bytes32ToAddress(order.outputToken), user),
+        destination ? tokenBalance(destination, bytes32ToAddress(order.outputToken), user) : null,
       ]);
 
       const now = Date.now() / 1000;
@@ -189,7 +187,7 @@ function registerOrderTrack(server: McpServer, { router, resolveNetwork }: Inten
         phase,
         next,
         originNetwork: origin.name,
-        destinationNetwork: destResolved?.name ?? `chainId:${order.destinationDomain}`,
+        destinationNetwork: destination?.name ?? `chainId:${order.destinationDomain}`,
         originStatus,
         destinationStatus,
         fillDeadline: {
