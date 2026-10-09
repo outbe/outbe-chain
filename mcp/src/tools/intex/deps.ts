@@ -41,10 +41,10 @@ function paymentMetaReader(): (n: Network) => Promise<PaymentMeta> {
   const cache = new Map<number, Promise<PaymentMeta>>();
   const read = async (n: Network): Promise<PaymentMeta> => {
     const token = await escrowPaymentToken(n);
-    const [decimals, symbol] = (await Promise.all([
+    const [decimals, symbol] = await Promise.all([
       n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
       n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
-    ])) as [number, string];
+    ]);
     return { token, decimals: Number(decimals), symbol };
   };
   return (n) => {

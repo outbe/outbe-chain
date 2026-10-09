@@ -18,12 +18,12 @@ export interface Allowance {
  */
 export async function ensureAllowance(ctx: Ctx, n: Network, { token, spender, amount }: Allowance): Promise<Hex | null> {
   const owner = requireAccount(ctx).address;
-  const allowance = (await n.client.readContract({
+  const allowance = await n.client.readContract({
     address: token,
     abi: ERC20_ABI,
     functionName: "allowance",
     args: [owner, spender],
-  })) as bigint;
+  });
   if (allowance >= amount) return null;
   const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [spender, amount] });
   const hash = await sendCall(ctx, n, { to: token, data, value: 0n });

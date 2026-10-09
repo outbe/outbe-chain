@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { type Hex, formatUnits } from "viem";
+import { formatUnits } from "viem";
 import { OUTBE_NETWORK } from "../../net/chains.js";
 import { networkName } from "../schemas.js";
 import { handler, ok } from "../util.js";
@@ -77,20 +77,20 @@ export function registerSeriesTools(server: McpServer, deps: IntexDeps): void {
     handler(async ({ network }) => {
       const n = await resolveNetwork(network ?? OUTBE_NETWORK);
       const total = Number(
-        (await n.client.readContract({
+        await n.client.readContract({
           address: addr(n, "intex"),
           abi: INTEX_ABI,
           functionName: "totalSeries",
-        })) as bigint,
+        }),
       );
       const ids: string[] = [];
       for (let i = 0; i < total; i++) {
-        const id = (await n.client.readContract({
+        const id = await n.client.readContract({
           address: addr(n, "intex"),
           abi: INTEX_ABI,
           functionName: "seriesAt",
           args: [BigInt(i)],
-        })) as Hex;
+        });
         ids.push(fromSeriesId(id));
       }
       return ok({ network: n.name, total, seriesIds: ids });

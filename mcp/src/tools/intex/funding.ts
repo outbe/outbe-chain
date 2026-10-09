@@ -21,12 +21,12 @@ export function registerFundingTools(server: McpServer, deps: IntexDeps): void {
       const who = whoever(account);
       const token = await escrowPaymentToken(n);
       const escrow = addr(n, "escrow");
-      const [allowance, balance, decimals, symbol] = (await Promise.all([
+      const [allowance, balance, decimals, symbol] = await Promise.all([
         n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [who, escrow] }),
         n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [who] }),
         n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
         n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
-      ])) as [bigint, bigint, number, string];
+      ]);
       const d = Number(decimals);
       return ok({
         network: n.name,

@@ -14,7 +14,7 @@ export async function tokenBalance(n: Network, token: Address, account: Address)
   }
   const [decimals, bal] = await Promise.all([
     readDecimals(n, token),
-    n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [account] }) as Promise<bigint>,
+    n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [account] }),
   ]);
   return { account, network: n.name, token, balance: { raw: bal.toString(), value: formatUnits(bal, decimals) } };
 }
@@ -44,12 +44,12 @@ export async function loadOrder(
   for (const n of candidates) {
     if (seen.has(n.chainId)) continue;
     seen.add(n.chainId);
-    const raw = (await n.client.readContract({
+    const raw = await n.client.readContract({
       address: router,
       abi: ROUTER_ABI,
       functionName: "openOrders",
       args: [orderId],
-    })) as Hex;
+    });
     if (raw && raw !== "0x") {
       const [, orderBytes] = decodeAbiParameters([{ type: "bytes32" }, { type: "bytes" }], raw) as [Hex, Hex];
       return { origin: n, order: decodeOrderData(orderBytes), originData: orderBytes };

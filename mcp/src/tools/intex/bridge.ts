@@ -24,12 +24,12 @@ export function registerBridgeTools(server: McpServer, deps: IntexDeps): void {
       const to = recipient ? getAddress(recipient) : whoever();
       const dstChainId = await bridgeDestination(n, destination);
       const sp = await bridgeSendParam(n, { series, units: BigInt(units), recipient: to, dstChainId });
-      const fee = (await n.client.readContract({
+      const fee = await n.client.readContract({
         address: addr(n, "nftBridge"),
         abi: NFT_BRIDGE_ABI,
         functionName: "quoteSend",
         args: [sp],
-      })) as bigint;
+      });
       return ok({
         network: n.name,
         series,
@@ -64,12 +64,12 @@ export function registerBridgeTools(server: McpServer, deps: IntexDeps): void {
       const to = recipient ? getAddress(recipient) : account.address;
       const dstChainId = await bridgeDestination(n, destination);
       const sp = await bridgeSendParam(n, { series, units: BigInt(units), recipient: to, dstChainId });
-      const fee = (await n.client.readContract({
+      const fee = await n.client.readContract({
         address: bridge,
         abi: NFT_BRIDGE_ABI,
         functionName: "quoteSend",
         args: [sp],
-      })) as bigint;
+      });
       const data = encodeFunctionData({ abi: NFT_BRIDGE_ABI, functionName: "send", args: [sp] });
       const receipt = await submit(n, bridge, data, fee, wait);
       return ok({

@@ -41,12 +41,12 @@ export function addr(n: Network, key: keyof IntexAddresses): Address {
 
 /** Whether the series has qualified. The outbe factory derives it from finalized daily VWAPs. */
 export async function seriesQualified(n: Network, series: Hex): Promise<boolean> {
-  return (await n.client.readContract({
+  return await n.client.readContract({
     address: addr(n, "factory"),
     abi: FACTORY_ABI,
     functionName: "isSeriesQualified",
     args: [series],
-  })) as boolean;
+  });
 }
 
 /** Token ids the address holds now: candidates from inbound transfer logs, then a live balance read.
@@ -72,12 +72,12 @@ export async function ownedWithBalances(n: Network, owner: Address): Promise<[bi
   const candidates = [...seen];
   if (candidates.length === 0) return [[], []];
 
-  const balances = (await n.client.readContract({
+  const balances = await n.client.readContract({
     address,
     abi: NFT_ABI,
     functionName: "balanceOfBatch",
     args: [candidates.map(() => owner), candidates],
-  })) as bigint[];
+  });
 
   const heldIds: bigint[] = [];
   const heldBalances: bigint[] = [];
@@ -98,17 +98,17 @@ export async function seriesMetadata(
 ): Promise<{ collection: DecodedDataUri; issued: DecodedDataUri; settled: DecodedDataUri } | undefined> {
   try {
     const nft = addr(n, "nft");
-    const [issuedId, settledId] = (await n.client.readContract({
+    const [issuedId, settledId] = await n.client.readContract({
       address: nft,
       abi: NFT_ABI,
       functionName: "tokenIds",
       args: [series],
-    })) as [bigint, bigint];
-    const [collection, issued, settled] = (await Promise.all([
+    });
+    const [collection, issued, settled] = await Promise.all([
       n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "contractURI" }),
       n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "uri", args: [issuedId] }),
       n.client.readContract({ address: nft, abi: NFT_ABI, functionName: "uri", args: [settledId] }),
-    ])) as [string, string, string];
+    ]);
     return {
       collection: parseDataUri(collection),
       issued: parseDataUri(issued),
@@ -125,12 +125,12 @@ export async function seriesMetadata(
  * window prices both COEN legs. `quoteSettlement` answers that question.
  */
 export async function settlementTokens(n: Network, series: Hex): Promise<`0x${string}`[]> {
-  const d = (await n.client.readContract({
+  const d = await n.client.readContract({
     address: addr(n, "intex"),
     abi: INTEX_ABI,
     functionName: "seriesData",
     args: [series],
-  })) as { referenceCurrency: number; issuanceCurrency: number };
+  });
   const currencies = [d.referenceCurrency];
   if (d.issuanceCurrency !== d.referenceCurrency) currencies.push(d.issuanceCurrency);
   const perCurrency = await Promise.all(
@@ -141,7 +141,7 @@ export async function settlementTokens(n: Network, series: Hex): Promise<`0x${st
           abi: VAULT_ROUTER_ABI,
           functionName: "referenceCurrencyAssets",
           args: [iso],
-        }) as Promise<readonly `0x${string}`[]>,
+        }),
     ),
   );
   const seen = new Set<`0x${string}`>();
@@ -164,12 +164,12 @@ export async function quoteSettlement(
   token: `0x${string}`,
   units: bigint,
 ): Promise<{ settlementCurrency: number; paymentMinor: bigint; snapshotId: bigint }> {
-  const [settlementCurrency, paymentMinor, snapshotId] = (await n.client.readContract({
+  const [settlementCurrency, paymentMinor, snapshotId] = await n.client.readContract({
     address: addr(n, "factory"),
     abi: FACTORY_ABI,
     functionName: "quoteSettlement",
     args: [series, token, units],
-  })) as [number, bigint, bigint];
+  });
   return { settlementCurrency: Number(settlementCurrency), paymentMinor, snapshotId };
 }
 
@@ -179,7 +179,7 @@ export const auctionStageOf = (n: Network, worldwideDay: number) =>
     abi: AUCTION_ABI,
     functionName: "getAuctionStage",
     args: [worldwideDay],
-  }) as Promise<number>;
+  });
 
 /** Probe getAuctionStage across a yyyymmdd date window; drop dates with no auction. */
 export async function discoverByDate(n: Network, fromDate: number, toDate: number): Promise<{ worldwideDay: number; stage: number }[]> {
@@ -204,12 +204,12 @@ export interface BridgeSend {
 }
 
 export async function bridgeSendParam(n: Network, { series, units, recipient, dstChainId }: BridgeSend) {
-  const ids = (await n.client.readContract({
+  const ids = await n.client.readContract({
     address: addr(n, "nft"),
     abi: NFT_ABI,
     functionName: "tokenIds",
     args: [series],
-  })) as [bigint, bigint];
+  });
   return {
     dstChainId,
     to: pad(recipient, { size: 32 }),
@@ -222,11 +222,11 @@ export async function bridgeSendParam(n: Network, { series, units, recipient, ds
 export async function intexTargets(outbe: Network): Promise<number[]> {
   const router = addr(outbe, "originRouter");
   try {
-    const targets = (await outbe.client.readContract({
+    const targets = await outbe.client.readContract({
       address: router,
       abi: ORIGIN_ROUTER_ABI,
       functionName: "targets",
-    })) as readonly number[];
+    });
     return targets.map(Number);
   } catch (error) {
     if (!isRevert(error) && !(error instanceof ContractFunctionZeroDataError)) throw error;
@@ -236,9 +236,9 @@ export async function intexTargets(outbe: Network): Promise<number[]> {
 
 /** The token a target's escrow takes bids in. */
 export async function escrowPaymentToken(n: Network): Promise<Address> {
-  return (await n.client.readContract({
+  return await n.client.readContract({
     address: addr(n, "escrow"),
     abi: ESCROW_ABI,
     functionName: "paymentToken",
-  })) as Address;
+  });
 }

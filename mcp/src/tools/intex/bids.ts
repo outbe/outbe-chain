@@ -61,12 +61,12 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       const bidRate = toBidRate(rate);
 
       // Entry bond: the escrow pulls it inside commitBid, so cover the allowance first.
-      const info = (await n.client.readContract({
+      const info = await n.client.readContract({
         address: addr(n, "auction"),
         abi: AUCTION_ABI,
         functionName: "getAuctionInfo",
         args: [worldwideDay],
-      })) as { params: { commitBondMinor: bigint } };
+      });
       const bond = info.params.commitBondMinor;
       let autoApprove: { txHash: Hex; amount: string } | null = null;
       let note = "No entry bond on this worldwideDay; nothing is locked at commit.";
@@ -131,12 +131,12 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
 
       // Calculate in protocol-6 from the per-Intex PROMIS load and 1e6 rate,
       // then convert exactly once to native-18 WCOEN for the escrow boundary.
-      const info = (await n.client.readContract({
+      const info = await n.client.readContract({
         address: addr(n, "auction"),
         abi: AUCTION_ABI,
         functionName: "getAuctionInfo",
         args: [worldwideDay],
-      })) as { params: { promisLoadMinor: bigint; commitBondMinor: bigint } };
+      });
       const strike = info.params.promisLoadMinor;
       const lockAmount = wcoenLockAmount(BigInt(units), strike, bidRate);
       const lockHuman = formatUnits(lockAmount, dec);

@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PRECOMPILE_ABI } from "../../abi.js";
-import { type Hex, encodeFunctionData, formatUnits, getAddress } from "viem";
+import { encodeFunctionData, formatUnits, getAddress } from "viem";
 import { z } from "zod";
 import { OUTBE_NETWORK } from "../../net/chains.js";
 import { requireAccount } from "../../net/tx.js";
@@ -123,12 +123,12 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
       const account = requireAccount(ctx);
       const owner = account.address;
       const amt = BigInt(units);
-      const sd = (await n.client.readContract({
+      const sd = await n.client.readContract({
         address: addr(n, "intex"),
         abi: INTEX_ABI,
         functionName: "seriesData",
         args: [series],
-      })) as { promisLoadMinor: bigint };
+      });
       const promisMinor = sd.promisLoadMinor * amt;
       // seq = this owner's prior mines for the series (feeds the PoW preimage).
       const logs = await n.client.getLogs({
@@ -159,12 +159,12 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
     handler(async ({ account, network }) => {
       const n = await resolveNetwork(network ?? OUTBE_NETWORK);
       const who = whoever(account);
-      const balance = (await n.client.readContract({
+      const balance = await n.client.readContract({
         address: addr(n, "promis"),
         abi: PRECOMPILE_ABI.IPromis,
         functionName: "balanceOf",
         args: [who],
-      })) as Hex;
+      });
       return ok({ network: n.name, account: who, balance });
     }),
   );

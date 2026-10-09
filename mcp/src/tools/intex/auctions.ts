@@ -112,22 +112,22 @@ export function registerAuctionTools(server: McpServer, deps: IntexDeps): void {
     handler(async ({ worldwideDay, network }) => {
       const n = await resolveNetwork(network ?? OUTBE_NETWORK);
       const desis = addr(n, "desis");
-      const chains = (await n.client.readContract({
+      const chains = await n.client.readContract({
         address: addr(n, "originRouter"),
         abi: ORIGIN_ROUTER_ABI,
         functionName: "targetsOf",
         args: [worldwideDay],
-      })) as number[];
-      const [stage, total] = (await Promise.all([
+      });
+      const [stage, total] = await Promise.all([
         n.client.readContract({ address: desis, abi: DESIS_ABI, functionName: "getAuctionStage", args: [worldwideDay] }),
         n.client.readContract({ address: desis, abi: DESIS_ABI, functionName: "getBidsCount", args: [worldwideDay] }),
-      ])) as [number, bigint];
+      ]);
       const perChain = await Promise.all(
         chains.map(async (chainId) => {
-          const [done, bids] = (await Promise.all([
+          const [done, bids] = await Promise.all([
             n.client.readContract({ address: desis, abi: DESIS_ABI, functionName: "isChainDone", args: [worldwideDay, chainId] }),
             n.client.readContract({ address: desis, abi: DESIS_ABI, functionName: "getChainBidsCount", args: [worldwideDay, chainId] }),
-          ])) as [boolean, bigint];
+          ]);
           return { chainId, done, bids: Number(bids) };
         }),
       );

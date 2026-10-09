@@ -166,13 +166,13 @@ function registerOrderTrack(server: McpServer, { router, resolveNetwork }: Inten
       const { origin, order } = await loadOrder(router, resolveNetwork, orderId, hint);
       const destination = await resolveNetwork(String(order.destinationDomain)).catch(() => undefined);
       const [originRaw, destRaw] = await Promise.all([
-        origin.client.readContract({ address: router, abi: ROUTER_ABI, functionName: "orderStatus", args: [orderId] }) as Promise<Hex>,
+        origin.client.readContract({ address: router, abi: ROUTER_ABI, functionName: "orderStatus", args: [orderId] }),
         destination?.client.readContract({
           address: router,
           abi: ROUTER_ABI,
           functionName: "destinationOrderStatus",
           args: [orderId],
-        }) as Promise<Hex> | undefined,
+        }),
       ]);
       const originStatus = statusLabel(originRaw) || "UNKNOWN";
       const destinationStatus = (destRaw && statusLabel(destRaw)) || "UNKNOWN";
@@ -224,12 +224,12 @@ function registerOrderRefund(server: McpServer, { ctx, router, resolveNetwork }:
       const hint = await resolveNetwork(a.chain);
       const { origin, order, originData } = await loadOrder(router, resolveNetwork, orderId, hint);
 
-      const originStatusRaw = (await origin.client.readContract({
+      const originStatusRaw = await origin.client.readContract({
         address: router,
         abi: ROUTER_ABI,
         functionName: "orderStatus",
         args: [orderId],
-      })) as Hex;
+      });
       if (statusLabel(originStatusRaw) !== "OPENED") {
         throw new Error(`order is ${statusLabel(originStatusRaw) || "UNKNOWN"}, only OPENED orders can be refunded`);
       }
@@ -249,12 +249,12 @@ function registerOrderRefund(server: McpServer, { ctx, router, resolveNetwork }:
       let value = 0n;
       if (!sameChain) {
         const payload = refundPayload(orderId);
-        const fee = (await destNet.client.readContract({
+        const fee = await destNet.client.readContract({
           address: router,
           abi: ROUTER_ABI,
           functionName: "quote",
           args: [order.originDomain, payload],
-        })) as bigint;
+        });
         value = fee;
       }
 

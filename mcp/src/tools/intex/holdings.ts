@@ -36,16 +36,16 @@ export function registerHoldingsTools(server: McpServer, deps: IntexDeps): void 
     handler(async ({ series, account, network }) => {
       const n = await target(network);
       const who = whoever(account);
-      const [issued, settled] = (await n.client.readContract({
+      const [issued, settled] = await n.client.readContract({
         address: addr(n, "nft"),
         abi: NFT_ABI,
         functionName: "tokenIds",
         args: [series],
-      })) as [bigint, bigint];
-      const [issuedBal, settledBal] = (await Promise.all([
+      });
+      const [issuedBal, settledBal] = await Promise.all([
         n.client.readContract({ address: addr(n, "nft"), abi: NFT_ABI, functionName: "balanceOf", args: [who, issued] }),
         n.client.readContract({ address: addr(n, "nft"), abi: NFT_ABI, functionName: "balanceOf", args: [who, settled] }),
-      ])) as [bigint, bigint];
+      ]);
       return ok({
         network: n.name,
         series,
