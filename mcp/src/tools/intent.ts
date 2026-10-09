@@ -59,7 +59,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
 function registerOrderOpen(server: McpServer, { ctx, router, resolveNetwork }: IntentDeps): void {
   server.tool(
     "intent_order_open",
-    "Open a cross-chain intent order on the LayerZeroRouter (ERC-7683 `open`). Pulls/approves the input " +
+    "Open a cross-chain intent order on the intent Router (ERC-7683 `open`). Pulls/approves the input " +
       "ERC20 (or sends native value), deposits into The Compact, returns the deterministic orderId. " +
       "`amount_in`/`amount_out` are whole-token decimals; input decimals are read on origin and output " +
       "decimals on destination (override with `output_decimals`). Tokens are symbols or 0x addresses. " +
@@ -219,7 +219,7 @@ function registerOrderRefund(server: McpServer, { ctx, router, resolveNetwork }:
   server.tool(
     "intent_order_refund",
     "Refund an expired, still-OPENED order, returning the input back to the sender. Calls `refund` on the " +
-      "destination router; cross-chain refunds pay the LayerZero messaging fee (quoted automatically), " +
+      "destination router; cross-chain refunds pay the bridge messaging fee (quoted automatically), " +
       "same-chain refunds are free. Reverts if the order is not OPENED or the deadline has not passed. " +
       "Requires OUTBE_PRIVATE_KEY.",
     {
@@ -262,9 +262,9 @@ function registerOrderRefund(server: McpServer, { ctx, router, resolveNetwork }:
           address: router,
           abi: ROUTER_ABI,
           functionName: "quote",
-          args: [order.originDomain, payload, false],
-        })) as { nativeFee: bigint; lzTokenFee: bigint };
-        value = fee.nativeFee;
+          args: [order.originDomain, payload],
+        })) as bigint;
+        value = fee;
       }
 
       const data = encodeFunctionData({
@@ -279,7 +279,7 @@ function registerOrderRefund(server: McpServer, { ctx, router, resolveNetwork }:
         txHash: hash,
         refundNetwork: destNet.name,
         sameChain,
-        lzFee: { raw: value.toString(), value: formatNativeAmount(destNet.chain, value) },
+        messagingFee: { raw: value.toString(), value: formatNativeAmount(destNet.chain, value) },
         recipient: bytes32ToAddress(order.sender),
       };
       if (a.wait === false) return ok({ ...meta, status: "submitted" });

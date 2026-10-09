@@ -3,7 +3,7 @@ import RouterJson from "../../../contracts/intent/abi-export/Router.json";
 import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
 
 /**
- * ABI + constants for the intent (ERC-7683 LayerZeroRouter) tools.
+ * ABI + constants for the intent (ERC-7683 Router) tools.
  *
  * ABIs are generated, not hand-written - see `src/abi.ts`. Source of truth:
  *  - contracts/intent/src/router/... via contracts/intent/abi-export/Router.json

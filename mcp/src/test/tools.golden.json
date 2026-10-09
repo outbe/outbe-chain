@@ -1153,7 +1153,7 @@
     },
     {
       "name": "intent_order_open",
-      "description": "Open a cross-chain intent order on the LayerZeroRouter (ERC-7683 `open`). Pulls/approves the input ERC20 (or sends native value), deposits into The Compact, returns the deterministic orderId. `amount_in`/`amount_out` are whole-token decimals; input decimals are read on origin and output decimals on destination (override with `output_decimals`). Tokens are symbols or 0x addresses. Requires OUTBE_PRIVATE_KEY.",
+      "description": "Open a cross-chain intent order on the intent Router (ERC-7683 `open`). Pulls/approves the input ERC20 (or sends native value), deposits into The Compact, returns the deterministic orderId. `amount_in`/`amount_out` are whole-token decimals; input decimals are read on origin and output decimals on destination (override with `output_decimals`). Tokens are symbols or 0x addresses. Requires OUTBE_PRIVATE_KEY.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1238,7 +1238,7 @@
     },
     {
       "name": "intent_order_refund",
-      "description": "Refund an expired, still-OPENED order, returning the input back to the sender. Calls `refund` on the destination router; cross-chain refunds pay the LayerZero messaging fee (quoted automatically), same-chain refunds are free. Reverts if the order is not OPENED or the deadline has not passed. Requires OUTBE_PRIVATE_KEY.",
+      "description": "Refund an expired, still-OPENED order, returning the input back to the sender. Calls `refund` on the destination router; cross-chain refunds pay the bridge messaging fee (quoted automatically), same-chain refunds are free. Reverts if the order is not OPENED or the deadline has not passed. Requires OUTBE_PRIVATE_KEY.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -3733,9 +3733,40 @@
         "order_id": "0x4444444444444444444444444444444444444444444444444444444444444444",
         "chain": "bsc-testnet"
       },
-      "isError": true,
-      "output": "error: ABI encoding params/values length mismatch.\nExpected length (params): 2\nGiven length (values): 3\n\nVersion: viem@2.52.0",
-      "sent": []
+      "isError": false,
+      "output": {
+        "orderId": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "txHash": "0xd9817795d875f554a24e3fdce94d32d3122708a5daab802d671f00992b8a1b38",
+        "refundNetwork": "outbe-testnet",
+        "sameChain": false,
+        "messagingFee": {
+          "raw": "3",
+          "value": "0.000000000000000003"
+        },
+        "recipient": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "status": "success",
+        "blockNumber": "100",
+        "gasUsed": "21000"
+      },
+      "sent": [
+        {
+          "chainId": 54322345,
+          "to": "0xC846a86D4FE91a43E900a7a3bd5BE23ED2C30492",
+          "function": "refund",
+          "args": [
+            [
+              {
+                "fillDeadline": 1760000100,
+                "orderDataType": "0x08d75650babf4de09c9273d48ef647876057ed91d4323f8a2e3ebc2cd8a63b5e",
+                "orderData": "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c800000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000500000000000000000000000000000000000000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000006100000000000000000000000000000000000000000000000000000000033ce4a9000000000000000000000000c846a86d4fe91a43e900a7a3bd5be23ed2c304920000000000000000000000000000000000000000000000000000000068e7786400000000000000000000000000000000000000000000000000000000000001800000000000000000000000000000000000000000000000000000000000000000"
+              }
+            ]
+          ],
+          "value": "3",
+          "gas": "130000",
+          "hash": "0xd9817795d875f554a24e3fdce94d32d3122708a5daab802d671f00992b8a1b38"
+        }
+      ]
     },
     {
       "tool": "intex_series_info",
@@ -5825,7 +5856,7 @@
         "paymentMinor": "3",
         "snapshotId": "3",
         "autoApprove": null,
-        "txHash": "0x3ba4b271a436932a622a5464a115c7d4f70026f4019a2e4025d9fd8f25314a4e",
+        "txHash": "0x5058669337786243cd278b3de173ad326a1cbde76d52152288cfe715d5e8658e",
         "status": "success",
         "blockNumber": "100",
         "gasUsed": "21000"
@@ -5844,7 +5875,7 @@
           ],
           "value": "0",
           "gas": "130000",
-          "hash": "0x3ba4b271a436932a622a5464a115c7d4f70026f4019a2e4025d9fd8f25314a4e"
+          "hash": "0x5058669337786243cd278b3de173ad326a1cbde76d52152288cfe715d5e8658e"
         }
       ]
     },
