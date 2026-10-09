@@ -2,7 +2,7 @@
 //! `FinalizationActor`.
 //!
 //! [`FinalizationView`] holds the small set of fields that the
-//! application's `build_block` path needs (`prev_randao`) plus the canonical
+//! application's forkchoice path needs, plus the observed VRF seed and canonical
 //! view of the last finalized block (`last_finalized_number`,
 //! `last_finalized_round`, `forkchoice`) and the latest observed canonical
 //! timestamp.
@@ -40,9 +40,9 @@ pub struct FinalizationView {
     /// Last finalized consensus round processed by the actor.
     pub last_finalized_round: Option<Round>,
 
-    /// VRF seed from the last finalized block's BLS threshold
-    /// signature. The application's `build_block` reads it to set
-    /// `header.prev_randao`.
+    /// Observed VRF seed from the last finalized block's BLS threshold
+    /// signature. Diagnostic only: proposals derive PREVRANDAO from the exact
+    /// selected parent certificate, independently of this process-local value.
     pub prev_randao: B256,
 
     /// Latest observed canonical timestamp. Updated when finalization or
@@ -128,7 +128,7 @@ pub trait FinalizationViewAccess {
     /// Current monotonic block-timestamp floor (`last_timestamp_millis`).
     fn timestamp_floor(&self) -> u64;
 
-    /// Current finalized VRF seed used for the next proposal.
+    /// Observed finalized VRF seed for diagnostics; not proposal authority.
     fn prev_randao(&self) -> B256;
 
     /// Raise the timestamp floor to at least `candidate_millis` and return the

@@ -39,7 +39,6 @@ impl ApplicationShared {
             outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
             outbe_primitives::consensus::MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
         );
-        let prev_randao = self.finalization_view.prev_randao();
 
         // build header.extra_data only from consensus header
         // artifacts that affect block hashing (DKG boundary/dealer-log).
@@ -101,6 +100,14 @@ impl ApplicationShared {
         let parent_consensus_metadata = parent_proof_record
             .as_ref()
             .map(|record| record.to_v2_metadata(parent_height.get()));
+        // Bind randomness to the same exact-parent certificate as Phase 1.
+        // A process-local last-finalized seed can lag, advance, or reset on
+        // restart. The genesis child has no certificate and uses ZERO.
+        let prev_randao = parent_consensus_metadata
+            .as_ref()
+            .map(crate::proof::verifier::decode_parent_prev_randao)
+            .transpose()?
+            .unwrap_or(B256::ZERO);
         if parent_consensus_metadata.is_some() {
             crate::metrics::record_parent_cert_included();
         }

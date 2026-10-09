@@ -129,7 +129,7 @@ pub(in crate::lifecycle) fn try_build_canonical_ocomp_successor(
     let attributes = OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
         suggested_fee_recipient: REWARDS_ADDRESS,
         timestamp_millis: timestamp * 1_000,
-        prev_randao: B256::from(U256::from(height).to_be_bytes::<32>()),
+        prev_randao: parent_prev_randao(fixture.dkg),
         parent_beacon_block_root: Some(B256::from(
             U256::from(height.saturating_add(1)).to_be_bytes::<32>(),
         )),

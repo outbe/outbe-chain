@@ -527,3 +527,24 @@ fn no_provider_no_hint_returns_missing_artifact_error() {
         "error must be the missing-artifact diagnostic, got: {message}"
     );
 }
+
+#[test]
+fn genesis_child_rejects_nonzero_prev_randao_without_parent_proof() {
+    let signer = test_evm_signer();
+    let mut state = state_with_active_proposer(signer.address());
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let mut env = test_evm_env(1, REWARDS_ADDRESS);
+    env.block_env.prevrandao = Some(B256::repeat_byte(0x42));
+    let evm = config.evm_with_env(&mut state, env);
+    let mut executor = config.create_executor(evm, block_one_execution_ctx(Some(0), Bytes::new()));
+    let error = executor
+        .apply_pre_execution_changes()
+        .expect_err("genesis child has no VRF proof");
+    assert!(
+        error
+            .to_string()
+            .contains("genesis child PREVRANDAO must be zero"),
+        "{error}"
+    );
+    assert!(executor.receipts().is_empty());
+}

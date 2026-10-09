@@ -428,7 +428,8 @@ fn build_active_payload_case(
     let attributes = OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
         suggested_fee_recipient: REWARDS_ADDRESS,
         timestamp_millis: ACTIVE_PAYLOAD_BLOCK_TIMESTAMP * 1000,
-        prev_randao: B256::repeat_byte(0x44),
+        // Genesis child has no parent certificate.
+        prev_randao: B256::ZERO,
         parent_beacon_block_root: None,
         extra_data: prefinal_extra_data,
         parent_consensus_metadata: None,

@@ -205,8 +205,10 @@ where
     /// no state changes (no soft receipt because Phase 1 failures are
     /// fatal).
     ///
-    /// Block `0` and block `1` (genesis bootstrap) skip Phase 1 entirely
-    /// and return `Ok(())` without reading any storage.
+    /// Block `0` and block `1` (genesis bootstrap) skip Phase 1 without
+    /// reading storage. Block `1` requires zero PREVRANDAO: genesis has no
+    /// parent certificate. Later blocks require randomness derived from the
+    /// authenticated exact-parent proof under its historical committee.
     ///
     /// Safety contract: the preflight runs in `apply_pre_execution_changes`
     /// AFTER marker preservation plus pending-RPC short-circuit. It runs BEFORE
@@ -224,6 +226,11 @@ where
         use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
 
         if block_number <= crate::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER {
+            if block_number > 0 && self.inner.evm.block().prevrandao() != Some(B256::ZERO) {
+                return Err(BlockExecutionError::msg(
+                    "genesis child PREVRANDAO must be zero (no parent proof)",
+                ));
+            }
             return Ok(());
         }
         #[cfg(test)]
@@ -310,6 +317,14 @@ where
                 .into(),
             ))
         })?;
+
+        let actual = self.inner.evm.block().prevrandao();
+        if actual != Some(verified.prev_randao) {
+            return Err(BlockExecutionError::msg(format!(
+                "PREVRANDAO does not match verified parent proof: expected {}, got {actual:?}",
+                verified.prev_randao,
+            )));
+        }
 
         // cache the canonical VRF proof hash so
         // `apply_phase1_commit_in_preexec` (and the main-loop body[0]

@@ -25,6 +25,7 @@ use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 mod bindings;
 mod certificate;
 mod crypto;
+pub(crate) use certificate::decode_parent_prev_randao;
 use crypto::verify_v2_certificate_low_level;
 
 // =============================================================================
@@ -45,6 +46,8 @@ pub struct VerifiedProof {
     /// proof carried in this certificate. See
     /// [`crate::proof::canonical_vrf_proof_hash_v2`].
     pub vrf_proof_hash: B256,
+    /// PREVRANDAO derived from the authenticated parent threshold signature.
+    pub prev_randao: B256,
     /// Material version of the verified VRF proof. Used by Rewards/Slash V2
     /// settlement to bind to the active VRF material.
     pub vrf_material_version: u64,

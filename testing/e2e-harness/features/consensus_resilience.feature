@@ -1,21 +1,23 @@
 @min-validators-4
-Feature: Consensus and Node Resilience (B8, R7, R11, R13, S14)
+Feature: Consensus and Node Resilience (B8, B20, R7, R11, R13, S14)
   # Network-level resilience scenarios for outbe-chain with explicit scope boundaries:
   #   - B8:  post-epoch restart and finalization progress smoke
+  #   - B20: PREVRANDAO binds the exact parent proof across restart, epoch transition, and follower replay
   #   - R7:  follower recovery across upstream loss/stall; dedup/retry/cancellation checked at the Commonware adapter boundary
   #   - R11: finalize vote ingress across epoch boundaries without consensus progress stall
   #   - R13: downtime recovery with valid empty V2 missed-proposers metadata
   #   - S14: txpool regression verifying nonce sequence preservation and execution order across proposals
 
-  @b8-cert-retention
+  @b8-cert-retention @b20-prev-randao
   Scenario: Committee finalization recovers after post-epoch validator restart
     Given a fresh localnet with a short epoch and 6-block voting window
     And the committee reaches a finalized height past the epoch transition
     When an active validator is stopped and restarted after the epoch transition
     Then the restarted validator catches up and resumes finalization
     And the committee continues producing and finalizing blocks in lockstep
+    And finalized headers derive PREVRANDAO from their exact parent proofs
 
-  @r7-follower-cancel @tee @sgx-no-attest @sudo
+  @r7-follower-cancel @b20-prev-randao @tee @sgx-no-attest @sudo
   Scenario: Follower sync recovers through a healthy upstream after upstream stall
     Given a fresh localnet with a 6-block voting window
     And the committee has reached a usable height
@@ -24,6 +26,7 @@ Feature: Consensus and Node Resilience (B8, R7, R11, R13, S14)
     Then the disconnected follower remains responsive while its upstream is offline
     When the follower is restarted in place and switched to an active healthy upstream
     Then the follower catches up to the committee finalized checkpoint with matching hash and state root
+    And finalized headers derive PREVRANDAO from their exact parent proofs
 
   @r11-finalize-epoch-progress
   Scenario: Finalize vote ingress across epoch boundary preserves consensus progress

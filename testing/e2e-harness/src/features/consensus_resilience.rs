@@ -1,4 +1,4 @@
-//! Step definitions for `features/consensus_resilience.feature` (B8, R7, R11, R13, S14).
+//! Step definitions for `features/consensus_resilience.feature` (B8, B20, R7, R11, R13, S14).
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -566,4 +566,118 @@ fn nonce_transactions_mined_in_order(world: &mut World) {
         p0 < p1,
         "nonce order violation: nonce N mined at {p0:?}, nonce N+1 mined at {p1:?}"
     );
+}
+
+// B20: observe canonical headers through RPC after restart and follower replay.
+// Negative block acceptance is exercised through the production EVM integration test.
+#[then("finalized headers derive PREVRANDAO from their exact parent proofs")]
+fn finalized_headers_bind_prev_randao(world: &mut World) {
+    let mut ports = world.validators.committee_ports();
+    if world.state.resilience_disconnected_height.is_some() {
+        ports.push(world.validators.http_port(FOLLOWER_RESILIENCE_SLOT));
+    }
+    let height = ports
+        .iter()
+        .map(|port| {
+            world
+                .rpc
+                .finalized(*port)
+                .expect("node reports finalized height")
+        })
+        .min()
+        .expect("at least one node");
+    assert!(
+        height >= 2,
+        "PREVRANDAO check requires a certified-parent block"
+    );
+    // Include genesis, the short-epoch boundary, and the recovered suffix.
+    let heights = [1, 2, 30, 31, 32, height.saturating_sub(1), height]
+        .into_iter()
+        .filter(|h| *h > 0 && *h <= height)
+        .collect::<std::collections::BTreeSet<_>>();
+    for port in ports {
+        for height in &heights {
+            let block = eth::raw_json_with_params(
+                &world.rpc.url(port),
+                "eth_getBlockByNumber",
+                serde_json::json!([format!("0x{height:x}"), true]),
+            )
+            .expect("finalized block is available");
+            let actual: alloy_primitives::B256 = block["mixHash"]
+                .as_str()
+                .expect("mixHash is present")
+                .parse()
+                .expect("mixHash is valid");
+            let expected = if *height == 1 {
+                alloy_primitives::B256::ZERO
+            } else {
+                parent_proof_randao(&block)
+            };
+            assert_eq!(
+                actual, expected,
+                "PREVRANDAO binding at node {port}, height {height}"
+            );
+        }
+    }
+}
+
+fn parent_proof_randao(block: &serde_json::Value) -> alloy_primitives::B256 {
+    use commonware_codec::{Encode as _, Read as _};
+    use commonware_cryptography::{bls12381::primitives::variant::MinSig, Hasher as _, Sha256};
+    use outbe_consensus::{digest::Digest, hybrid::HybridScheme};
+    use outbe_primitives::{
+        consensus_metadata::ParentParticipationProof, system_tx::SystemTxInputV2,
+    };
+    let input = block["transactions"][0]["input"]
+        .as_str()
+        .expect("Phase 1 input");
+    let bytes = hex::decode(input.trim_start_matches("0x")).expect("Phase 1 input hex");
+    let SystemTxInputV2::CertifiedParentAccounting { metadata } =
+        SystemTxInputV2::decode(&bytes).expect("Phase 1 metadata")
+    else {
+        panic!("first transaction must account the parent");
+    };
+    let parent: alloy_primitives::B256 = block["parentHash"]
+        .as_str()
+        .expect("parentHash")
+        .parse()
+        .expect("valid parentHash");
+    assert_eq!(metadata.finalized_block_hash, parent);
+    let bound = metadata.ordered_committee.len();
+    assert!(bound <= outbe_consensus::bls::MAX_VALIDATORS as usize);
+    let mut reader = metadata.proof.as_ref();
+    let (proposal, certificate) = match metadata.proof_kind {
+        ParentParticipationProof::Finalization => {
+            let proof = commonware_consensus::simplex::types::Finalization::<
+                HybridScheme<MinSig>,
+                Digest,
+            >::read_cfg(&mut reader, &bound)
+            .expect("decode parent finalization");
+            (proof.proposal, proof.certificate)
+        }
+        ParentParticipationProof::CertifiedNotarization => {
+            let proof = commonware_consensus::simplex::types::Notarization::<
+                HybridScheme<MinSig>,
+                Digest,
+            >::read_cfg(&mut reader, &bound)
+            .expect("decode parent notarization");
+            (proof.proposal, proof.certificate)
+        }
+    };
+    assert!(
+        reader.is_empty(),
+        "canonical parent proof has no trailing bytes"
+    );
+    assert_eq!(proposal.payload.0, parent);
+    assert_eq!(proposal.round.epoch().get(), metadata.finalized_epoch);
+    assert_eq!(proposal.round.view().get(), metadata.finalized_view);
+    assert_eq!(proposal.parent.get(), metadata.parent_view);
+    assert_eq!(
+        certificate.vrf_proof.material_version,
+        metadata.vrf_material_version
+    );
+    // Independent oracle for the existing protocol formula, not the production helper.
+    alloy_primitives::B256::from_slice(
+        Sha256::hash(&[certificate.vrf_proof.threshold_signature.encode().as_ref()]).as_ref(),
+    )
 }

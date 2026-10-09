@@ -128,3 +128,16 @@ pub(in crate::lifecycle) fn finalized_parent_metadata(
     .expect("real finalized-parent proof fixture verifies before execution");
     metadata
 }
+
+// Independent fixture oracle: the existing protocol hashes the encoded raw
+// threshold signature with SHA-256, not the VrfProof fingerprint (Keccak).
+pub(in crate::lifecycle) fn parent_prev_randao(dkg: &Dkg) -> B256 {
+    use commonware_cryptography::{sha256::Sha256, Hasher as _};
+    let round = Round::new(Epoch::new(FINALIZED_EPOCH), View::new(FINALIZED_VIEW));
+    let signature = sign_message::<MinSig>(
+        &dkg.vrf_threshold_private,
+        &hybrid_seed_namespace(),
+        round.encode().as_ref(),
+    );
+    B256::from_slice(Sha256::hash(&[signature.encode().as_ref()]).as_ref())
+}

@@ -16,6 +16,16 @@ pub(super) struct PreOpenStates {
 
 /// Also returns the committed pre-open states of the same job.
 pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenStates) {
+    open_voting_with_randao_checks(false)
+}
+
+pub(super) fn reject_forged_prev_randao() {
+    open_voting_with_randao_checks(true);
+}
+
+fn open_voting_with_randao_checks(
+    check_forged_randao: bool,
+) -> (VotingOpenScenario, PreOpenStates) {
     let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
         .reset()
         .paris_activated()
@@ -110,16 +120,29 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         evm_config.clone(),
         EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
     );
-    let attributes = OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
-        suggested_fee_recipient: REWARDS_ADDRESS,
-        timestamp_millis: prepared.request_time * 1_000,
-        prev_randao: B256::repeat_byte(0x44),
-        parent_beacon_block_root: Some(B256::repeat_byte(0x45)),
-        extra_data: Bytes::new(),
-        parent_consensus_metadata: Some(metadata),
-        proposer_evm_address: Some(proposer),
-    })
-    .with_execution_read_budget(ExecutionReadBudget::new());
+    let attributes_for = |prev_randao| {
+        OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
+            suggested_fee_recipient: REWARDS_ADDRESS,
+            timestamp_millis: prepared.request_time * 1_000,
+            prev_randao,
+            parent_beacon_block_root: Some(B256::repeat_byte(0x45)),
+            extra_data: Bytes::new(),
+            parent_consensus_metadata: Some(metadata.clone()),
+            proposer_evm_address: Some(proposer),
+        })
+        .with_execution_read_budget(ExecutionReadBudget::new())
+    };
+    if check_forged_randao {
+        let Err(error) = payload_builder.build_empty_payload(PayloadConfig::new(
+            prepared.parent.clone(),
+            attributes_for(B256::repeat_byte(0x44)),
+            PayloadId::new([0x18; 8]),
+        )) else {
+            panic!("valid parent proof must not authorize an arbitrary PREVRANDAO");
+        };
+        assert!(error.to_string().contains("PREVRANDAO"), "{error}");
+    }
+    let attributes = attributes_for(parent_prev_randao(&dkg));
     let payload = payload_builder
         .build_empty_payload(PayloadConfig::new(
             prepared.parent.clone(),
@@ -180,6 +203,22 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
     assert_eq!(requested.data.wwd, prepared.wwd.value());
     assert_eq!(requested.data.pendingNonce, 0);
     assert_eq!(requested.data.attempt, 0);
+
+    if check_forged_randao {
+        let mut forged = payload.block().clone().into_block();
+        forged.header.inner.mix_hash = B256::repeat_byte(0x66);
+        let forged = reth_primitives_traits::RecoveredBlock::new_unhashed(
+            forged,
+            executed.recovered_block.senders().to_vec(),
+        );
+        let Err(error) = evm_config
+            .executor(StateProviderDatabase::new(&provider))
+            .execute(&forged)
+        else {
+            panic!("validator must reject forged mixHash with an authentic parent proof");
+        };
+        assert!(error.to_string().contains("PREVRANDAO"), "{error}");
+    }
 
     let replay = evm_config
         .executor(StateProviderDatabase::new(&provider))
@@ -377,7 +416,7 @@ pub(super) fn open_voting_with_pre_open_state() -> (VotingOpenScenario, PreOpenS
         OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
             suggested_fee_recipient: REWARDS_ADDRESS,
             timestamp_millis: (prepared.request_time + 1) * 1_000,
-            prev_randao: B256::repeat_byte(0x54),
+            prev_randao: parent_prev_randao(&dkg),
             parent_beacon_block_root: Some(B256::repeat_byte(0x55)),
             extra_data: Bytes::new(),
             parent_consensus_metadata: Some(successor_metadata),

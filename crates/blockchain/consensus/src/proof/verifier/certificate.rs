@@ -110,3 +110,13 @@ fn read_proof<P: Read<Cfg = usize>>(
 ) -> Result<P, V2VerifyError> {
     P::read_cfg(reader, &participants_len).map_err(V2VerifyError::Decode)
 }
+
+/// Decode randomness from the selected local parent-proof record for proposal
+/// construction. This is not proof verification: the shared EVM preflight
+/// authenticates the certificate and checks the resulting header value.
+pub(crate) fn decode_parent_prev_randao(
+    metadata: &CertifiedParentAccountingMetadata,
+) -> Result<alloy_primitives::B256, V2VerifyError> {
+    let proof = decode_proof(metadata, metadata.ordered_committee.len())?;
+    Ok(proof.cert.vrf_proof.prev_randao())
+}

@@ -833,3 +833,35 @@ fn certified_notarization_proof_rejected_for_non_parent_ancestor() {
         "{err:?}"
     );
 }
+
+#[test]
+fn parent_randomness_is_independent_of_vote_kind_and_signer_subset() {
+    use commonware_cryptography::{Hasher as _, Sha256};
+    let dkg = build_dkg(4);
+    let snapshot = build_snapshot(&dkg);
+    let parent_hash = B256::with_last_byte(0xAA);
+    let (_, _, seed_message) = proposal_bytes(parent_hash);
+    // Independent protocol oracle: derive from the raw threshold signature,
+    // without invoking the production VrfProof helper or proof fingerprint.
+    let signature = sign_message::<MinSig>(
+        &dkg.vrf_threshold_private,
+        &hybrid_seed_namespace(),
+        &seed_message,
+    );
+    let expected = B256::from_slice(Sha256::hash(&[signature.encode().as_ref()]).as_ref());
+    assert_ne!(expected, B256::ZERO);
+    for kind in [
+        ParentParticipationProof::Finalization,
+        ParentParticipationProof::CertifiedNotarization,
+    ] {
+        for signers in [&[0, 1, 2][..], &[0, 1, 2, 3][..]] {
+            let cert = build_cert(&dkg, signers, parent_hash, kind);
+            let bytes = proof_envelope_bytes(&cert, parent_hash, kind);
+            let mut metadata = build_metadata(&snapshot, &bytes, parent_hash, kind);
+            metadata.signer_bitmap = vec![1, 1, 1, u8::from(signers.len() == 4)];
+            let verified = verify_v2_proof(&metadata, &snapshot, &bytes, parent_hash).unwrap();
+            assert_eq!(verified.prev_randao, expected);
+            assert_ne!(verified.prev_randao, verified.vrf_proof_hash);
+        }
+    }
+}

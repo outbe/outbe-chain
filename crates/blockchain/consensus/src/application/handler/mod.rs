@@ -148,7 +148,7 @@ pub(crate) struct ApplicationShared {
     proposal_failure_log_limiter: Arc<crate::util::rate_limit::LogRateLimiter>,
 
     /// Shared canonical view of the last finalization (forkchoice,
-    /// `last_finalized_*`, `prev_randao`, monotonic clock floor).
+    /// `last_finalized_*`, observed VRF seed, monotonic clock floor).
     /// The FinalizationActor writes it. This handler reads it for `build_block`.
     finalization_view: FinalizationViewHandle,
 

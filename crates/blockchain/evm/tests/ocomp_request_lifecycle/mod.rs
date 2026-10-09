@@ -147,3 +147,6 @@ pub(super) mod near_cap;
 pub(super) mod quorum;
 pub(super) mod rejection;
 mod request;
+pub(super) fn reject_forged_prev_randao() {
+    request::reject_forged_prev_randao();
+}
