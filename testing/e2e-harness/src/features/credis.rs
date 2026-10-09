@@ -216,7 +216,7 @@ fn prepare(world: &mut World) {
         credis_id: U256::ZERO,
         initial_native: U256::ZERO,
         interest_paid: U256::ZERO,
-        pool_before_forfeit: None,
+        partly_paid_at: None,
         lapsed: None,
     });
     let state = snapshot(world);
@@ -420,6 +420,15 @@ fn issue(world: &mut World) {
     );
     assert_receipt_event(
         &receipt,
+        CREDIS_ADDRESS,
+        &ICredis::Transfer {
+            from: Address::ZERO,
+            to: f.account,
+            tokenId: id,
+        },
+    );
+    assert_receipt_event(
+        &receipt,
         addresses::GRATIS_FACTORY_ADDR,
         &eth::IGratisFactory::PledgeSentToCredis {
             reservationId: f.reservation,
@@ -429,7 +438,7 @@ fn issue(world: &mut World) {
     world.state.credis.as_mut().expect("fixture").credis_id = id;
 }
 
-#[then("the smart account owns the open Credis")]
+#[then("the smart account owns the issued Credis")]
 fn issued(world: &mut World) {
     let state = snapshot(world);
     let f = world.state.credis.as_ref().expect("fixture");

@@ -8,7 +8,7 @@ Feature: Credis happy flow and payments
     Then the reservation holds the requested liquidity for those actors
     When the user pledges Gratis
     And the CCA issues Credis against the pledge and reservation
-    Then the smart account owns the open Credis
+    Then the smart account owns the issued Credis
     When the user makes three daily payments through the smart account
     Then the principal and interest are paid and all collateral is released
     And the committee nodes agree on the state root
@@ -21,7 +21,7 @@ Feature: Credis happy flow and payments
     Then the reservation holds the requested liquidity for those actors
     When the user pledges Gratis
     And the CCA issues Credis against the pledge and reservation
-    Then the smart account owns the open Credis
+    Then the smart account owns the issued Credis
     When the USD rate holds above the Credis call price across its call window
     Then the Credis is called with a settlement notice
     When the user pays part of the called Credis before its deadline

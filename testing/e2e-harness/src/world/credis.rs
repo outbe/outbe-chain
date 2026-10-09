@@ -59,8 +59,8 @@ pub(crate) struct CredisFixture {
     pub credis_id: U256,
     pub initial_native: U256,
     pub interest_paid: U256,
-    /// The finalized height and unallocated Promis Limit pool before any forfeit.
-    pub pool_before_forfeit: Option<(u64, U256)>,
+    /// The block of the partial settlement before the call lapsed.
+    pub partly_paid_at: Option<u64>,
     /// The Credis as read once its settlement deadline lapsed.
     pub lapsed: Option<ICredis::Credis>,
 }

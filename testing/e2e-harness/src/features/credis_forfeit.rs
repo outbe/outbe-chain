@@ -3,8 +3,8 @@
 
 use std::time::Duration;
 
-use alloy_primitives::{Address, U256};
-use alloy_sol_types::{sol, SolEvent};
+use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::{sol, SolCall, SolEvent};
 use cucumber::{then, when};
 use outbe_primitives::addresses::{CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS};
 
@@ -12,10 +12,11 @@ use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
 use crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
+use crate::features::settlement::assert_receipt_event;
 use crate::internal::{addresses, eth};
 use crate::world::credis::{
-    event, execute, send, snapshot, CredisFixture, ICredis, ICredisFactory, IFixtureToken, DAY,
-    INITIAL_GRATIS, LIQUIDITY, PRINCIPAL, USD,
+    execute, receipt_height, send, snapshot, CredisFixture, ICredis, ICredisFactory, IFixtureToken,
+    IMockAccount, DAY, INITIAL_GRATIS, LIQUIDITY, PRINCIPAL, USD,
 };
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::{test_issuance, World};
@@ -27,6 +28,8 @@ const PART: U256 = U256::from_limbs([100_000_000, 0, 0, 0]);
 const CALL_TIMEOUT_SECS: u64 = 300;
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
 const EXPIRY_BUCKET_SECS: u64 = 3_600;
+/// Window, threshold and notice of the DEV profile in an e2e build, in seconds.
+const DEV_TERMS: (u32, u32, u32) = (3 * 86_400, 2 * 86_400, 600);
 
 sol! {
     interface ICredisTestArming {
@@ -65,10 +68,14 @@ fn called(world: &mut World) {
     let height = finalized_checkpoint(world).height;
     let record = snapshot(world).record.expect("called Credis");
     let terms = &record.call;
-    assert!(
-        u64::from(terms.callNoticePeriod) <= EXPIRY_BUCKET_SECS,
-        "call notice is {}s: the DEV parameter profile is not active",
-        terms.callNoticePeriod
+    assert_eq!(
+        (
+            terms.callWindow,
+            terms.callThreshold,
+            terms.callNoticePeriod
+        ),
+        DEV_TERMS,
+        "the Credis did not seal the DEV parameter profile"
     );
     assert_eq!(
         terms.settlementDeadline,
@@ -123,10 +130,19 @@ fn pay_part(world: &mut World) {
             amountMinor: amount,
         },
     );
-    let applied = event::<ICredis::SettlementApplied>(&receipt, CREDIS_ADDRESS);
-    assert_eq!(
-        (applied.interestPaidMinor, applied.principalPaidMinor),
-        (interest, PART)
+    let returned = (record.gratisMinor * PART)
+        .div_ceil(record.principalMinor)
+        .min(record.outstandingGratisMinor);
+    assert_receipt_event(
+        &receipt,
+        CREDIS_ADDRESS,
+        &ICredis::SettlementApplied {
+            credisId: f.credis_id,
+            interestPaidMinor: interest,
+            principalPaidMinor: PART,
+            gratisReturnedMinor: returned,
+            outstandingPrincipalMinor: PRINCIPAL - PART,
+        },
     );
     let after = snapshot(world);
     let paid = after.record.as_ref().expect("partly paid Credis");
@@ -134,31 +150,22 @@ fn pay_part(world: &mut World) {
     assert_eq!(paid.outstandingPrincipalMinor, PRINCIPAL - PART);
     assert_eq!(
         paid.outstandingGratisMinor,
-        record.outstandingGratisMinor - applied.gratisReturnedMinor
+        record.outstandingGratisMinor - returned
     );
     assert_eq!(
         paid.outcome,
         ICredis::Outcome {
             principalPaidMinor: PART,
             principalWrittenOffMinor: U256::ZERO,
-            gratisReturnedMinor: applied.gratisReturnedMinor,
+            gratisReturnedMinor: returned,
             gratisBurnedMinor: U256::ZERO,
         }
     );
-    assert_eq!(after.pledged, before.pledged - applied.gratisReturnedMinor);
-    assert_eq!(after.liquid, before.liquid + applied.gratisReturnedMinor);
-    // Read before the deadline can lapse, so no forfeit has credited the pool yet.
-    let height = finalized_checkpoint(world).height;
-    let pool = eth::read_call_at(
-        &url,
-        addresses::PROMIS_LIMIT_ADDR,
-        &eth::IPromisLimit::totalUnallocatedCall {},
-        height,
-    )
-    .expect("unallocated pool before the forfeit");
+    assert_eq!(after.pledged, before.pledged - returned);
+    assert_eq!(after.liquid, before.liquid + returned);
     let f = world.state.credis.as_mut().expect("fixture");
     f.interest_paid += interest;
-    f.pool_before_forfeit = Some((height, pool));
+    f.partly_paid_at = Some(receipt_height(&receipt));
 }
 
 #[when("the settlement deadline passes unpaid")]
@@ -201,50 +208,69 @@ fn reads_forfeited(world: &mut World) {
         ),
         Some(U256::ZERO)
     );
+    // The sweep may already have reached it, if the deadline's hour closed at once.
+    let (reason, height) = settlement_revert(world, f);
+    let swept = forfeit_block(&url(world), f.credis_id).is_some_and(|block| block <= height);
+    let expected = if swept {
+        "Credis is closed"
+    } else {
+        "settlement deadline has passed"
+    };
+    assert_eq!(reason, expected);
     world.state.credis.as_mut().expect("fixture").lapsed = Some(lapsed);
 }
 
 /// The sweep opens an hour only once it has closed: move the deadline into a closed one.
 #[when("the forfeit sweep reaches the lapsed Credis")]
 fn sweep_reaches(world: &mut World) {
-    let outcome = eth::send_call_outcome(
-        &url(world),
+    let url = url(world);
+    let credis_id = fixture(world).credis_id;
+    // The deadline's hour may have closed already, and the sweep forfeited it.
+    if forfeit_block(&url, credis_id).is_some() {
+        return;
+    }
+    send(
+        &url,
         CREDIS_ADDRESS,
         DEPLOYER_KEY,
         &ICredisTestArming::closeCallNoticeForTestCall {
-            credisId: fixture(world).credis_id,
+            credisId: credis_id,
             deadline: head_time(world) - EXPIRY_BUCKET_SECS,
         },
         None,
-    )
-    .expect("submit closeCallNoticeForTest");
-    if !outcome.success {
-        eprintln!("the deadline's hour closed first: the sweep already dequeued the Credis");
-    }
+    );
 }
 
 #[then("the remaining pledge is burned into the Promis Limit pool once")]
 fn burned(world: &mut World) {
     let url = url(world);
     let f = fixture(world);
-    let (from, pool) = f.pool_before_forfeit.expect("pool before the forfeit");
+    let from = f.partly_paid_at.expect("partial payment height");
     let lapsed = f.lapsed.clone().expect("lapsed Credis");
     let burned = lapsed.outcome.gratisBurnedMinor;
-    let unallocated = |height: Option<u64>| {
-        let call = eth::IPromisLimit::totalUnallocatedCall {};
-        match height {
-            Some(height) => eth::read_call_at(&url, addresses::PROMIS_LIMIT_ADDR, &call, height),
-            None => eth::read_call(&url, addresses::PROMIS_LIMIT_ADDR, &call),
-        }
-        .expect("unallocated pool")
-    };
     poll_until(
         FORFEIT_TIMEOUT,
         || "the forfeit sweep never burned the lapsed Credis's pledge".into(),
-        || unallocated(None) == pool + burned,
+        || forfeit_block(&url, f.credis_id).is_some(),
     );
     let height = finalized_checkpoint(world).height;
-    assert_eq!(unallocated(Some(height)), pool + burned);
+    let forfeited_at = forfeit_block(&url, f.credis_id).expect("forfeit block");
+    assert!(forfeited_at <= height);
+    let unallocated = |height| {
+        eth::read_call_at(
+            &url,
+            addresses::PROMIS_LIMIT_ADDR,
+            &eth::IPromisLimit::totalUnallocatedCall {},
+            height,
+        )
+        .expect("unallocated pool")
+    };
+    // Other modules credit the pool too: only the forfeit's own block is attributable.
+    assert_eq!(
+        unallocated(forfeited_at) - unallocated(forfeited_at - 1),
+        burned,
+        "the forfeit did not credit exactly the burned Gratis to the pool"
+    );
     assert_single_event(
         &url,
         CREDIS_ADDRESS,
@@ -274,38 +300,47 @@ fn burned(world: &mut World) {
         LIQUIDITY - PRINCIPAL + PART + f.interest_paid
     );
     assert_eq!(state.cca_stables, PRINCIPAL);
-    assert_settlement_rejected(world, f);
+    assert_eq!(settlement_revert(world, f).0, "Credis is closed");
 }
 
-fn assert_settlement_rejected(world: &World, f: &CredisFixture) {
-    let url = url(world);
-    execute(
-        &url,
-        f.account,
-        DEPLOYER_KEY,
-        f.currency.asset,
-        &IFixtureToken::approveCall {
-            spender: CREDIS_FACTORY_ADDRESS,
-            amount: PART,
-        },
-    );
+/// Why a settlement through the Credis's smart account reverts, and the block read.
+fn settlement_revert(world: &World, f: &CredisFixture) -> (String, u64) {
     let settle = ICredisFactory::settleCredisCall {
         credisId: f.credis_id,
         amountMinor: PART,
     };
-    let outcome = eth::send_call_outcome(
-        &url,
+    let height = world
+        .rpc
+        .head(world.validators.primary_port())
+        .expect("primary head");
+    let reason = eth::read_call_revert_reason_at(
+        &url(world),
         f.account,
-        DEPLOYER_KEY,
-        &crate::world::credis::IMockAccount::executeCall {
+        f.user,
+        &IMockAccount::executeCall {
             target: CREDIS_FACTORY_ADDRESS,
             value: U256::ZERO,
-            data: alloy_sol_types::SolCall::abi_encode(&settle).into(),
+            data: settle.abi_encode().into(),
         },
-        None,
+        height,
     )
-    .expect("submit a settlement of the forfeited Credis");
-    assert!(!outcome.success, "a forfeited Credis accepted a settlement");
+    .expect("a settlement of a lapsed Credis reverts");
+    (reason, height)
+}
+
+/// The block of the Credis's `CredisForfeited` log, once there is one.
+fn forfeit_block(url: &str, credis_id: U256) -> Option<u64> {
+    let logs = eth::raw_json_result(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "address": CREDIS_ADDRESS, "fromBlock": "0x0", "toBlock": "latest",
+            "topics": [ICredis::CredisForfeited::SIGNATURE_HASH, B256::from(credis_id)],
+        }]),
+    )
+    .expect("Credis forfeit logs");
+    let block = logs.as_array()?.first()?["blockNumber"].as_str()?;
+    u64::from_str_radix(block.trim_start_matches("0x"), 16).ok()
 }
 
 fn assert_no_event<E: SolEvent>(url: &str, address: Address, from: u64, to: u64) {
