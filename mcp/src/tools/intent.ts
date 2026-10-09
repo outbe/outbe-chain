@@ -17,6 +17,7 @@ import {
 } from "viem";
 import { z } from "zod";
 import { type Ctx, createCtx, formatNativeAmount } from "../chain.js";
+import { loadConfig } from "../config.js";
 import { handler, ok } from "./util.js";
 import {
   DEFAULT_FILL_DEADLINE_SECONDS,
@@ -59,8 +60,9 @@ interface Network {
 }
 
 export function registerIntentTools(server: McpServer, ctx: Ctx): void {
-  const router = getAddress(process.env.OUTBE_INTENT_ROUTER ?? DEFAULT_ROUTER);
-  const pk = process.env.OUTBE_PRIVATE_KEY;
+  const config = loadConfig();
+  const router = getAddress(config.intentRouter ?? DEFAULT_ROUTER);
+  const pk = config.privateKey;
 
   // --- network resolution (reuses root createCtx, cached per network) --------
   const toNet = (name: string, c: Ctx): Network => ({

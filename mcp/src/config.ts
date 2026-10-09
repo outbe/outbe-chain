@@ -1,0 +1,17 @@
+export const DEFAULT_RPC = "https://rpc.testnet.outbe.net";
+
+export interface Config {
+  rpcUrl: string;
+  privateKey?: string;
+  intentRouter?: string;
+}
+
+/** Server settings from `--rpc` and the `OUTBE_*` environment. */
+export function loadConfig(argv: readonly string[] = [], env: NodeJS.ProcessEnv = process.env): Config {
+  const flag = argv.indexOf("--rpc");
+  return {
+    rpcUrl: (flag >= 0 && argv[flag + 1]) || (env.OUTBE_RPC ?? DEFAULT_RPC),
+    privateKey: env.OUTBE_PRIVATE_KEY,
+    intentRouter: env.OUTBE_INTENT_ROUTER,
+  };
+}

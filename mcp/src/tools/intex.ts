@@ -18,6 +18,7 @@ import {
 import { z } from "zod";
 import { type Ctx, createCtx, formatNativeAmount } from "../chain.js";
 import { type DecodedDataUri, parseDataUri } from "../format.js";
+import { loadConfig } from "../config.js";
 import { handler, ok } from "./util.js";
 import {
   AUCTION_ABI,
@@ -104,7 +105,7 @@ function ymdRange(from: number, to: number): number[] {
 }
 
 export function registerIntexTools(server: McpServer, ctx: Ctx): void {
-  const pk = process.env.OUTBE_PRIVATE_KEY;
+  const pk = loadConfig().privateKey;
   const netCache = new Map<string, Network>();
 
   async function resolveNetwork(spec: string): Promise<Network> {

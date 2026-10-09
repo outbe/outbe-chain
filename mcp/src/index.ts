@@ -1,19 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createCtx } from "./chain.js";
+import { loadConfig } from "./config.js";
 import { registerTools } from "./tools/index.js";
 
-const DEFAULT_RPC = "https://rpc.testnet.outbe.net";
-
-function parseRpc(argv: string[]): string {
-  const i = argv.indexOf("--rpc");
-  if (i >= 0 && argv[i + 1]) return argv[i + 1];
-  return process.env.OUTBE_RPC ?? DEFAULT_RPC;
-}
-
 async function main(): Promise<void> {
-  const rpcUrl = parseRpc(process.argv.slice(2));
-  const privateKey = process.env.OUTBE_PRIVATE_KEY;
+  const { rpcUrl, privateKey } = loadConfig(process.argv.slice(2));
 
   const ctx = await createCtx(rpcUrl, privateKey);
   // stderr only - stdout is the MCP stdio channel.
