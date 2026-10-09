@@ -188,6 +188,9 @@ export const WWD_STATUS = [
   "FAILED",
 ] as const;
 
+/** `WWD_STATUS` code of the days a tribute offer can target. */
+export const OFFERING_STATUS = WWD_STATUS.indexOf("OFFERING");
+
 export const DAY_TYPE = ["UNKNOWN", "GREEN", "RED"] as const;
 
 // Governance proposal status (crates/core/governance/src/status.rs).
