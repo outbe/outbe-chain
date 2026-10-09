@@ -8,6 +8,7 @@ import {
   type AbiFunction,
   type Hex,
   encodeAbiParameters,
+  encodeEventTopics,
   pad,
   stringToHex,
   zeroAddress,
@@ -28,7 +29,7 @@ import {
   intexAddress,
 } from "../intex/registry.js";
 import { CONTRACTS } from "../registry.js";
-import { sample } from "./fake-chain.js";
+import { type FakeChain, sample } from "./fake-chain.js";
 import { SIGNER, startHarness } from "./harness.js";
 
 const GOLDEN = new URL("./tools.golden.json", import.meta.url);
@@ -41,6 +42,22 @@ const document = Buffer.from(
   JSON.stringify({ name: "Token", image: `data:image/svg+xml;base64,${image}` }),
 ).toString("base64");
 const DATA_URI = `data:application/json;base64,${document}`;
+
+const TRANSFER_TO_OTHER = {
+  address: intexAddress({ name: "bsc-testnet", isOutbe: false }, "nft"),
+  topics: encodeEventTopics({
+    abi: NFT_ABI,
+    eventName: "TransferSingle",
+    args: { operator: OTHER, from: zeroAddress, to: OTHER },
+  }),
+  data: encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [BigInt("0x32303236303231322d5452592d55"), 2n]),
+  blockNumber: "0x64",
+  blockHash: `0x${"bb".repeat(32)}`,
+  transactionHash: `0x${"cc".repeat(32)}`,
+  transactionIndex: "0x0",
+  logIndex: "0x0",
+  removed: false,
+};
 
 const ORDER = encodeAbiParameters(
   [{ type: "bytes32" }, { type: "bytes" }],
@@ -75,7 +92,7 @@ const INTEX_ABIS: [Abi, Parameters<typeof intexAddress>[1]][] = [
   [ORIGIN_ROUTER_ABI, "originRouter"],
 ];
 
-type Case = [tool: string, args?: Record<string, unknown>];
+type Case = [tool: string, args?: Record<string, unknown>, prepare?: (chain: FakeChain) => void];
 
 const json = (value: unknown): unknown =>
   JSON.parse(JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v)));
@@ -218,6 +235,24 @@ const TOOLS: Case[] = [
   ["intex_series_info", { series: SERIES, network: "solana" }],
 ];
 
+/** Branches the default chain never reaches. They run last because their overrides persist. */
+const SCENARIOS: Case[] = [
+  ["auctions_active", { from_date: 20261008, to_date: 20261009 }, (chain) => chain.reply("getAuctionStage", 1)],
+  ["intex_holdings_by_owner", { account: OTHER }, (chain) => {
+    chain.logs.push(TRANSFER_TO_OTHER);
+    chain.reply("statusOf", 0);
+  }],
+  ["auction_bid_commit", { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }, (chain) => {
+    chain.logs.length = 0;
+    chain.reply("allowance", 0n);
+  }],
+  ["intex_settle", { series: SERIES, units: "2", token: OTHER }],
+  ["intent_order_open", { origin: "bsc-testnet", destination: "outbe-testnet", input_token: "USD", output_token: "USD", amount_in: "2" }],
+  ["intent_order_track", { order_id: HASH, chain: "bsc-testnet" }, (chain) => {
+    chain.reply("destinationOrderStatus", stringToHex("FILLED", { size: 32 }));
+  }],
+];
+
 /** Replaces both randomness sources the offer encryption draws from with a counter. */
 function seedRandomness(): void {
   let next = 0;
@@ -234,7 +269,7 @@ test("every MCP tool keeps its surface and its output against a fixed chain", as
   mock.timers.enable({ apis: ["Date"], now: Date.UTC(2026, 9, 9, 12) });
   seedRandomness();
   const harness = await startHarness((chain) => {
-    for (const [name, entry] of Object.entries(CONTRACTS)) chain.register(entry.abi, entry.address);
+    for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
     for (const network of [
       { name: "outbe-testnet", isOutbe: true },
       { name: "bsc-testnet", isOutbe: false },
@@ -260,8 +295,10 @@ test("every MCP tool keeps its surface and its output against a fixed chain", as
   try {
     const { tools } = await harness.client.listTools();
     const calls = [];
-    for (const [tool, args] of [...TOOLS, ...contractCalls()]) {
+    for (const [tool, args, prepare] of [...TOOLS, ...contractCalls(), ...SCENARIOS]) {
+      prepare?.(harness.chain);
       const from = harness.chain.sent.length;
+      const readFrom = harness.chain.reads.length;
       const { text, isError } = await harness.call(tool, args);
       let output: unknown = text;
       try {
@@ -269,11 +306,21 @@ test("every MCP tool keeps its surface and its output against a fixed chain", as
       } catch {
         // Plain-text output stays as text.
       }
-      calls.push({ tool, args, isError, output, sent: json(harness.chain.since(from)) });
+      calls.push({
+        tool,
+        args,
+        isError,
+        output,
+        reads: harness.chain.readsSince(readFrom),
+        sent: json(harness.chain.since(from)),
+      });
     }
     const actual = `${JSON.stringify({ tools, calls }, null, 2)}\n`;
     if (process.env.UPDATE_GOLDEN === "1") writeFileSync(GOLDEN, actual);
-    assert.equal(actual, readFileSync(GOLDEN, "utf8"));
+    const expected = JSON.parse(readFileSync(GOLDEN, "utf8")) as { tools: unknown[]; calls: unknown[] };
+    assert.deepEqual(json(tools), expected.tools, "tool surface");
+    calls.forEach((call, index) => assert.deepEqual(json(call), expected.calls[index], `call ${index}: ${call.tool}`));
+    assert.equal(actual, readFileSync(GOLDEN, "utf8"), "key order");
   } finally {
     await harness.close();
     mock.timers.reset();

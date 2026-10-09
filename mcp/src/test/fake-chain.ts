@@ -85,6 +85,8 @@ class RpcError extends Error {
 export class FakeChain {
   readonly sent: SentTransaction[] = [];
   readonly logs: unknown[] = [];
+  /** Every contract read, as `address.function(args)`, in the order the node saw them. */
+  readonly reads: string[] = [];
   private readonly registered: Registered[] = [];
   private readonly results = new Map<string, Result>();
   private readonly reverting = new Set<string>();
@@ -144,6 +146,11 @@ export class FakeChain {
     };
   }
 
+  /** Reads made since `from`, in order. */
+  readsSince(from: number): string[] {
+    return this.reads.slice(from);
+  }
+
   /** Transactions sent since `from`, in order. */
   since(from: number): SentTransaction[] {
     return this.sent.slice(from);
@@ -183,6 +190,7 @@ export class FakeChain {
       case "eth_getTransactionCount":
         return numberToHex(this.nonces.get(chainId) ?? 0);
       case "eth_getLogs":
+        this.reads.push(`getLogs(${JSON.stringify(params[0])})`);
         return this.logs;
       case "eth_call":
         return this.call(params[0] as { to: Address; data: Hex });
@@ -194,6 +202,18 @@ export class FakeChain {
         return this.transactions.get(params[0] as Hex) ?? null;
       default:
         throw new RpcError(-32601, `method ${method} is not faked`);
+    }
+  }
+
+  /** A real node answers a call to an address without code with empty data. */
+  private knows(to: Address, data: Hex): boolean {
+    const target = getAddress(to);
+    if (this.registered.some((r) => r.address === target)) return true;
+    try {
+      this.find(to, data);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -214,12 +234,17 @@ export class FakeChain {
   }
 
   private call({ to, data }: { to: Address; data: Hex }): Hex {
+    if (!this.knows(to, data)) {
+      this.reads.push(`${getAddress(to)}.${data.slice(0, 10)}`);
+      return "0x";
+    }
     const fn = this.find(to, data);
     if (this.reverting.has(this.key(fn.name, to)) || this.reverting.has(fn.name)) {
       throw new RpcError(3, `execution reverted: ${fn.name}`);
     }
     if (this.unreachable.has(fn.name)) throw new RpcError(-32000, "upstream node unavailable");
     const { args } = decodeFunctionData({ abi: [fn], data });
+    this.reads.push(`${getAddress(to)}.${fn.name}(${JSON.stringify(args ?? [], (_k, v) => (typeof v === "bigint" ? v.toString() : v))})`);
     const override = this.results.get(this.key(fn.name, to)) ?? this.results.get(fn.name);
     const result =
       override === undefined
