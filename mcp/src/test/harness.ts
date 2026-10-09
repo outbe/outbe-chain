@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { createCtx } from "../chain.js";
 import { registerTools } from "../tools/index.js";
+import { VERSION } from "../version.js";
 import { FakeChain } from "./fake-chain.js";
 
 export const OUTBE_RPC = "https://rpc.testnet.outbe.net";
@@ -32,7 +33,7 @@ export async function startHarness(prepare: (chain: FakeChain) => void): Promise
   for (const name of Object.keys(process.env).filter((n) => n.startsWith("OUTBE_"))) delete process.env[name];
   process.env.OUTBE_PRIVATE_KEY = SIGNER_KEY;
   const ctx = await createCtx(OUTBE_RPC, SIGNER_KEY);
-  const server = new McpServer({ name: "outbe-mcp", version: "0.1.0" });
+  const server = new McpServer({ name: "outbe-mcp", version: VERSION });
   registerTools(server, ctx);
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   await server.connect(serverSide);

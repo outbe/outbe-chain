@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createCtx } from "./chain.js";
 import { loadConfig } from "./config.js";
 import { registerTools } from "./tools/index.js";
+import { VERSION } from "./version.js";
 
 async function main(): Promise<void> {
   const { rpcUrl, privateKey } = loadConfig(process.argv.slice(2));
@@ -13,7 +14,7 @@ async function main(): Promise<void> {
     `[outbe-mcp] rpc=${rpcUrl} chainId=${ctx.chain.id} signer=${ctx.account?.address ?? "(read-only)"}`,
   );
 
-  const server = new McpServer({ name: "outbe-mcp", version: "0.1.0" });
+  const server = new McpServer({ name: "outbe-mcp", version: VERSION });
   registerTools(server, ctx);
 
   await server.connect(new StdioServerTransport());

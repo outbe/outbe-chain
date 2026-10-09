@@ -1,6 +1,6 @@
 {
   "name": "@outbe/mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local stdio MCP server for outbe-chain: read chain/precompile state and submit a curated set of signed transactions, with human-decoded output.",
   "license": "MIT",
   "type": "module",
