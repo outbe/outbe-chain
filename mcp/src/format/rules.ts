@@ -24,7 +24,7 @@ const DATE_RE = /(worldwideday|^wwd$|^wwds$|^date$|^day$)/i;
 const SIX_DECIMAL_AMOUNT_RE = /(minor$|amount|stake|balance|pledged|reward)/i;
 const ASSET_UNIT_AMOUNT_RE =
   /^(principal|outstandingPrincipal|principalPaid|principalWrittenOff|interestPaid|interestAccrued|interest|payment|amount)Minor$/;
-const SIX_DECIMAL_RATE_RE = /currencyrate/i;
+const SIX_DECIMAL_RATE_RE = /currencyrate|^policyrate$/i;
 const DIMENSIONLESS_FP18_RE = /(rewardband|minvalidperwindow|slashfraction)/i;
 const GENERIC_FP18_RE = /(vwap|twap|rate|price|volume|peakprice|currentvalue|nominalprice|maxscurve)/i;
 const TIME_RE = /(at$|time$|timestamp$|start$|end$|date$|duedate$|paidat$|deadline$)/i;

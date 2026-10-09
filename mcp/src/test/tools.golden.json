@@ -2512,7 +2512,7 @@
           },
           "policyRate": {
             "raw": "3",
-            "value": "0.000000000000000003"
+            "value": "0.000003"
           },
           "entryPriceMinor": {
             "raw": "3",
@@ -7039,7 +7039,7 @@
         },
         "policyRate": {
           "raw": "3",
-          "value": "0.000000000000000003"
+          "value": "0.000003"
         },
         "entryPriceMinor": {
           "raw": "3",
@@ -7193,7 +7193,7 @@
         },
         "policyRate": {
           "raw": "3",
-          "value": "0.000000000000000003"
+          "value": "0.000003"
         },
         "entryPriceMinor": {
           "raw": "3",
@@ -7271,7 +7271,7 @@
         },
         "policyRate": {
           "raw": "3",
-          "value": "0.000000000000000003"
+          "value": "0.000003"
         },
         "entryPriceMinor": {
           "raw": "3",
@@ -7620,7 +7620,7 @@
           },
           "policyRate": {
             "raw": "3",
-            "value": "0.000000000000000003"
+            "value": "0.000003"
           },
           "issuanceCurrency": {
             "code": 840,
