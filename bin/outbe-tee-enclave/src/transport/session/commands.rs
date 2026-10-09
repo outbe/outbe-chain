@@ -86,7 +86,10 @@ impl CommandSession {
 
         let resp = self.dispatch(req, context);
 
-        let outcome = if matches!(resp, EnclaveResponse::Error { .. }) {
+        let outcome = if matches!(
+            resp,
+            EnclaveResponse::Error { .. } | EnclaveResponse::NotReady { .. }
+        ) {
             crate::telemetry::RequestOutcome::Err
         } else {
             crate::telemetry::RequestOutcome::Ok
