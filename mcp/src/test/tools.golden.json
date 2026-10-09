@@ -745,7 +745,7 @@
     },
     {
       "name": "credis_reserve",
-      "description": "Reserve exact stablecoin principal and freeze the Credis terms for 15 minutes.",
+      "description": "Reserve exact stablecoin principal and freeze the Credis terms for 15 minutes. Returns the reservationId.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -769,6 +769,10 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 65535
+          },
+          "wait": {
+            "type": "boolean",
+            "description": "wait for the receipt (default true)"
           }
         },
         "required": [
@@ -802,6 +806,10 @@
           },
           "op_nonce": {
             "$ref": "#/properties/reservation_id"
+          },
+          "wait": {
+            "type": "boolean",
+            "description": "wait for the receipt (default true)"
           }
         },
         "required": [
@@ -826,6 +834,10 @@
             "type": "string",
             "pattern": "^(0|[1-9][0-9]*)$",
             "description": "Amount in raw token units"
+          },
+          "wait": {
+            "type": "boolean",
+            "description": "wait for the receipt (default true)"
           }
         },
         "required": [
@@ -840,7 +852,7 @@
     },
     {
       "name": "credis_issue",
-      "description": "Issue Credis against the reservation's pledge and deliver the reserved principal.",
+      "description": "Issue Credis against the reservation's pledge and deliver the reserved principal. The CCA stakes native COEN equal to the reserved Gratis collateral; omit `stake` to use exactly that. Returns the positionId.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -852,11 +864,14 @@
           "stake": {
             "type": "string",
             "description": "amount in whole COEN, e.g. \"100\" or \"1.5\""
+          },
+          "wait": {
+            "type": "boolean",
+            "description": "wait for the receipt (default true)"
           }
         },
         "required": [
-          "reservation_id",
-          "stake"
+          "reservation_id"
         ],
         "additionalProperties": false,
         "$schema": "http://json-schema.org/draft-07/schema#"
@@ -867,7 +882,7 @@
     },
     {
       "name": "credis_settle",
-      "description": "Repay a position after approving its asset to CredisFactory; released collateral returns to the source's liquid Gratis.",
+      "description": "Repay a position; released collateral returns to the source's liquid Gratis. Approves CredisFactory for `amount` of the position's asset first when the allowance is short.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -878,6 +893,10 @@
           },
           "amount": {
             "$ref": "#/properties/position_id"
+          },
+          "wait": {
+            "type": "boolean",
+            "description": "wait for the receipt (default true)"
           }
         },
         "required": [
@@ -3019,7 +3038,8 @@
         "method": "reserveStables",
         "status": "success",
         "blockNumber": "100",
-        "gasUsed": "21000"
+        "gasUsed": "21000",
+        "reservationId": null
       },
       "sent": [
         {
@@ -3114,7 +3134,8 @@
         "method": "issueCredis",
         "status": "success",
         "blockNumber": "100",
-        "gasUsed": "21000"
+        "gasUsed": "21000",
+        "positionId": null
       },
       "sent": [
         {
@@ -3138,14 +3159,27 @@
       },
       "isError": false,
       "output": {
-        "txHash": "0xb18ffa8d896e29503fa72be9fc0f26f1f67b910aaa03ad78ff336e461b391156",
+        "txHash": "0xf892845994b5c4860e847a2074287162195453c225c31800921d43a370d43885",
         "contract": "credisfactory",
         "method": "settleCredis",
+        "autoApprove": "0x5adb6e6065bb077183672eae983768d4c7ac3239bdcfe8c6a950144fc79b192e",
         "status": "success",
         "blockNumber": "100",
         "gasUsed": "21000"
       },
       "sent": [
+        {
+          "chainId": 54322345,
+          "to": "0x1111111111111111111111111111111111111111",
+          "function": "approve",
+          "args": [
+            "0x0000000000000000000000000000000000001009",
+            "500000"
+          ],
+          "value": "0",
+          "gas": "130000",
+          "hash": "0x5adb6e6065bb077183672eae983768d4c7ac3239bdcfe8c6a950144fc79b192e"
+        },
         {
           "chainId": 54322345,
           "to": "0x0000000000000000000000000000000000001009",
@@ -3156,7 +3190,7 @@
           ],
           "value": "0",
           "gas": "3000000",
-          "hash": "0xb18ffa8d896e29503fa72be9fc0f26f1f67b910aaa03ad78ff336e461b391156"
+          "hash": "0xf892845994b5c4860e847a2074287162195453c225c31800921d43a370d43885"
         }
       ]
     },
@@ -3176,7 +3210,7 @@
       },
       "isError": false,
       "output": {
-        "txHash": "0x30b9a3245d7484e8ba36947d9f26cd0dc1eb85328aefbe830aaad87e7f934d1b",
+        "txHash": "0xcfda2aa19eff0c8fb95014875d0b87fad80647f89d89ce691cb60d0aa158165c",
         "offerKey": "0x0000000000000000000000000000000000000000000000000000000000000009",
         "worldwide_day": 20261009,
         "currency": 840,
@@ -3222,7 +3256,7 @@
           ],
           "value": "0",
           "gas": "8000000",
-          "hash": "0x30b9a3245d7484e8ba36947d9f26cd0dc1eb85328aefbe830aaad87e7f934d1b"
+          "hash": "0xcfda2aa19eff0c8fb95014875d0b87fad80647f89d89ce691cb60d0aa158165c"
         }
       ]
     },
@@ -3242,7 +3276,7 @@
       },
       "isError": false,
       "output": {
-        "txHash": "0x6b83b90377f6ebebdb8e805f8ae8286ada6a038b6c26b4a96eb3b6dc26954c8a",
+        "txHash": "0xd088843e89b3faa3af1d6eac6b8070a3bb559370476eb5f896068e974929d111",
         "offerKey": "0x0000000000000000000000000000000000000000000000000000000000000009",
         "worldwide_day": 20261009,
         "currency": 840,
@@ -3280,7 +3314,7 @@
           ],
           "value": "0",
           "gas": "8000000",
-          "hash": "0x6b83b90377f6ebebdb8e805f8ae8286ada6a038b6c26b4a96eb3b6dc26954c8a"
+          "hash": "0xd088843e89b3faa3af1d6eac6b8070a3bb559370476eb5f896068e974929d111"
         }
       ]
     },
@@ -3292,7 +3326,7 @@
       },
       "isError": false,
       "output": {
-        "txHash": "0x00e5ae1af787a833d67314476a81d6f50d9688d2bf54aef76091c1c018d30817",
+        "txHash": "0x02543f990f0393d8ba457267c0f92059eab3e33a44fd6f6efb37cec5f8fa20d5",
         "contract": "staking",
         "method": "stake",
         "status": "success",
@@ -3310,7 +3344,7 @@
           ],
           "value": "1500000000000000000",
           "gas": "3000000",
-          "hash": "0x00e5ae1af787a833d67314476a81d6f50d9688d2bf54aef76091c1c018d30817"
+          "hash": "0x02543f990f0393d8ba457267c0f92059eab3e33a44fd6f6efb37cec5f8fa20d5"
         }
       ]
     },
@@ -3322,7 +3356,7 @@
       },
       "isError": false,
       "output": {
-        "txHash": "0x25449ade7413762b13566cd230ff48702f8809554a379564266a182a1e80828c",
+        "txHash": "0x5e2c2cd0ad80bca6d5a5292c2f07f00da4a33dd6aa976abca63b9d338af467b6",
         "contract": "staking",
         "method": "unstake",
         "status": "submitted"
@@ -3337,7 +3371,7 @@
           ],
           "value": "0",
           "gas": "3000000",
-          "hash": "0x25449ade7413762b13566cd230ff48702f8809554a379564266a182a1e80828c"
+          "hash": "0x5e2c2cd0ad80bca6d5a5292c2f07f00da4a33dd6aa976abca63b9d338af467b6"
         }
       ]
     },
@@ -3345,7 +3379,7 @@
       "tool": "staking_unbonded_claim",
       "isError": false,
       "output": {
-        "txHash": "0x8ef8714d7681b1f3191e6289b67f2266ea94fd3d2d043b3e51f5353fd05651a0",
+        "txHash": "0x7ed361c013e3c637ff35f7c6efd26a25a478363c9c0ae7222472e9027992ff34",
         "contract": "staking",
         "method": "claimUnbonded",
         "status": "success",
@@ -3360,7 +3394,7 @@
           "args": [],
           "value": "0",
           "gas": "3000000",
-          "hash": "0x8ef8714d7681b1f3191e6289b67f2266ea94fd3d2d043b3e51f5353fd05651a0"
+          "hash": "0x7ed361c013e3c637ff35f7c6efd26a25a478363c9c0ae7222472e9027992ff34"
         }
       ]
     },
@@ -3371,7 +3405,7 @@
       },
       "isError": false,
       "output": {
-        "txHash": "0x029298bb3235f1cd3ae5fb7a85ac8b4b7d3915fc6666feb5001ccf1b15d8ba48",
+        "txHash": "0xb4aa69ff81d463a86a68fcd203e50ba5142c272119f67be6d73325c24437e965",
         "contract": "agentreward",
         "method": "claimReward",
         "status": "success",
@@ -3389,7 +3423,7 @@
           ],
           "value": "0",
           "gas": "3000000",
-          "hash": "0x029298bb3235f1cd3ae5fb7a85ac8b4b7d3915fc6666feb5001ccf1b15d8ba48"
+          "hash": "0xb4aa69ff81d463a86a68fcd203e50ba5142c272119f67be6d73325c24437e965"
         }
       ]
     },
@@ -3401,7 +3435,7 @@
       },
       "isError": false,
       "output": {
-        "txHash": "0x6dea0411cd7a38fd8b189e8e04417b00496f3a698916e9e901bc6aae317a468b",
+        "txHash": "0x2bea668aea6589536dd22db686e00f5409dcbd4305529f9607d0eddcfe57164c",
         "contract": "agentreward",
         "method": "claimReward",
         "status": "success",
@@ -3419,7 +3453,7 @@
           ],
           "value": "0",
           "gas": "3000000",
-          "hash": "0x6dea0411cd7a38fd8b189e8e04417b00496f3a698916e9e901bc6aae317a468b"
+          "hash": "0x2bea668aea6589536dd22db686e00f5409dcbd4305529f9607d0eddcfe57164c"
         }
       ]
     },
@@ -3430,7 +3464,7 @@
       },
       "isError": false,
       "output": {
-        "txHash": "0xf28ce584b558f9809fee061f25b46ebba3771588bef303bed9397a84d97db400",
+        "txHash": "0xe2952710edd1b37349008de46bf4d9f815e7fc06e7ffb12a5a8caae411e0828d",
         "contract": "oracle",
         "method": "delegateFeederConsent",
         "status": "success",
@@ -3447,7 +3481,7 @@
           ],
           "value": "0",
           "gas": "3000000",
-          "hash": "0xf28ce584b558f9809fee061f25b46ebba3771588bef303bed9397a84d97db400"
+          "hash": "0xe2952710edd1b37349008de46bf4d9f815e7fc06e7ffb12a5a8caae411e0828d"
         }
       ]
     },
@@ -3465,7 +3499,7 @@
       },
       "isError": false,
       "output": {
-        "txHash": "0x92438a0ede0f795a209cf95e1235394930e598e906589e8d7e521d0d75ca65b1",
+        "txHash": "0xddc53f86519cc0384a897e172fda02c5d0e69da9d564bb8d5e09a595ebd7296f",
         "contract": "oracle",
         "method": "submitVote",
         "status": "success",
@@ -3489,7 +3523,7 @@
           ],
           "value": "0",
           "gas": "5000000",
-          "hash": "0x92438a0ede0f795a209cf95e1235394930e598e906589e8d7e521d0d75ca65b1"
+          "hash": "0xddc53f86519cc0384a897e172fda02c5d0e69da9d564bb8d5e09a595ebd7296f"
         }
       ]
     },
@@ -3505,7 +3539,7 @@
       "isError": false,
       "output": {
         "orderId": "0xc2ba503fbd9fcd95d181bf5622b0ad8330c16be953044766b61b1837246d73e9",
-        "txHash": "0xd481f236c13a0217ad4c678a43ecf7ece4c5cd48ab7f4304a24616ed542ea298",
+        "txHash": "0x9885dcf0bbeeba27a1d04e92721cfdeab13eac9d751107af3414a2adbb560a55",
         "approveTx": null,
         "router": "0xC846a86D4FE91a43E900a7a3bd5BE23ED2C30492",
         "origin": {
@@ -3559,7 +3593,7 @@
           ],
           "value": "1000000000000000000",
           "gas": "130000",
-          "hash": "0xd481f236c13a0217ad4c678a43ecf7ece4c5cd48ab7f4304a24616ed542ea298"
+          "hash": "0x9885dcf0bbeeba27a1d04e92721cfdeab13eac9d751107af3414a2adbb560a55"
         }
       ]
     },
@@ -3739,7 +3773,7 @@
       "isError": false,
       "output": {
         "orderId": "0x4444444444444444444444444444444444444444444444444444444444444444",
-        "txHash": "0xd9817795d875f554a24e3fdce94d32d3122708a5daab802d671f00992b8a1b38",
+        "txHash": "0x030544496b93afcf62977ec1f64fd22bf29551e3eb25b61671c950dd6968546c",
         "refundNetwork": "outbe-testnet",
         "sameChain": false,
         "messagingFee": {
@@ -3767,7 +3801,7 @@
           ],
           "value": "3",
           "gas": "130000",
-          "hash": "0xd9817795d875f554a24e3fdce94d32d3122708a5daab802d671f00992b8a1b38"
+          "hash": "0x030544496b93afcf62977ec1f64fd22bf29551e3eb25b61671c950dd6968546c"
         }
       ]
     },
@@ -5859,7 +5893,7 @@
         "paymentMinor": "3",
         "snapshotId": "3",
         "autoApprove": null,
-        "txHash": "0x5058669337786243cd278b3de173ad326a1cbde76d52152288cfe715d5e8658e",
+        "txHash": "0x5fe029cc99859f81df295ab703ad11b6f7a7dc2389b5c941b52ef0c4d09da746",
         "status": "success",
         "blockNumber": "100",
         "gasUsed": "21000"
@@ -5878,7 +5912,7 @@
           ],
           "value": "0",
           "gas": "130000",
-          "hash": "0x5058669337786243cd278b3de173ad326a1cbde76d52152288cfe715d5e8658e"
+          "hash": "0x5fe029cc99859f81df295ab703ad11b6f7a7dc2389b5c941b52ef0c4d09da746"
         }
       ]
     },

@@ -89,6 +89,7 @@ export class FakeChain {
   private readonly results = new Map<string, Result>();
   private readonly reverting = new Set<string>();
   private readonly failing = new Set<string>();
+  private readonly emitted = new Map<string, EmittedLog[]>();
   private readonly receipts = new Map<Hex, Record<string, unknown>>();
   private readonly transactions = new Map<Hex, Record<string, unknown>>();
   private readonly nonces = new Map<number, number>();
@@ -114,6 +115,11 @@ export class FakeChain {
   /** Makes every transaction calling `fn` mine with a failed receipt. */
   failReceipts(fn: string): void {
     this.failing.add(fn);
+  }
+
+  /** Attaches `logs` to the receipt of every transaction calling `fn`. */
+  receiptLogs(fn: string, logs: EmittedLog[]): void {
+    this.emitted.set(fn, logs);
   }
 
   install(): () => void {
@@ -238,16 +244,25 @@ export class FakeChain {
       hash,
     });
     this.nonces.set(chainId, (this.nonces.get(chainId) ?? 0) + 1);
-    this.record(hash, chainId, to, tx.data ?? "0x", tx.value ?? 0n, tx.gas ?? 0n, !this.failing.has(fn));
+    this.record(hash, chainId, to, tx.data ?? "0x", tx.value ?? 0n, tx.gas ?? 0n, !this.failing.has(fn), this.emitted.get(fn) ?? []);
     return hash;
   }
 
   /** Makes `hash` a mined transaction to `to` with `data`, as if it had been sent earlier. */
   seed(hash: Hex, chainId: number, to: string, data: Hex): void {
-    this.record(hash, chainId, getAddress(to), data, 0n, 21_000n, true);
+    this.record(hash, chainId, getAddress(to), data, 0n, 21_000n, true, []);
   }
 
-  private record(hash: Hex, chainId: number, to: Address, data: Hex, value: bigint, gas: bigint, ok: boolean): void {
+  private record(
+    hash: Hex,
+    chainId: number,
+    to: Address,
+    data: Hex,
+    value: bigint,
+    gas: bigint,
+    ok: boolean,
+    logs: EmittedLog[],
+  ): void {
     this.receipts.set(hash, {
       transactionHash: hash,
       transactionIndex: "0x0",
@@ -259,7 +274,15 @@ export class FakeChain {
       gasUsed: numberToHex(21_000),
       effectiveGasPrice: GAS_PRICE,
       contractAddress: null,
-      logs: [],
+      logs: logs.map((log, index) => ({
+        ...log,
+        blockHash: word("bb"),
+        blockNumber: numberToHex(BLOCK_NUMBER),
+        transactionHash: hash,
+        transactionIndex: "0x0",
+        logIndex: numberToHex(index),
+        removed: false,
+      })),
       logsBloom: ZERO_BLOOM,
       status: ok ? "0x1" : "0x0",
       type: "0x2",
@@ -286,6 +309,12 @@ export class FakeChain {
       accessList: [],
     });
   }
+}
+
+export interface EmittedLog {
+  address: Address;
+  topics: Hex[];
+  data: Hex;
 }
 
 interface RpcRequest {

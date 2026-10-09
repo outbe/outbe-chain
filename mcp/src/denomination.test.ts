@@ -25,6 +25,7 @@ import {
 import { formatParam, humanizeReturn } from "./format.js";
 import { humanizeOrder } from "./intent/format.js";
 import { CONTRACTS, resolveContract } from "./registry.js";
+import { ERC20_ABI } from "./net/erc20.js";
 import { SIGNER, startHarness } from "./test/harness.js";
 import { registerSignTools } from "./tools/sign.js";
 import { registerViewTools } from "./tools/view.js";
@@ -542,6 +543,7 @@ test("external intent amounts retain their existing 18-decimal presentation", ()
 test("MCP Credis and pledge tools encode their calls against the registered ABIs", async () => {
   const harness = await startHarness((chain) => {
     for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
+    chain.register(ERC20_ABI);
   });
   const smartAccount = "0x00000000000000000000000000000000000000aa";
   const source = SIGNER;

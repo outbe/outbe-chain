@@ -36,3 +36,14 @@ export function networkResolver(ctx: Ctx, privateKey?: string): NetworkResolver 
     return network;
   };
 }
+
+/** The connected outbe node as a `Network`. */
+export function contextNetwork(ctx: Ctx): Network {
+  return {
+    name: ctx.chain.name,
+    chainId: ctx.chain.id,
+    chain: ctx.chain,
+    client: ctx.publicClient,
+    wallet: ctx.walletClient,
+  };
+}
