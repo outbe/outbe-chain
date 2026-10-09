@@ -90,6 +90,7 @@ export class FakeChain {
   private readonly reverting = new Set<string>();
   private readonly failing = new Set<string>();
   private readonly emitted = new Map<string, EmittedLog[]>();
+  private readonly unreachable = new Set<string>();
   private readonly receipts = new Map<Hex, Record<string, unknown>>();
   private readonly transactions = new Map<Hex, Record<string, unknown>>();
   private readonly nonces = new Map<number, number>();
@@ -110,6 +111,11 @@ export class FakeChain {
 
   revert(fn: string, address?: string): void {
     this.reverting.add(this.key(fn, address));
+  }
+
+  /** Makes every read of `fn` fail the way an unreachable node does, without a revert. */
+  breakReads(fn: string): void {
+    this.unreachable.add(fn);
   }
 
   /** Makes every transaction calling `fn` mine with a failed receipt. */
@@ -212,6 +218,7 @@ export class FakeChain {
     if (this.reverting.has(this.key(fn.name, to)) || this.reverting.has(fn.name)) {
       throw new RpcError(3, `execution reverted: ${fn.name}`);
     }
+    if (this.unreachable.has(fn.name)) throw new RpcError(-32000, "upstream node unavailable");
     const { args } = decodeFunctionData({ abi: [fn], data });
     const override = this.results.get(this.key(fn.name, to)) ?? this.results.get(fn.name);
     const result =

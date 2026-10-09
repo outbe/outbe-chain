@@ -88,6 +88,9 @@ export function intexNftFromBlock(network: string): bigint {
   return NFT_DEPLOY_BLOCK[network] ?? 0n;
 }
 
+/** An Intex contract the network has no address for. */
+export class NotConfiguredError extends Error {}
+
 /** Resolve a contract address for a network, or throw a clear error. */
 export function intexAddress(network: string, key: keyof IntexAddresses): Address {
   let addr: Address | undefined;
@@ -107,7 +110,7 @@ export function intexAddress(network: string, key: keyof IntexAddresses): Addres
       addr = network === OUTBE_NETWORK ? OUTBE_ONLY[key] : undefined;
   }
   if (!addr) {
-    throw new Error(`Intex "${key}" is not configured on "${network}"`);
+    throw new NotConfiguredError(`Intex "${key}" is not configured on "${network}"`);
   }
   return addr;
 }

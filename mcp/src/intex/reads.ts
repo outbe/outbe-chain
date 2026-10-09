@@ -1,4 +1,13 @@
-import { type AbiEvent, type Address, type Hex, getAbiItem, getAddress, pad } from "viem";
+import {
+  type AbiEvent,
+  type Address,
+  BaseError,
+  ContractFunctionRevertedError,
+  type Hex,
+  getAbiItem,
+  getAddress,
+  pad,
+} from "viem";
 import { type DecodedDataUri, parseDataUri } from "../format.js";
 import type { Network } from "../net/resolver.js";
 import {
@@ -9,6 +18,7 @@ import {
   NFT_ABI,
   VAULT_ROUTER_ABI,
   bridgeDstChainId,
+  NotConfiguredError,
   intexAddress,
   intexNftFromBlock,
 } from "./registry.js";
@@ -17,6 +27,11 @@ import { ymdRange } from "./dates.js";
 export const PROMIS_MINED_EVENT = getAbiItem({ abi: FACTORY_ABI, name: "PromisMined" }) as AbiEvent;
 export const TRANSFER_SINGLE_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferSingle" }) as AbiEvent;
 export const TRANSFER_BATCH_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferBatch" }) as AbiEvent;
+
+/** A contract call the chain answered with a revert, as opposed to a failure to reach it. */
+export function isRevert(error: unknown): boolean {
+  return error instanceof BaseError && error.walk((e) => e instanceof ContractFunctionRevertedError) !== null;
+}
 
 export function addr(n: Network, key: keyof IntexAddresses): Address {
   return intexAddress(n.name, key);
@@ -97,8 +112,9 @@ export async function seriesMetadata(
       issued: parseDataUri(issued),
       settled: parseDataUri(settled),
     };
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (isRevert(error) || error instanceof NotConfiguredError) return undefined;
+    throw error;
   }
 }
 /**
@@ -169,8 +185,9 @@ export async function discoverByDate(n: Network, fromDate: number, toDate: numbe
     ymdRange(fromDate, toDate).map(async (worldwideDay) => {
       try {
         return { worldwideDay, stage: await auctionStageOf(n, worldwideDay) };
-      } catch {
-        return null; // getAuctionStage reverts AuctionNotFound for empty dates
+      } catch (error) {
+        if (isRevert(error)) return null; // getAuctionStage reverts AuctionNotFound for empty dates
+        throw error;
       }
     }),
   );
