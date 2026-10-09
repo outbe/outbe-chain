@@ -33,26 +33,15 @@ pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 
     PROMIS.account_keys.derive_modify_key(state_key, account)
 }
 
+/// The account operation covered by a Promis authorization.
+pub type ModifyOperation = crate::confidential::ModifyOperation<PromisOp>;
+
 /// `HMAC-SHA256(modify_key, preimage)` - the write authorization the client sends
 /// and the enclave re-checks. See [`crate::confidential::ModifyDomain::modify_mac`].
-pub fn modify_mac(
-    modify_key: &[u8; 32],
-    account: Address,
-    op: PromisOp,
-    amount: U256,
-    op_nonce: u64,
-    chain_id: B256,
-) -> [u8; 32] {
-    PROMIS.authorization.modify_mac(
-        modify_key,
-        &crate::confidential::ModifyAuthorization {
-            account,
-            op_tag: op as u8,
-            amount,
-            op_nonce,
-            chain_id,
-        },
-    )
+pub fn modify_mac(modify_key: &[u8; 32], operation: &ModifyOperation) -> [u8; 32] {
+    PROMIS
+        .authorization
+        .modify_mac(modify_key, &operation.authorization())
 }
 
 /// Client-side helper: decrypt an account's Promis balance blob with its view key
