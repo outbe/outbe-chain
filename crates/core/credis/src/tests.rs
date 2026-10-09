@@ -191,7 +191,7 @@ fn credis_id_matches_keccak_and_binds_every_field() {
 }
 
 #[test]
-fn open_credis_seals_the_call_price_from_the_call_anchor() {
+fn issuance_seals_the_call_price_from_the_call_anchor() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = credis.issue(params(alice())).unwrap();
@@ -232,7 +232,7 @@ fn open_credis_seals_the_call_price_from_the_call_anchor() {
 }
 
 #[test]
-fn open_credis_rejects_duplicates_and_zero_amounts() {
+fn issuance_rejects_duplicates_and_zero_amounts() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         credis.issue(params(alice())).unwrap();
@@ -251,7 +251,7 @@ fn open_credis_rejects_duplicates_and_zero_amounts() {
 }
 
 #[test]
-fn open_credis_requires_a_pledge_source() {
+fn issuance_requires_a_pledge_source() {
     with_credis(|storage| {
         let mut no_source = params(alice());
         no_source.source = Address::ZERO;
@@ -732,7 +732,7 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
 }
 
 #[test]
-fn settle_runs_from_open_and_is_rejected_after_closing() {
+fn settle_runs_from_issuance_and_is_rejected_after_closing() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = credis.issue(params(alice())).unwrap();
@@ -1125,7 +1125,7 @@ fn indexed_ids(credis: &CredisContract<'_>, sample: U256) -> Vec<U256> {
 }
 
 #[test]
-fn the_call_index_holds_exactly_the_open_credis() {
+fn the_call_index_holds_exactly_the_issued_credis() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = credis.issue(params(alice())).unwrap();
@@ -1147,7 +1147,7 @@ fn the_call_index_holds_exactly_the_open_credis() {
 }
 
 #[test]
-fn settling_an_open_credis_in_full_leaves_the_call_index() {
+fn settling_an_issued_credis_in_full_leaves_the_call_index() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = credis.issue(params(alice())).unwrap();
@@ -1352,7 +1352,7 @@ fn precompile_get_credis_returns_the_full_record() {
 }
 
 #[test]
-fn precompile_enumerates_positions_globally_and_per_owner() {
+fn precompile_enumerates_credis_globally_and_per_owner() {
     with_credis(|storage| {
         let (first, second) = {
             let mut credis = CredisContract::new(storage.clone());
@@ -1541,7 +1541,7 @@ fn precompile_supports_erc165() {
 }
 
 #[test]
-fn cca_weight_tracks_opening_and_only_the_collateral_burned_on_forfeit() {
+fn cca_weight_tracks_issuance_and_only_the_collateral_burned_on_forfeit() {
     let mut provider = credis_provider();
     let initial = collateral();
     let day = timestamp_to_date_key(ORIGINATED_AT);
@@ -1670,7 +1670,7 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
 }
 
 #[test]
-fn oversized_timestamp_rolls_back_opening_and_voiding() {
+fn oversized_timestamp_rolls_back_issuance_and_forfeit() {
     let mut provider = credis_provider();
     let id = open_at_block(&mut provider, 1, params(alice()));
     provider.set_block_number(2);
@@ -1769,7 +1769,7 @@ fn precompile_names_the_collection_and_is_soulbound() {
 }
 
 #[test]
-fn open_credis_announces_the_mint() {
+fn issuance_announces_the_mint() {
     use alloy_sol_types::SolEvent;
 
     let mut provider = prod_provider();
@@ -2133,6 +2133,40 @@ fn static_test_arming_is_rejected() {
     );
 }
 
+#[cfg(feature = "e2e-test")]
+#[test]
+fn test_arming_backdates_and_requeues_only_a_called_credis() {
+    use crate::test_arming::ICredisTestArming;
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let id = credis.issue(params(alice())).unwrap();
+        let arm = |data: Vec<u8>| dispatch(storage.clone(), &data, alice(), U256::ZERO);
+        let requeue = ICredisTestArming::closeCallNoticeForTestCall {
+            credisId: id,
+            deadline: at(5),
+        }
+        .abi_encode();
+        let err = arm(requeue.clone()).unwrap_err();
+        assert!(err.to_string().contains("not called"), "{err}");
+
+        arm(ICredisTestArming::backdateCredisForTestCall {
+            credisId: id,
+            issuedAt: at(0) - 30 * DAY,
+        }
+        .abi_encode())
+        .unwrap();
+        let record = credis.get_credis(id).unwrap();
+        assert_eq!(
+            (record.issued_at, record.last_settled_at),
+            (at(0) - 30 * DAY, at(0) - 30 * DAY)
+        );
+
+        assert!(credis.mark_called(id, at(10)).unwrap());
+        arm(requeue).unwrap();
+        assert_eq!(credis.called_deadline.read(&id).unwrap(), at(5));
+    });
+}
+
 #[test]
 fn the_profile_selector_resolves_by_network_and_rejects_unknown_values() {
     use crate::config::{CredisParams, PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
@@ -2168,12 +2202,18 @@ fn issuance_off_mainnet_seals_the_dev_terms() {
             .unwrap();
         let id = open_pos(&mut credis);
         let record = credis.get_credis(id).unwrap();
-        let dev = crate::config::CredisParams::DEV;
-        assert_eq!(record.call_window_seconds, dev.call_window_seconds);
-        assert_eq!(record.call_threshold_seconds, dev.call_threshold_seconds);
+        let notice = if cfg!(feature = "e2e-test") {
+            600
+        } else {
+            3 * DAY
+        };
         assert_eq!(
-            record.call_notice_period_seconds,
-            dev.call_notice_period_seconds
+            (
+                u64::from(record.call_window_seconds),
+                u64::from(record.call_threshold_seconds),
+                u64::from(record.call_notice_period_seconds)
+            ),
+            (3 * DAY, 2 * DAY, notice)
         );
         id
     });

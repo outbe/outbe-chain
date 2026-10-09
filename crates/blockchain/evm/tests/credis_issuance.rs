@@ -76,8 +76,8 @@ struct IssuanceEvm {
     scope: Arc<ExecutionScope>,
 }
 struct PaymentObservation {
-    position: U256,
-    position_call: outbe_credis::precompile::ICredis::getCredisCall,
+    credis_id: U256,
+    credis_call: outbe_credis::precompile::ICredis::getCredisCall,
     before: Bytes,
     pledged: Bytes,
 }
@@ -538,7 +538,7 @@ fn assert_payment_rollback(
         CREDIS_FACTORY_ADDRESS,
         U256::ZERO,
         ICredisFactory::settleCredisCall {
-            credisId: observation.position,
+            credisId: observation.credis_id,
             amountMinor: U256::from(1_000_000)
         }
     );
@@ -555,7 +555,7 @@ fn assert_payment_rollback(
         );
     }
     assert_eq!(evm.ctx.journaled_state.logs().len(), logs);
-    assert_payment_position_and_pledge_unchanged(evm, observation)?;
+    assert_payment_credis_and_pledge_unchanged(evm, observation)?;
     assert_payment_token_balances(evm)?;
     call!(
         evm,
@@ -574,13 +574,13 @@ fn settle_successful_issuance(
 ) -> eyre::Result<()> {
     use outbe_credis::precompile::ICredis;
     use outbe_primitives::addresses::CREDIS_ADDRESS;
-    let position = ICredisFactory::issueCredisCall::abi_decode_returns(&out.returndata)?.credisId;
+    let credis_id = ICredisFactory::issueCredisCall::abi_decode_returns(&out.returndata)?.credisId;
     call!(
         evm,
         OWNER,
         ASSET,
         U256::ZERO,
-        IFixture::setPositionCall { id: position }
+        IFixture::setPositionCall { id: credis_id }
     );
     call!(
         evm,
@@ -592,19 +592,14 @@ fn settle_successful_issuance(
             amount: U256::MAX
         }
     );
-    let position_call = ICredis::getCredisCall { credisId: position };
-    let before = call!(
-        evm,
-        OWNER,
-        CREDIS_ADDRESS,
-        U256::ZERO,
-        position_call.clone()
-    )
-    .returndata;
+    let credis_call = ICredis::getCredisCall {
+        credisId: credis_id,
+    };
+    let before = call!(evm, OWNER, CREDIS_ADDRESS, U256::ZERO, credis_call.clone()).returndata;
     let pledged = pledged_blob(evm)?;
     let payment = PaymentObservation {
-        position,
-        position_call,
+        credis_id,
+        credis_call,
         before,
         pledged,
     };
@@ -617,7 +612,7 @@ fn settle_successful_issuance(
         CREDIS_FACTORY_ADDRESS,
         U256::ZERO,
         ICredisFactory::settleCredisCall {
-            credisId: position,
+            credisId: credis_id,
             amountMinor: U256::from(1_000_000)
         }
     );
@@ -680,7 +675,7 @@ fn assert_issuance_payout_events(evm: &IssuanceEvm, failure: u64) -> eyre::Resul
     Ok(())
 }
 
-fn assert_payment_position_and_pledge_unchanged(
+fn assert_payment_credis_and_pledge_unchanged(
     evm: &mut IssuanceEvm,
     observation: &PaymentObservation,
 ) -> eyre::Result<()> {
@@ -691,7 +686,7 @@ fn assert_payment_position_and_pledge_unchanged(
             OWNER,
             CREDIS_ADDRESS,
             U256::ZERO,
-            observation.position_call.clone()
+            observation.credis_call.clone()
         )
         .returndata,
         observation.before

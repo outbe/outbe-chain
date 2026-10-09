@@ -332,8 +332,9 @@ fn issue_with(
     runtime::issue_credis(storage.clone(), cca(), id, reference, pledge_stake())
 }
 
-/// The pledge terms come from the reservation. The reference currency, the call
-/// anchor and the policy rate are fixed at issuance, from the day that just closed.
+/// The pledge terms come from the reservation, whatever the price does after it. The
+/// reference currency, the call anchor and the policy rate are fixed at issuance,
+/// from the day that just closed.
 #[test]
 fn issuance_reads_the_call_terms_at_issuance_across_midnight() {
     let mut provider = env();
@@ -350,6 +351,7 @@ fn issuance_reads_the_call_terms_at_issuance_across_midnight() {
             .policy_rate
             .write(&ISSUANCE_ISO, U256::from(50_000))
             .unwrap();
+        set_coen_rate(&storage, U256::from(7_000_000u64));
         fund_stake(&storage, pledge_stake());
 
         // The day that just closed has no VWAP yet: issuance reverts and keeps the pledge.
@@ -391,14 +393,23 @@ fn issuance_rejects_an_unregistered_reference_currency_or_a_missing_rate() {
         let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), id, 1);
         fund_stake(&storage, pledge_stake());
+        let reservation = outbe_vaultrouter::api::reservation_of(&storage, id).unwrap();
+        let rejected = |reference: u16, reason: &str| {
+            let err = issue_with(&storage, id, reference).unwrap_err();
+            assert!(err.to_string().contains(reason), "{err}");
+            assert_eq!(pledge_of(&storage, id).unwrap().source, alice());
+            assert_eq!(
+                outbe_vaultrouter::api::reservation_of(&storage, id).unwrap(),
+                reservation
+            );
+        };
 
-        assert!(issue_with(&storage, id, 999).is_err());
+        rejected(999, "not a registered reference currency");
         outbe_oracle::schema::OracleContract::new(storage.clone())
             .policy_rate
             .write(&ISSUANCE_ISO, U256::ZERO)
             .unwrap();
-        assert!(issue_with(&storage, id, REFERENCE_ISO).is_err());
-        assert_eq!(pledge_of(&storage, id).unwrap().source, alice());
+        rejected(REFERENCE_ISO, "no policy rate");
     });
     teardown();
 }

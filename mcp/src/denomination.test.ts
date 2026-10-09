@@ -214,7 +214,7 @@ test("MCP leaves asset-native amounts raw and scales Gratis, Promis and prices",
     "principalPaidMinor",
     "principalWrittenOffMinor",
     "interestAccruedMinor",
-    "interestMinor",
+    "interestPaidMinor",
     "paymentMinor",
     "amountMinor",
   ]) {

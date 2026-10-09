@@ -36,7 +36,7 @@ fn collateral(storage: &StorageHandle<'_>, id: U256) -> U256 {
 }
 
 #[test]
-fn settle_runs_immediately_after_opening() {
+fn settle_runs_immediately_after_issuance() {
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
@@ -281,7 +281,7 @@ fn issue_credis_allows_an_owner_with_an_unresolved_call() {
 }
 
 #[test]
-fn one_source_backs_several_positions_and_unused_pledges() {
+fn one_source_backs_several_credis_and_unused_pledges() {
     let mut provider = env();
     let first = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(3u64));
@@ -550,7 +550,7 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
 }
 
 #[test]
-fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source() {
+fn a_half_paid_call_forfeits_only_the_unpaid_backing_of_another_accounts_source() {
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));

@@ -47,7 +47,7 @@ fn open_with_series(storage: &StorageHandle<'_>, at: u64, days: u32, price: U256
     credis_id
 }
 
-/// Rewrites the call terms sealed on a Credis, the way a retuned constant
+/// Rewrites the call terms sealed on a Credis, the way a switched profile
 /// would have if the terms were still read live. Widens the currency's
 /// high-water mark alongside, exactly as `issue` does.
 fn reterm(
@@ -74,18 +74,17 @@ fn reterm(
 }
 
 /// The terms a Credis is called and forfeited under are the ones sealed at
-/// opening, not the live constants. A `const` cannot be retuned at runtime, so
-/// this proves it from the other side: rewrite what the record holds and watch
-/// the scan follow the record rather than the constant.
+/// issuance, not the live profile: rewrite what the record holds and watch the
+/// scan follow the record rather than the profile.
 #[test]
-fn the_scan_follows_the_terms_sealed_on_the_credis_not_the_constants() {
+fn the_scan_follows_the_terms_sealed_on_the_credis_not_the_profile() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
         let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, below_call());
         // Three breach days at the head of the window - far short of the 21 the
-        // constant demands, and exactly the threshold the record will carry.
+        // profile demands, and exactly the threshold the record will carry.
         for i in 0..3 {
             set_vwap(&storage, day_back(at, i), above_call());
         }
@@ -93,7 +92,7 @@ fn the_scan_follows_the_terms_sealed_on_the_credis_not_the_constants() {
         assert_eq!(
             scan(&storage, at),
             0,
-            "the constant's 21-of-28 threshold is unmet"
+            "the profile's 21-of-28 threshold is unmet"
         );
 
         reterm(&storage, credis_id, 3, 3, 1);
@@ -139,11 +138,11 @@ fn a_credis_with_zero_call_terms_is_never_called() {
     teardown();
 }
 
-/// A Credis whose sealed window outruns the current constant still gets its
-/// whole span collected: the scan sizes the shared per-currency window off the
-/// `max_call_window_seconds` high-water mark, not off the constant.
+/// A Credis whose sealed window outruns the live profile still gets its whole
+/// span collected: the scan sizes the shared per-currency window off the
+/// `max_call_window_seconds` high-water mark, not off the profile.
 #[test]
-fn a_window_wider_than_the_constant_is_collected_in_full() {
+fn a_window_wider_than_the_profile_is_collected_in_full() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
@@ -378,7 +377,7 @@ fn a_breach_run_that_predates_the_credis_does_not_call_it() {
 /// A Credis opened at 00:00 counts its issuance day. One opened at 00:00:01 starts
 /// counting the next day, so the same threshold run falls one day short.
 #[test]
-fn the_issuance_day_counts_only_for_a_credis_opened_at_midnight() {
+fn the_issuance_day_counts_only_for_a_credis_issued_at_midnight() {
     for (offset, called_at_threshold) in [(0, true), (1, false)] {
         let mut storage = env();
         StorageHandle::enter(&mut storage, |storage| {
@@ -823,7 +822,7 @@ fn queued_at(storage: &StorageHandle<'_>, credis_id: U256) -> u64 {
 }
 
 #[test]
-fn voiding_several_positions_in_one_block_skips_none() {
+fn forfeiting_several_credis_in_one_block_skips_none() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
@@ -870,7 +869,7 @@ fn a_forfeit_waits_for_the_hour_its_deadline_falls_in_to_close() {
 }
 
 #[test]
-fn every_cycle_tick_voids_without_the_daily_trigger() {
+fn every_cycle_tick_forfeits_without_the_daily_trigger() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
