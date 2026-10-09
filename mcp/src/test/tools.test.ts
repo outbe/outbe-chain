@@ -265,33 +265,36 @@ function seedRandomness(): void {
   syncBuiltinESMExports();
 }
 
+/** Every contract the tools address, answering with fixed values. */
+function fixedChain(chain: FakeChain): void {
+  for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
+  for (const network of [
+    { name: "outbe-testnet", isOutbe: true },
+    { name: "bsc-testnet", isOutbe: false },
+  ]) {
+    for (const [abi, key] of INTEX_ABIS) {
+      try {
+        chain.register(abi, intexAddress(network, key));
+      } catch {
+        // Not deployed on this network.
+      }
+    }
+  }
+  chain.register(ROUTER_ABI, DEFAULT_ROUTER);
+  chain.register(ERC20_ABI);
+  for (const name of ["tokenURI", "contractURI", "uri"]) chain.reply(name, DATA_URI);
+  chain.reply("tributeOfferPublicKey", 9n);
+  chain.seed(HASH, 54_322_345, OTHER, "0x1234");
+  chain.reply("openOrders", ORDER);
+  chain.reply("targets", [97, 54_322_345]);
+  chain.reply("orderStatus", stringToHex("OPENED", { size: 32 }));
+  for (const name of ["totalSeries", "getPairCount"]) chain.reply(name, 3n);
+}
+
 test("every MCP tool keeps its surface and its output against a fixed chain", async () => {
   mock.timers.enable({ apis: ["Date"], now: Date.UTC(2026, 9, 9, 12) });
   seedRandomness();
-  const harness = await startHarness((chain) => {
-    for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
-    for (const network of [
-      { name: "outbe-testnet", isOutbe: true },
-      { name: "bsc-testnet", isOutbe: false },
-    ]) {
-      for (const [abi, key] of INTEX_ABIS) {
-        try {
-          chain.register(abi, intexAddress(network, key));
-        } catch {
-          // Not deployed on this network.
-        }
-      }
-    }
-    chain.register(ROUTER_ABI, DEFAULT_ROUTER);
-    chain.register(ERC20_ABI);
-    for (const name of ["tokenURI", "contractURI", "uri"]) chain.reply(name, DATA_URI);
-    chain.reply("tributeOfferPublicKey", 9n);
-    chain.seed(HASH, 54_322_345, OTHER, "0x1234");
-    chain.reply("openOrders", ORDER);
-    chain.reply("targets", [97, 54_322_345]);
-    chain.reply("orderStatus", stringToHex("OPENED", { size: 32 }));
-    for (const name of ["totalSeries", "getPairCount"]) chain.reply(name, 3n);
-  });
+  const harness = await startHarness(fixedChain);
   try {
     const { tools } = await harness.client.listTools();
     const calls = [];
@@ -329,3 +332,20 @@ test("every MCP tool keeps its surface and its output against a fixed chain", as
   }
 });
 
+
+test("without a key every signing tool refuses before it sends", async () => {
+  const expected = JSON.parse(readFileSync(GOLDEN, "utf8")) as { calls: { sent: unknown[] }[] };
+  const harness = await startHarness(fixedChain, { signer: false });
+  try {
+    for (const [index, [tool, args]] of TOOLS.entries()) {
+      const { text, isError } = await harness.call(tool, args);
+      if (expected.calls[index].sent.length > 0) {
+        assert(isError, `${tool} answered without a key`);
+        assert.match(text, /OUTBE_PRIVATE_KEY/, tool);
+      }
+    }
+    assert.equal(harness.chain.sent.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
