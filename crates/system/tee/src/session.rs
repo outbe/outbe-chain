@@ -243,7 +243,7 @@ impl EnclaveSession {
             Some(client) => client.request(req),
             // Reconnect either installs a client or errors. Keep the impossible
             // missing-client path structured instead of panicking.
-            None => Err(TransportError::EnclaveError(
+            None => Err(TransportError::Unavailable(
                 "enclave session has no connection after reconnect".into(),
             )),
         }
