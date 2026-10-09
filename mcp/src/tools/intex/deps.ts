@@ -36,18 +36,55 @@ export interface IntexDeps {
   bridgeDestination(n: Network, spec?: string): Promise<number>;
 }
 
-export function intexDeps(ctx: Ctx): IntexDeps {
-  const metaCache = new Map<number, PaymentMeta>();
-  const resolveNetwork = networkResolver(ctx, loadConfig());
+/** Reads a token's metadata once per chain. */
+function paymentMetaReader(): (n: Network) => Promise<PaymentMeta> {
+  const cache = new Map<number, Promise<PaymentMeta>>();
+  const read = async (n: Network): Promise<PaymentMeta> => {
+    const token = await escrowPaymentToken(n);
+    const [decimals, symbol] = (await Promise.all([
+      n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+      n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+    ])) as [number, string];
+    return { token, decimals: Number(decimals), symbol };
+  };
+  return (n) => {
+    const cached = cache.get(n.chainId) ?? read(n).catch((error) => {
+      cache.delete(n.chainId);
+      throw error;
+    });
+    cache.set(n.chainId, cached);
+    return cached;
+  };
+}
+
+/** Every chain running Intex: the connected Outbe node and the origin router's targets, read once. */
+function intexChainsReader(ctx: Ctx): () => Promise<number[]> {
   let targets: Promise<number[]> | undefined;
-  const intexChains = async (): Promise<number[]> => {
-    targets ??= intexTargets(contextNetwork(ctx));
-    const chainIds = await targets.catch((error) => {
+  return async () => {
+    targets ??= intexTargets(contextNetwork(ctx)).catch((error) => {
       targets = undefined;
       throw error;
     });
-    return [...new Set([ctx.chain.id, ...chainIds])];
+    return [...new Set([ctx.chain.id, ...(await targets)])];
   };
+}
+
+function bridgeDestinationOf(ctx: Ctx, n: Network, peers: number[], spec?: string): number {
+  let destination: number | undefined = ctx.chain.id;
+  if (spec !== undefined) destination = chainIdOf(spec, ctx);
+  else if (n.isOutbe) destination = peers.length === 1 ? peers[0] : undefined;
+  if (destination === undefined) {
+    throw new Error(`pass destination: ${n.name} bridges to chains ${peers.join(", ")}`);
+  }
+  if (!peers.includes(destination)) {
+    throw new Error(`${n.name} cannot bridge to chain ${destination}; its Intex peers are ${peers.join(", ")}`);
+  }
+  return destination;
+}
+
+export function intexDeps(ctx: Ctx): IntexDeps {
+  const resolveNetwork = networkResolver(ctx, loadConfig());
+  const intexChains = intexChainsReader(ctx);
   return {
     ctx,
     resolveNetwork,
@@ -61,18 +98,7 @@ export function intexDeps(ctx: Ctx): IntexDeps {
       if (wait === false) return { txHash: hash, status: "submitted" as const };
       return { txHash: hash, ...receiptSummary(await waitForReceipt(n, hash)) };
     },
-    async paymentMeta(n) {
-      const cached = metaCache.get(n.chainId);
-      if (cached) return cached;
-      const token = await escrowPaymentToken(n);
-      const [decimals, symbol] = (await Promise.all([
-        n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
-        n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
-      ])) as [number, string];
-      const meta = { token, decimals: Number(decimals), symbol };
-      metaCache.set(n.chainId, meta);
-      return meta;
-    },
+    paymentMeta: paymentMetaReader(),
     async target(spec) {
       const n = await resolveNetwork(spec ?? TARGET_NETWORK);
       const chainIds = await intexChains();
@@ -82,16 +108,8 @@ export function intexDeps(ctx: Ctx): IntexDeps {
       return n;
     },
     async bridgeDestination(n, spec) {
-      const chainIds = (await intexChains()).filter((id) => id !== n.chainId);
-      const destination =
-        spec !== undefined ? chainIdOf(spec, ctx) : n.isOutbe ? (chainIds.length === 1 ? chainIds[0] : undefined) : ctx.chain.id;
-      if (destination === undefined) {
-        throw new Error(`pass destination: ${n.name} bridges to chains ${chainIds.join(", ")}`);
-      }
-      if (!chainIds.includes(destination)) {
-        throw new Error(`${n.name} cannot bridge to chain ${destination}; its Intex peers are ${chainIds.join(", ")}`);
-      }
-      return destination;
+      const peers = (await intexChains()).filter((id) => id !== n.chainId);
+      return bridgeDestinationOf(ctx, n, peers, spec);
     },
   };
 }
