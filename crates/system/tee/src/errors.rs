@@ -64,6 +64,9 @@ pub enum TransportError {
 
     #[error("enclave session permanently revoked: {0}")]
     SessionRevoked(&'static str),
+
+    #[error("enclave unavailable: {0}")]
+    Unavailable(String),
 }
 
 impl TransportError {
@@ -85,6 +88,22 @@ impl TransportError {
         matches!(
             self,
             Self::Io(_) | Self::IoTimeout { .. } | Self::Noise(_) | Self::FrameTooLarge(_)
+        )
+    }
+
+    /// True when the fault lies with this node's own enclave, session or socket,
+    /// so another node's enclave would have answered the same request.
+    pub fn is_node_local(&self) -> bool {
+        matches!(
+            self,
+            Self::Io(_)
+                | Self::IoTimeout { .. }
+                | Self::Noise(_)
+                | Self::FrameTooLarge(_)
+                | Self::Handshake(_)
+                | Self::SessionRevoked(_)
+                | Self::IdentityMismatch(_)
+                | Self::Unavailable(_)
         )
     }
 
@@ -110,6 +129,45 @@ impl TransportError {
             Self::NodMintRejected(_) => "nod_mint_rejected",
             Self::IdentityMismatch(_) => "identity_mismatch",
             Self::SessionRevoked(_) => "session_revoked",
+            Self::Unavailable(_) => "unavailable",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TransportError;
+
+    #[test]
+    fn a_missing_session_is_this_nodes_fault() {
+        let error = crate::tribute_client::read_tribute_amounts(&[]).unwrap_err();
+        assert!(matches!(error, TransportError::Unavailable(_)), "{error}");
+        assert!(error.is_node_local());
+        assert_eq!(error.metric_class(), "unavailable");
+    }
+
+    #[test]
+    fn an_enclave_answer_or_a_bad_result_is_not_node_local() {
+        for error in [
+            TransportError::EnclaveError("x".into()),
+            TransportError::UnexpectedResponse,
+            TransportError::Codec("x".into()),
+            TransportError::Attestation("x".into()),
+            TransportError::NodMintRejected("x".into()),
+        ] {
+            assert!(!error.is_node_local(), "{error}");
+        }
+        for error in [
+            TransportError::IoTimeout {
+                operation: "x",
+                timeout_secs: 1,
+            },
+            TransportError::Noise("x".into()),
+            TransportError::Handshake("x".into()),
+            TransportError::SessionRevoked("x"),
+            TransportError::IdentityMismatch("x".into()),
+        ] {
+            assert!(error.is_node_local(), "{error}");
         }
     }
 }
