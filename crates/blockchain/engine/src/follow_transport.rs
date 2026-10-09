@@ -22,14 +22,16 @@
 //!   afterwards.
 
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use alloy_primitives::B256;
 use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_cryptography::certificate::Verifier as _;
-use jsonrpsee::core::client::ClientT;
+use jsonrpsee::core::client::{ClientT, Error as ClientError};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
 use outbe_consensus::block::ConsensusBlock;
@@ -126,18 +128,82 @@ struct UpstreamAncestorFinalityProof {
 pub struct UpstreamRpcClient {
     client: Arc<HttpClient>,
     url: String,
+    methods: Arc<UpstreamMethods>,
+}
+
+/// Explicit bounds of one upstream request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UpstreamLimits {
+    /// Wall-clock bound of one RPC request.
+    pub request_timeout: Duration,
+    /// Largest accepted response body, in bytes.
+    pub max_response_bytes: u32,
+}
+
+impl UpstreamLimits {
+    /// Production bounds.
+    ///
+    /// * 10 s per request: a finality-proof request followed by its legacy
+    ///   fallback stays inside the follower resolver's 30 s resolution deadline.
+    /// * 10 MiB per response body (the jsonrpsee default, now explicit). The
+    ///   follower resolver runs a bounded number of requests at once and caps
+    ///   every delivered value separately.
+    pub const DEFAULT: Self = Self {
+        request_timeout: Duration::from_secs(10),
+        max_response_bytes: 10 * 1024 * 1024,
+    };
+}
+
+/// JSON-RPC 2.0 "method not found".
+const JSONRPC_METHOD_NOT_FOUND: i32 = -32601;
+
+/// What a failed call of an optional upstream method means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CallFailure {
+    /// The upstream does not serve the method: use the legacy method from now on.
+    MethodNotFound,
+    /// Timeout, transport or upstream error: retry the same method later, never
+    /// switch methods because of it.
+    Transient,
+}
+
+impl CallFailure {
+    fn of(error: &ClientError) -> Self {
+        match error {
+            ClientError::Call(object) if object.code() == JSONRPC_METHOD_NOT_FOUND => {
+                Self::MethodNotFound
+            }
+            _ => Self::Transient,
+        }
+    }
+}
+
+/// Optional upstream methods this client learned are missing. Only a
+/// method-not-found answer sets a flag; nothing transient does.
+#[derive(Default)]
+struct UpstreamMethods {
+    finality_proof_missing: AtomicBool,
+    consensus_block_missing: AtomicBool,
 }
 
 impl UpstreamRpcClient {
-    /// Build an HTTP client for `url`. Accepts `http://host:port` (or `host:port`,
-    /// to which this function adds the `http://` prefix).
+    /// Build an HTTP client for `url` with production [`UpstreamLimits`].
+    /// Accepts `http://host:port` (or `host:port`, to which this function adds the
+    /// `http://` prefix).
     pub fn new(url: &str) -> eyre::Result<Self> {
+        Self::with_limits(url, UpstreamLimits::DEFAULT)
+    }
+
+    /// Build an HTTP client for `url` with explicit request bounds.
+    pub fn with_limits(url: &str, limits: UpstreamLimits) -> eyre::Result<Self> {
         let normalized = if url.contains("://") {
             url.to_string()
         } else {
             format!("http://{url}")
         };
         let client = HttpClientBuilder::default()
+            .request_timeout(limits.request_timeout)
+            .max_response_size(limits.max_response_bytes)
             .build(&normalized)
             .map_err(|e| {
                 eyre::eyre!("failed to build upstream RPC client for {normalized}: {e}")
@@ -145,9 +211,26 @@ impl UpstreamRpcClient {
         Ok(Self {
             client: Arc::new(client),
             url: normalized,
+            methods: Arc::default(),
         })
     }
 
+    /// The legacy single-block proof, used when the upstream has no
+    /// `outbe_getFinalityProof`.
+    async fn legacy_finality_proof(
+        &self,
+        height: Height,
+    ) -> Option<outbe_consensus::follow::upstream::AncestorFinalityProof> {
+        self.get_finalization(height).await.map(|certified| {
+            outbe_consensus::follow::upstream::AncestorFinalityProof {
+                certified,
+                ancestors: Vec::new(),
+            }
+        })
+    }
+}
+
+impl UpstreamRpcClient {
     /// Query the upstream's on-chain tribute offer public key
     /// (`TeeRegistry.tributeOfferPublicKey()`, selector `0x1b640a92`). A non-zero
     /// value means the chain is TEE-bootstrapped. Then a follower that re-executes
@@ -226,20 +309,27 @@ impl FinalizedSource for UpstreamRpcClient {
         &self,
         height: Height,
     ) -> Option<outbe_consensus::follow::upstream::AncestorFinalityProof> {
+        if self.methods.finality_proof_missing.load(Ordering::Acquire) {
+            return self.legacy_finality_proof(height).await;
+        }
         let proof: UpstreamAncestorFinalityProof = match self
             .client
             .request("outbe_getFinalityProof", rpc_params![height.get()])
             .await
         {
             Ok(value) => value,
-            Err(_) => {
-                return self.get_finalization(height).await.map(|certified| {
-                    outbe_consensus::follow::upstream::AncestorFinalityProof {
-                        certified,
-                        ancestors: Vec::new(),
-                    }
-                });
-            }
+            Err(error) => match CallFailure::of(&error) {
+                CallFailure::MethodNotFound => {
+                    self.methods
+                        .finality_proof_missing
+                        .store(true, Ordering::Release);
+                    return self.legacy_finality_proof(height).await;
+                }
+                CallFailure::Transient => {
+                    debug!(url = %self.url, height = height.get(), %error, "upstream getFinalityProof failed");
+                    return None;
+                }
+            },
         };
         if proof.ancestor_blocks_hex.len() > 64 {
             return None;
@@ -264,13 +354,27 @@ impl FinalizedSource for UpstreamRpcClient {
     }
 
     async fn get_block(&self, height: Height) -> Option<ConsensusBlock> {
+        if self.methods.consensus_block_missing.load(Ordering::Acquire) {
+            return self.get_finalization(height).await.map(|value| value.block);
+        }
         let bytes: alloy_primitives::Bytes = match self
             .client
             .request("outbe_getConsensusBlock", rpc_params![height.get()])
             .await
         {
             Ok(bytes) => bytes,
-            Err(_) => return self.get_finalization(height).await.map(|value| value.block),
+            Err(error) => match CallFailure::of(&error) {
+                CallFailure::MethodNotFound => {
+                    self.methods
+                        .consensus_block_missing
+                        .store(true, Ordering::Release);
+                    return self.get_finalization(height).await.map(|value| value.block);
+                }
+                CallFailure::Transient => {
+                    debug!(url = %self.url, height = height.get(), %error, "upstream getConsensusBlock failed");
+                    return None;
+                }
+            },
         };
         let mut input = bytes.as_ref();
         let block = ConsensusBlock::read_cfg(&mut input, &()).ok()?;
@@ -320,6 +424,10 @@ impl TipSource for UpstreamRpcClient {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "follow_transport_tests.rs"]
+mod upstream_tests;
 
 #[cfg(test)]
 mod tests {

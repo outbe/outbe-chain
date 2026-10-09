@@ -41,6 +41,7 @@ pub(super) fn verify_v2_certificate_low_level(
     Ok(VerifiedProof {
         signer_bitmap,
         vrf_proof_hash,
+        prev_randao: proof.prev_randao(),
         vrf_material_version: proof.material_version,
     })
 }

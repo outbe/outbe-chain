@@ -2,7 +2,7 @@
 //!
 //! This module holds the determinism-critical consensus-metadata validation.
 //! That validation previously shared `finalization::util` with generic leaf
-//! helpers. Splitting it out keeps the BLS / committee / canonical-missed-proposer
+//! helpers. Splitting it out keeps the BLS / committee / canonical identity
 //! checks in one named module. `util` retains only pure leaf helpers (retry,
 //! replay classification, header-artifact extraction, signer-bitmap fill).
 //!
@@ -17,10 +17,10 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use alloy_primitives::{Address, B256};
 use commonware_codec::Read as _;
 use commonware_consensus::{
-    simplex::{elector::Config as _, types::Finalization},
+    simplex::types::Finalization,
     types::{Epoch, Height},
 };
-use commonware_cryptography::{bls12381::primitives::variant::MinSig, certificate::Scheme as _};
+use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_parallel::Sequential;
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 
@@ -28,17 +28,12 @@ use crate::{
     committee_provider::CommitteeProvider,
     digest::Digest,
     finalization::util::build_signer_bitmap,
-    hybrid::{
-        bls_batch_verification_rng, election::HybridElectorConfigProvider, HybridScheme,
-        HybridSchemeProvider,
-    },
+    hybrid::{bls_batch_verification_rng, HybridScheme, HybridSchemeProvider},
 };
 
 /// Time budget for finalized-history metadata checks during verify and
 /// proposer-side validate-before-include.
 pub(crate) const METADATA_CANONICAL_LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
-/// Reporter caps missed-proposer attribution to one byte worth of entries.
-const MAX_MISSED_PROPOSERS_IN_METADATA: usize = u8::MAX as usize;
 
 /// Single shared verdict enum for builder-side and verifier-side
 /// finalized-parent attestation validation.
@@ -86,7 +81,6 @@ impl AttestationVerdict {
 
 pub struct AttestationValidationContext<'a> {
     pub certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
-    pub elector_config_provider: &'a HybridElectorConfigProvider<MinSig>,
     pub committee_provider: &'a CommitteeProvider,
     pub marshal_mailbox: &'a crate::marshal_types::MarshalMailbox,
     pub proposed_block_number: u64,
@@ -125,7 +119,7 @@ async fn validate_present_metadata_for_verify(
     actual: &CertifiedParentAccountingMetadata,
     ctx: &AttestationValidationContext<'_>,
 ) -> Result<(), AttestationVerdict> {
-    let (expected_committee, scheme) = resolve_metadata_verify_scope(actual, ctx)?;
+    resolve_metadata_verify_scope(actual, ctx)?;
 
     let digest = Digest(actual.finalized_block_hash);
     // The marshal lookup future borrows `&digest`, so it is not `'static` and
@@ -149,19 +143,8 @@ async fn validate_present_metadata_for_verify(
         return Err(AttestationVerdict::RejectCanonicalIdentity);
     }
 
-    match validate_canonical_missed_proposers(
-        clock,
-        actual,
-        scheme.as_ref(),
-        expected_committee.as_ref(),
-        ctx,
-    )
-    .await
-    {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(AttestationVerdict::RejectCanonicalIdentity),
-        Err(verdict) => Err(verdict),
-    }
+    // The structural predicate already enforces the V2 empty list.
+    Ok(())
 }
 
 type MetadataVerifyScope = (Arc<Vec<Address>>, Arc<HybridScheme<MinSig>>);
@@ -302,116 +285,4 @@ fn metadata_proposal_is_bound(
         && proposal.round.view().get() == actual.finalized_view
         && proposal.parent.get() == actual.parent_view
         && proposal.payload.0 == actual.finalized_block_hash
-}
-
-async fn validate_canonical_missed_proposers(
-    clock: &impl commonware_runtime::Clock,
-    actual: &CertifiedParentAccountingMetadata,
-    scheme: &HybridScheme<MinSig>,
-    expected_committee: &[Address],
-    ctx: &AttestationValidationContext<'_>,
-) -> Result<bool, AttestationVerdict> {
-    if actual.finalized_view <= actual.parent_view.saturating_add(1) || actual.parent_view == 0 {
-        return Ok(actual.missed_proposers.is_empty());
-    }
-
-    let previous_finalization = if actual.finalized_block_number <= 1 {
-        None
-    } else {
-        // Borrowing future => biased select instead of `Clock::timeout`.
-        let lookup = ctx
-            .marshal_mailbox
-            .get_finalization(Height::new(actual.finalized_block_number - 1));
-        let timeout = clock.sleep(METADATA_CANONICAL_LOOKUP_TIMEOUT);
-        let mut lookup = std::pin::pin!(lookup);
-        let mut timeout = std::pin::pin!(timeout);
-        let result = commonware_macros::select! {
-            result = &mut lookup => Some(result),
-            _ = &mut timeout => None,
-        };
-        match result {
-            Some(Some(finalization)) => Some(finalization),
-            Some(None) | None => return Err(AttestationVerdict::TransientUnavailable),
-        }
-    };
-
-    let Some(expected) = canonical_missed_proposers(
-        actual,
-        previous_finalization.as_ref(),
-        scheme,
-        ctx.elector_config_provider,
-        expected_committee,
-    ) else {
-        return Ok(false);
-    };
-
-    // Compare the V2 event list (`Vec<MissedProposerEvent>`) against
-    // the canonical-derivation `Vec<Address>`. Equality holds when (a) both
-    // are empty (the V2 contract) or (b) the event sequence's `.validator`
-    // chain matches the expected address sequence.
-    let actual_addrs: Vec<Address> = actual
-        .missed_proposers
-        .iter()
-        .map(|ev| ev.validator)
-        .collect();
-    Ok(actual_addrs == expected)
-}
-
-fn canonical_missed_proposers(
-    actual: &CertifiedParentAccountingMetadata,
-    previous_finalization: Option<&crate::marshal_types::Finalization>,
-    scheme: &HybridScheme<MinSig>,
-    elector_config_provider: &HybridElectorConfigProvider<MinSig>,
-    expected_committee: &[Address],
-) -> Option<Vec<Address>> {
-    let epoch = Epoch::new(actual.finalized_epoch);
-    let parent_view = actual.parent_view;
-    let current_view = actual.finalized_view;
-
-    if current_view <= parent_view.saturating_add(1) || parent_view == 0 {
-        return Some(Vec::new());
-    }
-
-    let previous = previous_finalization?;
-    let previous_round = previous.proposal.round;
-    if previous_round.epoch() > epoch {
-        return None;
-    }
-
-    if previous_round.epoch() < epoch {
-        return Some(Vec::new());
-    }
-
-    if previous.proposal.round.view().get() != parent_view {
-        return None;
-    }
-
-    let participants = scheme.participants();
-    if participants.is_empty() || participants.len() != expected_committee.len() {
-        return None;
-    }
-    let elector_config = elector_config_provider.scoped(epoch)?;
-    let elector = elector_config.as_ref().clone().build(participants);
-
-    // This call is the single source of truth shared with the proposer-side
-    // reporter path. The election sequence must match exactly. Otherwise this
-    // recompute would reject a valid proposer's `missed_proposers` list.
-    let leaders = crate::missed_proposers::elected_leaders_for_gap(
-        epoch,
-        &elector,
-        Some(&previous.certificate),
-        crate::missed_proposers::SkippedViewRange {
-            last_view: parent_view,
-            current_view,
-            cap: MAX_MISSED_PROPOSERS_IN_METADATA,
-        },
-    );
-    let mut missed = Vec::with_capacity(leaders.len());
-    for leader in &leaders {
-        let leader_idx = leader.get() as usize;
-        let address = expected_committee.get(leader_idx)?;
-        missed.push(*address);
-    }
-
-    Some(missed)
 }

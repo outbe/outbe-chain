@@ -60,7 +60,6 @@ where
             vote, cert, res, ..
         } = channels;
         // -- b. Build HybridScheme for this epoch ------------------------
-        use commonware_consensus::simplex::elector::Config as ElectorConfig;
         let radicle_signer = radicle_signer_enabled(
             self.radicle_status.snapshot().voting_gate,
             self.state.signing_share.is_some(),
@@ -125,7 +124,6 @@ where
             &self.reporter_continuity,
             self.vrf_materials.clone(),
         )?;
-        let reporter_elector = elector_config.clone().build(&self.state.participants);
 
         let _ = self
             .certificate_scheme_provider
@@ -142,7 +140,6 @@ where
             outbe_consensus::reporter::ReporterCommittee {
                 validator_addresses: ordered_addresses,
                 verifier_scheme,
-                elector: reporter_elector,
                 epoch: self.state.current_epoch,
             },
             outbe_consensus::reporter::ReporterDependencies {
@@ -155,7 +152,7 @@ where
 
         // Combine OutbeReporter + marshal mailbox as a joint Simplex reporter.
         // Both receive Activity events including Finalization:
-        // - OutbeReporter: bridge/VRF/missed-proposer processing AND
+        // - OutbeReporter: bridge/VRF processing AND
         // `Activity::Certification` -> CertifiedParentProofStore.
         // - Marshal: finalized block delivery -> executor -> ack -> recovery truth.
         //   Marshal's mailbox drops Certification via its `_ => return;` arm

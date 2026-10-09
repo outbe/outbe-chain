@@ -391,7 +391,6 @@ fn witness_for(round: Round, parent_view: View, parent_hash: B256) -> CertifiedP
         finalized_view: round.view().get(),
         parent_view: parent_view.get(),
         finalized_block_hash: parent_hash,
-        stored_at_height: round.view().get(),
         ..CertifiedParentProofRecord::default()
     }
 }

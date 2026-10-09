@@ -1,34 +1,9 @@
 //! Translates typed precompile outcomes at the EVM adapter seam.
 use alloy_primitives::Bytes;
-use alloy_sol_types::{Revert, SolError};
-use revm::precompile::{PrecompileHalt, PrecompileOutput, PrecompileResult};
+use revm::precompile::{PrecompileOutput, PrecompileResult};
 
-alloy_sol_types::sol! { error SubCallHalted(uint8 kind); }
-
-/// ABI-encode a revert reason as the Solidity-standard `Error(string)`
-/// (selector `0x08c379a0` followed by `abi.encode(reason)`).
-pub(super) fn encode_revert_reason(msg: String) -> Bytes {
-    Bytes::from(Revert::from(msg).abi_encode())
-}
-
-/// Translate the outbe-level [`outbe_primitives::error::PrecompileError`] (the
-/// flat error type returned from every outbe precompile dispatch function)
-/// into a revm [`PrecompileResult`] that the EVM interpreter understands.
-///
-/// `actual_gas` is the total gas charge attributed to this precompile call
-/// (`PRECOMPILE_BASE_GAS` plus any storage-op gas). The function reports it on
-/// success and `Revert*` paths, so the interpreter charges the caller
-/// correctly. `Halt(OOG)` reports zero gas because revm treats OOG halts
-/// as "consume everything" through `spend_all` in
-/// `revm-handler::precompile_output_to_interpreter_result`.
-///
-/// Explicit arms cover `OutOfGas`, `Revert`, `RevertBytes`, `WriteProtection`,
-/// `ChildHalt`, `SubCall`, and `Unsupported`. The trailing wildcard arm maps every other
-/// variant to `Fatal` rather than panicking. This includes `Storage`, the
-/// body-read and tree errors, the CE work-capacity errors, `Fatal`, and any
-/// variant added later. Thus a new variant does not force a mapping decision
-/// here. Settled child VM halts carry stable ABI codes and revert the wrapper;
-/// provider and infrastructure failures remain fatal.
+/// Return execution failures as Revert/Halt and infrastructure failures as Fatal.
+/// Error conversion is owned by the domain error, following Tempo's precompile model.
 #[doc(hidden)]
 pub fn map_outbe_precompile_result(
     result: outbe_primitives::error::Result<Bytes>,
@@ -48,36 +23,6 @@ pub(super) fn map_outbe_precompile_result_with_refund(
             output.gas_refunded = refund;
             Ok(output)
         }
-        Err(outbe_primitives::error::PrecompileError::OutOfGas) => {
-            Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0))
-        }
-        Err(outbe_primitives::error::PrecompileError::Revert(msg)) => Ok(PrecompileOutput::revert(
-            actual_gas,
-            encode_revert_reason(msg),
-            0,
-        )),
-        Err(error @ outbe_primitives::error::PrecompileError::BodyReadCorruption(_)) => Ok(
-            PrecompileOutput::revert(actual_gas, encode_revert_reason(error.to_string()), 0),
-        ),
-        Err(outbe_primitives::error::PrecompileError::RevertBytes(bytes)) => {
-            Ok(PrecompileOutput::revert(actual_gas, bytes, 0))
-        }
-        Err(outbe_primitives::error::PrecompileError::WriteProtection) => Ok(
-            PrecompileOutput::halt(PrecompileHalt::other("state change during static call"), 0),
-        ),
-        Err(outbe_primitives::error::PrecompileError::ChildHalt(kind)) => {
-            Ok(PrecompileOutput::revert(
-                actual_gas,
-                SubCallHalted { kind: kind as u8 }.abi_encode().into(),
-                0,
-            ))
-        }
-        Err(outbe_primitives::error::PrecompileError::SubCall(err)) => Err(
-            revm::precompile::PrecompileError::Fatal(format!("sub-call error: {err:?}")),
-        ),
-        Err(outbe_primitives::error::PrecompileError::Unsupported) => Err(
-            revm::precompile::PrecompileError::Fatal("precompile reported Unsupported".to_string()),
-        ),
-        Err(e) => Err(revm::precompile::PrecompileError::Fatal(e.to_string())),
+        Err(error) => error.into_precompile_result(actual_gas),
     }
 }

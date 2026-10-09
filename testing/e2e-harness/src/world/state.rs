@@ -677,6 +677,13 @@ pub struct FixtureState {
     /// The issuance currency a lifecycle scenario prices besides USD, chosen by its tag.
     pub issuance_market: Option<u16>,
     pub auction_bidders: Vec<crate::world::bidders::Bidder>,
+
+    // ---- Consensus resilience scenarios (B8, R7, R11, R13, S14) ----
+    pub resilience_observed_height: Option<u64>,
+    pub resilience_ordered_tx_hashes: Vec<String>,
+    pub resilience_healthy_tx_hash: Option<String>,
+    pub resilience_target_slot: Option<usize>,
+    pub resilience_disconnected_height: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -859,6 +866,11 @@ impl Default for FixtureState {
             target_contracts: None,
             origin_contracts: None,
             auction_bidders: Vec::new(),
+            resilience_observed_height: None,
+            resilience_ordered_tx_hashes: Vec::new(),
+            resilience_healthy_tx_hash: None,
+            resilience_target_slot: None,
+            resilience_disconnected_height: None,
         }
     }
 }

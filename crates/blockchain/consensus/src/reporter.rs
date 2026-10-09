@@ -7,11 +7,12 @@
 //! 1. Builds the canonical finalized-parent certificate artifact from the
 //!    finalized proposal and its Hybrid certificate
 //! 2. Hashes BLS seed signature -> VRF seed (B256) for on-chain randomness
-//! 3. Detects view gaps -> missed proposer addresses via elector
+//! 3. Records skipped-view counts without obsolete leader attribution
 //! 4. Sends `Finalized` to the [`FinalizationActor`](crate::finalization::actor),
 //!    which durably writes the exact-parent certificate record consumed by the
 //!    proposer-side Phase 1 system transaction.
-//! 5. Uses an unbounded mailbox. The voter task can never block on this edge.
+//! 5. Delivers without waiting: mandatory finalizations use the actor mailbox;
+//!    best-effort CN and finalize votes have bounded admission.
 //!    A closed mailbox is logged + counted but does not panic. The supervisor
 //!    handles actor exit through `FinalizationActor::run`'s `Result`.
 
@@ -34,20 +35,19 @@ use tracing::{debug, error, info, warn};
 use crate::{
     digest::Digest,
     finalization::finalize_verify::FinalizeVerifyMailbox,
-    finalization::ingress::{Finalized as FinalizationFinalized, Mailbox as FinalizationMailbox},
+    finalization::ingress::{
+        CertificationMailboxError, Finalized as FinalizationFinalized,
+        Mailbox as FinalizationMailbox,
+    },
     finalization::parent_cert_store::{
         CertificationWitnessSink, CertifiedParentProofKey, CertifiedParentProofRecord, ProofKind,
         CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
     },
-    hybrid::{
-        bls_batch_verification_rng, election::HybridRandomElector, HybridCertificate, HybridScheme,
-    },
+    hybrid::{bls_batch_verification_rng, HybridCertificate, HybridScheme},
 };
 use outbe_primitives::consensus::{
     ConsensusData, ConsensusExecutionBridge, FinalizedParentCertificateData,
 };
-
-const MAX_MISSED_PROPOSERS: usize = u8::MAX as usize;
 
 /// Reporter that forwards Simplex activities.
 ///
@@ -55,7 +55,7 @@ const MAX_MISSED_PROPOSERS: usize = u8::MAX as usize;
 /// 1. Forward finalized blocks to the FinalizationActor for durable exact-parent
 ///    certificate handoff and FCU/status side effects
 /// 2. Build finalized-parent certificate facts for Phase 1 system-tx input
-/// 3. Detect missed proposers from view gaps
+/// 3. Record skipped-view counts
 /// 4. Buffer byzantine evidence until a dedicated evidence transport exists
 #[derive(Clone)]
 pub struct OutbeReporter {
@@ -74,8 +74,6 @@ pub struct OutbeReporter {
     bridge: Option<ConsensusExecutionBridge>,
     /// Verifier scheme for validating carried finalize votes before inclusion.
     verifier_scheme: HybridScheme<MinSig>,
-    /// VRF-based leader elector for missed-proposer detection.
-    elector: HybridRandomElector<MinSig>,
     /// Current consensus epoch.
     epoch: Epoch,
     /// Mutable per-view tracking (finalization cursor + byzantine-evidence
@@ -97,7 +95,7 @@ pub struct OutbeReporter {
 
 /// Mutable per-view state owned by a single `OutbeReporter` instance, separated
 /// from the immutable epoch wiring. Holds the finalization cursor (the lower
-/// bound for view-gap missed-proposer attribution) and the byzantine-evidence
+/// bound for skipped-view metrics) and the byzantine-evidence
 /// buffer that each finalization drains. Its operations are unit-tested in
 /// isolation. Thus byzantine buffering and the finalization cursor are no
 /// longer loose fields threaded through the handlers.
@@ -130,7 +128,7 @@ impl ReporterViewState {
         drained
     }
 
-    /// Advance the finalization cursor used by view-gap missed-proposer detection.
+    /// Advance the finalization cursor used by skipped-view metrics.
     fn record_finalization(&mut self, view: u64, certificate: HybridCertificate<MinSig>) {
         self.last_finalized_view = view;
         self.last_certificate = Some(certificate);
@@ -177,7 +175,6 @@ impl ReporterContinuity {
 pub struct ReporterCommittee {
     pub validator_addresses: Vec<Address>,
     pub verifier_scheme: HybridScheme<MinSig>,
-    pub elector: HybridRandomElector<MinSig>,
     pub epoch: Epoch,
 }
 
@@ -202,7 +199,6 @@ impl OutbeReporter {
         let ReporterCommittee {
             validator_addresses,
             verifier_scheme,
-            elector,
             epoch,
         } = committee;
         let ReporterDependencies {
@@ -218,7 +214,6 @@ impl OutbeReporter {
             finalization_mailbox,
             bridge,
             verifier_scheme,
-            elector,
             epoch,
             finalize_verify_mailbox,
             view_state: ReporterViewState {
@@ -417,7 +412,7 @@ impl OutbeReporter {
     ///
     /// SYNC in 2026.5.0. The handler:
     /// - builds the finalized-parent certificate artifact;
-    /// - detects missed proposers;
+    /// - records skipped-view counts;
     /// - updates reporter-local continuity;
     /// - routes the finalization to the [`FinalizationActor`] through its
     ///   unbounded mailbox (`notify_finalized` is a non-blocking `unbounded_send`).
@@ -492,8 +487,12 @@ impl OutbeReporter {
         let finalized_certificate =
             self.build_finalized_certificate(&finalization.proposal, &certificate);
 
-        // 3. Detect missed proposers from view gaps.
-        let missed_proposers = self.detect_missed_proposers(view);
+        // V2 does not consume leader attribution. Count the gap in constant
+        // time; walking its views would repeat VRF proof verification on the
+        // synchronous voter task. Epoch continuity may reset the view counter.
+        if let Some(skipped) = skipped_views(self.view_state.last_finalized_view(), view) {
+            crate::metrics::record_views_skipped(skipped);
+        }
 
         // 4. Drain the per-finalization buffer of locally-attributed byzantine
         // signers. This is operator observability ONLY, not a transport stage.
@@ -522,7 +521,7 @@ impl OutbeReporter {
             finalized_block_hash: digest.0,
             finalized_certificate,
             vrf_seed,
-            missed_proposers,
+            missed_proposers: Vec::new(),
         };
 
         // 7. Send full finalization payload to the FinalizationActor.
@@ -632,9 +631,8 @@ impl OutbeReporter {
         let encoded_proof: Bytes = notarization.encode().into();
         // The notarization carries no block-number context. Thus the record
         // kind is `ProofKind::CertifiedNotarization`, which has no block number.
-        // `witness_sink` sets the exact-key local witness mark. Use the
-        // proposal view as a monotone retention proxy so the age-based prune in
-        // `actor.rs` keeps the slot bounded.
+        // `witness_sink` sets the exact-key local witness mark.
+        // Consensus retention uses the notarization's (epoch, view), never a block height.
         let view = notarization.proposal.round.view().get();
         let proof_key = CertifiedParentProofKey::new(
             notarization.proposal.round.epoch().get(),
@@ -656,7 +654,6 @@ impl OutbeReporter {
             ordered_committee: self.validator_addresses.clone(),
             signer_bitmap,
             encoded_proof,
-            stored_at_height: view,
         };
 
         // Step 3 - enqueue the durable write to the FinalizationActor.
@@ -673,16 +670,21 @@ impl OutbeReporter {
             .finalization_mailbox
             .persist_certified_notarization(record)
         {
-            crate::metrics::record_certification_dropped(
-                crate::metrics::CertificationDropReason::MailboxClosed,
-            );
+            crate::metrics::record_certification_dropped(match error {
+                CertificationMailboxError::Closed => {
+                    crate::metrics::CertificationDropReason::MailboxClosed
+                }
+                CertificationMailboxError::Full => {
+                    crate::metrics::CertificationDropReason::QueueFull
+                }
+            });
             warn!(
                 target: "outbe::reporter",
                 epoch = notarization.proposal.round.epoch().get(),
                 view,
                 payload = %notarization.proposal.payload,
                 %error,
-                "Activity::Certification dropped: FinalizationActor mailbox closed"
+                "Activity::Certification persistence dropped: mailbox unavailable"
             );
             return;
         }
@@ -724,111 +726,20 @@ impl OutbeReporter {
 
         signed
     }
+}
 
-    /// Detect missed proposers from view gaps.
-    ///
-    /// Views between `last_finalized_view + 1` and `current_view - 1` had leaders
-    /// who failed to propose. Uses the elector + last certificate to determine
-    /// who was the expected leader for each skipped view.
-    ///
-    /// Important: this is an event list, not a deduplicated validator set.
-    /// The same address may appear multiple times if the same proposer missed
-    /// multiple distinct views in a row. No production path reads this list.
-    /// It does not feed the Phase 1 system transaction or slashing. The V2
-    /// verifier requires an empty `missed_proposers` list in Phase 1 metadata.
-    fn detect_missed_proposers(&self, current_view: u64) -> Vec<Address> {
-        let last_finalized_view = self.view_state.last_finalized_view();
-        if last_finalized_view == 0 || current_view <= last_finalized_view + 1 {
-            return Vec::new();
-        }
-
-        let gap = current_view - last_finalized_view - 1;
-
-        // Single source of truth for the view-gap election sequence. The
-        // verify-side recompute in
-        // `finalization::attestation::canonical_missed_proposers` shares it, so
-        // both sides elect the same expected leader.
-        let leaders = crate::missed_proposers::elected_leaders_for_gap(
-            self.epoch,
-            &self.elector,
-            self.view_state.last_certificate(),
-            crate::missed_proposers::SkippedViewRange {
-                last_view: last_finalized_view,
-                current_view,
-                cap: MAX_MISSED_PROPOSERS,
-            },
-        );
-        let dropped = gap.saturating_sub(leaders.len() as u64);
-
-        let missed = self.missed_proposer_addresses(last_finalized_view, &leaders);
-
-        if !missed.is_empty() {
-            info!(
-                gap,
-                missed_count = missed.len(),
-                dropped_count = dropped,
-                from = self.view_state.last_finalized_view() + 1,
-                to = current_view - 1,
-                "view gap - missed proposers detected"
-            );
-            if dropped > 0 {
-                warn!(
-                    gap,
-                    emitted = missed.len(),
-                    dropped,
-                    limit = MAX_MISSED_PROPOSERS,
-                    "missed proposer list truncated to wire-format limit"
-                );
-            }
-
-            // Record skipped views metric.
-            crate::metrics::record_views_skipped(gap);
-        }
-
-        missed
-    }
-
-    fn missed_proposer_addresses(
-        &self,
-        last_finalized_view: u64,
-        leaders: &[commonware_utils::Participant],
-    ) -> Vec<Address> {
-        let mut missed = Vec::with_capacity(leaders.len());
-        for (offset, leader) in leaders.iter().enumerate() {
-            let v = last_finalized_view + 1 + offset as u64;
-            let leader_idx = leader.get() as usize;
-
-            if leader_idx < self.validator_addresses.len() {
-                let addr = self.validator_addresses[leader_idx];
-                debug!(
-                    view = v,
-                    leader_idx,
-                    %addr,
-                    "missed proposer detected"
-                );
-                missed.push(addr);
-            } else {
-                warn!(
-                    view = v,
-                    leader_idx,
-                    total = self.validator_addresses.len(),
-                    "leader index out of bounds"
-                );
-            }
-        }
-
-        missed
-    }
+/// Views skipped between two finalizations of one engine run. `None` when the
+/// previous finalized view is unknown (0: first finalization after start or an
+/// epoch restart) or the counter did not advance, so no false gap is recorded.
+fn skipped_views(last_finalized_view: u64, view: u64) -> Option<u64> {
+    (last_finalized_view != 0 && view > last_finalized_view).then(|| view - last_finalized_view - 1)
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
     use commonware_consensus::{
-        simplex::{
-            elector::{Config as _, Elector as _},
-            types::Subject,
-        },
+        simplex::types::Subject,
         types::{Epoch, Round, View},
     };
     use commonware_cryptography::{
@@ -854,7 +765,7 @@ mod tests {
             ingress::{Mailbox as FinalizationMailbox, Message as FinalizationMessage},
             parent_cert_store::FinalizedParentCertStore,
         },
-        hybrid::{election::HybridRandom, HybridScheme},
+        hybrid::HybridScheme,
     };
 
     fn test_participants(n: u8) -> (Vec<bls12381::PrivateKey>, Set<bls12381::PublicKey>) {
@@ -910,23 +821,6 @@ mod tests {
         HybridScheme::<MinSig>::verifier(b"reporter-test", participants, dkg.polynomial).unwrap()
     }
 
-    fn gap_detection_reporter(
-        continuity: ReporterContinuity,
-        committee: ReporterCommittee,
-        finalization_mailbox: FinalizationMailbox,
-    ) -> OutbeReporter {
-        OutbeReporter::new(
-            continuity,
-            committee,
-            ReporterDependencies {
-                finalization_mailbox,
-                bridge: None,
-                witness_sink: std::sync::Arc::new(FinalizedParentCertStore::new()),
-                finalize_verify_mailbox: FinalizeVerifyMailbox::disconnected(),
-            },
-        )
-    }
-
     /// Build signer schemes AND a matching verifier from ONE DKG. Then individual
     /// finalize votes signed by the signers verify against the verifier. This is
     /// required now that the reporter verifies before recording.
@@ -978,7 +872,6 @@ mod tests {
         let (mut verify_actor, verify_mailbox) = FinalizeVerifyActor::new(provider, store.clone());
 
         let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
-        let participants = test_participants(3).1;
         let mut reporter = OutbeReporter::new(
             ReporterContinuity::default(),
             ReporterCommittee {
@@ -988,7 +881,6 @@ mod tests {
                     address!("0x3333333333333333333333333333333333333333"),
                 ],
                 verifier_scheme: verifier,
-                elector: HybridRandom::default().build(&participants),
                 epoch: Epoch::new(0),
             },
             ReporterDependencies {
@@ -1009,7 +901,7 @@ mod tests {
         let finalize = Finalize::sign(&schemes[0], proposal).expect("finalize vote");
 
         // Reporter enqueues (no inline verify on the voter task) ...
-        let _ = reporter.report(Activity::Finalize(finalize));
+        let _ = reporter.report(Activity::Finalize(finalize.clone()));
         assert_eq!(
             store.lock().unwrap().pending_vote_count(fb_hash),
             0,
@@ -1027,6 +919,13 @@ mod tests {
             "verify actor must verify then buffer the individual finalize vote by fb_hash"
         );
         assert_eq!(verify_actor.observed_len(view), 1);
+        let _ = reporter.report(Activity::Finalize(finalize));
+        assert!(verify_actor.try_process_one());
+        assert_eq!(
+            verify_actor.observed_len(view),
+            1,
+            "verified duplicates must not grow retained evidence"
+        );
     }
 
     #[test]
@@ -1049,7 +948,6 @@ mod tests {
                     address!("0x3333333333333333333333333333333333333333"),
                 ],
                 verifier_scheme: sample_verifier_scheme(),
-                elector: HybridRandom::default().build(&test_participants(3).1),
                 epoch: Epoch::new(1),
             },
             ReporterDependencies {
@@ -1094,86 +992,12 @@ mod tests {
     }
 
     #[test]
-    fn reporter_uses_continuity_certificate_for_epoch_boundary_gap_detection() {
-        let continuity = ReporterContinuity::default();
-        let certificate = sample_certificate();
-        continuity.update(
-            5,
-            Some(certificate.clone()),
-            Some(certificate.raw_vrf_seed_bytes()),
-        );
-
-        let participants = test_participants(3).1;
-        let ordered_addresses = vec![
-            address!("0x1111111111111111111111111111111111111111"),
-            address!("0x2222222222222222222222222222222222222222"),
-            address!("0x3333333333333333333333333333333333333333"),
-        ];
-        let elector = HybridRandom::default().build(&participants);
-        let expected: Vec<_> = (6..8)
-            .map(|view| {
-                let leader = elector.elect(
-                    Round::new(Epoch::new(1), View::new(view)),
-                    Some(&certificate),
-                );
-                ordered_addresses[leader.get() as usize]
-            })
-            .collect();
-
-        let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
-        let reporter = gap_detection_reporter(
-            continuity,
-            ReporterCommittee {
-                validator_addresses: ordered_addresses,
-                verifier_scheme: sample_verifier_scheme(),
-                elector,
-                epoch: Epoch::new(1),
-            },
-            FinalizationMailbox::from_sender(tx),
-        );
-
-        assert_eq!(reporter.detect_missed_proposers(8), expected);
-    }
-
-    #[test]
-    fn reporter_caps_large_missed_proposer_gap_to_wire_limit() {
-        let continuity = ReporterContinuity::default();
-        let certificate = sample_certificate();
-        continuity.update(
-            5,
-            Some(certificate.clone()),
-            Some(certificate.raw_vrf_seed_bytes()),
-        );
-
-        let participants = test_participants(3).1;
-        let ordered_addresses = vec![
-            address!("0x1111111111111111111111111111111111111111"),
-            address!("0x2222222222222222222222222222222222222222"),
-            address!("0x3333333333333333333333333333333333333333"),
-        ];
-        let elector = HybridRandom::default().build(&participants);
-        let expected: Vec<_> = (6..(6 + super::MAX_MISSED_PROPOSERS as u64))
-            .map(|view| {
-                let leader = elector.elect(
-                    Round::new(Epoch::new(1), View::new(view)),
-                    Some(&certificate),
-                );
-                ordered_addresses[leader.get() as usize]
-            })
-            .collect();
-
-        let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
-        let reporter = gap_detection_reporter(
-            continuity,
-            ReporterCommittee {
-                validator_addresses: ordered_addresses,
-                verifier_scheme: sample_verifier_scheme(),
-                elector,
-                epoch: Epoch::new(1),
-            },
-            FinalizationMailbox::from_sender(tx),
-        );
-
-        assert_eq!(reporter.detect_missed_proposers(400), expected);
+    fn skipped_views_ignore_an_unknown_previous_view() {
+        use super::skipped_views;
+        assert_eq!(skipped_views(0, 1_200), None);
+        assert_eq!(skipped_views(40, 40), None);
+        assert_eq!(skipped_views(40, 3), None);
+        assert_eq!(skipped_views(40, 41), Some(0));
+        assert_eq!(skipped_views(40, 300), Some(259));
     }
 }

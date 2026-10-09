@@ -43,7 +43,7 @@ use outbe_consensus::{
             FinalizedParentCertStore, ProofKind, CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
         },
     },
-    hybrid::{election::HybridRandom, HybridScheme},
+    hybrid::HybridScheme,
     reporter::{OutbeReporter, ReporterCommittee, ReporterContinuity, ReporterDependencies},
 };
 use outbe_primitives::consensus_metadata::ParentParticipationProof;
@@ -156,7 +156,6 @@ fn build_reporter(
     fx: &Fixture,
     store: FinalizedParentCertStore,
 ) -> (OutbeReporter, mpsc::UnboundedReceiver<FinalizationMessage>) {
-    use commonware_consensus::simplex::elector::Config as _;
     // The reporter enqueues certified-notarization persistence to the
     // FinalizationActor mailbox. Keep the receiver so the test can drain it and
     // apply the write (what the actor does) before it asserts on the store.
@@ -175,7 +174,6 @@ fn build_reporter(
         ReporterCommittee {
             validator_addresses: ordered_addresses(),
             verifier_scheme: verifier_scheme_from(fx),
-            elector: HybridRandom::default().build(&fx.participants),
             epoch: Epoch::new(0),
         },
         ReporterDependencies {
@@ -216,7 +214,7 @@ async fn proof_store_persists_full_notarization_blob_before_simplex_journal_prun
             .expect("certification enqueued for persistence")
         {
             FinalizationMessage::CertifiedNotarization(record) => {
-                store.put_certified_notarization(record).unwrap();
+                store.put_certified_notarization(record.record).unwrap();
             }
             FinalizationMessage::Finalized(_) => panic!("expected CertifiedNotarization"),
         }
@@ -273,14 +271,12 @@ async fn proof_store_get_best_parent_proof_finalization_first_across_restart() {
             },
             finalized_block_hash: hash,
             finalized_view: 100,
-            stored_at_height: 100,
             ..CertifiedParentProofRecord::default()
         };
         let cn = CertifiedParentProofRecord {
             kind: ProofKind::CertifiedNotarization,
             finalized_block_hash: hash,
             finalized_view: 100,
-            stored_at_height: 100,
             ..CertifiedParentProofRecord::default()
         };
         store.put_finalization(fin).unwrap();
@@ -314,7 +310,6 @@ fn finalizations_for_block_returns_every_exact_record_across_restart() {
                     finalized_epoch: 3,
                     finalized_view,
                     finalized_block_hash: exact_hash,
-                    stored_at_height: 42,
                     ..CertifiedParentProofRecord::default()
                 })
                 .unwrap();
@@ -327,7 +322,6 @@ fn finalizations_for_block_returns_every_exact_record_across_restart() {
                 finalized_epoch: 3,
                 finalized_view: 8,
                 finalized_block_hash: other_hash,
-                stored_at_height: 42,
                 ..CertifiedParentProofRecord::default()
             })
             .unwrap();
@@ -377,7 +371,7 @@ fn proof_retention_depth_is_at_least_block_cache_keep_depth() {
     );
 
     // Behavioural cross-check: prune_below_height does not drop the retained
-    // record when the floor is below the record's stored_at_height. This holds
+    // record when the floor is below the record's authenticated height. This holds
     // even when the floor sits at exactly the BLOCK_CACHE_KEEP_DEPTH boundary.
     let store = FinalizedParentCertStore::new();
     let stored_height = BLOCK_CACHE_KEEP_DEPTH + 10;
@@ -388,7 +382,6 @@ fn proof_retention_depth_is_at_least_block_cache_keep_depth() {
         },
         finalized_block_hash: B256::with_last_byte(0xAA),
         finalized_view: stored_height,
-        stored_at_height: stored_height,
         ..CertifiedParentProofRecord::default()
     };
     store.put_finalization(record).unwrap();

@@ -138,7 +138,7 @@ where
     let (handler_receiver, handler): (handler::Receiver<Digest>, handler::Handler<Digest>) =
         handler::init(context.child("follow_resolver_handler"), mailbox_size);
 
-    let (resolver_actor, follow_resolver) = resolver::init(
+    let follow_resolver = resolver::init(
         context.child("follow_resolver"),
         handler,
         resolver::FetchResolution {
@@ -147,8 +147,8 @@ where
             chain: chain.clone(),
             epocher: epocher.clone(),
         },
+        mailbox_size,
     );
-    let _resolver_handle = resolver_actor.start();
 
     // -- 3. Null broadcast (the follower never disseminates) -----------------
     let broadcast = stubs::null_broadcast(context.child("follow_broadcast"), mailbox_size);

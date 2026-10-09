@@ -44,7 +44,7 @@ use crate::finalization::attestation::{
 };
 use crate::finalization::state::FinalizationViewAccess;
 use crate::finalization::util::build_signer_bitmap;
-use crate::hybrid::election::{HybridElectorConfigProvider, HybridRandom};
+use crate::hybrid::election::HybridElectorConfigProvider;
 use crate::hybrid::{HybridScheme, HybridSchemeProvider};
 use crate::validators::ValidatorSet;
 use crate::vrf_safety::VrfSafetyGate;
@@ -63,9 +63,6 @@ mod certification;
 
 #[path = "handler/tests/publication.rs"]
 mod publication;
-
-#[path = "handler/tests/missed_proposers.rs"]
-mod missed_proposers;
 
 struct TestApplicationShared {
     shared: ApplicationShared,
@@ -816,7 +813,6 @@ fn exact_parent_wait_drains_block_number_mismatch() {
                     ordered_committee: vec![Address::with_last_byte(1)],
                     signer_bitmap: vec![1],
                     encoded_proof: Bytes::from_static(b"cert"),
-                    stored_at_height: 41,
                     ..CertifiedParentProofRecord::default()
                 })
                 .unwrap();
@@ -1259,7 +1255,6 @@ fn consensus_metadata_verify_accepts_canonical_marshal_mapping() {
             let digest = block.digest();
             let (provider, committee_provider, metadata, finalization) =
                 finalization_metadata_fixture(&block, round);
-            let elector_provider = HybridElectorConfigProvider::<MinSig>::new();
             let clock = context.child("verify");
             let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
                 context,
@@ -1280,7 +1275,6 @@ fn consensus_metadata_verify_accepts_canonical_marshal_mapping() {
                     &metadata,
                     &AttestationValidationContext {
                         certificate_scheme_provider: &provider,
-                        elector_config_provider: &elector_provider,
                         committee_provider: &committee_provider,
                         marshal_mailbox: &marshal_mailbox,
                         proposed_block_number: 6,
@@ -1483,30 +1477,6 @@ fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
 }
 
 #[test]
-fn consensus_metadata_verify_accepts_canonical_missed_proposers() {
-    // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
-    let accepted = missed_proposers::check_verdict((0x61, 0x62), [1, 2], |verdict| {
-        verdict == AttestationVerdict::AcceptValid
-    });
-    assert!(
-        accepted,
-        "canonical missed proposer list must pass verify-time metadata validation"
-    );
-}
-
-#[test]
-fn consensus_metadata_verify_rejects_forged_missed_proposers() {
-    // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
-    let rejected = missed_proposers::check_verdict((0x63, 0x64), [2, 1], |verdict| {
-        verdict != AttestationVerdict::AcceptValid
-    });
-    assert!(
-        rejected,
-        "non-canonical missed proposer order/content must be rejected"
-    );
-}
-
-#[test]
 fn consensus_metadata_verify_rejects_inflated_finalized_number() {
     // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
     let rejected = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
@@ -1517,7 +1487,6 @@ fn consensus_metadata_verify_rejects_inflated_finalized_number() {
             let digest = block.digest();
             let (provider, committee_provider, mut metadata, finalization) =
                 finalization_metadata_fixture(&block, round);
-            let elector_provider = HybridElectorConfigProvider::<MinSig>::new();
             let clock = context.child("verify");
             let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
                 context,
@@ -1539,7 +1508,6 @@ fn consensus_metadata_verify_rejects_inflated_finalized_number() {
                     &metadata,
                     &AttestationValidationContext {
                         certificate_scheme_provider: &provider,
-                        elector_config_provider: &elector_provider,
                         committee_provider: &committee_provider,
                         marshal_mailbox: &marshal_mailbox,
                         proposed_block_number: 7,
@@ -1571,7 +1539,6 @@ fn consensus_metadata_verify_rejects_missing_marshal_mapping() {
             let block = consensus_block_with_number(0x53, 5);
             let (provider, committee_provider, metadata, _finalization) =
                 finalization_metadata_fixture(&block, round);
-            let elector_provider = HybridElectorConfigProvider::<MinSig>::new();
             let clock = context.child("verify");
             let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
                 context,
@@ -1585,7 +1552,6 @@ fn consensus_metadata_verify_rejects_missing_marshal_mapping() {
                 &metadata,
                 &AttestationValidationContext {
                     certificate_scheme_provider: &provider,
-                    elector_config_provider: &elector_provider,
                     committee_provider: &committee_provider,
                     marshal_mailbox: &marshal_mailbox,
                     proposed_block_number: 6,

@@ -32,6 +32,18 @@ pub struct VrfProof<V: Variant> {
     pub threshold_signature: V::Signature,
 }
 
+impl<V: Variant> VrfProof<V> {
+    /// Protocol PREVRANDAO: SHA-256 of the encoded raw threshold signature.
+    /// The caller must authenticate this proof against the parent's round and
+    /// historical committee before using the result for block execution.
+    pub fn prev_randao(&self) -> alloy_primitives::B256 {
+        use commonware_cryptography::{Hasher as _, Sha256};
+        alloy_primitives::B256::from_slice(
+            Sha256::hash(&[self.threshold_signature.encode().as_ref()]).as_ref(),
+        )
+    }
+}
+
 impl<V: Variant> Write for VrfProof<V> {
     fn write(&self, writer: &mut impl BufMut) {
         writer.put_u64(self.material_version);

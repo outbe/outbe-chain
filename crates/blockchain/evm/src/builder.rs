@@ -546,8 +546,11 @@ mod tests {
         secret[31] = 1;
         let mut consensus_public = [0_u8; 48];
         consensus_public[0] = 1;
-        let policy = gramine_direct_policy_v1(GRAMINE_DIRECT_DEV_CHAIN_ID, MAINNET.genesis_hash())
-            .expect("test GramineDirectDev policy is canonical");
+        let policy = gramine_direct_policy_v1(
+            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            test_chain_spec().genesis_hash(),
+        )
+        .expect("test GramineDirectDev policy is canonical");
         gramine_direct_bootstrap_v2(
             policy,
             committee_snapshot_hash,
@@ -607,7 +610,10 @@ mod tests {
             gramine_direct_policy_v1, tee_attestation_v1_extra_field,
         };
 
-        let mut spec = MAINNET.as_ref().clone();
+        // Outbe starts after the Merge; PREVRANDAO must be present at block 1.
+        let mut spec = reth_chainspec::ChainSpecBuilder::from(&*MAINNET)
+            .paris_activated()
+            .build();
         spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
         spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
         let policy = gramine_direct_policy_v1(spec.chain().id(), spec.genesis_hash())

@@ -46,3 +46,8 @@ fn real_payload_builder_output_near_the_transport_cap_passes_the_validator_size_
 fn authorized_vote_before_its_window_opens_is_early_not_invalid() {
     lifecycle::early_vote::run();
 }
+
+#[test]
+fn real_payload_builder_rejects_forged_prev_randao_with_valid_parent_proof() {
+    lifecycle::reject_forged_prev_randao();
+}

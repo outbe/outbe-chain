@@ -33,7 +33,6 @@ fn record(
     CertifiedParentProofRecord {
         kind,
         finalized_block_hash: hash,
-        stored_at_height: block_number,
         ..CertifiedParentProofRecord::default()
     }
 }

@@ -10,10 +10,10 @@
 //! - `RevertBytes(bytes)` -> `Ok(Revert(bytes, actual_gas))` (no re-encoding)
 //! - `BodyReadCorruption(s)` -> `Ok(Revert(Error(string)-encoded reason, actual_gas))`
 //! - `WriteProtection` -> `Ok(Halt(Other("state change during static call")))`
-//! - `SubCall(_)` -> `Err(Fatal(_))` with sub-call error info
+//! - VM sub-call failures -> `Ok(Halt(_))`; provider failures -> `Err(Fatal(_))`
 //! - `Unsupported` -> `Err(Fatal("precompile reported Unsupported"))`
-//! - `Storage(s)` -> `Err(Fatal(s))` (fallback arm)
-//! - `Fatal(s)` -> `Err(Fatal(s))` (fallback arm)
+//! - `Storage(s)` -> `Err(Fatal(s))`
+//! - `Fatal(s)` -> `Err(Fatal(s))`
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::{Revert, SolError};
@@ -175,5 +175,51 @@ fn fatal_passes_through_to_fatal() {
             );
         }
         other => panic!("expected Fatal, got {other:?}"),
+    }
+}
+
+#[test]
+fn child_vm_failures_use_standard_halt_results_without_revert_bytes() {
+    use revm::context::result::{HaltReason, OutOfGasError};
+    for error in [
+        SubCallError::OutOfGas,
+        SubCallError::ParentOutOfGas,
+        SubCallError::DepthLimitExceeded,
+        SubCallError::StaticContextViolation,
+        SubCallError::StateChangeDuringStaticCall,
+        SubCallError::InvalidTarget,
+        SubCallError::NotActivated,
+        SubCallError::EvmHalt(HaltReason::InvalidFEOpcode),
+        SubCallError::EvmHalt(HaltReason::OutOfGas(OutOfGasError::Basic)),
+        SubCallError::EvmHalt(HaltReason::OutOfFunds),
+    ] {
+        let expected_oog = matches!(
+            error,
+            SubCallError::OutOfGas
+                | SubCallError::ParentOutOfGas
+                | SubCallError::EvmHalt(HaltReason::OutOfGas(_))
+        );
+        let output = map_outbe_precompile_result(Err(error.into()), ACTUAL_GAS)
+            .expect("a VM failure must not abort block execution");
+        assert!(output.bytes.is_empty());
+        match output.status {
+            PrecompileStatus::Halt(reason) => assert_eq!(reason.is_oog(), expected_oog),
+            other => panic!("expected standard Halt, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn subcall_provider_failures_stay_fatal() {
+    for error in [
+        SubCallError::DatabaseError("db unavailable".into()),
+        SubCallError::ProviderBorrowed,
+        SubCallError::NotAvailable,
+        SubCallError::Fatal("driver failed".into()),
+    ] {
+        assert!(matches!(
+            map_outbe_precompile_result(Err(error.into()), ACTUAL_GAS),
+            Err(revm::precompile::PrecompileError::Fatal(_))
+        ));
     }
 }

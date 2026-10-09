@@ -263,6 +263,7 @@ impl FinalizationDropReason {
 /// persistence. Closed set behind `outbe_certification_dropped_total{reason=...}`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CertificationDropReason {
+    QueueFull,
     VerifyFailed,
     SnapshotBuildFailed,
     MailboxClosed,
@@ -273,6 +274,7 @@ impl CertificationDropReason {
     /// Stable telemetry label. It is an operator-facing surface. Do not change it.
     pub const fn label(self) -> &'static str {
         match self {
+            Self::QueueFull => "queue_full",
             Self::VerifyFailed => "verify_failed",
             Self::SnapshotBuildFailed => "snapshot_build_failed",
             Self::MailboxClosed => "mailbox_closed",

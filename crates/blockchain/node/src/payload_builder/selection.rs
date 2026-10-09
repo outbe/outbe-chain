@@ -18,7 +18,6 @@ use reth_evm::{
     Evm,
 };
 use reth_payload_primitives::PayloadBuilderError;
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_primitives_traits::Recovered;
 use reth_revm::cancelled::CancelOnDrop;
 use reth_transaction_pool::{
@@ -35,6 +34,7 @@ use super::{
     execution::{PayloadBuildState, StageOutcome},
     payload_execution_failure_kind,
     size_budget::SizeRejection,
+    transaction_error::PreservedInvalidUserTx,
 };
 
 enum BlobAdmission {
@@ -308,18 +308,23 @@ where
             Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                 error, ..
             })) => {
+                trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction");
                 if !error.is_nonce_too_low() {
                     self.best_txs.mark_invalid(
                         pool_tx,
-                        InvalidPoolTransactionError::Consensus(
-                            InvalidTransactionError::TxTypeNotSupported,
-                        ),
+                        InvalidPoolTransactionError::Other(Box::new(PreservedInvalidUserTx {
+                            reason: error,
+                        })),
                     );
                 }
-                trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction");
                 Ok(None)
             }
             Err(err) => {
+                // A failed local database/state read is a failure of this node.
+                // Consensus cannot repair its storage for this execution; the
+                // node/operator must restore the local provider. Abort this
+                // candidate: do not fabricate a revert receipt, invalidate the
+                // transaction in the pool, or add a consensus-level retry.
                 let failure_kind = payload_execution_failure_kind(&err);
                 debug!(
                     target: "payload_builder",

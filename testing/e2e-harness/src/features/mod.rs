@@ -30,6 +30,7 @@ pub mod nod_lifecycle;
 mod tribute_expectations;
 pub mod update;
 
+pub mod consensus_resilience;
 #[cfg(feature = "ocomp-integration")]
 pub mod contributor_payout;
 pub mod dcap_onboarding;
