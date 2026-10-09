@@ -6,7 +6,9 @@ pub mod runtime;
 pub mod schema;
 pub(crate) mod state;
 
-pub use runtime::{calc_call_price, settlement_deadline, Forfeit, IssueCredisParams, Settlement};
+pub use runtime::{
+    calc_call_price, outcome, settlement_deadline, Forfeit, IssueCredisParams, Outcome, Settlement,
+};
 pub use schema::{Credis, CredisContract, CredisState};
 pub use state::{CallBins, ExpiryHours};
 

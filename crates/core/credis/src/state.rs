@@ -73,7 +73,7 @@ impl CredisContract<'_> {
     }
 
     // ---------------------------------------------------------------------
-    // Global dense index backing `totalSupply` / `positionByIndex`
+    // Global dense index backing `totalSupply` / `tokenByIndex`
     // ---------------------------------------------------------------------
 
     pub(crate) fn append_to_global_index(&mut self, credis_id: U256) -> Result<()> {

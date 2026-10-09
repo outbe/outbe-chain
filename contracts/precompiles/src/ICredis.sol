@@ -47,6 +47,36 @@ interface ICredis {
         Forfeited
     }
 
+    /// Call terms, sealed at issuance in the reference currency.
+    struct CallTerms {
+        /// Call anchor price, scale 1e6, fixed by the reservation.
+        uint256 callAnchorPriceMinor;
+        /// callAnchorPriceMinor * 1.64.
+        uint256 callPriceMinor;
+        /// Breach window and threshold, in seconds.
+        uint32 callWindow;
+        uint32 callThreshold;
+        /// Settlement notice after a call, in seconds.
+        uint32 callNoticePeriod;
+        /// 0 until the Credis is called.
+        uint64 calledAt;
+        /// Inclusive deadline: 0 when uncalled.
+        uint64 settlementDeadline;
+    }
+
+    /// Where the principal and the pledged Gratis went, cumulative. Per-payment
+    /// deltas are in the events.
+    struct Outcome {
+        uint256 principalPaidMinor;
+        /// Principal left unpaid at forfeiture.
+        uint256 principalWrittenOffMinor;
+        uint256 gratisReturnedMinor;
+        /// Gratis burned at forfeiture.
+        uint256 gratisBurnedMinor;
+    }
+
+    /// principalMinor = principalPaidMinor + outstandingPrincipalMinor + principalWrittenOffMinor
+    /// and gratisMinor = gratisReturnedMinor + outstandingGratisMinor + gratisBurnedMinor.
     struct Credis {
         uint256 credisId;
         address owner;
@@ -61,39 +91,29 @@ interface ICredis {
         address source;
         /// P - the stablecoin amount disbursed. Never changes.
         uint256 principalMinor;
-        /// P_out - decreases with each settlement. The Credis closes at zero.
+        /// P_out - decreases with each settlement; 0 once Settled or Forfeited.
         uint256 outstandingPrincipalMinor;
         /// G - the pledged Gratis, valued 1:1 against principal at the reservation quote rate.
         uint256 gratisMinor;
-        /// The share of G still locked. Released principal-proportionally.
+        /// The share of G still locked; 0 once Settled or Forfeited.
         uint256 outstandingGratisMinor;
         /// r - the annual policy rate of the issuance currency, scale 1e6, fixed at opening.
         uint256 policyRate;
         /// Entry price in the issuance currency, scale 1e6, fixed by the reservation.
         uint256 entryPriceMinor;
-        /// Call anchor price in the reference currency, scale 1e6, fixed by the reservation.
-        uint256 callAnchorPriceMinor;
-        /// callAnchorPriceMinor * 1.64, in the reference currency.
-        uint256 callPriceMinor;
         /// Issuance timestamp.
         uint64 issuedAt;
         /// Anchor of the interest day count: origination until the first settlement.
         uint64 lastSettledAt;
-        /// 0 until the Credis is called.
-        uint64 calledAt;
         /// See {State}. Read-time: a Called Credis past its settlement deadline reads
-        /// Forfeit before the forfeit sweep reaches it.
+        /// Forfeited, with its outcome, before the forfeit sweep reaches it.
         uint8 state;
         /// Lifetime interest collected, in asset minor units. The sum of successful
         /// `SettlementApplied.interestPaidMinor` payments. Current-period accrual is
         /// {interestAccruedMinor}.
         uint256 interestPaidMinor;
-        /// Inclusive deadline: 0 when uncalled.
-        uint64 settlementDeadline;
-        /// Call terms sealed at issuance, in seconds.
-        uint32 callNoticePeriod;
-        uint32 callWindow;
-        uint32 callThreshold;
+        CallTerms call;
+        Outcome outcome;
     }
 
     function name() external view returns (string memory);

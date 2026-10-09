@@ -109,6 +109,47 @@ pub fn effective_state(record: &Credis, now: u64) -> Result<CredisState> {
     Ok(state)
 }
 
+/// Where a Credis's principal and Gratis went, as a reader sees it at `now`.
+/// A Forfeited Credis keeps its remainders on the record: they are what was written
+/// off and burned, and nothing is outstanding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Outcome {
+    pub outstanding_principal_minor: U256,
+    pub principal_paid_minor: U256,
+    pub principal_written_off_minor: U256,
+    pub outstanding_gratis_minor: U256,
+    pub gratis_returned_minor: U256,
+    pub gratis_burned_minor: U256,
+}
+
+pub fn outcome(record: &Credis, now: u64) -> Result<Outcome> {
+    let principal_paid_minor = record
+        .principal_minor
+        .checked_sub(record.outstanding_principal_minor)
+        .ok_or(CredisError::ArithmeticOverflow)?;
+    let gratis_returned_minor = record
+        .gratis_minor
+        .checked_sub(record.outstanding_gratis_minor)
+        .ok_or(CredisError::ArithmeticOverflow)?;
+    let forfeited = effective_state(record, now)? == CredisState::Forfeited;
+    let (outstanding_principal, written_off) = match forfeited {
+        true => (U256::ZERO, record.outstanding_principal_minor),
+        false => (record.outstanding_principal_minor, U256::ZERO),
+    };
+    let (outstanding_gratis, burned) = match forfeited {
+        true => (U256::ZERO, record.outstanding_gratis_minor),
+        false => (record.outstanding_gratis_minor, U256::ZERO),
+    };
+    Ok(Outcome {
+        outstanding_principal_minor: outstanding_principal,
+        principal_paid_minor,
+        principal_written_off_minor: written_off,
+        outstanding_gratis_minor: outstanding_gratis,
+        gratis_returned_minor,
+        gratis_burned_minor: burned,
+    })
+}
+
 impl CredisContract<'_> {
     /// Whole UTC days that a settlement at `now` charges. This is the day count
     /// for the interest and the amount by which the accrual anchor advances.
@@ -121,9 +162,13 @@ impl CredisContract<'_> {
     /// Interest accrued on the outstanding principal since the accrual anchor.
     /// The interest is simple and non-compounding, ACT/365 over whole elapsed days.
     /// It is floored in the user's favor to the asset's minor unit (C34).
+    /// A Forfeited Credis accrues nothing.
     pub fn accrued_interest(record: &Credis, now: u64) -> Result<U256> {
         let days = Self::elapsed_days(record, now);
-        if days == 0 || record.outstanding_principal_minor.is_zero() || record.policy_rate.is_zero()
+        if days == 0
+            || record.outstanding_principal_minor.is_zero()
+            || record.policy_rate.is_zero()
+            || effective_state(record, now)? == CredisState::Forfeited
         {
             return Ok(U256::ZERO);
         }
@@ -364,9 +409,9 @@ impl CredisContract<'_> {
     /// Forfeits the remainder of a called Credis whose settlement window has
     /// lapsed. Only the unpaid share is written off: every settlement already
     /// released its proportional share, so whatever the owner settled they have
-    /// already reclaimed. The invariant that holds exactly is
-    /// `sum released + outstanding_gratis_minor == G`. Rounded-up partial returns may
-    /// leave zero collateral even while principal remains outstanding.
+    /// already reclaimed. The record keeps its remainders: they are what is
+    /// written off and burned, read through [`outcome`]. Rounded-up partial returns
+    /// may leave zero collateral even while principal remains outstanding.
     ///
     /// Returns what the caller must burn and credit. This function closes the
     /// Credis itself.
@@ -393,8 +438,7 @@ impl CredisContract<'_> {
                 reward_day(&self.storage)?,
                 gratis_burned_minor,
             )?;
-            record.outstanding_principal_minor = U256::ZERO;
-            record.outstanding_gratis_minor = U256::ZERO;
+            // The remainders stay on the record: they are what was written off and burned.
             record.state = CredisState::Forfeited as u8;
             self.update_credis_record(&record)?;
             self.unindex_for_call(&record)?;
@@ -428,7 +472,7 @@ impl CredisContract<'_> {
 
     /// Sum of `principal_minor` and of `outstanding_principal_minor` across all Credis for
     /// `account`, in one walk of the owner index.
-    pub fn principal_and_outstanding_of(&self, account: Address) -> Result<(U256, U256)> {
+    pub fn principal_and_outstanding_of(&self, account: Address, now: u64) -> Result<(U256, U256)> {
         let mut principal = U256::ZERO;
         let mut outstanding = U256::ZERO;
         for record in self.get_credis_by_owner(account)? {
@@ -436,7 +480,7 @@ impl CredisContract<'_> {
                 .checked_add(record.principal_minor)
                 .ok_or(CredisError::ArithmeticOverflow)?;
             outstanding = outstanding
-                .checked_add(record.outstanding_principal_minor)
+                .checked_add(outcome(&record, now)?.outstanding_principal_minor)
                 .ok_or(CredisError::ArithmeticOverflow)?;
         }
         Ok((principal, outstanding))

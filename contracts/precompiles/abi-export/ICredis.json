@@ -180,27 +180,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "callAnchorPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "callPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
           },
           {
             "name": "lastSettledAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "calledAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -215,24 +200,73 @@
             "internalType": "uint256"
           },
           {
-            "name": "settlementDeadline",
-            "type": "uint64",
-            "internalType": "uint64"
+            "name": "call",
+            "type": "tuple",
+            "internalType": "struct ICredis.CallTerms",
+            "components": [
+              {
+                "name": "callAnchorPriceMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "callPriceMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "callWindow",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "callThreshold",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "callNoticePeriod",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "calledAt",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "settlementDeadline",
+                "type": "uint64",
+                "internalType": "uint64"
+              }
+            ]
           },
           {
-            "name": "callNoticePeriod",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "callWindow",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "callThreshold",
-            "type": "uint32",
-            "internalType": "uint32"
+            "name": "outcome",
+            "type": "tuple",
+            "internalType": "struct ICredis.Outcome",
+            "components": [
+              {
+                "name": "principalPaidMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "principalWrittenOffMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "gratisReturnedMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "gratisBurnedMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
           }
         ]
       }

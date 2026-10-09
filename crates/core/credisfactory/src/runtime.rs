@@ -197,7 +197,12 @@ pub fn forfeit_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()>
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
         let forfeit = credis.forfeit(credis_id, now)?;
-        if forfeit.gratis_burned_minor != before.outstanding_gratis_minor {
+        let after = credis.get_credis(credis_id)?;
+        let only_state_moved = outbe_credis::Credis {
+            state: outbe_credis::CredisState::Forfeited as u8,
+            ..before.clone()
+        } == after;
+        if forfeit.gratis_burned_minor != before.outstanding_gratis_minor || !only_state_moved {
             return Err(revert("forfeiture collateral mismatch"));
         }
         if !forfeit.gratis_burned_minor.is_zero() {

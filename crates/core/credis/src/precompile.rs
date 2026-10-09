@@ -80,7 +80,9 @@ pub fn dispatch(
                 Ok(contract.get_credis(c.credisId)?.interest_paid_minor)
             }),
             credisPrincipalAndOutstandingOf(c) => view(c, |c| {
-                let (principal, outstanding) = contract.principal_and_outstanding_of(c.owner)?;
+                let now = contract.storage.timestamp()?.to::<u64>();
+                let (principal, outstanding) =
+                    contract.principal_and_outstanding_of(c.owner, now)?;
                 Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
                     principalMinor: principal,
                     outstandingPrincipalMinor: outstanding,
@@ -94,6 +96,7 @@ pub fn dispatch(
 }
 
 fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
+    let outcome = crate::runtime::outcome(p, now)?;
     Ok(ICredis::Credis {
         credisId: p.credis_id,
         owner: p.owner,
@@ -103,25 +106,33 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
         referenceCurrency: p.reference_currency,
         source: p.source,
         principalMinor: p.principal_minor,
-        outstandingPrincipalMinor: p.outstanding_principal_minor,
+        outstandingPrincipalMinor: outcome.outstanding_principal_minor,
         gratisMinor: p.gratis_minor,
-        outstandingGratisMinor: p.outstanding_gratis_minor,
+        outstandingGratisMinor: outcome.outstanding_gratis_minor,
         policyRate: p.policy_rate,
         entryPriceMinor: p.entry_price_minor,
-        callPriceMinor: p.call_price_minor,
         issuedAt: p.issued_at,
         lastSettledAt: p.last_settled_at,
-        calledAt: p.called_at,
         state: crate::runtime::effective_state(p, now)? as u8,
-        callAnchorPriceMinor: p.call_anchor_price_minor,
         interestPaidMinor: p.interest_paid_minor,
-        settlementDeadline: if p.called_at == 0 {
-            0
-        } else {
-            crate::runtime::settlement_deadline(p)
+        call: ICredis::CallTerms {
+            callAnchorPriceMinor: p.call_anchor_price_minor,
+            callPriceMinor: p.call_price_minor,
+            callWindow: p.call_window_seconds,
+            callThreshold: p.call_threshold_seconds,
+            callNoticePeriod: p.call_notice_period_seconds,
+            calledAt: p.called_at,
+            settlementDeadline: if p.called_at == 0 {
+                0
+            } else {
+                crate::runtime::settlement_deadline(p)
+            },
         },
-        callNoticePeriod: p.call_notice_period_seconds,
-        callWindow: p.call_window_seconds,
-        callThreshold: p.call_threshold_seconds,
+        outcome: ICredis::Outcome {
+            principalPaidMinor: outcome.principal_paid_minor,
+            principalWrittenOffMinor: outcome.principal_written_off_minor,
+            gratisReturnedMinor: outcome.gratis_returned_minor,
+            gratisBurnedMinor: outcome.gratis_burned_minor,
+        },
     })
 }

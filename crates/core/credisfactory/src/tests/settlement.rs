@@ -20,12 +20,18 @@ fn record(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::Credis {
     CredisContract::new(storage.clone()).get_credis(id).unwrap()
 }
 
+/// What a reader of `id` sees now.
+fn shown(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::Outcome {
+    let now = storage.timestamp().unwrap().to::<u64>();
+    outbe_credis::outcome(&record(storage, id), now).unwrap()
+}
+
 /// The collateral left on `id`, checked against the Credis's own accounting.
 fn collateral(storage: &StorageHandle<'_>, id: U256) -> U256 {
     let remaining = outbe_gratisfactory::api::collateral_of(storage, id)
         .unwrap()
         .remaining_minor;
-    assert_eq!(remaining, record(storage, id).outstanding_gratis_minor);
+    assert_eq!(remaining, shown(storage, id).outstanding_gratis_minor);
     remaining
 }
 
@@ -157,7 +163,17 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             };
             let p = record(&storage, id);
             assert_eq!(p.lifecycle_state().unwrap(), expected);
-            assert!(p.outstanding_principal_minor.is_zero());
+            assert!(shown(&storage, id).outstanding_principal_minor.is_zero());
+            if forfeit {
+                // The rounding already returned every Gratis: nothing is burned.
+                let outcome = shown(&storage, id);
+                assert_eq!(outcome.principal_written_off_minor, U256::from(3u64));
+                assert!(outcome.gratis_burned_minor.is_zero());
+                assert_eq!(
+                    outcome.gratis_returned_minor,
+                    record(&storage, id).gratis_minor
+                );
+            }
             assert_eq!(view_balance(&storage, alice()), collateral);
             assert_eq!(view_balance(&storage, bob()), U256::ZERO);
             assert_eq!(
@@ -276,8 +292,8 @@ fn one_source_backs_several_positions_and_unused_pledges() {
         let unused = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), unused, 3);
         let backing = |storage: &StorageHandle<'_>| {
-            record(storage, first).outstanding_gratis_minor
-                + record(storage, second).outstanding_gratis_minor
+            shown(storage, first).outstanding_gratis_minor
+                + shown(storage, second).outstanding_gratis_minor
         };
         assert_eq!(
             view_pledged(&storage, alice()),

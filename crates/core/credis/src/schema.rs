@@ -77,7 +77,8 @@ pub struct Credis {
     #[attribute(order = 5)]
     pub principal_minor: U256,
 
-    /// `P_out` - outstanding principal. Reaching zero closes the Credis.
+    /// `P_out` - outstanding principal. Reaching zero settles the Credis. A Forfeited
+    /// Credis keeps it as the principal written off; readers go through `outcome`.
     #[attribute(order = 6)]
     pub outstanding_principal_minor: U256,
 
@@ -86,7 +87,8 @@ pub struct Credis {
     #[attribute(order = 7)]
     pub gratis_minor: U256,
 
-    /// The share of `G` still locked. Released principal-proportionally.
+    /// The share of `G` still locked. Released principal-proportionally. A Forfeited
+    /// Credis keeps it as the Gratis burned.
     #[attribute(order = 8)]
     pub outstanding_gratis_minor: U256,
 
@@ -196,7 +198,7 @@ pub struct CredisContract {
     #[attribute(order = 2)]
     pub owner_credis_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// Total Credis ever created (backs `totalSupply` / `positionByIndex`).
+    /// Total Credis ever issued (backs `totalSupply` / `tokenByIndex`).
     #[attribute(order = 3)]
     pub total_credis: outbe_primitives::storage::dsl::Value<u64>,
 

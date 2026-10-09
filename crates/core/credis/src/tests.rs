@@ -311,8 +311,22 @@ fn worked_example_ledger_closes_exactly() {
 
         let p = credis.get_credis(id).unwrap();
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Forfeited);
-        assert!(p.outstanding_principal_minor.is_zero());
-        assert!(p.outstanding_gratis_minor.is_zero());
+        let shown = crate::outcome(&p, at(472)).unwrap();
+        assert!(shown.outstanding_principal_minor.is_zero());
+        assert!(shown.outstanding_gratis_minor.is_zero());
+        assert_eq!(
+            shown.principal_written_off_minor,
+            U256::from(235_397_260u64)
+        );
+        assert_eq!(shown.gratis_burned_minor, U256::from(470_794_520u64));
+        assert_eq!(
+            shown.principal_paid_minor + shown.principal_written_off_minor,
+            U256::from(PRINCIPAL)
+        );
+        assert_eq!(
+            shown.gratis_returned_minor + shown.gratis_burned_minor,
+            collateral()
+        );
         assert_eq!(
             p.interest_paid_minor, collected,
             "forfeit leaves collected interest"
@@ -1180,7 +1194,7 @@ fn sums_and_indexes_span_all_of_an_accounts_credis() {
         let mut credis = CredisContract::new(storage);
 
         assert_eq!(
-            credis.principal_and_outstanding_of(alice()).unwrap(),
+            credis.principal_and_outstanding_of(alice(), at(1)).unwrap(),
             (
                 U256::from(PRINCIPAL) * U256::from(2u64),
                 U256::from(PRINCIPAL) * U256::from(2u64)
@@ -1192,7 +1206,7 @@ fn sums_and_indexes_span_all_of_an_accounts_credis() {
             .settle(first, U256::from(999_999_999_999u64), at(1))
             .unwrap();
         assert_eq!(
-            credis.principal_and_outstanding_of(alice()).unwrap(),
+            credis.principal_and_outstanding_of(alice(), at(1)).unwrap(),
             (
                 U256::from(PRINCIPAL) * U256::from(2u64),
                 U256::from(PRINCIPAL)
@@ -1268,6 +1282,7 @@ fn precompile_get_credis_reports_the_settlement_deadline_once_called() {
             let out = dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
             ICredis::getCredisCall::abi_decode_returns(&out)
                 .unwrap()
+                .call
                 .settlementDeadline
         };
         assert_eq!(deadline(&storage), 0);
@@ -1298,17 +1313,17 @@ fn precompile_get_credis_returns_the_full_record() {
         assert_eq!(decoded.principalMinor, U256::from(PRINCIPAL));
         assert_eq!(decoded.gratisMinor, collateral());
         assert_eq!(decoded.entryPriceMinor, entry_price());
-        assert_eq!(decoded.callAnchorPriceMinor, call_anchor_price());
-        assert_eq!(decoded.callPriceMinor, U256::from(1_640_000u64));
+        assert_eq!(decoded.call.callAnchorPriceMinor, call_anchor_price());
+        assert_eq!(decoded.call.callPriceMinor, U256::from(1_640_000u64));
         assert_eq!(decoded.issuedAt, ORIGINATED_AT);
         assert_eq!(decoded.policyRate, policy_rate());
         assert_eq!(decoded.state, CredisState::Issued as u8);
         assert_eq!(decoded.source, source());
         assert_eq!(
             (
-                decoded.callNoticePeriod,
-                decoded.callWindow,
-                decoded.callThreshold
+                decoded.call.callNoticePeriod,
+                decoded.call.callWindow,
+                decoded.call.callThreshold
             ),
             (
                 crate::constants::CALL_NOTICE_PERIOD,
@@ -1956,6 +1971,93 @@ fn a_called_credis_past_its_deadline_shows_forfeited() {
                 .lifecycle_state()
                 .unwrap(),
             CredisState::Called
+        );
+    });
+
+    // The sweep stores what the reader already saw.
+    StorageHandle::enter(&mut provider, |storage| {
+        let before = token_uri_parts(&storage, id).0;
+        CredisContract::new(storage.clone())
+            .forfeit(id, deadline + 1)
+            .unwrap();
+        let (json, _) = token_uri_parts(&storage, id);
+        assert_eq!(json, before);
+        assert_eq!(trait_value(&json, "Outstanding").unwrap(), 0);
+        assert_eq!(trait_value(&json, "Collateral Locked").unwrap(), 0);
+        assert_eq!(trait_value(&json, "Accrued Interest").unwrap(), 0);
+        assert_eq!(trait_value(&json, "Settlement Deadline").unwrap(), deadline);
+    });
+}
+
+/// principal = paid + outstanding + written off, and Gratis = returned + outstanding +
+/// burned, after every step. A forfeit reads the same before and after the sweep.
+#[test]
+fn the_outcome_identities_hold_through_partial_settlements_and_forfeit() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_pos(&mut credis);
+        let check = |credis: &CredisContract<'_>, now: u64| {
+            let record = credis.get_credis(id).unwrap();
+            let shown = crate::outcome(&record, now).unwrap();
+            assert_eq!(
+                shown.principal_paid_minor
+                    + shown.outstanding_principal_minor
+                    + shown.principal_written_off_minor,
+                record.principal_minor
+            );
+            assert_eq!(
+                shown.gratis_returned_minor
+                    + shown.outstanding_gratis_minor
+                    + shown.gratis_burned_minor,
+                record.gratis_minor
+            );
+            shown
+        };
+        check(&credis, at(0));
+        for day in [30, 60] {
+            let record = credis.get_credis(id).unwrap();
+            let payment = CredisContract::accrued_interest(&record, at(day)).unwrap()
+                + U256::from(PRINCIPAL / 4);
+            credis.settle(id, payment, at(day)).unwrap();
+            check(&credis, at(day));
+        }
+        credis.mark_called(id, at(61)).unwrap();
+        let deadline = settlement_deadline(&credis.get_credis(id).unwrap());
+        let interest_paid = credis.get_credis(id).unwrap().interest_paid_minor;
+
+        let before_sweep = check(&credis, deadline + 1);
+        assert_eq!(
+            before_sweep.principal_written_off_minor,
+            U256::from(PRINCIPAL / 2)
+        );
+        let later = deadline + 10 * 86_400;
+        assert!(
+            CredisContract::accrued_interest(&credis.get_credis(id).unwrap(), later)
+                .unwrap()
+                .is_zero()
+        );
+        assert_eq!(
+            credis
+                .principal_and_outstanding_of(alice(), deadline + 1)
+                .unwrap()
+                .1,
+            U256::ZERO
+        );
+
+        credis.forfeit(id, deadline + 1).unwrap();
+        assert_eq!(check(&credis, deadline + 1), before_sweep);
+        assert_eq!(check(&credis, later), before_sweep);
+        assert_eq!(
+            credis.get_credis(id).unwrap().interest_paid_minor,
+            interest_paid,
+            "a forfeit books no interest"
+        );
+        assert_eq!(
+            credis
+                .principal_and_outstanding_of(alice(), later)
+                .unwrap()
+                .1,
+            U256::ZERO
         );
     });
 }

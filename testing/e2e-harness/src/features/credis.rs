@@ -419,8 +419,8 @@ fn issued(world: &mut World) {
     assert_eq!(p.state, 0);
     assert_eq!(p.lastSettledAt, p.issuedAt);
     assert_eq!(p.entryPriceMinor, U256::from(1_000_000));
-    assert_eq!(p.callAnchorPriceMinor, U256::from(1_000_000));
-    assert_eq!(p.callPriceMinor, U256::from(1_640_000));
+    assert_eq!(p.call.callAnchorPriceMinor, U256::from(1_000_000));
+    assert_eq!(p.call.callPriceMinor, U256::from(1_640_000));
     assert!(p.policyRate > U256::ZERO);
     // Credis currently pins the issuance currency's official rate with a 1x multiplier.
     assert_eq!(p.policyRate, state.policy_rate);
@@ -573,13 +573,13 @@ fn repay(world: &mut World) {
                 a.principalMinor,
                 a.policyRate,
                 a.entryPriceMinor,
-                a.callAnchorPriceMinor
+                a.call.callAnchorPriceMinor
             ),
             (
                 p.principalMinor,
                 p.policyRate,
                 p.entryPriceMinor,
-                p.callAnchorPriceMinor
+                p.call.callAnchorPriceMinor
             )
         );
         assert_eq!(after.account_stables, before.account_stables - amount);
