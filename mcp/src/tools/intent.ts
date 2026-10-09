@@ -73,7 +73,11 @@ function registerOrderOpen(server: McpServer, { ctx, router, resolveNetwork }: I
       amount_out: z.string().optional().describe("output amount (default = amount_in)"),
       output_decimals: z.number().int().optional().describe("override dest output-token decimals"),
       recipient: z.string().optional().describe("recipient on dest chain (default = sender)"),
-      fill_deadline_seconds: z.number().int().optional().describe("seconds until fill deadline (default 86400)"),
+      fill_deadline_seconds: z
+        .number()
+        .int()
+        .optional()
+        .describe(`seconds until fill deadline (default ${DEFAULT_FILL_DEADLINE_SECONDS})`),
       wait: waitFlag,
     },
     handler(async (a) => {

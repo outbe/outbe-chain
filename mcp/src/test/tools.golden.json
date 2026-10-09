@@ -1208,7 +1208,7 @@
           },
           "fill_deadline_seconds": {
             "type": "integer",
-            "description": "seconds until fill deadline (default 86400)"
+            "description": "seconds until fill deadline (default 120)"
           },
           "wait": {
             "type": "boolean",

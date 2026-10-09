@@ -10,7 +10,7 @@ import RouterJson from "../../../contracts/intent/abi-export/Router.json";
  */
 
 export const DEFAULT_ROUTER = "0xC846a86D4FE91a43E900a7a3bd5BE23ED2C30492";
-export const DEFAULT_FILL_DEADLINE_SECONDS = 120; // 120s
+export const DEFAULT_FILL_DEADLINE_SECONDS = 120;
 
 export const ROUTER_ABI: Abi = RouterJson as Abi;
 
