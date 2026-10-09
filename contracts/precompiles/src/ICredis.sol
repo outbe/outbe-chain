@@ -128,9 +128,6 @@ interface ICredis {
     function balanceOf(address smartAccount) external view returns (uint256 balance);
     function positionOfAddressByIndex(address smartAccount, uint256 index) external view returns (Position memory);
 
-    /// @notice True while `smartAccount` holds any CALLED position.
-    function hasCalledPosition(address smartAccount) external view returns (bool);
-
     /// @notice Interest accrued on the outstanding principal since the last
     ///         settlement (simple, ACT/365), evaluated at the current block
     ///         timestamp. This is the next payment's interest delta and the

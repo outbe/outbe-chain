@@ -300,9 +300,6 @@ fn worked_example_ledger_closes_exactly() {
         let void = credis.void_position(id, at(472)).unwrap();
         assert_eq!(void.gratis_burned_minor, U256::from(470_794_520u64));
         assert_eq!(void.principal_written_off, U256::from(235_397_260u64));
-        // Unpaid fraction 235_397_260 / 1_000_000_000 = 23.5397260%, at scale 1e6.
-        assert_eq!(void.unpaid_share, U256::from(235_397u64));
-        assert_eq!(void.cca, cca());
 
         // --- The paper's ledger check. ---------------------------------------
         let released =
@@ -765,7 +762,6 @@ fn full_settlement_while_called_closes_the_position() {
             credis.get_position(id).unwrap().lifecycle_state().unwrap(),
             CredisState::Settled
         );
-        assert!(!credis.has_called_position(alice()).unwrap());
     });
 }
 
@@ -1008,7 +1004,6 @@ fn called_repayment_and_void_have_complementary_deadline_boundaries() {
                     0,
                     "still queued"
                 );
-                assert!(credis.has_called_position(alice()).unwrap());
                 assert_eq!(
                     credis.void_position(id, now).unwrap().gratis_burned_minor,
                     before.outstanding_gratis_minor
@@ -1052,7 +1047,7 @@ fn void_requires_a_called_position_past_its_window_with_a_remainder() {
 }
 
 #[test]
-fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
+fn a_fully_unpaid_void_burns_all_collateral() {
     use alloy_sol_types::SolEvent;
 
     let mut provider = credis_provider();
@@ -1064,7 +1059,6 @@ fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
         let void = credis.void_position(id, at(24)).unwrap();
         assert_eq!(void.gratis_burned_minor, collateral());
         assert_eq!(void.principal_written_off, U256::from(PRINCIPAL));
-        assert_eq!(void.unpaid_share, SCALE_1E6_U256, "100% unpaid");
         assert!(credis
             .get_position(id)
             .unwrap()
@@ -1099,55 +1093,12 @@ fn void_is_terminal() {
         // A second sweep finds nothing: the position is no longer Called.
         assert!(credis.void_position(id, at(25)).is_err());
         assert!(credis.settle(id, U256::from(1u64), at(25)).is_err());
-        assert!(!credis.has_called_position(alice()).unwrap());
     });
 }
 
 // ---------------------------------------------------------------------------
 // Reads and indexes
 // ---------------------------------------------------------------------------
-
-#[test]
-fn has_called_position_tracks_the_owners_book() {
-    let mut provider = credis_provider();
-    let first = open_at_block(&mut provider, 1, params(alice()));
-    open_at_block(&mut provider, 2, params(alice()));
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut credis = CredisContract::new(storage);
-        assert!(!credis.has_called_position(alice()).unwrap());
-
-        credis.mark_called(first, at(10)).unwrap();
-        assert!(credis.has_called_position(alice()).unwrap());
-        assert!(
-            !credis.has_called_position(bob()).unwrap(),
-            "another owner is unaffected"
-        );
-
-        credis
-            .settle(first, U256::from(999_999_999_999u64), at(11))
-            .unwrap();
-        assert!(
-            !credis.has_called_position(alice()).unwrap(),
-            "settling the call in full clears the owner's block"
-        );
-    });
-}
-
-#[test]
-fn the_called_counter_also_clears_on_a_void() {
-    with_credis(|storage| {
-        let mut credis = CredisContract::new(storage);
-        let id = open_pos(&mut credis);
-        credis.mark_called(id, at(10)).unwrap();
-        assert!(credis.has_called_position(alice()).unwrap());
-
-        credis.void_position(id, at(24)).unwrap();
-        assert!(
-            !credis.has_called_position(alice()).unwrap(),
-            "a void resolves the call as much as a settlement does"
-        );
-    });
-}
 
 /// Reads back the call bin `sample` is priced into, as a plain list.
 fn indexed_ids(credis: &CredisContract<'_>, sample: U256) -> Vec<U256> {

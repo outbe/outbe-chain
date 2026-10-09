@@ -209,11 +209,6 @@ fn a_full_window_above_the_call_price_calls_the_position() {
             "the settlement window opens at the call"
         );
 
-        // The owner's called-position counter tracks the unresolved call.
-        assert!(CredisContract::new(storage.clone())
-            .has_called_position(alice())
-            .unwrap());
-
         // Idempotent: a second run does not move the deadline.
         assert_eq!(scan(&storage, at), 0);
         assert_eq!(
@@ -474,10 +469,7 @@ fn the_call_and_the_void_compose_across_runs() {
             pledge_cost()
         );
 
-        // The void cleared the owner's called count and left the deadline queue.
-        assert!(!CredisContract::new(storage.clone())
-            .has_called_position(alice())
-            .unwrap());
+        // The void left the deadline queue.
         assert_eq!(queued_at(&storage, position_id), 0);
     });
     teardown();

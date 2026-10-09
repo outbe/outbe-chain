@@ -115,22 +115,6 @@ impl CredisContract<'_> {
     }
 
     // ---------------------------------------------------------------------
-    // Called-position counter
-    // ---------------------------------------------------------------------
-
-    pub(crate) fn bump_called_count(&mut self, account: Address) -> Result<()> {
-        let count = self.called_position_counts.read(&account)?;
-        self.called_position_counts
-            .write(&account, count.saturating_add(1))
-    }
-
-    pub(crate) fn drop_called_count(&mut self, account: Address) -> Result<()> {
-        let count = self.called_position_counts.read(&account)?;
-        self.called_position_counts
-            .write(&account, count.saturating_sub(1))
-    }
-
-    // ---------------------------------------------------------------------
     // Settlement-deadline queue
     // ---------------------------------------------------------------------
 

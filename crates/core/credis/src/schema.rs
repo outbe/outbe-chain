@@ -204,11 +204,6 @@ pub struct CredisContract {
     #[attribute(order = 4)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    /// Per-account count of positions currently `Called`, backing the
-    /// `hasCalledPosition` view.
-    #[attribute(order = 7)]
-    pub called_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
-
     /// Widest `call_window_seconds` ever opened in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
     /// position whose sealed window outruns the current constant.

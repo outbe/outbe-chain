@@ -72,7 +72,6 @@ pub fn dispatch(
                 let position = contract.position_of_address_at(c.smartAccount, index)?;
                 abi_position(&position, contract.storage.timestamp()?.to::<u64>())
             }),
-            hasCalledPosition(c) => view(c, |c| contract.has_called_position(c.smartAccount)),
             interestAccruedMinor(c) => view(c, |c| {
                 let position = contract.get_position(c.positionId)?;
                 let timestamp = contract.storage.timestamp()?.to::<u64>();

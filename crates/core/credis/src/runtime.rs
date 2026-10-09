@@ -69,8 +69,6 @@ pub struct Settlement {
     /// Collateral freed and owed back to the pledger.
     pub gratis_returned_minor: U256,
     pub asset: Address,
-    pub smart_account: Address,
-    pub cca: Address,
     /// True when this settlement drove the outstanding principal to zero.
     pub closed: bool,
 }
@@ -81,11 +79,6 @@ pub struct Settlement {
 pub struct Void {
     pub gratis_burned_minor: U256,
     pub principal_written_off: U256,
-    pub smart_account: Address,
-    pub cca: Address,
-    /// Unpaid share of the original principal, scale `1e6`. Scales the
-    /// originating CCA's penalty.
-    pub unpaid_share: U256,
 }
 
 /// `price x (100 + rate_pct) / 100`.
@@ -256,7 +249,6 @@ impl CredisContract<'_> {
         position.called_at = now;
         self.update_position_record(&position)?;
         self.unindex_for_call(&position)?;
-        self.bump_called_count(position.smart_account)?;
         self.queue_called(position_id, settlement_deadline(&position))?;
         self.emit(ICredis::PositionCalled {
             positionId: position_id,
@@ -343,11 +335,9 @@ impl CredisContract<'_> {
         }
         self.update_position_record(&position)?;
         if closed {
-            // Terminal: leave the call index, and release the owner's call
-            // block if this settlement resolved a called position.
+            // Terminal: leave the call index and the settlement-deadline queue.
             self.unindex_for_call(&position)?;
             if state_before == CredisState::Called {
-                self.drop_called_count(position.smart_account)?;
                 self.unqueue_called(position_id)?;
             }
         }
@@ -376,8 +366,6 @@ impl CredisContract<'_> {
                 .ok_or(CredisError::ArithmeticOverflow)?,
             gratis_returned_minor,
             asset: position.asset,
-            smart_account: position.smart_account,
-            cca: position.cca,
             closed,
         })
     }
@@ -407,12 +395,6 @@ impl CredisContract<'_> {
 
             let gratis_burned_minor = position.outstanding_gratis_minor;
             let principal_written_off = position.outstanding_principal_minor;
-            // A dimensionless fraction of the original principal, carried at the
-            // protocol's 1e6 fixed-point scale.
-            let unpaid_share = principal_written_off
-                .checked_mul(SCALE_1E6_U256)
-                .ok_or(CredisError::ArithmeticOverflow)?
-                / position.principal_minor;
 
             outbe_ccaregistry::api::position_voided(
                 &self.storage,
@@ -425,7 +407,6 @@ impl CredisContract<'_> {
             position.state = CredisState::Void as u8;
             self.update_position_record(&position)?;
             self.unindex_for_call(&position)?;
-            self.drop_called_count(position.smart_account)?;
             self.unqueue_called(position_id)?;
 
             self.emit(ICredis::PositionVoided {
@@ -441,9 +422,6 @@ impl CredisContract<'_> {
             Ok(Void {
                 gratis_burned_minor,
                 principal_written_off,
-                smart_account: position.smart_account,
-                cca: position.cca,
-                unpaid_share,
             })
         })
     }
@@ -455,12 +433,6 @@ impl CredisContract<'_> {
     /// Loads the position record. Reverts on missing.
     pub fn get_position(&self, position_id: U256) -> Result<Position> {
         self.load_position(position_id)
-    }
-
-    /// True if any of `account`'s positions is CALLED. Informational only: a
-    /// pending call does not gate origination of further positions.
-    pub fn has_called_position(&self, account: Address) -> Result<bool> {
-        Ok(self.called_position_counts.read(&account)? > 0)
     }
 
     /// Sum of `principal_minor` and of `outstanding_principal_minor` across all positions for
