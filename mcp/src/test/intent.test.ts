@@ -67,3 +67,18 @@ test("an order is still found on outbe when the hinted chain cannot answer", asy
     await harness.close();
   }
 });
+
+test("a refund to a chain without an RPC says how to reach it", async () => {
+  const harness = await startHarness((chain) => {
+    chain.register(ROUTER_ABI, DEFAULT_ROUTER);
+    chain.reply("openOrders", openOrder(8453));
+    chain.reply("orderStatus", stringToHex("OPENED", { size: 32 }));
+  });
+  try {
+    const { isError, text } = await harness.call("intent_order_refund", { order_id: ORDER_ID, chain: "bsc-testnet" });
+    assert(isError);
+    assert.match(text, /destination chain 8453 is not reachable: no RPC for chain 8453; set OUTBE_RPC_8453/);
+  } finally {
+    await harness.close();
+  }
+});

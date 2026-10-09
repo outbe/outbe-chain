@@ -26,7 +26,7 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
       "Allowed once the series has qualified (voluntary; see `qualified` in intex_series_info) or is Called " +
       "(forced, within the call period). The " +
       "Settled token (soulbound) stays with the owner whoever pays, and only the owner can mine its Promis. " +
-      "Settlement only ever happens on outbe: a position sitting on BSC has to be brought over with " +
+      "Settlement only ever happens on outbe: a position sitting on a target chain has to be brought over with " +
       "intex_bridge_send first, and that has to land before the series settlementDeadline. Requires " +
       "OUTBE_PRIVATE_KEY.",
     {

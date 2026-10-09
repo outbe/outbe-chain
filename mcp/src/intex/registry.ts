@@ -14,11 +14,10 @@ import IOriginRouter from "../abi/generated/intex/IOriginRouter.js";
  * Addresses + ABIs for the Intex tools (auction commit/reveal, escrow, NFT,
  * series registry, cross-chain bridge, settlement/Promis).
  *
- * Intex is cross-chain. The auction + escrow + NFT run on target chains (BSC
- * today, more later). The series ledger (Intex), settlement (IntexFactory) and
- * Promis live on outbe as runtime precompiles. Addresses are embedded constants,
- * keyed by network so a new target chain is an added branch, not a rewrite. The
- * build inlines the ABI JSON. This module never reads it at runtime.
+ * Intex is cross-chain. The auction + escrow + NFT run on the target chains the
+ * origin router serves. The series ledger (Intex), settlement (IntexFactory) and
+ * Promis live on outbe as runtime precompiles. Addresses are embedded constants.
+ * The build inlines the ABI JSON. This module never reads it at runtime.
  *
  * ABIs are generated from Solidity (contracts/{intex,precompiles,tokens}), never
  * hand-written. This matches the convention in src/registry.ts. Where a method is
@@ -26,7 +25,7 @@ import IOriginRouter from "../abi/generated/intex/IOriginRouter.js";
  * concrete artifact.
  */
 
-/** Per-network Intex contract addresses. Empty until deployed on that network. */
+/** The Intex contracts the tools address. */
 export interface IntexAddresses {
   auction?: Address;
   escrow?: Address;
@@ -100,16 +99,16 @@ export function intexAddress(network: IntexChain, key: keyof IntexAddresses): Ad
 
 // --- ABIs ------------------------------------------------------------------
 
-/** IntexAuction (BSC): commit/reveal + auction views. */
+/** IntexAuction (target chains): commit/reveal + auction views. */
 export const AUCTION_ABI = IntexAuction;
 
-/** IntexNFT1155 (BSC + outbe): holder-facing reads. */
+/** IntexNFT1155 (target chains + outbe): holder-facing reads. */
 export const NFT_ABI = IIntexNFT1155;
 
 /** Intex (outbe precompile): canonical cross-chain series ledger. */
 export const INTEX_ABI = IIntex;
 
-/** IntexNFT1155Bridge: the cross-chain NFT bridge (BSC <-> outbe) over ERC-7786. */
+/** IntexNFT1155Bridge: the cross-chain NFT bridge between Intex chains over ERC-7786. */
 export const NFT_BRIDGE_ABI = IIntexNFT1155Bridge;
 
 /** IntexFactory (outbe precompile): holder-facing settlement + Promis mining. */

@@ -1748,7 +1748,7 @@
           },
           "recipient": {
             "type": "string",
-            "description": "recipient on outbe (default: the signer)"
+            "description": "recipient on the destination chain (default: the signer)"
           },
           "network": {
             "type": "string",
@@ -1772,7 +1772,7 @@
     },
     {
       "name": "intex_bridge_send",
-      "description": "Bridge an Intex NFT to another Intex chain, by default to outbe, where settlement happens - nothing moves it for you, so a position left on BSC past the series settlementDeadline can no longer be settled at all. Works at every stage: to any recipient while Issued or Qualified, and to yourself only once the series is Called (ownership is frozen then, so a recipient other than you is refused). The bridge burns your token directly (role-gated), so no approval is needed. Auto-quotes the native fee (paid as value), which you pay in the source chain's native token. Requires OUTBE_PRIVATE_KEY.",
+      "description": "Bridge an Intex NFT to another Intex chain, by default to outbe, where settlement happens - nothing moves it for you, so a position left on a target chain past the series settlementDeadline can no longer be settled at all. Works at every stage: to any recipient while Issued or Qualified, and to yourself only once the series is Called (ownership is frozen then, so a recipient other than you is refused). The bridge burns your token directly (role-gated), so no approval is needed. Auto-quotes the native fee (paid as value), which you pay in the source chain's native token. Requires OUTBE_PRIVATE_KEY.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1786,7 +1786,7 @@
           },
           "recipient": {
             "type": "string",
-            "description": "recipient on outbe (default: the signer)"
+            "description": "recipient on the destination chain (default: the signer)"
           },
           "network": {
             "type": "string",
@@ -1814,7 +1814,7 @@
     },
     {
       "name": "intex_settle",
-      "description": "Settlement step 1: pay the strike and turn Issued Intexes into Settled (Promis is mined later via intex_promis_mine). Pays in `token`, one of the tokens intex_settlement_tokens lists: the tool quotes the units, approves IntexFactory for that cost if the allowance is short, and settles at the quoted snapshot. Defaults to your own wallet; pass owner to pay for someone else's position. Allowed once the series has qualified (voluntary; see `qualified` in intex_series_info) or is Called (forced, within the call period). The Settled token (soulbound) stays with the owner whoever pays, and only the owner can mine its Promis. Settlement only ever happens on outbe: a position sitting on BSC has to be brought over with intex_bridge_send first, and that has to land before the series settlementDeadline. Requires OUTBE_PRIVATE_KEY.",
+      "description": "Settlement step 1: pay the strike and turn Issued Intexes into Settled (Promis is mined later via intex_promis_mine). Pays in `token`, one of the tokens intex_settlement_tokens lists: the tool quotes the units, approves IntexFactory for that cost if the allowance is short, and settles at the quoted snapshot. Defaults to your own wallet; pass owner to pay for someone else's position. Allowed once the series has qualified (voluntary; see `qualified` in intex_series_info) or is Called (forced, within the call period). The Settled token (soulbound) stays with the owner whoever pays, and only the owner can mine its Promis. Settlement only ever happens on outbe: a position sitting on a target chain has to be brought over with intex_bridge_send first, and that has to land before the series settlementDeadline. Requires OUTBE_PRIVATE_KEY.",
       "inputSchema": {
         "type": "object",
         "properties": {

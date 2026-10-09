@@ -12,7 +12,7 @@ import {
 import { z } from "zod";
 import { networkName, waitFlag } from "./schemas.js";
 import { type Ctx, formatNativeAmount } from "../chain.js";
-import { type Network, type NetworkResolver, networkResolver } from "../net/resolver.js";
+import { type NetworkResolver, networkResolver } from "../net/resolver.js";
 import { receiptSummary, requireAccount, sendCall, waitForReceipt } from "../net/tx.js";
 import { loadConfig } from "../config.js";
 import { ensureAllowance, readDecimals } from "../net/erc20.js";
@@ -238,12 +238,9 @@ function registerOrderRefund(server: McpServer, { ctx, router, resolveNetwork }:
         throw new Error(`fill deadline not passed yet (~${mins} min remaining)`);
       }
 
-      let destNet: Network;
-      try {
-        destNet = await resolveNetwork(String(order.destinationDomain));
-      } catch {
-        throw new Error(`destination chainId ${order.destinationDomain} is not reachable (outbe/bsc only)`);
-      }
+      const destNet = await resolveNetwork(String(order.destinationDomain)).catch((error: Error) => {
+        throw new Error(`destination chain ${order.destinationDomain} is not reachable: ${error.message}`);
+      });
 
       const sameChain = order.originDomain === order.destinationDomain;
       let value = 0n;

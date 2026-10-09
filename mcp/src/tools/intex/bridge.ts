@@ -44,7 +44,7 @@ export function registerBridgeTools(server: McpServer, deps: IntexDeps): void {
   server.tool(
     "intex_bridge_send",
     "Bridge an Intex NFT to another Intex chain, by default to outbe, where settlement happens - nothing moves it for you, so a " +
-      "position left on BSC past the series settlementDeadline can no longer be settled at all. Works at every " +
+      "position left on a target chain past the series settlementDeadline can no longer be settled at all. Works at every " +
       "stage: to any recipient while Issued or Qualified, and to yourself only once the series is Called " +
       "(ownership is frozen then, so a recipient other than you is refused). The bridge burns your token " +
       "directly (role-gated), so no approval is needed. Auto-quotes the native fee (paid as value), which " +
