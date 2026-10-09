@@ -13,15 +13,15 @@
         "fidelity": "full"
       },
       "calldata": {
-        "bytes": 36,
-        "zero_bytes": 31,
-        "nonzero_bytes": 5,
+        "bytes": 68,
+        "zero_bytes": 61,
+        "nonzero_bytes": 7,
         "transaction_base_gas": 21000,
-        "zero_byte_gas": 124,
-        "nonzero_byte_gas": 80
+        "zero_byte_gas": 244,
+        "nonzero_byte_gas": 112
       },
       "gas_totals": {
-        "user_transaction": 215304
+        "user_transaction": 236356
       },
       "gas_components": [
         {
@@ -33,14 +33,14 @@
         {
           "ledger": "user_transaction",
           "key": "calldata.zero_bytes",
-          "gas": 124,
-          "operations": 31
+          "gas": 244,
+          "operations": 61
         },
         {
           "ledger": "user_transaction",
           "key": "calldata.nonzero_bytes",
-          "gas": 80,
-          "operations": 5
+          "gas": 112,
+          "operations": 7
         },
         {
           "ledger": "user_transaction",
@@ -51,15 +51,15 @@
         {
           "ledger": "user_transaction",
           "key": "storage.credis.read",
-          "gas": 5500,
-          "operations": 55,
+          "gas": 6000,
+          "operations": 60,
           "module": "credis"
         },
         {
           "ledger": "user_transaction",
           "key": "storage.credis.write",
-          "gas": 155000,
-          "operations": 31,
+          "gas": 175000,
+          "operations": 35,
           "module": "credis"
         },
         {
@@ -78,6 +78,13 @@
         },
         {
           "ledger": "user_transaction",
+          "key": "storage.oracle.read",
+          "gas": 700,
+          "operations": 7,
+          "module": "oracle"
+        },
+        {
+          "ledger": "user_transaction",
           "key": "storage.other.read",
           "gas": 1200,
           "operations": 12,
@@ -93,8 +100,8 @@
         {
           "ledger": "user_transaction",
           "key": "storage.vault_router.read",
-          "gas": 1700,
-          "operations": 17,
+          "gas": 1400,
+          "operations": 14,
           "module": "vault_router"
         }
       ],
@@ -102,14 +109,6 @@
         {
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
-          "slot": "0x10fada61ac3f474b94d09078eba0c86282f9e82009f564bba746fa8ed1d0b8eb",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "credis",
-          "address": "0x000000000000000000000000000000000000100a",
           "slot": "0x12bde240a59f20299672720b02ab41d3826c55046a2efc3bb03d7b0f8c9300e6",
           "operation": "read",
           "count": 2,
@@ -119,22 +118,6 @@
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
           "slot": "0x12bde240a59f20299672720b02ab41d3826c55046a2efc3bb03d7b0f8c9300e6",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "credis",
-          "address": "0x000000000000000000000000000000000000100a",
-          "slot": "0x170c5e209d3e3cc717b5e22953b54475cac6de9b4bd6a1db6a299ebde7dcc272",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "credis",
-          "address": "0x000000000000000000000000000000000000100a",
-          "slot": "0x170c5e209d3e3cc717b5e22953b54475cac6de9b4bd6a1db6a299ebde7dcc272",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -158,15 +141,15 @@
         {
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
-          "slot": "0x1b",
+          "slot": "0x292b5889b572f29e6c741075b8258ae9e55c26462fa67f5cf32c5970f4aa09f7",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 1,
+          "gas": 100
         },
         {
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
-          "slot": "0x1b",
+          "slot": "0x292b5889b572f29e6c741075b8258ae9e55c26462fa67f5cf32c5970f4aa09f7",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -190,6 +173,14 @@
         {
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x32",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
           "slot": "0x344239c618a369cc332fc0cf3951778456de8b7b8bf15410e6854c6e43cef8d",
           "operation": "read",
           "count": 2,
@@ -206,7 +197,15 @@
         {
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
-          "slot": "0x3ad8aa4f87544323a9d1e5dd902f40c356527a7955687113db5f9a85ad579dc1",
+          "slot": "0x3941f793c48cb64bdd8789bb91965defc0c5bdc79699e74227a55fcc118d8151",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x3941f793c48cb64bdd8789bb91965defc0c5bdc79699e74227a55fcc118d8151",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -223,6 +222,22 @@
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
           "slot": "0x4b77a5819517f1d73cd482e10477227e385794db0325ed16cf0c8863aae9162d",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x4fa415927f69e37b82aea4de23bfbad05fd700ea12edf53f40745f62f5882d1f",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x4fa415927f69e37b82aea4de23bfbad05fd700ea12edf53f40745f62f5882d1f",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -302,6 +317,22 @@
         {
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x784e211014f8cf4a9e930ea9a47ad6ab91b639d5fdade73876cc514288b48f58",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x784e211014f8cf4a9e930ea9a47ad6ab91b639d5fdade73876cc514288b48f58",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
           "slot": "0x844a0ca5c1d4690acc02a6f68166d94f70a98b930e5ac75319b225509e124739",
           "operation": "read",
           "count": 2,
@@ -334,6 +365,30 @@
         {
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x8a1322463ba1224bd7761625f5ac234a1098a0a2bb980f5cfdc58f4bdb74854",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x8a1322463ba1224bd7761625f5ac234a1098a0a2bb980f5cfdc58f4bdb74854",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x8bf255c7d153cda8bf03bfb47d74c2b7e1d426f63aed390d833a0d4e312b2fc",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
           "slot": "0x8cfb0603e31eadb1077669ac1e8c68d68f351b0467a80f8fa0e777f548d74e00",
           "operation": "read",
           "count": 2,
@@ -350,6 +405,22 @@
         {
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x94cf9c2aa069650e127e3e9dbb12ffd2496bb47f368d47de3a3e0e000c953f97",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x94cf9c2aa069650e127e3e9dbb12ffd2496bb47f368d47de3a3e0e000c953f97",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
           "slot": "0x96c9ace798f588004e3db2f0f035919912f1d57ff6e17c0281717e80afb36be1",
           "operation": "read",
           "count": 2,
@@ -359,6 +430,22 @@
           "module": "credis",
           "address": "0x000000000000000000000000000000000000100a",
           "slot": "0x96c9ace798f588004e3db2f0f035919912f1d57ff6e17c0281717e80afb36be1",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x9bad2853855e924f3845354eeae1843ffd198f03f0aa86c1fb32ec3fe9623b84",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "credis",
+          "address": "0x000000000000000000000000000000000000100a",
+          "slot": "0x9bad2853855e924f3845354eeae1843ffd198f03f0aa86c1fb32ec3fe9623b84",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -620,6 +707,54 @@
           "gas": 5000
         },
         {
+          "module": "oracle",
+          "address": "0x000000000000000000000000000000000000ee05",
+          "slot": "0x37",
+          "operation": "read",
+          "count": 2,
+          "gas": 200
+        },
+        {
+          "module": "oracle",
+          "address": "0x000000000000000000000000000000000000ee05",
+          "slot": "0x3b",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "oracle",
+          "address": "0x000000000000000000000000000000000000ee05",
+          "slot": "0x42a7b7dd785cd69714a189dffb3fd7d7174edc9ece837694ce50f7078f7c31ae",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "oracle",
+          "address": "0x000000000000000000000000000000000000ee05",
+          "slot": "0x7c5e3abb0610475094feae94b2b8d9f23360e0891496dc7a926bfce0d52091ec",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "oracle",
+          "address": "0x000000000000000000000000000000000000ee05",
+          "slot": "0xb2329b75437839d4117f9edf6f977f00f98f5fe4982fb47d75847512fa53863c",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "oracle",
+          "address": "0x000000000000000000000000000000000000ee05",
+          "slot": "0xfa9240513fa8af0cd3aa94db0c237a129a63076f21ab227c30018c124938bc88",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
           "module": "other",
           "address": "0x0000000000000000000000000000000000001011",
           "slot": "0x3e1bb713a7067490315b070c10893ff3a9e19f5eac09871d13a08e8f5ccfd374",
@@ -710,14 +845,6 @@
         {
           "module": "vault_router",
           "address": "0x0000000000000000000000000000000000001017",
-          "slot": "0x3f32b1e6928a174926c4b104dac81e478b6c8ab881d899ad155ded3e9d1b4426",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "vault_router",
-          "address": "0x0000000000000000000000000000000000001017",
           "slot": "0x5db1dfd2ced311e642486f0e890a646498a1bdee1ad9403b0a73141af8a4c411",
           "operation": "read",
           "count": 1,
@@ -734,14 +861,6 @@
         {
           "module": "vault_router",
           "address": "0x0000000000000000000000000000000000001017",
-          "slot": "0x6e777cacfc4ad3a3cac3b8e17ccbbe9f6893bdc61d89783315eee44e3959da21",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "vault_router",
-          "address": "0x0000000000000000000000000000000000001017",
           "slot": "0x820fef5837650fa3b8e45045b88059d8deaf0810350ec511c47ef768a28c2c9b",
           "operation": "read",
           "count": 1,
@@ -751,14 +870,6 @@
           "module": "vault_router",
           "address": "0x0000000000000000000000000000000000001017",
           "slot": "0x873299c6a6c39b8b92f01922bb622df4a3236ea2876aac2da76f6c092cf7e98f",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "vault_router",
-          "address": "0x0000000000000000000000000000000000001017",
-          "slot": "0x97f6617e72684f128d84ea8b55c40e794b94716acf5a4e8c39cb395494fddcca",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -815,12 +926,7 @@
       "events": [
         {
           "emitter": "0x0000000000000000000000000000000000001009",
-          "event": "0x29f389faedc12da2532072992f495360c8013a15596925c6e1c710b7b73b478d",
-          "count": 1
-        },
-        {
-          "emitter": "0x000000000000000000000000000000000000100a",
-          "event": "0x9493498b2135708a3d9a814ad461d66a0552870420618ca62b13f265abfacc2f",
+          "event": "0x4dd075365655c22055a1dbe284064911d88dee99d0d4e4e788a706055b8077aa",
           "count": 1
         },
         {
@@ -830,7 +936,7 @@
         },
         {
           "emitter": "0x0000000000000000000000000000000000002003",
-          "event": "0x976eda9f15fe96a8f1631d7ec8d3123153d789a1dd5cbf05f64075cb2719b677",
+          "event": "0x807808df65bddd6c06424f04707800fe723cb152b36192a4ac7b0c2262eb4c37",
           "count": 1
         }
       ]
@@ -916,17 +1022,9 @@
           "fidelity": "benchmark_stub"
         },
         {
-          "label": "IERC20.approve",
+          "label": "IERC20.transfer",
           "target": "0x8888888888888888888888888888888888888888",
-          "selector": "0x095ea7b3",
-          "status": "success (deterministic benchmark stub)",
-          "gas_used": 0,
-          "fidelity": "benchmark_stub"
-        },
-        {
-          "label": "ITokenBundle.topUp (smart-account TODO)",
-          "target": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "selector": "0x69901858",
+          "selector": "0xa9059cbb",
           "status": "success (deterministic benchmark stub)",
           "gas_used": 0,
           "fidelity": "benchmark_stub"
