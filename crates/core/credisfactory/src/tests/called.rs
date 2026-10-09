@@ -972,7 +972,10 @@ fn a_failed_void_fails_the_block_and_keeps_the_position_queued() {
             outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, lapsed, CHAIN_ID),
             storage.clone(),
         );
-        assert!(crate::expired::sweep_expired(&ctx).is_err());
+        assert!(matches!(
+            crate::expired::sweep_expired(&ctx),
+            Err(outbe_primitives::error::PrecompileError::EnclaveUnavailable(_))
+        ));
         assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
         assert_ne!(queued_at(&storage, ids[0]), 0);
     });

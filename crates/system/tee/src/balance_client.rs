@@ -186,6 +186,9 @@ mod tests {
             TransportError::Unavailable("enclave is not initialized".into()),
             TransportError::EnclaveError("no resident group key".into()),
             TransportError::Noise("x".into()),
+            TransportError::Handshake("x".into()),
+            TransportError::SessionRevoked("x"),
+            TransportError::IdentityMismatch("x".into()),
         ] {
             assert!(matches!(
                 request_failure(error),
@@ -195,6 +198,7 @@ mod tests {
         for error in [
             TransportError::Codec("x".into()),
             TransportError::UnexpectedResponse,
+            TransportError::GratisOpAttestation("x".into()),
         ] {
             assert!(matches!(request_failure(error), PrecompileError::Fatal(_)));
         }

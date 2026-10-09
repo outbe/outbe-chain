@@ -28,20 +28,22 @@ fn a_keyless_enclave_or_an_expired_lease_is_not_ready() {
     let read = EnclaveRequest::ReadNodAmountV2 {
         nod: encrypted_nod(),
     };
-    assert!(matches!(
+    assert_eq!(
         enclave
             .initialization
             .authorize_command(&read, false, SessionAuthorityV1::LocalNodeHost),
-        Err(CommandDenial::NotReady(_))
-    ));
-    assert!(matches!(
+        Err(CommandDenial::NotReady(
+            "command denied by enclave state matrix"
+        ))
+    );
+    assert_eq!(
         enclave.initialization.authorize_command(
             &EnclaveRequest::GetPublicKeys,
             true,
             SessionAuthorityV1::RemoteActiveNode { deadline: 0 }
         ),
-        Err(CommandDenial::NotReady(_))
-    ));
+        Err(CommandDenial::NotReady("remote session lease expired"))
+    );
     let response = dispatch(
         read,
         &enclave.keys,
@@ -67,6 +69,23 @@ fn a_command_this_state_never_allows_is_forbidden() {
             Err(CommandDenial::Forbidden(_))
         ));
     }
+    let founding = EnclaveRequest::DkgOpen {
+        ceremony_id: B256::repeat_byte(1),
+        round: 0,
+        participants: Vec::new(),
+    };
+    assert!(enclave
+        .initialization
+        .authorize_command(&founding, false, SessionAuthorityV1::LocalNodeHost)
+        .is_ok());
+    assert!(matches!(
+        enclave.initialization.authorize_command(
+            &founding,
+            true,
+            SessionAuthorityV1::LocalNodeHost
+        ),
+        Err(CommandDenial::Forbidden(_))
+    ));
     assert!(matches!(
         enclave.initialization.authorize_command(
             &EnclaveRequest::ReadNodAmountV2 {
