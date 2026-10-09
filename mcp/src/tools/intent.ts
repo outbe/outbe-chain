@@ -14,11 +14,11 @@ import { type Ctx, formatNativeAmount } from "../chain.js";
 import { type Network, type NetworkResolver, networkResolver } from "../net/resolver.js";
 import { receiptSummary, requireAccount, sendCall, waitForReceipt } from "../net/tx.js";
 import { loadConfig } from "../config.js";
+import { ensureAllowance } from "../net/erc20.js";
 import { handler, ok } from "./util.js";
 import {
   DEFAULT_FILL_DEADLINE_SECONDS,
   DEFAULT_ROUTER,
-  ERC20_ABI,
   ROUTER_ABI,
 } from "../intent/registry.js";
 import {
@@ -94,20 +94,9 @@ function registerOrderOpen(server: McpServer, { ctx, router, resolveNetwork }: I
       const native = isNative(input.address);
 
       // Approve the router to pull the ERC20 input (skip for native).
-      let approveTx: Hex | undefined;
-      if (!native) {
-        const allowance = (await originNet.client.readContract({
-          address: input.address,
-          abi: ERC20_ABI,
-          functionName: "allowance",
-          args: [user, router],
-        })) as bigint;
-        if (allowance < amountIn) {
-          const data = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [router, amountIn] });
-          approveTx = await sendCall(ctx, originNet, { to: input.address, data, value: 0n });
-          await waitForReceipt(originNet, approveTx);
-        }
-      }
+      const approveTx = native
+        ? null
+        : await ensureAllowance(ctx, originNet, { token: input.address, spender: router, amount: amountIn });
 
       const orderData: OrderData = {
         sender: pad(user, { size: 32 }),
@@ -136,7 +125,7 @@ function registerOrderOpen(server: McpServer, { ctx, router, resolveNetwork }: I
       const meta = {
         orderId,
         txHash: hash,
-        approveTx: approveTx ?? null,
+        approveTx,
         router,
         origin: { network: originNet.name, chainId: originNet.chainId },
         destination: { network: destNet.name, chainId: destNet.chainId },

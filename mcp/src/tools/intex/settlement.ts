@@ -5,6 +5,7 @@ import { z } from "zod";
 import { OUTBE_NETWORK } from "../../net/chains.js";
 import { requireAccount } from "../../net/tx.js";
 import { networkName, waitFlag } from "../schemas.js";
+import { ensureAllowance } from "../../net/erc20.js";
 import { handler, ok } from "../util.js";
 import { ERC20_ABI, FACTORY_ABI, INTEX_ABI } from "../../intex/registry.js";
 import { POW_DIFFICULTY, grindNonce } from "../../intex/pow.js";
@@ -45,21 +46,9 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
       const { settlementCurrency, paymentMinor, snapshotId } = await quoteSettlement(n, series, asset, quantity);
 
       const factory = addr(n, "factory");
-      let autoApprove: { txHash: Hex; amount: string } | null = null;
-      if (paymentMinor > 0n) {
-        const allowance = (await n.client.readContract({
-          address: asset,
-          abi: ERC20_ABI,
-          functionName: "allowance",
-          args: [account.address, factory],
-        })) as bigint;
-        if (allowance < paymentMinor) {
-          const approveData = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [factory, paymentMinor] });
-          const ar = await submit(n, asset, approveData, 0n, true); // must be mined before settle
-          if (ar.status !== "success") throw new Error(`approve ${ar.txHash} for IntexFactory reverted`);
-          autoApprove = { txHash: ar.txHash, amount: paymentMinor.toString() };
-        }
-      }
+      const approval =
+        paymentMinor > 0n ? await ensureAllowance(ctx, n, { token: asset, spender: factory, amount: paymentMinor }) : null;
+      const autoApprove = approval ? { txHash: approval, amount: paymentMinor.toString() } : null;
       const data = encodeFunctionData({
         abi: FACTORY_ABI,
         functionName: "settleIntex",

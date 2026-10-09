@@ -1,6 +1,5 @@
 import type { Abi } from "viem";
 import RouterJson from "../../../contracts/intent/abi-export/Router.json";
-import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
 
 /**
  * ABI + constants for the intent (ERC-7683 Router) tools.
@@ -15,4 +14,4 @@ export const DEFAULT_FILL_DEADLINE_SECONDS = 120; // 120s
 
 export const ROUTER_ABI: Abi = RouterJson as Abi;
 
-export const ERC20_ABI: Abi = IERC20Json as Abi;
+export { ERC20_ABI } from "../net/erc20.js";

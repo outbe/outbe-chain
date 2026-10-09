@@ -4,8 +4,9 @@ import { TARGET_NETWORK } from "../../net/chains.js";
 import type { Network } from "../../net/resolver.js";
 import { requireAccount } from "../../net/tx.js";
 import { networkName, waitFlag } from "../schemas.js";
+import { ensureAllowance } from "../../net/erc20.js";
 import { handler, ok } from "../util.js";
-import { AUCTION_ABI, ERC20_ABI, ESCROW_ABI } from "../../intex/registry.js";
+import { AUCTION_ABI, ESCROW_ABI } from "../../intex/registry.js";
 import { commitHash, revealBidTypedData } from "../../intex/bid.js";
 import { toBidRate, wcoenLockAmount } from "../../intex/units.js";
 import { addr } from "../../intex/reads.js";
@@ -73,19 +74,12 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       if (bond > 0n) {
         const { decimals: dec, symbol } = await paymentMeta(n);
         const bondHuman = formatUnits(bond, dec);
-        const token = addr(n, "paymentToken");
-        const escrow = addr(n, "escrow");
-        const allowance = (await n.client.readContract({
-          address: token,
-          abi: ERC20_ABI,
-          functionName: "allowance",
-          args: [account.address, escrow],
-        })) as bigint;
-        if (allowance < bond) {
-          const approveData = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [escrow, bond] });
-          const ar = await submit(n, token, approveData, 0n, true); // must be mined before commit
-          autoApprove = { txHash: ar.txHash, amount: bond.toString() };
-        }
+        const approval = await ensureAllowance(ctx, n, {
+          token: addr(n, "paymentToken"),
+          spender: addr(n, "escrow"),
+          amount: bond,
+        });
+        if (approval) autoApprove = { txHash: approval, amount: bond.toString() };
         note =
           `Commit locks a ${bondHuman} ${symbol} entry bond in escrow; it returns at reveal/cancel. ` +
           `A green-day no-reveal keeps it locked until 24 hours past revealEnd (intex_claim_commit_bond).`;
@@ -147,20 +141,14 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       const strike = info.params.promisLoadMinor;
       const lockAmount = wcoenLockAmount(BigInt(units), strike, bidRate);
       const lockHuman = formatUnits(lockAmount, dec);
-      const token = addr(n, "paymentToken");
-      const escrow = addr(n, "escrow");
-      const allowance = (await n.client.readContract({
-        address: token,
-        abi: ERC20_ABI,
-        functionName: "allowance",
-        args: [account.address, escrow],
-      })) as bigint;
-      let autoApprove: { txHash: Hex; amount: string } | null = null;
+      const approval = await ensureAllowance(ctx, n, {
+        token: addr(n, "paymentToken"),
+        spender: addr(n, "escrow"),
+        amount: lockAmount,
+      });
+      const autoApprove = approval ? { txHash: approval, amount: lockAmount.toString() } : null;
       let note: string;
-      if (allowance < lockAmount) {
-        const approveData = encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [escrow, lockAmount] });
-        const ar = await submit(n, token, approveData, 0n, true); // must be mined before reveal
-        autoApprove = { txHash: ar.txHash, amount: lockAmount.toString() };
+      if (approval) {
         note = `Reveal locks ${lockHuman} ${symbol} (${units} x strike x ${rate}) in escrow. Allowance was short, so the escrow was approved for ${lockHuman} ${symbol} first, then the bid was revealed.`;
       } else {
         note = `Reveal locks ${lockHuman} ${symbol} (${units} x strike x ${rate}) in escrow; allowance already covered it, no approval needed.`;

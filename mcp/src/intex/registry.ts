@@ -9,7 +9,6 @@ import IntexAuctionJson from "../../../contracts/intex/abi-export/IntexAuction.j
 import IIntexNFT1155Json from "../../../contracts/intex/abi-export/IIntexNFT1155.json";
 import IIntexNFT1155BridgeJson from "../../../contracts/intex/abi-export/IIntexNFT1155Bridge.json";
 import IOriginRouterJson from "../../../contracts/intex/abi-export/IOriginRouter.json";
-import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
 
 /** contracts/intex exports as `{ contractName, abi }`. The others export a bare array. */
 const abiOf = (json: unknown): Abi =>
@@ -157,5 +156,4 @@ export const ESCROW_ABI: Abi = abiOf(EscrowAdapterJson);
 /** VaultRouter (outbe precompile): the reserve asset registry. */
 export const VAULT_ROUTER_ABI: Abi = abiOf(IVaultRouterJson);
 
-/** ERC20 (BSC payment token; outbe Promis balance). */
-export const ERC20_ABI: Abi = abiOf(IERC20Json);
+export { ERC20_ABI } from "../net/erc20.js";

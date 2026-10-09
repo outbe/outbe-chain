@@ -88,6 +88,7 @@ export class FakeChain {
   private readonly registered: Registered[] = [];
   private readonly results = new Map<string, Result>();
   private readonly reverting = new Set<string>();
+  private readonly failing = new Set<string>();
   private readonly receipts = new Map<Hex, Record<string, unknown>>();
   private readonly transactions = new Map<Hex, Record<string, unknown>>();
   private readonly nonces = new Map<number, number>();
@@ -108,6 +109,11 @@ export class FakeChain {
 
   revert(fn: string, address?: string): void {
     this.reverting.add(this.key(fn, address));
+  }
+
+  /** Makes every transaction calling `fn` mine with a failed receipt. */
+  failReceipts(fn: string): void {
+    this.failing.add(fn);
   }
 
   install(): () => void {
@@ -232,16 +238,16 @@ export class FakeChain {
       hash,
     });
     this.nonces.set(chainId, (this.nonces.get(chainId) ?? 0) + 1);
-    this.record(hash, chainId, to, tx.data ?? "0x", tx.value ?? 0n, tx.gas ?? 0n);
+    this.record(hash, chainId, to, tx.data ?? "0x", tx.value ?? 0n, tx.gas ?? 0n, !this.failing.has(fn));
     return hash;
   }
 
   /** Makes `hash` a mined transaction to `to` with `data`, as if it had been sent earlier. */
   seed(hash: Hex, chainId: number, to: string, data: Hex): void {
-    this.record(hash, chainId, getAddress(to), data, 0n, 21_000n);
+    this.record(hash, chainId, getAddress(to), data, 0n, 21_000n, true);
   }
 
-  private record(hash: Hex, chainId: number, to: Address, data: Hex, value: bigint, gas: bigint): void {
+  private record(hash: Hex, chainId: number, to: Address, data: Hex, value: bigint, gas: bigint, ok: boolean): void {
     this.receipts.set(hash, {
       transactionHash: hash,
       transactionIndex: "0x0",
@@ -255,7 +261,7 @@ export class FakeChain {
       contractAddress: null,
       logs: [],
       logsBloom: ZERO_BLOOM,
-      status: "0x1",
+      status: ok ? "0x1" : "0x0",
       type: "0x2",
     });
     this.transactions.set(hash, {
