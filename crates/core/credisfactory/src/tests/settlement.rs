@@ -1,10 +1,12 @@
 //! Repayment, forfeiture and stake behaviour of positions backed by a direct pledge.
 use crate::{precompile::ICredisFactory, runtime, tests::common::*};
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{b256, keccak256, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
+use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, CredisState};
 use outbe_gratisfactory::runtime::cancel_pledge;
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
 use outbe_tee::protocol::GratisOp;
@@ -592,4 +594,155 @@ fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source()
         );
     });
     teardown();
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Footprint {
+    gas: u64,
+    reads: u64,
+    writes: u64,
+    logs: B256,
+}
+
+/// Runs one step under production storage metering and digests the logs it emitted, in order.
+fn measure<T>(
+    provider: &mut HashMapStorageProvider,
+    step: impl FnOnce(&StorageHandle<'_>) -> T,
+) -> (T, Footprint) {
+    let logged = provider.get_ordered_events().len();
+    provider.set_gas_limit(1_000_000_000_000);
+    provider.enable_production_storage_gas_metering();
+    let (out, gas) = StorageHandle::enter(provider, |storage| {
+        let out = step(&storage);
+        (out, storage.gas_used().unwrap())
+    });
+    let (reads, writes) = provider.metered_storage_operations();
+    let mut digest = Vec::new();
+    for log in &provider.get_ordered_events()[logged..] {
+        digest.extend_from_slice(log.address.as_slice());
+        for topic in log.data.topics() {
+            digest.extend_from_slice(topic.as_slice());
+        }
+        digest.extend_from_slice(&log.data.data);
+    }
+    let footprint = Footprint {
+        gas,
+        reads,
+        writes,
+        logs: keccak256(digest),
+    };
+    (out, footprint)
+}
+
+fn credis_views(storage: &StorageHandle<'_>, id: U256) -> B256 {
+    let calls = [
+        ICredis::tokenURICall { positionId: id }.abi_encode(),
+        ICredis::getPositionCall { positionId: id }.abi_encode(),
+        ICredis::positionByIndexCall { index: U256::ZERO }.abi_encode(),
+        ICredis::positionOfAddressByIndexCall {
+            smartAccount: alice(),
+            index: U256::ZERO,
+        }
+        .abi_encode(),
+        ICredis::interestAccruedMinorCall { positionId: id }.abi_encode(),
+        ICredis::credisPrincipalAndOutstandingOfCall {
+            smartAccount: alice(),
+        }
+        .abi_encode(),
+    ];
+    let mut out = Vec::new();
+    for call in calls {
+        let ret = outbe_credis::precompile::dispatch(storage.clone(), &call, alice(), U256::ZERO)
+            .unwrap();
+        out.extend_from_slice(&ret);
+    }
+    keccak256(out)
+}
+
+#[test]
+fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
+    let mut provider = env();
+    let reservation = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
+        pledge(&storage, alice(), id, 1);
+        fund_stake(&storage, pledge_stake());
+        id
+    });
+    let (id, issue) = measure(&mut provider, |storage| {
+        runtime::issue_credis(storage.clone(), cca(), reservation, pledge_stake())
+            .unwrap()
+            .0
+    });
+    let half = pledge_stables() / U256::from(2u64);
+    StorageHandle::enter(&mut provider, |storage| {
+        advance_to(&storage, CREATED_AT + 30 * DAY)
+    });
+    let (_, partial) = measure(&mut provider, |storage| {
+        settle_principal(storage, alice(), id, half)
+    });
+    let (views, read) = measure(&mut provider, |storage| credis_views(storage, id));
+    StorageHandle::enter(&mut provider, |storage| {
+        advance_to(&storage, CREATED_AT + 60 * DAY)
+    });
+    let (_, close) = measure(&mut provider, |storage| {
+        settle_principal(storage, alice(), id, half)
+    });
+    teardown();
+
+    let mut provider = env();
+    let deadline = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let id = open(&storage, 1);
+        CredisContract::new(storage.clone())
+            .mark_called(id, CREATED_AT)
+            .unwrap();
+        let deadline = CREATED_AT + NOTICE + HOUR;
+        advance_to(&storage, deadline);
+        finalize_through(&storage, deadline);
+        deadline
+    });
+    let (voided, void) = measure(&mut provider, |storage| expire(storage, deadline));
+    teardown();
+
+    assert_eq!(voided, 1);
+    assert_eq!(
+        views,
+        b256!("0x6760edfdbc12ac89d83134f3e785d1a70d50c3e9579e51e842ac098f99e22e7d")
+    );
+    assert_eq!(
+        [issue, partial, read, close, void],
+        [
+            Footprint {
+                gas: 214300,
+                reads: 93,
+                writes: 41,
+                logs: b256!("0xb4862d8cb352d98f119ceea44c3db1a06daadcb7151bfc52a7d5fa06eb041bca"),
+            },
+            Footprint {
+                gas: 183700,
+                reads: 137,
+                writes: 34,
+                logs: b256!("0xabf2b6c4044763cab91e5cbc28c63bdf510963c3b85ea94150562846159fe368"),
+            },
+            Footprint {
+                gas: 15000,
+                reads: 150,
+                writes: 0,
+                logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
+            },
+            Footprint {
+                gas: 214200,
+                reads: 142,
+                writes: 40,
+                logs: b256!("0x4a9b0f0b14a9ee5d560ddb4d4d338a43f8b75326e3baf44001665b759c09523b"),
+            },
+            Footprint {
+                gas: 231500,
+                reads: 115,
+                writes: 44,
+                logs: b256!("0xf825cab70bcb9d919b04a03ead21d67a05ed196b2276ef0dbe224f7aa6c678b0"),
+            },
+        ]
+    );
 }
