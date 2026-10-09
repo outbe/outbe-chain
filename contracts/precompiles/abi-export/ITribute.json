@@ -36,8 +36,8 @@
       },
       {
         "name": "tributeNominalTotalMinor",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "bytes",
+        "internalType": "bytes"
       },
       {
         "name": "isSealed",
@@ -217,9 +217,9 @@
       },
       {
         "name": "consumedNominalTotalMinor",
-        "type": "uint256",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
       },
       {
         "name": "retiredGeneration",
@@ -347,9 +347,9 @@
       },
       {
         "name": "issuanceAmountMinor",
-        "type": "uint256",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
       },
       {
         "name": "settlementCurrency",
@@ -359,9 +359,9 @@
       },
       {
         "name": "nominalAmountMinor",
-        "type": "uint256",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
       }
     ],
     "anonymous": false

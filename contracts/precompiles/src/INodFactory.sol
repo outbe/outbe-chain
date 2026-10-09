@@ -81,7 +81,9 @@ interface INodFactory {
     /// with `miningSequence = 0` and the required leading zero bytes. The owner is the Nod owner.
     /// @param mac Gratis mint authorization under the owner's modify key.
     /// @param opNonce The owner's current Gratis operation nonce, bound by `mac`.
-    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (bytes memory encryptedBalance);
+    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce)
+        external
+        returns (bytes memory encryptedBalance);
 
     /// @notice Materialize the current certified FIFO head from one canonical
     /// proof-backed encrypted OCOMP batch.
