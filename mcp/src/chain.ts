@@ -1,7 +1,6 @@
 import {
   type Abi,
   type AbiFunction,
-  type Address,
   type Chain,
   type Hex,
   type PublicClient,
@@ -15,6 +14,8 @@ import {
   parseUnits,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { nativeCurrencyForChainId } from "./net/chains.js";
+import { requireAccount } from "./net/tx.js";
 import type { ContractEntry } from "./registry.js";
 
 export interface Ctx {
@@ -23,17 +24,6 @@ export interface Ctx {
   publicClient: PublicClient;
   walletClient?: WalletClient;
   account?: ReturnType<typeof privateKeyToAccount>;
-}
-
-export function nativeCurrencyForChainId(id: number): Chain["nativeCurrency"] {
-  if (id === 424_242 || id === 54_322_345) {
-    return { name: "COEN", symbol: "COEN", decimals: 18 };
-  }
-  if (id === 56 || id === 97) {
-    return { name: "BNB", symbol: "BNB", decimals: 18 };
-  }
-  // External EVM/LZ domains retain the pre-cutover 18-decimal native boundary.
-  return { name: "Ether", symbol: "ETH", decimals: 18 };
 }
 
 export function parseNativeAmount(chain: Pick<Chain, "nativeCurrency">, value: string): bigint {
@@ -139,51 +129,28 @@ export async function readView(
   return { fn, result };
 }
 
+/** A state-changing precompile call under an explicit gas limit. */
+export interface PrecompileWrite {
+  entry: ContractEntry;
+  method: string;
+  args: unknown[];
+  gas: bigint;
+  value?: bigint;
+}
+
 /** Sign + send a state-changing method with an explicit gas limit. */
-export async function sendTx(
-  ctx: Ctx,
-  entry: ContractEntry,
-  method: string,
-  rawArgs: unknown[],
-  gas: bigint,
-  value = 0n,
-): Promise<Hex> {
-  if (!ctx.walletClient || !ctx.account) {
-    throw new Error(
-      "signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env",
-    );
-  }
+export async function sendTx(ctx: Ctx, { entry, method, args: rawArgs, gas, value = 0n }: PrecompileWrite): Promise<Hex> {
+  const account = requireAccount(ctx);
+  if (!ctx.walletClient) throw new Error(`no signer for ${ctx.chain.name}`);
   const fn = abiFn(entry.abi, method);
   const args = coerceArgs(fn, rawArgs);
   const data = encodeFunctionData({ abi: entry.abi, functionName: method, args });
   return ctx.walletClient.sendTransaction({
-    account: ctx.account,
+    account,
     chain: ctx.chain,
     to: entry.address,
     data,
     gas,
     value,
-  });
-}
-
-/** Send pre-encoded calldata (used by tribute_offer). */
-export async function sendRaw(
-  ctx: Ctx,
-  to: Address,
-  data: Hex,
-  gas: bigint,
-): Promise<Hex> {
-  if (!ctx.walletClient || !ctx.account) {
-    throw new Error(
-      "signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env",
-    );
-  }
-  return ctx.walletClient.sendTransaction({
-    account: ctx.account,
-    chain: ctx.chain,
-    to,
-    data,
-    gas,
-    value: 0n,
   });
 }

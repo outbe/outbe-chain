@@ -1,33 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { rememberMarkets } from "../oracle/markets.js";
+import { address } from "./schemas.js";
+import { listProposals } from "../governance.js";
+import { pairTable } from "../oracle/pairs.js";
 import type { Ctx } from "../chain.js";
-import {
-  CONTRACTS,
-  PROPOSAL_STATUS,
-  type ProposalStatusName,
-  proposalStatusCode,
-  proposalStatusName,
-} from "../registry.js";
+import { CONTRACTS, OFFERING_STATUS, PROPOSAL_STATUS } from "../registry.js";
+import { ownedTokenIds } from "../read.js";
 import { handler, ok, view } from "./util.js";
 
-const addr = z.string().describe("0x-prefixed address");
 const wwd = z.number().int().describe("WorldwideDay as YYYYMMDD, e.g. 20260601");
-
-/**
- * Normalise the proposal status.
- *
- * `format.ts` already renders `status` as `{code, name}` for `IGovernance.*`
- * structs. This function only backfills the name when a caller gives a raw code.
- */
-function annotateProposal(p: unknown): Record<string, unknown> {
-  const r = { ...(p as Record<string, unknown>) };
-  if (typeof r.status === "number" || typeof r.status === "bigint") {
-    const code = Number(r.status);
-    r.status = { code, name: proposalStatusName(code) };
-  }
-  return r;
-}
 
 function registerEntityViews(server: McpServer, ctx: Ctx): void {
   // --- generic escape hatch: any view method of any precompile ---------------
@@ -63,7 +44,7 @@ function registerEntityViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "tributes_by_owner",
     "List Tribute token ids owned by an address.",
-    { owner: addr },
+    { owner: address },
     handler(async ({ owner }) => ok(await view(ctx, "tribute", "getTributesByOwner", [owner]))),
   );
 
@@ -103,14 +84,10 @@ function registerEntityViews(server: McpServer, ctx: Ctx): void {
     "nods_by_owner",
     "List Nod token ids owned by an address (Nod has no bulk getter, so this " +
       "enumerates balanceOf -> tokenOfOwnerByIndex).",
-    { owner: addr },
+    { owner: address },
     handler(async ({ owner }) => {
-      const balance = Number(await view(ctx, "nod", "balanceOf", [owner]));
-      const ids: unknown[] = [];
-      for (let i = 0; i < balance; i++) {
-        ids.push(await view(ctx, "nod", "tokenOfOwnerByIndex", [owner, i]));
-      }
-      return ok({ owner, count: balance, nodIds: ids });
+      const ids = await ownedTokenIds(ctx, "nod", owner);
+      return ok({ owner, count: ids.length, nodIds: ids.map(String) });
     }),
   );
 
@@ -151,7 +128,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
       "the reference rail). An issuance-currency quote expires at the next whole UTC hour.",
     {
       id: z.string().describe("Gem token id (decimal or 0x hex)"),
-      asset: addr.describe("Settlement stablecoin the holder intends to pay with"),
+      asset: address.describe("Settlement stablecoin the holder intends to pay with"),
     },
     handler(async ({ id, asset }) =>
       ok(await view(ctx, "gemfactory", "quoteSettlement", [BigInt(id), asset])),
@@ -162,15 +139,11 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
     "gems_by_owner",
     "List Gems owned by an address with decoded status for each (Gem has no bulk getter, " +
       "so this enumerates balanceOf -> tokenOfOwnerByIndex -> getGemStatus).",
-    { owner: addr },
+    { owner: address },
     handler(async ({ owner }) => {
-      const balance = Number(await view(ctx, "gem", "balanceOf", [owner]));
-      const gems: unknown[] = [];
-      for (let i = 0; i < balance; i++) {
-        const tokenId = await view(ctx, "gem", "tokenOfOwnerByIndex", [owner, i]);
-        gems.push(await view(ctx, "gem", "getGemStatus", [BigInt(tokenId as string)]));
-      }
-      return ok({ owner, count: balance, gems });
+      const ids = await ownedTokenIds(ctx, "gem", owner);
+      const gems = await Promise.all(ids.map((id) => view(ctx, "gem", "getGemStatus", [id])));
+      return ok({ owner, count: ids.length, gems });
     }),
   );
 
@@ -193,7 +166,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "gratis_balance",
     "Encrypted Gratis liquid and pledged balances; decrypt both locally with the account view key.",
-    { account: addr },
+    { account: address },
     handler(async ({ account }) => {
       const balance = await view(ctx, "gratis", "balanceOf", [account]);
       const pledged = await view(ctx, "gratis", "pledgedOf", [account]);
@@ -203,9 +176,9 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "promis_balance",
-    "Promis balance for an account (in COEN).",
-    { account: addr },
-    handler(async ({ account }) => ok(await view(ctx, "promis", "balanceOf", [account]))),
+    "Encrypted Promis balance; decrypt it locally with the account's Promis view key.",
+    { account: address },
+    handler(async ({ account }) => ok({ account, balance: await view(ctx, "promis", "balanceOf", [account]) })),
   );
 
   // Per-account fidelity index is now encrypted and owner-signature-gated, so a
@@ -224,7 +197,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "agentreward_claimable",
     "Claimable AgentReward balance for an account (in COEN), all three pools summed.",
-    { account: addr },
+    { account: address },
     handler(async ({ account }) =>
       ok(await view(ctx, "agentreward", "getClaimableBalance", [account])),
     ),
@@ -233,7 +206,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "agentreward_pool_claimable",
     "Claimable AgentReward balance for an account in one pool (0 = WAA, 1 = SRA, 2 = CCA), in COEN.",
-    { account: addr, pool: z.number().int().min(0).max(2).describe("0 = WAA, 1 = SRA, 2 = CCA") },
+    { account: address, pool: z.number().int().min(0).max(2).describe("0 = WAA, 1 = SRA, 2 = CCA") },
     handler(async ({ account, pool }) =>
       ok(await view(ctx, "agentreward", "getPoolClaimableBalance", [account, pool])),
     ),
@@ -248,7 +221,7 @@ function registerMarketViews(server: McpServer, ctx: Ctx): void {
     "WorldwideDays currently in OFFERING status (the days a tribute offer can target).",
     {},
     handler(async () => {
-      const wwds = (await view(ctx, "metadosis", "getWorldwideDaysByStatus", [2])) as {
+      const wwds = (await view(ctx, "metadosis", "getWorldwideDaysByStatus", [OFFERING_STATUS])) as {
         wwds: { wwd: number; date: string }[];
       };
       return ok(wwds);
@@ -270,33 +243,7 @@ function registerMarketViews(server: McpServer, ctx: Ctx): void {
     "All oracle price pairs (index, base, quote, the decimals each side is quoted in, active).",
     {},
     handler(async () => {
-      // The oracle enumerates its registry by index rather than returning the
-      // whole table, so this tool assembles the table.
-      const count = Number(await view(ctx, "oracle", "getPairCount", []));
-      const indices = Array.from({ length: count }, (_, i) => i + 1);
-      const pairs = await Promise.all(
-        indices.map(async (index) => {
-          const pair = (await view(ctx, "oracle", "getPairByIndex", [index])) as {
-            base: string;
-            quote: string;
-            baseScale: number;
-            quoteScale: number;
-          };
-          const active = await view(ctx, "oracle", "isVoteTarget", [pair.base, pair.quote]);
-          return {
-            index,
-            base: pair.base,
-            quote: pair.quote,
-            baseScale: Number(pair.baseScale),
-            quoteScale: Number(pair.quoteScale),
-            active,
-          };
-        }),
-      );
-      rememberMarkets(
-        ctx.chain.id,
-        pairs.map((p) => [p.base, p.quote, p.baseScale, p.quoteScale] as const),
-      );
+      const pairs = await pairTable(ctx);
       return ok(pairs);
     }),
   );
@@ -348,7 +295,7 @@ function registerValidatorViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "validator_get",
     "Full validator record by address (stake, status, miss counters, epoch heights).",
-    { address: addr },
+    { address },
     handler(async ({ address }) =>
       ok(await view(ctx, "validatorset", "validatorByAddress", [address])),
     ),
@@ -357,7 +304,7 @@ function registerValidatorViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "staking_info",
     "Stake delegated to a validator and total staked.",
-    { validator: addr },
+    { validator: address },
     handler(async ({ validator }) => {
       const [stake, total] = await Promise.all([
         view(ctx, "staking", "getStake", [validator]),
@@ -392,7 +339,7 @@ function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
     "One Outbe Improvement Proposal by id: author, status, blocks, text hash, and full text.",
     { id: proposalId },
     handler(async ({ id }) =>
-      ok(annotateProposal(await view(ctx, "governance", "getOip", [BigInt(id)]))),
+      ok(await view(ctx, "governance", "getOip", [BigInt(id)])),
     ),
   );
 
@@ -401,7 +348,7 @@ function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
     "One Governance Improvement Proposal by id: author, status, blocks, text hash, and full text.",
     { id: proposalId },
     handler(async ({ id }) =>
-      ok(annotateProposal(await view(ctx, "governance", "getGip", [BigInt(id)]))),
+      ok(await view(ctx, "governance", "getGip", [BigInt(id)])),
     ),
   );
 
@@ -419,37 +366,13 @@ function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
     limit: z.number().int().min(1).max(1000).optional().describe("page size (default 100, max 1000)"),
   };
 
-  async function listProposals(
-    kind: "Oip" | "Gip",
-    args: { author?: string; status?: ProposalStatusName; offset?: number; limit?: number },
-  ): Promise<{ total: number; offset: number; limit: number; items: unknown[] }> {
-    const { author, status } = args;
-    if ((author === undefined) === (status === undefined)) {
-      throw new Error(
-        `provide exactly one of \`author\` or \`status\` (${PROPOSAL_STATUS.join("|")})`,
-      );
-    }
-    const offset = args.offset ?? 0;
-    const limit = args.limit ?? 100;
-    const byAuthor = author !== undefined;
-    const suffix = byAuthor ? "ByAuthor" : "ByStatus";
-    const key = byAuthor ? author : proposalStatusCode(status as ProposalStatusName);
-    const [metas, total] = await Promise.all([
-      view(ctx, "governance", `get${kind}s${suffix}`, [key, offset, limit]) as Promise<
-        unknown[]
-      >,
-      view(ctx, "governance", `${kind.toLowerCase()}Count${suffix}`, [key]),
-    ]);
-    return { total: Number(total), offset, limit, items: metas.map(annotateProposal) };
-  }
-
   server.tool(
     "oip_list",
     "List OIPs by index, paginated (metadata only - omits the full text). Give `author` " +
       "(their OIPs) or `status` (a proposal status name), plus optional `offset`/`limit`.",
     listFilter,
     handler(async (args) => {
-      const { total, offset, limit, items } = await listProposals("Oip", args);
+      const { total, offset, limit, items } = await listProposals(ctx, "Oip", args);
       return ok({ total, offset, limit, oips: items });
     }),
   );
@@ -460,7 +383,7 @@ function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
       "(their GIPs) or `status` (a proposal status name), plus optional `offset`/`limit`.",
     listFilter,
     handler(async (args) => {
-      const { total, offset, limit, items } = await listProposals("Gip", args);
+      const { total, offset, limit, items } = await listProposals(ctx, "Gip", args);
       return ok({ total, offset, limit, gips: items });
     }),
   );
