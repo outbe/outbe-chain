@@ -1,3 +1,4 @@
+import { epochIso } from "../format/time.js";
 import {
   type Address,
   type Hex,
@@ -79,6 +80,6 @@ export function humanizeOrder(o: OrderData) {
     originDomain: o.originDomain,
     destinationDomain: o.destinationDomain,
     destinationSettler: bytes32ToAddress(o.destinationSettler),
-    fillDeadline: { epoch: o.fillDeadline, iso: new Date(Number(o.fillDeadline) * 1000).toISOString() },
+    fillDeadline: epochIso(o.fillDeadline),
   };
 }

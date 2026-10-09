@@ -24,7 +24,9 @@ import {
 } from "./chain.js";
 import { formatParam, humanizeReturn } from "./format.js";
 import { humanizeOrder } from "./intent/format.js";
-import { resolveContract } from "./registry.js";
+import { CONTRACTS, resolveContract } from "./registry.js";
+import { ERC20_ABI } from "./net/erc20.js";
+import { SIGNER, startHarness } from "./test/harness.js";
 import { registerSignTools } from "./tools/sign.js";
 import { registerViewTools } from "./tools/view.js";
 import { wcoenLockAmount } from "./tools/intex.js";
@@ -539,34 +541,12 @@ test("external intent amounts retain their existing 18-decimal presentation", ()
 });
 
 test("MCP Credis and pledge tools encode their calls against the registered ABIs", async () => {
-  type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
-  const handlers = new Map<string, ToolHandler>();
-  const server = {
-    tool(name: string, ...args: unknown[]) {
-      handlers.set(name, args.at(-1) as ToolHandler);
-    },
-  } as unknown as McpServer;
-  const account = privateKeyToAccount(
-    "0x0000000000000000000000000000000000000000000000000000000000000001",
-  );
-  const sent: { to: Hex; data: Hex; value: bigint }[] = [];
-  const ctx = {
-    rpcUrl: "http://unused.invalid",
-    chain: { id: 1, nativeCurrency: { name: "COEN", symbol: "COEN", decimals: 18 } } as Chain,
-    publicClient: {
-      waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 1n, gasUsed: 1n }),
-    } as unknown as PublicClient,
-    account,
-    walletClient: {
-      sendTransaction: async (transaction: { to: Hex; data: Hex; value: bigint }) => {
-        sent.push(transaction);
-        return `0x${"11".repeat(32)}` as Hex;
-      },
-    } as WalletClient,
-  } satisfies Ctx;
-  registerSignTools(server, ctx);
+  const harness = await startHarness((chain) => {
+    for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
+    chain.register(ERC20_ABI);
+  });
   const smartAccount = "0x00000000000000000000000000000000000000aa";
-  const source = account.address;
+  const source = SIGNER;
   const asset = "0x0000000000000000000000000000000000000888";
   const mac = `0x${"22".repeat(32)}`;
   const cases = [
@@ -612,21 +592,20 @@ test("MCP Credis and pledge tools encode their calls against the registered ABIs
     },
   ] as const;
 
-  for (const item of cases) {
-    const callback = handlers.get(item.tool);
-    assert(callback, `${item.tool} was registered`);
-    await callback(item.args);
-    const transaction = sent.at(-1);
-    assert(transaction, `${item.tool} submitted a transaction`);
-    const entry = resolveContract(item.contract);
-    assert.equal(transaction.to, entry.address, `${item.tool} target`);
-    const decoded = decodeFunctionData({ abi: entry.abi, data: transaction.data });
-    assert.equal(decoded.functionName, item.functionName, item.tool);
-    assert.deepEqual(
-      JSON.parse(JSON.stringify(decoded.args, (_, v) => (typeof v === "bigint" ? `${v}n` : v)).toLowerCase()),
-      JSON.parse(JSON.stringify(item.expected, (_, v) => (typeof v === "bigint" ? `${v}n` : v)).toLowerCase()),
-      item.tool,
-    );
-    assert.equal(transaction.value, item.value, `${item.tool} msg.value`);
+  const normalized = (value: unknown) =>
+    JSON.parse(JSON.stringify(value, (_, v) => (typeof v === "bigint" ? `${v}n` : v)).toLowerCase());
+  try {
+    for (const item of cases) {
+      const from = harness.chain.sent.length;
+      const { text, isError } = await harness.call(item.tool, item.args);
+      assert(!isError, `${item.tool}: ${text}`);
+      const transaction = harness.chain.since(from).find((tx) => tx.function === item.functionName);
+      assert(transaction, `${item.tool} submitted ${item.functionName}`);
+      assert.equal(transaction.to, resolveContract(item.contract).address, `${item.tool} target`);
+      assert.deepEqual(normalized(transaction.args), normalized(item.expected), item.tool);
+      assert.equal(BigInt(transaction.value), item.value, `${item.tool} msg.value`);
+    }
+  } finally {
+    await harness.close();
   }
 });

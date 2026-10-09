@@ -1,0 +1,61 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { AUCTION_ABI, ERC20_ABI, ESCROW_ABI, ORIGIN_ROUTER_ABI, intexAddress } from "../intex/registry.js";
+import type { FakeChain } from "../test/fake-chain.js";
+import { startHarness } from "../test/harness.js";
+
+const BSC = { name: "bsc-testnet", isOutbe: false };
+const COMMIT = { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 };
+
+async function commit(prepare: (chain: FakeChain) => void) {
+  const harness = await startHarness((chain) => {
+    chain.register(AUCTION_ABI, intexAddress(BSC, "auction"));
+    chain.register(ORIGIN_ROUTER_ABI, intexAddress({ name: "outbe-testnet", isOutbe: true }, "originRouter"));
+    chain.reply("targets", [97]);
+    chain.register(ESCROW_ABI, intexAddress(BSC, "escrow"));
+    chain.register(ERC20_ABI);
+    chain.reply("allowance", 0n);
+    prepare(chain);
+  });
+  try {
+    const result = await harness.call("auction_bid_commit", COMMIT);
+    return { ...result, sent: harness.chain.sent.map((tx) => tx.function) };
+  } finally {
+    await harness.close();
+  }
+}
+
+test("a short allowance is approved and mined before the call that spends it", async () => {
+  const { isError, text, sent } = await commit(() => {});
+  assert(!isError, text);
+  assert.deepEqual(sent, ["approve", "commitBid"]);
+  assert.match(text, /"autoApprove": \{\n\s+"txHash"/);
+});
+
+test("a reverted approval stops the call that would spend it", async () => {
+  const { isError, text, sent } = await commit((chain) => chain.failReceipts("approve"));
+  assert(isError);
+  assert.match(text, /approve 0x[0-9a-f]{64} for 0x[0-9a-fA-F]{40} reverted/);
+  assert.deepEqual(sent, ["approve"]);
+});
+
+test("an unreadable token decimals fails the order instead of assuming 18", async () => {
+  const harness = await startHarness((chain) => {
+    chain.register(ERC20_ABI);
+    chain.revert("decimals");
+  });
+  try {
+    const { isError, text } = await harness.call("intent_order_open", {
+      origin: "bsc-testnet",
+      destination: "outbe-testnet",
+      input_token: "USD",
+      output_token: "USD",
+      amount_in: "1",
+    });
+    assert(isError);
+    assert.match(text, /cannot read the decimals of 0x[0-9a-fA-F]{40} on bsc-testnet/);
+    assert.equal(harness.chain.sent.length, 0);
+  } finally {
+    await harness.close();
+  }
+});
