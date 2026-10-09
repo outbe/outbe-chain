@@ -21,3 +21,7 @@ export const referenceCurrencyArg = z
   .describe("reference currency the bid prices in, ISO 4217 numeric; must be one the day prices (auction_info)");
 export const unitsArg = z.string().describe("Intex units, a whole number");
 export const recipientArg = z.string().optional().describe("recipient on outbe (default: the signer)");
+export const destinationArg = z
+  .string()
+  .optional()
+  .describe("chain to bridge to: outbe, a network name or a chain id (default outbe, or the one other Intex chain)");

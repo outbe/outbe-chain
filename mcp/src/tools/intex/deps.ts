@@ -4,7 +4,7 @@ import { loadConfig } from "../../config.js";
 import { escrowPaymentToken, intexTargets } from "../../intex/reads.js";
 import { TARGET_NETWORK } from "../../net/chains.js";
 import { ERC20_ABI } from "../../intex/registry.js";
-import { type Network, type NetworkResolver, contextNetwork, networkResolver } from "../../net/resolver.js";
+import { type Network, type NetworkResolver, chainIdOf, contextNetwork, networkResolver } from "../../net/resolver.js";
 import { receiptSummary, sendCall, waitForReceipt } from "../../net/tx.js";
 
 interface PaymentMeta {
@@ -32,12 +32,22 @@ export interface IntexDeps {
   paymentMeta(n: Network): Promise<PaymentMeta>;
   /** Resolves `spec` (default the target network) and checks the origin router fans out to it. */
   target(spec?: string): Promise<Network>;
+  /** Where a bridge from `n` lands: `spec`, else outbe, else the one other Intex chain. */
+  bridgeDestination(n: Network, spec?: string): Promise<number>;
 }
 
 export function intexDeps(ctx: Ctx): IntexDeps {
   const metaCache = new Map<number, PaymentMeta>();
   const resolveNetwork = networkResolver(ctx, loadConfig());
   let targets: Promise<number[]> | undefined;
+  const intexChains = async (): Promise<number[]> => {
+    targets ??= intexTargets(contextNetwork(ctx));
+    const chainIds = await targets.catch((error) => {
+      targets = undefined;
+      throw error;
+    });
+    return [...new Set([ctx.chain.id, ...chainIds])];
+  };
   return {
     ctx,
     resolveNetwork,
@@ -65,15 +75,23 @@ export function intexDeps(ctx: Ctx): IntexDeps {
     },
     async target(spec) {
       const n = await resolveNetwork(spec ?? TARGET_NETWORK);
-      targets ??= intexTargets(contextNetwork(ctx));
-      const chainIds = await targets.catch((error) => {
-        targets = undefined;
-        throw error;
-      });
-      if (!n.isOutbe && !chainIds.includes(n.chainId)) {
+      const chainIds = await intexChains();
+      if (!chainIds.includes(n.chainId)) {
         throw new Error(`${n.name} is not an Intex target; the origin router serves chains ${chainIds.join(", ")}`);
       }
       return n;
+    },
+    async bridgeDestination(n, spec) {
+      const chainIds = (await intexChains()).filter((id) => id !== n.chainId);
+      const destination =
+        spec !== undefined ? chainIdOf(spec, ctx) : n.isOutbe ? (chainIds.length === 1 ? chainIds[0] : undefined) : ctx.chain.id;
+      if (destination === undefined) {
+        throw new Error(`pass destination: ${n.name} bridges to chains ${chainIds.join(", ")}`);
+      }
+      if (!chainIds.includes(destination)) {
+        throw new Error(`${n.name} cannot bridge to chain ${destination}; its Intex peers are ${chainIds.join(", ")}`);
+      }
+      return destination;
     },
   };
 }

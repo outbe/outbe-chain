@@ -44,7 +44,22 @@ test("a chain the origin router does not serve is refused before any auction rea
   try {
     const { isError, text } = await harness.call("auctions_active", { network: "sepolia" });
     assert(isError);
-    assert.match(text, /sepolia is not an Intex target; the origin router serves chains 97/);
+    assert.match(text, /sepolia is not an Intex target; the origin router serves chains 54322345, 97/);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("a bridge out of outbe names its destination once several chains could take it", async () => {
+  const harness = await startHarness((chain) => {
+    chain.register(ORIGIN_ROUTER_ABI, intexAddress({ name: "outbe-testnet", isOutbe: true }, "originRouter"));
+    chain.reply("targets", [97, 11_155_111]);
+  });
+  try {
+    const bridge = (args: Record<string, unknown>) =>
+      harness.call("intex_bridge_quote", { series: "20260212-TRY-U", units: "1", network: "outbe", ...args });
+    assert.match((await bridge({})).text, /pass destination: outbe-testnet bridges to chains 97, 11155111/);
+    assert.match((await bridge({ destination: "8453" })).text, /cannot bridge to chain 8453/);
   } finally {
     await harness.close();
   }

@@ -38,7 +38,8 @@ export function contextNetwork(ctx: Ctx): Network {
   return network(ctx, true);
 }
 
-function chainIdOf(spec: string, ctx: Ctx): number {
+/** The chain id `spec` names: `outbe`, a known chain name or a chain id. */
+export function chainIdOf(spec: string, ctx: Ctx): number {
   const s = spec.trim().toLowerCase();
   if (s === OUTBE_NETWORK) return ctx.chain.id;
   const known = KNOWN_CHAINS.find((c) => c.name === s);

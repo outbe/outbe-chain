@@ -102,21 +102,6 @@ export function intexAddress(network: IntexChain, key: keyof IntexAddresses): Ad
   return addr;
 }
 
-/** Destination EVM chain id of each network's bridge counterpart (NFT destination). */
-export const BRIDGE_DST_CHAIN_ID: Record<string, number> = {
-  "bsc-testnet": 54322345, // -> outbe-testnet
-  "outbe-testnet": 97, // -> bsc-testnet
-};
-
-/** Destination chain id for bridging an NFT out of a network, or throw. */
-export function bridgeDstChainId(network: string): number {
-  const chainId = BRIDGE_DST_CHAIN_ID[network];
-  if (chainId === undefined) {
-    throw new Error(`Intex bridge destination chain id is not configured on "${network}"`);
-  }
-  return chainId;
-}
-
 // --- ABIs ------------------------------------------------------------------
 
 /** IntexAuction (BSC): commit/reveal + auction views. */

@@ -20,7 +20,6 @@ import {
   NFT_ABI,
   ORIGIN_ROUTER_ABI,
   VAULT_ROUTER_ABI,
-  bridgeDstChainId,
   NotConfiguredError,
   intexAddress,
   intexNftFromBlock,
@@ -197,7 +196,14 @@ export async function discoverByDate(n: Network, fromDate: number, toDate: numbe
   return probed.filter((x): x is { worldwideDay: number; stage: number } => x !== null);
 }
 
-export async function bridgeSendParam(n: Network, series: Hex, units: bigint, recipient: Address) {
+export interface BridgeSend {
+  series: Hex;
+  units: bigint;
+  recipient: Address;
+  dstChainId: number;
+}
+
+export async function bridgeSendParam(n: Network, { series, units, recipient, dstChainId }: BridgeSend) {
   const ids = (await n.client.readContract({
     address: addr(n, "nft"),
     abi: NFT_ABI,
@@ -205,7 +211,7 @@ export async function bridgeSendParam(n: Network, series: Hex, units: bigint, re
     args: [series],
   })) as [bigint, bigint];
   return {
-    dstChainId: bridgeDstChainId(n.name),
+    dstChainId,
     to: pad(recipient, { size: 32 }),
     tokenId: ids[0], // issued token id
     units,
