@@ -265,6 +265,12 @@ function seedRandomness(): void {
   syncBuiltinESMExports();
 }
 
+/** JSON with one tool or call per line, so a change shows up as the one line it touches. */
+function lineJson(golden: { tools: unknown[]; calls: unknown[] }): string {
+  const list = (items: unknown[]) => items.map((item) => `  ${JSON.stringify(item)}`).join(",\n");
+  return `{\n"tools": [\n${list(golden.tools)}\n],\n"calls": [\n${list(golden.calls)}\n]\n}\n`;
+}
+
 /** Every contract the tools address, answering with fixed values. */
 function fixedChain(chain: FakeChain): void {
   for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
@@ -318,7 +324,7 @@ test("every MCP tool keeps its surface and its output against a fixed chain", as
         sent: json(harness.chain.since(from)),
       });
     }
-    const actual = `${JSON.stringify({ tools, calls }, null, 2)}\n`;
+    const actual = lineJson({ tools, calls });
     if (process.env.UPDATE_GOLDEN === "1") writeFileSync(GOLDEN, actual);
     const expected = JSON.parse(readFileSync(GOLDEN, "utf8")) as { tools: unknown[]; calls: unknown[] };
     assert.deepEqual(json(tools), expected.tools, "tool surface");
