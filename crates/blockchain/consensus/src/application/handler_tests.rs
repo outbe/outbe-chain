@@ -448,6 +448,7 @@ fn finalizer_test_shared(
     let committee_provider = CommitteeProvider::new();
     let selector = crate::finalization::selection::ParentProofSelector::new(
         crate::finalization::parent_cert_store::FinalizedParentCertStore::new(),
+        crate::config::DEFAULT_PROPOSAL_TIMEOUT,
     );
     let _ = (
         provider.clone(),
@@ -817,7 +818,10 @@ fn exact_parent_wait_drains_block_number_mismatch() {
                 })
                 .unwrap();
 
-            let selector = crate::finalization::selection::ParentProofSelector::new(store.clone());
+            let selector = crate::finalization::selection::ParentProofSelector::new(
+                store.clone(),
+                crate::config::DEFAULT_PROPOSAL_TIMEOUT,
+            );
             let _ = marshal_mailbox;
             let result = selector.select_direct_parent_proof(1, 7, 42, parent_hash);
 

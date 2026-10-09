@@ -2,6 +2,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{
     dispatch_call, metadata, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
+    PayableCallContext,
 };
 use outbe_primitives::error::Result;
 
@@ -34,9 +35,11 @@ pub fn dispatch(
             stake(c) => mutate_void_payable(
                 &storage,
                 c,
-                PAYABLE_SELECTORS,
-                caller,
-                value,
+                PayableCallContext {
+                    selectors: PAYABLE_SELECTORS,
+                    sender: caller,
+                    value,
+                },
                 |sender, c, val| {
                     if val != c.amount {
                         return Err(outbe_primitives::error::PrecompileError::Revert(

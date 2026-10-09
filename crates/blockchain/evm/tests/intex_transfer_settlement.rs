@@ -6,7 +6,6 @@ use std::sync::Arc;
 use alloy_primitives::{keccak256, Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_compressed_entities::ExecutionScope;
-use outbe_evm::sub_call;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
 use outbe_offchain_data::RuntimeBodyReaders;
@@ -15,9 +14,7 @@ use outbe_primitives::{
     addresses::{INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS},
     block::BlockContext,
     chain::CHAIN_ID,
-    storage::{
-        direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallOutput, SubCallStatus,
-    },
+    storage::{direct::DirectStorageProvider, StorageHandle, SubCallOutput, SubCallStatus},
     time::WorldwideDay,
 };
 use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
@@ -25,10 +22,12 @@ use revm::{
     context_interface::JournalTr,
     database::{CacheDB, EmptyDB},
     handler::MainContext as _,
-    primitives::hardfork::SpecId,
     state::{AccountInfo, Bytecode},
     Context,
 };
+
+#[path = "support/intex_sub_call.rs"]
+mod intex_sub_call;
 
 sol!("../../../contracts/intex/src/shared/interfaces/IIntexNFT1155.sol");
 
@@ -289,24 +288,12 @@ impl World {
         calldata: Bytes,
         is_static: bool,
     ) -> SubCallOutput {
-        sub_call::run(
-            &mut self.ctx,
-            sub_call::SubCallEnvironment {
-                self_address: caller,
-                outer_is_static: false,
-                spec: SpecId::PRAGUE,
-                runtime_body_readers: Some(self.readers.clone()),
-                execution_scope: self.scope.clone(),
-            },
-            SubCallInput {
-                target,
-                value: U256::ZERO,
-                calldata,
-                gas_limit: 5_000_000,
-                is_static,
-            },
-        )
-        .unwrap()
+        intex_sub_call::IntexSubCall {
+            ctx: &mut self.ctx,
+            scope: &self.scope,
+            readers: &self.readers,
+        }
+        .call(caller, target, calldata, is_static)
     }
 
     fn ok<C: SolCall>(&mut self, caller: Address, target: Address, call: C) -> C::Return {

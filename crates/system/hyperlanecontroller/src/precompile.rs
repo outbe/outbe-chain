@@ -2,6 +2,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{
     dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
+    PayableCallContext,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -49,9 +50,11 @@ pub fn dispatch(
                 fund(c) => mutate_void_payable(
                     &storage,
                     c,
-                    PAYABLE_SELECTORS,
-                    caller,
-                    value,
+                    PayableCallContext {
+                        selectors: PAYABLE_SELECTORS,
+                        sender: caller,
+                        value,
+                    },
                     |sender, _, amount| controller.fund(sender, amount),
                 ),
                 sync(c) => mutate(&storage, c, caller, |_, _| controller.sync()),

@@ -30,7 +30,8 @@ fn write_snapshot_advances_the_ring_buffer_and_feeds_vwap() {
         let vwap = oracle
             .calculate_vwap(pair_key(COEN, USDT), 0, 5000)
             .unwrap();
-        // TODO is it correct??
+        // Prices and volumes use the same 18-decimal scale; the quotient
+        // retains the price scale after the weighted sum is divided by volume.
         let expected = fixed18(1_400_000) * SCALE_1E18 / fixed18(6_000);
         assert_eq!(vwap, expected);
     });

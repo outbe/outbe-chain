@@ -121,7 +121,7 @@ fn sign_recoverable_hash(
         });
     }
     let mut out = [0u8; 65];
-    out[..64].copy_from_slice(sig_bytes.as_slice());
+    out[..64].copy_from_slice(&sig_bytes);
     out[64] = recovery_id.to_byte();
     Ok(out)
 }

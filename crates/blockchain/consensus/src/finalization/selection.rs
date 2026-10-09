@@ -35,11 +35,15 @@ pub fn clamped_phase1_finalization_wait(requested: Duration, leader_timeout: Dur
 #[derive(Clone)]
 pub struct ParentProofSelector {
     parent_cert_store: FinalizedParentCertStore,
+    leader_timeout: Duration,
 }
 
 impl ParentProofSelector {
-    pub fn new(parent_cert_store: FinalizedParentCertStore) -> Self {
-        Self { parent_cert_store }
+    pub fn new(parent_cert_store: FinalizedParentCertStore, leader_timeout: Duration) -> Self {
+        Self {
+            parent_cert_store,
+            leader_timeout,
+        }
     }
 
     /// Look up the best available direct-parent proof for the proposer.
@@ -124,16 +128,8 @@ impl ParentProofSelector {
             return None;
         }
 
-        // Cap the phase-1 finalization wait at the default leader timeout
-        // (`DEFAULT_PROPOSAL_TIMEOUT` == `timing::DEFAULT_LEADER_TIMEOUT_MS`).
-        // NOTE: this tracks the compile-time default, not a per-network
-        // `genesis.json` `leaderTimeoutMs` override. If a chain widens the leader
-        // timeout via genesis, this cap stays at the default. To pass the
-        // effective `bt.leader_timeout` here is a deliberate follow-up.
-        let wait = clamped_phase1_finalization_wait(
-            requested_wait,
-            crate::config::DEFAULT_PROPOSAL_TIMEOUT,
-        );
+        // Use the effective genesis timing supplied by the engine.
+        let wait = clamped_phase1_finalization_wait(requested_wait, self.leader_timeout);
         let observed_cn_at = Instant::now();
 
         match self
@@ -262,7 +258,7 @@ mod tests {
     #[test]
     fn select_returns_none_for_genesis_parent() {
         let store = FinalizedParentCertStore::new();
-        let selector = ParentProofSelector::new(store);
+        let selector = ParentProofSelector::new(store, crate::config::DEFAULT_PROPOSAL_TIMEOUT);
         assert!(selector
             .select_direct_parent_proof(0, 0, 0, B256::ZERO)
             .is_none());
@@ -282,7 +278,7 @@ mod tests {
         store
             .put_finalization(record(hash, 7, ParentParticipationProof::Finalization))
             .unwrap();
-        let selector = ParentProofSelector::new(store);
+        let selector = ParentProofSelector::new(store, crate::config::DEFAULT_PROPOSAL_TIMEOUT);
         let r = selector.select_direct_parent_proof(0, 0, 7, hash).unwrap();
         assert_eq!(r.proof_kind(), ParentParticipationProof::Finalization);
     }
@@ -310,7 +306,7 @@ mod tests {
         // resolves its height to the known parent at metadata time.
         assert_eq!(best.finalized_block_number(), None);
         // The non-wait selector treats CN as witness-only and returns None.
-        let selector = ParentProofSelector::new(store);
+        let selector = ParentProofSelector::new(store, crate::config::DEFAULT_PROPOSAL_TIMEOUT);
         assert!(selector.select_direct_parent_proof(0, 0, 9, hash).is_none());
     }
 
@@ -325,7 +321,7 @@ mod tests {
                 ParentParticipationProof::CertifiedNotarization,
             ))
             .unwrap();
-        let selector = ParentProofSelector::new(store);
+        let selector = ParentProofSelector::new(store, crate::config::DEFAULT_PROPOSAL_TIMEOUT);
         assert!(selector.select_direct_parent_proof(0, 0, 9, hash).is_none());
         let key = CertifiedParentProofKey::new(0, 0, hash);
         assert!(selector
@@ -341,7 +337,7 @@ mod tests {
         store
             .put_finalization(record(hash, 7, ParentParticipationProof::Finalization))
             .unwrap();
-        let selector = ParentProofSelector::new(store);
+        let selector = ParentProofSelector::new(store, crate::config::DEFAULT_PROPOSAL_TIMEOUT);
         assert!(selector
             .select_direct_parent_proof(0, 0, 99, hash)
             .is_none());
@@ -357,7 +353,7 @@ mod tests {
         store
             .put_finalization(record(hash, 0, ParentParticipationProof::Finalization))
             .unwrap();
-        let selector = ParentProofSelector::new(store);
+        let selector = ParentProofSelector::new(store, crate::config::DEFAULT_PROPOSAL_TIMEOUT);
         assert!(selector.select_direct_parent_proof(0, 0, 9, hash).is_none());
         // Zero is not a valid finalized parent number for a Phase 1 proof.
         let key = CertifiedParentProofKey::new(0, 0, hash);
@@ -378,7 +374,8 @@ mod tests {
                         ParentParticipationProof::CertifiedNotarization,
                     ))
                     .unwrap();
-                let selector = ParentProofSelector::new(store);
+                let selector =
+                    ParentProofSelector::new(store, crate::config::DEFAULT_PROPOSAL_TIMEOUT);
                 let key = CertifiedParentProofKey::new(0, 0, hash);
 
                 let r = selector
@@ -438,7 +435,10 @@ mod tests {
                         )
                         .unwrap();
                 });
-                let selector = ParentProofSelector::new(store.clone());
+                let selector = ParentProofSelector::new(
+                    store.clone(),
+                    crate::config::DEFAULT_PROPOSAL_TIMEOUT,
+                );
                 let selected = selector
                     .select_direct_parent_proof_by_key_with_wait(
                         &context,
@@ -482,7 +482,8 @@ mod tests {
                         .unwrap();
                 });
 
-                let selector = ParentProofSelector::new(store);
+                let selector =
+                    ParentProofSelector::new(store, crate::config::DEFAULT_PROPOSAL_TIMEOUT);
                 let r = selector
                     .select_direct_parent_proof_by_key_with_wait(
                         &context,

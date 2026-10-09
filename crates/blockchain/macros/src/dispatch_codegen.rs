@@ -262,9 +262,11 @@ fn build_match_arm(m: &DispatchMethod) -> syn::Result<TokenStream2> {
                 #variant(c) => ::outbe_primitives::dispatch::mutate_void_payable(
                     &storage,
                     c,
-                    self::PAYABLE_SELECTORS,
-                    caller,
-                    value,
+                    ::outbe_primitives::dispatch::PayableCallContext {
+                        selectors: self::PAYABLE_SELECTORS,
+                        sender: caller,
+                        value,
+                    },
                     |sender, c, v| contract.#rust_name(sender, v, #(#field_accesses),*),
                 )
             }

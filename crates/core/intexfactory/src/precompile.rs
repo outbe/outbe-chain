@@ -10,7 +10,7 @@ use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{
     dispatch_call, metadata, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable,
-    view,
+    view, PayableCallContext,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -268,9 +268,11 @@ pub fn dispatch(
                 distribute(c) => mutate_void_payable(
                     &storage,
                     c,
-                    PAYABLE_SELECTORS,
-                    caller,
-                    value,
+                    PayableCallContext {
+                        selectors: PAYABLE_SELECTORS,
+                        sender: caller,
+                        value,
+                    },
                     |sender, c, val| {
                         runtime::distribute(
                             &storage,
