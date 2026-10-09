@@ -37,7 +37,7 @@ pub const BLOCK_NUMBER: u64 = 42;
 /// Denominates the loan and keys the policy rate.
 pub const ISSUANCE_ISO: u16 = 840;
 
-/// Reference currency every position here elects. Deliberately distinct from
+/// Reference currency every Credis here elects. Deliberately distinct from
 /// [`ISSUANCE_ISO`] so a test that passes on the wrong series cannot pass by
 /// coincidence. The fixture seeds both pairs at the same rate, so the default call
 /// anchor is 2.0 and the call price is 3.28.
@@ -48,7 +48,7 @@ pub const DAY: u64 = 86_400;
 /// Past any deadline by enough that the hour it falls in has closed.
 pub const HOUR: u64 = 3_600;
 
-/// The settlement window a position seals at opening. Derived from the constant
+/// The settlement window a Credis seals at opening. Derived from the constant
 /// rather than written out as a literal: a hard-coded `14 * DAY` is what these
 /// tests used to carry, and it went stale the day the window was retuned.
 pub const NOTICE: u64 = outbe_credis::constants::CALL_NOTICE_PERIOD as u64;
@@ -81,18 +81,18 @@ pub fn oracle_rate() -> U256 {
     U256::from(2u64) * SCALE_1E6_U256
 }
 
-/// A price below every position's call price (3.28), so such a day is not a breach.
+/// A price below every Credis's call price (3.28), so such a day is not a breach.
 pub fn below_call() -> U256 {
     U256::from(2_200_000u64)
 }
 
-/// Exactly every position's call price (3.28). The breach test is strictly `>`,
+/// Exactly every Credis's call price (3.28). The breach test is strictly `>`,
 /// so a day at this value does not count.
 pub fn at_call() -> U256 {
     U256::from(3_280_000u64)
 }
 
-/// One minor unit above every position's call price (3.28), the tightest price
+/// One minor unit above every Credis's call price (3.28), the tightest price
 /// that counts as a breach day.
 pub fn above_call() -> U256 {
     at_call() + U256::from(1u64)
@@ -214,7 +214,7 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
 }
 
 /// Registers `COEN/<iso>` and admits `iso` to the reference-currency registry, so
-/// a position may elect it. Idempotent in both halves.
+/// a Credis may elect it. Idempotent in both halves.
 pub fn register_reference_pair(storage: &StorageHandle<'_>, iso: u16) {
     if outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
         .unwrap()
@@ -267,7 +267,7 @@ pub fn last_closed_day(timestamp: u64) -> u32 {
 
 /// Advances the finalization watermark to cover the day closed at `timestamp`
 /// without publishing a price for any day. The scan then runs but finds no
-/// reference series, so only price-independent transitions (the void) apply.
+/// reference series, so only price-independent transitions (the forfeit) apply.
 pub fn finalize_through(storage: &StorageHandle<'_>, timestamp: u64) {
     bump_watermark(storage, last_closed_day(timestamp));
 }
@@ -283,7 +283,7 @@ pub fn set_vwap_for(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, value: 
 }
 
 /// [`set_vwap_for`] on [`REFERENCE_ISO`] - the series the scan actually reads,
-/// since the call threshold is anchored to the position's reference currency.
+/// since the call threshold is anchored to the Credis's reference currency.
 pub fn set_vwap(storage: &StorageHandle<'_>, utc_day: u32, value: U256) {
     set_vwap_for(storage, REFERENCE_ISO, utc_day, value);
 }
@@ -318,7 +318,7 @@ fn bump_watermark(storage: &StorageHandle<'_>, utc_day: u32) {
     }
 }
 
-/// Runs the daily price-path scan at `timestamp`, returning how many positions
+/// Runs the daily price-path scan at `timestamp`, returning how many Credis
 /// it moved.
 fn block_at<'storage>(
     storage: &StorageHandle<'storage>,
@@ -344,7 +344,7 @@ pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     crate::called::run_call_slice(&block_at(storage, timestamp)).unwrap()
 }
 
-/// One block's void sweep over the lapsed called positions.
+/// One block's forfeit sweep over the lapsed called Credis.
 pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     crate::expired::sweep_expired(&block_at(storage, timestamp)).unwrap()
 }
@@ -369,14 +369,14 @@ pub fn advance_to(storage: &StorageHandle<'_>, timestamp: u64) {
 pub fn settle_principal(
     storage: &StorageHandle<'_>,
     payer: Address,
-    position_id: U256,
+    credis_id: U256,
     principal: U256,
 ) -> (U256, U256) {
-    let position = CredisContract::new(storage.clone())
-        .get_position(position_id)
+    let record = CredisContract::new(storage.clone())
+        .get_credis(credis_id)
         .unwrap();
-    let interest = CredisContract::accrued_interest(&position, now_of(storage)).unwrap();
-    runtime::settle(storage.clone(), payer, position_id, interest + principal).unwrap()
+    let interest = CredisContract::accrued_interest(&record, now_of(storage)).unwrap();
+    runtime::settle(storage.clone(), payer, credis_id, interest + principal).unwrap()
 }
 
 /// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.
@@ -491,7 +491,7 @@ pub fn bootstrap(storage: &StorageHandle<'_>, amount: U256) {
     bootstrap_for(storage, alice(), amount);
 }
 
-/// [`bootstrap`] for an arbitrary owner, so a test can open positions for
+/// [`bootstrap`] for an arbitrary owner, so a test can open Credis for
 /// several distinct accounts.
 pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     outbe_gratis::api::mint(

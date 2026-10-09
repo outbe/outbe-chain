@@ -38,7 +38,7 @@ test("a lifecycle state is named by the contract whose struct carries it", () =>
     );
   assert.deepEqual(state("struct IGem.GemData", 2), { state: { code: 2, name: "Called" } });
   assert.deepEqual(state("struct IGem.GemData", 4), { state: { code: 4, name: "Forfeited" } });
-  assert.deepEqual(state("struct ICredis.Position", 3), { state: { code: 3, name: "Void" } });
+  assert.deepEqual(state("struct ICredis.Credis", 3), { state: { code: 3, name: "Forfeited" } });
   assert.deepEqual(state("struct IOther.Data", 3), { state: { code: 3 } });
   assert.deepEqual(
     formatParam({ name: "state", type: "uint8" } as AbiParameter, 1, { contractName: "credis" }),

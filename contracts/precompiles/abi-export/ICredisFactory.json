@@ -11,7 +11,7 @@
     ],
     "outputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -28,7 +28,7 @@
     "name": "settleCredis",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -45,7 +45,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "interestMinor",
+        "name": "interestPaidMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -120,7 +120,7 @@
     "name": "ExpiryDeferred",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"

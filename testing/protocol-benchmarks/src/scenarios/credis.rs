@@ -273,9 +273,9 @@ impl BenchmarkScenario for CredisScenario {
             "credis_factory",
         )?;
 
-        let (position, pledged) = StorageHandle::enter(&mut provider, |storage| {
-            let position = CredisContract::new(storage.clone())
-                .get_position(decoded.positionId)
+        let (record, pledged) = StorageHandle::enter(&mut provider, |storage| {
+            let record = CredisContract::new(storage.clone())
+                .get_credis(decoded.credisId)
                 .map_err(|error| error.to_string())?;
             let view_key = derive_view_key(&gratis_enclave::state_key(), ALICE)
                 .map_err(|error| error.to_string())?;
@@ -283,10 +283,10 @@ impl BenchmarkScenario for CredisScenario {
                 outbe_gratis::api::pledged_ct(storage, ALICE).map_err(|error| error.to_string())?;
             let pledged =
                 decrypt_pledged(&view_key, ALICE, &blob).map_err(|error| error.to_string())?;
-            Ok::<_, String>((position, pledged))
+            Ok::<_, String>((record, pledged))
         })?;
-        if position.smart_account != ALICE
-            || position.source != ALICE
+        if record.owner != ALICE
+            || record.source != ALICE
             || pledged != pledge_cost()
             || decoded.principalMinor != pledge_stables()
         {
@@ -334,7 +334,7 @@ impl BenchmarkScenario for CredisScenario {
                 .with_postcondition("credis.source_recorded", "true")
                 .with_postcondition("credis.collateral_pledged", "true")
                 .with_postcondition("credis.child_frame_gas_included", "false")
-                .with_postcondition("credis.position_id", decoded.positionId.to_string());
+                .with_postcondition("credis.credis_id", decoded.credisId.to_string());
         observation.storage = captured.storage;
         observation.events = captured.events;
         Ok(observation)

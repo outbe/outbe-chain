@@ -207,7 +207,7 @@ fn prepare(world: &mut World) {
         keys,
         reservation: U256::ZERO,
         gratis_minor: U256::ZERO,
-        position_id: U256::ZERO,
+        credis_id: U256::ZERO,
         initial_native: U256::ZERO,
         interest_paid: U256::ZERO,
     });
@@ -378,8 +378,8 @@ fn issue(world: &mut World) {
         &receipt,
         CREDIS_ADDRESS,
         &ICredis::PositionCreated {
-            positionId: id,
-            smartAccount: f.account,
+            credisId: id,
+            owner: f.account,
             cca: f.cca,
             principalMinor: PRINCIPAL,
             gratisMinor: f.gratis_minor,
@@ -399,20 +399,20 @@ fn issue(world: &mut World) {
         addresses::GRATIS_FACTORY_ADDR,
         &eth::IGratisFactory::PledgeSentToCredis {
             reservationId: f.reservation,
-            positionId: id,
+            credisId: id,
         },
     );
-    world.state.credis.as_mut().expect("fixture").position_id = id;
+    world.state.credis.as_mut().expect("fixture").credis_id = id;
 }
 
-#[then("the smart account owns the open Credis position")]
+#[then("the smart account owns the open Credis")]
 fn issued(world: &mut World) {
     let state = snapshot(world);
     let f = world.state.credis.as_ref().expect("fixture");
-    let p = state.position.expect("issued position");
-    assert_eq!(p.positionId, f.position_id);
+    let p = state.record.expect("issued Credis");
+    assert_eq!(p.credisId, f.credis_id);
     assert_eq!(
-        (p.smartAccount, p.cca, p.asset),
+        (p.owner, p.cca, p.asset),
         (f.account, f.cca, f.currency.asset)
     );
     assert_eq!((p.issuanceCurrency, p.referenceCurrency), (USD, USD));
@@ -462,7 +462,7 @@ fn issued(world: &mut World) {
 fn repay(world: &mut World) {
     for payment_index in 0..3 {
         let before = snapshot(world);
-        let p = before.position.as_ref().expect("position before payment");
+        let p = before.record.as_ref().expect("Credis before payment");
         // An hour of slack keeps transaction inclusion well away from the next day boundary.
         let target = p.lastSettledAt + DAY + 3_600;
         let (_, _, _, pending) =
@@ -500,7 +500,7 @@ fn repay(world: &mut World) {
                 &url,
                 CREDIS_ADDRESS,
                 &ICredis::interestAccruedMinorCall {
-                    positionId: f.position_id
+                    credisId: f.credis_id
                 }
             ),
             Some(interest)
@@ -527,7 +527,7 @@ fn repay(world: &mut World) {
             DEPLOYER_KEY,
             CREDIS_FACTORY_ADDRESS,
             &ICredisFactory::settleCredisCall {
-                positionId: f.position_id,
+                credisId: f.credis_id,
                 amountMinor: amount,
             },
         );
@@ -548,8 +548,8 @@ fn repay(world: &mut World) {
             &receipt,
             CREDIS_ADDRESS,
             &ICredis::SettlementApplied {
-                positionId: f.position_id,
-                interestMinor: interest,
+                credisId: f.credis_id,
+                interestPaidMinor: interest,
                 principalPaidMinor: principal,
                 gratisReturnedMinor: released,
                 outstandingPrincipalMinor: p.outstandingPrincipalMinor - principal,
@@ -559,13 +559,13 @@ fn repay(world: &mut World) {
             assert_receipt_event(
                 &receipt,
                 CREDIS_ADDRESS,
-                &ICredis::PositionSettled {
-                    positionId: f.position_id,
+                &ICredis::CredisSettled {
+                    credisId: f.credis_id,
                 },
             );
         }
         let after = snapshot(world);
-        let a = after.position.as_ref().expect("position after payment");
+        let a = after.record.as_ref().expect("Credis after payment");
         assert_eq!(
             a.outstandingPrincipalMinor,
             p.outstandingPrincipalMinor - principal
@@ -607,15 +607,15 @@ fn repay(world: &mut World) {
 fn fully_repaid(world: &mut World) {
     let state = snapshot(world);
     let f = world.state.credis.as_ref().expect("fixture");
-    let position = state.position.expect("retained settled position");
+    let record = state.record.expect("retained settled Credis");
     assert_eq!(
         (
-            position.outstandingPrincipalMinor,
-            position.outstandingGratisMinor
+            record.outstandingPrincipalMinor,
+            record.outstandingGratisMinor
         ),
         (U256::ZERO, U256::ZERO)
     );
-    assert_eq!(position.state, 2);
+    assert_eq!(record.state, 2);
     assert!(f.interest_paid > U256::ZERO);
     assert_eq!(state.liquid, INITIAL_GRATIS);
     assert_eq!(state.pledged, U256::ZERO);
@@ -629,9 +629,9 @@ fn fully_repaid(world: &mut World) {
     assert_eq!(state.router_stables, U256::ZERO);
 }
 
-fn expected_interest(position: &ICredis::Position, timestamp: u64) -> U256 {
-    let days = (timestamp - position.lastSettledAt) / DAY;
-    position.outstandingPrincipalMinor * position.policyRate * U256::from(days)
+fn expected_interest(record: &ICredis::Credis, timestamp: u64) -> U256 {
+    let days = (timestamp - record.lastSettledAt) / DAY;
+    record.outstandingPrincipalMinor * record.policyRate * U256::from(days)
         / U256::from(365_000_000)
 }
 

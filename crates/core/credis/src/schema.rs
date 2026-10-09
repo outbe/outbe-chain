@@ -6,69 +6,69 @@ use outbe_primitives::addresses::CREDIS_ADDRESS;
 
 use crate::errors::CredisError;
 
-/// Position lifecycle state.
+/// Credis lifecycle state.
 ///
-/// A position is settleable from the moment it opens. `Open -> Called` is the
-/// sustained-breach trigger. Both `Settled` (fully repaid) and `Void` (call
-/// window lapsed with a remainder) are terminal.
+/// A Credis is settleable from the moment it is issued. `Issued -> Called` is the
+/// sustained-breach trigger. Both `Settled` (fully repaid) and `Forfeited` (settlement
+/// deadline passed with a remainder) are terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CredisState {
-    Open = 0,
+    Issued = 0,
     Called = 1,
     Settled = 2,
-    Void = 3,
+    Forfeited = 3,
 }
 
 impl CredisState {
     pub fn from_u8(value: u8) -> Result<Self, CredisError> {
         match value {
-            0 => Ok(Self::Open),
+            0 => Ok(Self::Issued),
             1 => Ok(Self::Called),
             2 => Ok(Self::Settled),
-            3 => Ok(Self::Void),
+            3 => Ok(Self::Forfeited),
             other => Err(CredisError::InvalidStateValue(other)),
         }
     }
 
-    /// True once the position can no longer change: fully repaid or voided.
+    /// True once the Credis can no longer change: fully repaid or forfeited.
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Settled | Self::Void)
+        matches!(self, Self::Settled | Self::Forfeited)
     }
 }
 
-/// Position record. Keyed by `keccak256(cca || smart_account || asset || block_number)`.
+/// Credis record. Keyed by `keccak256(cca || owner || asset || block_number)`.
 ///
 /// Every term, both currency codes included, is sealed at opening and never
 /// changes afterwards. Only `outstanding_principal_minor`, `outstanding_gratis_minor`,
 /// `interest_paid_minor`, `last_settled_at`, `called_at` and `state` move over the
-/// position's life.
+/// Credis's life.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[storage_record(exists_field = smart_account)]
-pub struct Position {
+#[storage_record(exists_field = owner)]
+pub struct Credis {
     #[key]
-    pub position_id: U256,
+    pub credis_id: U256,
 
     /// The card bundle the loan was disbursed to.
     #[attribute(order = 0)]
-    pub smart_account: Address,
+    pub owner: Address,
 
-    /// The agent that originated the position. Carries the accountability for
+    /// The agent that originated the Credis. Carries the accountability for
     /// how it resolves.
     #[attribute(order = 1)]
     pub cca: Address,
 
-    /// The stablecoin the position is denominated and disbursed in.
+    /// The stablecoin the Credis is denominated and disbursed in.
     #[attribute(order = 2)]
     pub asset: Address,
 
     /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at opening.
-    /// Denominates the position and keys its policy rate. It is NOT the call
+    /// Denominates the Credis and keys its policy rate. It is NOT the call
     /// threshold anchor. See [`Self::reference_currency`].
     #[attribute(order = 3)]
     pub issuance_currency: u16,
 
-    /// Main account whose pledged Gratis backs the position. Repayments release
+    /// Main account whose pledged Gratis backs the Credis. Repayments release
     /// collateral to it and a default burns it from it.
     #[attribute(order = 4)]
     pub source: Address,
@@ -77,7 +77,7 @@ pub struct Position {
     #[attribute(order = 5)]
     pub principal_minor: U256,
 
-    /// `P_out` - outstanding principal. Reaching zero closes the position.
+    /// `P_out` - outstanding principal. Reaching zero closes the Credis.
     #[attribute(order = 6)]
     pub outstanding_principal_minor: U256,
 
@@ -91,7 +91,7 @@ pub struct Position {
     pub outstanding_gratis_minor: U256,
 
     /// `r` - the currency's annual official policy rate (scale `1e6`) times the
-    /// policy-rate factor, pinned at opening for the position's life.
+    /// policy-rate factor, pinned at opening for the Credis's life.
     #[attribute(order = 9)]
     pub policy_rate: U256,
 
@@ -101,7 +101,7 @@ pub struct Position {
     pub entry_price_minor: U256,
 
     /// `call_anchor_price_minor * 164 / 100`, in the reference currency (scale `1e6`).
-    /// The daily scan calls the position when 21 of the last 28 finalized
+    /// The daily scan calls the Credis when 21 of the last 28 finalized
     /// COEN/`reference_currency` VWAPs are strictly above this price. Immutable.
     #[attribute(order = 11)]
     pub call_price_minor: U256,
@@ -118,7 +118,7 @@ pub struct Position {
     #[attribute(order = 13)]
     pub last_settled_at: u64,
 
-    /// 0 until the position is called.
+    /// 0 until the Credis is called.
     #[attribute(order = 14, default = 0)]
     pub called_at: u64,
 
@@ -127,14 +127,14 @@ pub struct Position {
     pub state: u8,
 
     /// ISO 4217 numeric code of the reference currency elected at issuance
-    /// and fixed for the position's life. `call_anchor_price_minor` and `call_price_minor`
+    /// and fixed for the Credis's life. `call_anchor_price_minor` and `call_price_minor`
     /// are quoted here, and the daily breach scan reads the
     /// COEN/`reference_currency` series. It does not denominate `entry_price_minor`.
     #[attribute(order = 16)]
     pub reference_currency: u16,
 
-    /// Call Notice Period in seconds: a called position whose remainder is
-    /// still outstanding at `called_at + call_notice_period_seconds` is voided.
+    /// Call Notice Period in seconds: a called Credis whose remainder is
+    /// still outstanding at `called_at + call_notice_period_seconds` is forfeited.
     /// Snapshot of the protocol constant at opening.
     #[attribute(order = 17, default = 0)]
     pub call_notice_period_seconds: u32,
@@ -163,54 +163,54 @@ pub struct Position {
 
     /// Lifetime interest collected, in the asset's minor units. The sum of
     /// successful settlement interest deltas. Unpaid interest is left out,
-    /// including when the remainder is voided.
+    /// including when the remainder is forfeited.
     #[attribute(order = 22)]
     pub interest_paid_minor: U256,
 }
 
-impl Position {
+impl Credis {
     pub fn lifecycle_state(&self) -> Result<CredisState, CredisError> {
         CredisState::from_u8(self.state)
     }
 }
 
-/// EVM storage layout for the Credis position contract.
+/// EVM storage layout for the Credis contract.
 ///
-/// `address_position_*` and `total_positions` / `position_id_at_index` provide
+/// `address_position_*` and `total_credis` / `credis_id_at_index` provide
 /// dense, no-`Vec` enumeration in the same shape as `outbe-nod`'s owner index
 /// (`crates/core/nod/src/schema.rs`). Slot assignment is macro-generated: a
 /// `Map<K, V>` over a record reserves `V::SLOTS` top-level slots, so the
-/// positions map alone spans as many slots as `Position` has attributes.
+/// Credis map alone spans as many slots as `Credis` has attributes.
 #[storage_schema]
 #[contract(addr = CREDIS_ADDRESS)]
 pub struct CredisContract {
-    /// Position record keyed by position_id.
+    /// Credis record keyed by credis_id.
     #[attribute(order = 0)]
-    pub positions: outbe_primitives::storage::dsl::Map<U256, Position>,
+    pub records: outbe_primitives::storage::dsl::Map<U256, Credis>,
 
-    /// Per-account count of positions ever created.
+    /// Per-account count of Credis ever created.
     #[attribute(order = 1)]
-    pub address_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
+    pub owner_credis_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 
-    /// Per-account index - keccak(addr ++ idx_be32) -> position_id.
+    /// Per-account index - keccak(addr ++ idx_be32) -> credis_id.
     #[attribute(order = 2)]
-    pub address_position_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub owner_credis_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// Total positions ever created (backs `totalSupply` / `positionByIndex`).
+    /// Total Credis ever created (backs `totalSupply` / `positionByIndex`).
     #[attribute(order = 3)]
-    pub total_positions: outbe_primitives::storage::dsl::Value<u64>,
+    pub total_credis: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// Dense index - index -> position_id.
+    /// Dense index - index -> credis_id.
     #[attribute(order = 4)]
-    pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub credis_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     /// Widest `call_window_seconds` ever opened in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
-    /// position whose sealed window outruns the current constant.
+    /// Credis whose sealed window outruns the current constant.
     #[attribute(order = 8)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Called positions, queued by the hour their settlement deadline falls in.
+    // Called Credis, queued by the hour their settlement deadline falls in.
     #[attribute(order = 9)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 10)]
@@ -224,7 +224,7 @@ pub struct CredisContract {
     #[attribute(order = 14)]
     pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, U256>,
     #[attribute(order = 15)]
-    pub called_position_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
+    pub called_credis_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
     #[attribute(order = 16)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
     #[attribute(order = 17)]
@@ -237,8 +237,8 @@ pub struct CredisContract {
     #[attribute(order = 19)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Open positions by call price, one trie per reference currency. A call takes
-    // the position out, so the daily scan visits only what can still be called.
+    // Open Credis by call price, one trie per reference currency. A call takes
+    // the Credis out, so the daily scan visits only what can still be called.
     #[attribute(order = 20)]
     pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 21)]
@@ -248,10 +248,10 @@ pub struct CredisContract {
     #[attribute(order = 23)]
     pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     #[attribute(order = 24)]
-    pub call_bin_positions: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub call_bin_credis: outbe_primitives::storage::dsl::Map<B256, U256>,
     #[attribute(order = 25)]
-    pub call_position_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
-    /// `(bin << 32) | positions of that bin still to visit`. 0 = start from the lowest bin.
+    pub call_credis_slot: outbe_primitives::storage::dsl::Map<U256, u64>,
+    /// `(bin << 32) | Credis of that bin still to visit`. 0 = start from the lowest bin.
     #[attribute(order = 26)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
     /// UTC day the call sweep could not price a reference currency on. The rest of that
@@ -271,23 +271,18 @@ pub struct CredisContract {
 }
 
 impl CredisContract<'_> {
-    /// `keccak256(cca || smart_account || asset || block_number)` with packed
+    /// `keccak256(cca || owner || asset || block_number)` with packed
     /// 20-byte addresses and the execution block number as a big-endian u64.
-    pub fn position_id(
-        cca: Address,
-        smart_account: Address,
-        asset: Address,
-        block_number: u64,
-    ) -> U256 {
+    pub fn credis_id(cca: Address, owner: Address, asset: Address, block_number: u64) -> U256 {
         let mut buf = [0u8; 68];
         buf[..20].copy_from_slice(cca.as_slice());
-        buf[20..40].copy_from_slice(smart_account.as_slice());
+        buf[20..40].copy_from_slice(owner.as_slice());
         buf[40..60].copy_from_slice(asset.as_slice());
         buf[60..].copy_from_slice(&block_number.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
     }
 
-    /// Composite key for per-address position index: `keccak256(addr ++ idx_be32)`.
+    /// Composite key for per-address Credis index: `keccak256(addr ++ idx_be32)`.
     pub fn address_index_key(account: Address, index: u32) -> B256 {
         let mut buf = [0u8; 24];
         buf[0..20].copy_from_slice(account.as_slice());

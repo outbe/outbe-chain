@@ -39,18 +39,18 @@ pub fn dispatch(
             name(_) => metadata::<ICredis::nameCall>(|| Ok(TOKEN_NAME.to_string())),
             symbol(_) => metadata::<ICredis::symbolCall>(|| Ok(TOKEN_SYMBOL.to_string())),
             tokenURI(c) => view(c, |c| {
-                let position = contract.get_position(c.positionId)?;
+                let record = contract.get_credis(c.credisId)?;
                 let now = contract.storage.timestamp()?.to::<u64>();
-                crate::metadata::token_uri(&position, now)
+                crate::metadata::token_uri(&record, now)
             }),
-            totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_positions()?))),
-            getPosition(c) => view(c, |c| {
-                let position = contract.get_position(c.positionId)?;
-                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
+            totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_credis()?))),
+            getCredis(c) => view(c, |c| {
+                let record = contract.get_credis(c.credisId)?;
+                abi_credis(&record, contract.storage.timestamp()?.to::<u64>())
             }),
             ownerOf(c) => view(c, |c| {
-                let position = contract.get_position(c.positionId)?;
-                Ok(position.smart_account)
+                let record = contract.get_credis(c.credisId)?;
+                Ok(record.owner)
             }),
             transferFrom(_)
             | safeTransferFrom_0(_)
@@ -61,28 +61,25 @@ pub fn dispatch(
             isApprovedForAll(c) => view(c, |_| Ok(false)),
             positionByIndex(c) => view(c, |c| {
                 let index = u64::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
-                let position = contract.position_at(index)?;
-                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
+                let record = contract.credis_at(index)?;
+                abi_credis(&record, contract.storage.timestamp()?.to::<u64>())
             }),
-            balanceOf(c) => view(c, |c| {
-                Ok(U256::from(contract.position_count_of(c.smartAccount)?))
-            }),
+            balanceOf(c) => view(c, |c| Ok(U256::from(contract.credis_count_of(c.owner)?))),
             positionOfAddressByIndex(c) => view(c, |c| {
                 let index = u32::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
-                let position = contract.position_of_address_at(c.smartAccount, index)?;
-                abi_position(&position, contract.storage.timestamp()?.to::<u64>())
+                let record = contract.credis_of_owner_at(c.owner, index)?;
+                abi_credis(&record, contract.storage.timestamp()?.to::<u64>())
             }),
             interestAccruedMinor(c) => view(c, |c| {
-                let position = contract.get_position(c.positionId)?;
+                let record = contract.get_credis(c.credisId)?;
                 let timestamp = contract.storage.timestamp()?.to::<u64>();
-                CredisContract::accrued_interest(&position, timestamp)
+                CredisContract::accrued_interest(&record, timestamp)
             }),
             interestPaidMinor(c) => view(c, |c| {
-                Ok(contract.get_position(c.positionId)?.interest_paid_minor)
+                Ok(contract.get_credis(c.credisId)?.interest_paid_minor)
             }),
             credisPrincipalAndOutstandingOf(c) => view(c, |c| {
-                let (principal, outstanding) =
-                    contract.principal_and_outstanding_of(c.smartAccount)?;
+                let (principal, outstanding) = contract.principal_and_outstanding_of(c.owner)?;
                 Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
                     principalMinor: principal,
                     outstandingPrincipalMinor: outstanding,
@@ -95,10 +92,10 @@ pub fn dispatch(
     })
 }
 
-fn abi_position(p: &crate::schema::Position, now: u64) -> Result<ICredis::Position> {
-    Ok(ICredis::Position {
-        positionId: p.position_id,
-        smartAccount: p.smart_account,
+fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
+    Ok(ICredis::Credis {
+        credisId: p.credis_id,
+        owner: p.owner,
         cca: p.cca,
         asset: p.asset,
         issuanceCurrency: p.issuance_currency,

@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_credis::{CredisContract, OpenPositionParams};
+use outbe_credis::{CredisContract, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
@@ -77,8 +77,8 @@ pub fn issue_credis(
             return Err(CredisFactoryError::CcaStakeMismatch.into());
         }
         let mut credis = CredisContract::new(storage.clone());
-        let id = credis.open_position(OpenPositionParams {
-            smart_account: r.smart_account,
+        let id = credis.issue(IssueCredisParams {
+            owner: r.smart_account,
             cca: caller,
             source: r.source,
             asset: r.asset,
@@ -92,7 +92,7 @@ pub fn issue_credis(
             issued_at: now,
         })?;
         pledges::send_to_credis(&storage, reservation_id, id, r.source, r.gratis_minor)?;
-        let opened = credis.get_position(id)?;
+        let opened = credis.get_credis(id)?;
         storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.smart_account, stake)?;
         let paid = outbe_vaultrouter::api::release_reservation(
             &storage,
@@ -100,7 +100,7 @@ pub fn issue_credis(
             r.smart_account,
             r.amount,
         )?;
-        if paid != r.amount || credis.get_position(id)? != opened {
+        if paid != r.amount || credis.get_credis(id)? != opened {
             return Err(revert("Credis changed during issuance"));
         }
         storage.emit_event(
@@ -120,7 +120,7 @@ pub fn issue_credis(
 pub fn settle(
     storage: StorageHandle<'_>,
     caller: Address,
-    position_id: U256,
+    credis_id: U256,
     amount: U256,
 ) -> Result<(U256, U256)> {
     storage.with_checkpoint(|| {
@@ -128,11 +128,11 @@ pub fn settle(
             return Err(CredisFactoryError::InvalidAmount.into());
         }
         let mut credis = CredisContract::new(storage.clone());
-        let before = credis.get_position(position_id)?;
+        let before = credis.get_credis(credis_id)?;
         let now =
             u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
-        let settlement = credis.settle(position_id, amount, now)?;
-        let after = credis.get_position(position_id)?;
+        let settlement = credis.settle(credis_id, amount, now)?;
+        let after = credis.get_credis(credis_id)?;
         let released = before
             .outstanding_gratis_minor
             .checked_sub(after.outstanding_gratis_minor)
@@ -175,32 +175,32 @@ pub fn settle(
             }
             outbe_vaultrouter::api::deposit(&storage, settlement.asset, paid)?;
         }
-        if credis.get_position(position_id)? != after {
+        if credis.get_credis(credis_id)? != after {
             return Err(revert("Credis changed during payment"));
         }
         if !released.is_zero() {
-            pledges::return_from_credis(&storage, position_id, released)?;
+            pledges::return_from_credis(&storage, credis_id, released)?;
         }
         Ok((settlement.principal_paid, settlement.interest))
     })
 }
 
-/// Burn only this position's remaining collateral from the source's pledged
+/// Burn only this Credis's remaining collateral from the source's pledged
 /// balance. Fidelity cohorts stay untouched.
-pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
+pub fn forfeit_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
     storage.with_checkpoint(|| {
         let now =
             u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
         let mut credis = CredisContract::new(storage.clone());
-        let before = credis.get_position(position_id)?;
-        let void = credis.void_position(position_id, now)?;
-        if void.gratis_burned_minor != before.outstanding_gratis_minor {
+        let before = credis.get_credis(credis_id)?;
+        let forfeit = credis.forfeit(credis_id, now)?;
+        if forfeit.gratis_burned_minor != before.outstanding_gratis_minor {
             return Err(revert("forfeiture collateral mismatch"));
         }
-        if !void.gratis_burned_minor.is_zero() {
-            pledges::burn_from_credis(&storage, position_id, void.gratis_burned_minor)?;
+        if !forfeit.gratis_burned_minor.is_zero() {
+            pledges::burn_from_credis(&storage, credis_id, forfeit.gratis_burned_minor)?;
             outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .add_to_total_unallocated(void.gratis_burned_minor)?;
+                .add_to_total_unallocated(forfeit.gratis_burned_minor)?;
         }
         Ok(())
     })

@@ -122,10 +122,10 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     { reservation_id: rawAmount, stake: coen },
     handler(async ({ reservation_id, stake }) =>
       submit(ctx, { contract: "credisfactory", method: "issueCredis", args: [BigInt(reservation_id)], value: parseNativeAmount(ctx.chain, stake) })));
-  server.tool("credis_settle", "Repay a position after approving its asset to CredisFactory; released collateral returns to the source's liquid Gratis.",
-    { position_id: rawAmount, amount: rawAmount },
-    handler(async ({ position_id, amount }) =>
-      submit(ctx, { contract: "credisfactory", method: "settleCredis", args: [BigInt(position_id), BigInt(amount)] })));
+  server.tool("credis_settle", "Repay a Credis after approving its asset to CredisFactory; released collateral returns to the source's liquid Gratis.",
+    { credis_id: rawAmount, amount: rawAmount },
+    handler(async ({ credis_id, amount }) =>
+      submit(ctx, { contract: "credisfactory", method: "settleCredis", args: [BigInt(credis_id), BigInt(amount)] })));
   // --- tribute_offer (encrypts to the live offer key, byte-identical to enclave)
   server.tool(
     "tribute_offer",

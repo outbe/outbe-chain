@@ -8,7 +8,7 @@ Feature: Credis happy flow and payments
     Then the reservation holds the requested liquidity for those actors
     When the user pledges Gratis
     And the CCA issues Credis against the pledge and reservation
-    Then the smart account owns the open Credis position
+    Then the smart account owns the open Credis
     When the user makes three daily payments through the smart account
     Then the principal and interest are paid and all collateral is released
     And the committee nodes agree on the state root

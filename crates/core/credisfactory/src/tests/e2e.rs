@@ -17,10 +17,10 @@ fn fidelity_of(storage: &StorageHandle<'_>, account: Address) -> Vec<u8> {
 
 fn call_and_lapse(storage: &StorageHandle<'_>, id: U256) {
     let credis = CredisContract::new(storage.clone());
-    let mut p = credis.get_position(id).unwrap();
+    let mut p = credis.get_credis(id).unwrap();
     p.state = CredisState::Called as u8;
     p.called_at = CREATED_AT;
-    credis.positions.update(&p).unwrap();
+    credis.records.update(&p).unwrap();
     advance_to(storage, CREATED_AT + NOTICE + 1);
 }
 
@@ -91,7 +91,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
             .unwrap();
         assert_eq!(pledge_of(&storage, id).unwrap().source, alice());
 
-        let (position_id, amount) =
+        let (credis_id, amount) =
             runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
         assert_eq!(amount, reservation.amount);
         assert!(pledge_of(&storage, id).unwrap().source.is_zero());
@@ -101,22 +101,22 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             pledge_cost()
         );
-        let position = CredisContract::new(storage.clone())
-            .get_position(position_id)
+        let record = CredisContract::new(storage.clone())
+            .get_credis(credis_id)
             .unwrap();
-        assert_eq!(position.source, alice());
-        assert_eq!(position.policy_rate, reservation.policy_rate);
+        assert_eq!(record.source, alice());
+        assert_eq!(record.policy_rate, reservation.policy_rate);
         assert_eq!(
-            position.call_price_minor,
+            record.call_price_minor,
             outbe_credis::calc_call_price(reservation.call_anchor_price_minor).unwrap()
         );
         assert_eq!(
-            position.call_notice_period_seconds,
+            record.call_notice_period_seconds,
             outbe_credis::constants::CALL_NOTICE_PERIOD
         );
         (id, reservation)
     });
-    // A later block derives a fresh position id, so only the spent pledge can stop a replay.
+    // A later block derives a fresh Credis id, so only the spent pledge can stop a replay.
     provider.set_block_number(BLOCK_NUMBER + 1);
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
@@ -169,14 +169,14 @@ fn a_source_backs_another_smart_account_and_repayments_return_to_the_source() {
         );
         pledge(&storage, alice(), id, 1);
         fund_stake(&storage, pledge_stake());
-        let position_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
+        let credis_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
             .unwrap()
             .0;
-        let position = CredisContract::new(storage.clone())
-            .get_position(position_id)
+        let record = CredisContract::new(storage.clone())
+            .get_credis(credis_id)
             .unwrap();
-        assert_eq!((position.smart_account, position.source), (bob(), alice()));
-        settle_principal(&storage, bob(), position_id, pledge_stables());
+        assert_eq!((record.owner, record.source), (bob(), alice()));
+        settle_principal(&storage, bob(), credis_id, pledge_stables());
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(view_balance(&storage, bob()), U256::ZERO);
@@ -189,37 +189,27 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
-        let position_id = open(&storage, 1);
+        let credis_id = open(&storage, 1);
         let fidelity = fidelity_of(&storage, alice());
         advance_to(&storage, CREATED_AT + DAY);
-        let position = CredisContract::new(storage.clone())
-            .get_position(position_id)
+        let record = CredisContract::new(storage.clone())
+            .get_credis(credis_id)
             .unwrap();
-        let interest = CredisContract::accrued_interest(&position, CREATED_AT + DAY).unwrap();
+        let interest = CredisContract::accrued_interest(&record, CREATED_AT + DAY).unwrap();
         assert!(!interest.is_zero());
-        runtime::settle(storage.clone(), bob(), position_id, interest).unwrap();
+        runtime::settle(storage.clone(), bob(), credis_id, interest).unwrap();
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
 
         let half = pledge_cost() / U256::from(2);
-        settle_principal(
-            &storage,
-            bob(),
-            position_id,
-            pledge_stables() / U256::from(2),
-        );
+        settle_principal(&storage, bob(), credis_id, pledge_stables() / U256::from(2));
         assert_eq!(view_balance(&storage, alice()), half);
         assert_eq!(view_pledged(&storage, alice()), pledge_cost() - half);
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             pledge_cost() - half
         );
-        settle_principal(
-            &storage,
-            bob(),
-            position_id,
-            pledge_stables() / U256::from(2),
-        );
+        settle_principal(&storage, bob(), credis_id, pledge_stables() / U256::from(2));
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(view_balance(&storage, bob()), U256::ZERO);
@@ -234,7 +224,7 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
         assert_eq!(fidelity_of(&storage, alice()), fidelity);
         assert_eq!(
             CredisContract::new(storage)
-                .get_position(position_id)
+                .get_credis(credis_id)
                 .unwrap()
                 .state,
             CredisState::Settled as u8
@@ -244,7 +234,7 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
 }
 
 #[test]
-fn false_token_return_rolls_back_position_and_pledged_collateral() {
+fn false_token_return_rolls_back_credis_and_pledged_collateral() {
     let mut provider = env();
     provider.stub_sub_call_at_selector(
         asset(),
@@ -255,11 +245,11 @@ fn false_token_return_rolls_back_position_and_pledged_collateral() {
         bootstrap(&storage, pledge_cost());
         let id = open(&storage, 1);
         let credis = CredisContract::new(storage.clone());
-        let position = credis.get_position(id).unwrap();
+        let record = credis.get_credis(id).unwrap();
         let pledged = outbe_gratis::api::pledged_ct(storage.clone(), alice()).unwrap();
         let liquid = outbe_gratis::api::balance_ct(storage.clone(), alice()).unwrap();
         assert!(runtime::settle(storage.clone(), bob(), id, pledge_stables()).is_err());
-        assert_eq!(credis.get_position(id).unwrap(), position);
+        assert_eq!(credis.get_credis(id).unwrap(), record);
         assert_eq!(
             outbe_gratis::api::pledged_ct(storage.clone(), alice()).unwrap(),
             pledged
@@ -273,7 +263,7 @@ fn false_token_return_rolls_back_position_and_pledged_collateral() {
 }
 
 #[test]
-fn forfeit_burns_only_remaining_position_backing_and_leaves_fidelity_untouched() {
+fn forfeit_burns_only_remaining_credis_backing_and_leaves_fidelity_untouched() {
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
@@ -286,13 +276,13 @@ fn forfeit_burns_only_remaining_position_backing_and_leaves_fidelity_untouched()
             .get_total_unallocated()
             .unwrap();
         call_and_lapse(&storage, id);
-        runtime::void_position(storage.clone(), id).unwrap();
-        assert!(runtime::void_position(storage.clone(), id).is_err());
+        runtime::forfeit_credis(storage.clone(), id).unwrap();
+        assert!(runtime::forfeit_credis(storage.clone(), id).is_err());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, bob()), pledge_cost());
         assert_eq!(
             CredisContract::new(storage.clone())
-                .get_position(other)
+                .get_credis(other)
                 .unwrap()
                 .outstanding_gratis_minor,
             pledge_cost()
@@ -342,25 +332,23 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         // Neither a refreshed quote nor yesterday's VWAP is available after midnight.
         oracle.utc_day_vwap_last_finalized.write(0).unwrap();
         fund_stake(&storage, pledge_stake());
-        let (position_id, principal) =
+        let (credis_id, principal) =
             runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
-        let position = CredisContract::new(storage)
-            .get_position(position_id)
-            .unwrap();
+        let record = CredisContract::new(storage).get_credis(credis_id).unwrap();
         assert_eq!(principal, reservation.amount);
-        assert_eq!(position.gratis_minor, reservation.gratis_minor);
-        assert_eq!(position.entry_price_minor, reservation.entry_price_minor);
-        assert_eq!(position.policy_rate, reservation.policy_rate);
+        assert_eq!(record.gratis_minor, reservation.gratis_minor);
+        assert_eq!(record.entry_price_minor, reservation.entry_price_minor);
+        assert_eq!(record.policy_rate, reservation.policy_rate);
         assert_eq!(
-            position.call_anchor_price_minor,
+            record.call_anchor_price_minor,
             reservation.call_anchor_price_minor
         );
         assert_eq!(
-            position.call_price_minor,
+            record.call_price_minor,
             outbe_credis::calc_call_price(reservation.call_anchor_price_minor).unwrap()
         );
-        assert_eq!(position.issued_at, midnight + 300);
-        assert_eq!(position.last_settled_at, position.issued_at);
+        assert_eq!(record.issued_at, midnight + 300);
+        assert_eq!(record.last_settled_at, record.issued_at);
     });
     teardown();
 }

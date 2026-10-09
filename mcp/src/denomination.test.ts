@@ -128,10 +128,10 @@ test("MCP formats native monetary fields at scale18 and leaves dimensionless FP1
 });
 
 test("MCP formats Credis prices at six decimals", () => {
-  const position = {
-    name: "position",
+  const credis = {
+    name: "credis",
     type: "tuple",
-    internalType: "struct ICredis.Position",
+    internalType: "struct ICredis.Credis",
     components: [
       { name: "entryPriceMinor", type: "uint256" },
       { name: "callAnchorPriceMinor", type: "uint256" },
@@ -139,7 +139,7 @@ test("MCP formats Credis prices at six decimals", () => {
     ],
   } as AbiParameter;
   assert.deepEqual(
-    formatParam(position, {
+    formatParam(credis, {
       entryPriceMinor: 2_000_000n,
       callAnchorPriceMinor: 1_900_000n,
       callPriceMinor: 3_116_000n,
@@ -175,10 +175,10 @@ test("MCP leaves a settlement quote in the asset's own minor units", () => {
 });
 
 test("MCP leaves asset-native amounts raw and scales Gratis, Promis and prices", () => {
-  const position = {
-    name: "position",
+  const credis = {
+    name: "credis",
     type: "tuple",
-    internalType: "struct ICredis.Position",
+    internalType: "struct ICredis.Credis",
     components: [
       { name: "principalMinor", type: "uint256" },
       { name: "outstandingPrincipalMinor", type: "uint256" },
@@ -190,7 +190,7 @@ test("MCP leaves asset-native amounts raw and scales Gratis, Promis and prices",
     ],
   } as AbiParameter;
   assert.deepEqual(
-    formatParam(position, {
+    formatParam(credis, {
       principalMinor: 1_000_000_000_000_000_000n,
       outstandingPrincipalMinor: 500_000_000_000_000_000n,
       gratisMinor: 333_333n,
@@ -234,14 +234,14 @@ test("MCP leaves asset-native amounts raw and scales Gratis, Promis and prices",
 });
 
 test("MCP formats Credis and Oracle annual rates with six decimals", () => {
-  const position = {
-    name: "position",
+  const credis = {
+    name: "credis",
     type: "tuple",
-    internalType: "struct ICredis.Position",
-    components: [{ name: "currencyRate", type: "uint256" }],
+    internalType: "struct ICredis.Credis",
+    components: [{ name: "policyRate", type: "uint256" }],
   } as AbiParameter;
-  assert.deepEqual(formatParam(position, { currencyRate: 43_000n }), {
-    currencyRate: { raw: "43000", value: "0.043" },
+  assert.deepEqual(formatParam(credis, { policyRate: 43_000n }), {
+    policyRate: { raw: "43000", value: "0.043" },
   });
 
   const getPolicyRate = {
@@ -604,7 +604,7 @@ test("MCP Credis and pledge tools encode their calls against the registered ABIs
     },
     {
       tool: "credis_settle",
-      args: { position_id: "9", amount: "100" },
+      args: { credis_id: "9", amount: "100" },
       contract: "credisfactory",
       functionName: "settleCredis",
       expected: [9n, 100n],

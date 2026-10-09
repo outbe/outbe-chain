@@ -1,4 +1,4 @@
-//! Repayment, forfeiture and stake behaviour of positions backed by a direct pledge.
+//! Repayment, forfeiture and stake behaviour of Credis backed by a direct pledge.
 use crate::{precompile::ICredisFactory, runtime, tests::common::*};
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
@@ -16,18 +16,16 @@ fn unallocated(storage: &StorageHandle<'_>) -> U256 {
         .unwrap()
 }
 
-fn position(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::Position {
-    CredisContract::new(storage.clone())
-        .get_position(id)
-        .unwrap()
+fn record(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::Credis {
+    CredisContract::new(storage.clone()).get_credis(id).unwrap()
 }
 
-/// The collateral left on `id`, checked against the position's own accounting.
+/// The collateral left on `id`, checked against the Credis's own accounting.
 fn collateral(storage: &StorageHandle<'_>, id: U256) -> U256 {
     let remaining = outbe_gratisfactory::api::collateral_of(storage, id)
         .unwrap()
         .remaining_minor;
-    assert_eq!(remaining, position(storage, id).outstanding_gratis_minor);
+    assert_eq!(remaining, record(storage, id).outstanding_gratis_minor);
     remaining
 }
 
@@ -37,12 +35,12 @@ fn settle_runs_immediately_after_opening() {
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
         let id = open(&storage, 1);
-        let sealed = position(&storage, id);
+        let sealed = record(&storage, id);
         settle_principal(&storage, alice(), id, U256::from(500_000u64));
         settle_principal(&storage, alice(), id, U256::from(500_000u64));
-        let p = position(&storage, id);
+        let p = record(&storage, id);
         assert_eq!(p.outstanding_principal_minor, U256::from(1_000_000u64));
-        assert_eq!(p.lifecycle_state().unwrap(), CredisState::Open);
+        assert_eq!(p.lifecycle_state().unwrap(), CredisState::Issued);
         assert_eq!(p.entry_price_minor, sealed.entry_price_minor);
         assert_eq!(p.call_price_minor, sealed.call_price_minor);
         assert_eq!(p.issued_at, sealed.issued_at);
@@ -61,7 +59,7 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
         let (principal_paid, interest_paid) = settle_principal(&storage, alice(), id, half);
         assert_eq!(principal_paid, half);
         assert!(!interest_paid.is_zero());
-        let p = position(&storage, id);
+        let p = record(&storage, id);
         assert_eq!(p.outstanding_principal_minor, half);
         assert_eq!(p.outstanding_gratis_minor, pledge_cost() / U256::from(2u64));
         assert_eq!(
@@ -75,7 +73,7 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
 
         advance_to(&storage, CREATED_AT + 60 * DAY);
         settle_principal(&storage, alice(), id, half);
-        let p = position(&storage, id);
+        let p = record(&storage, id);
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Settled);
         assert!(p.outstanding_gratis_minor.is_zero());
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
@@ -137,10 +135,10 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
                     U256::from(remaining)
                 );
             }
-            let p = position(&storage, id);
+            let p = record(&storage, id);
             assert_eq!(p.outstanding_principal_minor, U256::from(3u64));
             assert!(p.outstanding_gratis_minor.is_zero());
-            assert_eq!(p.lifecycle_state().unwrap(), CredisState::Open);
+            assert_eq!(p.lifecycle_state().unwrap(), CredisState::Issued);
 
             let expected = if forfeit {
                 let called_at = now_of(&storage);
@@ -152,12 +150,12 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
                 finalize_through(&storage, expired_at);
                 assert_eq!(expire(&storage, expired_at), 1);
                 assert_eq!(expire(&storage, expired_at), 0);
-                CredisState::Void
+                CredisState::Forfeited
             } else {
                 runtime::settle(storage.clone(), bob(), id, U256::from(3u64)).unwrap();
                 CredisState::Settled
             };
-            let p = position(&storage, id);
+            let p = record(&storage, id);
             assert_eq!(p.lifecycle_state().unwrap(), expected);
             assert!(p.outstanding_principal_minor.is_zero());
             assert_eq!(view_balance(&storage, alice()), collateral);
@@ -191,20 +189,20 @@ fn the_settle_abi_returns_the_principal_and_interest_split() {
         let id = open(&storage, 1);
         advance_to(&storage, CREATED_AT + 30 * DAY);
         let interest =
-            CredisContract::accrued_interest(&position(&storage, id), now_of(&storage)).unwrap();
+            CredisContract::accrued_interest(&record(&storage, id), now_of(&storage)).unwrap();
         assert!(!interest.is_zero());
         let principal = pledge_stables() / U256::from(4u64);
         let data = ICredisFactory::settleCredisCall {
-            positionId: id,
+            credisId: id,
             amountMinor: interest + principal,
         }
         .abi_encode();
         let out = crate::precompile::dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
         let decoded = ICredisFactory::settleCredisCall::abi_decode_returns(&out).unwrap();
         assert_eq!(decoded.principalPaidMinor, principal);
-        assert_eq!(decoded.interestMinor, interest);
+        assert_eq!(decoded.interestPaidMinor, interest);
         assert_eq!(
-            position(&storage, id).outstanding_principal_minor,
+            record(&storage, id).outstanding_principal_minor,
             pledge_stables() - principal
         );
     });
@@ -212,14 +210,14 @@ fn the_settle_abi_returns_the_principal_and_interest_split() {
 }
 
 #[test]
-fn settle_takes_only_what_the_position_needs() {
+fn settle_takes_only_what_the_credis_needs() {
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
         let id = open(&storage, 1);
         advance_to(&storage, CREATED_AT + 30 * DAY);
         let interest =
-            CredisContract::accrued_interest(&position(&storage, id), now_of(&storage)).unwrap();
+            CredisContract::accrued_interest(&record(&storage, id), now_of(&storage)).unwrap();
         let (principal_paid, interest_paid) = runtime::settle(
             storage.clone(),
             alice(),
@@ -250,12 +248,12 @@ fn issue_credis_allows_an_owner_with_an_unresolved_call() {
         let second = open(&storage, 2);
         assert_ne!(second, first);
         assert_eq!(
-            position(&storage, first).lifecycle_state().unwrap(),
+            record(&storage, first).lifecycle_state().unwrap(),
             CredisState::Called
         );
         assert_eq!(
-            position(&storage, second).lifecycle_state().unwrap(),
-            CredisState::Open
+            record(&storage, second).lifecycle_state().unwrap(),
+            CredisState::Issued
         );
         assert_eq!(
             view_pledged(&storage, alice()),
@@ -278,8 +276,8 @@ fn one_source_backs_several_positions_and_unused_pledges() {
         let unused = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), unused, 3);
         let backing = |storage: &StorageHandle<'_>| {
-            position(storage, first).outstanding_gratis_minor
-                + position(storage, second).outstanding_gratis_minor
+            record(storage, first).outstanding_gratis_minor
+                + record(storage, second).outstanding_gratis_minor
         };
         assert_eq!(
             view_pledged(&storage, alice()),
@@ -300,7 +298,7 @@ fn one_source_backs_several_positions_and_unused_pledges() {
             .mark_called(second, CREATED_AT)
             .unwrap();
         advance_to(&storage, CREATED_AT + NOTICE + 1);
-        runtime::void_position(storage.clone(), second).unwrap();
+        runtime::forfeit_credis(storage.clone(), second).unwrap();
         assert_eq!(
             view_pledged(&storage, alice()),
             backing(&storage) + pledge_cost()
@@ -320,7 +318,7 @@ fn one_source_backs_several_positions_and_unused_pledges() {
 }
 
 #[test]
-fn a_position_settled_at_the_deadline_is_never_voided() {
+fn a_credis_settled_at_the_deadline_is_never_forfeited() {
     let mut provider = env();
     let id = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
@@ -340,7 +338,7 @@ fn a_position_settled_at_the_deadline_is_never_voided() {
         finalize_through(&storage, after);
         assert_eq!(expire(&storage, after), 0);
         let credis = CredisContract::new(storage.clone());
-        let open = position(&storage, bystander);
+        let open = record(&storage, bystander);
         let bins = outbe_credis::CallBins(&credis, open.reference_currency);
         let bin = outbe_primitives::call_bins::price_to_bin(open.call_price_minor).unwrap();
         assert_eq!(outbe_primitives::call_bins::len(&bins, bin).unwrap(), 1);
@@ -349,8 +347,8 @@ fn a_position_settled_at_the_deadline_is_never_voided() {
             bystander
         );
         assert_eq!(
-            position(&storage, bystander).lifecycle_state().unwrap(),
-            CredisState::Open
+            record(&storage, bystander).lifecycle_state().unwrap(),
+            CredisState::Issued
         );
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
@@ -371,14 +369,14 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         let id = open(&storage, 1);
         let mut credis = CredisContract::new(storage.clone());
         credis.mark_called(id, CREATED_AT).unwrap();
-        let deadline = outbe_credis::settlement_deadline(&credis.get_position(id).unwrap());
+        let deadline = outbe_credis::settlement_deadline(&credis.get_credis(id).unwrap());
         let principal = pledge_stables() / U256::from(4);
         for now in [deadline - 1, deadline] {
             advance_to(&storage, now);
             let interest =
-                CredisContract::accrued_interest(&credis.get_position(id).unwrap(), now).unwrap();
+                CredisContract::accrued_interest(&credis.get_credis(id).unwrap(), now).unwrap();
             let data = ICredisFactory::settleCredisCall {
-                positionId: id,
+                credisId: id,
                 amountMinor: principal + interest,
             }
             .abi_encode();
@@ -391,24 +389,27 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
                 principal
             );
         }
-        let before = credis.get_position(id).unwrap();
+        let before = credis.get_credis(id).unwrap();
         let balance = view_balance(&storage, alice());
         let pledged = view_pledged(&storage, alice());
         assert_eq!(pledged, pledge_cost() / U256::from(2));
         advance_to(&storage, deadline + HOUR);
         let data = ICredisFactory::settleCredisCall {
-            positionId: id,
+            credisId: id,
             amountMinor: U256::MAX,
         }
         .abi_encode();
         let err =
             crate::precompile::dispatch(storage.clone(), &data, bob(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("call window has lapsed"), "{err}");
-        assert_eq!(credis.get_position(id).unwrap(), before);
+        assert!(
+            err.to_string().contains("settlement deadline has passed"),
+            "{err}"
+        );
+        assert_eq!(credis.get_credis(id).unwrap(), before);
         assert_eq!(view_balance(&storage, alice()), balance);
         assert_eq!(view_pledged(&storage, alice()), pledged);
 
-        runtime::void_position(storage.clone(), id).unwrap();
+        runtime::forfeit_credis(storage.clone(), id).unwrap();
         assert_eq!(view_balance(&storage, alice()), balance);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(unallocated(&storage), pledged);
@@ -438,15 +439,15 @@ fn issue_credis_requires_the_stake_to_equal_the_collateral() {
 }
 
 #[test]
-fn the_stake_stays_with_the_smart_account_through_settlement_and_void() {
-    for void in [false, true] {
+fn the_stake_stays_with_the_smart_account_through_settlement_and_forfeit() {
+    for forfeit in [false, true] {
         let mut provider = env();
         StorageHandle::enter(&mut provider, |storage| {
             bootstrap(&storage, pledge_cost());
             let id = open(&storage, 1);
             assert_eq!(storage.balance(alice()).unwrap(), pledge_stake());
             assert_eq!(storage.balance(CREDIS_FACTORY_ADDRESS).unwrap(), U256::ZERO);
-            if void {
+            if forfeit {
                 let called_at = now_of(&storage);
                 CredisContract::new(storage.clone())
                     .mark_called(id, called_at)
@@ -467,9 +468,9 @@ fn the_stake_stays_with_the_smart_account_through_settlement_and_void() {
 }
 
 #[test]
-fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_positions() {
+fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credis() {
     let mut provider = env();
-    let (position_id, next) = StorageHandle::enter(&mut provider, |storage| {
+    let (credis_id, next) = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
         let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), id, 1);
@@ -494,7 +495,7 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_posit
             U256::ZERO
         );
         fund_stake(&storage, pledge_stake());
-        let (position_id, _) =
+        let (credis_id, _) =
             runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
@@ -504,14 +505,14 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_posit
         let next = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), next, 2);
         fund_stake(&storage, pledge_stake());
-        (position_id, next)
+        (credis_id, next)
     });
     provider.set_block_number(BLOCK_NUMBER + 1);
     StorageHandle::enter(&mut provider, |storage| {
         let err = runtime::issue_credis(storage.clone(), cca(), next, pledge_stake()).unwrap_err();
         assert!(err.to_string().contains("CCA is not active"), "{err}");
         assert_eq!(
-            position(&storage, position_id).outstanding_principal_minor,
+            record(&storage, credis_id).outstanding_principal_minor,
             pledge_stables()
         );
         assert_eq!(
@@ -535,31 +536,31 @@ fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source()
         let unused = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), unused, 2);
         fund_stake(&storage, pledge_stake());
-        let position_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
+        let credis_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
             .unwrap()
             .0;
         let half = pledge_cost() / U256::from(2u64);
         settle_principal(
             &storage,
             bob(),
-            position_id,
+            credis_id,
             pledge_stables() / U256::from(2u64),
         );
         assert_eq!(view_balance(&storage, alice()), half);
         assert_eq!(view_pledged(&storage, alice()), pledge_cost() + half);
-        assert_eq!(collateral(&storage, position_id), half);
+        assert_eq!(collateral(&storage, credis_id), half);
 
         let called_at = now_of(&storage);
         assert!(CredisContract::new(storage.clone())
-            .mark_called(position_id, called_at)
+            .mark_called(credis_id, called_at)
             .unwrap());
-        let deadline = outbe_credis::settlement_deadline(&position(&storage, position_id));
+        let deadline = outbe_credis::settlement_deadline(&record(&storage, credis_id));
         for at in [deadline - 1, deadline] {
             advance_to(&storage, at);
             finalize_through(&storage, at);
             assert_eq!(expire(&storage, at), 0);
             assert_eq!(
-                position(&storage, position_id).lifecycle_state().unwrap(),
+                record(&storage, credis_id).lifecycle_state().unwrap(),
                 CredisState::Called
             );
         }
@@ -569,10 +570,10 @@ fn a_half_repaid_call_voids_only_the_unpaid_backing_of_another_accounts_source()
         assert_eq!(expire(&storage, deadline + HOUR), 1);
         assert_eq!(expire(&storage, deadline + HOUR), 0);
         assert_eq!(
-            position(&storage, position_id).lifecycle_state().unwrap(),
-            CredisState::Void
+            record(&storage, credis_id).lifecycle_state().unwrap(),
+            CredisState::Forfeited
         );
-        assert_eq!(collateral(&storage, position_id), U256::ZERO);
+        assert_eq!(collateral(&storage, credis_id), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
         assert_eq!(view_balance(&storage, alice()), half);
         assert_eq!(view_pledged(&storage, bob()), U256::ZERO);

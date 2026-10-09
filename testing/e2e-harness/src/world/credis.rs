@@ -56,7 +56,7 @@ pub(crate) struct CredisFixture {
     pub keys: eth::ConfidentialAccountKeys,
     pub reservation: U256,
     pub gratis_minor: U256,
-    pub position_id: U256,
+    pub credis_id: U256,
     pub initial_native: U256,
     pub interest_paid: U256,
 }
@@ -146,7 +146,7 @@ pub(crate) struct Snapshot {
     pub router_stables: U256,
     pub shares: U256,
     pub native: U256,
-    pub position: Option<ICredis::Position>,
+    pub record: Option<ICredis::Credis>,
 }
 
 /// Every state comparison uses the same finalized height on every validator.
@@ -217,12 +217,12 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
             serde_json::json!([format!("{:#x}", f.account), format!("0x{h:x}")]),
         )
         .expect("account native balance at checkpoint");
-        let position = (!f.position_id.is_zero()).then(|| {
-            let position = read(
+        let record = (!f.credis_id.is_zero()).then(|| {
+            let record = read(
                 &url,
                 CREDIS_ADDRESS,
-                &ICredis::getPositionCall {
-                    positionId: f.position_id,
+                &ICredis::getCredisCall {
+                    credisId: f.credis_id,
                 },
                 h,
             );
@@ -231,7 +231,7 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
                     &url,
                     CREDIS_ADDRESS,
                     &ICredis::ownerOfCall {
-                        positionId: f.position_id
+                        credisId: f.credis_id
                     },
                     h
                 ),
@@ -241,14 +241,12 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
                 read(
                     &url,
                     CREDIS_ADDRESS,
-                    &ICredis::balanceOfCall {
-                        smartAccount: f.account
-                    },
+                    &ICredis::balanceOfCall { owner: f.account },
                     h
                 ),
                 U256::from(1)
             );
-            position
+            record
         });
         let reservation = read(
             &url,
@@ -291,7 +289,7 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
                 .expect("native balance hex")
                 .parse()
                 .expect("native U256"),
-            position,
+            record,
         }
     });
     let first = snapshots.next().expect("nonempty committee");

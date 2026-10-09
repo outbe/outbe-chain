@@ -43,20 +43,20 @@ pub fn dispatch(
                         value,
                     },
                     |sender, c, val| {
-                        let (position_id, principal_minor) =
+                        let (credis_id, principal_minor) =
                             runtime::issue_credis(storage.clone(), sender, c.reservationId, val)?;
                         Ok(ICredisFactory::issueCredisReturn {
-                            positionId: position_id,
+                            credisId: credis_id,
                             principalMinor: principal_minor,
                         })
                     },
                 ),
                 settleCredis(c) => mutate(&storage, c, caller, |sender, c| {
                     let (principal, interest) =
-                        runtime::settle(storage.clone(), sender, c.positionId, c.amountMinor)?;
+                        runtime::settle(storage.clone(), sender, c.credisId, c.amountMinor)?;
                     Ok(ICredisFactory::settleCredisReturn {
                         principalPaidMinor: principal,
-                        interestMinor: interest,
+                        interestPaidMinor: interest,
                     })
                 }),
                 supportsInterface(c) => view(c, |c| {

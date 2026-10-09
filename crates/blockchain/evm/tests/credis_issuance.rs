@@ -77,7 +77,7 @@ struct IssuanceEvm {
 }
 struct PaymentObservation {
     position: U256,
-    position_call: outbe_credis::precompile::ICredis::getPositionCall,
+    position_call: outbe_credis::precompile::ICredis::getCredisCall,
     before: Bytes,
     pledged: Bytes,
 }
@@ -540,7 +540,7 @@ fn assert_payment_rollback(
         CREDIS_FACTORY_ADDRESS,
         U256::ZERO,
         ICredisFactory::settleCredisCall {
-            positionId: observation.position,
+            credisId: observation.position,
             amountMinor: U256::from(1_000_000)
         }
     );
@@ -576,7 +576,7 @@ fn settle_successful_issuance(
 ) -> eyre::Result<()> {
     use outbe_credis::precompile::ICredis;
     use outbe_primitives::addresses::CREDIS_ADDRESS;
-    let position = ICredisFactory::issueCredisCall::abi_decode_returns(&out.returndata)?.positionId;
+    let position = ICredisFactory::issueCredisCall::abi_decode_returns(&out.returndata)?.credisId;
     call!(
         evm,
         OWNER,
@@ -594,9 +594,7 @@ fn settle_successful_issuance(
             amount: U256::MAX
         }
     );
-    let position_call = ICredis::getPositionCall {
-        positionId: position,
-    };
+    let position_call = ICredis::getCredisCall { credisId: position };
     let before = call!(
         evm,
         OWNER,
@@ -621,7 +619,7 @@ fn settle_successful_issuance(
         CREDIS_FACTORY_ADDRESS,
         U256::ZERO,
         ICredisFactory::settleCredisCall {
-            positionId: position,
+            credisId: position,
             amountMinor: U256::from(1_000_000)
         }
     );

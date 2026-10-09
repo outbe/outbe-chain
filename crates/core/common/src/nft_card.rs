@@ -28,10 +28,6 @@ pub const ISSUED: State = State {
     label: "Issued",
     color: "#2563eb",
 };
-pub const OPEN: State = State {
-    label: "Open",
-    color: "#2563eb",
-};
 pub const QUALIFIED: State = State {
     label: "Qualified",
     color: "#16a34a",
@@ -39,10 +35,6 @@ pub const QUALIFIED: State = State {
 pub const CALLED: State = State {
     label: "Called",
     color: "#f97316",
-};
-pub const VOID: State = State {
-    label: "Void",
-    color: "#6b7280",
 };
 pub const FORFEITED: State = State {
     label: "Forfeited",

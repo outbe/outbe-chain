@@ -407,15 +407,15 @@ fn credis_takes_a_pledge_once_and_cancel_then_fails() {
     with_env(|storage| {
         let id = fund_and_reserve(&storage, alice());
         pledge(&storage, alice(), id, 1).unwrap();
-        let position = U256::from(7u64);
-        let err = runtime::send_to_credis(&storage, id, position, bob(), U256::from(RESERVED))
-            .unwrap_err();
+        let record = U256::from(7u64);
+        let err =
+            runtime::send_to_credis(&storage, id, record, bob(), U256::from(RESERVED)).unwrap_err();
         assert!(err.to_string().contains("does not match"), "{err}");
-        let err = runtime::send_to_credis(&storage, id, position, alice(), U256::ONE).unwrap_err();
+        let err = runtime::send_to_credis(&storage, id, record, alice(), U256::ONE).unwrap_err();
         assert!(err.to_string().contains("does not match"), "{err}");
 
-        runtime::send_to_credis(&storage, id, position, alice(), U256::from(RESERVED)).unwrap();
-        let collateral = runtime::collateral_of(&storage, position).unwrap();
+        runtime::send_to_credis(&storage, id, record, alice(), U256::from(RESERVED)).unwrap();
+        let collateral = runtime::collateral_of(&storage, record).unwrap();
         assert_eq!(
             (collateral.source, collateral.remaining_minor),
             (alice(), U256::from(RESERVED))
@@ -425,7 +425,7 @@ fn credis_takes_a_pledge_once_and_cancel_then_fails() {
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             U256::from(RESERVED)
         );
-        let err = runtime::send_to_credis(&storage, id, position, alice(), U256::from(RESERVED))
+        let err = runtime::send_to_credis(&storage, id, record, alice(), U256::from(RESERVED))
             .unwrap_err();
         assert!(err.to_string().contains("pledge not found"), "{err}");
         let err = runtime::cancel_pledge(storage.clone(), alice(), id).unwrap_err();
@@ -501,7 +501,7 @@ fn reserve_and_pledge(storage: &StorageHandle<'_>, source: Address, id: u64, non
 }
 
 #[test]
-fn collateral_is_drawn_per_position_and_never_reopens() {
+fn collateral_is_drawn_per_credis_and_never_reopens() {
     with_env(|storage| {
         let first = fund_and_reserve(&storage, alice());
         pledge(&storage, alice(), first, 1).unwrap();
@@ -512,17 +512,15 @@ fn collateral_is_drawn_per_position_and_never_reopens() {
         runtime::send_to_credis(&storage, second, b, alice(), reserved).unwrap();
         assert_eq!(view_pledged(&storage, alice()), reserved * U256::from(2u64));
 
-        // The source's pledged total would cover it, but position A only holds RESERVED.
+        // The source's pledged total would cover it, but Credis A only holds RESERVED.
         let err = runtime::return_from_credis(&storage, a, reserved + U256::ONE).unwrap_err();
         assert!(
-            err.to_string()
-                .contains("exceeds the position's collateral"),
+            err.to_string().contains("exceeds the Credis's collateral"),
             "{err}"
         );
         let err = runtime::burn_from_credis(&storage, a, reserved + U256::ONE).unwrap_err();
         assert!(
-            err.to_string()
-                .contains("exceeds the position's collateral"),
+            err.to_string().contains("exceeds the Credis's collateral"),
             "{err}"
         );
         assert_eq!(view_pledged(&storage, alice()), reserved * U256::from(2u64));

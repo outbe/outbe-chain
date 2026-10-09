@@ -176,16 +176,16 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
 
   // --- Credis ----------------------------------------------------------------
   server.tool(
-    "credis_position_get",
-    "Credis position by id (decoded: principal, outstanding, Gratis, prices, state) " +
+    "credis_get",
+    "Credis by id (decoded: principal, outstanding, Gratis, prices, state) " +
       "plus parsed tokenURI metadata.",
-    { id: z.string().describe("Position id (decimal or 0x hex)") },
+    { id: z.string().describe("Credis id (decimal or 0x hex)") },
     handler(async ({ id }) => {
       const [data, metadata] = await Promise.all([
-        view(ctx, "credis", "getPosition", [BigInt(id)]),
+        view(ctx, "credis", "getCredis", [BigInt(id)]),
         view(ctx, "credis", "tokenURI", [BigInt(id)]),
       ]);
-      return ok({ positionId: id, data, metadata });
+      return ok({ credisId: id, data, metadata });
     }),
   );
 

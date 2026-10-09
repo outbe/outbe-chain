@@ -3,27 +3,27 @@ use outbe_primitives::error::Result;
 
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::runtime::{effective_state, settlement_deadline};
-use crate::schema::{CredisContract, CredisState, Position};
+use crate::schema::{Credis, CredisContract, CredisState};
 
-/// The position's `tokenURI` at block time `now`. It evaluates accrued interest at `now`.
-pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
-    let lifecycle = position.lifecycle_state()?;
-    let state = match effective_state(position, now)? {
-        CredisState::Open => nft_card::OPEN,
+/// The Credis's `tokenURI` at block time `now`. It evaluates accrued interest at `now`.
+pub(crate) fn token_uri(record: &Credis, now: u64) -> Result<String> {
+    let lifecycle = record.lifecycle_state()?;
+    let state = match effective_state(record, now)? {
+        CredisState::Issued => nft_card::ISSUED,
         CredisState::Called => nft_card::CALLED,
         CredisState::Settled => nft_card::SETTLED,
-        CredisState::Void => nft_card::VOID,
+        CredisState::Forfeited => nft_card::FORFEITED,
     };
-    let accrued_interest = CredisContract::accrued_interest(position, now)?;
+    let accrued_interest = CredisContract::accrued_interest(record, now)?;
 
     let mut rows = vec![
         (
             "Principal",
-            nft_card::amount_grouped(position.principal_minor, AMOUNT_PRECISION),
+            nft_card::amount_grouped(record.principal_minor, AMOUNT_PRECISION),
         ),
         (
             "Outstanding",
-            nft_card::amount_grouped(position.outstanding_principal_minor, AMOUNT_PRECISION),
+            nft_card::amount_grouped(record.outstanding_principal_minor, AMOUNT_PRECISION),
         ),
         (
             "Accrued Interest",
@@ -31,54 +31,54 @@ pub(crate) fn token_uri(position: &Position, now: u64) -> Result<String> {
         ),
         (
             "Entry Price",
-            nft_card::amount_grouped(position.entry_price_minor, PRICE_PRECISION),
+            nft_card::amount_grouped(record.entry_price_minor, PRICE_PRECISION),
         ),
         (
             "Call Anchor",
-            nft_card::amount_grouped(position.call_anchor_price_minor, PRICE_PRECISION),
+            nft_card::amount_grouped(record.call_anchor_price_minor, PRICE_PRECISION),
         ),
         (
             "Call Price",
-            nft_card::amount_grouped(position.call_price_minor, PRICE_PRECISION),
+            nft_card::amount_grouped(record.call_price_minor, PRICE_PRECISION),
         ),
     ];
     let mut traits = vec![
         Trait::text("State", state.label),
-        Trait::amount("Principal", position.principal_minor, AMOUNT_PRECISION),
+        Trait::amount("Principal", record.principal_minor, AMOUNT_PRECISION),
         Trait::amount(
             "Outstanding",
-            position.outstanding_principal_minor,
+            record.outstanding_principal_minor,
             AMOUNT_PRECISION,
         ),
         Trait::amount("Accrued Interest", accrued_interest, AMOUNT_PRECISION),
-        Trait::amount("Entry Price", position.entry_price_minor, PRICE_PRECISION),
+        Trait::amount("Entry Price", record.entry_price_minor, PRICE_PRECISION),
         Trait::amount(
             "Call Anchor",
-            position.call_anchor_price_minor,
+            record.call_anchor_price_minor,
             PRICE_PRECISION,
         ),
-        Trait::amount("Call Price", position.call_price_minor, PRICE_PRECISION),
-        Trait::amount("Policy Rate", position.policy_rate, PRICE_PRECISION),
-        Trait::amount("Collateral", position.gratis_minor, AMOUNT_PRECISION),
+        Trait::amount("Call Price", record.call_price_minor, PRICE_PRECISION),
+        Trait::amount("Policy Rate", record.policy_rate, PRICE_PRECISION),
+        Trait::amount("Collateral", record.gratis_minor, AMOUNT_PRECISION),
         Trait::amount(
             "Collateral Locked",
-            position.outstanding_gratis_minor,
+            record.outstanding_gratis_minor,
             AMOUNT_PRECISION,
         ),
-        Trait::integer("Issuance Currency", position.issuance_currency),
-        Trait::integer("Reference Currency", position.reference_currency),
-        Trait::text("Asset", position.asset.to_string()),
-        Trait::text("CCA", position.cca.to_string()),
-        Trait::date("Issued At", position.issued_at),
+        Trait::integer("Issuance Currency", record.issuance_currency),
+        Trait::integer("Reference Currency", record.reference_currency),
+        Trait::text("Asset", record.asset.to_string()),
+        Trait::text("CCA", record.cca.to_string()),
+        Trait::date("Issued At", record.issued_at),
     ];
     if lifecycle == CredisState::Called {
-        let deadline = settlement_deadline(position);
+        let deadline = settlement_deadline(record);
         rows.push(("Settlement Deadline", nft_card::timestamp_utc(deadline)));
-        traits.push(Trait::date("Called At", position.called_at));
+        traits.push(Trait::date("Called At", record.called_at));
         traits.push(Trait::date("Settlement Deadline", deadline));
     }
 
-    let id = nft_card::short_id(position.position_id);
+    let id = nft_card::short_id(record.credis_id);
     let title = TOKEN_NAME.to_ascii_uppercase();
     let card = Card {
         title: &title,

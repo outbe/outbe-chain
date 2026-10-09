@@ -9,7 +9,7 @@
         "internalType": "address"
       },
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -22,7 +22,7 @@
     "name": "balanceOf",
     "inputs": [
       {
-        "name": "smartAccount",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       }
@@ -41,7 +41,7 @@
     "name": "credisPrincipalAndOutstandingOf",
     "inputs": [
       {
-        "name": "smartAccount",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       }
@@ -65,7 +65,7 @@
     "name": "getApproved",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -81,10 +81,10 @@
   },
   {
     "type": "function",
-    "name": "getPosition",
+    "name": "getCredis",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -93,15 +93,15 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct ICredis.Position",
+        "internalType": "struct ICredis.Credis",
         "components": [
           {
-            "name": "positionId",
+            "name": "credisId",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "smartAccount",
+            "name": "owner",
             "type": "address",
             "internalType": "address"
           },
@@ -225,7 +225,7 @@
     "name": "interestAccruedMinor",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -244,7 +244,7 @@
     "name": "interestPaidMinor",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -300,7 +300,7 @@
     "name": "ownerOf",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -328,15 +328,15 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct ICredis.Position",
+        "internalType": "struct ICredis.Credis",
         "components": [
           {
-            "name": "positionId",
+            "name": "credisId",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "smartAccount",
+            "name": "owner",
             "type": "address",
             "internalType": "address"
           },
@@ -460,7 +460,7 @@
     "name": "positionOfAddressByIndex",
     "inputs": [
       {
-        "name": "smartAccount",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       },
@@ -474,15 +474,15 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct ICredis.Position",
+        "internalType": "struct ICredis.Credis",
         "components": [
           {
-            "name": "positionId",
+            "name": "credisId",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "smartAccount",
+            "name": "owner",
             "type": "address",
             "internalType": "address"
           },
@@ -616,7 +616,7 @@
         "internalType": "address"
       },
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -639,7 +639,7 @@
         "internalType": "address"
       },
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -707,7 +707,7 @@
     "name": "tokenURI",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -749,7 +749,7 @@
         "internalType": "address"
       },
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -828,23 +828,10 @@
   },
   {
     "type": "event",
-    "name": "MetadataUpdate",
+    "name": "CredisCalled",
     "inputs": [
       {
-        "name": "_tokenId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PositionCalled",
-    "inputs": [
-      {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -866,60 +853,10 @@
   },
   {
     "type": "event",
-    "name": "PositionCreated",
+    "name": "CredisForfeited",
     "inputs": [
       {
-        "name": "positionId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "smartAccount",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "cca",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "principalMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "gratisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PositionSettled",
-    "inputs": [
-      {
-        "name": "positionId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PositionVoided",
-    "inputs": [
-      {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -947,16 +884,79 @@
   },
   {
     "type": "event",
-    "name": "SettlementApplied",
+    "name": "CredisSettled",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MetadataUpdate",
+    "inputs": [
+      {
+        "name": "_tokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PositionCreated",
+    "inputs": [
+      {
+        "name": "credisId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "interestMinor",
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "cca",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "principalMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "gratisMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SettlementApplied",
+    "inputs": [
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestPaidMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
