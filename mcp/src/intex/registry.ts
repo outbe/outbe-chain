@@ -1,18 +1,14 @@
-import { type Abi, type Address, getAddress } from "viem";
+import { type Address, getAddress } from "viem";
 import { loadConfig } from "../config.js";
-import IDesisJson from "../../../contracts/precompiles/abi-export/IDesis.json";
-import IIntexJson from "../../../contracts/precompiles/abi-export/IIntex.json";
-import IIntexFactoryJson from "../../../contracts/precompiles/abi-export/IIntexFactory.json";
-import IVaultRouterJson from "../../../contracts/precompiles/abi-export/IVaultRouter.json";
-import EscrowAdapterJson from "../../../contracts/intex/abi-export/EscrowAdapter.json";
-import IntexAuctionJson from "../../../contracts/intex/abi-export/IntexAuction.json";
-import IIntexNFT1155Json from "../../../contracts/intex/abi-export/IIntexNFT1155.json";
-import IIntexNFT1155BridgeJson from "../../../contracts/intex/abi-export/IIntexNFT1155Bridge.json";
-import IOriginRouterJson from "../../../contracts/intex/abi-export/IOriginRouter.json";
-
-/** contracts/intex exports as `{ contractName, abi }`. The others export a bare array. */
-const abiOf = (json: unknown): Abi =>
-  (Array.isArray(json) ? json : (json as { abi: unknown }).abi) as Abi;
+import IDesis from "../abi/generated/precompiles/IDesis.js";
+import IIntex from "../abi/generated/precompiles/IIntex.js";
+import IIntexFactory from "../abi/generated/precompiles/IIntexFactory.js";
+import IVaultRouter from "../abi/generated/precompiles/IVaultRouter.js";
+import EscrowAdapter from "../abi/generated/intex/EscrowAdapter.js";
+import IntexAuction from "../abi/generated/intex/IntexAuction.js";
+import IIntexNFT1155 from "../abi/generated/intex/IIntexNFT1155.js";
+import IIntexNFT1155Bridge from "../abi/generated/intex/IIntexNFT1155Bridge.js";
+import IOriginRouter from "../abi/generated/intex/IOriginRouter.js";
 
 /**
  * Addresses + ABIs for the Intex tools (auction commit/reveal, escrow, NFT,
@@ -105,30 +101,30 @@ export function intexAddress(network: IntexChain, key: keyof IntexAddresses): Ad
 // --- ABIs ------------------------------------------------------------------
 
 /** IntexAuction (BSC): commit/reveal + auction views. */
-export const AUCTION_ABI: Abi = abiOf(IntexAuctionJson);
+export const AUCTION_ABI = IntexAuction;
 
 /** IntexNFT1155 (BSC + outbe): holder-facing reads. */
-export const NFT_ABI: Abi = abiOf(IIntexNFT1155Json);
+export const NFT_ABI = IIntexNFT1155;
 
 /** Intex (outbe precompile): canonical cross-chain series ledger. */
-export const INTEX_ABI: Abi = abiOf(IIntexJson);
+export const INTEX_ABI = IIntex;
 
 /** IntexNFT1155Bridge: the cross-chain NFT bridge (BSC <-> outbe) over ERC-7786. */
-export const NFT_BRIDGE_ABI: Abi = abiOf(IIntexNFT1155BridgeJson);
+export const NFT_BRIDGE_ABI = IIntexNFT1155Bridge;
 
 /** IntexFactory (outbe precompile): holder-facing settlement + Promis mining. */
-export const FACTORY_ABI: Abi = abiOf(IIntexFactoryJson);
+export const FACTORY_ABI = IIntexFactory;
 
 /** Desis (outbe precompile): auction stage + per-chain bid fan-in views. */
-export const DESIS_ABI: Abi = abiOf(IDesisJson);
+export const DESIS_ABI = IDesis;
 
 /** OriginRouter (outbe): the auction's target-chain registry + per-day snapshot. */
-export const ORIGIN_ROUTER_ABI: Abi = abiOf(IOriginRouterJson);
+export const ORIGIN_ROUTER_ABI = IOriginRouter;
 
 /** EscrowAdapter (target chains): bid locks, commit bonds and refunds. */
-export const ESCROW_ABI: Abi = abiOf(EscrowAdapterJson);
+export const ESCROW_ABI = EscrowAdapter;
 
 /** VaultRouter (outbe precompile): the reserve asset registry. */
-export const VAULT_ROUTER_ABI: Abi = abiOf(IVaultRouterJson);
+export const VAULT_ROUTER_ABI = IVaultRouter;
 
 export { ERC20_ABI } from "../net/erc20.js";

@@ -1,4 +1,3 @@
-import type { Abi } from "viem";
 
 /**
  * Generated precompile ABIs.
@@ -8,52 +7,50 @@ import type { Abi } from "viem";
  * Nothing here is hand-written. A signature can only change when the Solidity
  * changes. The registry uses each ABI whole and does not filter it.
  */
-import IAgentReward from "../../contracts/precompiles/abi-export/IAgentReward.json";
-import ICredis from "../../contracts/precompiles/abi-export/ICredis.json";
-import ICredisFactory from "../../contracts/precompiles/abi-export/ICredisFactory.json";
-import IFidelity from "../../contracts/precompiles/abi-export/IFidelity.json";
-import IGem from "../../contracts/precompiles/abi-export/IGem.json";
-import IGemFactory from "../../contracts/precompiles/abi-export/IGemFactory.json";
-import IGovernance from "../../contracts/precompiles/abi-export/IGovernance.json";
-import IGratis from "../../contracts/precompiles/abi-export/IGratis.json";
-import IGratisFactory from "../../contracts/precompiles/abi-export/IGratisFactory.json";
-import IMetadosis from "../../contracts/precompiles/abi-export/IMetadosis.json";
-import INod from "../../contracts/precompiles/abi-export/INod.json";
-import IOracle from "../../contracts/precompiles/abi-export/IOracle.json";
-import IPromis from "../../contracts/precompiles/abi-export/IPromis.json";
-import IPromisLimit from "../../contracts/precompiles/abi-export/IPromisLimit.json";
-import ISlashIndicator from "../../contracts/precompiles/abi-export/ISlashIndicator.json";
-import IStaking from "../../contracts/precompiles/abi-export/IStaking.json";
-import ITeeRegistryV1 from "../../contracts/precompiles/abi-export/ITeeRegistryV1.json";
-import ITribute from "../../contracts/precompiles/abi-export/ITribute.json";
-import ITributeFactory from "../../contracts/precompiles/abi-export/ITributeFactory.json";
-import IValidatorSet from "../../contracts/precompiles/abi-export/IValidatorSet.json";
-import IVaultRouter from "../../contracts/precompiles/abi-export/IVaultRouter.json";
-import IZeroFee from "../../contracts/precompiles/abi-export/IZeroFee.json";
-
-const asAbi = (json: unknown): Abi => json as Abi;
+import IAgentReward from "./abi/generated/precompiles/IAgentReward.js";
+import ICredis from "./abi/generated/precompiles/ICredis.js";
+import ICredisFactory from "./abi/generated/precompiles/ICredisFactory.js";
+import IFidelity from "./abi/generated/precompiles/IFidelity.js";
+import IGem from "./abi/generated/precompiles/IGem.js";
+import IGemFactory from "./abi/generated/precompiles/IGemFactory.js";
+import IGovernance from "./abi/generated/precompiles/IGovernance.js";
+import IGratis from "./abi/generated/precompiles/IGratis.js";
+import IGratisFactory from "./abi/generated/precompiles/IGratisFactory.js";
+import IMetadosis from "./abi/generated/precompiles/IMetadosis.js";
+import INod from "./abi/generated/precompiles/INod.js";
+import IOracle from "./abi/generated/precompiles/IOracle.js";
+import IPromis from "./abi/generated/precompiles/IPromis.js";
+import IPromisLimit from "./abi/generated/precompiles/IPromisLimit.js";
+import ISlashIndicator from "./abi/generated/precompiles/ISlashIndicator.js";
+import IStaking from "./abi/generated/precompiles/IStaking.js";
+import ITeeRegistryV1 from "./abi/generated/precompiles/ITeeRegistryV1.js";
+import ITribute from "./abi/generated/precompiles/ITribute.js";
+import ITributeFactory from "./abi/generated/precompiles/ITributeFactory.js";
+import IValidatorSet from "./abi/generated/precompiles/IValidatorSet.js";
+import IVaultRouter from "./abi/generated/precompiles/IVaultRouter.js";
+import IZeroFee from "./abi/generated/precompiles/IZeroFee.js";
 
 export const PRECOMPILE_ABI = {
-  IAgentReward: asAbi(IAgentReward),
-  ICredis: asAbi(ICredis),
-  ICredisFactory: asAbi(ICredisFactory),
-  IFidelity: asAbi(IFidelity),
-  IGem: asAbi(IGem),
-  IGemFactory: asAbi(IGemFactory),
-  IGovernance: asAbi(IGovernance),
-  IGratis: asAbi(IGratis),
-  IGratisFactory: asAbi(IGratisFactory),
-  IMetadosis: asAbi(IMetadosis),
-  INod: asAbi(INod),
-  IOracle: asAbi(IOracle),
-  IPromis: asAbi(IPromis),
-  IPromisLimit: asAbi(IPromisLimit),
-  ISlashIndicator: asAbi(ISlashIndicator),
-  IStaking: asAbi(IStaking),
-  ITeeRegistryV1: asAbi(ITeeRegistryV1),
-  ITribute: asAbi(ITribute),
-  ITributeFactory: asAbi(ITributeFactory),
-  IValidatorSet: asAbi(IValidatorSet),
-  IVaultRouter: asAbi(IVaultRouter),
-  IZeroFee: asAbi(IZeroFee),
+  IAgentReward,
+  ICredis,
+  ICredisFactory,
+  IFidelity,
+  IGem,
+  IGemFactory,
+  IGovernance,
+  IGratis,
+  IGratisFactory,
+  IMetadosis,
+  INod,
+  IOracle,
+  IPromis,
+  IPromisLimit,
+  ISlashIndicator,
+  IStaking,
+  ITeeRegistryV1,
+  ITribute,
+  ITributeFactory,
+  IValidatorSet,
+  IVaultRouter,
+  IZeroFee,
 } as const;

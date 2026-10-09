@@ -22,30 +22,29 @@ export function registerSeriesTools(server: McpServer, deps: IntexDeps): void {
     { series: seriesArg, network: networkName.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? OUTBE_NETWORK);
-      const d = (await n.client.readContract({
+      const d = await n.client.readContract({
         address: addr(n, "intex"),
         abi: INTEX_ABI,
         functionName: "seriesData",
         args: [series],
-      })) as Record<string, bigint | number>;
+      });
       // The engine owns the split. Exercised units are not on the series record.
-      const counts = (await n.client.readContract({
+      const counts = await n.client.readContract({
         address: addr(n, "factory"),
         abi: FACTORY_ABI,
         functionName: "seriesUnitCounts",
         args: [series],
-      })) as Record<string, number>;
-      const u256 = (v: bigint | number) => v as bigint;
+      });
       const settlementDeadline = Number(d.settlementDeadline);
       const [metadata, qualified] = await Promise.all([seriesMetadata(n, series), seriesQualified(n, series)]);
       return ok({
         network: n.name,
-        seriesId: fromSeriesId(d.seriesId as unknown as Hex),
+        seriesId: fromSeriesId(d.seriesId),
         // scales per crates/core/intex/src/schema.rs (SeriesRecord):
-        promisLoadMinor: { raw: d.promisLoadMinor.toString(), value: formatUnits(u256(d.promisLoadMinor), 6) },
-        entryPriceMinor: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 6), scale: "1e6 ISO stable-unit" },
-        floorPriceMinor: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 6), scale: "1e6 ISO stable-unit" },
-        callPriceMinor: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 6), scale: "1e6 ISO stable-unit" },
+        promisLoadMinor: { raw: d.promisLoadMinor.toString(), value: formatUnits(d.promisLoadMinor, 6) },
+        entryPriceMinor: { raw: d.entryPriceMinor.toString(), value: formatUnits(d.entryPriceMinor, 6), scale: "1e6 ISO stable-unit" },
+        floorPriceMinor: { raw: d.floorPriceMinor.toString(), value: formatUnits(d.floorPriceMinor, 6), scale: "1e6 ISO stable-unit" },
+        callPriceMinor: { raw: d.callPriceMinor.toString(), value: formatUnits(d.callPriceMinor, 6), scale: "1e6 ISO stable-unit" },
         issuedUnits: Number(counts.issuedUnits),
         // Disjoint classes summing to issuedUnits. Active units lose their load to
         // the pool once the call window closes and they are forfeited.

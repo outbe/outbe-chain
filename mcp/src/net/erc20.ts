@@ -1,10 +1,10 @@
-import { type Abi, type Address, type Hex, encodeFunctionData, getAddress, zeroAddress } from "viem";
-import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
+import { type Address, type Hex, encodeFunctionData, getAddress, zeroAddress } from "viem";
+import IERC20 from "../abi/generated/tokens/IERC20.js";
 import type { Ctx } from "../chain.js";
 import type { Network } from "./resolver.js";
 import { requireAccount, sendCall, waitForReceipt } from "./tx.js";
 
-export const ERC20_ABI: Abi = IERC20Json as Abi;
+export const ERC20_ABI = IERC20;
 
 export interface Allowance {
   token: Address;

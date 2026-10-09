@@ -54,24 +54,7 @@ export function registerAuctionTools(server: McpServer, deps: IntexDeps): void {
         paymentMeta(n),
       ]);
       const dec = meta.decimals;
-      const d = info as {
-        worldwideDayState: number;
-        schedule: { commitEnd: number; revealEnd: number; issuanceEnd: number };
-        params: {
-          promisLoadMinor: bigint;
-          callTrigger: { callWindow: number; callThreshold: number; callNoticePeriod: number };
-          minIntexBidRate: bigint;
-          minIntexBidQuantity: number;
-          prices: readonly {
-            isoCode: number;
-            entryPriceMinor: bigint;
-            floorPriceMinor: bigint;
-            callPriceMinor: bigint;
-          }[];
-          commitBondMinor: bigint;
-        };
-        result: { auctionClearingRate: bigint; wonBidsCount: number; issuedUnits: number; issuedPromisLoadMinor: bigint };
-      };
+      const d = info;
       return ok({
         network: n.name,
         worldwideDay,
@@ -96,7 +79,7 @@ export function registerAuctionTools(server: McpServer, deps: IntexDeps): void {
             callNoticePeriod: d.params.callTrigger.callNoticePeriod,
           },
           // bid rates are 1e6 fixed-point (fraction of strike).
-          minIntexBidRate: { raw: d.params.minIntexBidRate.toString(), value: formatUnits(d.params.minIntexBidRate, 6) },
+          minIntexBidRate: { raw: d.params.minIntexBidRate.toString(), value: formatUnits(BigInt(d.params.minIntexBidRate), 6) },
           minIntexBidQuantity: Number(d.params.minIntexBidQuantity),
           // entry bond pulled at commit and returned at reveal/cancel. 0 = no bond.
           commitBondMinor: { raw: d.params.commitBondMinor.toString(), value: formatUnits(d.params.commitBondMinor, dec) },

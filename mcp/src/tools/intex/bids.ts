@@ -163,7 +163,7 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
         args: [
           worldwideDay,
           units,
-          bidRate,
+          Number(bidRate),
           issuanceCurrency,
           referenceCurrency,
           BigInt(n.chainId),
