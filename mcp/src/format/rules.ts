@@ -108,6 +108,7 @@ function isNativeCoen(s: Scalar): boolean {
 
 /** The first rule that matches renders the value. Order matters: specific rules precede conventions. */
 const RULES: Rule[] = [
+  { when: (s) => s.name === "maxRetainedWorldwideDays", render: (s) => Number(s.value) },
   { when: (s) => uint(32)(s) && DATE_RE.test(s.name), render: (s) => ({ wwd: Number(s.value), date: formatWwd(Number(s.value)) }) },
   { when: (s) => uint(8)(s) && s.name === "status", render: (s) => coded(statusLabel(s))(s) },
   { when: (s) => uint(8)(s) && s.name === "dayType", render: coded(dayTypeName) },

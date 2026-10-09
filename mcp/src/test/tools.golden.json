@@ -7843,10 +7843,7 @@
       "isError": false,
       "output": {
         "outcome": 2,
-        "maxRetainedWorldwideDays": {
-          "wwd": 20261009,
-          "date": "2026-10-09"
-        },
+        "maxRetainedWorldwideDays": 20261009,
         "retainedCountBefore": 20261009,
         "promisLimitReturnedMinor": {
           "raw": "3",
