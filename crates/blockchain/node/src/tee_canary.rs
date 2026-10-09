@@ -107,7 +107,7 @@ pub enum CanaryTickOutcome {
     OfferKeyNotReady,
     /// The probe failed. `unreachable` = transport-level (connect/socket/session
     /// revoked) as opposed to a bad answer. One stage-dependent exception: an
-    /// `EnclaveError` answer to the `GetPublicKeys` stage also counts as
+    /// `EnclaveError` or `Unavailable` answer to the `GetPublicKeys` stage also counts as
     /// `unreachable`. In the canary decrypt stage it does not.
     Failure { unreachable: bool, reason: String },
 }
@@ -192,10 +192,10 @@ fn apply_tick(
 }
 
 fn publish_health_gauges(status: &EnclaveHealthStatusV1) {
-    gauge!("outbe_tee_heap_bytes", "kind" => "current").set(status.heap_current_bytes as f64);
-    gauge!("outbe_tee_heap_bytes", "kind" => "peak").set(status.heap_peak_bytes as f64);
+    gauge!("outbe_tee_heap_bytes", "kind" => "current").set(status.heap.current_bytes as f64);
+    gauge!("outbe_tee_heap_bytes", "kind" => "peak").set(status.heap.peak_bytes as f64);
     gauge!("outbe_tee_enclave_uptime_seconds").set(status.uptime_s as f64);
-    gauge!("outbe_tee_requests_errored_total").set(status.requests_errored as f64);
+    gauge!("outbe_tee_requests_errored_total").set(status.requests.errored as f64);
 }
 
 fn unix_now_ms() -> Option<u64> {
@@ -690,5 +690,23 @@ mod tests {
             decrypt_failure.seen(),
             ["get_public_keys", "process_tribute_offer_batch"]
         );
+    }
+
+    #[test]
+    fn a_not_ready_enclave_is_unreachable_at_the_key_stage() {
+        let fake = FakeRequester::new(vec![(
+            "get_public_keys",
+            Err(TransportError::Unavailable(
+                "enclave is not initialized".into(),
+            )),
+        )]);
+        let (outcome, _, _) = run_canary_probe(&fake, Some(false));
+        assert!(matches!(
+            outcome,
+            CanaryTickOutcome::Failure {
+                unreachable: true,
+                ..
+            }
+        ));
     }
 }

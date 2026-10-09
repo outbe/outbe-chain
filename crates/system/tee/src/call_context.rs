@@ -120,11 +120,11 @@ pub fn resolve() -> std::result::Result<EnclaveCallContextV1, crate::TransportEr
         return Ok(context);
     }
     match PROVIDER.get() {
-        Some(provider) => provider().map_err(crate::TransportError::EnclaveError),
+        Some(provider) => provider().map_err(crate::TransportError::Unavailable),
         None => Ok(SNAPSHOT
             .read()
             .map_err(|_| {
-                crate::TransportError::EnclaveError("enclave snapshot lock poisoned".into())
+                crate::TransportError::Unavailable("enclave snapshot lock poisoned".into())
             })?
             .unwrap_or_default()),
     }

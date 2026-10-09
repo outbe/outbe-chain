@@ -6,6 +6,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use crate::protocol::{
     gratis_op_canonical_hash, promis_op_canonical_hash, EnclaveRequest, EnclaveResponse,
 };
+use crate::TransportError;
 
 #[derive(Clone, Copy)]
 enum BalanceOperation {
@@ -42,11 +43,20 @@ pub fn execute_confidential_balance_op(request: EnclaveRequest) -> Result<Enclav
         let response = client.request(&request);
         (attestation_pub, response)
     })
-    .ok_or_else(|| PrecompileError::Fatal("tee_sidecar_unavailable".to_string()))?;
-    let response = response
-        .map_err(|error| PrecompileError::Fatal(format!("tee_sidecar_unavailable: {error}")))?;
+    .ok_or_else(|| PrecompileError::EnclaveUnavailable("tee_sidecar_unavailable".to_string()))?;
+    let response = response.map_err(request_failure)?;
     validate_response(operation, expected_hash, &attestation_pub, &response)?;
     Ok(response)
+}
+
+/// A balance op's `Error` answer only reports this enclave's state (no group key, session,
+/// readiness); input-driven refusals come back as a `Rejected` status instead.
+fn request_failure(error: TransportError) -> PrecompileError {
+    if error.is_node_local() || matches!(error, TransportError::EnclaveError(_)) {
+        PrecompileError::EnclaveUnavailable(format!("tee_sidecar_unavailable: {error}"))
+    } else {
+        PrecompileError::Fatal(format!("enclave request failed: {error}"))
+    }
 }
 
 fn validate_response(
@@ -82,10 +92,9 @@ fn validate_response(
                 PrecompileError::Fatal(format!("tee_promis_attestation_invalid: {error}"))
             })
         }
-        (_, EnclaveResponse::Error { message }) => Err(PrecompileError::Fatal(format!(
-            "enclave {} error: {message}",
-            operation.name(),
-        ))),
+        (_, EnclaveResponse::Error { message }) => Err(PrecompileError::EnclaveUnavailable(
+            format!("enclave {} error: {message}", operation.name(),),
+        )),
         _ => Err(PrecompileError::Fatal(format!(
             "unexpected enclave response: {response:?}"
         ))),
@@ -149,7 +158,7 @@ mod tests {
             let expected = format!("enclave {name} error: denied");
             assert!(matches!(
                 validate_response(operation, hash, &key, &response),
-                Err(PrecompileError::Fatal(message)) if message == expected
+                Err(PrecompileError::EnclaveUnavailable(message)) if message == expected
             ));
         }
 
@@ -169,6 +178,30 @@ mod tests {
             validate_response(BalanceOperation::Promis, hash, &key, &wrong_for_promis),
             Err(PrecompileError::Fatal(message)) if message == expected
         ));
+    }
+
+    #[test]
+    fn an_enclave_refusal_or_outage_is_unavailable_and_a_bad_answer_is_fatal() {
+        for error in [
+            TransportError::Unavailable("enclave is not initialized".into()),
+            TransportError::EnclaveError("no resident group key".into()),
+            TransportError::Noise("x".into()),
+            TransportError::Handshake("x".into()),
+            TransportError::SessionRevoked("x"),
+            TransportError::IdentityMismatch("x".into()),
+        ] {
+            assert!(matches!(
+                request_failure(error),
+                PrecompileError::EnclaveUnavailable(_)
+            ));
+        }
+        for error in [
+            TransportError::Codec("x".into()),
+            TransportError::UnexpectedResponse,
+            TransportError::GratisOpAttestation("x".into()),
+        ] {
+            assert!(matches!(request_failure(error), PrecompileError::Fatal(_)));
+        }
     }
 
     #[test]

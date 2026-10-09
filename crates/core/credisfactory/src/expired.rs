@@ -6,7 +6,7 @@ use outbe_credis::{CredisContract, CredisState, ExpiryHours};
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, SweepFailure},
+    error::Result,
     expiry_queue::{self, Due, ExpiryHandler},
     sweep_budget::SweepBudget,
 };
@@ -66,10 +66,6 @@ impl ExpiryHandler<U256> for CredisExpiry<'_, '_> {
         Ok(())
     }
 
-    fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        void_failure(error)
-    }
-
     fn deferred(&mut self, position_id: U256, retry_at: u64) -> Result<()> {
         tracing::warn!(target: "outbe::credisfactory", %position_id, retry_at, "expiry sweep: void deferred");
         self.ctx.storage.emit_event(
@@ -79,15 +75,5 @@ impl ExpiryHandler<U256> for CredisExpiry<'_, '_> {
                 retryAt: retry_at,
             }),
         )
-    }
-}
-
-/// The Gratis enclave client reports its own outage and a deterministic Gratis failure
-/// alike as `Fatal`. Until they part, a `Fatal` void fails the block: skipping an
-/// outage would fork the chain silently.
-pub(crate) fn void_failure(error: &PrecompileError) -> SweepFailure {
-    match error {
-        PrecompileError::Fatal(_) => SweepFailure::Propagate,
-        other => other.sweep_failure(),
     }
 }

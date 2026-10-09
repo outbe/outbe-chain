@@ -55,7 +55,7 @@ fn health_reports_counters_uptime_and_offer_key_state() {
 
     // Counters are process-global: record a ready-class request and observe
     // the delta through a second Health probe.
-    let before_ready = status.class_ready;
+    let before_ready = status.classes.ready;
     crate::telemetry::record_request(
         crate::telemetry::RequestClassLabel::Ready,
         crate::telemetry::RequestOutcome::Ok,
@@ -77,10 +77,10 @@ fn health_reports_counters_uptime_and_offer_key_state() {
     };
     assert!(status.offer_key_ready, "resident key reports ready");
     assert!(
-        status.class_ready > before_ready,
+        status.classes.ready > before_ready,
         "ready-class counter must grow"
     );
-    assert!(status.requests_total >= status.class_ready);
+    assert!(status.requests.total >= status.classes.ready);
 }
 
 #[test]

@@ -62,6 +62,23 @@ pub enum SessionAuthorityV1 {
     RemoteActiveNode { deadline: u64 },
 }
 
+/// Why a session command was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandDenial {
+    /// This enclave cannot serve the command yet.
+    NotReady(&'static str),
+    /// The command is never allowed in this enclave state or session.
+    Forbidden(&'static str),
+}
+
+impl CommandDenial {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::NotReady(message) | Self::Forbidden(message) => message,
+        }
+    }
+}
+
 impl SessionAuthorityV1 {
     pub fn ensure_live(self) -> Result<(), &'static str> {
         self.ensure_live_at(unix_time_seconds()?)
@@ -249,20 +266,22 @@ impl InitializationState {
         request: &EnclaveRequest,
         offer_key_ready: bool,
         authority: SessionAuthorityV1,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), CommandDenial> {
         if self.mode == InitializationMode::Development {
             return Ok(());
         }
-        authority.ensure_live()?;
+        authority.ensure_live().map_err(CommandDenial::NotReady)?;
         if matches!(authority, SessionAuthorityV1::RemoteActiveNode { .. }) {
             return matches!(request, EnclaveRequest::GetPublicKeys)
                 .then_some(())
-                .ok_or("remote session command denied by enclave capability matrix");
+                .ok_or(CommandDenial::Forbidden(
+                    "remote session command denied by enclave capability matrix",
+                ));
         }
         let manifest = self
             .manifest()
-            .map_err(|_| "initialization state unavailable")?
-            .ok_or("enclave is not initialized")?;
+            .map_err(|_| CommandDenial::NotReady("initialization state unavailable"))?
+            .ok_or(CommandDenial::NotReady("enclave is not initialized"))?;
         if matches!(
             request,
             EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
@@ -270,7 +289,9 @@ impl InitializationState {
         ) && (!self.gramine_direct_dev_evidence_allowed
             || manifest.attestation_mode != AttestationMode::GramineDirectDev)
         {
-            return Err("GramineDirectDev onboarding is forbidden by the initialized network");
+            return Err(CommandDenial::Forbidden(
+                "GramineDirectDev onboarding is forbidden by the initialized network",
+            ));
         }
         command_allowed_for_environment(
             command_class(request),
@@ -590,17 +611,19 @@ fn command_allowed_for_environment(
     class: CommandClass,
     offer_key_ready: bool,
     _gramine_direct_dev_evidence_allowed: bool,
-) -> Result<(), &'static str> {
-    let allowed = match class {
-        CommandClass::Never => false,
-        CommandClass::Initialized => true,
-        CommandClass::FoundingKeyless => !offer_key_ready,
-        CommandClass::KeylessOnboardingArtifact => !offer_key_ready,
-        CommandClass::Ready => offer_key_ready,
-    };
-    allowed
-        .then_some(())
-        .ok_or("command denied by enclave state matrix")
+) -> Result<(), CommandDenial> {
+    const DENIED: &str = "command denied by enclave state matrix";
+    match class {
+        CommandClass::Initialized => Ok(()),
+        CommandClass::Ready if offer_key_ready => Ok(()),
+        CommandClass::Ready => Err(CommandDenial::NotReady(DENIED)),
+        CommandClass::FoundingKeyless | CommandClass::KeylessOnboardingArtifact
+            if !offer_key_ready =>
+        {
+            Ok(())
+        }
+        _ => Err(CommandDenial::Forbidden(DENIED)),
+    }
 }
 
 fn persist_manifest(
@@ -1051,6 +1074,7 @@ mod tests {
             assert!(state
                 .authorize_command(&owner_request, true, remote)
                 .unwrap_err()
+                .message()
                 .contains("remote session command denied"));
         }
 

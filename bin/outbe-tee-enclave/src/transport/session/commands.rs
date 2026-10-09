@@ -51,7 +51,7 @@ impl CommandSession {
             };
             return Response::Immediate(response);
         }
-        if let Err(message) =
+        if let Err(denial) =
             initialization.authorize_command(&req, offer_key.get().is_some(), session_authority)
         {
             if is_onboarding_upload_request {
@@ -69,15 +69,27 @@ impl CommandSession {
                     dur_ms,
                 )
             );
-            let response = EnclaveResponse::Error {
-                message: message.to_string(),
+            let response = match denial {
+                crate::initialization::CommandDenial::NotReady(message) => {
+                    EnclaveResponse::NotReady {
+                        message: message.into(),
+                    }
+                }
+                crate::initialization::CommandDenial::Forbidden(message) => {
+                    EnclaveResponse::Error {
+                        message: message.into(),
+                    }
+                }
             };
             return Response::Immediate(response);
         }
 
         let resp = self.dispatch(req, context);
 
-        let outcome = if matches!(resp, EnclaveResponse::Error { .. }) {
+        let outcome = if matches!(
+            resp,
+            EnclaveResponse::Error { .. } | EnclaveResponse::NotReady { .. }
+        ) {
             crate::telemetry::RequestOutcome::Err
         } else {
             crate::telemetry::RequestOutcome::Ok

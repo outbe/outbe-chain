@@ -1030,25 +1030,43 @@ impl EnclaveRequest {
 
 /// Self-observed enclave health snapshot returned by [`EnclaveRequest::Health`].
 ///
-/// Heap fields come from the enclave binary's counting global allocator. They are
-/// a proxy for EPC pressure (they exclude thread stacks, allocator overhead and
+/// `heap` comes from the enclave binary's counting global allocator. It is
+/// a proxy for EPC pressure (it excludes thread stacks, allocator overhead and
 /// direct mmaps). `0` means allocator accounting is not installed. Per-class
 /// counters are fixed fields, not maps, so the wire shape stays stable.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EnclaveHealthStatusV1 {
     pub uptime_s: u64,
     pub offer_key_ready: bool,
-    pub heap_current_bytes: u64,
-    pub heap_peak_bytes: u64,
-    pub requests_total: u64,
-    pub requests_errored: u64,
-    pub requests_denied: u64,
-    pub class_initialized: u64,
-    pub class_founding_keyless: u64,
-    pub class_keyless_onboarding: u64,
-    pub class_ready: u64,
-    pub class_dev_source_seal: u64,
-    pub class_dev_recipient_ingest: u64,
+    pub heap: EnclaveHeapUsageV1,
+    pub requests: EnclaveRequestCountsV1,
+    pub classes: EnclaveRequestClassCountsV1,
+}
+
+/// Enclave heap the allocator accounts for, now and at its peak.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EnclaveHeapUsageV1 {
+    pub current_bytes: u64,
+    pub peak_bytes: u64,
+}
+
+/// Requests the enclave dispatched, by outcome.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EnclaveRequestCountsV1 {
+    pub total: u64,
+    pub errored: u64,
+    pub denied: u64,
+}
+
+/// Requests the enclave dispatched, by authorization class.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EnclaveRequestClassCountsV1 {
+    pub initialized: u64,
+    pub founding_keyless: u64,
+    pub keyless_onboarding: u64,
+    pub ready: u64,
+    pub dev_source_seal: u64,
+    pub dev_recipient_ingest: u64,
 }
 
 /// Domain-tagged message an account owner personal-signs to authorize Fidelity
@@ -1477,6 +1495,11 @@ pub enum EnclaveResponse {
         amount: U256,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
+    },
+    /// The enclave cannot serve this request yet: not initialized, no resident key,
+    /// or an expired session. Unlike `Error`, it reports this enclave's state, not the request's content.
+    NotReady {
+        message: String,
     },
 }
 

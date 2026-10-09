@@ -76,7 +76,9 @@ fn read_offer_key(requester: &dyn EnclaveRequester) -> Result<[u8; 32], CanaryTi
             unreachable: error.is_connection_fault()
                 || matches!(
                     error,
-                    TransportError::SessionRevoked(_) | TransportError::EnclaveError(_)
+                    TransportError::SessionRevoked(_)
+                        | TransportError::EnclaveError(_)
+                        | TransportError::Unavailable(_)
                 ),
             reason: format!("GetPublicKeys failed: {}", error.metric_class()),
         }),

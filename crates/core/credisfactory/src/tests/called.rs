@@ -972,30 +972,35 @@ fn a_failed_void_fails_the_block_and_keeps_the_position_queued() {
             outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, lapsed, CHAIN_ID),
             storage.clone(),
         );
-        assert!(crate::expired::sweep_expired(&ctx).is_err());
+        assert!(matches!(
+            crate::expired::sweep_expired(&ctx),
+            Err(outbe_primitives::error::PrecompileError::EnclaveUnavailable(_))
+        ));
         assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
         assert_ne!(queued_at(&storage, ids[0]), 0);
     });
     teardown();
 }
 
+/// A failure every node hits alike, here a broken pledged-supply total, defers the void.
 #[test]
-fn a_void_fails_the_block_only_on_what_may_be_this_nodes_fault() {
-    use crate::expired::void_failure;
-    use outbe_primitives::error::{PrecompileError, SweepFailure};
-    assert_eq!(
-        void_failure(&PrecompileError::Fatal("tee_sidecar_unavailable".into())),
-        SweepFailure::Propagate
-    );
-    assert_eq!(
-        void_failure(&PrecompileError::Storage("x".into())),
-        SweepFailure::Propagate
-    );
-    assert_eq!(
-        void_failure(&PrecompileError::Revert(
-            "forfeiture collateral mismatch".into()
-        )),
-        SweepFailure::Skip
-    );
-    assert_eq!(void_failure(&PrecompileError::OutOfGas), SweepFailure::Stop);
+fn a_deterministic_void_failure_defers_the_position() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        call_by_hand(&storage, &ids[..1], CREATED_AT);
+        let lapsed = CREATED_AT + NOTICE + HOUR;
+        advance_to(&storage, lapsed);
+        let queued = queued_at(&storage, ids[0]);
+
+        outbe_gratis::schema::Gratis::new(storage.clone())
+            .pledged_total_supply
+            .write(U256::ZERO)
+            .unwrap();
+        assert_eq!(expire(&storage, lapsed), 0);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
+        assert_ne!(queued_at(&storage, ids[0]), 0);
+        assert_ne!(queued_at(&storage, ids[0]), queued);
+    });
+    teardown();
 }

@@ -381,7 +381,9 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
     };
     assert_eq!(
         dcap_initialization.authorize_command(&request, false, SessionAuthorityV1::LocalNodeHost,),
-        Err("GramineDirectDev onboarding is forbidden by the initialized network")
+        Err(crate::initialization::CommandDenial::Forbidden(
+            "GramineDirectDev onboarding is forbidden by the initialized network"
+        ))
     );
 
     let target_offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
