@@ -1043,6 +1043,7 @@ pub struct EnclaveHealthStatusV1 {
     pub classes: EnclaveRequestClassCountsV1,
 }
 
+/// Enclave heap the allocator accounts for, now and at its peak.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EnclaveHeapUsageV1 {
     pub current_bytes: u64,
