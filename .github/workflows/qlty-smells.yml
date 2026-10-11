@@ -1,9 +1,9 @@
 name: qlty smells
 
 # Report code smells (complexity, duplication, many parameters, deep nesting)
-# for the files that a pull request changes. The job fails when it finds at
-# least one smell. `qlty smells` itself exits 0, so the last step checks the
-# finding count.
+# for the files that a pull request changes. The job fails only for findings
+# added relative to the base branch. `qlty smells` itself exits 0, so the last
+# step checks the new finding count.
 #
 # Findings reach the pull request in two places:
 #   - code scanning annotations on the changed lines (SARIF upload);
@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          # qlty compares against the base branch, so the job needs its history.
+          # Both scans need the base branch and the complete diff history.
           fetch-depth: 0
           persist-credentials: false
 
@@ -58,16 +58,66 @@ jobs:
                   then del(.startColumn, .endColumn) else . end)
           ' qlty-smells.raw.sarif > qlty-smells.sarif
 
+      - name: Compare findings with the base branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          baseline_dir="$(mktemp -d "${RUNNER_TEMP}/qlty-baseline.XXXXXX")"
+          git worktree add --detach "${baseline_dir}" "origin/${BASE_REF}"
+          mapfile -d '' -t changed_paths < <(git diff --name-only -z "origin/${BASE_REF}...HEAD")
+          baseline_paths=()
+          for path in "${changed_paths[@]}"; do
+            if [[ -f "${baseline_dir}/${path}" ]]; then
+              baseline_paths+=("${path}")
+            fi
+          done
+          if (( ${#baseline_paths[@]} > 0 )); then
+            (cd "${baseline_dir}" && qlty smells --sarif --no-upgrade-check "${baseline_paths[@]}") \
+              > qlty-baseline.sarif
+          else
+            jq '(.runs[].results) = []' qlty-smells.sarif > qlty-baseline.sarif
+          fi
+
+          # Match findings by file and rule. Function-specific rules also use
+          # the function name. Counts preserve repeated findings in one file.
+          jq --slurpfile baseline qlty-baseline.sarif '
+            def identity:
+              [ .locations[0].physicalLocation.artifactLocation.uri,
+                .ruleId,
+                (if (.ruleId == "qlty:function-complexity" or
+                     .ruleId == "qlty:function-parameters" or
+                     .ruleId == "qlty:return-statements")
+                 then (.message.text | split(": ") | last)
+                 else "" end)
+              ] | join("\u001f");
+            . as $current
+            | (reduce ($baseline[0].runs[].results[]?) as $finding
+                ({}; .[$finding | identity] += 1)) as $counts
+            | (reduce ($current.runs[].results[]?) as $finding
+                ({remaining: $counts, new: []};
+                  ($finding | identity) as $key
+                  | if (.remaining[$key] // 0) > 0 then
+                      .remaining[$key] -= 1
+                    else
+                      .new += [$finding]
+                    end)) as $delta
+            | $current
+            | .runs[0].results = $delta.new
+            | .runs[1:][].results = []
+          ' qlty-smells.sarif > qlty-smells-new.sarif
+
       - name: Write job summary
         id: summary
         run: |
-          count=$(jq '[.runs[].results[]] | length' qlty-smells.sarif)
-          echo "count=${count}" >> "${GITHUB_OUTPUT}"
+          all_count=$(jq '[.runs[].results[]] | length' qlty-smells.sarif)
+          new_count=$(jq '[.runs[].results[]] | length' qlty-smells-new.sarif)
+          echo "new_count=${new_count}" >> "${GITHUB_OUTPUT}"
           {
             echo "## qlty smells in changed files"
             echo
-            echo "Findings: ${count}"
-            if [ "${count}" -gt 0 ]; then
+            echo "New relative to main: ${new_count}"
+            echo "Already present in main: $((all_count - new_count))"
+            if [ "${new_count}" -gt 0 ]; then
               echo
               echo "| File | Line | Rule | Finding |"
               echo "|---|---|---|---|"
@@ -81,8 +131,8 @@ jobs:
                     (.ruleId | sub("^qlty:"; "")),
                     (.message.text | gsub("\\|"; "\\|")) ]
                 | "| `\(.[0])` | \(.[1]) | \(.[2]) | \(.[3]) |"
-              ' qlty-smells.sarif
-              if [ "${count}" -gt 300 ]; then
+              ' qlty-smells-new.sarif
+              if [ "${new_count}" -gt 300 ]; then
                 echo
                 echo "The table shows the first 300 findings. Code scanning has all of them."
               fi
@@ -95,19 +145,19 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
-          sarif_file: qlty-smells.sarif
+          sarif_file: qlty-smells-new.sarif
           category: qlty-smells
 
       # This step runs last, so the summary and the annotations exist when the
       # job fails. It also runs when the SARIF upload fails, so the smell count
       # is always reported.
-      - name: Fail when smells are found
+      - name: Fail when new smells are found
         if: ${{ !cancelled() && steps.summary.outcome == 'success' }}
         env:
-          COUNT: ${{ steps.summary.outputs.count }}
+          COUNT: ${{ steps.summary.outputs.new_count }}
         run: |
           if [ "${COUNT}" -gt 0 ]; then
-            echo "::error title=qlty smells::${COUNT} smell(s) in changed files. See the job summary or the annotations on the changed lines."
+            echo "::error title=qlty smells::${COUNT} new smell(s) relative to main. See the job summary or the annotations on the changed lines."
             exit 1
           fi
-          echo "No smells in changed files."
+          echo "No new smells relative to main."
