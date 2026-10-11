@@ -383,6 +383,71 @@ fn token_registered(world: &mut World) {
     }
 }
 
+#[then("native value is rejected at the token but accepted at an unused address in its prefix")]
+fn native_value_stablecoin_prefix_boundary(world: &mut World) {
+    let fixture = world.state.stablecoin.as_ref().expect("stablecoin fixture");
+    let mut unused_bytes = [0_u8; 20];
+    unused_bytes[..2].copy_from_slice(&STABLECOIN_ADDRESS_PREFIX);
+    unused_bytes[19] = 1;
+    let unused = Address::from(unused_bytes);
+    assert_ne!(
+        unused, fixture.token,
+        "unused prefix address collides with token"
+    );
+    let url = primary_url(world);
+    assert_eq!(eth::code(&url, unused).map(|code| code.len()), Some(0));
+    let issuer = address(ISSUER_KEY);
+    let value = eth::coen(1);
+    let initial_issuer = eth::balance(&url, issuer).expect("issuer native balance");
+    let initial_token = eth::balance(&url, fixture.token).expect("token native balance");
+    let initial_unused = eth::balance(&url, unused).expect("unused prefix native balance");
+
+    let rejected =
+        eth::send_value_outcome_with_gas(&url, fixture.token, ISSUER_KEY, value, 150_000)
+            .expect("submit native transfer to issued token");
+    assert!(
+        !rejected.success,
+        "issued token accepted a plain native transfer"
+    );
+    let after_reject_issuer = eth::balance(&url, issuer).expect("issuer balance after revert");
+    assert_eq!(
+        after_reject_issuer,
+        initial_issuer - transaction_fee(&rejected.receipt)
+    );
+    assert_eq!(eth::balance(&url, fixture.token), Some(initial_token));
+
+    let accepted = eth::send_value_outcome(&url, unused, ISSUER_KEY, value)
+        .expect("submit native transfer to unused prefix address");
+    assert!(
+        accepted.success,
+        "unused prefix address rejected plain native value"
+    );
+    let after_accept_issuer = after_reject_issuer - value - transaction_fee(&accepted.receipt);
+    let height = finalize_observation(world);
+    for port in ports(world) {
+        let url = world.rpc.url(port);
+        assert_eq!(
+            eth::balance(&url, fixture.token),
+            Some(initial_token),
+            "issued token retained native value on RPC {port}"
+        );
+        assert_eq!(
+            eth::balance(&url, unused),
+            Some(initial_unused + value),
+            "unused prefix address lost native value on RPC {port}"
+        );
+        assert_eq!(
+            eth::balance(&url, issuer),
+            Some(after_accept_issuer),
+            "issuer native balance differs after both receipts on RPC {port}"
+        );
+        assert!(world
+            .rpc
+            .finalized(port)
+            .is_some_and(|finalized| finalized >= height));
+    }
+}
+
 fn sign_permit(
     key: &str,
     domain: B256,

@@ -33,7 +33,7 @@ pub(super) fn summarize_verified_chunks(
     let mut previous_kind = None;
 
     for (index, object) in chunk_objects.iter().enumerate() {
-        let derived = derive_input_chunk(object, bundle, limits)?;
+        let derived = derive_input_chunk(object, bundle, limits, ChunkRead::Private)?;
         let expected_ordinal =
             u32::try_from(index).map_err(|_| InputArtifactError::CountOverflow)?;
         require(

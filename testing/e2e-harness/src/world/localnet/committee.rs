@@ -634,6 +634,28 @@ impl Localnet {
         )
     }
 
+    /// Keep the validator process owned while its enclave is absent during a
+    /// real encrypted-offer fault window.
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn stop_validator_enclave_for_fault(&mut self, index: usize) -> Result<()> {
+        self.stop_enclave_for_observation(index).map(|_| ())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn restore_validator_enclave_after_fault(&mut self, index: usize) -> Result<()> {
+        ensure!(
+            !self.enclaves.contains_key(&index),
+            "validator enclave is already owned"
+        );
+        let chain_id_hex = self.chain_id_hex()?;
+        let seed = self.default_dkg_seed(index);
+        self.start_enclave_with_seed(index, &chain_id_hex, seed)?;
+        if !self.validator_running(index) {
+            self.restart_validator(index)?;
+        }
+        Ok(())
+    }
+
     /// Whether committee validator `i`'s node process is still running (its
     /// owned child guard exists and has not exited).
     pub fn validator_running(&mut self, i: usize) -> bool {

@@ -1112,28 +1112,35 @@ fn shareless_validator_stakes_confirms(world: &mut World) {
     .expect("finalized stake precedes readiness and the in-flight offer");
 }
 
+fn submit_fixture_offer(world: &mut World, validator: usize, missing: &str) -> Result<String> {
+    let key = world.validators.get(validator).evm_key()?;
+    // Testnet binds the fixture circuit to L2 57005. Each caller retains its owner.
+    let tx = world
+        .rpc
+        .tribute_offer_for_network_with_params(
+            &key,
+            crate::internal::l2_fixture::FIXTURE_L2_CHAIN_ID,
+            crate::world::rpc::TributeOfferParams {
+                wwd: world
+                    .state
+                    .wwd
+                    .as_deref()
+                    .ok_or_else(|| eyre!("missing worldwide day"))?,
+                amounts: ("100", "0"),
+                currency: 840,
+                exclude_from_intex_issuance: false,
+            },
+        )
+        .ok_or_else(|| eyre!("{missing}"))?;
+    world.state.tribute_tx_hash = Some(tx.clone());
+    Ok(tx)
+}
+
 #[then("it activates through DKG in the same process and the in-flight offer lands once")]
 fn promoted_with_inflight_offer(world: &mut World) {
     (|| -> Result<()> {
         joined(world)?;
-        let key = world.validators.get(1).evm_key()?;
-        crate::features::l2_registration::ensure_tribute_offer_operator(world, &key);
-        world.state.tribute_tx_hash = world.rpc.offer_until_supply_hash(
-            &key,
-            world
-                .state
-                .wwd
-                .as_deref()
-                .ok_or_else(|| eyre!("missing worldwide day"))?,
-            world.validators.primary_port(),
-            "2",
-            15,
-        );
-        let tx = world
-            .state
-            .tribute_tx_hash
-            .clone()
-            .ok_or_else(|| eyre!("in-flight offer did not land"))?;
+        let tx = submit_fixture_offer(world, 1, "in-flight offer was not submitted")?;
         world.projection.wait_for_tribute_projection(&tx, 120)?;
         let confirm = world
             .state
@@ -1309,24 +1316,11 @@ fn exits_and_demotes(world: &mut World) {
                 "relative_offset": offset, "marker": DEMOTION, "exit_height": exit_height,
             }),
         );
-        let key = world.validators.get(2).evm_key()?;
-        crate::features::l2_registration::ensure_tribute_offer_operator(world, &key);
-        world.state.tribute_tx_hash = world.rpc.offer_until_supply_hash(
-            &key,
-            world
-                .state
-                .wwd
-                .as_deref()
-                .ok_or_else(|| eyre!("missing worldwide day"))?,
-            world.validators.primary_port(),
-            "3",
-            20,
+        let tx = submit_fixture_offer(world, 2, "post-exit offer was not submitted")?;
+        ensure!(
+            world.rpc.wait_successful_receipt(&tx, 120),
+            "post-exit offer receipt did not succeed"
         );
-        let tx = world
-            .state
-            .tribute_tx_hash
-            .clone()
-            .ok_or_else(|| eyre!("post-exit offer did not land"))?;
         let (_, offer) = finalized_tx(world, "lifecycle_post_exit_offer", &tx, 40)?;
         ensure!(
             offer.supply == U256::from(3),

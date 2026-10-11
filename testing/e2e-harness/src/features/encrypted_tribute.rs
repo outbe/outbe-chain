@@ -3,6 +3,8 @@
 use alloy_primitives::{Address, Bytes, U256};
 use cucumber::{then, when};
 use outbe_compressed_entities::decode_stored_tribute_v2;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use crate::internal::{addresses, eth, tribute_keys};
 use crate::world::World;
@@ -22,6 +24,106 @@ fn offer_for_creator(world: &mut World) {
             .rpc
             .tribute_offer_for_creator(&key, day, creator())
             .expect("offer for creator"),
+    );
+}
+
+#[when("validator 3 enclave is stopped while an encrypted Tribute is submitted")]
+fn offer_during_enclave_outage(world: &mut World) {
+    let key = world.validators.get(0).evm_key().expect("operator key");
+    super::l2_registration::ensure_tribute_offer_operator(world, &key);
+    let day = world.state.wwd.clone().expect("offering day");
+    world
+        .localnet
+        .stop_validator_enclave_for_fault(3)
+        .expect("stop validator-3 enclave sidecar");
+    world.state.tribute_tx_hash = Some(
+        world
+            .rpc
+            .tribute_offer_for_creator(&key, &day, creator())
+            .expect("offer encrypted Tribute through surviving validator"),
+    );
+}
+
+#[then("the surviving quorum finalizes and decrypts that encrypted Tribute")]
+fn survivors_finalize_encrypted_tribute(world: &mut World) {
+    let tx = world
+        .state
+        .tribute_tx_hash
+        .as_deref()
+        .expect("encrypted offer transaction");
+    let primary = world.validators.primary_port();
+    assert!(
+        world.rpc.wait_successful_receipt(tx, 240),
+        "encrypted offer did not produce a successful receipt: {tx}"
+    );
+    let height = world
+        .rpc
+        .receipt_block_number(tx, primary)
+        .expect("offer inclusion height");
+    let ports = [0, 1, 2].map(|index| world.validators.http_port(index));
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, height, 90)
+        .expect("surviving quorum finalizes encrypted offer");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        if let Ok(projected) = world.projection.projected_tribute(0, tx) {
+            let body = decode_stored_tribute_v2(&projected.stored_body)
+                .expect("canonical encrypted body after enclave outage");
+            let expected = world
+                .rpc
+                .private_tribute_read(0, &body)
+                .expect("surviving enclave decrypts Tribute");
+            for index in [1, 2] {
+                assert_eq!(
+                    world
+                        .rpc
+                        .private_tribute_read(index, &body)
+                        .expect("surviving enclave decrypts Tribute"),
+                    expected
+                );
+                let observed = world
+                    .rpc
+                    .checkpoint_at(world.validators.http_port(index), checkpoint.height)
+                    .expect("survivor checkpoint");
+                assert_eq!(observed.block_hash, checkpoint.block_hash);
+                assert_eq!(observed.state_root, checkpoint.state_root);
+            }
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "surviving validators did not project encrypted Tribute"
+        );
+        sleep(Duration::from_millis(250));
+    }
+}
+
+#[when("validator 3 enclave is restored from its sealed state")]
+fn restore_enclave_after_offer(world: &mut World) {
+    if !world.localnet.validator_running(3) {
+        world.state.expected_tee_sidecar_outage = Some((
+            3,
+            world
+                .state
+                .tribute_tx_hash
+                .clone()
+                .expect("encrypted offer transaction"),
+        ));
+    }
+    world
+        .localnet
+        .restore_validator_enclave_after_fault(3)
+        .expect("restore validator-3 sealed enclave");
+    let target = world
+        .rpc
+        .finalized(world.validators.primary_port())
+        .expect("survivor finality after enclave recovery");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(world.validators.http_port(3), target, 90),
+        "validator-3 did not catch up after enclave recovery"
     );
 }
 

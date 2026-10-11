@@ -10,9 +10,9 @@ use eyre::{ensure, eyre, Result};
 use crate::internal::{addresses, eth};
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::price_oracle::{
-    CanonicalPublicationObservation, FeederLaunch, OracleCheckpointV1, OracleCohortV1,
-    OracleEvidencePhaseV1, OracleMemberV1, PenaltySnapshotEvidenceV1, QuorumLossEvidenceV1,
-    QuorumLossPairEvidenceV1, ValidatorPenaltyEvidenceV1,
+    CanonicalPublicationObservation, FeederLaunch, MockSourceFailure, OracleCheckpointV1,
+    OracleCohortV1, OracleEvidencePhaseV1, OracleMemberV1, PenaltySnapshotEvidenceV1,
+    QuorumLossEvidenceV1, QuorumLossPairEvidenceV1, ValidatorPenaltyEvidenceV1,
 };
 use crate::world::World;
 
@@ -23,6 +23,116 @@ pub(crate) const EXPECTED_RATE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 const BTC_TOKEN: Address = address!("2260fac5e5542a773aa44fbcfedf7c193bc2c599");
 const FX_TTL_SECS: u64 = 21_600;
 const PUBLICATION_TIMEOUT: Duration = Duration::from_secs(180);
+
+#[then("live feeders reject failed and malformed sources without publishing a new price")]
+fn live_feeders_reject_bad_sources(world: &mut World) {
+    let usd = outbe_primitives::asset_type::currency_address(USD_ISO);
+    start_feeder(world, OracleEvidencePhaseV1::Initial);
+    let cohort = world.price_oracle.cohort().expect("active Oracle cohort");
+    let vote_period = cohort_vote_period(world, &cohort).expect("Oracle vote period");
+    wait_for_unanimous_pair_publication(
+        world,
+        OracleEvidencePhaseV1::Initial,
+        Address::ZERO,
+        usd,
+        cohort.checkpoint.height,
+        EXPECTED_RATE,
+        true,
+    );
+    let original_pids = world
+        .price_oracle
+        .evidence_snapshot()
+        .feeder_processes
+        .iter()
+        .map(|process| process.pid)
+        .collect::<Vec<_>>();
+    for failure in [
+        MockSourceFailure::HttpError,
+        MockSourceFailure::InvalidPayload,
+        MockSourceFailure::Timeout,
+    ] {
+        world
+            .price_oracle
+            .set_source_failure(failure)
+            .expect("set controlled source failure");
+        // A vote assembled before the source switch can still finalize once.
+        wait_finalized_blocks(world, vote_period * 2 + 2);
+        let before = world
+            .rpc
+            .oracle_rate_data(world.validators.primary_port(), USD_ISO)
+            .expect("read last finalized price during source failure");
+        let requests_before = world.price_oracle.evidence_snapshot().ticker_requests;
+        let finalized_before = world
+            .rpc
+            .finalized(world.validators.primary_port())
+            .expect("read finality during source failure");
+        wait_until_finalized_height(world, finalized_before + vote_period + 2);
+        world
+            .price_oracle
+            .ensure_cohort_feeders_alive()
+            .expect("source failure must not kill feeders");
+        let evidence = world.price_oracle.evidence_snapshot();
+        assert!(
+            evidence.ticker_requests > requests_before,
+            "feeders stopped polling {failure:?}"
+        );
+        assert_eq!(
+            evidence
+                .feeder_processes
+                .iter()
+                .map(|process| process.pid)
+                .collect::<Vec<_>>(),
+            original_pids,
+            "source failure restarted a feeder"
+        );
+        for port in world.validators.committee_ports() {
+            let after = world
+                .rpc
+                .oracle_rate_data(port, USD_ISO)
+                .expect("read finalized price on every validator");
+            assert_eq!(
+                after.last_block, before.last_block,
+                "{failure:?} produced a new Oracle publication on port {port}"
+            );
+            assert_eq!(
+                after.rate, before.rate,
+                "{failure:?} changed the finalized Oracle rate on port {port}"
+            );
+        }
+        world.price_oracle.record_cohort_observation(serde_json::json!({
+            "kind": "source_failure_window", "failure": format!("{failure:?}"),
+            "finalized_before": finalized_before, "finalized_after": finalized_before + vote_period + 2,
+            "last_oracle_block": before.last_block, "ticker_requests_before": requests_before,
+            "ticker_requests_after": evidence.ticker_requests, "feeder_pids": original_pids,
+        }));
+    }
+    let before_recovery = world
+        .rpc
+        .oracle_rate_data(world.validators.primary_port(), USD_ISO)
+        .expect("read price before source recovery")
+        .last_block;
+    world
+        .price_oracle
+        .publish_quote(
+            OracleEvidencePhaseV1::SourceRecovery,
+            "1.250000",
+            MOCK_VOLUME,
+        )
+        .expect("publish recovered source quote");
+    world
+        .price_oracle
+        .set_source_failure(MockSourceFailure::Healthy)
+        .expect("restore price sources");
+    wait_for_unanimous_pair_publication(
+        world,
+        OracleEvidencePhaseV1::SourceRecovery,
+        Address::ZERO,
+        usd,
+        before_recovery,
+        U256::from(1_250_000_u64),
+        true,
+    );
+}
 
 #[cfg(feature = "ocomp-integration")]
 #[derive(Clone, Copy, Debug)]
