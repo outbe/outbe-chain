@@ -169,7 +169,7 @@ pub(super) fn verify_present_job(
         match (&binding_reader, &inputs) {
             (Some(reader), Some(inputs)) => {
                 let loaded = (|| -> eyre::Result<_> {
-                    let binding = reader.load_exact(
+                    let binding = reader.load_integrity(
                         &cas,
                         &canonical_job_spec(&job)?,
                         bundle.bundle(),
@@ -240,7 +240,7 @@ pub(super) fn verify_present_job(
                 ))
             })?;
             let admissions = AdmissionCatalogReader::open_existing(&admission_path, &cas, schema)?;
-            let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
+            let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_integrity_audit(
                 &admissions,
                 inputs,
                 &cas,
@@ -296,7 +296,7 @@ pub(super) fn verify_present_job(
     }
     if let Some(inputs) = &inputs {
         let verify = (|| -> eyre::Result<u64> {
-            let mut cursor = inputs.exact_verified_cursor(&cas, bundle.bundle())?;
+            let mut cursor = inputs.exact_verified_integrity_cursor(&cas, bundle.bundle())?;
             let expected_count = u32::try_from(cursor.len())?;
             let mut ordered = outbe_ocomp_protocol::StreamingOrderedListRoot::new(
                 outbe_ocomp_protocol::ListKind::InputChunkReferences,
@@ -331,6 +331,26 @@ pub(super) fn verify_present_job(
                     && u64::from(expected.tribute_count) == tribute,
                 "present input catalog differs from authenticated manifest"
             );
+            for entry in inputs.exact_verified_integrity_cursor(&cas, bundle.bundle())? {
+                let entry = entry?;
+                if entry.reference.kind == outbe_ocomp_protocol::input::InputChunkKind::Tribute {
+                    ensure!(
+                        entry.chunk.job_id == id
+                            && entry.chunk.protocol_bundle_hash == job.intent.protocol_bundle_hash,
+                        "present input chunk differs from canonical job"
+                    );
+                    membership.insert(
+                        id,
+                        &outbe_ocomp_protocol::CasObjectRefV1 {
+                            transport_digest: entry.reference.transport_digest,
+                            encoded_bytes: entry.reference.encoded_bytes,
+                            expected_ocb1_kind: Some(
+                                outbe_ocomp_protocol::ObjectKind::AuthenticatedInputChunkV1.tag(),
+                            ),
+                        },
+                    )?;
+                }
+            }
             Ok(u64::from(expected_count))
         })();
         if let Some(chunks) = errors.observe(verify) {

@@ -25,7 +25,7 @@ mod probes;
 mod radicle;
 
 pub use bootstrap::BootstrapProfile;
-pub(crate) use log_audit::LogAudit;
+pub(crate) use log_audit::{ExpectedTeeFailures, LogAudit};
 pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
 #[cfg(feature = "ocomp-integration")]
 pub(crate) use radicle::RadicleRepositoryFixtureV1;

@@ -17,6 +17,15 @@ Feature: Consensus and Node Resilience (B8, B20, R7, R11, R13, S14)
     And the committee continues producing and finalizing blocks in lockstep
     And finalized headers derive PREVRANDAO from their exact parent proofs
 
+  @tee @sgx-no-attest @sudo @no-quorum
+  Scenario: Two of four validators cannot finalize and recover after quorum returns
+    Given a fresh localnet with a 6-block voting window
+    And the committee has reached a usable height
+    When two validators are stopped outside an epoch transition
+    Then the remaining two validators cannot finalize new blocks
+    When both stopped validators restart from their durable data
+    Then all four validators finalize a matching checkpoint beyond the outage
+
   @r7-follower-cancel @b20-prev-randao @tee @sgx-no-attest @sudo
   Scenario: Follower sync recovers through a healthy upstream after upstream stall
     Given a fresh localnet with a 6-block voting window
@@ -27,6 +36,30 @@ Feature: Consensus and Node Resilience (B8, B20, R7, R11, R13, S14)
     When the follower is restarted in place and switched to an active healthy upstream
     Then the follower catches up to the committee finalized checkpoint with matching hash and state root
     And finalized headers derive PREVRANDAO from their exact parent proofs
+
+  @r7-same-upstream-recovery @tee @sgx-no-attest @sudo
+  Scenario: A FullNode recovers from its original upstream without process restart
+    Given a fresh localnet with a 6-block voting window
+    And the committee has reached a usable height
+    When a production FullNode syncs from the committee with bounded follower resolution
+    And the follower upstream is stopped while committee consensus advances
+    Then the disconnected follower remains responsive while its upstream is offline
+    When the original upstream restarts and the FullNode remains the same process
+    Then the unchanged FullNode catches up to a pinned matching finalized checkpoint
+
+  @r7-upstream-rate-limit @tee @sgx-no-attest @sudo
+  Scenario: A FullNode recovers from HTTP 429 without restarting or switching upstream
+    Given a fresh localnet with a 6-block voting window
+    And the committee has reached a usable height
+    When a production FullNode survives transient HTTP 429 from its unchanged upstream
+    Then the committee nodes agree on the state root
+
+  @r7-forged-finalization @tee @sgx-no-attest @sudo
+  Scenario: A FullNode rejects a forged finalized proof and resumes with its original upstream
+    Given a fresh localnet with a 6-block voting window
+    And the committee has reached a usable height
+    When a production FullNode receives a forged finalized proof from its upstream
+    Then the committee nodes agree on the state root
 
   @r11-finalize-epoch-progress
   Scenario: Finalize vote ingress across epoch boundary preserves consensus progress

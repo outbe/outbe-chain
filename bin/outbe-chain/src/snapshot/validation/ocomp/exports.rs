@@ -42,7 +42,7 @@ pub(crate) fn verify_export_inputs(
                 .join(&job_hex),
             limits,
         )?
-        .load_exact(&cas, &spec, bundle.bundle(), &inputs)?;
+        .load_integrity(&cas, &spec, bundle.bundle(), &inputs)?;
         let checkpoint = CheckpointIdentityV1 {
             finalized_block_number: job.intent_height,
             finalized_block_hash: finalized.finalized_request_block_hash,

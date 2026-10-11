@@ -61,6 +61,7 @@ struct VerifiedPlanSchedule<'a> {
     plan: PlanCommitmentV1,
     planner: LysisPlannerV1,
     topology: LysisPlanTopologyV1,
+    integrity_only: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -181,6 +182,24 @@ pub fn open_read_only_local_plan_audit<'a>(
     )
 }
 
+/// Reopen a stopped plan for ciphertext and public-authority integrity only.
+/// Live scheduler and materialization audits continue to read private amounts.
+pub fn open_read_only_local_plan_integrity_audit<'a>(
+    admissions: &'a AdmissionCatalogReader,
+    input_refs: &'a VerifiedInputChunkRefCatalog,
+    reader: &'a FilesystemCasReader,
+    bundle: &'a PinnedProtocolBundle,
+    limits: &'a SchemaLimits,
+) -> Result<LocalLysisPlanAuditV1<'a>, ExactLysisPlanError> {
+    open_local_plan_audit_with_mode(
+        PlanAuditMode::Integrity(admissions.verified_view()),
+        input_refs,
+        reader,
+        bundle,
+        limits,
+    )
+}
+
 pub fn open_local_plan_audit<'a>(
     admissions: &'a VerifiedAdmissionCatalog,
     input_refs: &'a VerifiedInputChunkRefCatalog,
@@ -188,6 +207,31 @@ pub fn open_local_plan_audit<'a>(
     bundle: &'a PinnedProtocolBundle,
     limits: &'a SchemaLimits,
 ) -> Result<LocalLysisPlanAuditV1<'a>, ExactLysisPlanError> {
+    open_local_plan_audit_with_mode(
+        PlanAuditMode::Private(admissions),
+        input_refs,
+        reader,
+        bundle,
+        limits,
+    )
+}
+
+enum PlanAuditMode<'a> {
+    Private(&'a VerifiedAdmissionCatalog),
+    Integrity(&'a VerifiedAdmissionCatalog),
+}
+
+fn open_local_plan_audit_with_mode<'a>(
+    mode: PlanAuditMode<'a>,
+    input_refs: &'a VerifiedInputChunkRefCatalog,
+    reader: &'a FilesystemCasReader,
+    bundle: &'a PinnedProtocolBundle,
+    limits: &'a SchemaLimits,
+) -> Result<LocalLysisPlanAuditV1<'a>, ExactLysisPlanError> {
+    let (admissions, integrity_only) = match mode {
+        PlanAuditMode::Private(admissions) => (admissions, false),
+        PlanAuditMode::Integrity(admissions) => (admissions, true),
+    };
     let pinned = admissions.reload_pinned_plan(reader)?;
     input_refs.require_manifest_authority(&pinned.input_manifest_ref, &pinned.input_manifest)?;
     if bundle.hash() != pinned.plan.protocol_bundle_hash
@@ -239,6 +283,7 @@ pub fn open_local_plan_audit<'a>(
             plan: pinned.plan,
             planner,
             topology,
+            integrity_only,
         },
     })
 }

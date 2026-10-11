@@ -21,7 +21,10 @@ use thiserror::Error;
 
 use crate::{
     cas::{CasError, FilesystemCas, FilesystemCasReader},
-    input_artifacts::{decode_verified_input_chunk, derive_input_chunk_ref},
+    input_artifacts::{
+        decode_verified_input_chunk, decode_verified_input_chunk_integrity, derive_input_chunk_ref,
+        derive_input_chunk_ref_integrity,
+    },
 };
 
 const DIRECTORY_MODE: u32 = 0o750;
@@ -578,6 +581,21 @@ impl VerifiedInputChunkRefCatalog {
             inner: self.exact_cursor_observing(on_progress)?,
             reader,
             bundle,
+            integrity_only: false,
+        })
+    }
+
+    /// Verify a closed catalog's CAS objects without opening private amounts.
+    pub fn exact_verified_integrity_cursor<'a>(
+        &'a self,
+        reader: &'a FilesystemCasReader,
+        bundle: &'a ProtocolBundleV1,
+    ) -> Result<VerifiedInputRefCursor<'a>, InputRefCatalogError> {
+        Ok(VerifiedInputRefCursor {
+            inner: self.exact_cursor()?,
+            reader,
+            bundle,
+            integrity_only: true,
         })
     }
 
@@ -602,6 +620,15 @@ impl VerifiedInputChunkRefCatalog {
         self.verify_reference(self.read(ordinal)?, reader, bundle)
     }
 
+    pub(crate) fn verified_reference_at_integrity(
+        &self,
+        ordinal: u32,
+        reader: &FilesystemCasReader,
+        bundle: &ProtocolBundleV1,
+    ) -> Result<VerifiedInputChunkRefV1, InputRefCatalogError> {
+        self.verify_reference_integrity(self.read(ordinal)?, reader, bundle)
+    }
+
     fn read(&self, ordinal: u32) -> Result<InputChunkRefV1, InputRefCatalogError> {
         read_reference(&self.root, &self.limits, ordinal)
     }
@@ -612,22 +639,47 @@ impl VerifiedInputChunkRefCatalog {
         reader: &FilesystemCasReader,
         bundle: &ProtocolBundleV1,
     ) -> Result<VerifiedInputChunkRefV1, InputRefCatalogError> {
+        self.verify_reference_with_mode(reference, reader, bundle, false)
+    }
+
+    fn verify_reference_integrity(
+        &self,
+        reference: InputChunkRefV1,
+        reader: &FilesystemCasReader,
+        bundle: &ProtocolBundleV1,
+    ) -> Result<VerifiedInputChunkRefV1, InputRefCatalogError> {
+        self.verify_reference_with_mode(reference, reader, bundle, true)
+    }
+
+    fn verify_reference_with_mode(
+        &self,
+        reference: InputChunkRefV1,
+        reader: &FilesystemCasReader,
+        bundle: &ProtocolBundleV1,
+        integrity_only: bool,
+    ) -> Result<VerifiedInputChunkRefV1, InputRefCatalogError> {
         let object_ref = CasObjectRefV1 {
             transport_digest: reference.transport_digest,
             encoded_bytes: reference.encoded_bytes,
             expected_ocb1_kind: Some(ObjectKind::AuthenticatedInputChunkV1.tag()),
         };
         let object = reader.read_verified(&object_ref)?;
-        let derived = derive_input_chunk_ref(&object, bundle, &self.limits)
-            .map_err(|_| {
-                ProtocolError::InvalidInvariant("input-ref catalog CAS reference derivation")
-            })?
-            .reference;
+        let derived = if integrity_only {
+            derive_input_chunk_ref_integrity(&object, bundle, &self.limits)
+        } else {
+            derive_input_chunk_ref(&object, bundle, &self.limits)
+        }
+        .map_err(|_| ProtocolError::InvalidInvariant("input-ref catalog CAS reference derivation"))?
+        .reference;
         if derived != reference {
             return Err(ProtocolError::InvalidInvariant("input-ref catalog CAS preimage").into());
         }
-        let chunk = decode_verified_input_chunk(&object, bundle, &self.limits)
-            .map_err(|_| ProtocolError::InvalidInvariant("input-ref catalog CAS chunk decoding"))?;
+        let chunk = if integrity_only {
+            decode_verified_input_chunk_integrity(&object, bundle, &self.limits)
+        } else {
+            decode_verified_input_chunk(&object, bundle, &self.limits)
+        }
+        .map_err(|_| ProtocolError::InvalidInvariant("input-ref catalog CAS chunk decoding"))?;
         if chunk.protocol_bundle_hash != self.header.protocol_bundle_hash
             || chunk.job_id != self.header.job_id
             || chunk.kind != reference.kind
@@ -887,6 +939,7 @@ pub struct VerifiedInputRefCursor<'a> {
     inner: InputRefCursor<'a>,
     reader: &'a FilesystemCasReader,
     bundle: &'a ProtocolBundleV1,
+    integrity_only: bool,
 }
 
 impl Iterator for VerifiedInputRefCursor<'_> {
@@ -897,11 +950,15 @@ impl Iterator for VerifiedInputRefCursor<'_> {
             Ok(reference) => reference,
             Err(error) => return Some(Err(error)),
         };
-        Some(
+        Some(if self.integrity_only {
             self.inner
                 .catalog
-                .verify_reference(reference, self.reader, self.bundle),
-        )
+                .verify_reference_integrity(reference, self.reader, self.bundle)
+        } else {
+            self.inner
+                .catalog
+                .verify_reference(reference, self.reader, self.bundle)
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

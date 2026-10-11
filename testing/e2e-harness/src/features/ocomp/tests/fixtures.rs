@@ -10,6 +10,12 @@ pub(super) fn completed_accountability() -> OcompPublicVoteAccountabilityV1 {
         quorum_threshold: 3,
         slot_validator_indexes: vec![0, 1, 2],
         slot_first_signatures: vec![(0, vec![0xa0]), (1, vec![0xa1]), (2, vec![0xa2])],
+        slot_first_digests: vec![
+            (0, alloy_primitives::B256::repeat_byte(0x44)),
+            (1, alloy_primitives::B256::repeat_byte(0x44)),
+            (2, alloy_primitives::B256::repeat_byte(0x44)),
+        ],
+        slot_equivocation_digests: vec![],
         quorum_result_digest: Some(alloy_primitives::B256::repeat_byte(0x44)),
         quorum_height: Some(92),
         quorum_signer_bitmap: Some(vec![0b0000_0111]),
@@ -112,6 +118,11 @@ pub(super) fn dynamic_accountability_fixture(
             .iter()
             .map(|&index| (index, vec![index as u8 + 1; 64]))
             .collect(),
+        slot_first_digests: slots
+            .iter()
+            .map(|&index| (index, B256::repeat_byte(4)))
+            .collect(),
+        slot_equivocation_digests: vec![],
         slot_validator_indexes: slots,
         quorum_result_digest: Some(B256::repeat_byte(4)),
         quorum_height: Some(900),

@@ -30,3 +30,9 @@ Feature: TEE enclave observability and session identity
     When validator-1's original sealed enclave identity is restored
     Then validator-1's enclave session reconnects without a node restart
     And the committee finalizes fresh blocks after enclave identity recovery
+
+  Scenario: A validator rejects wrong durable TEE genesis and identity before signing
+    Given a fresh localnet with a 6-block voting window
+    And the committee has reached a usable height
+    When validator 3 restarts with wrong durable TEE genesis and NodeHost identity
+    Then the committee finalizes fresh blocks after enclave identity recovery

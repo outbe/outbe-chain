@@ -12,6 +12,292 @@ use crate::world::World;
 
 const FOLLOWER_RESILIENCE_SLOT: usize = 14;
 const FOLLOWER_RESILIENCE_NAME: &str = "follower-resilience";
+const FOLLOWER_RATE_LIMIT_NAME: &str = "follower-rate-limit";
+
+mod upstream;
+use upstream::ControlledUpstream;
+
+#[when("a production FullNode survives transient HTTP 429 from its unchanged upstream")]
+fn follower_survives_upstream_rate_limit(world: &mut World) {
+    let slot = FOLLOWER_RESILIENCE_SLOT;
+    world
+        .localnet
+        .provision_full_node_node_host(slot)
+        .expect("provision production FullNode NodeHost");
+    let proxy = ControlledUpstream::start(world.validators.primary_port())
+        .expect("start scenario-owned upstream proxy");
+    world
+        .localnet
+        .launch_full_node_with_upstream_url(FOLLOWER_RATE_LIMIT_NAME, slot, 0, &proxy.url())
+        .expect("launch certified FullNode through upstream proxy");
+    let follower_port = world.validators.http_port(slot);
+    let primary = world.validators.primary_port();
+    let initial = world
+        .rpc
+        .finalized(primary)
+        .expect("initial committee finality");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(follower_port, initial, 90),
+        "FullNode did not catch up before rate limit"
+    );
+    let pid = world
+        .localnet
+        .live_follower_pid(FOLLOWER_RATE_LIMIT_NAME)
+        .expect("original FullNode PID");
+    let requests_before = proxy.tip_requests();
+    proxy.rate_limit_tips(true);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while proxy.rejected_tips() < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "FullNode did not query the rate-limited consensus status"
+        );
+        assert_eq!(
+            world
+                .localnet
+                .live_follower_pid(FOLLOWER_RATE_LIMIT_NAME)
+                .expect("FullNode during HTTP 429"),
+            pid
+        );
+        sleep(Duration::from_millis(250));
+    }
+    let target = world
+        .rpc
+        .finalized(primary)
+        .expect("committee finality during 429")
+        + 3;
+    assert!(
+        world.rpc.wait_finalized_at_least(primary, target, 90),
+        "committee did not advance during HTTP 429"
+    );
+    proxy.rate_limit_tips(false);
+    let expected = world
+        .rpc
+        .checkpoint_at(primary, target)
+        .expect("pin finalized recovery checkpoint");
+    assert!(
+        world.rpc.wait_finalized_at_least(follower_port, target, 90),
+        "unchanged FullNode did not recover after HTTP 429"
+    );
+    let observed = world
+        .rpc
+        .checkpoint_at(follower_port, target)
+        .expect("FullNode recovery checkpoint");
+    assert_eq!(observed.block_hash, expected.block_hash);
+    assert_eq!(observed.state_root, expected.state_root);
+    assert_eq!(
+        world
+            .localnet
+            .live_follower_pid(FOLLOWER_RATE_LIMIT_NAME)
+            .expect("FullNode after HTTP 429"),
+        pid
+    );
+    assert!(proxy.tip_requests() > requests_before);
+    let evidence = serde_json::json!({
+        "full_node_pid": pid, "upstream_url": proxy.url(),
+        "tip_requests": proxy.tip_requests(), "http_429_responses": proxy.rejected_tips(),
+        "recovery_checkpoint": {
+            "height": expected.height,
+            "block_hash": expected.block_hash,
+            "state_root": expected.state_root,
+        },
+    });
+    let path = world.localnet.scenario_dir().join("follower-http-429.json");
+    std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&evidence).expect("serialize 429 evidence"),
+    )
+    .expect("write 429 evidence");
+    world
+        .localnet
+        .stop_follower(FOLLOWER_RATE_LIMIT_NAME)
+        .expect("stop probe FullNode");
+}
+
+#[when("a production FullNode receives a forged finalized proof from its upstream")]
+fn follower_rejects_forged_finalization(world: &mut World) {
+    const NAME: &str = "follower-forged-finalization";
+    let slot = FOLLOWER_RESILIENCE_SLOT;
+    world
+        .localnet
+        .provision_full_node_node_host(slot)
+        .expect("provision production FullNode NodeHost");
+    let primary = world.validators.primary_port();
+    let proxy = ControlledUpstream::start(primary).expect("start owned proof proxy");
+    world
+        .localnet
+        .launch_full_node_with_upstream_url(NAME, slot, 0, &proxy.url())
+        .expect("launch certified FullNode through proof proxy");
+    let follower_port = world.validators.http_port(slot);
+    let initial = world
+        .rpc
+        .finalized(primary)
+        .expect("initial committee finality");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(follower_port, initial, 90),
+        "FullNode did not synchronize before forged proof"
+    );
+    let pid = world
+        .localnet
+        .live_follower_pid(NAME)
+        .expect("original FullNode process");
+    let forged_floor = world
+        .rpc
+        .finalized(follower_port)
+        .expect("FullNode finality before fault")
+        + 1;
+    proxy.forge_finalizations_from(forged_floor);
+    let deadline = std::time::Instant::now() + Duration::from_secs(90);
+    while proxy.forged_finalizations() < 1 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "FullNode never received a forged finalized proof (finalization requests: {}, forged: {})",
+            proxy.finalization_requests(),
+            proxy.forged_finalizations()
+        );
+        assert_eq!(
+            world
+                .localnet
+                .live_follower_pid(NAME)
+                .expect("FullNode during forged proof"),
+            pid
+        );
+        sleep(Duration::from_millis(250));
+    }
+    let forged_height = proxy
+        .first_forged_height()
+        .expect("first forged proof height");
+    assert!(forged_height >= forged_floor);
+    sleep(Duration::from_secs(2));
+    let during = world
+        .rpc
+        .finalized(follower_port)
+        .expect("FullNode RPC after forged proof");
+    assert!(
+        during < forged_height,
+        "FullNode accepted forged proof at h{forged_height}: finalized h{during}"
+    );
+    proxy.restore_finalizations();
+    let target = forged_height + 2;
+    assert!(
+        world.rpc.wait_finalized_at_least(primary, target, 90),
+        "committee did not advance past forged proof height"
+    );
+    let expected = world
+        .rpc
+        .checkpoint_at(primary, target)
+        .expect("pin committee checkpoint after forged proof");
+    assert!(
+        world.rpc.wait_finalized_at_least(follower_port, target, 90),
+        "FullNode did not recover after authentic proofs returned"
+    );
+    let observed = world
+        .rpc
+        .checkpoint_at(follower_port, target)
+        .expect("FullNode checkpoint after recovery");
+    assert_eq!(observed.block_hash, expected.block_hash);
+    assert_eq!(observed.state_root, expected.state_root);
+    assert_eq!(
+        world
+            .localnet
+            .live_follower_pid(NAME)
+            .expect("unchanged FullNode process"),
+        pid
+    );
+    let path = world
+        .localnet
+        .scenario_dir()
+        .join("follower-forged-finalization.json");
+    std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "full_node_pid": pid, "proxy_url": proxy.url(),
+            "forged_proof_count": proxy.forged_finalizations(),
+            "forged_height": forged_height, "finalized_during_forgery": during,
+            "recovery_height": target, "recovery_hash": expected.block_hash,
+            "recovery_state_root": expected.state_root,
+        }))
+        .expect("serialize forged proof evidence"),
+    )
+    .expect("write forged proof evidence");
+    world
+        .localnet
+        .stop_follower(NAME)
+        .expect("stop probe FullNode");
+}
+
+#[when("two validators are stopped outside an epoch transition")]
+fn stop_two_validators_outside_epoch(world: &mut World) {
+    assert_eq!(
+        world.validators.size(),
+        4,
+        "quorum fault requires four validators"
+    );
+    let ports = world.validators.committee_ports();
+    let before = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, 8, 60)
+        .expect("all validators finalize before quorum fault");
+    world.state.resilience_observed_height = Some(before.height);
+    for index in [2, 3] {
+        world
+            .localnet
+            .kill_validator(index)
+            .expect("stop validator for quorum fault");
+    }
+}
+
+#[then("the remaining two validators cannot finalize new blocks")]
+fn two_validators_cannot_finalize(world: &mut World) {
+    let ports = [world.validators.http_port(0), world.validators.http_port(1)];
+    // Let any proposal already committed before the process stops settle first.
+    sleep(Duration::from_secs(3));
+    let settled = ports.map(|port| world.rpc.finalized(port).expect("survivor finality RPC"));
+    sleep(Duration::from_secs(8));
+    for (&port, &baseline) in ports.iter().zip(&settled) {
+        assert_eq!(
+            world.rpc.finalized(port),
+            Some(baseline),
+            "two of four validators finalized a block without quorum on port {port}"
+        );
+    }
+    world.state.resilience_disconnected_height = Some(*settled.iter().max().unwrap());
+}
+
+#[when("both stopped validators restart from their durable data")]
+fn restart_two_validators(world: &mut World) {
+    for index in [2, 3] {
+        world
+            .localnet
+            .restart_validator(index)
+            .expect("restart validator after quorum fault");
+    }
+}
+
+#[then("all four validators finalize a matching checkpoint beyond the outage")]
+fn quorum_recovers_matching_checkpoint(world: &mut World) {
+    let ports = world.validators.committee_ports();
+    let outage_height = world
+        .state
+        .resilience_disconnected_height
+        .expect("outage height");
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, outage_height + 2, 90)
+        .expect("four validators recover finality after quorum returns");
+    for port in ports {
+        let observed = world
+            .rpc
+            .checkpoint_at(port, checkpoint.height)
+            .expect("validator checkpoint after quorum recovery");
+        assert_eq!(observed.block_hash, checkpoint.block_hash);
+        assert_eq!(observed.state_root, checkpoint.state_root);
+    }
+}
 
 // -----------------------------------------------------------------------
 // B8: post-epoch validator restart recovery smoke
@@ -126,6 +412,12 @@ fn sync_follower_with_bounded_resolution(world: &mut World) {
         sleep(Duration::from_secs(1));
     }
     assert!(synced, "follower did not sync to committee head");
+    world.state.resilience_follower_pid = Some(
+        world
+            .localnet
+            .live_follower_pid(FOLLOWER_RESILIENCE_NAME)
+            .expect("record original FullNode process"),
+    );
 }
 
 #[when("the follower upstream is stopped while committee consensus advances")]
@@ -205,6 +497,88 @@ fn restart_follower_and_switch_upstream(world: &mut World) {
         .localnet
         .launch_dcap_full_node(FOLLOWER_RESILIENCE_NAME, FOLLOWER_RESILIENCE_SLOT, 1)
         .expect("launch follower pointing to validator-1");
+}
+
+#[when("the original upstream restarts and the FullNode remains the same process")]
+fn restart_original_upstream_without_follower_restart(world: &mut World) {
+    let original_pid = world
+        .state
+        .resilience_follower_pid
+        .expect("original FullNode PID");
+    assert_eq!(
+        world
+            .localnet
+            .live_follower_pid(FOLLOWER_RESILIENCE_NAME)
+            .expect("FullNode remains alive during upstream outage"),
+        original_pid
+    );
+    world
+        .localnet
+        .restart_validator(0)
+        .expect("restart original upstream validator");
+    let ports = world.validators.committee_ports();
+    let outage_height = world
+        .state
+        .resilience_observed_height
+        .expect("survivor checkpoint");
+    let recovered = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, outage_height + 2, 90)
+        .expect("original upstream rejoins canonical committee");
+    world.state.resilience_observed_height = Some(recovered.height);
+    assert_eq!(
+        world
+            .localnet
+            .live_follower_pid(FOLLOWER_RESILIENCE_NAME)
+            .expect("FullNode still running after upstream restart"),
+        original_pid
+    );
+}
+
+#[then("the unchanged FullNode catches up to a pinned matching finalized checkpoint")]
+fn unchanged_follower_catches_up(world: &mut World) {
+    let height = world
+        .state
+        .resilience_observed_height
+        .expect("pinned recovery height");
+    let primary = world.validators.primary_port();
+    let expected = world
+        .rpc
+        .checkpoint_at(primary, height)
+        .expect("canonical recovery checkpoint");
+    let follower_port = world.validators.http_port(FOLLOWER_RESILIENCE_SLOT);
+    let original_pid = world
+        .state
+        .resilience_follower_pid
+        .expect("original FullNode PID");
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        assert_eq!(
+            world
+                .localnet
+                .live_follower_pid(FOLLOWER_RESILIENCE_NAME)
+                .expect("FullNode must remain live"),
+            original_pid
+        );
+        if world
+            .rpc
+            .finalized(follower_port)
+            .is_some_and(|finalized| finalized >= height)
+        {
+            let observed = world
+                .rpc
+                .checkpoint_at(follower_port, height)
+                .expect("FullNode pinned recovery checkpoint");
+            assert_eq!(observed.block_hash, expected.block_hash);
+            assert_eq!(observed.state_root, expected.state_root);
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "unchanged FullNode did not catch up after original upstream returned"
+        );
+        sleep(Duration::from_millis(250));
+    }
 }
 
 #[then("the follower catches up to the committee finalized checkpoint with matching hash and state root")]

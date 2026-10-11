@@ -16,6 +16,12 @@ use serde_json::{json, Value};
 use super::Localnet;
 use crate::world::state::TeeLeaseShutdownV1;
 
+pub(crate) struct ExpectedTeeFailures<'a> {
+    pub(crate) lease_guard_validator: Option<usize>,
+    pub(crate) sidecar_outage: Option<(usize, &'a str)>,
+    pub(crate) lease_guard_full_node: Option<&'a TeeLeaseShutdownV1>,
+}
+
 impl Localnet {
     /// At least one current committee process must actually reject the update.
     /// Not every replica executes a rejected local payload.
@@ -41,22 +47,26 @@ impl Localnet {
     }
 
     /// Audits runtime health independently from functional scenario acceptance.
-    pub fn audit_unexpected_logs(
+    pub(crate) fn audit_unexpected_logs(
         &self,
         unsupported_version: Option<u64>,
         expected_dkg_reveal: Option<&str>,
         expected_ocomp_full_node_mismatch: Option<B256>,
-        expected_tee_lease_guard_shutdown_validator: Option<usize>,
-        expected_tee_lease_guard_shutdown_full_node: Option<&TeeLeaseShutdownV1>,
+        expected_tee_failures: ExpectedTeeFailures<'_>,
     ) -> Result<LogAudit> {
         let result = audit_runtime_logs(
             &self.cfg.dir,
-            self.cfg.validators,
-            unsupported_version,
-            expected_dkg_reveal,
-            expected_ocomp_full_node_mismatch,
-            expected_tee_lease_guard_shutdown_validator,
-            expected_tee_lease_guard_shutdown_full_node,
+            AuditExpectations {
+                validators: self.cfg.validators,
+                unsupported_version,
+                expected_dkg_reveal,
+                expected_ocomp_full_node_mismatch,
+                expected_tee_lease_guard_shutdown_validator: expected_tee_failures
+                    .lease_guard_validator,
+                expected_tee_sidecar_outage: expected_tee_failures.sidecar_outage,
+                expected_tee_lease_guard_shutdown_full_node: expected_tee_failures
+                    .lease_guard_full_node,
+            },
         );
         // Keep an unavailable audit as a failed audit result so the after hook
         // can publish already-captured public evidence before failing closed.
@@ -81,6 +91,7 @@ struct LogCounts {
     expected_request_deadline_cancellation: usize,
     expected_ocomp_full_node_mismatch: usize,
     expected_tee_lease_guard_shutdown_fatal: usize,
+    expected_tee_sidecar_outage_fatal: usize,
 }
 
 impl LogCounts {
@@ -114,6 +125,7 @@ impl LogCounts {
             "expected_request_deadline_cancellation": self.expected_request_deadline_cancellation,
             "expected_ocomp_full_node_mismatch": self.expected_ocomp_full_node_mismatch,
             "expected_tee_lease_guard_shutdown_fatal": self.expected_tee_lease_guard_shutdown_fatal,
+            "expected_tee_sidecar_outage_fatal": self.expected_tee_sidecar_outage_fatal,
         })
     }
 }
@@ -169,16 +181,8 @@ struct PayloadFailure {
     location: String,
 }
 
-pub(super) fn audit_runtime_logs(
-    root: &Path,
-    validators: usize,
-    unsupported_version: Option<u64>,
-    expected_dkg_reveal: Option<&str>,
-    expected_ocomp_full_node_mismatch: Option<B256>,
-    expected_tee_lease_guard_shutdown_validator: Option<usize>,
-    expected_tee_lease_guard_shutdown_full_node: Option<&TeeLeaseShutdownV1>,
-) -> Result<LogAudit> {
-    if let Some(proof) = expected_tee_lease_guard_shutdown_full_node {
+fn audit_runtime_logs(root: &Path, expectations: AuditExpectations<'_>) -> Result<LogAudit> {
+    if let Some(proof) = expectations.expected_tee_lease_guard_shutdown_full_node {
         for interval in &proof.sinks {
             let metadata =
                 fs::metadata(&interval.path).wrap_err("stat retained lease shutdown sink")?;
@@ -206,15 +210,7 @@ pub(super) fn audit_runtime_logs(
             Ok((path, content))
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(audit_loaded_logs_with_all_expectations(
-        &logs,
-        validators,
-        unsupported_version,
-        expected_dkg_reveal,
-        expected_ocomp_full_node_mismatch,
-        expected_tee_lease_guard_shutdown_validator,
-        expected_tee_lease_guard_shutdown_full_node,
-    ))
+    Ok(audit_loaded_logs_with_all_expectations(&logs, expectations))
 }
 
 #[cfg(test)]
@@ -232,24 +228,73 @@ fn audit_loaded_logs_with_expectations(
 ) -> LogAudit {
     audit_loaded_logs_with_all_expectations(
         logs,
-        validators,
-        unsupported_version,
-        expected_dkg_reveal,
-        expected_ocomp_full_node_mismatch,
-        None,
-        None,
+        AuditExpectations {
+            validators,
+            unsupported_version,
+            expected_dkg_reveal,
+            expected_ocomp_full_node_mismatch,
+            expected_tee_lease_guard_shutdown_validator: None,
+            expected_tee_sidecar_outage: None,
+            expected_tee_lease_guard_shutdown_full_node: None,
+        },
     )
+}
+
+#[cfg(test)]
+fn audit_validator_shutdown(logs: &[(PathBuf, String)], validator: usize) -> LogAudit {
+    audit_loaded_logs_with_all_expectations(
+        logs,
+        AuditExpectations {
+            validators: 4,
+            unsupported_version: None,
+            expected_dkg_reveal: None,
+            expected_ocomp_full_node_mismatch: None,
+            expected_tee_lease_guard_shutdown_validator: Some(validator),
+            expected_tee_sidecar_outage: None,
+            expected_tee_lease_guard_shutdown_full_node: None,
+        },
+    )
+}
+
+#[cfg(test)]
+fn audit_full_node_shutdown(logs: &[(PathBuf, String)], proof: &TeeLeaseShutdownV1) -> LogAudit {
+    audit_loaded_logs_with_all_expectations(
+        logs,
+        AuditExpectations {
+            validators: 4,
+            unsupported_version: None,
+            expected_dkg_reveal: None,
+            expected_ocomp_full_node_mismatch: None,
+            expected_tee_lease_guard_shutdown_validator: None,
+            expected_tee_sidecar_outage: None,
+            expected_tee_lease_guard_shutdown_full_node: Some(proof),
+        },
+    )
+}
+
+struct AuditExpectations<'a> {
+    validators: usize,
+    unsupported_version: Option<u64>,
+    expected_dkg_reveal: Option<&'a str>,
+    expected_ocomp_full_node_mismatch: Option<B256>,
+    expected_tee_lease_guard_shutdown_validator: Option<usize>,
+    expected_tee_sidecar_outage: Option<(usize, &'a str)>,
+    expected_tee_lease_guard_shutdown_full_node: Option<&'a TeeLeaseShutdownV1>,
 }
 
 fn audit_loaded_logs_with_all_expectations(
     logs: &[(PathBuf, String)],
-    validators: usize,
-    unsupported_version: Option<u64>,
-    expected_dkg_reveal: Option<&str>,
-    expected_ocomp_full_node_mismatch: Option<B256>,
-    expected_tee_lease_guard_shutdown_validator: Option<usize>,
-    expected_tee_lease_guard_shutdown_full_node: Option<&TeeLeaseShutdownV1>,
+    expectations: AuditExpectations<'_>,
 ) -> LogAudit {
+    let AuditExpectations {
+        validators,
+        unsupported_version,
+        expected_dkg_reveal,
+        expected_ocomp_full_node_mismatch,
+        expected_tee_lease_guard_shutdown_validator,
+        expected_tee_sidecar_outage,
+        expected_tee_lease_guard_shutdown_full_node,
+    } = expectations;
     let mut findings = Vec::new();
     let mut counts = LogCounts {
         runtime_log_files: logs.len(),
@@ -272,6 +317,16 @@ fn audit_loaded_logs_with_all_expectations(
         .map(|validator| expected_tee_lease_guard_shutdown_records(logs, validators, validator))
         .transpose();
     let expected_tee_lease_shutdown_records = match expected_tee_lease_shutdown_records {
+        Ok(records) => records.unwrap_or_default(),
+        Err(reason) => {
+            findings.push(reason);
+            BTreeSet::new()
+        }
+    };
+    let expected_tee_sidecar_outage_records = expected_tee_sidecar_outage
+        .map(|(validator, tx)| expected_tee_sidecar_outage_records(logs, validators, validator, tx))
+        .transpose();
+    let expected_tee_sidecar_outage_records = match expected_tee_sidecar_outage_records {
         Ok(records) => records.unwrap_or_default(),
         Err(reason) => {
             findings.push(reason);
@@ -316,6 +371,8 @@ fn audit_loaded_logs_with_all_expectations(
             let accepted_tee_lease_shutdown = expected_tee_lease_shutdown_records
                 .contains(&(path.clone(), index))
                 || expected_tee_lease_full_node_shutdown_records.contains(&(path.clone(), index));
+            let accepted_tee_sidecar_outage =
+                expected_tee_sidecar_outage_records.contains(&(path.clone(), index));
             if accepted_update {
                 counts.expected_update_fatal += 1;
             }
@@ -328,11 +385,15 @@ fn audit_loaded_logs_with_all_expectations(
             if accepted_tee_lease_shutdown {
                 counts.expected_tee_lease_guard_shutdown_fatal += 1;
             }
+            if accepted_tee_sidecar_outage {
+                counts.expected_tee_sidecar_outage_fatal += 1;
+            }
             if !accepted_legacy_deadline
                 && !accepted_update
                 && !accepted_reveal
                 && !accepted_ocomp_mismatch
                 && !accepted_tee_lease_shutdown
+                && !accepted_tee_sidecar_outage
             {
                 counts.observe(line);
             }
@@ -341,6 +402,7 @@ fn audit_loaded_logs_with_all_expectations(
                 && !accepted_reveal
                 && !accepted_ocomp_mismatch
                 && !accepted_tee_lease_shutdown
+                && !accepted_tee_sidecar_outage
                 && unexpected_log_line(line)
             {
                 findings.push(format!("{location}: {line}"));
@@ -853,7 +915,7 @@ fn expected_ocomp_full_node_mismatch_records(
         }
         expected.extend([
             (2, format!("ERROR outbe_chain::launch::node: embedded OCOMP requested node shutdown failure_class=Other failure={sticky}"), true),
-            (2, format!("ERROR outbe_chain::launch::node: consensus stack failed during shutdown error={recovery}"), true),
+            (2, format!("ERROR outbe_chain::launch::node::consensus: consensus stack failed during shutdown error={recovery}"), true),
         ]);
         if sink == "node.log" {
             expected.extend([
@@ -915,6 +977,112 @@ fn expected_ocomp_full_node_mismatch_records(
         ));
     }
     Ok(accepted)
+}
+
+fn expected_tee_sidecar_outage_records(
+    logs: &[(PathBuf, String)],
+    validators: usize,
+    expected_validator: usize,
+    tx_hash: &str,
+) -> Result<BTreeSet<(PathBuf, usize)>, String> {
+    if expected_validator >= validators || !tx_hash.starts_with("0x") || tx_hash.len() != 66 {
+        return Err("invalid expected TEE sidecar outage identity".into());
+    }
+    let mut accepted = BTreeSet::new();
+    let mut sinks = BTreeSet::new();
+    let mut node_proof = false;
+    for (path, content) in logs {
+        if validator_log_index(path, validators) != Some(expected_validator) {
+            continue;
+        }
+        let Some(sink @ ("node.log" | "reth.log")) =
+            path.file_name().and_then(|name| name.to_str())
+        else {
+            continue;
+        };
+        let lines = content.lines().collect::<Vec<_>>();
+        let Some(SidecarFailStop { fatal, proof }) = sidecar_fail_stop(&lines, sink, tx_hash)
+            .map_err(|_| format!("expected one TEE outage fail-stop in {}", path.display()))?
+        else {
+            continue;
+        };
+        if !sinks.insert(sink) {
+            return Err(format!(
+                "expected one TEE outage fail-stop in {}",
+                path.display()
+            ));
+        }
+        if let Some((actor, sidecar)) = proof {
+            node_proof = true;
+            accepted.insert((path.clone(), actor));
+            accepted.insert((path.clone(), sidecar));
+        }
+        accepted.insert((path.clone(), fatal));
+    }
+    if sinks != BTreeSet::from(["node.log", "reth.log"]) || !node_proof {
+        return Err(format!(
+            "missing matching validator-{expected_validator} TEE sidecar fail-stop for {tx_hash}"
+        ));
+    }
+    Ok(accepted)
+}
+
+struct SidecarFailStop {
+    fatal: usize,
+    proof: Option<(usize, usize)>,
+}
+
+fn sidecar_fail_stop(
+    lines: &[&str],
+    sink: &str,
+    tx_hash: &str,
+) -> Result<Option<SidecarFailStop>, ()> {
+    let fatal = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            line.contains("ERROR outbe_chain::launch::node::consensus: consensus stack failed e=executor actor returned fatal error")
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let [index] = fatal.as_slice() else {
+        if fatal.is_empty() {
+            return Ok(None);
+        }
+        return Err(());
+    };
+    if sink != "node.log" {
+        return Ok(Some(SidecarFailStop {
+            fatal: *index,
+            proof: None,
+        }));
+    }
+    let trailer = lines
+        .iter()
+        .enumerate()
+        .skip(index + 1)
+        .take(20)
+        .take_while(|(_, line)| !process_start_boundary(line));
+    let mut actor_error = None;
+    let mut sidecar_error = None;
+    for (trailer_index, line) in trailer {
+        if line.trim() == "0: executor actor returned fatal error" {
+            actor_error = Some(trailer_index);
+        }
+        if line.contains("2: internal EVM error occurred when executing transaction")
+            && line.contains(tx_hash)
+            && line.contains("tee_sidecar_unavailable: io error: Connection refused")
+        {
+            sidecar_error = Some(trailer_index);
+        }
+    }
+    let proof = actor_error
+        .zip(sidecar_error)
+        .filter(|(actor, sidecar)| actor < sidecar);
+    Ok(Some(SidecarFailStop {
+        fatal: *index,
+        proof,
+    }))
 }
 
 fn expected_tee_lease_guard_shutdown_records(
@@ -1189,7 +1357,7 @@ fn exact_tee_lease_expired_full_node_guard_shutdown(line: &str) -> bool {
 fn exact_consensus_stack_shutdown(line: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.trim_end()
-        .ends_with("outbe_chain::launch::node: consensus stack shutting down")
+        .ends_with("outbe_chain::launch::node::consensus: consensus stack shutting down")
         && line.contains("info")
         && !contains_nonfatal_alarm(&line)
 }
@@ -1246,8 +1414,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        audit_loaded_logs, audit_loaded_logs_with_all_expectations,
-        audit_loaded_logs_with_expectations,
+        audit_full_node_shutdown, audit_loaded_logs, audit_loaded_logs_with_expectations,
+        audit_validator_shutdown,
     };
     use alloy_primitives::B256;
     use outbe_primitives::runtime_audit_v1::{
@@ -1684,7 +1852,7 @@ mod tests {
         );
         let recovery = format!("OCOMP recovery readiness failed (Other): {sticky}");
         let restart = format!(
-            "{start}\n{anchor}\nERROR outbe_chain::launch::node: consensus stack failed during shutdown error={recovery}"
+            "{start}\n{anchor}\nERROR outbe_chain::launch::node::consensus: consensus stack failed during shutdown error={recovery}"
         );
         let expected = vec![
             (
@@ -1830,7 +1998,7 @@ mod tests {
         let guard =
             "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown \
             reason=validator is jailed; complete ordinary unjail and then run tee join";
-        let shutdown = "INFO outbe_chain::launch::node: consensus stack shutting down";
+        let shutdown = "INFO outbe_chain::launch::node::consensus: consensus stack shutting down";
         vec![
             (
                 PathBuf::from(format!("scenario-1/validator-{validator}/node.log")),
@@ -1847,7 +2015,7 @@ mod tests {
 
     fn tee_lease_full_node_shutdown_bundle(full_node: usize) -> Vec<(PathBuf, String)> {
         let guard = "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=finalized TEE lease expired at 1789793371; stop node and run tee join";
-        let shutdown = "INFO outbe_chain::launch::node: consensus stack shutting down";
+        let shutdown = "INFO outbe_chain::launch::node::consensus: consensus stack shutting down";
         vec![
             (
                 PathBuf::from(format!("scenario-1/validator-{full_node}/node.log")),
@@ -1890,28 +2058,19 @@ mod tests {
     #[test]
     fn tee_lease_guard_accepts_only_the_explicit_exact_two_sink_shutdown_bundle() {
         let expected = tee_lease_guard_shutdown_bundle(3);
-        let accepted =
-            audit_loaded_logs_with_all_expectations(&expected, 4, None, None, None, Some(3), None);
+        let accepted = audit_validator_shutdown(&expected, 3);
         assert!(accepted.is_clean(), "{:?}", accepted.findings);
         assert_eq!(accepted.counts.expected_tee_lease_guard_shutdown_fatal, 4);
 
         let mut later_unrelated_shutdown = expected.clone();
         later_unrelated_shutdown[0]
             .1
-            .push_str("\nINFO outbe_chain::launch::node: consensus stack shutting down");
+            .push_str("\nINFO outbe_chain::launch::node::consensus: consensus stack shutting down");
         later_unrelated_shutdown[1].1.push_str(
             "\nINFO reth::cli: Starting Reth version=1.2.3\n\
-             INFO outbe_chain::launch::node: consensus stack shutting down",
+             INFO outbe_chain::launch::node::consensus: consensus stack shutting down",
         );
-        let accepted_with_later_shutdown = audit_loaded_logs_with_all_expectations(
-            &later_unrelated_shutdown,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        );
+        let accepted_with_later_shutdown = audit_validator_shutdown(&later_unrelated_shutdown, 3);
         assert!(
             accepted_with_later_shutdown.is_clean(),
             "{:?}",
@@ -1927,34 +2086,15 @@ mod tests {
         let unarmed = audit_loaded_logs_with_expectations(&expected, 4, None, None, None);
         assert!(!unarmed.is_clean());
 
-        let wrong_validator =
-            audit_loaded_logs_with_all_expectations(&expected, 4, None, None, None, Some(2), None);
+        let wrong_validator = audit_validator_shutdown(&expected, 2);
         assert!(!wrong_validator.is_clean());
 
         let missing_sink = vec![expected[0].clone()];
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &missing_sink,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(!audit_validator_shutdown(&missing_sink, 3).is_clean());
 
         let mut duplicate_sink = expected.clone();
         duplicate_sink.push(expected[0].clone());
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &duplicate_sink,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(!audit_validator_shutdown(&duplicate_sink, 3).is_clean());
 
         let reordered = expected
             .iter()
@@ -1963,16 +2103,7 @@ mod tests {
                 (path.clone(), format!("{}\n{}", lines[1], lines[0]))
             })
             .collect::<Vec<_>>();
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &reordered,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(!audit_validator_shutdown(&reordered, 3).is_clean());
 
         let process_epoch_crossing = expected
             .iter()
@@ -1980,53 +2111,26 @@ mod tests {
                 (
                     path.clone(),
                     content.replacen(
-                        "\nINFO outbe_chain::launch::node: consensus stack shutting down",
-                        "\nINFO reth::cli: Starting Reth version=1.2.3\nINFO outbe_chain::launch::node: consensus stack shutting down",
+                        "\nINFO outbe_chain::launch::node::consensus: consensus stack shutting down",
+                        "\nINFO reth::cli: Starting Reth version=1.2.3\nINFO outbe_chain::launch::node::consensus: consensus stack shutting down",
                         1,
                     ),
                 )
             })
             .collect::<Vec<_>>();
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &process_epoch_crossing,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(!audit_validator_shutdown(&process_epoch_crossing, 3).is_clean());
 
         let mut extra_fatal = expected.clone();
         extra_fatal[0]
             .1
             .push_str("\nERROR outbe_chain::launch::node: unrelated fatal condition");
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &extra_fatal,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(!audit_validator_shutdown(&extra_fatal, 3).is_clean());
 
         let mut duplicate_fatal_trailer = expected.clone();
         duplicate_fatal_trailer[0]
             .1
             .push_str("\nERROR engine::tree: Fatal error");
-        assert!(!audit_loaded_logs_with_all_expectations(
-            &duplicate_fatal_trailer,
-            4,
-            None,
-            None,
-            None,
-            Some(3),
-            None,
-        )
-        .is_clean());
+        assert!(!audit_validator_shutdown(&duplicate_fatal_trailer, 3).is_clean());
     }
 
     #[test]
@@ -2035,7 +2139,7 @@ mod tests {
         let proof = full_node_proof(&expected);
         let audit = |logs: &[(PathBuf, String)],
                      proof: &crate::world::state::TeeLeaseShutdownV1| {
-            audit_loaded_logs_with_all_expectations(logs, 4, None, None, None, None, Some(proof))
+            audit_full_node_shutdown(logs, proof)
         };
         let accepted = audit(&expected, &proof);
         assert!(accepted.is_clean(), "{:?}", accepted.findings);
@@ -2082,8 +2186,7 @@ mod tests {
         let baseline = tee_lease_full_node_shutdown_bundle(4);
         let check = |logs: &[(PathBuf, String)]| {
             let proof = full_node_proof(logs);
-            audit_loaded_logs_with_all_expectations(logs, 4, None, None, None, None, Some(&proof))
-                .is_clean()
+            audit_full_node_shutdown(logs, &proof).is_clean()
         };
         assert!(check(&baseline));
         for sink in 0..2 {
@@ -2106,12 +2209,12 @@ mod tests {
             }
         }
         for replacement in [
-            "INFO reth::cli: Starting Reth version=other\nINFO outbe_chain::launch::node: consensus stack shutting down",
-            "INFO outbe_chain::launch::node: consensus stack shutting down\nINFO reth::cli: Starting Reth version=other",
+            "INFO reth::cli: Starting Reth version=other\nINFO outbe_chain::launch::node::consensus: consensus stack shutting down",
+            "INFO outbe_chain::launch::node::consensus: consensus stack shutting down\nINFO reth::cli: Starting Reth version=other",
         ] {
             let mut bad = baseline.clone();
             bad[1].1 = bad[1].1.replace(
-                "INFO outbe_chain::launch::node: consensus stack shutting down",
+                "INFO outbe_chain::launch::node::consensus: consensus stack shutting down",
                 replacement,
             );
             assert!(!check(&bad));
@@ -2154,29 +2257,11 @@ mod tests {
         for (_, log) in &mut appended {
             log.push_str("INFO reth::cli: Starting Reth version=new\n");
         }
-        assert!(audit_loaded_logs_with_all_expectations(
-            &appended,
-            4,
-            None,
-            None,
-            None,
-            None,
-            Some(&proof)
-        )
-        .is_clean());
+        assert!(audit_full_node_shutdown(&appended, &proof).is_clean());
         for changed in ["", "INFO replaced process\n"] {
             let mut bad = baseline.clone();
             bad[1].1 = changed.to_owned();
-            assert!(!audit_loaded_logs_with_all_expectations(
-                &bad,
-                4,
-                None,
-                None,
-                None,
-                None,
-                Some(&proof)
-            )
-            .is_clean());
+            assert!(!audit_full_node_shutdown(&bad, &proof).is_clean());
         }
         let mut previous = baseline.clone();
         let mut shifted = proof.clone();
@@ -2185,16 +2270,7 @@ mod tests {
             shifted.sinks[index].start += 22;
             shifted.sinks[index].end += 22;
         }
-        assert!(audit_loaded_logs_with_all_expectations(
-            &previous,
-            4,
-            None,
-            None,
-            None,
-            None,
-            Some(&shifted)
-        )
-        .is_clean());
+        assert!(audit_full_node_shutdown(&previous, &shifted).is_clean());
     }
 
     #[test]

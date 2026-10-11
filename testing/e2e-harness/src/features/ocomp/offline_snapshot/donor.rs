@@ -19,10 +19,35 @@ pub(super) fn create_snapshot_archive(
     use std::process::Command;
     let index = 3;
     let archive = evidence_dir.join("created.tar");
+    // Native MDBX files reserve large sparse ranges. Snapshot tar stores those
+    // ranges as bytes, so creating it on the validators' disk can stall their
+    // projection while consensus is still live. Stage in memory, then copy
+    // the finished tar back with holes in its all-zero ranges.
+    let scratch_root = std::path::Path::new("/dev/shm");
+    let scratch_free = rustix::fs::statvfs(scratch_root)
+        .map(|stat| u128::from(stat.f_bavail) * u128::from(stat.f_frsize))?;
+    let memory_available_kib = std::fs::read_to_string("/proc/meminfo")?
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("MemAvailable:")?
+                .split_whitespace()
+                .next()
+        })
+        .ok_or_else(|| eyre!("cannot read MemAvailable for snapshot staging"))?
+        .parse::<u128>()?;
+    ensure!(
+        scratch_free >= 16 * 1024_u128.pow(3)
+            && memory_available_kib * 1024 >= 24 * 1024_u128.pow(3),
+        "insufficient memory for isolated native snapshot staging: shm_free={scratch_free}, mem_available_kib={memory_available_kib}"
+    );
+    let scratch = tempfile::Builder::new()
+        .prefix("outbe-snapshot-create-")
+        .tempdir_in(scratch_root)?;
+    let staged_archive = scratch.path().join("created.tar");
     let mut command = Command::new(&launch.program);
     command
         .args(["snapshot", "create", "--output"])
-        .arg(&archive)
+        .arg(&staged_archive)
         .arg("--signing-key")
         .arg(world.validators.get(index).evm_key_path())
         .args([
@@ -40,6 +65,22 @@ pub(super) fn create_snapshot_archive(
         std::time::Duration::from_secs(600),
     )?;
     successful_command(&create)?;
+    let mut command = Command::new("cp");
+    command
+        .args(["--sparse=always", "--"])
+        .arg(&staged_archive)
+        .arg(&archive);
+    successful_command(&run_snapshot_command(
+        command,
+        evidence_dir,
+        "save-sparse-archive",
+        std::time::Duration::from_secs(600),
+    )?)?;
+    ensure!(
+        std::fs::metadata(&archive)?.len() == std::fs::metadata(&staged_archive)?.len(),
+        "sparse archive copy changed native tar length"
+    );
+    scratch.close()?;
     let archive_sha256 = snapshot_file_sha256(&archive)?;
     let mut command = Command::new("tar");
     command.arg("-xOf").arg(&archive).arg("manifest.json");
@@ -117,6 +158,7 @@ pub(super) fn initial_snapshot_evidence(
 }
 
 pub(super) fn create_stopped_snapshot_result(world: &mut crate::world::World) -> eyre::Result<()> {
+    capture_certified_generation_for_snapshot(world)?;
     let SnapshotDonorContext {
         index,
         node,
@@ -192,6 +234,70 @@ pub(super) fn create_stopped_snapshot_result(world: &mut crate::world::World) ->
     Ok(())
 }
 
+fn capture_certified_generation_for_snapshot(world: &mut crate::world::World) -> eyre::Result<()> {
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .ok_or_else(|| eyre!("missing finalized JobIntent before snapshot"))?;
+    let ports = world.validators.committee_ports();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    loop {
+        let activations = ports
+            .iter()
+            .copied()
+            .map(|port| {
+                world.rpc.finalized_ocomp_activation_on(
+                    port,
+                    request.request_height,
+                    request.intent_id,
+                )
+            })
+            .collect::<Vec<_>>();
+        if activations.iter().all(Option::is_some) {
+            let activation = activations[0].clone().expect("all activations present");
+            ensure!(
+                activations
+                    .iter()
+                    .all(|value| value.as_ref() == Some(&activation)),
+                "validators disagree on finalized Lysis activation before snapshot"
+            );
+            let generations = ports
+                .iter()
+                .copied()
+                .map(|port| {
+                    world
+                        .rpc
+                        .finalized_ocomp_certified_generation_on(port, &activation)
+                })
+                .collect::<Vec<_>>();
+            if generations.iter().all(Option::is_some) {
+                let generation = generations[0].clone().expect("all generations present");
+                ensure!(
+                    generations
+                        .iter()
+                        .all(|value| value.as_ref() == Some(&generation)),
+                    "validators disagree on finalized Lysis generation before snapshot"
+                );
+                ensure!(
+                    generation.job_id == request.job_id
+                        && generation.block_number == activation.block_number
+                        && generation.block_hash == activation.block_hash,
+                    "snapshot generation does not match finalized JobIntent activation"
+                );
+                world.state.ocomp_activation = Some(activation);
+                world.state.ocomp_certified_generation = Some(generation);
+                return Ok(());
+            }
+        }
+        ensure!(
+            std::time::Instant::now() < deadline,
+            "finalized Lysis generation did not become available before snapshot"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
 struct SnapshotDonorContext {
     index: usize,
     node: std::path::PathBuf,
@@ -205,7 +311,7 @@ struct SnapshotDonorContext {
 fn snapshot_donor_context(world: &mut crate::world::World) -> eyre::Result<SnapshotDonorContext> {
     // Exercise restart after committee rotation, so genesis reconstruction
     // cannot satisfy the snapshot acceptance check below.
-    let rotated_height = super::super::OCOMP_TEST_EPOCH_LENGTH_BLOCKS * 2;
+    let rotated_height = super::super::OCOMP_TEST_EPOCH_LENGTH_BLOCKS + 1;
     ensure!(
         world
             .rpc
