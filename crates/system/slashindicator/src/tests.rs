@@ -1,5 +1,6 @@
 use alloy_primitives::{address, b256, Address, B256, U256};
-use outbe_primitives::addresses::STAKING_ADDRESS;
+use alloy_sol_types::SolEvent;
+use outbe_primitives::addresses::{SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
 use outbe_primitives::storage::hashmap::{HashMapStorageProvider, MutationPrefixViews};
@@ -9,7 +10,9 @@ use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::test_support::test_lifecycle_of;
 use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 
+use crate::constants::DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD;
 use crate::hooks;
+use crate::precompile::ISlashIndicator;
 use crate::schema::SlashIndicator;
 use crate::test_signing::{self, signed_evidence, POP_DST};
 
@@ -68,9 +71,9 @@ fn register_and_activate_with_pubkey_and_stake(
         .increase_balance(STAKING_ADDRESS, stake_amount)
         .unwrap();
     staking.total_staked.write(stake_amount).unwrap();
-    // the evidence precompiles now require an ACTIVE-validator submitter.
-    // Register SUBMITTER as ACTIVE so the evidence tests reach the verifier (a
-    // distinct test asserts a non-ACTIVE caller is rejected).
+    // The evidence precompiles require an ACTIVE-validator submitter.
+    // Register SUBMITTER as ACTIVE so the evidence tests reach the verifier.
+    // A separate test verifies that the precompiles reject a non-ACTIVE caller.
     if !vs
         .validator_lifecycle(SUBMITTER)
         .unwrap()
@@ -95,8 +98,8 @@ fn register_active_fixture(
 // ---------------------------------------------------------------------------
 // 1. test_slash_proposer_misdemeanor
 // ---------------------------------------------------------------------------
-/// Reaches the misdemeanor threshold (default 50) without triggering a felony.
-/// Verifies the miss count is accumulated and felony_count stays zero.
+/// Reaches the default misdemeanor threshold without triggering a felony.
+/// Verifies that the miss count increases and felony_count stays zero.
 #[test]
 fn test_slash_proposer_misdemeanor() {
     with_storage(|storage| {
@@ -104,12 +107,14 @@ fn test_slash_proposer_misdemeanor() {
 
         let mut si = SlashIndicator::new(storage.clone());
 
-        // Default misdemeanor threshold is 50
-        for _ in 0..50 {
+        for _ in 0..DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD {
             si.slash_proposer(VAL_A).unwrap();
         }
 
-        assert_eq!(si.get_proposer_miss_count(VAL_A).unwrap(), 50);
+        assert_eq!(
+            si.get_proposer_miss_count(VAL_A).unwrap(),
+            DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD
+        );
         // SlashIndicator only logs the misdemeanor. No felony.
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 0);
 
@@ -123,10 +128,10 @@ fn test_slash_proposer_misdemeanor() {
 // ---------------------------------------------------------------------------
 // 2. test_slash_proposer_felony
 // ---------------------------------------------------------------------------
-/// Reaches the felony threshold (default 150), verifying:
-/// - felony_count is incremented
-/// - validator is forced out in ValidatorSet
-/// - stake is reduced in Staking
+/// Reaches an explicitly configured felony threshold of 150 and verifies:
+/// - SlashIndicator increments felony_count.
+/// - ValidatorSet jails the validator.
+/// - Staking reduces the stake.
 #[test]
 fn test_slash_proposer_felony() {
     with_storage(|storage| {
@@ -144,7 +149,7 @@ fn test_slash_proposer_felony() {
         // Felony count must be incremented to 1
         assert_eq!(si.get_felony_count(VAL_A).unwrap(), 1);
 
-        // Validator must be forced out
+        // Validator must be JAILED.
         assert!(matches!(
             test_lifecycle_of(storage.clone(), VAL_A).unwrap(),
             ValidatorLifecycle::JailRetained(_)
@@ -200,8 +205,7 @@ fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
 // ---------------------------------------------------------------------------
 // 3. test_slash_voter
 // ---------------------------------------------------------------------------
-/// Increments voter miss count for a validator.
-/// No on-chain action at threshold in v1.
+/// Records voter misses below the warning and felony thresholds.
 #[test]
 fn test_slash_voter() {
     with_storage(|storage| {
@@ -607,9 +611,9 @@ fn test_full_lifecycle_integration() {
         assert_eq!(si.get_felony_count(validator).unwrap(), 1);
     });
 
-    // 8. On a felony the validator is JAILED (not force-exited). It remains
-    // JAILED until the operator unjails (-> PENDING) or unstakes out. DKG drops
-    // it from the committee at the next reshare regardless.
+    // 8. A felony jails the validator. It remains JAILED until the operator
+    // unjails it (-> PENDING) or withdraws its stake.
+    // DKG removes it from the committee at the next reshare in either case.
     storage.set_timestamp(U256::from(200_000u64));
     StorageHandle::enter(&mut storage, |storage| {
         let validator = VAL_A;
@@ -630,8 +634,7 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         register_and_activate(storage.clone(), VAL_A, 0xA1);
 
         let mut si = SlashIndicator::new(storage.clone());
-        // Pin the felony threshold (prod default is 500). The felony branch fires
-        // first at this pinned 150, so the test does not reach the misdemeanor warning.
+        // Pin the felony threshold so the test is independent of the prod default.
         si.config_voter_felony_threshold.write(150).unwrap();
         for _ in 0..149 {
             si.slash_voter(VAL_A).unwrap();
@@ -664,6 +667,17 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
 fn default_thresholds_warn_before_they_punish() {
     with_storage(|storage| {
         let si = SlashIndicator::new(storage);
+        assert_eq!(
+            (
+                si.proposer_misdemeanor_threshold().unwrap(),
+                si.proposer_felony_threshold().unwrap(),
+                si.voter_misdemeanor_threshold().unwrap(),
+                si.voter_felony_threshold().unwrap(),
+                si.slash_amount_percent().unwrap(),
+                si.evidence_reward_percent().unwrap(),
+            ),
+            (32, 128, 128, 512, 5, 10)
+        );
         assert!(
             si.proposer_misdemeanor_threshold().unwrap() < si.proposer_felony_threshold().unwrap()
         );
@@ -672,6 +686,114 @@ fn default_thresholds_warn_before_they_punish() {
             "voter misdemeanor must be below voter felony"
         );
     });
+}
+
+#[test]
+fn configured_slashing_policy_overrides_defaults() {
+    with_storage(|storage| {
+        let si = SlashIndicator::new(storage);
+        si.config_proposer_misdemeanor_threshold.write(3).unwrap();
+        si.config_proposer_felony_threshold.write(9).unwrap();
+        si.config_voter_misdemeanor_threshold.write(7).unwrap();
+        si.config_voter_felony_threshold.write(21).unwrap();
+        si.config_slash_amount_percent.write(4).unwrap();
+        si.config_evidence_reward_percent.write(12).unwrap();
+        assert_eq!(
+            (
+                si.proposer_misdemeanor_threshold().unwrap(),
+                si.proposer_felony_threshold().unwrap(),
+                si.voter_misdemeanor_threshold().unwrap(),
+                si.voter_felony_threshold().unwrap(),
+                si.slash_amount_percent().unwrap(),
+                si.evidence_reward_percent().unwrap(),
+            ),
+            (3, 9, 7, 21, 4, 12)
+        );
+    });
+}
+
+#[test]
+fn default_liveness_thresholds_warn_then_jail_once() {
+    for (proposer, warnings, felony) in [(true, [32, 64, 96], 128), (false, [128, 256, 384], 512)] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.set_block_number(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            register_and_activate(storage, VAL_A, 1);
+        });
+
+        for count in 1..=2 * felony {
+            provider.clear_events(SLASH_INDICATOR_ADDRESS);
+            StorageHandle::enter(&mut provider, |storage| {
+                let mut si = SlashIndicator::new(storage.clone());
+                let recorded = if proposer {
+                    si.slash_proposer(VAL_A).unwrap();
+                    si.get_proposer_miss_count(VAL_A).unwrap()
+                } else {
+                    si.slash_voter(VAL_A).unwrap();
+                    si.get_voter_miss_count(VAL_A).unwrap()
+                };
+                assert_eq!(recorded, count);
+                assert_eq!(
+                    si.get_felony_count(VAL_A).unwrap(),
+                    u64::from(count >= felony)
+                );
+                let lifecycle = test_lifecycle_of(storage.clone(), VAL_A).unwrap();
+                if count < felony {
+                    assert!(lifecycle.is_active_status());
+                } else {
+                    assert!(matches!(lifecycle, ValidatorLifecycle::JailRetained(_)));
+                }
+                let stake = Staking::new(storage).get_stake(VAL_A).unwrap();
+                assert_eq!(
+                    stake,
+                    U256::from(if count < felony {
+                        1_000_000u64
+                    } else {
+                        950_000
+                    })
+                );
+            });
+
+            let expected = if warnings.contains(&count) {
+                Some(if proposer {
+                    ISlashIndicator::ProposerMisdemeanor {
+                        validator: VAL_A,
+                        missCount: count,
+                    }
+                    .encode_log_data()
+                } else {
+                    ISlashIndicator::VoterMisdemeanor {
+                        validator: VAL_A,
+                        missCount: count,
+                    }
+                    .encode_log_data()
+                })
+            } else if count == felony {
+                Some(if proposer {
+                    ISlashIndicator::ProposerFelony {
+                        validator: VAL_A,
+                        missCount: count,
+                        felonyCount: 1,
+                    }
+                    .encode_log_data()
+                } else {
+                    ISlashIndicator::VoterFelony {
+                        validator: VAL_A,
+                        missCount: count,
+                        felonyCount: 1,
+                    }
+                    .encode_log_data()
+                })
+            } else {
+                None
+            };
+            assert_eq!(
+                provider.get_events(SLASH_INDICATOR_ADDRESS),
+                &expected.into_iter().collect::<Vec<_>>(),
+                "unexpected event at miss {count} (proposer={proposer})"
+            );
+        }
+    }
 }
 
 /// A validator already JAILED for a continuous liveness fault is NOT
@@ -995,10 +1117,12 @@ fn slash_ring_view(
     })
 }
 
-/// Characterizes the write order of one prune at a wrapped cursor: the voter
-/// guard, then the proposer guard of the evicted block, then the ring entry,
-/// then the cursor. A failure before write `n` leaves exactly the first `n`
-/// writes applied.
+/// Characterizes one prune at a wrapped cursor. The write order is:
+/// 1. The voter guard of the evicted block.
+/// 2. The proposer guard of the evicted block.
+/// 3. The ring entry.
+/// 4. The cursor.
+/// A failure before write `n` leaves exactly the first `n` writes applied.
 #[test]
 fn prune_slash_guards_write_order_at_a_wrapped_cursor() {
     let evicted = test_ring_hash(1);

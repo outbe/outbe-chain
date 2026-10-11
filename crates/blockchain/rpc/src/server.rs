@@ -448,11 +448,10 @@ where
                 signature.len()
             ))
         })?;
-        // Fast reject: recover the signer here so that this handler drops an
-        // unauthorized request before the enclave round-trip. This is defense-in-depth
-        // only. The enclave re-verifies the same signature, because a compromised host
-        // could bypass this check and reach the enclave transport directly (see
-        // DeriveAccountKeys arm).
+        // Recover the signer to reject unauthorized requests before the enclave round-trip.
+        // This adds defense in depth. The enclave also verifies the signature.
+        // A compromised host could bypass this check and reach the enclave transport directly.
+        // See the DeriveAccountKeys arm.
         let prehash = outbe_tee::protocol::eip191_hash(
             &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
         );
@@ -937,6 +936,11 @@ mod tests {
         OcompLysisOpeningsRuntimeV1,
     };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_slashindicator::constants::{
+        DEFAULT_EVIDENCE_REWARD_PERCENT, DEFAULT_PROPOSER_FELONY_THRESHOLD,
+        DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD, DEFAULT_SLASH_AMOUNT_PERCENT,
+        DEFAULT_VOTER_FELONY_THRESHOLD, DEFAULT_VOTER_MISDEMEANOR_THRESHOLD,
+    };
 
     #[test]
     fn a_follower_bridge_does_not_make_the_handler_a_validator() {
@@ -973,12 +977,27 @@ mod tests {
             read_effective_slash_config(storage).expect("read effective slash config")
         });
 
-        assert_eq!(config.proposer_misdemeanor_threshold, 50);
-        assert_eq!(config.proposer_felony_threshold, 150);
-        assert_eq!(config.voter_misdemeanor_threshold, 150);
-        assert_eq!(config.voter_felony_threshold, 500);
-        assert_eq!(config.slash_amount_percent, 5);
-        assert_eq!(config.evidence_reward_percent, 10);
+        assert_eq!(
+            config.proposer_misdemeanor_threshold,
+            DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD
+        );
+        assert_eq!(
+            config.proposer_felony_threshold,
+            DEFAULT_PROPOSER_FELONY_THRESHOLD
+        );
+        assert_eq!(
+            config.voter_misdemeanor_threshold,
+            DEFAULT_VOTER_MISDEMEANOR_THRESHOLD
+        );
+        assert_eq!(
+            config.voter_felony_threshold,
+            DEFAULT_VOTER_FELONY_THRESHOLD
+        );
+        assert_eq!(config.slash_amount_percent, DEFAULT_SLASH_AMOUNT_PERCENT);
+        assert_eq!(
+            config.evidence_reward_percent,
+            DEFAULT_EVIDENCE_REWARD_PERCENT
+        );
     }
 
     #[test]
