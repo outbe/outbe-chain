@@ -24,25 +24,7 @@ pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 
 }
 
 /// The account operation covered by a Gratis authorization.
-pub struct ModifyOperation {
-    pub account: Address,
-    pub op: GratisOp,
-    pub amount: U256,
-    pub op_nonce: u64,
-    pub chain_id: B256,
-}
-
-impl ModifyOperation {
-    fn authorization(&self) -> crate::confidential::ModifyAuthorization {
-        crate::confidential::ModifyAuthorization {
-            account: self.account,
-            op_tag: self.op as u8,
-            amount: self.amount,
-            op_nonce: self.op_nonce,
-            chain_id: self.chain_id,
-        }
-    }
-}
+pub type ModifyOperation = crate::confidential::ModifyOperation<GratisOp>;
 
 pub fn modify_mac(modify_key: &[u8; 32], operation: &ModifyOperation) -> [u8; 32] {
     GRATIS

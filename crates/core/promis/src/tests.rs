@@ -9,7 +9,9 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{ModifyAuth, PromisOp};
-use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
+use outbe_tee_enclave::promis::{
+    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
+};
 
 use crate::api;
 use crate::enclave_client::test_enclave;
@@ -33,7 +35,16 @@ fn auth(op: PromisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth 
     let sk = test_enclave::state_key();
     let mk = derive_modify_key(&sk, account).unwrap();
     ModifyAuth {
-        mac: modify_mac(&mk, account, op, amount, nonce, chain_b256()),
+        mac: modify_mac(
+            &mk,
+            &ModifyOperation {
+                account,
+                op,
+                amount,
+                op_nonce: nonce,
+                chain_id: chain_b256(),
+            },
+        ),
         op_nonce: nonce,
     }
 }
