@@ -48,6 +48,7 @@ fn finalized_window_vwap_requires_two_thirds_round_coverage() {
     // 73 of them is not enough. The judgement is per pair.
     with_storage_at(cutoff + 5 * 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
+        oracle.config_lookback_duration.write(86_400).unwrap();
         let usd = AddressPair::new_coen_to(840);
         let eur = AddressPair::new_coen_to(978);
         oracle.register_pair(usd).unwrap();
@@ -70,6 +71,7 @@ fn finalized_window_vwap_requires_two_thirds_round_coverage() {
     // 1,100 of 1,800 (61%) is not enough even though the price is positive.
     with_storage_at(cutoff + 5 * 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
+        oracle.config_lookback_duration.write(86_400).unwrap();
         let usd = AddressPair::new_coen_to(840);
         oracle.register_pair(usd).unwrap();
         fill_window(&mut oracle, usd, start, 1_100, None);
@@ -222,12 +224,12 @@ fn finalized_window_vwap_needs_two_thirds_of_the_window_from_counting_hours() {
     assert_eq!(window_vwap_for([149; 8], twos), None);
 }
 
-#[test]
-fn finalized_window_vwap_skips_hours_without_blocks() {
-    // The chain produced no block in hours 2 and 3: those hours allow no round,
-    // so the window's span shrinks to six hours and full coverage of them passes.
+/// VWAP of the eight-hour window when the chain produced no block in the hours
+/// listed in `halted`, and every other hour is fully covered.
+fn window_vwap_with_halted_hours(halted: &[u64]) -> Option<U256> {
     let start = ATOMIC_DAY_START + 2 * 3_600;
     let cutoff = start + 8 * 3_600;
+    let mut result = None;
     with_storage_at(cutoff + 5 * 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let pair = AddressPair::new_coen_to(840);
@@ -235,7 +237,7 @@ fn finalized_window_vwap_skips_hours_without_blocks() {
         oracle.config_vote_period.write(8).unwrap();
         let mut block = 1_000;
         for k in 0..=8u64 {
-            if k == 2 || k == 3 {
+            if halted.contains(&k) {
                 continue;
             }
             oracle.record_hour_block(start + k * 3_600, block).unwrap();
@@ -251,11 +253,19 @@ fn finalized_window_vwap_skips_hours_without_blocks() {
             }
             block += 1_800;
         }
-        assert_eq!(
-            oracle
-                .finalized_window_vwap(pair, default_snapshot_at(cutoff + 5 * 60))
-                .unwrap(),
-            Some(coen_iso(3))
-        );
+        result = oracle
+            .finalized_window_vwap(pair, default_snapshot_at(cutoff + 5 * 60))
+            .unwrap();
     });
+    result
+}
+
+#[test]
+fn finalized_window_vwap_needs_two_thirds_of_the_hours_with_blocks() {
+    // An hour without blocks allows no round and cannot count. Two such hours
+    // leave six of eight, which pass. Three leave five, which do not, however
+    // well the remaining hours are covered: a halt holds the window back until
+    // six whole hours have passed since.
+    assert_eq!(window_vwap_with_halted_hours(&[2, 3]), Some(coen_iso(3)));
+    assert_eq!(window_vwap_with_halted_hours(&[2, 3, 4]), None);
 }
