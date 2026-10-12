@@ -122,8 +122,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             let stake = outbe_primitives::units::checked_protocol_to_native(collateral).unwrap();
             fund_stake(&storage, stake);
             let (id, disbursed) =
-                runtime::issue_credis(storage.clone(), cca(), reservation_id, REFERENCE_ISO, stake)
-                    .unwrap();
+                runtime::issue_credis(storage.clone(), cca(), reservation_id, stake).unwrap();
             assert_eq!(disbursed, principal);
             assert_eq!(view_pledged(&storage, alice()), collateral);
 
@@ -449,8 +448,7 @@ fn issue_credis_requires_the_stake_to_equal_the_collateral() {
             pledge_stake() - U256::ONE,
             pledge_stake() + U256::ONE,
         ] {
-            let err = runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, wrong)
-                .unwrap_err();
+            let err = runtime::issue_credis(storage.clone(), cca(), id, wrong).unwrap_err();
             assert!(err.to_string().contains("attached COEN"), "{wrong}: {err}");
         }
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
@@ -496,10 +494,7 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
         pledge(&storage, alice(), id, 1);
         let day = outbe_primitives::time::timestamp_to_date_key(CREATED_AT);
         // The unfunded stake transfer fails after the pledge was handed to Credis.
-        assert!(
-            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
-                .is_err()
-        );
+        assert!(runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).is_err());
         assert_eq!(
             outbe_gratisfactory::runtime::pledge_of(&storage, id)
                 .unwrap()
@@ -519,8 +514,7 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
         );
         fund_stake(&storage, pledge_stake());
         let (credis_id, _) =
-            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
-                .unwrap();
+            runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             pledge_cost()
@@ -533,9 +527,7 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
     });
     provider.set_block_number(BLOCK_NUMBER + 1);
     StorageHandle::enter(&mut provider, |storage| {
-        let err =
-            runtime::issue_credis(storage.clone(), cca(), next, REFERENCE_ISO, pledge_stake())
-                .unwrap_err();
+        let err = runtime::issue_credis(storage.clone(), cca(), next, pledge_stake()).unwrap_err();
         assert!(err.to_string().contains("CCA is not active"), "{err}");
         assert_eq!(
             record(&storage, credis_id).outstanding_principal_minor,
@@ -562,10 +554,9 @@ fn a_half_paid_call_forfeits_only_the_unpaid_backing_of_another_accounts_source(
         let unused = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), unused, 2);
         fund_stake(&storage, pledge_stake());
-        let credis_id =
-            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
-                .unwrap()
-                .0;
+        let credis_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
+            .unwrap()
+            .0;
         let half = pledge_cost() / U256::from(2u64);
         settle_principal(
             &storage,
@@ -705,15 +696,9 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
         id
     });
     let (id, issue) = measure(&mut provider, |storage| {
-        runtime::issue_credis(
-            storage.clone(),
-            cca(),
-            reservation,
-            REFERENCE_ISO,
-            pledge_stake(),
-        )
-        .unwrap()
-        .0
+        runtime::issue_credis(storage.clone(), cca(), reservation, pledge_stake())
+            .unwrap()
+            .0
     });
     let half = pledge_stables() / U256::from(2u64);
     StorageHandle::enter(&mut provider, |storage| {
@@ -760,46 +745,46 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
         [issue, partial, read, close, called_read, void],
         [
             Footprint {
-                gas: 214800,
-                reads: 98,
+                gas: 214400,
+                reads: 94,
                 writes: 41,
                 logs: b256!("0x36c28055f46240955c8ed66a51e4c939e2d7c7b36bdd40387dddc24db87e43cc"),
-                state: b256!("0x7e11651a4a3ba111788c30b774ee855c0f9887c23af9d8dd769813718cf135e1"),
+                state: b256!("0x35143b2f04c993e35f390ffe6902b890436ad7ea4e3463653023b17704ced77c"),
             },
             Footprint {
                 gas: 183700,
                 reads: 137,
                 writes: 34,
                 logs: b256!("0xabf2b6c4044763cab91e5cbc28c63bdf510963c3b85ea94150562846159fe368"),
-                state: b256!("0x21425705e0f8c4a46e0478687098e74a037ccdbff08b1c71ca30d17e212e3af3"),
+                state: b256!("0x60f764942a89af9d1cb3f43d4342dcb851f7385086fb92be7d45dcedf85d8483"),
             },
             Footprint {
                 gas: 10200,
                 reads: 102,
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-                state: b256!("0x21425705e0f8c4a46e0478687098e74a037ccdbff08b1c71ca30d17e212e3af3"),
+                state: b256!("0x60f764942a89af9d1cb3f43d4342dcb851f7385086fb92be7d45dcedf85d8483"),
             },
             Footprint {
                 gas: 214200,
                 reads: 142,
                 writes: 40,
                 logs: b256!("0x9bc938ba84f2da035d825b274f8ac29c997dbec15d3a459172a168b90c46ecc2"),
-                state: b256!("0x90d3e86192a005551eb071b3f176b9a606034abc60ffc92f415e7810bfaae820"),
+                state: b256!("0xb90aca79c472fc49f47cc5102a63df09f6a592c2a12c7e05d17299eec62f8b6c"),
             },
             Footprint {
                 gas: 10200,
                 reads: 102,
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-                state: b256!("0x04ad725310d4e5302393057e3e5a80a51e8be6c6e7aec71f91eaeca5a4505bed"),
+                state: b256!("0x095b3bae0699c848e4980667e80f87acd148c471e71da85268c4c22986b31cfc"),
             },
             Footprint {
                 gas: 228800,
                 reads: 138,
                 writes: 43,
                 logs: b256!("0x81f01b28f8f9039cd7d463c5f70139bf2384e0e24c333878342348d88f5e8c7c"),
-                state: b256!("0x6c95570eb9fa85d1512be9367a53c075105f79cdcace79985ed243de9a05a199"),
+                state: b256!("0x0f52b25ec3292ecf2a3514618432f1d2234680cc7dad94873734129f21e13a97"),
             },
         ]
     );
