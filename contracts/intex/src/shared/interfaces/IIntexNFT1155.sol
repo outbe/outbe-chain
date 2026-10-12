@@ -298,8 +298,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The token classification.
     function statusOf(uint256 tokenId) external pure returns (IntexStatus);
 
-    /// @notice Read series data by series id. `state` derives Expired but not Qualified (see
-    ///         `isQualified`).
+    /// @notice Read series data by series id. `state` derives Qualified and Expired, as the card
+    ///         renders them.
     /// @param seriesId Series identifier.
     /// @return The full series data for the Issued token id.
     function readData(bytes14 seriesId) external view returns (SeriesData memory);

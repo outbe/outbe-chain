@@ -172,6 +172,23 @@ contract IntexNFT1155MetadataTest is Test {
         assertFalse(token.isQualified(SERIES_ID), "a failing source answers no rather than reverting");
     }
 
+    function test_readData_DerivesQualifiedAsTheCardDoes() public {
+        MockVwapSource source = _pointAtSource(FLOOR_PRICE + 1);
+        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Qualified));
+
+        source.set(DateKey.firstFullDay(token.readData(SERIES_ID).issuedAt), FLOOR_PRICE);
+        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Issued), "at the floor");
+
+        source.set(DateKey.firstFullDay(token.readData(SERIES_ID).issuedAt), FLOOR_PRICE + 1);
+        source.setReverts(true);
+        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Issued), "failing source");
+
+        source.setReverts(false);
+        vm.prank(bridger);
+        token.markCalled(SERIES_ID, uint32(block.timestamp));
+        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
+    }
+
     function test_TheIntexFactoryAnswersAsAVwapSource() public pure {
         assertEq(IIntexFactory.maxUtcDayVwapSince.selector, IVwapSource.maxUtcDayVwapSince.selector);
     }
