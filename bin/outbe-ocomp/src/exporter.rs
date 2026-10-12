@@ -9,9 +9,11 @@
 //! - [`FinalizedTributeSource::reconstruction_stream`] does no CE lookup for each
 //!   candidate. The caller must close the ordered leaves to the finalized
 //!   collection root before it publishes an authoritative manifest.
+//! - [`FinalizedTributeSource::commitment_reconstruction_stream`] reads the
+//!   exact encrypted bodies without opening private amounts. The caller must
+//!   close the ordered leaves to the finalized collection root.
 //!
-//! In both modes, final completeness closes against the expected count and the
-//! expected nominal total.
+//! The exporter streams also check the expected count and nominal total.
 
 use std::collections::VecDeque;
 
@@ -100,7 +102,7 @@ impl FinalizedTributeSource {
         pin: RetainedTributePin,
         expected_count: u32,
         expected_nominal_total: U256,
-    ) -> Result<AuthenticatedTributeStream<'_, '_>, FinalizedTributeError> {
+    ) -> Result<AuthenticatedTributeStream<'_, 'static>, FinalizedTributeError> {
         let (current_limit, retained_limit) = split_page_budget(self.page_limit)?;
         Ok(AuthenticatedTributeStream {
             current: CurrentPager::new(&self.current, pin.worldwide_day, current_limit)?,
@@ -117,6 +119,18 @@ impl FinalizedTributeSource {
             exact_body_bytes: 0,
             peak_source_records: 0,
             exhausted: false,
+        })
+    }
+
+    /// Reconstruct body commitments for an offline integrity check.
+    /// The caller must compare the complete leaf set with the finalized root.
+    pub fn commitment_reconstruction_stream(
+        &self,
+        pin: RetainedTributePin,
+        expected_count: u32,
+    ) -> Result<AuthenticatedTributeCommitmentStream<'_>, FinalizedTributeError> {
+        Ok(AuthenticatedTributeCommitmentStream {
+            inner: self.reconstruction_stream(pin, expected_count, U256::ZERO)?,
         })
     }
 }
@@ -163,6 +177,34 @@ pub struct AuthenticatedTributeStream<'source, 'view> {
     exhausted: bool,
 }
 
+pub struct AuthenticatedTributeCommitmentStream<'source> {
+    inner: AuthenticatedTributeStream<'source, 'static>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AuthenticatedTributeCommitment {
+    pub tribute_id: WwdEntityId,
+    pub commitment: B256,
+}
+
+impl AuthenticatedTributeCommitmentStream<'_> {
+    pub fn next_commitment(
+        &mut self,
+    ) -> Result<Option<AuthenticatedTributeCommitment>, FinalizedTributeError> {
+        let Some((tribute_id, _, _, commitment)) = self.inner.next_authenticated_body()? else {
+            return Ok(None);
+        };
+        Ok(Some(AuthenticatedTributeCommitment {
+            tribute_id,
+            commitment,
+        }))
+    }
+
+    pub fn finish(self) -> Result<(), FinalizedTributeError> {
+        self.inner.finish_count()
+    }
+}
+
 enum TributeCommitmentAuthority<'view> {
     Authenticated(&'view AuthenticatedTributePartition<'view>),
     Reconstruct,
@@ -172,6 +214,43 @@ impl AuthenticatedTributeStream<'_, '_> {
     pub fn next_record(
         &mut self,
     ) -> Result<Option<AuthenticatedTributeRecord>, FinalizedTributeError> {
+        let Some((tribute_id, stored, record, recomputed)) = self.next_authenticated_body()? else {
+            return Ok(None);
+        };
+
+        // The exact original ciphertext commitment has been authenticated above.
+        let body = outbe_tribute::canonical_body(&record.calculation_view()?);
+
+        self.nominal_total = self
+            .nominal_total
+            .checked_add(body.nominal_amount_minor)
+            .ok_or(FinalizedTributeError::NominalOverflow)?;
+        if self.nominal_total > self.expected_nominal_total {
+            return Err(FinalizedTributeError::NominalMismatch {
+                expected: self.expected_nominal_total,
+                actual: self.nominal_total,
+            });
+        }
+
+        Ok(Some(AuthenticatedTributeRecord {
+            tribute_id,
+            commitment: recomputed,
+            canonical_body: stored.payload().to_vec(),
+            body,
+        }))
+    }
+
+    fn next_authenticated_body(
+        &mut self,
+    ) -> Result<
+        Option<(
+            WwdEntityId,
+            outbe_compressed_entities::StoredBody,
+            outbe_tribute::TributeRecord,
+            B256,
+        )>,
+        FinalizedTributeError,
+    > {
         if self.exhausted {
             return Ok(None);
         }
@@ -189,9 +268,6 @@ impl AuthenticatedTributeStream<'_, '_> {
 
         let (stored, record, recomputed) = self.authenticate_candidate(candidate)?;
 
-        // The exact original ciphertext commitment has been authenticated above.
-        let body = outbe_tribute::canonical_body(&record.calculation_view()?);
-
         self.record_count = self
             .record_count
             .checked_add(1)
@@ -202,16 +278,6 @@ impl AuthenticatedTributeStream<'_, '_> {
                 actual: self.record_count,
             });
         }
-        self.nominal_total = self
-            .nominal_total
-            .checked_add(body.nominal_amount_minor)
-            .ok_or(FinalizedTributeError::NominalOverflow)?;
-        if self.nominal_total > self.expected_nominal_total {
-            return Err(FinalizedTributeError::NominalMismatch {
-                expected: self.expected_nominal_total,
-                actual: self.nominal_total,
-            });
-        }
         let body_len = u64::try_from(stored.payload().len())
             .map_err(|_| FinalizedTributeError::BodyBytesOverflow)?;
         self.exact_body_bytes = self
@@ -219,12 +285,7 @@ impl AuthenticatedTributeStream<'_, '_> {
             .checked_add(body_len)
             .ok_or(FinalizedTributeError::BodyBytesOverflow)?;
 
-        Ok(Some(AuthenticatedTributeRecord {
-            tribute_id: candidate.tribute_id,
-            commitment: recomputed,
-            canonical_body: stored.payload().to_vec(),
-            body,
-        }))
+        Ok(Some((candidate.tribute_id, stored, record, recomputed)))
     }
 
     fn authenticate_candidate(
@@ -306,15 +367,7 @@ impl AuthenticatedTributeStream<'_, '_> {
     }
 
     pub fn finish(self) -> Result<TributeStreamSummary, FinalizedTributeError> {
-        if !self.exhausted {
-            return Err(FinalizedTributeError::StreamNotExhausted);
-        }
-        if self.record_count != self.expected_count {
-            return Err(FinalizedTributeError::CountMismatch {
-                expected: self.expected_count,
-                actual: self.record_count,
-            });
-        }
+        self.finish_count()?;
         if self.nominal_total != self.expected_nominal_total {
             return Err(FinalizedTributeError::NominalMismatch {
                 expected: self.expected_nominal_total,
@@ -326,6 +379,19 @@ impl AuthenticatedTributeStream<'_, '_> {
             nominal_total: self.nominal_total,
             exact_body_bytes: self.exact_body_bytes,
         })
+    }
+
+    fn finish_count(&self) -> Result<(), FinalizedTributeError> {
+        if !self.exhausted {
+            return Err(FinalizedTributeError::StreamNotExhausted);
+        }
+        if self.record_count != self.expected_count {
+            return Err(FinalizedTributeError::CountMismatch {
+                expected: self.expected_count,
+                actual: self.record_count,
+            });
+        }
+        Ok(())
     }
 
     #[must_use]

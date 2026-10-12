@@ -1,6 +1,34 @@
 use super::*;
 
 impl VerifiedPlanSchedule<'_> {
+    pub(super) fn verified_reference_at(
+        &self,
+        ordinal: u32,
+    ) -> Result<crate::input_ref_catalog::VerifiedInputChunkRefV1, ExactLysisPlanError> {
+        Ok(if self.integrity_only {
+            self.input_refs.verified_reference_at_integrity(
+                ordinal,
+                self.reader,
+                self.bundle.bundle(),
+            )?
+        } else {
+            self.input_refs
+                .verified_reference_at(ordinal, self.reader, self.bundle.bundle())?
+        })
+    }
+
+    pub(super) fn exact_verified_cursor(
+        &self,
+    ) -> Result<crate::input_ref_catalog::VerifiedInputRefCursor<'_>, ExactLysisPlanError> {
+        Ok(if self.integrity_only {
+            self.input_refs
+                .exact_verified_integrity_cursor(self.reader, self.bundle.bundle())?
+        } else {
+            self.input_refs
+                .exact_verified_cursor(self.reader, self.bundle.bundle())?
+        })
+    }
+
     pub(super) fn worker_request_at(
         &self,
         plan_ordinal: u32,
@@ -186,17 +214,9 @@ impl VerifiedPlanSchedule<'_> {
         &self,
         shard_ordinal: u32,
     ) -> Result<UnitSpecV1, ExactLysisPlanError> {
-        let current = self.input_refs.verified_reference_at(
-            shard_ordinal,
-            self.reader,
-            self.bundle.bundle(),
-        )?;
+        let current = self.verified_reference_at(shard_ordinal)?;
         let next = if shard_ordinal + 1 < self.plan.primary_work_unit_count {
-            Some(self.input_refs.verified_reference_at(
-                shard_ordinal + 1,
-                self.reader,
-                self.bundle.bundle(),
-            )?)
+            Some(self.verified_reference_at(shard_ordinal + 1)?)
         } else {
             None
         };
@@ -235,11 +255,7 @@ impl VerifiedPlanSchedule<'_> {
         shard_ordinal: u32,
         output: &mut Vec<CasObjectRefV1>,
     ) -> Result<(), ExactLysisPlanError> {
-        let verified = self.input_refs.verified_reference_at(
-            shard_ordinal,
-            self.reader,
-            self.bundle.bundle(),
-        )?;
+        let verified = self.verified_reference_at(shard_ordinal)?;
         if verified.reference.kind != InputChunkKind::Tribute {
             return Err(ExactLysisPlanError::AuthorityMismatch(
                 "primary Tribute input kind",
@@ -276,10 +292,7 @@ impl VerifiedPlanSchedule<'_> {
         output: &mut Vec<CasObjectRefV1>,
     ) -> Result<(), ExactLysisPlanError> {
         let mut matched = 0_u32;
-        for verified in self
-            .input_refs
-            .exact_verified_cursor(self.reader, self.bundle.bundle())?
-        {
+        for verified in self.exact_verified_cursor()? {
             let verified = verified?;
             if verified.reference.kind == kind {
                 output.push(input_object_ref(&verified.reference));

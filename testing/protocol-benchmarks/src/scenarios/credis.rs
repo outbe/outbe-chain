@@ -185,11 +185,8 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             snapshot_id: U256::from(17),
             entry_price_minor: oracle_rate(),
             valuation_price_minor: oracle_rate(),
-            policy_rate: U256::from(43_000),
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
-            reference_currency: REFERENCE_ISO,
-            call_anchor_price_minor: oracle_rate(),
             source: ALICE,
         })
         .map_err(|error| error.to_string())?;
@@ -251,6 +248,7 @@ impl BenchmarkScenario for CredisScenario {
         let event_offset = provider.get_ordered_events().len();
         let calldata = ICredisFactory::issueCredisCall {
             reservationId: prepared.reservation_id,
+            referenceCurrency: REFERENCE_ISO,
         }
         .abi_encode();
 
@@ -273,9 +271,9 @@ impl BenchmarkScenario for CredisScenario {
             "credis_factory",
         )?;
 
-        let (position, pledged) = StorageHandle::enter(&mut provider, |storage| {
-            let position = CredisContract::new(storage.clone())
-                .get_position(decoded.positionId)
+        let (record, pledged) = StorageHandle::enter(&mut provider, |storage| {
+            let record = CredisContract::new(storage.clone())
+                .get_credis(decoded.credisId)
                 .map_err(|error| error.to_string())?;
             let view_key = derive_view_key(&gratis_enclave::state_key(), ALICE)
                 .map_err(|error| error.to_string())?;
@@ -283,10 +281,10 @@ impl BenchmarkScenario for CredisScenario {
                 outbe_gratis::api::pledged_ct(storage, ALICE).map_err(|error| error.to_string())?;
             let pledged =
                 decrypt_pledged(&view_key, ALICE, &blob).map_err(|error| error.to_string())?;
-            Ok::<_, String>((position, pledged))
+            Ok::<_, String>((record, pledged))
         })?;
-        if position.smart_account != ALICE
-            || position.source != ALICE
+        if record.owner != ALICE
+            || record.source != ALICE
             || pledged != pledge_cost()
             || decoded.principalMinor != pledge_stables()
         {
@@ -334,7 +332,7 @@ impl BenchmarkScenario for CredisScenario {
                 .with_postcondition("credis.source_recorded", "true")
                 .with_postcondition("credis.collateral_pledged", "true")
                 .with_postcondition("credis.child_frame_gas_included", "false")
-                .with_postcondition("credis.position_id", decoded.positionId.to_string());
+                .with_postcondition("credis.credis_id", decoded.credisId.to_string());
         observation.storage = captured.storage;
         observation.events = captured.events;
         Ok(observation)

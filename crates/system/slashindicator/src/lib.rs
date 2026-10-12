@@ -1,4 +1,5 @@
 //! Module-structure standard layout:
+//! - `constants.rs` - default slashing policy and parameter descriptions.
 //! - `schema.rs` - storage schema for the `SlashIndicator` facade.
 //! - `runtime.rs` - shared slashing helpers, felonies and getters.
 //! - `misses.rs` - proposer/voter liveness misses.
@@ -10,6 +11,7 @@
 //!
 //! `pub use` re-exports below preserve the old `contract` / `logic`
 //! paths for external callers. Migrate those callers opportunistically.
+pub mod constants;
 mod equivocation;
 mod evidence;
 pub mod hooks;

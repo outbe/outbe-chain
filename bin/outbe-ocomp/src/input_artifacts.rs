@@ -191,7 +191,17 @@ pub fn derive_input_chunk_ref(
     bundle: &ProtocolBundleV1,
     limits: &SchemaLimits,
 ) -> Result<DerivedInputChunk, InputArtifactError> {
-    Ok(derive_input_chunk(object, bundle, limits)?.public)
+    Ok(derive_input_chunk(object, bundle, limits, ChunkRead::Private)?.public)
+}
+
+/// Rebuild the reference to an immutable input chunk from its authenticated
+/// ciphertext and public metadata. Offline integrity checks do not read amounts.
+pub fn derive_input_chunk_ref_integrity(
+    object: &VerifiedCasObject,
+    bundle: &ProtocolBundleV1,
+    limits: &SchemaLimits,
+) -> Result<DerivedInputChunk, InputArtifactError> {
+    Ok(derive_input_chunk(object, bundle, limits, ChunkRead::Integrity)?.public)
 }
 
 pub fn decode_verified_input_chunk(
@@ -199,7 +209,19 @@ pub fn decode_verified_input_chunk(
     bundle: &ProtocolBundleV1,
     limits: &SchemaLimits,
 ) -> Result<AuthenticatedInputChunkV1, InputArtifactError> {
-    let _ = derive_input_chunk(object, bundle, limits)?;
+    let _ = derive_input_chunk(object, bundle, limits, ChunkRead::Private)?;
+    Ok(AuthenticatedInputChunkV1::decode_canonical(
+        object.bytes(),
+        limits,
+    )?)
+}
+
+pub fn decode_verified_input_chunk_integrity(
+    object: &VerifiedCasObject,
+    bundle: &ProtocolBundleV1,
+    limits: &SchemaLimits,
+) -> Result<AuthenticatedInputChunkV1, InputArtifactError> {
+    let _ = derive_input_chunk(object, bundle, limits, ChunkRead::Integrity)?;
     Ok(AuthenticatedInputChunkV1::decode_canonical(
         object.bytes(),
         limits,
@@ -767,10 +789,17 @@ pub fn verify_input_artifact_set(
     })
 }
 
+#[derive(Clone, Copy)]
+enum ChunkRead {
+    Private,
+    Integrity,
+}
+
 fn derive_input_chunk(
     object: &VerifiedCasObject,
     bundle: &ProtocolBundleV1,
     limits: &SchemaLimits,
+    read: ChunkRead,
 ) -> Result<DerivedChunk, InputArtifactError> {
     require_expected_kind(object, ObjectKind::AuthenticatedInputChunkV1)?;
     let chunk = AuthenticatedInputChunkV1::decode_canonical(object.bytes(), limits)?;
@@ -796,15 +825,16 @@ fn derive_input_chunk(
     for record in &chunk.canonical_records_or_openings {
         match chunk.kind {
             InputChunkKind::Tribute => {
-                let tribute =
-                    outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
+                let tribute = outbe_tribute::record::decode_canonical(&record.0)?;
                 keys.push(tribute.tribute_id.as_slice().to_vec());
                 tribute_count = tribute_count
                     .checked_add(1)
                     .ok_or(InputArtifactError::CountOverflow)?;
-                tribute_nominal_total = tribute_nominal_total
-                    .checked_add(tribute.nominal_amount_minor)
-                    .ok_or(InputArtifactError::NominalTotalOverflow)?;
+                if matches!(read, ChunkRead::Private) {
+                    tribute_nominal_total = tribute_nominal_total
+                        .checked_add(tribute.calculation_view()?.nominal_amount_minor)
+                        .ok_or(InputArtifactError::NominalTotalOverflow)?;
+                }
                 tribute_owners.push(tribute.owner);
                 tribute_isos.push(tribute.reference_currency);
             }

@@ -271,7 +271,7 @@ pub(super) fn seed_reward_cca(storage: &outbe_primitives::storage::StorageHandle
         "Test CCA".into(),
     )
     .unwrap();
-    outbe_ccaregistry::api::position_opened(storage, cca, 20240101, U256::ONE).unwrap();
+    outbe_ccaregistry::api::credis_issued(storage, cca, 20240101, U256::ONE).unwrap();
 }
 
 /// Runs the first dispatcher block (block 1 at `timestamp`) after the genesis

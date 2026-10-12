@@ -180,7 +180,7 @@ Feature: Off-chain computation and Metadosis
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     And validator 2 prepares one valid vote without broadcasting it
-    And the held validator vote is broadcast at the exclusive deadline
+    And the held validator vote is broadcast after the exclusive deadline closes
     Then the no-quorum job expires at its exclusive deadline without creating Nod
 
   @ocomp-public-expiry-terminal
@@ -195,7 +195,7 @@ Feature: Off-chain computation and Metadosis
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     And validator 2 prepares one valid vote without broadcasting it
-    And the held validator vote is broadcast at the exclusive deadline
+    And the held validator vote is broadcast after the exclusive deadline closes
     Then the no-quorum job expires at its exclusive deadline without creating Nod
     When the stopped OCOMP workers restart after canonical expiry
     Then the expired job remains terminal with no successor after process recovery
@@ -251,6 +251,19 @@ Feature: Off-chain computation and Metadosis
     Then three matching validator domains atomically apply Lysis and create the Nod
     And the keyless FullNode verifies the same finalized Nod body through its local proof path
 
+  @ocomp-public-equivocation
+  Scenario: A correctly bound conflicting OCOMP vote records equivocation without creating a result
+    Given a fresh four-validator OCOMP public measurement localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
+    When validators 1, 2 and 3 OCOMP workers are stopped before the job
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    And the first validator submits a second correctly signed vote with the same binding and a different result
+    Then every validator records one equivocation and no result quorum while finality advances
+
   @offline-snapshot @price-oracle
   Scenario: A new FullNode starts from signed native files after Lysis and continues ordinary work
     Given a fresh four-validator OCOMP offline-snapshot localnet
@@ -261,9 +274,9 @@ Feature: Off-chain computation and Metadosis
     When the committee logical clock reaches the public capacity processing time
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
-    Then three matching validator domains atomically certify the Lysis generation
     When a stopped post-Lysis donor creates the signed native snapshot
-    And the signed files start fresh FullNode placements with and without offline validation
+    Then three matching validator domains atomically certify the Lysis generation
+    When the signed files start fresh FullNode placements with and without offline validation
     Then the snapshot FullNode preserves the copied Lysis result and canonical state
     And the certified generation is materialized through at least two bounded transactions
     And five deterministic capacity owners enumerate ordinary NODs with matching nodData

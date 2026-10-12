@@ -27,18 +27,14 @@ interface IVaultRouter {
         uint256 snapshotId;
         uint256 entryPriceMinor;
         uint256 valuationPriceMinor;
-        uint256 policyRate;
         uint16 issuanceCurrency;
         uint8 assetDecimals;
-        uint16 referenceCurrency;
-        uint256 callAnchorPriceMinor;
         address source;
     }
 
     error TokenOperationFailed();
     error InvalidLiquiditySource();
     error InvalidLiquidityTarget();
-    error InvalidReferenceCurrency();
     error ReserveVaultNotConfigured();
     error ReserveVaultAssetMismatch();
     error ReserveVaultAlreadyAdded();
@@ -207,14 +203,11 @@ interface IVaultRouter {
     /// @notice Redeems `amount` of `asset` from its origin vault and holds it in this
     ///         router's custody for `smartAccount`, guaranteeing it can later be
     ///         delivered for 15 minutes. Caller must be an active CCA. Only `source`
-    ///         may pledge the Gratis collateral for this reservation.
-    function reserveStables(
-        address smartAccount,
-        address source,
-        address asset,
-        uint256 amount,
-        uint16 referenceCurrency
-    ) external returns (uint256 reservationId);
+    ///         may pledge the Gratis collateral for this reservation. The quote fixes the
+    ///         pledge valuation only: the Credis call terms are read at issuance.
+    function reserveStables(address smartAccount, address source, address asset, uint256 amount)
+        external
+        returns (uint256 reservationId);
 
     /// @notice Validates `receiver` as the reserved smart account, pays `amount` to
     ///         the recorded CCA to cover COEN delivered to that account, and

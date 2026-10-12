@@ -37,7 +37,7 @@ pub(super) fn observe_offchain_progress(
         LOCAL_STORAGE_SCHEMA_VERSION,
     };
     use outbe_offchain_data::{read_projection_state, ProjectionConfig};
-    use outbe_offchain_storage::RocksDbReader;
+    use outbe_offchain_storage::partitioned::adapters::RocksPartitionReadView;
     use outbe_primitives::projection::ProjectionCheckpoint;
     use std::sync::Arc;
     let chain = node.join("data");
@@ -61,13 +61,17 @@ pub(super) fn observe_offchain_progress(
         !scratch.starts_with(node) && !node.starts_with(&scratch),
         "native inspection scratch overlaps the node directory"
     );
+    let source = RocksPartitionReadView::open(&rocks.path, secondary.path())?;
     let projection_marker = read_projection_state(
         ProjectionConfig {
             chain_id,
             genesis_hash,
             start_block,
         },
-        Arc::new(RocksDbReader::open(&rocks.path, secondary.path())?),
+        Arc::new(outbe_offchain_storage::PartitionedStorage::read_only(
+            Arc::new(source),
+            outbe_offchain_data::entity_partition_routing()?,
+        )),
     )?
     .and_then(|state| state.checkpoint)
     .ok_or_else(|| eyre::eyre!("missing placed projection checkpoint"))?;

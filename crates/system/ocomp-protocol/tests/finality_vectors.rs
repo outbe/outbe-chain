@@ -551,7 +551,6 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
         ordered_committee,
         signer_bitmap: bitmap,
         encoded_proof: Bytes::from(finalization),
-        stored_at_height: FINALIZED_BLOCK_NUMBER,
         ..CertifiedParentProofRecord::default()
     };
     let account = |trie: TrieAccount| Account {

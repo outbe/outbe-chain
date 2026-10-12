@@ -405,6 +405,9 @@ pub struct FixtureState {
     #[cfg(feature = "ocomp-integration")]
     pub(crate) credis: Option<crate::world::credis::CredisFixture>,
     #[cfg(feature = "ocomp-integration")]
+    pub(crate) hyperlane_controller:
+        Option<crate::features::hyperlane_controller::HyperlaneFixture>,
+    #[cfg(feature = "ocomp-integration")]
     pub(crate) offline_snapshot: Option<OfflineSnapshotEvidence>,
     #[cfg(feature = "ocomp-integration")]
     pub(crate) offline_snapshot_worker_inventory:
@@ -444,6 +447,7 @@ pub struct FixtureState {
     /// its finalized lease expires. The log audit accepts only the exact two-sink
     /// Reth shutdown trailers that are causally bound to that guard.
     pub expected_tee_lease_guard_shutdown_validator: Option<usize>,
+    pub expected_tee_sidecar_outage: Option<(usize, String)>,
     /// The same manual-lease scenario deliberately fail-stops this role-neutral
     /// FullNode. Acceptance requires the owned exit and exact bounded sink records.
     pub expected_tee_lease_guard_shutdown_full_node: Option<TeeLeaseShutdownV1>,
@@ -684,6 +688,10 @@ pub struct FixtureState {
     pub resilience_healthy_tx_hash: Option<String>,
     pub resilience_target_slot: Option<usize>,
     pub resilience_disconnected_height: Option<u64>,
+    pub resilience_follower_pid: Option<u32>,
+    pub ocomp_equivocation_job_id: Option<alloy_primitives::B256>,
+    pub ocomp_equivocation_first_digest: Option<alloy_primitives::B256>,
+    pub ocomp_equivocation_conflicting_digest: Option<alloy_primitives::B256>,
 }
 
 #[derive(Debug)]
@@ -711,6 +719,8 @@ impl Default for FixtureState {
         Self {
             #[cfg(feature = "ocomp-integration")]
             credis: None,
+            #[cfg(feature = "ocomp-integration")]
+            hyperlane_controller: None,
             #[cfg(feature = "ocomp-integration")]
             offline_snapshot: None,
             #[cfg(feature = "ocomp-integration")]
@@ -746,6 +756,7 @@ impl Default for FixtureState {
             expected_dkg_reveal: None,
             expected_dkg_expiry_exits: Vec::new(),
             expected_tee_lease_guard_shutdown_validator: None,
+            expected_tee_sidecar_outage: None,
             expected_tee_lease_guard_shutdown_full_node: None,
             joiner_addr: None,
             promoted_validator_pid: None,
@@ -871,6 +882,10 @@ impl Default for FixtureState {
             resilience_healthy_tx_hash: None,
             resilience_target_slot: None,
             resilience_disconnected_height: None,
+            resilience_follower_pid: None,
+            ocomp_equivocation_job_id: None,
+            ocomp_equivocation_first_digest: None,
+            ocomp_equivocation_conflicting_digest: None,
         }
     }
 }

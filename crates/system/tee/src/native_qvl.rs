@@ -188,6 +188,13 @@ struct RawResult {
     qe_tcb_evaluation_data_number: u32,
 }
 
+#[cfg_attr(
+    not(native_qvl_linked),
+    expect(
+        dead_code,
+        reason = "The unsupported-host stub does not read QVL arguments"
+    )
+)]
 struct NativeQvlCall<'a> {
     quote: &'a [u8],
     quote_size: u32,

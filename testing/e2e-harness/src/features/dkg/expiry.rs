@@ -233,8 +233,8 @@ fn telemetry(log: &str, target: &FrozenTarget, expiry: u64) -> Result<Telemetry>
             // The same error can also appear in the terminal eyre cause chain.
             // Validate every copy, but only the production tracing record is
             // positive evidence that this stack selected its expiry branch.
-            saw_expiry |=
-                line.contains(" ERROR outbe_chain::launch::node: consensus stack failed ");
+            saw_expiry |= line
+                .contains(" ERROR outbe_chain::launch::node::consensus: consensus stack failed ");
         }
     }
     ensure!(saw_expiry, "missing exact frozen-target stack error");
@@ -709,7 +709,7 @@ mod tests {
             log.push_str(&format!("2026-09-05T12:00:00Z  INFO outbe_consensus::executor::actor::finalization: {FINALIZED} height={} digest={}\n",
                 header.height, header.block_hash));
         }
-        log.push_str(&format!("2026-09-05T12:00:01Z ERROR outbe_chain::launch::node: consensus stack failed e={EXPIRED}1, height 66, deadline 66\n"));
+        log.push_str(&format!("2026-09-05T12:00:01Z ERROR outbe_chain::launch::node::consensus: consensus stack failed e={EXPIRED}1, height 66, deadline 66\n"));
         log
     }
 
@@ -799,7 +799,7 @@ mod tests {
     #[test]
     fn terminal_log_accepts_current_production_finalization_and_expiry_records() {
         let captured = "2026-09-13T19:38:27.057012Z  INFO outbe_consensus::executor::actor::finalization: marshal-delivered block finalized and acked height=66 digest=0x82b8a3fa749f55a368d7ce6a2c2ad2b73bcd1110304f1d59a20ded5de6e2dc00\n\
-            2026-09-13T19:39:49.404497Z ERROR outbe_chain::launch::node: consensus stack failed e=frozen DKG target missed VRF expiry: cycle 1, height 66, deadline 66\n";
+            2026-09-13T19:39:49.404497Z ERROR outbe_chain::launch::node::consensus: consensus stack failed e=frozen DKG target missed VRF expiry: cycle 1, height 66, deadline 66\n";
         let records = telemetry(captured, &target(), 66).unwrap();
         assert_eq!(records.finalized.len(), 1);
         assert_eq!(

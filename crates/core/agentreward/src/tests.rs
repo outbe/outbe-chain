@@ -673,11 +673,10 @@ mod distribute_daily_tests {
                 .unwrap();
             outbe_ccaregistry::runtime::bond(ctx.storage.clone(), cca, bond, "Test CCA".into())
                 .unwrap();
-            outbe_ccaregistry::api::position_opened(&ctx.storage, cca, DAY.value(), U256::ONE)
+            outbe_ccaregistry::api::credis_issued(&ctx.storage, cca, DAY.value(), U256::ONE)
                 .unwrap();
             distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(100u64))]).unwrap();
-            outbe_ccaregistry::api::position_opened(&ctx.storage, cca, 20240102, U256::ONE)
-                .unwrap();
+            outbe_ccaregistry::api::credis_issued(&ctx.storage, cca, 20240102, U256::ONE).unwrap();
             distribute_daily(ctx, 20240102.into(), &[(PoolKind::Cca, U256::from(50u64))]).unwrap();
             assert_eq!(
                 ctx.storage

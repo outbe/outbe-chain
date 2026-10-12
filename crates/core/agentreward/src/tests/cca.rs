@@ -45,8 +45,8 @@ fn inactive_weights_are_excluded_and_residue_stays_excess() {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
         assert_eq!(reward(&storage, U256::from(11)), U256::from(11));
-        runtime::position_opened(&storage, ALICE, DAY, U256::from(1)).unwrap();
-        runtime::position_opened(&storage, BOB, DAY, U256::from(3)).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::from(1)).unwrap();
+        runtime::credis_issued(&storage, BOB, DAY, U256::from(3)).unwrap();
         assert_eq!(reward(&storage, U256::from(11)), U256::ONE);
         assert_eq!(claimable(&storage, ALICE), native(2));
         assert_eq!(claimable(&storage, BOB), native(8));
@@ -69,14 +69,14 @@ fn inactive_weights_are_excluded_and_residue_stays_excess() {
 fn wide_reward_products_do_not_overflow_and_conversion_failure_rolls_back() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
-        runtime::position_opened(&storage, ALICE, DAY, U256::MAX).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::MAX).unwrap();
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
         let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
         let before = storage.balance(AGENT_REWARD_ADDRESS).unwrap();
         assert!(distribute_daily(&ctx, 20231115.into(), &[(PoolKind::Cca, U256::MAX)]).is_err());
         assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), before);
         assert_eq!(claimable(&storage, ALICE), native(100));
-        assert!(runtime::position_opened(&storage, ALICE, DAY, U256::ONE).is_err());
+        assert!(runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).is_err());
         assert_eq!(api::reward_weight(&storage, ALICE, DAY).unwrap(), U256::MAX);
     });
 }
@@ -86,7 +86,7 @@ fn reward_map_overflow_rolls_back_earlier_credits_and_minting() {
     run(|storage| {
         for cca in [ALICE, BOB] {
             bond(&storage, cca, BOND_REQUIREMENT);
-            runtime::position_opened(&storage, cca, DAY, U256::ONE).unwrap();
+            runtime::credis_issued(&storage, cca, DAY, U256::ONE).unwrap();
         }
         let contract = AgentRewardContract::new(storage.clone());
         let active = [ALICE, BOB];
@@ -121,7 +121,7 @@ fn daily_distribution_at_the_active_cap_matches_the_proportional_reference() {
         for id in 1..=population {
             let cca = Address::from_word(U256::from(id).into());
             bond(&storage, cca, BOND_REQUIREMENT);
-            runtime::position_opened(&storage, cca, DAY, U256::ONE).unwrap();
+            runtime::credis_issued(&storage, cca, DAY, U256::ONE).unwrap();
             weights.push((cca, U256::ONE));
         }
     });
@@ -154,17 +154,17 @@ fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
         let next = 20231116;
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
-        runtime::position_opened(&storage, ALICE, DAY, U256::from(60)).unwrap();
-        runtime::position_opened(&storage, ALICE, DAY, U256::from(40)).unwrap();
-        runtime::position_opened(&storage, BOB, DAY, U256::from(100)).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::from(60)).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::from(40)).unwrap();
+        runtime::credis_issued(&storage, BOB, DAY, U256::from(100)).unwrap();
         storage
             .set_block_timestamp(U256::from(
                 outbe_primitives::time::date_key_to_utc_timestamp(next),
             ))
             .unwrap();
-        runtime::position_opened(&storage, ALICE, next, U256::from(100)).unwrap();
-        runtime::position_opened(&storage, BOB, next, U256::from(150)).unwrap();
-        runtime::position_voided(&storage, ALICE, next, U256::from(50)).unwrap();
+        runtime::credis_issued(&storage, ALICE, next, U256::from(100)).unwrap();
+        runtime::credis_issued(&storage, BOB, next, U256::from(150)).unwrap();
+        runtime::credis_forfeited(&storage, ALICE, next, U256::from(50)).unwrap();
         assert_eq!(
             api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::from(100)
@@ -192,7 +192,7 @@ fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
             U256::from(120)
         );
         // A later void cannot claw back already accrued rewards.
-        runtime::position_voided(&storage, ALICE, next, U256::from(50)).unwrap();
+        runtime::credis_forfeited(&storage, ALICE, next, U256::from(50)).unwrap();
         assert_eq!(claimable(&storage, ALICE), native(90));
     });
 }
@@ -204,7 +204,7 @@ fn cca_pool_queries_and_claims_are_isolated() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
-        runtime::position_opened(&storage, ALICE, DAY, U256::ONE).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).unwrap();
         assert_eq!(reward(&storage, U256::from(1000)), U256::ZERO);
         let mut contract = AgentRewardContract::new(storage.clone());
         for (pool, amount) in [(RewardPool::Waa, 100), (RewardPool::Sra, 200)] {
@@ -324,7 +324,7 @@ fn cca_pool_queries_and_claims_are_isolated() {
 fn deregistered_cca_claims_from_agentreward_after_withdrawing_bond() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
-        runtime::position_opened(&storage, ALICE, DAY, U256::ONE).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).unwrap();
         reward(&storage, U256::from(1000));
         runtime::unbond(storage.clone(), ALICE).unwrap();
         let now = NOW + UNBOND_COOLDOWN_SECONDS;
@@ -360,7 +360,7 @@ const CAROL: Address = Address::repeat_byte(3);
 
 fn originate(storage: &StorageHandle<'_>, who: Address, weight: u64) {
     bond(storage, who, BOND_REQUIREMENT);
-    runtime::position_opened(storage, who, DAY, U256::from(weight)).unwrap();
+    runtime::credis_issued(storage, who, DAY, U256::from(weight)).unwrap();
 }
 
 #[test]

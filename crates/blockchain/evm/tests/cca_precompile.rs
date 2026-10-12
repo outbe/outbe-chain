@@ -187,7 +187,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         );
     }
     with_storage(&mut db, |s| {
-        api::position_opened(&s, CCA, 20231115, U256::from(100)).unwrap();
+        api::credis_issued(&s, CCA, 20231115, U256::from(100)).unwrap();
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, NOW, 1), s.clone());
         assert_eq!(
             distribute_daily(&ctx, 20231115.into(), &[(PoolKind::Cca, U256::from(1000))]).unwrap(),
@@ -227,7 +227,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert_eq!(record.bondedAmount, BOND_REQUIREMENT);
         assert_eq!(record.unbondUnlocksAfter, NOW + UNBOND_COOLDOWN_SECONDS);
         assert!(!api::is_active(&s, CCA).unwrap());
-        assert!(api::position_opened(&s, CCA, 20231115, U256::ONE).is_err());
+        assert!(api::credis_issued(&s, CCA, 20231115, U256::ONE).is_err());
     });
     let claim = |amount| IAgentReward::claimRewardCall { pool: 2, amount }.abi_encode();
     let before = snapshot(&mut db);

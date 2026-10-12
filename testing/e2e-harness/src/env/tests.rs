@@ -280,6 +280,7 @@ fn ordinary_oracle_and_zerofee_rollover_steps_remain_available_without_integrati
         checked,
         [
             "Per-pair quorum survives a sub-quorum cross intersection",
+            "Feeder source failures leave the last finalized price intact and recover",
             "Exhausted quota resets lazily across the worldwide-day boundary",
         ]
     );
@@ -620,7 +621,7 @@ fn consensus_resilience_scenarios_have_registered_steps() {
         cucumber::gherkin::GherkinEnv::default(),
     )
     .expect("parse consensus_resilience feature");
-    assert_eq!(feature.scenarios.len(), 5);
+    assert_eq!(feature.scenarios.len(), 9);
     for scenario in &feature.scenarios {
         assert_registered_steps(&feature, scenario);
     }

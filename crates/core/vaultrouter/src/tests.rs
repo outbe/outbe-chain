@@ -2312,7 +2312,6 @@ fn reserve_stables_rejects_an_inactive_caller() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
-                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap_err();
@@ -2335,7 +2334,6 @@ fn reserve_stables_requires_a_pledge_source() {
                 source: Address::ZERO,
                 asset: asset(),
                 amount: U256::from(10),
-                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap_err();
@@ -2354,7 +2352,6 @@ fn a_reservation_holds_then_releases_once() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
-                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
@@ -2368,9 +2365,6 @@ fn a_reservation_holds_then_releases_once() {
         assert_eq!(held.gratis_minor, U256::from(5));
         assert_eq!(held.asset_decimals, 6);
         assert_eq!(held.issuance_currency, USD_ISO_CODE);
-        assert_eq!(held.reference_currency, USD_ISO_CODE);
-        assert_eq!(held.policy_rate, U256::from(43_000));
-        assert_eq!(held.call_anchor_price_minor, U256::from(2_000_000));
         assert!(!held.snapshot_id.is_zero());
         assert_eq!(held.expires_at, 1_700_000_000 + 15 * 60);
 
@@ -2411,7 +2405,6 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(50),
-                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
@@ -2461,7 +2454,6 @@ fn an_unspent_reservation_returns_to_the_origin_vault() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
-                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
@@ -2489,7 +2481,6 @@ fn a_stranger_cannot_return_a_live_reservation() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
-                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
@@ -2557,7 +2548,6 @@ fn release_rejects_an_expired_reservation() {
 fn reservations_are_gated_like_a_withdrawal() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let reserve_call = IVaultRouter::reserveStablesCall {
-            referenceCurrency: USD_ISO_CODE,
             smartAccount: receiver(),
             source: pledger(),
             asset: asset(),
@@ -2617,7 +2607,6 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
-                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap_err();
@@ -2654,7 +2643,6 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
-                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();

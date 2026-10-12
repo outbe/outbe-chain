@@ -476,15 +476,33 @@ impl Localnet {
 
     /// Publish one ordinary Git update after the source node is online.
     pub fn push_user_radicle_update(&self, fixture: &mut RadicleRepositoryFixtureV1) -> Result<()> {
-        fs::write(
-            fixture.worktree.join("README.md"),
+        self.push_user_radicle_commit(
+            fixture,
             "# Outbe Radicle E2E\n\nReplicated through the validator mesh.\n",
-        )?;
+            "Publish validator mesh evidence",
+        )
+    }
+
+    pub fn push_user_radicle_recovery_update(
+        &self,
+        fixture: &mut RadicleRepositoryFixtureV1,
+    ) -> Result<()> {
+        self.push_user_radicle_commit(
+            fixture,
+            "# Outbe Radicle E2E\n\nNew Git head during validator sidecar outage.\n",
+            "Publish head during sidecar outage",
+        )
+    }
+
+    fn push_user_radicle_commit(
+        &self,
+        fixture: &mut RadicleRepositoryFixtureV1,
+        readme: &str,
+        message: &str,
+    ) -> Result<()> {
+        fs::write(fixture.worktree.join("README.md"), readme)?;
         self.git(&fixture.worktree, &["add", "README.md"])?;
-        self.git(
-            &fixture.worktree,
-            &["commit", "-m", "Publish validator mesh evidence"],
-        )?;
+        self.git(&fixture.worktree, &["commit", "-m", message])?;
         self.git_env(
             &fixture.home,
             &self.cfg.user_radicle_control_socket(),

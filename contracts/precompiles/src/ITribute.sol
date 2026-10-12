@@ -51,7 +51,7 @@ interface ITribute {
     function getDayTotals(uint32 worldwideDay)
         external
         view
-        returns (uint32 tributeCount, bytes tributeNominalTotalMinor, bool isSealed);
+        returns (uint32 tributeCount, bytes memory tributeNominalTotalMinor, bool isSealed);
     function getTributesByOwner(address owner) external view returns (uint256[] memory tributeIds);
     function getTributesByDay(uint32 worldwideDay) external view returns (uint256[] memory tributeIds);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

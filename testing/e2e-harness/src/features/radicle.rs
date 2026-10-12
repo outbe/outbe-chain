@@ -401,6 +401,44 @@ fn degraded(world: &mut World) {
     });
 }
 
+#[when("the independent source publishes a second Git head during the sidecar outage")]
+fn publish_during_sidecar_outage(world: &mut World) {
+    let previous = world
+        .state
+        .radicle
+        .pushed_commit
+        .clone()
+        .expect("first Git head");
+    let mut source = fixture(world);
+    world
+        .localnet
+        .push_user_radicle_recovery_update(&mut source)
+        .expect("publish second Git head while validator-1 Radicle is stopped");
+    let second = source.pushed_commit.expect("second Git head");
+    assert_ne!(second, previous, "second update did not advance Git head");
+    world.state.radicle.pushed_commit = Some(second);
+}
+
+#[then("the three live validators serve the second head while validator 1 does not")]
+fn second_head_during_sidecar_outage(world: &mut World) {
+    let source = fixture(world);
+    wait_until("second Git head on live validators", 180, || {
+        [0, 2, 3].into_iter().all(|index| {
+            world
+                .localnet
+                .radicle_repo_visible(index, &source)
+                .expect("observe second Git head")
+        })
+    });
+    assert!(
+        !world
+            .localnet
+            .radicle_repo_visible(1, &source)
+            .expect("observe stopped validator repository"),
+        "stopped sidecar already served the second Git head"
+    );
+}
+
 #[when("validator 1 Radicle sidecar is restarted")]
 fn restart_sidecar(world: &mut World) {
     world

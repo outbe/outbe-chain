@@ -165,11 +165,7 @@ fn assert_first_start(
             report.checks.values().any(|check| check.selected),
             "empty validation selection"
         );
-        let passed = report
-            .checks
-            .values()
-            .filter(|check| check.selected)
-            .all(|check| check.status == SnapshotCheckStatus::Passed);
+        let passed = snapshot_full_validation_complete(&report)?;
         if passed {
             successful_command(command)?;
         } else {

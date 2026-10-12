@@ -14,13 +14,13 @@ pub struct PledgeRecord {
     pub gratis_minor: U256,
 }
 
-/// Gratis backing one issued Credis position. Returns and burns draw it down,
+/// Gratis backing one issued Credis. Returns and burns draw it down,
 /// and it closes at zero.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[storage_record(exists_field = source)]
 pub struct CollateralAllocation {
     #[key]
-    pub position_id: U256,
+    pub credis_id: U256,
     #[attribute(order = 0)]
     pub source: Address,
     #[attribute(order = 1)]

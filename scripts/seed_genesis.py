@@ -13,8 +13,8 @@ Usage:
     --output /tmp/outbe/genesis-seeded.json
 
 Dependencies: pycryptodome (pip install pycryptodome) or pysha3.
-Falls back to a small pure-Python Keccak-256 implementation for hermetic
-localnet smoke runs when neither optional package is installed.
+Uses a small pure-Python Keccak-256 implementation for hermetic localnet smoke
+runs when neither optional package is available.
 """
 
 from __future__ import annotations
@@ -190,9 +190,8 @@ ACCOUNTING_PROGRESS_ADDRESS = "000000000000000000000000000000000000ee04"
 ORACLE_ADDRESS = "000000000000000000000000000000000000ee05"
 # ZeroFee paymaster precompile at 0xEE09. Holds per-signer EIP-7702
 # sponsorship counters. The precompile itself has dispatch logic in
-# `outbe-evm/src/precompiles.rs`, so the marker bytecode below protects
-# its account (and slot 0) from EIP-161 cleanup before the
-# first sponsored tx ever lands.
+# `outbe-evm/src/precompiles.rs`. The marker bytecode below protects its account
+# and slot 0 from EIP-161 cleanup before the first sponsored transaction.
 ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
 # Compressed-entity EVM schema V3. ADR-011 adds the retirement journal.
 # Catalog, so slot 1 is non-zero even though no collection exists at genesis.
@@ -204,15 +203,15 @@ COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT = int(
 # TEE registry precompile at 0xEE0A. Genesis seeds only slot 2 (`policy_hash`),
 # and only when `tee_policy` is present in the seed config. The block-1
 # `TeeBootstrap` system tx writes the rest of the registry. At runtime,
-# `OUTBE_RUNTIME_MARKER_ADDRESSES` preserves the account across EIP-161. When a
-# policy is seeded, the account also gets genesis marker bytecode so slot 2 survives
+# `OUTBE_RUNTIME_MARKER_ADDRESSES` preserves the account across EIP-161. When
+# genesis seeds a policy, it also adds marker bytecode so slot 2 survives
 # to block 1. Mirrors `outbe_primitives::addresses::TEE_REGISTRY_ADDRESS`.
 TEE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee0a"
 UPDATE_ADDRESS = "0x000000000000000000000000000000000000ee0b"
 VOTE_ADDRESS = "0x000000000000000000000000000000000000ee0c"
 # Stablecoin Factory/Policy fixed accounts and the dynamic-token address class.
-# These mirror outbe_primitives::addresses and are reserved from genesis even
-# before production dispatch activates.
+# These mirror outbe_primitives::addresses. Genesis reserves them even before
+# production dispatch activates.
 STABLECOIN_FACTORY_ADDRESS = "000000000000000000000000000000000000ee0f"
 STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
 RADICLE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee11"
@@ -224,13 +223,14 @@ DEFAULT_UNBONDING_PERIOD = 21 * 24 * 3600
 DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS = 151_200
 # ~1 hour at a ~3s block (40 min at 2s ... 2.7 h at 8s). The epoch is the cadence
 # for DKG reshare, active-set rotation, and the per-epoch slash-counter reset. So
-# it bounds the felony window: a felony threshold (default 150) must stay below it.
+# it bounds the felony window. Slashing defaults live in
+# crates/system/slashindicator/src/constants.rs. Short epochs need suitable overrides.
 DEFAULT_EPOCH_LENGTH_BLOCKS = 1_200
 SECONDS_PER_DAY = 86_400
 
 # Profile selectors. Numbers live in Rust (crates/core/intexfactory/src/config.rs,
 # crates/core/gem/src/config.rs and crates/core/nod/src/config.rs). Genesis only
-# picks one. The slots are pinned by a test in each crate.
+# selects one. A test in each crate checks the slot numbers.
 PROFILE_SELECTORS = {"auto": 0, "dev": 1, "prod": 2}
 INTEX_PROFILE_SLOT = 5
 GEM_PROFILE_SLOT = 34
@@ -390,8 +390,8 @@ def compute_tee_policy_hash(
     MUST match `outbe_primitives::tee_bootstrap::TeePolicy::compute_hash`:
     `keccak256(b"outbe/tee/policy/v1" || u16_be(len(mrsigner)) || sorted(mrsigner)
     || u16_be(len(mrenclave)) || sorted(mrenclave) || u16_be(min_isv_svn))`.
-    Lists are sorted ascending by their 32 raw bytes (matching Rust's `B256`
-    `sort_unstable`), so the hash is independent of allowlist ordering.
+    This function sorts lists ascending by their 32 raw bytes, matching Rust's
+    `B256` `sort_unstable`. The hash is independent of allowlist ordering.
     """
     signers = sorted(b256_bytes(s) for s in allowed_mrsigner)
     enclaves = sorted(b256_bytes(e) for e in allowed_mrenclave)
@@ -539,9 +539,9 @@ class StorageBuilder:
         """
         Set a two-word `Mapping<K, AddressPair>` entry.
 
-        An oracle pair is 40 bytes and a storage word is 32, so the value spans
-        the key's mapping slot and the one after it - base then quote, the same
-        layout Solidity gives `mapping(K => struct { address; address; })`.
+        An oracle pair is 40 bytes. A storage word is 32 bytes.
+        The value spans the key's mapping slot and the next slot: base, then quote.
+        Solidity uses the same layout for `mapping(K => struct { address; address; })`.
         Callers pass the pair in its registered orientation. Nothing here sorts it.
         """
         slot = int(mapping_key(key_bytes, base_slot), 16)
@@ -716,10 +716,10 @@ def address_pair(base: str, quote: str) -> bytes:
     """
     Oracle pair storage key: both asset addresses concatenated ascending.
 
-    Order-independent, so `COEN/840` and `840/COEN` are one key. `mapping_key`
-    needs no special case: it left-pads with `rjust(32)`, which never truncates,
-    so a 40-byte key falls through unpadded and yields the same slot as the Rust
-    `StorageKey for AddressPair` override.
+    The order-independent key is the same for `COEN/840` and `840/COEN`.
+    `mapping_key` needs no special case. It pads on the left with `rjust(32)`,
+    which never truncates. A 40-byte key needs no padding and yields the same
+    slot as the Rust `StorageKey for AddressPair` override.
     """
     low, high = sorted((asset_address(base), asset_address(quote)))
     return low + high
@@ -940,13 +940,14 @@ def seed_tributes(storage: StorageBuilder, tributes: list):
 
 def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
     """Initialize the Tribute `day_totals` DSL record for OFFERING days so
-    `offerTribute` is accepted. `ensure_day_accepts_tributes` requires
+    callers can use `offerTribute`. `ensure_day_accepts_tributes` requires
     `initialized == true && !is_sealed`. A directly-seeded OFFERING worldwide
     day never ran the metadosis `unseal_day` that normally initializes it.
 
-    `day_totals` is `Map<WorldwideDay, DayTotals>` at TributeContract slot 1
-    (storage_schema cumulative offsets: `total_supply`@0 = 1 slot, then
-    `day_totals` lands at slot 1). Tribute bodies no longer occupy EVM storage.
+    `day_totals` is `Map<WorldwideDay, DayTotals>` at TributeContract slot 1.
+    The storage_schema cumulative offsets place `total_supply` at slot 0.
+    It occupies one slot, so `day_totals` starts at slot 1.
+    Tribute bodies no longer occupy EVM storage.
     Within the `DayTotals` record, the field offset is the cumulative slot index
     by `#[attribute(order)]`:
     `initialized`@0, `tribute_count`@1, `tribute_nominal_total_minor`@2,
@@ -984,7 +985,7 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
       slot 11:     active_wwd_count (Value<u16>)
       slots 12-13: active_wwd (Set<WorldwideDayKey>) - OZ enumerable set:
                      12 = length + value array at keccak256(be32(12))+i
-                     13 = positions base; position(wwd) = index + 1 (0 = absent)
+                     13 = positions base, position(wwd) = index + 1 (0 = absent)
       slot 14+:    closed_wwd (Deque<WorldwideDayKey>)
 
     The active_wwd Set is what `get_active_wwd_by_status` (and therefore the tribute
@@ -1061,7 +1062,7 @@ def _seed_address_set_with_types(
     `mapping(Address => u8)` type map, matching the Rust `StorageSet` layout:
       set_base       = element count (length)
       set_base       -> value array at keccak256(be32(set_base)) + index
-      set_base + 1   = positions mapping (1-indexed; 0 = absent)
+      set_base + 1   = positions mapping (1-indexed, 0 = absent)
       type_map_slot  = mapping(Address => u8) discriminant
     """
     for idx, (addr, type_value) in enumerate(entries):
@@ -1087,9 +1088,9 @@ def seed_vault_router(storage: StorageBuilder, owner_address: str):
       slot 9:      liquidity_target_types (Map<Address, u8>)
 
     Genesis sets the owner and pre-registers the default liquidity source/target
-    registry for the factory precompiles, so the Solidity deposit / withdraw
-    ABI path is gated and configured out of the box. The
-    reserve vault itself is still registered post-deploy via `addVault`. The
+    registry for the factory precompiles. This configures and restricts the
+    Solidity deposit / withdraw ABI path. The reserve vault still requires
+    registration after deployment through `addVault`. The
     in-process api callers bypass this registry and declare their discriminant
     directly. Owner mirrors the ValidatorSet owner pattern (slot 0).
     """
@@ -1312,29 +1313,29 @@ def seed_compressed_entities(storage: StorageBuilder):
 
 def seed_governance(storage: StorageBuilder, validators: list, canon_dir: str | None):
     """
-    Governance storage layout. All seeded fields are one slot each and precede
-    the two record maps in the schema, so their slot indices are stable no matter
-    how the Oip/Gip record types grow (a `Map<K, Record>` reserves
-    `Record::SLOTS` contiguous base slots). The Rust-side
+    Governance storage layout. Each seeded field occupies one slot before the
+    two record maps in the schema. Their slot indices stay stable as the Oip/Gip
+    record types grow. A `Map<K, Record>` reserves `Record::SLOTS` contiguous base slots.
+    The Rust-side
     `storage_layout_matches_seeder` test pins these indices.
 
-      slot 0:  meta_canon text        (StorageBytes; long data at keccak256(0))
+      slot 0:  meta_canon text        (StorageBytes, long data at keccak256(0))
       slot 1:  meta_canon_version     (u64)
       slot 2:  meta_canon_hash        (B256 = keccak256(text))
       slot 3:  meta_canon_revisions   Map<u64, B256>
-      slot 4:  canon text             (StorageBytes; long data at keccak256(4))
+      slot 4:  canon text             (StorageBytes, long data at keccak256(4))
       slot 5:  canon_version          (u64)
       slot 6:  canon_hash             (B256)
       slot 7:  canon_revisions        Map<u64, B256>
       slot 8:  next_oip_id            (u64, default 0 - not seeded)
       slot 9:  next_gip_id            (u64, default 0 - not seeded)
       slot 10: authorities            Map<Address, bool>  (PoC write-gate)
-      slot 11: oips                   Map<U256, Oip>   (not seeded; empty)
-      slot 17: gips                   Map<U256, Gip>   (not seeded; empty)
+      slot 11: oips                   Map<U256, Oip>   (not seeded, empty)
+      slot 17: gips                   Map<U256, Gip>   (not seeded, empty)
 
-    Authorities are seeded with every genesis validator address. With an empty
-    authorities set nobody could ever write the canon, so this is mandatory. The
-    canon / meta-canon texts are seeded from `canon_dir/{metacanon.md,canon.md}`
+    Genesis includes every validator address in the authorities set.
+    An empty authorities set would prevent all canon writes, so this is mandatory.
+    Genesis uses the canon / meta-canon texts from `canon_dir/{metacanon.md,canon.md}`
     at version 1 when present. When absent, the texts stay empty and any authority
     performs the first `updateCanon` post-genesis (version 0 -> 1).
 
@@ -1383,9 +1384,8 @@ def seed_oracle(storage: StorageBuilder, config: dict):
       slot 15: feeder delegations
       slots 32-33: protected validators
       slot 43: mapping(pair_index => AddressPair), a two-word value and the only
-        way to enumerate the registry (40-42, 44, 45 and 46 are retired
-        settlement holes; the settlement pair is derived as
-        address_pair("COEN", "<iso>"))
+        way to enumerate the registry. Slots 40-42, 44, 45 and 46 are retired
+        settlement holes. The settlement pair is address_pair("COEN", "<iso>").
       slot 55: reference_currencies (StorageVec<u16>)
       slot 60: retired policy-rate mapping
       slots 74-75: policy_rate_currencies / policy_rate
@@ -1583,7 +1583,7 @@ def seed_radicle_registry(storage: StorageBuilder, config: dict):
 
 def seed_external_contracts(alloc, contracts_list, contracts_dir):
     """
-    Embed externally-fetched contracts (bytecode + storage) into the genesis
+    Embed contracts from external sources (bytecode + storage) into the genesis
     alloc. Each entry has the form:
         {"address": "0x...", "code": "<file>.code.hex",
          "state": "<file>.state.json"?, "nonce": "0x.."?, "balance": "0x.."?}
@@ -1676,9 +1676,9 @@ def override_worldwide_day(seed: dict, day: int) -> None:
 
     A localnet must boot on its genesis (current) date. The metadosis runtime
     derives the active day each block from
-    `WorldwideDay::from_timestamp(block.timestamp)`. Thus, a seeded day that differs
-    from the genesis wall-clock day leaves two active worldwide days fighting
-    (the seeded one + the runtime-created "today"), and consensus wedges. This
+    `WorldwideDay::from_timestamp(block.timestamp)`. A seeded day that differs
+    from the genesis wall-clock day leaves two active worldwide days.
+    The seeded day conflicts with the runtime-created "today", and consensus stalls. This
     function leaves other day fields (status, offering window, limits) as authored
     and retargets only the calendar key. The OFFERING window that the seed declares
     (forming in the past, offering_end far future) keeps the day OFFERING at the
@@ -1702,10 +1702,13 @@ def apply_seed(
 ) -> dict:
     """Compute every derived value a genesis needs and write it into `genesis`.
 
-    This is the calculation half of genesis creation: storage slot layout for
-    each precompile, keccak-derived mapping keys, the active WorldwideDay
-    resolved against the genesis timestamp, marker bytecode, and balances that
-    must match seeded counters. `create_genesis.py` owns the declarative half
+    This function calculates these genesis values:
+    - The storage slot layout for each precompile.
+    - The keccak-derived mapping keys.
+    - The active WorldwideDay for the genesis timestamp.
+    - The marker bytecode.
+    - The balances that must match seeded counters.
+    `create_genesis.py` owns the declarative half
     (what the network *is*, from a yaml) and calls this to render it.
 
     The function mutates `genesis` in place and returns it.
@@ -1713,9 +1716,9 @@ def apply_seed(
 
     seed_protocol_constants(genesis, seed)
 
-    # Retarget the seeded worldwide-day to the genesis (current) date when asked,
-    # before any seeder consumes `seed`, so metadosis, the oracle S-curve, the
-    # tribute day_totals init, and the NODs all agree on the same active day.
+    # When requested, retarget the seeded worldwide-day to the genesis (current) date.
+    # Do this before any seeder consumes `seed`. This gives metadosis, the oracle
+    # S-curve, tribute day_totals, and the NODs the same active day.
     if worldwide_day is not None:
         override_worldwide_day(seed, worldwide_day)
     if fresh_metadosis:
@@ -1848,10 +1851,9 @@ def apply_seed(
         f"{len(governance_storage.entries)} storage entries"
     )
 
-    # V2 Phase 1 accounting progress (slot 0 = 0). Always seeded - independent
-    # of validator count - because the executor needs the marker bytecode +
-    # an explicit slot 0 = 0 word to record `last_accounted_block_number`
-    # under EIP-161-safe storage.
+    # V2 Phase 1 accounting progress (slot 0 = 0). Genesis always seeds it,
+    # regardless of validator count. The executor needs the marker bytecode and
+    # an explicit slot 0 = 0 word to record `last_accounted_block_number` with EIP-161-safe storage.
     accounting_storage = StorageBuilder()
     seed_accounting_progress(accounting_storage)
     alloc[ACCOUNTING_PROGRESS_ADDRESS].setdefault("storage", {}).update(
@@ -1901,10 +1903,10 @@ def apply_seed(
     # config.teePolicy, but only when `tee_policy` is present in the seed config.
     seed_tee_policy(genesis, alloc, seed)
 
-    # Gratis and Promis are TEE-encrypted at rest: per-account balances are
-    # ciphertext keyed off enclave state keys, so they can NOT be plaintext-seeded
-    # at genesis. (The old flat writes were dead. Worse, they set total_supply to
-    # a non-zero value with no backing encrypted balances.) A demo account instead
+    # Gratis and Promis use TEE encryption at rest. Per-account balances are
+    # ciphertext that uses enclave state keys. Genesis cannot seed plaintext balances.
+    # The old flat writes had no effect on balances. They set total_supply to
+    # a non-zero value with no backing encrypted balances. A demo account instead
     # gets a Settled gem (see below) and mines Gem -> Promis -> Gratis through the
     # enclave. Fail loudly if a stale seed still carries these keys.
     for _encrypted_key in ("gratis_balances", "promis_balances"):
@@ -1928,9 +1930,8 @@ def apply_seed(
     if "tributes" in seed:
         tribute_storage = StorageBuilder()
         seed_tributes(tribute_storage, seed["tributes"])
-        # Initialize day_totals for OFFERING worldwide days (status 2) so
-        # offerTribute is accepted (the directly-seeded OFFERING day never ran
-        # the metadosis unseal_day that normally initializes it).
+        # Initialize day_totals for OFFERING worldwide days (status 2) so callers can use offerTribute.
+        # A directly seeded OFFERING day never ran the metadosis unseal_day that normally initializes day_totals.
         offering_days = [
             entry_wd["wwd"]
             for entry_wd in seed.get("metadosis", {}).get("worldwide_days", [])

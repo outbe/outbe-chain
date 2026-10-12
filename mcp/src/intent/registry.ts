@@ -1,9 +1,7 @@
-import type { Abi } from "viem";
-import RouterJson from "../../../contracts/intent/abi-export/Router.json";
-import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
+import Router from "../abi/generated/intent/Router.js";
 
 /**
- * ABI + constants for the intent (ERC-7683 LayerZeroRouter) tools.
+ * ABI + constants for the intent (ERC-7683 Router) tools.
  *
  * ABIs are generated, not hand-written - see `src/abi.ts`. Source of truth:
  *  - contracts/intent/src/router/... via contracts/intent/abi-export/Router.json
@@ -11,25 +9,8 @@ import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
  */
 
 export const DEFAULT_ROUTER = "0xC846a86D4FE91a43E900a7a3bd5BE23ED2C30492";
-export const DEFAULT_FILL_DEADLINE_SECONDS = 120; // 120s
+export const DEFAULT_FILL_DEADLINE_SECONDS = 120;
 
-/**
- * Supported networks besides `outbe` (always the connected ctx). A network is
- * resolved by name or chain id, with no RPC URLs and no aliases. The model
- * normalizes natural language ("bsc" typed in Cyrillic, "BSC testnet") to `bsc`.
- * Add a row to support another chain.
- */
-export interface NetworkDef {
-  name: string;
-  chainId: number;
-  rpc: string;
-}
+export const ROUTER_ABI = Router;
 
-export const NETWORKS: NetworkDef[] = [
-  { name: "bsc-testnet", chainId: 97, rpc: "https://bsc-testnet-rpc.publicnode.com" },
-  { name: "outbe-testnet", chainId: 54322345, rpc: "https://rpc.testnet.outbe.net" },
-];
-
-export const ROUTER_ABI: Abi = RouterJson as Abi;
-
-export const ERC20_ABI: Abi = IERC20Json as Abi;
+export { ERC20_ABI } from "../net/erc20.js";

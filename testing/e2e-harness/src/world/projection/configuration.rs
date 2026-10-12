@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Write;
 
 /// Create once, privately. A restart validates and reuses the operator's exact file.
 pub(crate) fn ensure_node_config(cfg: &Config, index: usize) -> Result<()> {

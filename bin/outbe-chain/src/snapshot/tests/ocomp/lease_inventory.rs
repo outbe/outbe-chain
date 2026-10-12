@@ -10,7 +10,7 @@ use outbe_compressed_entities::{
     tribute_partition_root_from_leaves, PartitionRef, StoredBody, ACTIVE_COMMITMENT_SCHEME,
     BODY_SCHEMA_V1,
 };
-use outbe_ocomp::{control::poc_schema_limits, exporter::TributeStreamSummary};
+use outbe_ocomp::control::poc_schema_limits;
 use outbe_ocomp_protocol::intent::{
     ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType, FrozenMetadosisValuesV1,
     JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
@@ -150,7 +150,6 @@ struct Fixture {
     source: PathBuf,
     scratch: PathBuf,
     intent: JobIntentV1,
-    exact_body_bytes: u64,
 }
 
 impl Fixture {
@@ -160,12 +159,10 @@ impl Fixture {
         let scratch = root.path().join("scratch");
         fs::create_dir(&scratch).unwrap();
         let bodies: Vec<_> = (1..=5).map(|index| body(index, DAY)).collect();
-        let mut exact_body_bytes = 0;
         let leaves: Vec<_> = bodies
             .iter()
             .map(|body| {
                 let bytes = encode_tribute_v1(&canonical_body(body)).unwrap();
-                exact_body_bytes += bytes.len() as u64;
                 (
                     body.tribute_id,
                     body_commitment(
@@ -278,15 +275,10 @@ impl Fixture {
             source,
             scratch,
             intent,
-            exact_body_bytes,
         }
     }
 
-    fn check(
-        &self,
-        authority: &JobIntentV1,
-        maximum: Option<u64>,
-    ) -> eyre::Result<TributeStreamSummary> {
+    fn check(&self, authority: &JobIntentV1, maximum: Option<u64>) -> eyre::Result<()> {
         self.check_at(authority, &self.scratch, maximum)
     }
 
@@ -295,7 +287,7 @@ impl Fixture {
         authority: &JobIntentV1,
         scratch: &Path,
         maximum: Option<u64>,
-    ) -> eyre::Result<TributeStreamSummary> {
+    ) -> eyre::Result<()> {
         let before = fingerprint(&self.source);
         let scratch_before = fingerprint(scratch);
         let result = verify_lease_inputs(
@@ -316,18 +308,10 @@ impl Fixture {
 }
 
 #[test]
-fn live_retained_and_deduplicated_union_close_actual_native_root_and_nominal() {
+fn live_retained_and_deduplicated_union_close_actual_native_root() {
     for placement in [Placement::Live, Placement::Retained, Placement::Union] {
         let fixture = Fixture::new(placement, Fault::None);
-        let summary = fixture.check(&fixture.intent, Some(5)).unwrap();
-        assert_eq!(
-            summary,
-            TributeStreamSummary {
-                record_count: 5,
-                nominal_total: U256::from(3500),
-                exact_body_bytes: fixture.exact_body_bytes
-            }
-        );
+        fixture.check(&fixture.intent, Some(5)).unwrap();
     }
 }
 
@@ -363,7 +347,7 @@ fn corrupt_or_foreign_day_body_under_selected_key_is_failed() {
 }
 
 #[test]
-fn full_count_wrong_root_count_overrun_and_nominal_contradictions_are_failed() {
+fn full_count_wrong_root_and_count_overrun_are_failed() {
     let fixture = Fixture::new(Placement::Live, Fault::None);
     for authority in [
         intent(hash(0x99), 5, U256::from(3500)),
@@ -371,16 +355,6 @@ fn full_count_wrong_root_count_overrun_and_nominal_contradictions_are_failed() {
             fixture.intent.sealed_tribute_collection_root,
             4,
             U256::from(3500),
-        ),
-        intent(
-            fixture.intent.sealed_tribute_collection_root,
-            5,
-            U256::from(3499),
-        ),
-        intent(
-            fixture.intent.sealed_tribute_collection_root,
-            5,
-            U256::from(3501),
         ),
     ] {
         let error = fixture.check(&authority, None).unwrap_err();
@@ -396,19 +370,26 @@ fn full_count_wrong_root_count_overrun_and_nominal_contradictions_are_failed() {
 }
 
 #[test]
+fn body_integrity_check_does_not_open_private_nominal() {
+    let fixture = Fixture::new(Placement::Live, Fault::None);
+    for nominal in [3499_u64, 3501] {
+        let authority = intent(
+            fixture.intent.sealed_tribute_collection_root,
+            5,
+            U256::from(nominal),
+        );
+        fixture.check(&authority, None).unwrap();
+    }
+}
+
+#[test]
 fn resource_limit_reports_incomplete_and_exact_budget_can_finish() {
     let fixture = Fixture::new(Placement::Union, Fault::None);
     for maximum in [0, 1, 4] {
         let error = fixture.check(&fixture.intent, Some(maximum)).unwrap_err();
         assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
     }
-    assert_eq!(
-        fixture
-            .check(&fixture.intent, Some(5))
-            .unwrap()
-            .record_count,
-        5
-    );
+    fixture.check(&fixture.intent, Some(5)).unwrap();
 }
 
 #[test]

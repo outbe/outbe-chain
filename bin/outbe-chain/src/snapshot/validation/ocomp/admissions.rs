@@ -63,7 +63,7 @@ pub(crate) fn verify_present_admissions(
             .join(&job)
             .join("admissions");
         let admissions = AdmissionCatalogReader::open_existing(&root, &cas, limits)?;
-        let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
+        let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_integrity_audit(
             &admissions,
             &inputs,
             &cas,
