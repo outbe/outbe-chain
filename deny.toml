@@ -11,6 +11,7 @@ ignore = [
     "RUSTSEC-2024-0436", # paste unmaintained
     "RUSTSEC-2025-0141", # bincode unmaintained
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained
+    "RUSTSEC-2024-0449", # unsafe-libyaml unmaintained, via serde_yaml_ng in the e2e harness only
     # rsa Marvin timing sidechannel: no patched release exists upstream. Pulled
     # via ssh-key -> radicle-crypto (Heartwood keystore); Outbe identities are
     # Ed25519, the rsa code path is never exercised for key material.
