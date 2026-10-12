@@ -1,15 +1,16 @@
 //! Projection datasource fixture. Runtime processes consume only the generated TOML.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_compressed_entities::{decode_stored_tribute_v1, decode_stored_tribute_v2, WwdEntityId};
 use outbe_offchain_storage::StorageProvider;
+mod fault;
 mod mongo;
 use outbe_offchain_storage::{
     Key, Namespace, RocksDbConfig, ScanEntry, ScanRequest, StorageBackend, StorageConfig,
@@ -26,6 +27,7 @@ const COLLECTIONS: [&str; 3] = ["tributes", "tributes_by_owner", "tributes_by_da
 #[derive(Debug)]
 pub struct ProjectionFixture {
     cfg: Config,
+    fault_mount: Mutex<Option<PathBuf>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,7 +84,10 @@ fn session(cfg: &Config, index: usize) -> Result<StorageReaderHandle> {
 }
 
 pub(crate) fn projection_fixture(cfg: &Config) -> ProjectionFixture {
-    ProjectionFixture { cfg: cfg.clone() }
+    ProjectionFixture {
+        cfg: cfg.clone(),
+        fault_mount: Mutex::new(None),
+    }
 }
 
 impl ProjectionFixture {
@@ -220,6 +225,9 @@ fn reset_targets(cfg: &Config, paths: [PathBuf; 2]) -> Result<Vec<PathBuf>> {
 
 impl Drop for ProjectionFixture {
     fn drop(&mut self) {
+        if let Err(error) = self.teardown_fault_mount() {
+            eprintln!("E2E projection fault mount cleanup failed: {error:#}");
+        }
         mongo::stop(&self.cfg);
     }
 }

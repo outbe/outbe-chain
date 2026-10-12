@@ -48,7 +48,7 @@ use std::time::{Duration, Instant};
 use crate::artifacts::ArtifactLedger;
 use crate::env::{decide, unmet, Decision, EnvCli, Environment};
 use crate::internal::config::Config;
-use crate::world::localnet::Localnet;
+use crate::world::localnet::{ExpectedTeeFailures, Localnet};
 use crate::world::World;
 
 #[derive(Default)]
@@ -364,6 +364,7 @@ pub async fn run() {
                     &expected_failed_slots,
                     &world.state.expected_dkg_expiry_exits,
                 );
+                let projection_cleanup = world.projection.teardown_fault_mount();
                 let audit = world.localnet.audit_unexpected_logs(
                     world
                         .state
@@ -372,11 +373,20 @@ pub async fn run() {
                         .flatten(),
                     world.state.expected_dkg_reveal.as_deref(),
                     world.state.ocomp_full_node_mismatch_job_id,
-                    world.state.expected_tee_lease_guard_shutdown_validator,
-                    world
-                        .state
-                        .expected_tee_lease_guard_shutdown_full_node
-                        .as_ref(),
+                    ExpectedTeeFailures {
+                        lease_guard_validator: world
+                            .state
+                            .expected_tee_lease_guard_shutdown_validator,
+                        sidecar_outage: world
+                            .state
+                            .expected_tee_sidecar_outage
+                            .as_ref()
+                            .map(|(index, tx)| (*index, tx.as_str())),
+                        lease_guard_full_node: world
+                            .state
+                            .expected_tee_lease_guard_shutdown_full_node
+                            .as_ref(),
+                    },
                 );
                 let mut audit = match audit {
                     Ok(audit) => audit,
@@ -384,9 +394,13 @@ pub async fn run() {
                         panic!("E2E log-safety audit could not run: {error:#}");
                     }
                 };
-                for error in [ocomp_cleanup.err(), node_cleanup.err()]
-                    .into_iter()
-                    .flatten()
+                for error in [
+                    ocomp_cleanup.err(),
+                    node_cleanup.err(),
+                    projection_cleanup.err(),
+                ]
+                .into_iter()
+                .flatten()
                 {
                     audit.record_cleanup_failure(error);
                 }

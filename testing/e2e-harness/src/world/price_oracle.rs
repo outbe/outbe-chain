@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -72,6 +72,16 @@ pub enum OracleEvidencePhaseV1 {
     ClockRestart,
     ControlledUpdate,
     QuorumRecovery,
+    SourceRecovery,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum MockSourceFailure {
+    Healthy = 0,
+    HttpError = 1,
+    InvalidPayload = 2,
+    Timeout = 3,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -297,6 +307,7 @@ fn mock_response(path: &str, symbols: &str, book: &PriceBook) -> Result<String> 
 #[derive(Debug)]
 struct MockServerState {
     book: RwLock<PriceBook>,
+    failure: AtomicU8,
     ticker_requests: AtomicU64,
     candle_requests: AtomicU64,
     stop: AtomicBool,
@@ -327,6 +338,7 @@ impl MockPriceServer {
         let addr = listener.local_addr()?;
         let state = Arc::new(MockServerState {
             book: RwLock::new(book),
+            failure: AtomicU8::new(MockSourceFailure::Healthy as u8),
             ticker_requests: AtomicU64::new(0),
             candle_requests: AtomicU64::new(0),
             stop: AtomicBool::new(false),
@@ -385,6 +397,10 @@ impl MockPriceServer {
             self.state.ticker_requests.load(Ordering::Relaxed),
             self.state.candle_requests.load(Ordering::Relaxed),
         )
+    }
+
+    fn set_failure(&self, failure: MockSourceFailure) {
+        self.state.failure.store(failure as u8, Ordering::Release);
     }
 
     fn stop(&mut self) {
@@ -457,28 +473,41 @@ fn respond_to_price_request(stream: &mut TcpStream, state: &MockServerState) -> 
         .split('&')
         .find_map(|field| field.strip_prefix("symbols="))
         .unwrap_or("");
+    match path {
+        "/api/tickers" => {
+            state.ticker_requests.fetch_add(1, Ordering::Relaxed);
+        }
+        "/api/candles" => {
+            state.candle_requests.fetch_add(1, Ordering::Relaxed);
+        }
+        _ => {}
+    }
+    let failure = state.failure.load(Ordering::Acquire);
+    if failure == MockSourceFailure::Timeout as u8 {
+        thread::sleep(Duration::from_secs(6));
+        return Ok(());
+    }
     let book = state
         .book
         .read()
         .unwrap_or_else(|error| error.into_inner())
         .clone();
-    let (status, body) = match mock_response(path, symbols, &book) {
-        Ok(body) => {
-            match path {
-                "/api/tickers" => {
-                    state.ticker_requests.fetch_add(1, Ordering::Relaxed);
-                }
-                "/api/candles" => {
-                    state.candle_requests.fetch_add(1, Ordering::Relaxed);
-                }
-                _ => {}
-            }
-            ("200 OK", body)
-        }
-        Err(error) => (
-            "400 Bad Request",
-            serde_json::json!({ "error": error.to_string() }).to_string(),
+    let (status, body) = match failure {
+        value if value == MockSourceFailure::HttpError as u8 => (
+            "500 Internal Server Error",
+            r#"{"error":"controlled source outage"}"#.to_owned(),
         ),
+        value if value == MockSourceFailure::InvalidPayload as u8 => (
+            "200 OK",
+            r#"{"data":"invalid controlled payload"}"#.to_owned(),
+        ),
+        _ => match mock_response(path, symbols, &book) {
+            Ok(body) => ("200 OK", body),
+            Err(error) => (
+                "400 Bad Request",
+                serde_json::json!({ "error": error.to_string() }).to_string(),
+            ),
+        },
     };
     write!(
         stream,
@@ -509,6 +538,16 @@ pub(crate) struct FixedPair {
 }
 
 impl PriceOracleTopology {
+    pub(crate) fn set_source_failure(&mut self, failure: MockSourceFailure) -> Result<()> {
+        eyre::ensure!(
+            !self.mocks.is_empty(),
+            "no controlled price sources are running"
+        );
+        for mock in self.mocks.values() {
+            mock.set_failure(failure);
+        }
+        Ok(())
+    }
     pub(crate) fn install_cohort(&mut self, phase: OracleEvidencePhaseV1, cohort: OracleCohortV1) {
         self.evidence.cohorts.push(OracleCohortEvidenceV1 {
             first_process_record: self.evidence.feeder_processes.len(),

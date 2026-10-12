@@ -1,8 +1,11 @@
 //! Steps for `features/tee_observability.feature` - enclave canary health,
 //! per-request telemetry, and production session identity/recovery.
 
+use std::fs;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
+
+use alloy_primitives::B256;
 
 use crate::internal::launch_log::LaunchLog;
 use eyre::{ensure, Result};
@@ -11,6 +14,84 @@ use cucumber::{then, when};
 use serde_json::Value;
 
 use crate::world::World;
+
+#[derive(Clone, Copy)]
+enum WrongDurableIdentity {
+    Genesis,
+    NodeHost,
+}
+
+fn reject_wrong_durable_identity(world: &mut World, variant: WrongDurableIdentity) -> Result<()> {
+    let target = 3;
+    let data = world.validators.data_dir(target);
+    let manifest_path = data
+        .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+        .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1);
+    let original = fs::read(&manifest_path)?;
+    let mut manifest = outbe_tee::load_committed_enclave_manifest_v1(&data)?;
+    match variant {
+        WrongDurableIdentity::Genesis => {
+            let wrong = B256::repeat_byte(0xe3);
+            ensure!(
+                manifest.genesis_hash != wrong,
+                "test genesis already equals the fault value"
+            );
+            manifest.genesis_hash = wrong;
+        }
+        WrongDurableIdentity::NodeHost => {
+            let other =
+                outbe_tee::load_committed_enclave_manifest_v1(&world.validators.data_dir(2))?;
+            ensure!(
+                manifest.node_id != other.node_id,
+                "two validators have the same NodeHost identity"
+            );
+            manifest.node_id = other.node_id;
+        }
+    }
+    let log_path = world
+        .localnet
+        .scenario_dir()
+        .join(format!("validator-{target}/node.log"));
+    let mut log = LaunchLog::checkpoint(&log_path)?;
+    fs::write(&manifest_path, manifest.encode_canonical()?)?;
+    let rejected = world.localnet.restart_validator_preserving_enclave(target);
+    log.seal()?;
+    fs::write(&manifest_path, original)?;
+    let text = log.read()?;
+    if rejected.is_ok() {
+        world
+            .localnet
+            .restart_validator_preserving_enclave(target)?;
+    }
+    ensure!(
+        rejected.is_err(),
+        "validator signed with wrong durable TEE identity"
+    );
+    ensure!(
+        text.contains("persisted NodeHost manifest does not match this node startup identity"),
+        "validator failed for a reason other than durable TEE identity admission: {text}"
+    );
+    world.localnet.restart_validator(target)?;
+    let target_height = world
+        .rpc
+        .finalized(world.validators.primary_port())
+        .ok_or_else(|| eyre::eyre!("surviving committee has no finalized height"))?;
+    ensure!(
+        world
+            .rpc
+            .wait_finalized_at_least(world.validators.http_port(target), target_height, 90),
+        "validator did not recover after restoring its exact durable TEE manifest"
+    );
+    Ok(())
+}
+
+#[when("validator 3 restarts with wrong durable TEE genesis and NodeHost identity")]
+fn reject_wrong_durable_genesis_and_identity(world: &mut World) {
+    reject_wrong_durable_identity(world, WrongDurableIdentity::Genesis)
+        .expect("reject wrong durable genesis before signing");
+    reject_wrong_durable_identity(world, WrongDurableIdentity::NodeHost)
+        .expect("reject wrong durable NodeHost identity before signing");
+}
 
 /// The parsed `outbe_consensusStatus.enclave` object of validator `index`.
 fn enclave_status(world: &World, index: usize) -> Option<Value> {

@@ -1182,6 +1182,40 @@ pub(crate) fn send_value_outcome(
     })
 }
 
+/// Force an explicit gas limit so a deliberately reverting native transfer is
+/// included and produces a receipt rather than failing during gas estimation.
+pub(crate) fn send_value_outcome_with_gas(
+    url: &str,
+    to: Address,
+    key: &str,
+    value: U256,
+    gas_limit: u64,
+) -> Result<MinedCallOutcome> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let wallet = EthereumWallet::from(signer);
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .value(value)
+            .gas_limit(gas_limit)
+            .max_fee_per_gas(max_fee)
+            .max_priority_fee_per_gas(0);
+        let pending = provider.send_transaction(tx).await?;
+        let transaction_hash = format!("{:#x}", pending.tx_hash());
+        let receipt = pending.get_receipt().await?;
+        Ok(MinedCallOutcome {
+            transaction_hash,
+            success: receipt.status(),
+            receipt: serde_json::to_value(receipt)?,
+        })
+    })
+}
+
 /// Submit a value transfer at an explicit nonce WITHOUT waiting for a receipt.
 ///
 /// The pool-eviction scenarios use this. A nonce ahead of the account's next

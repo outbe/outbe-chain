@@ -297,17 +297,34 @@ fn seed_followup_public_day(
                     "follow-up OCOMP Oracle window overflow".into(),
                 )
             })?;
-        let volume = U256::from(1_000_000_u64);
-        let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
+        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle
             .config_vote_period
             .write(E2E_ORACLE_VOTE_PERIOD_BLOCKS)?;
-        oracle.write_snapshot(snapshot_time, &[(pair, price, volume)])?;
         let pair_index = oracle.pair_index_of(pair)?;
         if pair_index == 0 {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "follow-up OCOMP Oracle pair is not registered".into(),
             ));
+        }
+        // Job A freezes its entry price from the previous UTC day. The
+        // WorldwideDay VWAP below is a separate Oracle value.
+        if let Some(first_processing_time) = first_processing_time {
+            let entry_price_day = outbe_primitives::time::previous_date_key(
+                outbe_primitives::time::timestamp_to_date_key(first_processing_time),
+            );
+            oracle.record_utc_day_vwap(entry_price_day, pair_index, price)?;
+            let last_finalized = oracle.utc_day_vwap_last_finalized.read()?;
+            oracle
+                .utc_day_vwap_last_finalized
+                .write(last_finalized.max(entry_price_day))?;
+            if outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), entry_price_day, 840)?
+                != Some(price)
+            {
+                return Err(outbe_primitives::error::PrecompileError::Fatal(
+                    "dynamic OCOMP genesis is missing its finalized entry price".into(),
+                ));
+            }
         }
         oracle
             .worldwide_day_vwap_exists

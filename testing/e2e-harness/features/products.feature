@@ -6,6 +6,7 @@ Feature: Product lifecycle
     And the committee has reached a usable height
     When a funded issuer creates a shared policy and validators approve its bonded stablecoin proposal
     Then the token is registered with one HookEvents creation receipt and the bond is refunded
+    And native value is rejected at the token but accepted at an unused address in its prefix
     When the issuer exercises mint transfer permit memo pause freeze and forced transfer
     Then the stablecoin ledger has the expected final state on every validator
     When a second issuer proposes the same global ticker

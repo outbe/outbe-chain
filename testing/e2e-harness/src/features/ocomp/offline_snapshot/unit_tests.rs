@@ -35,8 +35,8 @@ fn native(h: u64) -> SnapshotNativeProgress {
         partial_state_trie: Some(h),
         unwind: None,
         storage_version: 2,
-        ce: block(h - 1),
-        projection: block(h),
+        ce: block(h),
+        projection: block(h - 1),
         ocomp_baseline: block(1),
         ocomp_previous: block(h - 1),
         ocomp_current: block(h),
@@ -486,7 +486,13 @@ fn report(q: SnapshotBlock, p: SnapshotBlock, bodies: &str) -> Vec<u8> {
         "bodies",
         "ocomp",
     ] {
-        checks.insert(name.into(), serde_json::json!({"selected":name == "bodies", "status":if name == "bodies" { bodies } else { "not_requested" }, "diagnostic":null}));
+        checks.insert(name.into(), serde_json::json!({
+            "selected":true,
+            "status":if name == "bodies" { bodies } else { "passed" },
+            "diagnostic":if name == "bodies" && bodies == "incomplete" {
+                Some("live body equality requires the same CE and projection identity: Q/P differ")
+            } else { None },
+        }));
     }
     serde_json::to_vec(&serde_json::json!({"checks":checks,"observed":{"q":q,"p":p},"provenance":{},"required_missing":[],"retained_ranges":[],"inventory_bounds":[],"active_ocomp":[]})).unwrap()
 }
@@ -511,7 +517,7 @@ fn rejects_unknown_status_and_missing_check_in_actual_json_shape() {
 fn optional_audit_keeps_incomplete_exit_and_cannot_be_backfilled_after_start() {
     let mut e = fixture();
     let mut validation = command("validate", 6);
-    validation.stdout = report(block(9), block(10), "incomplete");
+    validation.stdout = report(block(10), block(9), "incomplete");
     validation.exit_code = Some(1);
     e.validation = SnapshotValidationObservation::Run(validation.clone());
     assert!(assert_snapshot_workflow(&e).is_ok());
@@ -523,6 +529,34 @@ fn optional_audit_keeps_incomplete_exit_and_cannot_be_backfilled_after_start() {
     validation.ended = 10;
     e.validation = SnapshotValidationObservation::Run(validation);
     assert!(assert_snapshot_workflow(&e).is_err());
+}
+
+#[test]
+fn full_validation_only_accepts_one_block_projection_lag_for_incomplete_bodies() {
+    let check = |q, p, status| {
+        let bytes = report(block(q), block(p), status);
+        snapshot_full_validation_complete(&parse_snapshot_validation_report(&bytes).unwrap())
+    };
+    assert!(matches!(check(10, 10, "passed"), Ok(true)));
+    assert!(matches!(check(10, 9, "incomplete"), Ok(false)));
+    assert!(check(10, 8, "incomplete").is_err());
+    assert!(check(9, 10, "incomplete").is_err());
+
+    let mut wrong_reason: serde_json::Value =
+        serde_json::from_slice(&report(block(10), block(9), "incomplete")).unwrap();
+    wrong_reason["checks"]["bodies"]["diagnostic"] =
+        serde_json::json!("missing projection database");
+    let parsed =
+        parse_snapshot_validation_report(&serde_json::to_vec(&wrong_reason).unwrap()).unwrap();
+    assert!(snapshot_full_validation_complete(&parsed).is_err());
+
+    let mut another_incomplete: serde_json::Value =
+        serde_json::from_slice(&report(block(10), block(9), "incomplete")).unwrap();
+    another_incomplete["checks"]["ocomp"]["status"] = serde_json::json!("incomplete");
+    let parsed =
+        parse_snapshot_validation_report(&serde_json::to_vec(&another_incomplete).unwrap())
+            .unwrap();
+    assert!(snapshot_full_validation_complete(&parsed).is_err());
 }
 
 #[test]

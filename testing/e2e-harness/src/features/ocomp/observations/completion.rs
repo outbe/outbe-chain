@@ -423,6 +423,7 @@ pub(in crate::features::ocomp) fn quorum_applies_lysis_and_creates_nod_for_reque
                 })
                 .min()
                 .expect("four validator ports");
+            let vote_scan_end = finalized_height.min(request.deadline_height);
             let public_votes = ports
                 .iter()
                 .copied()
@@ -430,7 +431,7 @@ pub(in crate::features::ocomp) fn quorum_applies_lysis_and_creates_nod_for_reque
                     world.rpc.finalized_ocomp_result_vote_transactions_on(
                         port,
                         request.request_height,
-                        finalized_height,
+                        vote_scan_end,
                     )
                 })
                 .collect::<Vec<_>>();
