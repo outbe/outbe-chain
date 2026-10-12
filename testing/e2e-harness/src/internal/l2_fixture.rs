@@ -27,18 +27,18 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_protocol::primitive::hash::{self, derive_owner};
-use outbe_protocol::primitive::signature;
-use outbe_protocol::protocol::imt::Imt;
-use outbe_protocol::protocol::key::{NftSecret, Signer};
-use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
-use outbe_protocol_derive::Entity;
-use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
-use outbe_zk_canonical::demo_tribute::{
+use outbe_zk::claim::TributeDraftClaim;
+use outbe_zk::demo_tribute::{
     demo_tribute_domain, DemoTributeProvable, COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN,
 };
-use outbe_zk_canonical::noir::demo_tribute::DemoTribute;
-use outbe_zk_canonical::INCLUSION_DEPTH;
+use outbe_zk::noir::demo_tribute::DemoTribute;
+use outbe_zk::primitive::hash::{self, derive_owner};
+use outbe_zk::primitive::signature;
+use outbe_zk::protocol::imt::Imt;
+use outbe_zk::protocol::key::{NftSecret, Signer};
+use outbe_zk::protocol::zk::{Circuit, ProofGenerator};
+use outbe_zk::INCLUSION_DEPTH;
+use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
 use rand::{rngs::StdRng, SeedableRng};
 
 /// Must match `outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE`. Kept as a
@@ -61,28 +61,7 @@ pub(crate) fn circuit_selector(l2_chain_id: u64) -> u32 {
     u32::try_from(l2_chain_id).expect("sandbox L2 chain id fits the uint32 offer selector")
 }
 
-/// The TributeDraft an offer commits to. This mirrors the enclave's
-/// `TributeDraftClaim` field for field. `base` is the whole-unit amount and
-/// `atto` is the raw six-decimal remainder. Thus the proof's `nft_hash` is the
-/// hash that the enclave recomputes from the decrypted payload and the
-/// cleartext day and currency.
-#[derive(Entity)]
-struct TributeDraftClaim {
-    #[outbe(id_seed)]
-    id: B256,
-    #[outbe(body, owner, pos = 0)]
-    derived_owner: B256,
-    #[outbe(body, pos = 1)]
-    worldwide_day: u64,
-    #[outbe(body, pos = 2)]
-    currency: u16,
-    #[outbe(body, pos = 3)]
-    base: u64,
-    #[outbe(body, pos = 4)]
-    atto: u64,
-    #[outbe(body, pos = 5)]
-    su_ids: Vec<B256>,
-}
+/// The TributeDraft an offer commits to. Same type the enclave hashes.
 
 /// One offer's circuit selector and zk calldata fields. This struct keeps the
 /// proof, its Merkle root and the root signature as bytes. The CLI path renders
@@ -312,7 +291,7 @@ fn parse_amount(value: &str, what: &'static str) -> u64 {
 }
 
 fn field_bytes(field: &Fr) -> [u8; 32] {
-    outbe_protocol::codec::field_to_be_bytes(field)
+    outbe_zk::codec::field_to_be_bytes(field)
         .try_into()
         .expect("BN254 field encoding is 32 bytes")
 }
@@ -367,19 +346,16 @@ mod tests {
         assert_ne!(first.1, second.1, "SU hashes must not repeat");
         assert_ne!(first.0, first.1);
         for id in [first.0, first.1, second.0, second.1] {
-            outbe_protocol::codec::field_from_be_bytes_canonical(
-                id.as_slice(),
-                "fixture identifier",
-            )
-            .expect("draft and SU identifiers must encode as canonical circuit fields");
+            outbe_zk::codec::field_from_be_bytes_canonical(id.as_slice(), "fixture identifier")
+                .expect("draft and SU identifiers must encode as canonical circuit fields");
         }
     }
 
     #[test]
     #[ignore = "generates and verifies a real Barretenberg Demo Tribute proof"]
     fn proven_offer_is_a_valid_demo_tribute_proof_for_its_statement() {
-        use outbe_protocol::protocol::zkproof::decode_public_words;
         use outbe_tee::protocol::TributePublicInputs;
+        use outbe_zk::wire::decode_public_words;
         use outbe_zk_backend::barretenberg::verify_circuit;
 
         let caller = Address::repeat_byte(0x44);

@@ -1,0 +1,8 @@
+[package]
+name = "niflheim_tribute"
+type = "bin"
+authors = ["outbe"]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+schnorr = { tag = "v0.2.0", git = "https://github.com/noir-lang/schnorr" }

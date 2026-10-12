@@ -1,0 +1,23 @@
+# L2 tribute selections. `selector` is the offerTribute version string, not a
+# package release. Paths are relative to l2/<chain_id>/.
+proof_system = "bb-keccak-v1"
+
+[[l2_chain]]
+chain_id = 57005
+
+[[l2_chain.versions]]
+selector = "1.1.0"
+stable = false
+circuits = [
+  { path = "tribute", vk_hash = "4f1e294540876d22e858ef46f62918a46fed2913898cc5cbe097b8abe3921e21" },
+]
+
+[[l2_chain]]
+chain_id = 9900501
+
+[[l2_chain.versions]]
+selector = "1.0.0"
+stable = true
+circuits = [
+  { path = "tribute", vk_hash = "7ec39936f08a1f5bb5675249be8c2ee3a31811a604e2785ab31b670eaaa2e7f9" },
+]

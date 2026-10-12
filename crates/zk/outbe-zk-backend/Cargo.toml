@@ -1,0 +1,31 @@
+[package]
+name = "outbe-zk-backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Noir ACVM witness solver and Barretenberg UltraHonkKeccak verifier."
+
+[dependencies]
+outbe-zk = { path = "../outbe-zk" }
+ark-bn254.workspace = true
+ark-ff.workspace = true
+base64.workspace = true
+flate2 = "1"
+sha2.workspace = true
+acir = { git = "https://github.com/noir-lang/noir.git", tag = "v1.0.0-beta.22", package = "acir" }
+acvm = { git = "https://github.com/noir-lang/noir.git", tag = "v1.0.0-beta.22", package = "acvm" }
+bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir.git", tag = "v1.0.0-beta.22", package = "bn254_blackbox_solver" }
+barretenberg-rs = { version = "=5.0.0-nightly.20260522", default-features = false, features = ["ffi"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"], optional = true }
+
+[features]
+default = ["with-network-srs"]
+with-network-srs = ["dep:reqwest"]
+
+[dev-dependencies]
+ark-std = { version = "0.6", features = ["parallel"] }
+outbe-zk = { path = "../outbe-zk", features = ["alloy"] }
+
+[lints]
+workspace = true
