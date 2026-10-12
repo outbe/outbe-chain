@@ -2344,6 +2344,45 @@ fn reserve_stables_requires_a_pledge_source() {
 }
 
 #[test]
+fn a_reservation_needs_every_call_term() {
+    let rejected = |storage: &StorageHandle<'_>, reference_currency: u16, reason: &str| {
+        let err = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            IVaultRouter::reserveStablesCall {
+                smartAccount: receiver(),
+                source: pledger(),
+                asset: asset(),
+                amount: U256::from(10),
+                referenceCurrency: reference_currency,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains(reason), "{err}");
+        let router = VaultRouterContract::new(storage.clone());
+        assert!(router.reservation_nonce.read().unwrap().is_zero());
+        assert!(runtime::reservation_of(storage, U256::ONE)
+            .unwrap()
+            .asset
+            .is_zero());
+    };
+    with_reservable_vault(U256::from(100u64), |storage| {
+        rejected(&storage, 999, "not a registered reference currency");
+        let day = outbe_primitives::time::previous_date_key(
+            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        );
+        let oracle = OracleContract::new(storage.clone());
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
+            .unwrap()
+            .unwrap();
+        oracle.record_utc_day_vwap(day, index, U256::ZERO).unwrap();
+        rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+        oracle.utc_day_vwap_last_finalized.write(day - 1).unwrap();
+        rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+    });
+}
+
+#[test]
 fn a_reservation_holds_then_releases_once() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let id = runtime::reserve_stables(
