@@ -1,13 +1,14 @@
 # Test contracts
 
-Shared Solidity fixtures for the E2E harness. `MockSmartAccount` gives its user
-and CCA equal access to arbitrary calls and native transfers.
+Shared Solidity fixtures for the E2E harness. `MockHyperlaneIsm` and
+`MockHyperlaneIcaRouter` give the HyperlaneController precompile an owner
+surface to drive.
 
 Run from this directory:
 
 ```sh
 forge soldeer install
-forge test
+forge build
 ```
 
-The harness deploys `src/MockSmartAccount.sol:MockSmartAccount` from this project.
+The harness deploys both from `src/MockHyperlaneController.sol`.

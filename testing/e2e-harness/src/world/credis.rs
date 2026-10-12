@@ -26,9 +26,6 @@ mod abi {
 pub(crate) use abi::{ICcaRegistry, ICredis, ICredisFactory};
 
 sol! {
-    interface IMockAccount {
-        function execute(address target, uint256 value, bytes calldata data) external payable returns (bytes);
-    }
     interface IFixtureToken {
         function mint(address to, uint256 amount) external;
         function approve(address spender, uint256 amount) external returns (bool);
@@ -51,7 +48,8 @@ pub(crate) struct CredisFixture {
     pub user: Address,
     pub cca: Address,
     pub cca_key: String,
-    pub account: Address,
+    pub owner: Address,
+    pub owner_key: String,
     pub currency: SettlementCurrency,
     pub keys: eth::ConfidentialAccountKeys,
     pub reservation: U256,
@@ -78,16 +76,13 @@ pub(crate) fn actors() -> (Address, String, Address) {
     (user, key, cca)
 }
 
-pub(crate) fn deploy_account(url: &str, user: Address, cca: Address) -> Address {
-    let output = forge::run_with_ctor(
-        &crate::env::environment().repo.join("testing/contracts"),
-        &["create", "src/MockSmartAccount.sol:MockSmartAccount"],
-        &[&format!("{user:#x}"), &format!("{cca:#x}")],
-        &[],
-        url,
-    )
-    .expect("deploy mock Credis account");
-    forge::address_from(&output, "Deployed to:").expect("mock account address")
+pub(crate) fn owner() -> (String, Address) {
+    let key = format!("{:#x}", keccak256(b"outbe-e2e:credis-owner"));
+    let owner = key
+        .parse::<PrivateKeySigner>()
+        .expect("fixture owner key")
+        .address();
+    (key, owner)
 }
 
 pub(crate) fn send<C: SolCall>(
@@ -108,24 +103,14 @@ pub(crate) fn send<C: SolCall>(
     outcome.receipt
 }
 
-pub(crate) fn execute<C: SolCall>(
-    url: &str,
-    account: Address,
-    key: &str,
-    to: Address,
-    call: &C,
-) -> serde_json::Value {
-    send(
-        url,
-        account,
-        key,
-        &IMockAccount::executeCall {
-            target: to,
-            value: U256::ZERO,
-            data: call.abi_encode().into(),
-        },
-        None,
-    )
+pub(crate) fn fee(receipt: &serde_json::Value) -> U256 {
+    let quantity = |field: &str| {
+        receipt[field]
+            .as_str()
+            .and_then(|hex| U256::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
+            .unwrap_or_else(|| panic!("receipt {field}"))
+    };
+    quantity("gasUsed") * quantity("effectiveGasPrice")
 }
 
 /// Decode exactly one event from its expected emitter. Never accept another contract's log.
@@ -151,7 +136,7 @@ pub(crate) struct Snapshot {
     pub reservation: (Address, U256, Address, Address, Address, u64),
     pub liquid: U256,
     pub pledged: U256,
-    pub account_stables: U256,
+    pub owner_stables: U256,
     pub cca_stables: U256,
     pub vault_stables: U256,
     pub router_stables: U256,
@@ -225,9 +210,9 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
         let native = eth::raw_json_result(
             &url,
             "eth_getBalance",
-            serde_json::json!([format!("{:#x}", f.account), format!("0x{h:x}")]),
+            serde_json::json!([format!("{:#x}", f.owner), format!("0x{h:x}")]),
         )
-        .expect("account native balance at checkpoint");
+        .expect("owner native balance at checkpoint");
         let record = (!f.credis_id.is_zero()).then(|| {
             let record = read(
                 &url,
@@ -246,13 +231,13 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
                     },
                     h
                 ),
-                f.account
+                f.owner
             );
             assert_eq!(
                 read(
                     &url,
                     CREDIS_ADDRESS,
-                    &ICredis::balanceOfCall { owner: f.account },
+                    &ICredis::balanceOfCall { owner: f.owner },
                     h
                 ),
                 U256::from(1)
@@ -283,7 +268,7 @@ pub(crate) fn snapshot(world: &World) -> Snapshot {
             liquid: outbe_tee_enclave::gratis::decrypt_balance(&f.keys.view, f.user, &liquid)
                 .expect("decrypt Gratis"),
             pledged,
-            account_stables: balance(f.account),
+            owner_stables: balance(f.owner),
             cca_stables: balance(f.cca),
             vault_stables: balance(f.currency.vault),
             router_stables: balance(VAULT_ROUTER_ADDRESS),
