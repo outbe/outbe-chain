@@ -4,6 +4,8 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, PromisOp};
+use outbe_tee_enclave::confidential::ModifyOperation;
+use outbe_tee_enclave::{gratis, promis};
 
 use crate::features::settlement::{
     assert_mined_success, chain_id_b256, gratis_balance, promis_balance,
@@ -66,61 +68,80 @@ pub(crate) fn mint_authorization(
     owner: Address,
     amount: U256,
 ) -> (B256, u64) {
-    authorization(world, ledger, owner_key, owner, amount, true)
+    authorization(
+        world,
+        &Grant {
+            ledger,
+            owner_key,
+            owner,
+            amount,
+            mint: true,
+        },
+    )
 }
 
-fn authorization(
-    world: &World,
+/// One owner's mint or burn of `amount` on a confidential ledger.
+struct Grant<'a> {
     ledger: Ledger,
-    owner_key: &str,
+    owner_key: &'a str,
     owner: Address,
     amount: U256,
     mint: bool,
-) -> (B256, u64) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let keys = eth::derive_account_keys(&url, owner_key, ledger.tee())
-        .expect("derive the owner's modify key");
-    let chain_id = chain_id_b256(world);
-    match ledger {
-        Ledger::Promis => {
-            let nonce = eth::read_call(
-                &url,
-                addresses::PROMIS_ADDR,
-                &eth::IPromis::opNonceOfCall { account: owner },
-            )
-            .expect("Promis operation nonce");
-            let op = if mint { PromisOp::Mint } else { PromisOp::Burn };
-            let mac = outbe_tee_enclave::promis::modify_mac(
-                &keys.modify,
-                owner,
-                op,
-                amount,
-                nonce,
-                chain_id,
-            );
-            (B256::from(mac), nonce)
-        }
-        Ledger::Gratis => {
-            let nonce = eth::read_call(
-                &url,
-                addresses::GRATIS_ADDR,
-                &eth::IGratis::opNonceOfCall { account: owner },
-            )
-            .expect("Gratis operation nonce");
-            let op = if mint { GratisOp::Mint } else { GratisOp::Burn };
-            let mac = outbe_tee_enclave::gratis::modify_mac(
-                &keys.modify,
-                &outbe_tee_enclave::gratis::ModifyOperation {
-                    account: owner,
-                    op,
-                    amount,
-                    op_nonce: nonce,
-                    chain_id,
-                },
-            );
-            (B256::from(mac), nonce)
+}
+
+impl Grant<'_> {
+    fn operation<Op>(&self, op: Op, op_nonce: u64, chain_id: B256) -> ModifyOperation<Op> {
+        ModifyOperation {
+            account: self.owner,
+            op,
+            amount: self.amount,
+            op_nonce,
+            chain_id,
         }
     }
+}
+
+fn authorization(world: &World, grant: &Grant<'_>) -> (B256, u64) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let keys = eth::derive_account_keys(&url, grant.owner_key, grant.ledger.tee())
+        .expect("derive the owner's modify key");
+    let chain_id = chain_id_b256(world);
+    let nonce = match grant.ledger {
+        Ledger::Promis => eth::read_call(
+            &url,
+            addresses::PROMIS_ADDR,
+            &eth::IPromis::opNonceOfCall {
+                account: grant.owner,
+            },
+        ),
+        Ledger::Gratis => eth::read_call(
+            &url,
+            addresses::GRATIS_ADDR,
+            &eth::IGratis::opNonceOfCall {
+                account: grant.owner,
+            },
+        ),
+    }
+    .expect("operation nonce");
+    let mac = match (grant.ledger, grant.mint) {
+        (Ledger::Promis, true) => promis::modify_mac(
+            &keys.modify,
+            &grant.operation(PromisOp::Mint, nonce, chain_id),
+        ),
+        (Ledger::Promis, false) => promis::modify_mac(
+            &keys.modify,
+            &grant.operation(PromisOp::Burn, nonce, chain_id),
+        ),
+        (Ledger::Gratis, true) => gratis::modify_mac(
+            &keys.modify,
+            &grant.operation(GratisOp::Mint, nonce, chain_id),
+        ),
+        (Ledger::Gratis, false) => gratis::modify_mac(
+            &keys.modify,
+            &grant.operation(GratisOp::Burn, nonce, chain_id),
+        ),
+    };
+    (B256::from(mac), nonce)
 }
 
 /// Each owner's balance grew by exactly what they mined.
@@ -144,11 +165,13 @@ pub(crate) fn redeem(world: &World, mined: &[Mined]) -> Vec<Redeemed> {
         .map(|record| {
             let (mac, nonce) = authorization(
                 world,
-                record.ledger,
-                &record.owner_key,
-                record.owner,
-                record.amount,
-                false,
+                &Grant {
+                    ledger: record.ledger,
+                    owner_key: &record.owner_key,
+                    owner: record.owner,
+                    amount: record.amount,
+                    mint: false,
+                },
             );
             let native_before = eth::balance(&url, record.owner).expect("native balance");
             let outcome = match record.ledger {

@@ -4,7 +4,9 @@
 use super::*;
 use alloy_sol_types::SolEvent;
 use outbe_tee::protocol::PromisOp;
-use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
+use outbe_tee_enclave::promis::{
+    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
+};
 
 fn promis_auth(account: Address, amount: U256, nonce: u64) -> outbe_promisfactory::api::ModifyAuth {
     let sk = outbe_promis::enclave_client::test_enclave::state_key();
@@ -12,11 +14,13 @@ fn promis_auth(account: Address, amount: U256, nonce: u64) -> outbe_promisfactor
     outbe_promisfactory::api::ModifyAuth {
         mac: modify_mac(
             &mk,
-            account,
-            PromisOp::Mint,
-            amount,
-            nonce,
-            B256::from(U256::from(CHAIN_ID)),
+            &ModifyOperation {
+                account,
+                op: PromisOp::Mint,
+                amount,
+                op_nonce: nonce,
+                chain_id: B256::from(U256::from(CHAIN_ID)),
+            },
         ),
         op_nonce: nonce,
     }

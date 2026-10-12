@@ -8,7 +8,9 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_promisfactory::api::ModifyAuth;
 use outbe_tee::protocol::PromisOp;
-use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
+use outbe_tee_enclave::promis::{
+    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
+};
 
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
@@ -49,11 +51,13 @@ fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
     ModifyAuth {
         mac: modify_mac(
             &mk,
-            account,
-            PromisOp::Mint,
-            amount,
-            nonce,
-            B256::from(U256::from(1u64)),
+            &ModifyOperation {
+                account,
+                op: PromisOp::Mint,
+                amount,
+                op_nonce: nonce,
+                chain_id: B256::from(U256::from(1u64)),
+            },
         ),
         op_nonce: nonce,
     }
