@@ -6,6 +6,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let manifest_path = circuits_dir.join("manifest.toml");
     println!("cargo:rerun-if-changed={}", manifest_path.display());
+    rerun_nr(&circuits_dir);
 
     let manifest: toml::Value = toml::from_str(
         &fs::read_to_string(&manifest_path)
@@ -18,7 +19,7 @@ fn main() {
         .expect("manifest: proof_system must be a string")
         .to_string();
     let loaded = load_circuits(&manifest, &circuits_dir);
-    let l2 = load_l2_circuits(&manifest, &circuits_dir, &loaded);
+    let l2 = load_l2_circuits(&manifest, &circuits_dir, &out_dir, &manifest_path, &loaded);
 
     let mut generated = String::new();
     generated.push_str(&generate_header());
@@ -37,10 +38,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use base64::Engine;
 use serde_json::Value;
 use tiny_keccak::{Hasher, Keccak};
+use toml_edit::DocumentMut;
 
 /// Shared proving artifacts and computed identity for an L1 release or L2 package.
 struct Loaded {
@@ -259,8 +262,14 @@ fn generate_circuit_registry(loaded: &[Release], proof_system: &str) -> String {
     registry
 }
 
-/// Load each L2 package once, checking every chain-version pin against its VK.
-fn load_l2_circuits(manifest: &toml::Value, manifest_dir: &Path, l1: &[Release]) -> L2Registry {
+/// Compile each L2 package into `OUT_DIR` and apply its `vk_hash` mode.
+fn load_l2_circuits(
+    manifest: &toml::Value,
+    manifest_dir: &Path,
+    out_dir: &Path,
+    manifest_path: &Path,
+    l1: &[Release],
+) -> L2Registry {
     let chains = manifest.get("l2_chain").map_or(&[][..], |value| {
         value
             .as_array()
@@ -273,6 +282,7 @@ fn load_l2_circuits(manifest: &toml::Value, manifest_dir: &Path, l1: &[Release])
     };
     let mut chain_ids = BTreeSet::new();
     let mut package_indices = BTreeMap::<String, usize>::new();
+    let mut fills = Vec::new();
     let mut modules: BTreeMap<String, String> = l1
         .iter()
         .map(|release| {
@@ -282,7 +292,7 @@ fn load_l2_circuits(manifest: &toml::Value, manifest_dir: &Path, l1: &[Release])
             )
         })
         .collect();
-    for chain in chains {
+    for (chain_index, chain) in chains.iter().enumerate() {
         let chain_id = chain
             .get("chain_id")
             .and_then(|value| value.as_integer())
@@ -293,7 +303,7 @@ fn load_l2_circuits(manifest: &toml::Value, manifest_dir: &Path, l1: &[Release])
             .get("versions")
             .and_then(|value| value.as_array())
             .expect("l2_chain.versions must be an array");
-        for version in versions {
+        for (version_index, version) in versions.iter().enumerate() {
             let name = version
                 .get("selector")
                 .and_then(|value| value.as_str())
@@ -304,24 +314,22 @@ fn load_l2_circuits(manifest: &toml::Value, manifest_dir: &Path, l1: &[Release])
                 !registry.versions.contains_key(&key),
                 "L2 chain {chain_id}: duplicate version {name:?}"
             );
-            version
-                .get("stable")
-                .and_then(|value| value.as_bool())
-                .expect("l2_chain.versions.stable must be a boolean");
             let circuits = version
                 .get("circuits")
                 .and_then(|value| value.as_array())
                 .expect("l2_chain.versions.circuits must be an array");
             let mut paths = BTreeSet::new();
             let mut indices = Vec::with_capacity(circuits.len());
-            for circuit in circuits {
+            for (circuit_index, circuit) in circuits.iter().enumerate() {
                 let path = circuit
                     .get("path")
                     .and_then(|value| value.as_str())
                     .expect("L2 circuit.path must be a string");
                 assert!(
                     !path.contains(['\\', ':'])
-                        && path.split('/').all(|part| !part.is_empty() && part != "." && part != ".."),
+                        && path
+                            .split('/')
+                            .all(|part| !part.is_empty() && part != "." && part != ".."),
                     "L2 chain {chain_id}: package path {path:?} must be relative and cannot escape its chain"
                 );
                 assert!(
@@ -332,20 +340,12 @@ fn load_l2_circuits(manifest: &toml::Value, manifest_dir: &Path, l1: &[Release])
                     .get("vk_hash")
                     .and_then(|value| value.as_str())
                     .expect("L2 circuit.vk_hash must be a string");
-                assert!(
-                    pin.len() == 64 && pin.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-                    "L2 chain {chain_id} package {path:?}: vk_hash must be 64 lowercase hex characters"
-                );
-                let vk_hash = hex_to_32(pin);
+                let mode = vk_mode(pin, chain_id, path);
                 let artifacts = format!("l2/{chain_id}/{path}");
                 let index = if let Some(&index) = package_indices.get(&artifacts) {
-                    let package = &mut registry.packages[index];
-                    assert_eq!(
-                        package.circuit.vk_hash, vk_hash,
-                        "L2 package {artifacts}: conflicting vk_hash pins"
-                    );
-                    if version_key(name) > version_key(&package.circuit.version) {
-                        package.circuit.version = name.to_string();
+                    apply_vk_mode(&registry.packages[index].circuit, &mode, &artifacts);
+                    if version_key(name) > version_key(&registry.packages[index].circuit.version) {
+                        registry.packages[index].circuit.version = name.to_string();
                     }
                     index
                 } else {
@@ -359,30 +359,29 @@ fn load_l2_circuits(manifest: &toml::Value, manifest_dir: &Path, l1: &[Release])
                         resolved.starts_with(&chain_root) && resolved != chain_root,
                         "L2 package {artifacts}: path escapes its chain"
                     );
-                    let nargo_path = root.join("Nargo.toml");
-                    println!("cargo:rerun-if-changed={}", nargo_path.display());
-                    let nargo: toml::Value = toml::from_str(
-                        &fs::read_to_string(&nargo_path)
-                            .unwrap_or_else(|e| panic!("read {}: {e}", nargo_path.display())),
+                    println!("cargo:rerun-if-changed={}", root.join("Nargo.toml").display());
+                    rerun_sources(&root);
+                    let nargo_toml: toml::Value = toml::from_str(
+                        &fs::read_to_string(root.join("Nargo.toml"))
+                            .unwrap_or_else(|e| panic!("read {}: {e}", root.display())),
                     )
-                    .unwrap_or_else(|e| panic!("parse {}: {e}", nargo_path.display()));
-                    let module = nargo["package"]["name"]
+                    .unwrap_or_else(|e| panic!("parse {}: {e}", root.display()));
+                    let module = nargo_toml["package"]["name"]
                         .as_str()
                         .expect("Nargo package.name");
                     if let Some(previous) = modules.insert(module.to_string(), artifacts.clone()) {
                         panic!("duplicate circuit module {module:?}: {previous} and {artifacts}");
                     }
-                    let label = module.replace('_', ".");
-                    let loaded =
-                        load_artifacts(module, &label, name, &artifacts, None, manifest_dir);
-                    assert!(
-                        loaded.has_bytecode && loaded.abi.is_some(),
-                        "L2 package {artifacts}: bytecode.b64 and abi.json are required"
+                    let loaded = compile_l2_package(
+                        module,
+                        &module.replace('_', "."),
+                        name,
+                        &artifacts,
+                        &root,
+                        manifest_dir,
+                        out_dir,
                     );
-                    assert_eq!(
-                        loaded.vk_hash, vk_hash,
-                        "L2 package {artifacts}: stored circuit.vk does not match pinned vk_hash"
-                    );
+                    apply_vk_mode(&loaded, &mode, &artifacts);
                     let index = registry.packages.len();
                     registry.packages.push(L2Package {
                         path: path.to_string(),
@@ -391,10 +390,21 @@ fn load_l2_circuits(manifest: &toml::Value, manifest_dir: &Path, l1: &[Release])
                     package_indices.insert(artifacts, index);
                     index
                 };
+                if matches!(mode, VkMode::Fill) {
+                    fills.push((
+                        chain_index,
+                        version_index,
+                        circuit_index,
+                        hex_str(&registry.packages[index].circuit.vk_hash),
+                    ));
+                }
                 indices.push(index);
             }
             registry.versions.insert(key, indices);
         }
+    }
+    if !fills.is_empty() {
+        write_vk_pins(manifest_path, &fills);
     }
     registry
 }
@@ -418,16 +428,13 @@ fn generate_l2_registry(registry: &L2Registry, proof_system: &str) -> String {
         ));
         for (selector, index) in circuits {
             let package = &registry.packages[index];
-            let vk_path = format!(
-                "/../../../circuits/{}/circuit.vk",
-                package.circuit.artifacts
-            );
+            let vk_path = format!("/{}/circuit.vk", package.circuit.artifacts);
             generated.push_str(&format!(
                 "        crate::L2CircuitVersion {{\n\
                  \x20           version: {selector:?},\n\
                  \x20           circuit_hash: {ch},\n\
                  \x20           vk_hash: {vh},\n\
-                 \x20           vk_bytes: include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), {vk_path:?})),\n\
+                 \x20           vk_bytes: include_bytes!(concat!(env!(\"OUT_DIR\"), {vk_path:?})),\n\
                  \x20           label: {label:?},\n\
                  \x20           proof_system: {proof_system:?},\n\
                  \x20       }},\n",
@@ -566,14 +573,14 @@ fn generate_circuit_imports(params: &[Value], module: &str) -> String {
     {
         generated.push_str("    use super::EmbeddedCurvePoint;\n");
     }
-    generated.push_str("    use crate::Fr;\n\n");
+    generated.push_str("    use crate::Fr;\n");
     generated
 }
 
-/// Proof layout and frozen circuit identity constants.
+/// Proof layout and identity constants for a compiled package.
 fn generate_circuit_constants(l: &Loaded, params: &[Value], proof_system: &str) -> String {
-    let b64_path = format!("/../../../circuits/{}/bytecode.b64", l.artifacts);
-    let vk_path = format!("/../../../circuits/{}/circuit.vk", l.artifacts);
+    let b64_path = format!("/{}/bytecode.b64", l.artifacts);
+    let vk_path = format!("/{}/circuit.vk", l.artifacts);
     let version = &l.version;
     let mut generated = String::new();
     let public_input_count: usize = params
@@ -590,31 +597,22 @@ fn generate_circuit_constants(l: &Loaded, params: &[Value], proof_system: &str) 
          \x20   /// Combined proof: four-byte count, public inputs, then proof words.\n\
          \x20   pub const COMBINED_LEN: usize = 4 + (PUBLIC_INPUT_COUNT + PROOF_WORDS) * 32;\n\n"
     ));
-
-    generated.push_str("    /// Canonical dotted label (matches `outbe-zk-canonical`).\n");
     generated.push_str(&format!("    pub const LABEL: &str = {:?};\n", l.label));
-    generated.push_str("    /// Semver-style version string. Not authoritative.\n");
     generated.push_str(&format!("    pub const VERSION: &str = {version:?};\n"));
-    generated
-        .push_str("    /// `keccak256(base64_decode(bytecode))` — proving bytecode identity.\n");
     generated.push_str(&format!(
         "    pub const CIRCUIT_HASH: [u8; 32] = {};\n",
         hex_lit(&l.circuit_hash)
     ));
-    generated.push_str("    /// Base64-encoded ACIR bytecode (frozen; the proving artifact).\n");
     generated.push_str(&format!(
-        "    pub const BYTECODE_B64: &str = include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), {b64_path:?}));\n"
+        "    pub const BYTECODE_B64: &str = include_str!(concat!(env!(\"OUT_DIR\"), {b64_path:?}));\n"
     ));
-    generated.push_str("    /// UltraHonkKeccak verification key (frozen).\n");
     generated.push_str(&format!(
-        "    pub const VK_BYTES: &[u8] = include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), {vk_path:?}));\n"
+        "    pub const VK_BYTES: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), {vk_path:?}));\n"
     ));
-    generated.push_str("    /// `keccak256(VK_BYTES)`.\n");
     generated.push_str(&format!(
         "    pub const VK_HASH: [u8; 32] = {};\n\n",
         hex_lit(&l.vk_hash)
     ));
-
     generated
 }
 
@@ -1156,4 +1154,228 @@ fn rust_type(ty: &Value, module: &str) -> String {
         }
         other => panic!("{module}: unsupported ABI kind {other:?}"),
     }
+}
+
+const NARGO_VERSION: &str = "1.0.0-beta.22";
+const BB_VERSION: &str = "5.0.0-nightly.20260522";
+
+enum VkMode {
+    Fixed([u8; 32]),
+    Unstable,
+    Fill,
+}
+
+fn vk_mode(pin: &str, chain_id: u64, path: &str) -> VkMode {
+    match pin {
+        "" => VkMode::Fill,
+        "unstable" => VkMode::Unstable,
+        other => {
+            assert!(
+                other.len() == 64
+                    && other
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "L2 chain {chain_id} package {path:?}: vk_hash must be 64 lowercase hex, \"unstable\", or \"\""
+            );
+            VkMode::Fixed(hex_to_32(other))
+        }
+    }
+}
+
+fn apply_vk_mode(circuit: &Loaded, mode: &VkMode, artifacts: &str) {
+    if let VkMode::Fixed(pin) = mode {
+        assert_eq!(
+            circuit.vk_hash, *pin,
+            "L2 package {artifacts}: derived vk {} != pinned {}",
+            hex_str(&circuit.vk_hash),
+            hex_str(pin)
+        );
+    }
+}
+
+fn compile_l2_package(
+    module: &str,
+    label: &str,
+    version: &str,
+    artifacts: &str,
+    _package: &Path,
+    circuits_dir: &Path,
+    out_dir: &Path,
+) -> Loaded {
+    let nargo = locate("NARGO", ".nargo/bin/nargo", "nargo");
+    let bb = locate("BB", ".bb/bb", "bb");
+    assert_tool_version(&nargo, "nargo", NARGO_VERSION);
+    assert_tool_version(&bb, "bb", BB_VERSION);
+
+    let scratch = out_dir.join("scratch");
+    copy_tree(circuits_dir, &scratch);
+    let scratch_package = scratch.join(artifacts);
+    let status = Command::new(&nargo)
+        .arg("compile")
+        .current_dir(&scratch_package)
+        .status()
+        .unwrap_or_else(|error| panic!("spawn nargo for {artifacts}: {error}"));
+    assert!(
+        status.success(),
+        "nargo compile failed for {artifacts}: {status}"
+    );
+    let json_path = scratch_package.join("target").join(format!("{module}.json"));
+    let json: Value = serde_json::from_str(
+        &fs::read_to_string(&json_path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", json_path.display())),
+    )
+    .unwrap_or_else(|error| panic!("parse {}: {error}", json_path.display()));
+    let bytecode = json["bytecode"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{artifacts}: compiled JSON has no bytecode"))
+        .to_string();
+    let acir = base64::engine::general_purpose::STANDARD
+        .decode(bytecode.trim())
+        .unwrap_or_else(|error| panic!("{artifacts}: bad bytecode: {error}"));
+    let vk_file = write_vk(&bb, &json_path, &out_dir.join("vk").join(artifacts));
+    let vk =
+        fs::read(&vk_file).unwrap_or_else(|error| panic!("read {}: {error}", vk_file.display()));
+
+    let dest = out_dir.join(artifacts);
+    fs::create_dir_all(&dest).unwrap_or_else(|error| panic!("mkdir {}: {error}", dest.display()));
+    fs::write(dest.join("bytecode.b64"), &bytecode).expect("write bytecode.b64");
+    fs::write(
+        dest.join("abi.json"),
+        serde_json::to_vec(&json["abi"]).expect("encode abi"),
+    )
+    .expect("write abi.json");
+    fs::write(dest.join("circuit.vk"), &vk).expect("write circuit.vk");
+
+    Loaded {
+        module: module.to_string(),
+        label: label.to_string(),
+        version: version.to_string(),
+        artifacts: artifacts.to_string(),
+        circuit_hash: keccak256(&acir),
+        vk_hash: keccak256(&vk),
+        vk,
+        abi: Some(json["abi"].clone()),
+        has_bytecode: true,
+    }
+}
+
+fn write_vk(bb: &Path, json_path: &Path, output: &Path) -> PathBuf {
+    fs::create_dir_all(output).unwrap_or_else(|error| panic!("mkdir {}: {error}", output.display()));
+    let status = Command::new(bb)
+        .arg("write_vk")
+        .arg("-b")
+        .arg(json_path)
+        .arg("-o")
+        .arg(output)
+        .args(["-t", "evm-no-zk"])
+        .status()
+        .unwrap_or_else(|error| panic!("spawn bb: {error}"));
+    assert!(
+        status.success(),
+        "bb write_vk failed for {}: {status}",
+        json_path.display()
+    );
+    output.join("vk")
+}
+
+fn write_vk_pins(manifest_path: &Path, fills: &[(usize, usize, usize, String)]) {
+    let text = fs::read_to_string(manifest_path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", manifest_path.display()));
+    let mut doc: DocumentMut = text
+        .parse()
+        .unwrap_or_else(|error| panic!("parse {}: {error}", manifest_path.display()));
+    for (chain, version, circuit, hash) in fills {
+        doc["l2_chain"][*chain]["versions"][*version]["circuits"][*circuit]["vk_hash"] =
+            hash.as_str().into();
+    }
+    fs::write(manifest_path, doc.to_string())
+        .unwrap_or_else(|error| panic!("write {}: {error}", manifest_path.display()));
+}
+
+fn rerun_sources(dir: &Path) {
+    rerun_nr(&dir.join("src"));
+}
+
+fn rerun_nr(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            if entry.file_name() != "target" {
+                rerun_nr(&path);
+            }
+        } else if path.extension().is_some_and(|ext| ext == "nr" || ext == "toml") {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
+}
+
+fn copy_tree(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).unwrap_or_else(|error| panic!("mkdir {}: {error}", dst.display()));
+    for entry in fs::read_dir(src).unwrap_or_else(|error| panic!("read {}: {error}", src.display()))
+    {
+        let entry = entry.expect("read circuits entry");
+        let name = entry.file_name();
+        if name == "target" || name == "bytecode.b64" || name == "abi.json" || name == "circuit.vk"
+        {
+            continue;
+        }
+        let to = dst.join(&name);
+        if entry.file_type().expect("file type").is_dir() {
+            copy_tree(&entry.path(), &to);
+        } else {
+            fs::copy(entry.path(), &to)
+                .unwrap_or_else(|error| panic!("copy {}: {error}", to.display()));
+        }
+    }
+}
+
+fn locate(env_var: &str, home_rel: &str, bin: &str) -> PathBuf {
+    if let Ok(path) = env::var(env_var) {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return path;
+        }
+    }
+    if let Ok(home) = env::var("HOME") {
+        let path = Path::new(&home).join(home_rel);
+        if path.exists() {
+            return path;
+        }
+    }
+    if Command::new(bin)
+        .arg("--version")
+        .status()
+        .ok()
+        .is_some_and(|status| status.success())
+    {
+        return PathBuf::from(bin);
+    }
+    panic!("{bin} not found (set ${env_var})")
+}
+
+fn assert_tool_version(bin: &Path, tool: &str, pin: &str) {
+    let output = Command::new(bin)
+        .arg("--version")
+        .output()
+        .unwrap_or_else(|error| panic!("{} --version: {error}", bin.display()));
+    assert!(
+        output.status.success(),
+        "{} --version failed",
+        bin.display()
+    );
+    let stdout = String::from_utf8(output.stdout).expect("tool version is utf-8");
+    let first = stdout.lines().next().unwrap_or("").trim();
+    let version = if tool == "nargo" {
+        first.strip_prefix("nargo version = ").unwrap_or(first)
+    } else {
+        first
+    };
+    assert_eq!(
+        version, pin,
+        "{} --version reports {first:?}; pinned {tool} is {pin}",
+        bin.display()
+    );
 }

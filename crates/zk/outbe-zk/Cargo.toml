@@ -13,6 +13,7 @@ alloy = ["dep:alloy-primitives"]
 serde_json.workspace = true
 base64.workspace = true
 toml.workspace = true
+toml_edit = "0.22"
 tiny-keccak = { version = "2", features = ["keccak"] }
 
 [dependencies]
@@ -25,7 +26,7 @@ ark-std = { version = "0.6", default-features = false, features = ["parallel"] }
 alloy-primitives = { workspace = true, optional = true }
 blake2 = { version = "0.10", default-features = false }
 hex-literal = "0.4"
-outbe-poseidon = "0.13.0"
+outbe-poseidon.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
 

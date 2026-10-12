@@ -9514,7 +9514,6 @@ dependencies = [
 ]
 
 [[package]]
-
 name = "outbe-protocol-benchmarks"
 version = "0.1.0"
 dependencies = [
@@ -10091,11 +10090,12 @@ dependencies = [
  "base64 0.22.1",
  "blake2 0.10.6",
  "hex-literal",
- "outbe-poseidon 0.13.0",
+ "outbe-poseidon",
  "serde_json",
  "thiserror 2.0.18",
  "tiny-keccak",
  "toml 0.8.23",
+ "toml_edit 0.22.27",
  "zeroize",
 ]
 

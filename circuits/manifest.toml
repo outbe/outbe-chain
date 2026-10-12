@@ -1,5 +1,11 @@
 # L2 tribute selections. `selector` is the offerTribute version string, not a
 # package release. Paths are relative to l2/<chain_id>/.
+#
+# `vk_hash` is the pin for keccak256(circuit.vk). build.rs compiles the package
+# with the pinned nargo/bb and then applies one of three modes:
+#   1. vk_hash = "<64 lowercase hex>" — fixed. Fail the build if the derived key differs.
+#   2. vk_hash = "unstable" — no stable key. Accept the derived key; used for tests.
+#   3. vk_hash = "" — empty. Write the derived key into this manifest during the build.
 proof_system = "bb-keccak-v1"
 
 [[l2_chain]]
@@ -7,7 +13,6 @@ chain_id = 57005
 
 [[l2_chain.versions]]
 selector = "1.1.0"
-stable = false
 circuits = [
   { path = "tribute", vk_hash = "4f1e294540876d22e858ef46f62918a46fed2913898cc5cbe097b8abe3921e21" },
 ]
@@ -17,7 +22,6 @@ chain_id = 9900501
 
 [[l2_chain.versions]]
 selector = "1.0.0"
-stable = true
 circuits = [
   { path = "tribute", vk_hash = "7ec39936f08a1f5bb5675249be8c2ee3a31811a604e2785ab31b670eaaa2e7f9" },
 ]
