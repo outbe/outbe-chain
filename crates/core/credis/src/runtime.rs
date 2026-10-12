@@ -40,7 +40,7 @@ pub struct IssueCredisParams {
     /// ISO 4217 numeric code of the reference currency elected at issuance and
     /// fixed for the Credis's life.
     pub reference_currency: u16,
-    /// `r`, 1e6 scaled, already multiplied by the policy-rate factor.
+    /// `r`, the issuance currency's policy rate, 1e6 scaled.
     pub policy_rate: U256,
     /// `P` - stablecoin minor units disbursed.
     pub principal_minor: U256,

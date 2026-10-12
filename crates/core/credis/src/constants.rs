@@ -44,13 +44,3 @@ pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
 
 /// Day count convention for interest accrual: simple, ACT/365.
 pub const DAYS_PER_YEAR: u64 = 365;
-
-/// Basis-point multiplier applied to the currency's official policy rate when
-/// pinning a Credis's `policy_rate` at issuance. 10_000 bp = x1.
-// TODO: confirm the policy-rate factor before launch. Section 10 lists it as TBD and proposes 1.
-// A governance-settable parameter is the upgrade path if it needs retuning
-// without a redeploy.
-pub const POLICY_RATE_FACTOR_BP: u32 = 10_000;
-
-/// Denominator for [`POLICY_RATE_FACTOR_BP`].
-pub const BP_DEN: u32 = 10_000;

@@ -92,8 +92,8 @@ pub struct Credis {
     #[attribute(order = 8)]
     pub outstanding_gratis_minor: U256,
 
-    /// `r` - the currency's annual official policy rate (scale `1e6`) times the
-    /// policy-rate factor, pinned at issuance for the Credis's life.
+    /// `r` - the currency's annual official policy rate (scale `1e6`), pinned at
+    /// issuance for the Credis's life.
     #[attribute(order = 9)]
     pub policy_rate: U256,
 
