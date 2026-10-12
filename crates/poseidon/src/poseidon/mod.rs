@@ -31,7 +31,7 @@ pub struct PoseidonParameters<F: PrimeField> {
 
 impl<F: PrimeField> PoseidonParameters<F> {
 
-    // qlty-ignore: function-parameters
+    // qlty-ignore: qlty:function-parameters
     pub fn new(
         ark: Vec<F>,
         mds: Vec<Vec<F>>,
