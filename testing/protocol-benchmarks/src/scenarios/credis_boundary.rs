@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolValue};
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
-    storage::{hashmap::HashMapStorageProvider, Bytecode, StorageHandle},
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
 
@@ -121,12 +121,6 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
             VaultRouterContract::new(storage.clone())
                 .owner
                 .write(ADMIN)
-                .map_err(|error| error.to_string())?;
-            storage
-                .set_code(
-                    OWNER,
-                    Bytecode::new_raw(Bytes::from_static(&[0x00])),
-                )
                 .map_err(|error| error.to_string())?;
             outbe_vaultrouter::runtime::add_vault(storage.clone(), ADMIN, VAULT)
                 .map_err(|error| error.to_string())?;

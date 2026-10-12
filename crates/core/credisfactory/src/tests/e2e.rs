@@ -7,7 +7,6 @@ use outbe_gratisfactory::runtime::{cancel_pledge, pledge_of};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
 use outbe_tee::protocol::GratisOp;
-use outbe_vaultrouter::VaultRouterContract;
 
 fn fidelity_of(storage: &StorageHandle<'_>, account: Address) -> Vec<u8> {
     outbe_fidelity::FidelityContract::new(storage.clone())
@@ -78,17 +77,6 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
             pledge_stake(),
             "reservation cca mismatch",
         );
-        let mut undeployed = reservation.clone();
-        undeployed.owner = bob();
-        VaultRouterContract::new(storage.clone())
-            .reservations
-            .update(&undeployed)
-            .unwrap();
-        expect_issue_error(&storage, cca(), id, pledge_stake(), "not deployed");
-        VaultRouterContract::new(storage.clone())
-            .reservations
-            .update(&reservation)
-            .unwrap();
         assert_eq!(pledge_of(&storage, id).unwrap().source, alice());
 
         let (credis_id, amount) =
@@ -158,7 +146,6 @@ fn a_source_backs_another_owner_and_repayments_return_to_the_source() {
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
-        deploy_smart_account(&storage, bob());
         let id = seed_reservation(&storage, bob(), alice(), pledge_stables());
         let err = outbe_gratisfactory::runtime::pledge_gratis(
             storage.clone(),

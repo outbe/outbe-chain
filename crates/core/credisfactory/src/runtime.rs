@@ -25,7 +25,7 @@ fn revert(message: &str) -> PrecompileError {
     PrecompileError::Revert(message.into())
 }
 
-/// The caller's live reservation, with a deployed smart account. Returns it with the block time.
+/// The caller's live reservation. Returns it with the block time.
 fn live_reservation(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -39,10 +39,6 @@ fn live_reservation(
         CredisFactoryError::ReservationCcaMismatch
     } else if now > r.expires_at {
         CredisFactoryError::ReservationExpired
-    } else if r.owner.is_zero()
-        || storage.with_account_info(r.owner, |info| Ok(info.is_empty_code_hash()))?
-    {
-        CredisFactoryError::SmartAccountNotDeployed
     } else {
         return Ok((r, now));
     };

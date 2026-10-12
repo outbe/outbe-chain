@@ -103,7 +103,6 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
         );
         StorageHandle::enter(&mut provider, |storage| {
             bootstrap(&storage, collateral);
-            deploy_smart_account(&storage, bob());
             let reservation_id = seed_reservation(&storage, bob(), alice(), principal);
             let mut reservation =
                 outbe_vaultrouter::api::reservation_of(&storage, reservation_id).unwrap();
@@ -556,7 +555,6 @@ fn a_half_paid_call_forfeits_only_the_unpaid_backing_of_another_accounts_source(
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
-        deploy_smart_account(&storage, bob());
         let id = seed_reservation(&storage, bob(), alice(), pledge_stables());
         pledge(&storage, alice(), id, 1);
         let unused = seed_reservation(&storage, alice(), alice(), pledge_stables());

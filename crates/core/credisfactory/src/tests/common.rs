@@ -18,7 +18,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::{Bytecode, StorageHandle};
+use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
@@ -511,16 +511,6 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     .unwrap();
     seed_fidelity(storage.clone(), who);
     seed_oracle(storage.clone(), oracle_rate());
-    deploy_smart_account(storage, who);
-}
-
-/// Gives `who` non-empty code so `issue_credis`'s deployed-account guard passes.
-/// Nothing executes the bytes (`HashMapStorageProvider` runs no EVM). The guard
-/// reads only the code hash.
-pub fn deploy_smart_account(storage: &StorageHandle<'_>, who: Address) {
-    storage
-        .set_code(who, Bytecode::new_raw(Bytes::from_static(&[0xef])))
-        .unwrap();
 }
 
 /// Credits the factory with the stake the payable boundary would have credited.

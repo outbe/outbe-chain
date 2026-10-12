@@ -9,7 +9,7 @@ use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
-    storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, Bytecode, StorageHandle},
+    storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key},
     units::{checked_protocol_to_native, SCALE_1E6_U256},
 };
@@ -164,9 +164,6 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
     oracle
         .utc_day_vwap_last_finalized
         .write(closed_day)
-        .map_err(|error| error.to_string())?;
-    storage
-        .set_code(ALICE, Bytecode::new_raw(Bytes::from_static(&[0xef])))
         .map_err(|error| error.to_string())?;
 
     let contract = VaultRouterContract::new(storage.clone());

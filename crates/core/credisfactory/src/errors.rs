@@ -6,22 +6,16 @@ use thiserror::Error;
 pub enum CredisFactoryError {
     #[error("invalid asset address")]
     InvalidAsset,
-    #[error("invalid smart account address")]
-    InvalidSmartAccount,
     #[error("settlement amount is zero")]
     InvalidAmount,
     #[error("asset isoCode() call returned undecodable data")]
     AssetIsoUndecodable,
-    #[error("smart account is not deployed")]
-    SmartAccountNotDeployed,
     #[error("attached COEN must equal the pledged collateral exactly")]
     CcaStakeMismatch,
     #[error("reservation not found")]
     ReservationNotFound,
     #[error("reservation expired")]
     ReservationExpired,
-    #[error("reservation account mismatch")]
-    ReservationAccountMismatch,
     #[error("reservation cca mismatch")]
     ReservationCcaMismatch,
     #[error("reservation asset mismatch")]
