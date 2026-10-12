@@ -631,7 +631,7 @@ struct Footprint {
     state: B256,
 }
 
-/// Runs one step under production storage metering; digests the logs it emitted, in order, and the storage it leaves.
+/// Runs one step under production metering and digests its ordered logs and the storage it leaves.
 fn measure<T>(
     provider: &mut HashMapStorageProvider,
     step: impl FnOnce(&StorageHandle<'_>) -> T,
