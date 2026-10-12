@@ -40,6 +40,7 @@ exclude_patterns = [
   "**/templates/**",
   "**/testdata/**",
   "**/vendor/**",
+  "crates/poseidon/src/poseidon/constants.rs",
 ]
 
 test_patterns = [
