@@ -315,14 +315,8 @@ pub(crate) fn dispatch_crosschain(
                     })
                 }),
                 crosschainDeposit(c) => mutate(&storage, c, caller, |user, c| {
-                    let (operation_id, send_id) = crosschain::deposit(
-                        storage.clone(),
-                        user,
-                        c.assetsAmount,
-                        c.destinationGasLimit,
-                        c.acknowledgementGasLimit,
-                        value,
-                    )?;
+                    let (operation_id, send_id) =
+                        crosschain::deposit(storage.clone(), user, c, value)?;
                     Ok(CrosschainExt::crosschainDepositReturn {
                         operationId: operation_id,
                         sendId: send_id,
@@ -342,14 +336,8 @@ pub(crate) fn dispatch_crosschain(
                     })
                 }),
                 crosschainWithdraw(c) => mutate(&storage, c, caller, |user, c| {
-                    let (operation_id, send_id) = crosschain::withdraw(
-                        storage.clone(),
-                        user,
-                        c.sharesAmount,
-                        c.requestGasLimit,
-                        c.returnGasLimit,
-                        value,
-                    )?;
+                    let (operation_id, send_id) =
+                        crosschain::withdraw(storage.clone(), user, c, value)?;
                     Ok(CrosschainExt::crosschainWithdrawReturn {
                         operationId: operation_id,
                         sendId: send_id,
@@ -368,14 +356,7 @@ pub(crate) fn dispatch_crosschain(
                     ))
                 }),
                 onCrosschainTokensReceived(c) => mutate(&storage, c, caller, |_token_bridge, c| {
-                    crosschain::receive_withdrawal_return(
-                        storage.clone(),
-                        caller,
-                        c.sourceDomain,
-                        &c.from,
-                        c.amount,
-                        &c.extraData,
-                    )?;
+                    crosschain::receive_withdrawal_return(storage.clone(), caller, c)?;
                     Ok(FixedBytes::<4>::from_slice(
                         &CrosschainExt::onCrosschainTokensReceivedCall::SELECTOR,
                     ))
