@@ -569,6 +569,44 @@ fn failed_crosschain_deposit_does_not_consume_nonce_or_shares() {
     });
 }
 
+#[test]
+fn crosschain_deposit_rejects_a_false_token_return() {
+    let fee = U256::from(50);
+    for selector in [
+        IERC20::transferFromCall::SELECTOR,
+        IERC20::approveCall::SELECTOR,
+    ] {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.stub_sub_call_at(token_bridge(), word(fee));
+        storage.stub_sub_call_at_selector(asset(), selector, word(U256::ZERO));
+        storage.enable_sub_call_stub();
+
+        StorageHandle::enter(&mut storage, |storage| {
+            set_owner(&storage, owner());
+            configure_crosschain(&storage);
+            let call = IVaultRouterCrosschainExtention::crosschainDepositCall {
+                assetsAmount: U256::from(100),
+                destinationGasLimit: U256::from(600_000),
+                acknowledgementGasLimit: U256::from(250_000),
+            };
+            let err =
+                dispatch_crosschain(storage.clone(), &call.abi_encode(), source_account(), fee)
+                    .unwrap_err();
+            assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
+
+            let contract = VaultRouterContract::new(storage.clone());
+            assert_eq!(
+                contract.crosschain_operation_nonce.read().unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(
+                contract.pending_crosschain_operations.read().unwrap(),
+                U256::ZERO
+            );
+        });
+    }
+}
+
 // --- liquidity sources / targets --------------------------------------------
 
 #[test]
@@ -906,16 +944,19 @@ fn stub_registrable_vault(storage: &mut HashMapStorageProvider) {
 }
 
 #[test]
-fn add_vault_rejects_a_false_approve() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    stub_registrable_vault(&mut storage);
-    storage.stub_sub_call_at_selector(asset(), IERC20::approveCall::SELECTOR, word(U256::ZERO));
+fn add_vault_rejects_a_false_or_malformed_approve() {
+    let true_with_tail = Bytes::from([word(U256::ONE).to_vec(), vec![0u8; 32]].concat());
+    for returndata in [word(U256::ZERO), word(U256::from(2)), true_with_tail] {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        stub_registrable_vault(&mut storage);
+        storage.stub_sub_call_at_selector(asset(), IERC20::approveCall::SELECTOR, returndata);
 
-    StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        let err = runtime::add_vault(storage.clone(), owner(), vault()).unwrap_err();
-        assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
-    });
+        StorageHandle::enter(&mut storage, |storage| {
+            set_owner(&storage, owner());
+            let err = runtime::add_vault(storage.clone(), owner(), vault()).unwrap_err();
+            assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
+        });
+    }
 }
 
 #[test]
