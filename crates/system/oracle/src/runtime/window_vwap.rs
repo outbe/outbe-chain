@@ -14,15 +14,17 @@ use crate::window::VwapSnapshotId;
 impl OracleContract<'_> {
     /// VWAP over the snapshot's window once its cutoff has passed.
     ///
-    /// Coverage is judged twice against the tally rounds the blocks allowed
-    /// (see [`MIN_WINDOW_COVERAGE`]):
-    /// - An hour counts only when the pair has at least that share of the hour's
-    ///   rounds.
-    /// - The hours that count must together hold at least that share of the whole
-    ///   window's rounds.
+    /// Coverage is judged three times by the share in [`MIN_WINDOW_COVERAGE`]:
+    /// - An hour counts only when the pair has at least that share of the tally
+    ///   rounds the hour's blocks allowed.
+    /// - At least that share of the window's hours must count. An hour without
+    ///   blocks does not, so a halt holds the window back until enough whole
+    ///   hours have passed since.
+    /// - The hours that count must together hold at least that share of the
+    ///   rounds the window's blocks allowed.
     ///
     /// Hours that do not count contribute neither price nor volume. `None` when
-    /// the window fails that test, holds no observation, or has no positive price.
+    /// the window fails a test, holds no observation, or has no positive price.
     pub fn finalized_window_vwap(
         &self,
         pair: AddressPair,
@@ -77,7 +79,9 @@ impl OracleContract<'_> {
         };
         let last = bounds.len() - 1;
         let window_end = bounds[last];
+        let hours = last as u64;
         let mut window_first = None;
+        let mut counted_hours = 0u64;
         let mut counted = 0u64;
         let mut total = VwapAccumulator::default();
         for (index, &first_block) in bounds[..last].iter().enumerate() {
@@ -98,6 +102,7 @@ impl OracleContract<'_> {
             if snapshots == 0 || !covered(snapshots, possible) {
                 continue;
             }
+            counted_hours += 1;
             counted = counted.saturating_add(snapshots);
             total.add(
                 pair,
@@ -111,7 +116,8 @@ impl OracleContract<'_> {
             return Ok(None);
         };
         let possible = window_end.saturating_sub(window_first) / vote_period;
-        Ok(covered(counted, possible).then(|| total.finish()).flatten())
+        let enough = covered(counted_hours, hours) && covered(counted, possible);
+        Ok(enough.then(|| total.finish()).flatten())
     }
 
     /// Adds one whole hour's sums to `total` and returns how many snapshots

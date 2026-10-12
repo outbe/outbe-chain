@@ -22,13 +22,14 @@ pub(crate) const VWAP_HOUR_SECONDS: u64 = 60 * 60;
 /// Hourly cells kept per pair. A cell is reused for the same hour a day later.
 pub(crate) const HOURLY_VWAP_CELLS: u64 = 24;
 
-/// Minimum share of possible tally rounds that must have produced a snapshot
-/// for a pair: two thirds. It applies to every hour of a finalized window (an
-/// hour below it is excluded from the VWAP). It applies again to the window as a
-/// whole, over the hours that count. Possible rounds are blocks divided by
-/// `vote_period`. Examples:
+/// Minimum coverage share of a finalized window: two thirds. It applies three
+/// times. Every hour needs that share of the tally rounds its blocks allowed
+/// (an hour below it is excluded from the VWAP). That share of the window's
+/// hours must count; an hour without blocks does not. The hours that count must
+/// together hold that share of the rounds the window's blocks allowed. Possible
+/// rounds are blocks divided by `vote_period`. Examples:
 /// - Eight hours at exactly two thirds pass.
-/// - Six full hours pass.
+/// - Six full hours pass, with two empty hours or not.
 /// - Five full hours, or six hours at two thirds each, do not pass.
 pub(crate) const MIN_WINDOW_COVERAGE: (u64, u64) = (2, 3);
 
