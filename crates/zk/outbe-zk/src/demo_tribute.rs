@@ -23,7 +23,7 @@ use crate::primitive::hash;
 use crate::protocol::entity::{Entity, Owned};
 use crate::protocol::imt::InclusionPath;
 use crate::protocol::key::NftSigner;
-use crate::protocol::zk::{ProofGenerator, ProofVerifier};
+use crate::protocol::zk::ProofGenerator;
 use crate::Fr;
 
 #[cfg(feature = "alloy")]
@@ -144,28 +144,6 @@ pub trait DemoTributeProvable: Entity + Owned {
         generator.generate(&witness, &public)
     }
 
-    /// Demo Tribute round-trip: build the witness, generate a proof, and verify
-    /// it. The `where`-clause pins `V::Proof = G::Proof`.
-    #[allow(clippy::too_many_arguments)]
-    fn demo_tribute_prove_and_verify<R, K, G, V>(
-        &self,
-        rng: &mut R,
-        signer: &K,
-        binding: Fr,
-        path: &InclusionPath,
-        generator: &G,
-        verifier: &V,
-    ) -> Result<bool, Error>
-    where
-        R: Rng,
-        K: NftSigner,
-        G: ProofGenerator<DemoTribute>,
-        V: ProofVerifier<DemoTribute, Proof = G::Proof>,
-    {
-        let (witness, public) = self.derive_demo_tribute_witness(rng, signer, binding, path)?;
-        let proof = generator.generate(&witness, &public)?;
-        verifier.verify(&public, &proof)
-    }
 }
 
 impl<E: Entity + Owned + ?Sized> DemoTributeProvable for E {}

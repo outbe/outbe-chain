@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 //! Read-only codegen over frozen L2 tribute artifacts in `circuits/`.
+//! Smell findings for this file are ignored in `.qlty/qlty.toml`.
 fn main() {
     let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let circuits_dir = crate_dir.join("../../../circuits");

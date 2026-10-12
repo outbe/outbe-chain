@@ -43,7 +43,7 @@ pub struct VerifyCall<'a> {
 
 pub fn decode_verify_call(input: &[u8]) -> Result<VerifyCall<'_>, ProofMarshalingError> {
     if input.len() < 64 {
-        return Err(ProofMarshalingError::InputTooShort(input.len()));
+        Err(ProofMarshalingError::InputTooShort(input.len()))?;
     }
 
     let mut circuit_hash = [0u8; 32];
@@ -52,7 +52,7 @@ pub fn decode_verify_call(input: &[u8]) -> Result<VerifyCall<'_>, ProofMarshalin
     let offset = read_u64_be_padded(&input[32..64])
         .ok_or(ProofMarshalingError::MalformedAbi("offset too large"))?;
     if offset != CANONICAL_ABI_OFFSET {
-        return Err(ProofMarshalingError::MalformedAbi("non-canonical offset"));
+        Err(ProofMarshalingError::MalformedAbi("non-canonical offset"))?;
     }
     let offset = usize::try_from(offset)
         .map_err(|_| ProofMarshalingError::MalformedAbi("offset too large"))?;
@@ -60,7 +60,7 @@ pub fn decode_verify_call(input: &[u8]) -> Result<VerifyCall<'_>, ProofMarshalin
         .checked_add(32)
         .ok_or(ProofMarshalingError::MalformedAbi("offset overflow"))?;
     if input.len() < header_end {
-        return Err(ProofMarshalingError::MalformedAbi("offset past end"));
+        Err(ProofMarshalingError::MalformedAbi("offset past end"))?;
     }
 
     let length = read_u64_be_padded(&input[offset..header_end])
@@ -71,7 +71,7 @@ pub fn decode_verify_call(input: &[u8]) -> Result<VerifyCall<'_>, ProofMarshalin
         .checked_add(length)
         .ok_or(ProofMarshalingError::MalformedAbi("length overflow"))?;
     if input.len() < data_end {
-        return Err(ProofMarshalingError::MalformedAbi("payload truncated"));
+        Err(ProofMarshalingError::MalformedAbi("payload truncated"))?;
     }
 
     let padding = (32 - length % 32) % 32;
@@ -79,12 +79,10 @@ pub fn decode_verify_call(input: &[u8]) -> Result<VerifyCall<'_>, ProofMarshalin
         .checked_add(padding)
         .ok_or(ProofMarshalingError::MalformedAbi("padding overflow"))?;
     if input.len() != encoded_end {
-        return Err(ProofMarshalingError::MalformedAbi(
-            "non-canonical total length",
-        ));
+        Err(ProofMarshalingError::MalformedAbi("non-canonical total length"))?;
     }
     if input[data_end..encoded_end].iter().any(|byte| *byte != 0) {
-        return Err(ProofMarshalingError::MalformedAbi("non-zero padding"));
+        Err(ProofMarshalingError::MalformedAbi("non-zero padding"))?;
     }
 
     Ok(VerifyCall {
