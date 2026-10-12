@@ -8357,7 +8357,7 @@ dependencies = [
  "hex",
  "outbe-compressed-entities",
  "outbe-macros",
- "outbe-poseidon 0.11.0",
+ "outbe-poseidon",
  "outbe-primitives",
  "outbe-sparse-merkle-tree-v061",
  "outbe-sparse-merkle-tree-v061-pristine",
@@ -8731,7 +8731,7 @@ dependencies = [
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-oracle",
- "outbe-poseidon 0.11.0",
+ "outbe-poseidon",
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
@@ -9431,19 +9431,7 @@ dependencies = [
 
 [[package]]
 name = "outbe-poseidon"
-version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-poseidon/?tag=v0.11.0#a6066cede0bb95672b194dc69c89946131794396"
-dependencies = [
- "ark-bn254",
- "ark-ff 0.6.0",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "outbe-poseidon"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "304c5852d481a6b20a13d761a50ffcd0c698f97653a6af40fd76851790b34a9f"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.6.0",
@@ -9542,7 +9530,7 @@ dependencies = [
  "ark-serialize 0.6.0",
  "ark-std 0.6.0",
  "blake2 0.10.6",
- "outbe-poseidon 0.13.0",
+ "outbe-poseidon",
  "thiserror 2.0.18",
  "zeroize",
 ]
@@ -9895,7 +9883,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-fidelity-math",
  "outbe-ocomp-protocol",
- "outbe-poseidon 0.11.0",
+ "outbe-poseidon",
  "outbe-primitives",
  "outbe-protocol",
  "outbe-protocol-derive",
