@@ -288,8 +288,8 @@ fn hourly_cells_reproduce_the_raw_snapshot_vwap() {
                     (pv + price * vol, v + vol)
                 });
             assert_eq!(
-                oracle.calculate_vwap(pair, start, end).unwrap(),
-                pv / volume,
+                oracle.try_calculate_vwap(pair, start, end).unwrap(),
+                Some(pv / volume),
                 "window [{start}, {end})"
             );
         }
