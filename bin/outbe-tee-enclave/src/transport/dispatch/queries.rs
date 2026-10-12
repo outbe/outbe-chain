@@ -25,17 +25,23 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
                 status: Box::new(outbe_tee::protocol::EnclaveHealthStatusV1 {
                     uptime_s: crate::telemetry::uptime_s(),
                     offer_key_ready: offer_key.get().is_some(),
-                    heap_current_bytes,
-                    heap_peak_bytes,
-                    requests_total,
-                    requests_errored,
-                    requests_denied,
-                    class_initialized,
-                    class_founding_keyless,
-                    class_keyless_onboarding,
-                    class_ready,
-                    class_dev_source_seal,
-                    class_dev_recipient_ingest,
+                    heap: outbe_tee::protocol::EnclaveHeapUsageV1 {
+                        current_bytes: heap_current_bytes,
+                        peak_bytes: heap_peak_bytes,
+                    },
+                    requests: outbe_tee::protocol::EnclaveRequestCountsV1 {
+                        total: requests_total,
+                        errored: requests_errored,
+                        denied: requests_denied,
+                    },
+                    classes: outbe_tee::protocol::EnclaveRequestClassCountsV1 {
+                        initialized: class_initialized,
+                        founding_keyless: class_founding_keyless,
+                        keyless_onboarding: class_keyless_onboarding,
+                        ready: class_ready,
+                        dev_source_seal: class_dev_source_seal,
+                        dev_recipient_ingest: class_dev_recipient_ingest,
+                    },
                 }),
             }
         }

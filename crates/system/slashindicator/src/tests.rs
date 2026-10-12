@@ -1122,6 +1122,7 @@ fn slash_ring_view(
 /// 2. The proposer guard of the evicted block.
 /// 3. The ring entry.
 /// 4. The cursor.
+///
 /// A failure before write `n` leaves exactly the first `n` writes applied.
 #[test]
 fn prune_slash_guards_write_order_at_a_wrapped_cursor() {
