@@ -134,6 +134,42 @@ mod tests {
     use alloy_primitives::{Address, U256};
 
     #[test]
+    fn health_status_encodes_its_counters_in_flat_field_order() {
+        use crate::protocol::{
+            EnclaveHealthStatusV1, EnclaveHeapUsageV1, EnclaveRequestClassCountsV1,
+            EnclaveRequestCountsV1,
+        };
+        let status = EnclaveHealthStatusV1 {
+            uptime_s: 1,
+            offer_key_ready: true,
+            heap: EnclaveHeapUsageV1 {
+                current_bytes: 2,
+                peak_bytes: 300,
+            },
+            requests: EnclaveRequestCountsV1 {
+                total: 4,
+                errored: 5,
+                denied: 6,
+            },
+            classes: EnclaveRequestClassCountsV1 {
+                initialized: 7,
+                founding_keyless: 8,
+                keyless_onboarding: 9,
+                ready: 10,
+                dev_source_seal: 11,
+                dev_recipient_ingest: 12,
+            },
+        };
+        let flat = (
+            1u64, true, 2u64, 300u64, 4u64, 5u64, 6u64, 7u64, 8u64, 9u64, 10u64, 11u64, 12u64,
+        );
+        assert_eq!(
+            postcard::to_allocvec(&status).unwrap(),
+            postcard::to_allocvec(&flat).unwrap()
+        );
+    }
+
+    #[test]
     fn common_context_envelope_preserves_request_and_rejects_trailing_bytes() {
         let ctx = EnclaveCallContextV1 {
             kind: EnclaveContextKindV1::Execution,

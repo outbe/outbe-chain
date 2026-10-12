@@ -6,7 +6,6 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
 use outbe_credis::{CredisContract, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
 use outbe_oracle::api::{
@@ -85,14 +84,6 @@ fn call_anchor_at(storage: &StorageHandle<'_>, reference_currency: u16, now: u64
     }
 }
 
-/// The issuance currency's policy rate, scaled by the policy-rate factor.
-fn policy_rate_of(storage: &StorageHandle<'_>, issuance_currency: u16) -> Result<U256> {
-    get_policy_rate(storage.clone(), issuance_currency)?
-        .checked_mul(U256::from(POLICY_RATE_FACTOR_BP))
-        .map(|v| v / U256::from(BP_DEN))
-        .ok_or_else(|| revert("credis policy rate overflow"))
-}
-
 /// Issues a Credis on the reservation's pledge. The pledge terms come from the
 /// reservation; `reference_currency`, the call anchor and the policy rate are
 /// fixed here, at issuance.
@@ -109,7 +100,7 @@ pub fn issue_credis(
         ensure_asset_metadata(&storage, &r)?;
         // The call sweep walks only registered currencies.
         check_reference_currency_with_storage(storage.clone(), reference_currency)?;
-        let policy_rate = policy_rate_of(&storage, r.issuance_currency)?;
+        let policy_rate = get_policy_rate(storage.clone(), r.issuance_currency)?;
         let call_anchor_price_minor = call_anchor_at(&storage, reference_currency, now)?;
         let required = checked_protocol_to_native(r.gratis_minor)
             .ok_or_else(|| revert("COEN stake overflow"))?;
@@ -158,6 +149,48 @@ pub fn issue_credis(
     })
 }
 
+/// Pull `amount` of `asset` from `payer` and deposit it into the VaultRouter.
+fn collect_payment(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    payer: Address,
+    amount: U256,
+) -> Result<()> {
+    let returned = storage.call(
+        asset,
+        U256::ZERO,
+        IERC20::transferFromCall {
+            from: payer,
+            to: CREDIS_FACTORY_ADDRESS,
+            amount,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    if !returned.is_empty()
+        && IERC20::transferFromCall::abi_decode_returns_validate(&returned) != Ok(true)
+    {
+        return Err(revert("ERC20 transfer failed"));
+    }
+    let returned = storage.call(
+        asset,
+        U256::ZERO,
+        IERC20::approveCall {
+            spender: VAULT_ROUTER_ADDRESS,
+            amount,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    if !returned.is_empty()
+        && IERC20::approveCall::abi_decode_returns_validate(&returned) != Ok(true)
+    {
+        return Err(revert("ERC20 approval failed"));
+    }
+    outbe_vaultrouter::api::deposit(storage, asset, amount)?;
+    Ok(())
+}
+
 /// Collect payment first, then return the released collateral to the source's
 /// liquid balance. No Fidelity mutation.
 pub fn settle(
@@ -185,38 +218,7 @@ pub fn settle(
         }
         let paid = settlement.total_paid;
         if !paid.is_zero() {
-            let returned = storage.call(
-                settlement.asset,
-                U256::ZERO,
-                IERC20::transferFromCall {
-                    from: caller,
-                    to: CREDIS_FACTORY_ADDRESS,
-                    amount: paid,
-                }
-                .abi_encode()
-                .into(),
-            )?;
-            if !returned.is_empty()
-                && IERC20::transferFromCall::abi_decode_returns_validate(&returned) != Ok(true)
-            {
-                return Err(revert("ERC20 transfer failed"));
-            }
-            let returned = storage.call(
-                settlement.asset,
-                U256::ZERO,
-                IERC20::approveCall {
-                    spender: VAULT_ROUTER_ADDRESS,
-                    amount: paid,
-                }
-                .abi_encode()
-                .into(),
-            )?;
-            if !returned.is_empty()
-                && IERC20::approveCall::abi_decode_returns_validate(&returned) != Ok(true)
-            {
-                return Err(revert("ERC20 approval failed"));
-            }
-            outbe_vaultrouter::api::deposit(&storage, settlement.asset, paid)?;
+            collect_payment(&storage, settlement.asset, caller, paid)?;
         }
         if credis.get_credis(credis_id)? != after {
             return Err(revert("Credis changed during payment"));

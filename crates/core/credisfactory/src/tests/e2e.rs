@@ -107,7 +107,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
             .unwrap();
         assert_eq!(record.source, alice());
         assert_eq!(record.reference_currency, REFERENCE_ISO);
-        assert_eq!(record.policy_rate, scaled_policy_rate(policy_rate()));
+        assert_eq!(record.policy_rate, policy_rate());
         assert_eq!(record.call_anchor_price_minor, oracle_rate());
         assert_eq!(
             record.call_price_minor,
@@ -318,12 +318,6 @@ fn forfeit_burns_only_remaining_credis_backing_and_leaves_fidelity_untouched() {
     teardown();
 }
 
-/// The policy rate as issuance pins it: the oracle rate scaled by the factor.
-fn scaled_policy_rate(rate: U256) -> U256 {
-    use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
-    rate * U256::from(POLICY_RATE_FACTOR_BP) / U256::from(BP_DEN)
-}
-
 fn issue_with(
     storage: &StorageHandle<'_>,
     id: U256,
@@ -373,7 +367,7 @@ fn issuance_reads_the_call_terms_at_issuance_across_midnight() {
         assert_eq!(record.gratis_minor, reservation.gratis_minor);
         assert_eq!(record.entry_price_minor, reservation.entry_price_minor);
         assert_eq!(record.reference_currency, REFERENCE_ISO);
-        assert_eq!(record.policy_rate, scaled_policy_rate(U256::from(50_000)));
+        assert_eq!(record.policy_rate, U256::from(50_000));
         assert_eq!(record.call_anchor_price_minor, anchor);
         assert_eq!(
             record.call_price_minor,

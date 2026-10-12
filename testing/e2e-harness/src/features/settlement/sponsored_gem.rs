@@ -70,11 +70,13 @@ pub(super) fn redeem(world: &mut World) {
     let chain_id = chain_id_b256(world);
     let mint_mac = outbe_tee_enclave::promis::modify_mac(
         &keys.modify,
-        owner,
-        PromisOp::Mint,
-        gem.promisLoadMinor,
-        promis_nonce,
-        chain_id,
+        &outbe_tee_enclave::promis::ModifyOperation {
+            account: owner,
+            op: PromisOp::Mint,
+            amount: gem.promisLoadMinor,
+            op_nonce: promis_nonce,
+            chain_id,
+        },
     );
     let pow = find_mining_pow_nonce(outbe_common::pow::MiningDomain::Gem, gem_id, owner);
     let mine_promis = eth::send_sponsored_call(
@@ -106,11 +108,13 @@ pub(super) fn redeem(world: &mut World) {
     .expect("Promis nonce before COEN mining");
     let burn_mac = outbe_tee_enclave::promis::modify_mac(
         &keys.modify,
-        owner,
-        PromisOp::Burn,
-        gem.promisLoadMinor,
-        burn_nonce,
-        chain_id,
+        &outbe_tee_enclave::promis::ModifyOperation {
+            account: owner,
+            op: PromisOp::Burn,
+            amount: gem.promisLoadMinor,
+            op_nonce: burn_nonce,
+            chain_id,
+        },
     );
     let mine_coen = eth::send_sponsored_call(
         &url,
