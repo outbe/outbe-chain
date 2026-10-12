@@ -14,8 +14,9 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::api::IVaultRouterCrosschainExtention;
 use crate::errors::VaultRouterError;
+use crate::runtime::{erc20_approve, erc20_transfer, erc20_transfer_from};
 use crate::schema::VaultRouterContract;
-use crate::sol_ext::{IERC7786GatewaySource, IERC7786TokenBridge, IGatewayQuote, IERC20};
+use crate::sol_ext::{IERC7786GatewaySource, IERC7786TokenBridge, IGatewayQuote};
 
 const SELF: Address = VAULT_ROUTER_ADDRESS;
 
@@ -574,51 +575,6 @@ fn token_bridge_quote(
     )?;
     IERC7786TokenBridge::quoteSendCall::abi_decode_returns(&ret)
         .map_err(|_| VaultRouterError::UndecodableReturn("token bridge quoteSend").into())
-}
-
-fn erc20_approve(
-    storage: &StorageHandle<'_>,
-    token: Address,
-    spender: Address,
-    amount: U256,
-) -> Result<()> {
-    storage.call(
-        token,
-        U256::ZERO,
-        IERC20::approveCall { spender, amount }.abi_encode().into(),
-    )?;
-    Ok(())
-}
-
-fn erc20_transfer_from(
-    storage: &StorageHandle<'_>,
-    token: Address,
-    from: Address,
-    to: Address,
-    amount: U256,
-) -> Result<()> {
-    storage.call(
-        token,
-        U256::ZERO,
-        IERC20::transferFromCall { from, to, amount }
-            .abi_encode()
-            .into(),
-    )?;
-    Ok(())
-}
-
-fn erc20_transfer(
-    storage: &StorageHandle<'_>,
-    token: Address,
-    to: Address,
-    amount: U256,
-) -> Result<()> {
-    storage.call(
-        token,
-        U256::ZERO,
-        IERC20::transferCall { to, amount }.abi_encode().into(),
-    )?;
-    Ok(())
 }
 
 /// OpenZeppelin InteroperableAddress.formatEvmV1(chainId, address).

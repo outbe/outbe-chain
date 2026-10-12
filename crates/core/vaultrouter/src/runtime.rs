@@ -5,7 +5,8 @@
 //! through `StorageHandle::call` / `StorageHandle::staticcall`. From the callee's
 //! perspective `msg.sender` is `VAULT_ROUTER_ADDRESS` (this precompile).
 //!
-//! ERC-20 transfers reject false or malformed return values. They accept empty returns.
+//! ERC-20 transfers and approvals reject false or malformed return values. They accept empty
+//! returns.
 
 use alloy_primitives::{Address, U256};
 
@@ -24,9 +25,10 @@ mod rebalance;
 mod reservations;
 
 use calls::{
-    asset_iso_code, erc20_approve, erc20_balance_of, erc20_transfer, erc20_transfer_from,
-    vault_asset, vault_deposit, vault_owner, vault_preview_withdraw, vault_withdraw,
+    asset_iso_code, erc20_balance_of, vault_asset, vault_deposit, vault_owner,
+    vault_preview_withdraw, vault_withdraw,
 };
+pub(crate) use calls::{erc20_approve, erc20_transfer, erc20_transfer_from};
 pub use liquidity::{
     add_liquidity_source, add_liquidity_target, registered_liquidity_source,
     registered_liquidity_target, remove_liquidity_source, remove_liquidity_target,
