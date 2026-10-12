@@ -18,10 +18,14 @@ pub mod common;
 #[cfg(feature = "ocomp-integration")]
 pub mod credis;
 #[cfg(feature = "ocomp-integration")]
+mod credis_forfeit;
+#[cfg(feature = "ocomp-integration")]
 pub mod entity_lifecycle;
 #[cfg(feature = "ocomp-integration")]
 pub mod gem_lifecycle;
 pub mod governance;
+#[cfg(feature = "ocomp-integration")]
+pub mod hyperlane_controller;
 #[cfg(feature = "ocomp-integration")]
 pub mod intex_lifecycle;
 #[cfg(feature = "ocomp-integration")]
@@ -55,6 +59,8 @@ mod oracle_expectations;
 pub mod origin_venue;
 mod p2p_admission;
 pub mod price_oracle;
+#[cfg(feature = "ocomp-integration")]
+mod projection_write_fault;
 #[cfg(feature = "ocomp-integration")]
 pub mod radicle;
 pub mod restart;

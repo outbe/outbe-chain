@@ -959,7 +959,14 @@ fn run_native_checks(
                 let result = super::ocomp::verify_ocomp_relations(
                     &canonical, &view, layout, scratch, report,
                 );
-                record_outcome(report, Ocomp, &result);
+                match result {
+                    Ok(()) => report.record(
+                        Ocomp,
+                        CheckStatus::Passed,
+                        Some("OCOMP relations passed. Private Tribute amounts were not read."),
+                    ),
+                    Err(error) => record_failure(report, Ocomp, &error),
+                }
             }
         }
     }

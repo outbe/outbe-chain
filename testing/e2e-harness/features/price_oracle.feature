@@ -8,3 +8,9 @@ Feature: Price Oracle publishes through independent validator feeders
     And the committee has reached a usable height
     Then independent validator feeders finalize overlapping pair quorums
     And the committee nodes agree on the state root
+
+  Scenario: Feeder source failures leave the last finalized price intact and recover
+    Given a fresh price oracle localnet with a 8-block voting window
+    And the committee has reached a usable height
+    Then live feeders reject failed and malformed sources without publishing a new price
+    And the committee nodes agree on the state root

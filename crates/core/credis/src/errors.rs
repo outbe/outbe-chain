@@ -1,4 +1,4 @@
-//! Module-local error types for the Credis position contract.
+//! Module-local error types for the Credis contract.
 //!
 //! Errors that are not credis-specific (out-of-gas, generic revert) come from
 //! `outbe_primitives::error::PrecompileError`.
@@ -9,33 +9,33 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum CredisError {
-    #[error("position not found")]
-    PositionNotFound,
-    #[error("position already exists")]
-    PositionAlreadyExists,
-    #[error("position is closed")]
-    PositionClosed,
+    #[error("Credis not found")]
+    CredisNotFound,
+    #[error("Credis already exists")]
+    CredisAlreadyExists,
+    #[error("Credis is closed")]
+    CredisClosed,
     #[error("amount must be positive")]
     InvalidAmount,
     #[error("pledge source is zero")]
     InvalidSource,
-    #[error("invalid position state value: {0}")]
+    #[error("invalid Credis state value: {0}")]
     InvalidStateValue(u8),
     #[error("payment is below the interest accrued since the last settlement")]
     PaymentBelowAccruedInterest,
-    #[error("position is not called")]
+    #[error("Credis is not called")]
     NotCalled,
-    #[error("call window has not lapsed")]
-    CallWindowOpen,
-    #[error("call window has lapsed")]
-    CallWindowClosed,
-    #[error("position has no outstanding principal")]
+    #[error("settlement deadline has not passed")]
+    SettlementDeadlineNotPassed,
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
+    #[error("Credis has no outstanding principal")]
     NothingOutstanding,
     #[error("credis arithmetic overflow")]
     ArithmeticOverflow,
     #[error("index out of bounds")]
     IndexOutOfBounds,
-    #[error("position is non-transferable")]
+    #[error("Credis is non-transferable")]
     NonTransferable,
 }
 

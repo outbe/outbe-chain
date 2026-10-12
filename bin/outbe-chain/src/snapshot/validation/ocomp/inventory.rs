@@ -475,13 +475,14 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                     &cas,
                     limits,
                 )?;
-                let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
-                    &admissions,
-                    &inputs,
-                    &cas,
-                    &bundle,
-                    &limits,
-                )?;
+                let audit =
+                    outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_integrity_audit(
+                        &admissions,
+                        &inputs,
+                        &cas,
+                        &bundle,
+                        &limits,
+                    )?;
                 ensure!(
                     audit.plan().job_id == projection.job_id
                         && audit.plan().protocol_bundle_hash == projection.protocol_bundle_hash

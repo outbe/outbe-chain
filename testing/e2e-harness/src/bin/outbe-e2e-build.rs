@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use eyre::Result;
-use outbe_e2e_harness::artifacts::{build_lane, BuildLane};
+use outbe_e2e_harness::artifacts::{build_lane, refresh_harness_lane, BuildLane};
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-e2e-build")]
@@ -23,6 +23,10 @@ struct Cli {
     /// Maximum Cargo build parallelism.
     #[arg(long, default_value_t = 8)]
     jobs: usize,
+
+    /// Reuse and verify byte-identical runtime artifacts from this manifest.
+    #[arg(long)]
+    reuse_runtime_manifest: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -34,5 +38,9 @@ fn main() -> Result<()> {
             .expect("e2e-harness belongs to the workspace")
             .to_path_buf()
     });
-    build_lane(&repo, cli.lane, cli.jobs, &cli.output)
+    if let Some(prior) = cli.reuse_runtime_manifest {
+        refresh_harness_lane(&repo, cli.lane, cli.jobs, &prior, &cli.output)
+    } else {
+        build_lane(&repo, cli.lane, cli.jobs, &cli.output)
+    }
 }

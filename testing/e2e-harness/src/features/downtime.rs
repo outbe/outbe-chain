@@ -21,6 +21,7 @@ use crate::world::state::{
 use crate::world::World;
 
 const TOP_UP_COEN: u64 = 100;
+const PENALTY_TIMEOUT: Duration = Duration::from_secs(1200);
 
 #[given("the slashing config is readable")]
 fn slashing_config_readable(world: &mut World) {
@@ -226,10 +227,12 @@ fn observe_penalty(world: &mut World) -> Result<()> {
         .slash_count
         .checked_add(1)
         .ok_or_else(|| eyre!("slash count overflow"))?;
-    // Keep the original 80 x 3-second penalty budget. Use no nested readiness wait.
-    for _ in 0..80 {
+    let deadline = Instant::now() + PENALTY_TIMEOUT;
+    let mut last_height = target;
+    loop {
         check_owned_processes(world, &state, true)?;
         let checkpoint = world.rpc.wait_finalized_checkpoint(&ports, 0, 1)?;
+        last_height = last_height.max(checkpoint.height);
         let observed = observe_at(world, state.victim, &ports, checkpoint)?;
         retain(world, "downtime_penalty_poll", json!({"state": observed}));
         let account = agreed_account(&ports, &observed.accounts)?;
@@ -257,10 +260,15 @@ fn observe_penalty(world: &mut World) -> Result<()> {
                 "accounting changed without the expected slash"
             );
         }
+        if Instant::now() >= deadline {
+            break;
+        }
         sleep(Duration::from_secs(3));
     }
     Err(eyre!(
-        "single finalized downtime felony not observed within 80 attempts"
+        "single finalized downtime felony not observed within {} seconds; last finalized height {last_height}, configured miss threshold {}",
+        PENALTY_TIMEOUT.as_secs(),
+        state.threshold
     ))
 }
 

@@ -437,7 +437,7 @@ pub(super) fn snapshot_worker_bind_admission(
         limits,
         poc_input_list_limits(),
     )?;
-    let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
+    let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_integrity_audit(
         &admissions,
         &input_refs,
         &reader,

@@ -1,28 +1,23 @@
-import { type Abi, type Address, getAddress } from "viem";
-import IDesisJson from "../../../contracts/precompiles/abi-export/IDesis.json";
-import IIntexJson from "../../../contracts/precompiles/abi-export/IIntex.json";
-import IIntexFactoryJson from "../../../contracts/precompiles/abi-export/IIntexFactory.json";
-import IVaultRouterJson from "../../../contracts/precompiles/abi-export/IVaultRouter.json";
-import EscrowAdapterJson from "../../../contracts/intex/abi-export/EscrowAdapter.json";
-import IntexAuctionJson from "../../../contracts/intex/abi-export/IntexAuction.json";
-import IIntexNFT1155Json from "../../../contracts/intex/abi-export/IIntexNFT1155.json";
-import IIntexNFT1155BridgeJson from "../../../contracts/intex/abi-export/IIntexNFT1155Bridge.json";
-import IOriginRouterJson from "../../../contracts/intex/abi-export/IOriginRouter.json";
-import IERC20Json from "../../../contracts/tokens/abi-export/IERC20.json";
-
-/** contracts/intex exports as `{ contractName, abi }`. The others export a bare array. */
-const abiOf = (json: unknown): Abi =>
-  (Array.isArray(json) ? json : (json as { abi: unknown }).abi) as Abi;
+import { type Address, getAddress } from "viem";
+import { loadConfig } from "../config.js";
+import IDesis from "../abi/generated/precompiles/IDesis.js";
+import IIntex from "../abi/generated/precompiles/IIntex.js";
+import IIntexFactory from "../abi/generated/precompiles/IIntexFactory.js";
+import IVaultRouter from "../abi/generated/precompiles/IVaultRouter.js";
+import EscrowAdapter from "../abi/generated/intex/EscrowAdapter.js";
+import IntexAuction from "../abi/generated/intex/IntexAuction.js";
+import IIntexNFT1155 from "../abi/generated/intex/IIntexNFT1155.js";
+import IIntexNFT1155Bridge from "../abi/generated/intex/IIntexNFT1155Bridge.js";
+import IOriginRouter from "../abi/generated/intex/IOriginRouter.js";
 
 /**
  * Addresses + ABIs for the Intex tools (auction commit/reveal, escrow, NFT,
  * series registry, cross-chain bridge, settlement/Promis).
  *
- * Intex is cross-chain. The auction + escrow + NFT run on target chains (BSC
- * today, more later). The series ledger (Intex), settlement (IntexFactory) and
- * Promis live on outbe as runtime precompiles. Addresses are embedded constants,
- * keyed by network so a new target chain is an added branch, not a rewrite. The
- * build inlines the ABI JSON. This module never reads it at runtime.
+ * Intex is cross-chain. The auction + escrow + NFT run on the target chains the
+ * origin router serves. The series ledger (Intex), settlement (IntexFactory) and
+ * Promis live on outbe as runtime precompiles. Addresses are embedded constants.
+ * The build inlines the ABI JSON. This module never reads it at runtime.
  *
  * ABIs are generated from Solidity (contracts/{intex,precompiles,tokens}), never
  * hand-written. This matches the convention in src/registry.ts. Where a method is
@@ -30,23 +25,10 @@ const abiOf = (json: unknown): Abi =>
  * concrete artifact.
  */
 
-export interface NetworkDef {
-  name: string;
-  chainId: number;
-  rpc: string;
-}
-
-/** Supported networks. `outbe-testnet` reuses the connected ctx when ids match. */
-export const NETWORKS: NetworkDef[] = [
-  { name: "bsc-testnet", chainId: 97, rpc: "https://bsc-testnet-rpc.publicnode.com" },
-  { name: "outbe-testnet", chainId: 54322345, rpc: "https://rpc.testnet.outbe.net" },
-];
-
-/** Per-network Intex contract addresses. Empty until deployed on that network. */
+/** The Intex contracts the tools address. */
 export interface IntexAddresses {
   auction?: Address;
   escrow?: Address;
-  paymentToken?: Address;
   nft?: Address;
   nftBridge?: Address;
   intex?: Address;
@@ -59,11 +41,9 @@ export interface IntexAddresses {
 
 const a = (s: string): Address => getAddress(s);
 
-export const OUTBE = "outbe-testnet";
-
 // The app contracts are CREATE3 proxies (salt "outbe-intex:<Name>:v5.0.0"), so
-// each one shares a single address on every chain. Only the wCOEN payment token
-// is a per-chain deployment. Networks gate availability, addresses do not.
+// each one shares a single address on every chain. Which chains run them is the
+// origin router's target list; the payment token is the escrow's own.
 const APP = {
   auction: a("0x66F0377e4dCbf4df50134eAf147b2B305AE86813"),
   escrow: a("0x917dBD5EeEEc541BB25397F8d38D266d2E88ae19"),
@@ -82,15 +62,6 @@ const OUTBE_ONLY = {
   originRouter: a("0x3439ebc6732ECA3F11125F4c1160C1cdd2C47Dc8"),
 };
 
-/** Networks where the auction/escrow pair is live. The NFT pair runs on the origin
- *  and every target; enabling a new target = adding it here + its wCOEN below. */
-const AUCTION_LIVE = new Set(["bsc-testnet"]);
-
-/** WCOEN - the auction's 18-decimal wrapped native payment token, per chain. */
-const PAYMENT_TOKEN: Record<string, Address> = {
-  "bsc-testnet": a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
-};
-
 /** Block the NFT pair was deployed at, per network. The tools read holdings from transfer logs,
  *  and the scan starts here. An unset network scans from genesis, which public RPCs range-limit.
  *  Fill this in when the pair is deployed. Recovering a deployment block afterwards needs archive
@@ -102,73 +73,57 @@ export function intexNftFromBlock(network: string): bigint {
   return NFT_DEPLOY_BLOCK[network] ?? 0n;
 }
 
+/** What the address book needs to know about a network. */
+export interface IntexChain {
+  name: string;
+  isOutbe: boolean;
+}
+
+/** An Intex contract the network has no address for. */
+export class NotConfiguredError extends Error {}
+
 /** Resolve a contract address for a network, or throw a clear error. */
-export function intexAddress(network: string, key: keyof IntexAddresses): Address {
+export function intexAddress(network: IntexChain, key: keyof IntexAddresses): Address {
   let addr: Address | undefined;
-  switch (key) {
-    case "auction":
-    case "escrow":
-      addr = AUCTION_LIVE.has(network) ? APP[key] : undefined;
-      break;
-    case "nft":
-    case "nftBridge":
-      addr = network === OUTBE || AUCTION_LIVE.has(network) ? APP[key] : undefined;
-      break;
-    case "paymentToken":
-      addr = PAYMENT_TOKEN[network];
-      break;
-    default:
-      addr = network === OUTBE ? OUTBE_ONLY[key] : undefined;
+  if (key in APP) {
+    addr = APP[key as keyof typeof APP];
+  } else if (network.isOutbe) {
+    const override = key === "originRouter" ? loadConfig().intexOriginRouter : undefined;
+    addr = override ? getAddress(override) : OUTBE_ONLY[key as keyof typeof OUTBE_ONLY];
   }
   if (!addr) {
-    throw new Error(`Intex "${key}" is not configured on "${network}"`);
+    throw new NotConfiguredError(`Intex "${key}" is not configured on "${network.name}"`);
   }
   return addr;
 }
 
-/** Destination EVM chain id of each network's bridge counterpart (NFT destination). */
-export const BRIDGE_DST_CHAIN_ID: Record<string, number> = {
-  "bsc-testnet": 54322345, // -> outbe-testnet
-  "outbe-testnet": 97, // -> bsc-testnet
-};
-
-/** Destination chain id for bridging an NFT out of a network, or throw. */
-export function bridgeDstChainId(network: string): number {
-  const chainId = BRIDGE_DST_CHAIN_ID[network];
-  if (chainId === undefined) {
-    throw new Error(`Intex bridge destination chain id is not configured on "${network}"`);
-  }
-  return chainId;
-}
-
 // --- ABIs ------------------------------------------------------------------
 
-/** IntexAuction (BSC): commit/reveal + auction views. */
-export const AUCTION_ABI: Abi = abiOf(IntexAuctionJson);
+/** IntexAuction (target chains): commit/reveal + auction views. */
+export const AUCTION_ABI = IntexAuction;
 
-/** IntexNFT1155 (BSC + outbe): holder-facing reads. */
-export const NFT_ABI: Abi = abiOf(IIntexNFT1155Json);
+/** IntexNFT1155 (target chains + outbe): holder-facing reads. */
+export const NFT_ABI = IIntexNFT1155;
 
 /** Intex (outbe precompile): canonical cross-chain series ledger. */
-export const INTEX_ABI: Abi = abiOf(IIntexJson);
+export const INTEX_ABI = IIntex;
 
-/** IntexNFT1155Bridge: the cross-chain NFT bridge (BSC <-> outbe) over ERC-7786. */
-export const NFT_BRIDGE_ABI: Abi = abiOf(IIntexNFT1155BridgeJson);
+/** IntexNFT1155Bridge: the cross-chain NFT bridge between Intex chains over ERC-7786. */
+export const NFT_BRIDGE_ABI = IIntexNFT1155Bridge;
 
 /** IntexFactory (outbe precompile): holder-facing settlement + Promis mining. */
-export const FACTORY_ABI: Abi = abiOf(IIntexFactoryJson);
+export const FACTORY_ABI = IIntexFactory;
 
 /** Desis (outbe precompile): auction stage + per-chain bid fan-in views. */
-export const DESIS_ABI: Abi = abiOf(IDesisJson);
+export const DESIS_ABI = IDesis;
 
 /** OriginRouter (outbe): the auction's target-chain registry + per-day snapshot. */
-export const ORIGIN_ROUTER_ABI: Abi = abiOf(IOriginRouterJson);
+export const ORIGIN_ROUTER_ABI = IOriginRouter;
 
 /** EscrowAdapter (target chains): bid locks, commit bonds and refunds. */
-export const ESCROW_ABI: Abi = abiOf(EscrowAdapterJson);
+export const ESCROW_ABI = EscrowAdapter;
 
 /** VaultRouter (outbe precompile): the reserve asset registry. */
-export const VAULT_ROUTER_ABI: Abi = abiOf(IVaultRouterJson);
+export const VAULT_ROUTER_ABI = IVaultRouter;
 
-/** ERC20 (BSC payment token; outbe Promis balance). */
-export const ERC20_ABI: Abi = abiOf(IERC20Json);
+export { ERC20_ABI } from "../net/erc20.js";

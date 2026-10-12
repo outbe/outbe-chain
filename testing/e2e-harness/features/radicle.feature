@@ -14,6 +14,8 @@ Feature: Validator-managed Radicle storage
     Then the signed endpoint converges without restarting validator 0
     When validator 1 Radicle sidecar is stopped
     Then consensus advances while validator 1 reports Radicle degraded
+    When the independent source publishes a second Git head during the sidecar outage
+    Then the three live validators serve the second head while validator 1 does not
     When validator 1 Radicle sidecar is restarted
     Then validator 1 returns to Radicle ready with the same identity
     When validator 2 node restarts while its Radicle sidecar stays alive

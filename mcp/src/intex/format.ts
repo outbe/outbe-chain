@@ -42,11 +42,7 @@ export function isActiveStage(code: number | bigint): boolean {
 }
 
 /** A unix-seconds u32 as { epoch, iso }, or null when zero/unset. */
-export function epochIso(v: number | bigint): { epoch: number; iso: string } | null {
-  const sec = Number(v);
-  if (!Number.isFinite(sec) || sec <= 0) return null;
-  return { epoch: sec, iso: new Date(sec * 1000).toISOString() };
-}
+export { epochIso } from "../format/time.js";
 
 /** Series ids are the 14 ASCII bytes of `20260212-TRY-U`. */
 export function toSeriesId(value: string): Hex {

@@ -134,7 +134,7 @@ pub(crate) fn verify_lease_inputs(
     scratch_parent: &Path,
     protected: &ProtectedPaths,
     maximum_records: Option<u64>,
-) -> eyre::Result<outbe_ocomp::exporter::TributeStreamSummary> {
+) -> eyre::Result<()> {
     use outbe_compressed_entities::{
         BoundedTributePartitionVerifier, Commitment, TributePartitionExpectationV1,
         TributePartitionWorkConfig, ACTIVE_COMMITMENT_SCHEME,
@@ -166,11 +166,7 @@ pub(crate) fn verify_lease_inputs(
     let source = FinalizedTributeSource::new(reader, outbe_offchain_storage::MAX_SCAN_ENTRIES)
         .map_err(&classify)?;
     let mut stream = source
-        .reconstruction_stream(
-            pin,
-            intent.authenticated_day_count,
-            intent.authenticated_day_nominal,
-        )
+        .commitment_reconstruction_stream(pin, intent.authenticated_day_count)
         .map_err(&classify)?;
     let directory = tempfile::Builder::new()
         .prefix("outbe-lease-audit-")
@@ -186,7 +182,7 @@ pub(crate) fn verify_lease_inputs(
         TributePartitionWorkConfig::default(),
     )?;
     let mut visited = 0_u64;
-    while let Some(record) = stream.next_record().map_err(&classify)? {
+    while let Some(record) = stream.next_commitment().map_err(&classify)? {
         if maximum_records.is_some_and(|maximum| visited >= maximum) {
             return Err(Incomplete(format!(
                 "Tribute lease {} scan stopped at {visited}/{} records",
@@ -202,9 +198,9 @@ pub(crate) fn verify_lease_inputs(
             .checked_add(1)
             .ok_or_else(|| eyre::eyre!("Tribute visit count overflow"))?;
     }
-    // Count underflow is unavailable input, whereas a complete but different
-    // population is a failed root/nominal comparison. Keep that distinction.
-    let summary = stream.finish().map_err(classify)?;
+    // Count underflow is unavailable input. A different complete population
+    // fails the finalized collection root check.
+    stream.finish().map_err(classify)?;
     partition.finish()?;
-    Ok(summary)
+    Ok(())
 }

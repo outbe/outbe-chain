@@ -29,11 +29,11 @@ impl From<GratisFactoryError> for PrecompileError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum CollateralError {
-    #[error("position already has collateral")]
+    #[error("Credis already has collateral")]
     Exists,
     #[error("collateral not found")]
     NotFound,
-    #[error("amount exceeds the position's collateral")]
+    #[error("amount exceeds the Credis's collateral")]
     Exceeded,
 }
 

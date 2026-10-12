@@ -25,7 +25,7 @@ pub(super) fn snapshot_rejects_damaged_artifact(
         chain,
         node,
     } = check;
-    use std::io::Read;
+    use std::io::{Read, Seek, SeekFrom, Write};
     use std::process::Command;
     use std::time::Duration;
     let original = std::fs::read(manifest)?;
@@ -103,6 +103,81 @@ pub(super) fn snapshot_rejects_damaged_artifact(
         "partial artifact was accepted or failed for an unrelated provenance reason"
     );
     std::fs::remove_file(partial)?;
+
+    let archive_len = std::fs::metadata(archive)?.len();
+    let payload = std::fs::File::open(archive)?;
+    let mut tar = tar::Archive::new(payload);
+    let mut mutation = None;
+    for entry in tar.entries_with_seek()? {
+        let entry = entry?;
+        let path = entry.path()?;
+        if path.starts_with("payload") && entry.header().entry_type().is_file() && entry.size() > 0
+        {
+            mutation = Some((path.into_owned(), entry.raw_file_position()));
+            break;
+        }
+    }
+    let (member, offset) = mutation.ok_or_else(|| eyre!("snapshot archive has no file payload"))?;
+    drop(tar);
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(archive)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut original_byte = [0_u8; 1];
+    file.read_exact(&mut original_byte)?;
+    std::fs::write(
+        evidence_dir.join("same-size-payload-mutation.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "member": member,
+            "offset": offset,
+            "archive_size": archive_len,
+            "original_byte": original_byte[0],
+            "mutated_byte": original_byte[0] ^ 1,
+        }))?,
+    )?;
+    file.seek(SeekFrom::Start(offset))?;
+    file.write_all(&[original_byte[0] ^ 1])?;
+    file.flush()?;
+    drop(file);
+    let mut command = Command::new(program);
+    command
+        .args(["snapshot", "validate", "--checks", "files", "--archive"])
+        .arg(archive)
+        .args(["--expected-signer", creator, "--", "--chain", chain])
+        .arg("--datadir")
+        .arg(node.join("data"))
+        .arg("--consensus.storage-dir")
+        .arg(node.join("data/consensus"))
+        .arg("--projection.storage-config")
+        .arg(node.join("offchain-storage.toml"));
+    let rejected = run_snapshot_command(
+        command,
+        evidence_dir,
+        "same-size-payload-mutation",
+        Duration::from_secs(180),
+    );
+    let mut file = std::fs::OpenOptions::new().write(true).open(archive)?;
+    file.seek(SeekFrom::Start(offset))?;
+    file.write_all(&original_byte)?;
+    file.flush()?;
+    drop(file);
+    ensure!(
+        std::fs::metadata(archive)?.len() == archive_len,
+        "snapshot archive size changed during payload mutation"
+    );
+    let rejected = rejected?;
+    let report = parse_snapshot_validation_report(&rejected.stdout)?;
+    ensure!(
+        rejected.exit_code.is_some_and(|code| code != 0)
+            && report.checks["provenance"].status == SnapshotCheckStatus::Passed
+            && report.checks["files"].status == SnapshotCheckStatus::Failed
+            && report.checks["files"]
+                .diagnostic
+                .as_deref()
+                .is_some_and(|diagnostic| diagnostic.contains("payload checksum mismatch")),
+        "same-size native payload corruption was not rejected by its checksum"
+    );
     Ok(())
 }
 

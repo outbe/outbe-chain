@@ -9,7 +9,7 @@
         "internalType": "address"
       },
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -22,7 +22,7 @@
     "name": "balanceOf",
     "inputs": [
       {
-        "name": "smartAccount",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       }
@@ -38,10 +38,29 @@
   },
   {
     "type": "function",
+    "name": "credisExists",
+    "inputs": [
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "credisPrincipalAndOutstandingOf",
     "inputs": [
       {
-        "name": "smartAccount",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       }
@@ -65,7 +84,7 @@
     "name": "getApproved",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -81,10 +100,10 @@
   },
   {
     "type": "function",
-    "name": "getPosition",
+    "name": "getCredis",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -93,15 +112,15 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct ICredis.Position",
+        "internalType": "struct ICredis.Credis",
         "components": [
           {
-            "name": "positionId",
+            "name": "credisId",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "smartAccount",
+            "name": "owner",
             "type": "address",
             "internalType": "address"
           },
@@ -161,27 +180,12 @@
             "internalType": "uint256"
           },
           {
-            "name": "callAnchorPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "callPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
           },
           {
             "name": "lastSettledAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "calledAt",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -196,45 +200,75 @@
             "internalType": "uint256"
           },
           {
-            "name": "settlementDeadline",
-            "type": "uint64",
-            "internalType": "uint64"
+            "name": "call",
+            "type": "tuple",
+            "internalType": "struct ICredis.CallTerms",
+            "components": [
+              {
+                "name": "callAnchorPriceMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "callPriceMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "callWindow",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "callThreshold",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "callNoticePeriod",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "calledAt",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "settlementDeadline",
+                "type": "uint64",
+                "internalType": "uint64"
+              }
+            ]
           },
           {
-            "name": "callNoticePeriod",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "callWindow",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "callThreshold",
-            "type": "uint32",
-            "internalType": "uint32"
+            "name": "outcome",
+            "type": "tuple",
+            "internalType": "struct ICredis.Outcome",
+            "components": [
+              {
+                "name": "principalPaidMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "principalWrittenOffMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "gratisReturnedMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "gratisBurnedMinor",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
           }
         ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "hasCalledPosition",
-    "inputs": [
-      {
-        "name": "smartAccount",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -244,7 +278,7 @@
     "name": "interestAccruedMinor",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -263,7 +297,7 @@
     "name": "interestPaidMinor",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -319,7 +353,7 @@
     "name": "ownerOf",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -329,293 +363,6 @@
         "name": "",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "positionByIndex",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct ICredis.Position",
-        "components": [
-          {
-            "name": "positionId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "smartAccount",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "cca",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "asset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "issuanceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "referenceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "source",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "principalMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outstandingPrincipalMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "gratisMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outstandingGratisMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "policyRate",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "entryPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "callAnchorPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "callPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "issuedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "lastSettledAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "calledAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "state",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "interestPaidMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "settlementDeadline",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "callNoticePeriod",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "callWindow",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "callThreshold",
-            "type": "uint32",
-            "internalType": "uint32"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "positionOfAddressByIndex",
-    "inputs": [
-      {
-        "name": "smartAccount",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct ICredis.Position",
-        "components": [
-          {
-            "name": "positionId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "smartAccount",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "cca",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "asset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "issuanceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "referenceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "source",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "principalMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outstandingPrincipalMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "gratisMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outstandingGratisMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "policyRate",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "entryPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "callAnchorPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "callPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "issuedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "lastSettledAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "calledAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "state",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "interestPaidMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "settlementDeadline",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "callNoticePeriod",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "callWindow",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "callThreshold",
-            "type": "uint32",
-            "internalType": "uint32"
-          }
-        ]
       }
     ],
     "stateMutability": "view"
@@ -635,7 +382,7 @@
         "internalType": "address"
       },
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -658,7 +405,7 @@
         "internalType": "address"
       },
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -723,10 +470,53 @@
   },
   {
     "type": "function",
+    "name": "tokenByIndex",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tokenOfOwnerByIndex",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "tokenURI",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -768,7 +558,7 @@
         "internalType": "address"
       },
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -847,23 +637,10 @@
   },
   {
     "type": "event",
-    "name": "MetadataUpdate",
+    "name": "CredisCalled",
     "inputs": [
       {
-        "name": "_tokenId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PositionCalled",
-    "inputs": [
-      {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -885,60 +662,10 @@
   },
   {
     "type": "event",
-    "name": "PositionCreated",
+    "name": "CredisForfeited",
     "inputs": [
       {
-        "name": "positionId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "smartAccount",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "cca",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "principalMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "gratisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PositionSettled",
-    "inputs": [
-      {
-        "name": "positionId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PositionVoided",
-    "inputs": [
-      {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -966,16 +693,42 @@
   },
   {
     "type": "event",
+    "name": "CredisSettled",
+    "inputs": [
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MetadataUpdate",
+    "inputs": [
+      {
+        "name": "_tokenId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SettlementApplied",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "interestMinor",
+        "name": "interestPaidMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

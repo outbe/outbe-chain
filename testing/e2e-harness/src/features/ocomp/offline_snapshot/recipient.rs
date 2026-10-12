@@ -86,7 +86,22 @@ pub(crate) fn place_snapshot_payload(
     evidence_dir: &std::path::Path,
 ) -> eyre::Result<(Vec<u8>, Vec<u8>)> {
     use std::process::Command;
-    let scratch = tempfile::tempdir()?;
+    // Keep the unpacked MDBX files off the live validators' disk. A second
+    // placement unpacks the same signed archive again after the first closes.
+    let shm = std::path::Path::new("/dev/shm");
+    let archive_size = u128::from(std::fs::metadata(archive)?.len());
+    let scratch = if shm.is_dir()
+        && rustix::fs::statvfs(shm).is_ok_and(|stat| {
+            let free = u128::from(stat.f_bavail) * u128::from(stat.f_frsize);
+            free > archive_size + 2 * 1024 * 1024 * 1024
+        }) {
+        tempfile::Builder::new()
+            .prefix("outbe-snapshot-")
+            .tempdir_in(shm)?
+    } else {
+        tempfile::tempdir()?
+    };
+    eprintln!("snapshot placement scratch: {}", scratch.path().display());
     let mut command = Command::new("tar");
     command
         .args(["--no-same-owner", "-xpf"])
@@ -133,7 +148,13 @@ pub(crate) fn place_snapshot_payload(
         std::fs::create_dir_all(&target)?;
         let mut command = Command::new("cp");
         command
-            .args(["-a", "--no-preserve=ownership", "--"])
+            .args([
+                "-a",
+                "--reflink=auto",
+                "--sparse=always",
+                "--no-preserve=ownership",
+                "--",
+            ])
             .arg(scratch.path().join("payload").join(id).join("."))
             .arg(&target);
         successful_command(&run_snapshot_command(
@@ -351,7 +372,10 @@ impl SnapshotPlacement {
         std::fs::create_dir_all(&phase_dir)?;
         let source = if validate { archive } else { retained_archive };
         let mut command = Command::new("cp");
-        command.arg("--").arg(source).arg(received);
+        command
+            .args(["--reflink=auto", "--sparse=always", "--"])
+            .arg(source)
+            .arg(received);
         let transfer =
             run_snapshot_command(command, &phase_dir, "transfer", Duration::from_secs(600))?;
         successful_command(&transfer)?;
@@ -469,23 +493,7 @@ impl SnapshotPlacement {
         let observation =
             run_snapshot_command(command, phase_dir, "validate", Duration::from_secs(900))?;
         let report = parse_snapshot_validation_report(&observation.stdout)?;
-        ensure!(
-            report.checks["files"].status == SnapshotCheckStatus::Passed
-                && report.checks["provenance"].status == SnapshotCheckStatus::Passed,
-            "original signed file checks did not pass"
-        );
-        ensure!(
-            !report
-                .checks
-                .values()
-                .any(|check| check.status == SnapshotCheckStatus::Failed),
-            "semantic validation failed; inspect retained actual report"
-        );
-        // Incomplete remains a nonzero audit, never relabeled complete.
-        let complete = report
-            .checks
-            .values()
-            .all(|check| check.status == SnapshotCheckStatus::Passed);
+        let complete = snapshot_full_validation_complete(&report)?;
         ensure!(
             (complete && observation.exit_code == Some(0))
                 || (!complete && observation.exit_code.is_some_and(|code| code != 0)),

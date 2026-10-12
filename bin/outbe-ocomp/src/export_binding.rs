@@ -275,11 +275,14 @@ impl ExportedManifestBindingStore {
         load_binding(
             &self.root,
             &self.limits,
-            reader,
-            &discovery.spec,
+            BindingReadInputs {
+                reader,
+                spec: &discovery.spec,
+                bundle,
+                input_refs,
+            },
             discovery.cursor,
-            bundle,
-            input_refs,
+            CatalogRead::Private,
         )
     }
 
@@ -320,6 +323,13 @@ pub struct ExportedManifestBindingReader {
     limits: SchemaLimits,
 }
 
+struct BindingReadInputs<'a> {
+    reader: &'a FilesystemCasReader,
+    spec: &'a FinalizedJobSpecV1,
+    bundle: &'a ProtocolBundleV1,
+    input_refs: &'a VerifiedInputChunkRefCatalog,
+}
+
 impl ExportedManifestBindingReader {
     pub fn open_existing(
         root: impl AsRef<Path>,
@@ -344,17 +354,52 @@ impl ExportedManifestBindingReader {
         bundle: &ProtocolBundleV1,
         input_refs: &VerifiedInputChunkRefCatalog,
     ) -> Result<VerifiedExportedManifestBinding, ExportBindingError> {
-        inspect_existing_binding(&self.root)?;
-        load_binding(
-            &self.root,
-            &self.limits,
-            reader,
-            spec,
-            spec.summary.cursor,
-            bundle,
-            input_refs,
+        self.load_with_catalog_read(
+            BindingReadInputs {
+                reader,
+                spec,
+                bundle,
+                input_refs,
+            },
+            CatalogRead::Private,
         )
     }
+
+    /// Check the stopped snapshot's immutable binding and ciphertext catalog.
+    /// Private Tribute amounts remain the responsibility of live execution.
+    pub fn load_integrity(
+        &self,
+        reader: &FilesystemCasReader,
+        spec: &FinalizedJobSpecV1,
+        bundle: &ProtocolBundleV1,
+        input_refs: &VerifiedInputChunkRefCatalog,
+    ) -> Result<VerifiedExportedManifestBinding, ExportBindingError> {
+        self.load_with_catalog_read(
+            BindingReadInputs {
+                reader,
+                spec,
+                bundle,
+                input_refs,
+            },
+            CatalogRead::Integrity,
+        )
+    }
+
+    fn load_with_catalog_read(
+        &self,
+        inputs: BindingReadInputs<'_>,
+        catalog_read: CatalogRead,
+    ) -> Result<VerifiedExportedManifestBinding, ExportBindingError> {
+        inspect_existing_binding(&self.root)?;
+        let cursor = inputs.spec.summary.cursor;
+        load_binding(&self.root, &self.limits, inputs, cursor, catalog_read)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CatalogRead {
+    Private,
+    Integrity,
 }
 
 fn inspect_existing_binding(root: &Path) -> Result<(), ExportBindingError> {
@@ -380,12 +425,16 @@ fn inspect_existing_binding(root: &Path) -> Result<(), ExportBindingError> {
 fn load_binding(
     root: &Path,
     limits: &SchemaLimits,
-    reader: &FilesystemCasReader,
-    spec: &FinalizedJobSpecV1,
+    inputs: BindingReadInputs<'_>,
     cursor: u64,
-    bundle: &ProtocolBundleV1,
-    input_refs: &VerifiedInputChunkRefCatalog,
+    catalog_read: CatalogRead,
 ) -> Result<VerifiedExportedManifestBinding, ExportBindingError> {
+    let BindingReadInputs {
+        reader,
+        spec,
+        bundle,
+        input_refs,
+    } = inputs;
     let locator_path = root.join(LOCATOR_FILE);
     if !path_exists(&locator_path)? {
         return Err(ExportBindingError::MissingBinding);
@@ -405,7 +454,16 @@ fn load_binding(
     let manifest = InputManifestV1::decode_canonical(manifest_object.bytes(), limits)?;
     manifest.validate_against_bundle(bundle, limits)?;
     validate_binding_authority(&binding, spec, cursor, &manifest, limits)?;
-    validate_closed_input_catalog(input_refs, reader, bundle, &binding.manifest_ref, &manifest)?;
+    validate_closed_input_catalog(
+        input_refs,
+        reader,
+        bundle,
+        InputManifestAuthority {
+            reference: &binding.manifest_ref,
+            manifest: &manifest,
+        },
+        catalog_read,
+    )?;
     Ok(VerifiedExportedManifestBinding {
         binding_ref,
         binding,
@@ -429,8 +487,11 @@ fn derive_binding(
         candidate.input_refs,
         reader,
         candidate.bundle,
-        candidate.manifest_ref,
-        &manifest,
+        InputManifestAuthority {
+            reference: candidate.manifest_ref,
+            manifest: &manifest,
+        },
+        CatalogRead::Private,
     )?;
 
     let spec_bytes = candidate.discovery.spec.encode_body(limits)?;
@@ -600,15 +661,24 @@ fn validate_manifest_job_fields(
     )
 }
 
+struct InputManifestAuthority<'a> {
+    reference: &'a CasObjectRefV1,
+    manifest: &'a InputManifestV1,
+}
+
 fn validate_closed_input_catalog(
     input_refs: &VerifiedInputChunkRefCatalog,
     reader: &FilesystemCasReader,
     bundle: &ProtocolBundleV1,
-    manifest_ref: &CasObjectRefV1,
-    manifest: &InputManifestV1,
+    authority: InputManifestAuthority<'_>,
+    catalog_read: CatalogRead,
 ) -> Result<(), ExportBindingError> {
-    input_refs.require_manifest_authority(manifest_ref, manifest)?;
-    for reference in input_refs.exact_verified_cursor(reader, bundle)? {
+    input_refs.require_manifest_authority(authority.reference, authority.manifest)?;
+    let cursor = match catalog_read {
+        CatalogRead::Private => input_refs.exact_verified_cursor(reader, bundle)?,
+        CatalogRead::Integrity => input_refs.exact_verified_integrity_cursor(reader, bundle)?,
+    };
+    for reference in cursor {
         let _ = reference?;
     }
     Ok(())

@@ -1,4 +1,4 @@
-//! Daily price-path scan: the multi-week breach-count call, and the void of a
+//! Daily price-path scan: the multi-week breach-count call, and the forfeit of a
 //! lapsed settlement window from the deadline queue.
 //!
 //! Tests drive [`crate::called::scan_and_call`] through the `scan` harness helper,
@@ -15,15 +15,15 @@ use outbe_primitives::time::previous_date_key;
 use crate::tests::common::*;
 
 /// Enough headroom before `CREATED_AT` that a full lookback window never reaches
-/// back past a position's origination day.
+/// back past a Credis's origination day.
 const AFTER_WINDOW: u64 = (CALL_LOOKBACK_DAYS as u64 + 2) * DAY;
 
 /// An ISO code the fixture registers no `COEN/<iso>` pair for.
 const UNPRICED_ISO: u16 = 392; // JPY
 
-fn state_of(storage: &StorageHandle<'_>, position_id: U256) -> CredisState {
+fn state_of(storage: &StorageHandle<'_>, credis_id: U256) -> CredisState {
     CredisContract::new(storage.clone())
-        .get_position(position_id)
+        .get_credis(credis_id)
         .unwrap()
         .lifecycle_state()
         .unwrap()
@@ -38,54 +38,53 @@ fn day_back(at: u64, n: u32) -> u32 {
     day
 }
 
-/// Opens a position and publishes `days` closed days at `price`, ending at the
-/// day closed at `at`. Returns the position id.
+/// Opens a Credis and publishes `days` closed days at `price`, ending at the
+/// day closed at `at`. Returns the Credis id.
 fn open_with_series(storage: &StorageHandle<'_>, at: u64, days: u32, price: U256) -> U256 {
-    let position_id = open(storage, 1);
+    let credis_id = open(storage, 1);
     advance_to(storage, at);
     fill_days(storage, last_closed_day(at), days, price);
-    position_id
+    credis_id
 }
 
-/// Rewrites the call terms sealed on a position, the way a retuned constant
+/// Rewrites the call terms sealed on a Credis, the way a switched profile
 /// would have if the terms were still read live. Widens the currency's
-/// high-water mark alongside, exactly as `open_position` does.
+/// high-water mark alongside, exactly as `issue` does.
 fn reterm(
     storage: &StorageHandle<'_>,
-    position_id: U256,
+    credis_id: U256,
     window_days: u32,
     threshold_days: u32,
     notice_days: u32,
 ) {
     let credis = CredisContract::new(storage.clone());
-    let mut position = credis.get_position(position_id).unwrap();
-    position.call_window_seconds = window_days * SECS_PER_DAY;
-    position.call_threshold_seconds = threshold_days * SECS_PER_DAY;
-    position.call_notice_period_seconds = notice_days * SECS_PER_DAY;
-    credis.positions.update(&position).unwrap();
+    let mut record = credis.get_credis(credis_id).unwrap();
+    record.call_window_seconds = window_days * SECS_PER_DAY;
+    record.call_threshold_seconds = threshold_days * SECS_PER_DAY;
+    record.call_notice_period_seconds = notice_days * SECS_PER_DAY;
+    credis.records.update(&record).unwrap();
     outbe_primitives::call_breach::widen_scan_terms(
         &credis.max_call_window_seconds,
         &credis.min_call_threshold_seconds,
         REFERENCE_ISO,
-        position.call_window_seconds,
-        position.call_threshold_seconds,
+        record.call_window_seconds,
+        record.call_threshold_seconds,
     )
     .unwrap();
 }
 
-/// The terms a position is called and voided under are the ones sealed at
-/// opening, not the live constants. A `const` cannot be retuned at runtime, so
-/// this proves it from the other side: rewrite what the record holds and watch
-/// the scan follow the record rather than the constant.
+/// The terms a Credis is called and forfeited under are the ones sealed at
+/// issuance, not the live profile: rewrite what the record holds and watch the
+/// scan follow the record rather than the profile.
 #[test]
-fn the_scan_follows_the_terms_sealed_on_the_position_not_the_constants() {
+fn the_scan_follows_the_terms_sealed_on_the_credis_not_the_profile() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, below_call());
+        let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, below_call());
         // Three breach days at the head of the window - far short of the 21 the
-        // constant demands, and exactly the threshold the record will carry.
+        // profile demands, and exactly the threshold the record will carry.
         for i in 0..3 {
             set_vwap(&storage, day_back(at, i), above_call());
         }
@@ -93,79 +92,79 @@ fn the_scan_follows_the_terms_sealed_on_the_position_not_the_constants() {
         assert_eq!(
             scan(&storage, at),
             0,
-            "the constant's 21-of-28 threshold is unmet"
+            "the profile's 21-of-28 threshold is unmet"
         );
 
-        reterm(&storage, position_id, 3, 3, 1);
+        reterm(&storage, credis_id, 3, 3, 1);
         assert_eq!(scan(&storage, at), 1, "3 of 3 meets the sealed threshold");
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
 
-        // And the sealed notice period governs the void: one day, not seven.
-        let position = CredisContract::new(storage.clone())
-            .get_position(position_id)
+        // And the sealed notice period governs the forfeit: one day, not seven.
+        let record = CredisContract::new(storage.clone())
+            .get_credis(credis_id)
             .unwrap();
         assert_eq!(
-            outbe_credis::settlement_deadline(&position),
+            outbe_credis::settlement_deadline(&record),
             at + DAY,
             "the deadline follows the sealed notice period"
         );
         let lapsed = at + DAY + HOUR;
         advance_to(&storage, lapsed);
         assert_eq!(expire(&storage, lapsed), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Void);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Forfeited);
     });
     teardown();
 }
 
-/// A position carrying zero terms is uncallable, not callable on every day.
+/// A Credis carrying zero terms is uncallable, not callable on every day.
 /// Zero is what a record sealed before the terms existed reads back, and
 /// `breaches >= 0` would otherwise call the whole book on the next scan.
 #[test]
-fn a_position_with_zero_call_terms_is_never_called() {
+fn a_credis_with_zero_call_terms_is_never_called() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
+        let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
-        reterm(&storage, position_id, 0, 0, 0);
+        reterm(&storage, credis_id, 0, 0, 0);
         assert_eq!(
             scan(&storage, at),
             0,
             "a full breach window still does not call"
         );
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
     });
     teardown();
 }
 
-/// A position whose sealed window outruns the current constant still gets its
-/// whole span collected: the scan sizes the shared per-currency window off the
-/// `max_call_window_seconds` high-water mark, not off the constant.
+/// A Credis whose sealed window outruns the live profile still gets its whole
+/// span collected: the scan sizes the shared per-currency window off the
+/// `max_call_window_seconds` high-water mark, not off the profile.
 #[test]
-fn a_window_wider_than_the_constant_is_collected_in_full() {
+fn a_window_wider_than_the_profile_is_collected_in_full() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         const WIDE_DAYS: u32 = 40;
         let at = CREATED_AT + (WIDE_DAYS as u64 + 5) * DAY;
-        let position_id = open(&storage, 1);
+        let credis_id = open(&storage, 1);
         advance_to(&storage, at);
         fill_days(&storage, last_closed_day(at), WIDE_DAYS, above_call());
 
         // 35 of the 40 days must breach, which no 28-day window can supply.
-        reterm(&storage, position_id, WIDE_DAYS, 35, 7);
+        reterm(&storage, credis_id, WIDE_DAYS, 35, 7);
         assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
     teardown();
 }
 
 #[test]
-fn a_node_local_failure_while_calling_a_position_fails_the_scan() {
+fn a_node_local_failure_while_calling_a_credis_fails_the_scan() {
     let mut storage = env();
     let at = CREATED_AT + AFTER_WINDOW;
-    let position_id = StorageHandle::enter(&mut storage, |storage| {
+    let credis_id = StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call())
     });
@@ -183,42 +182,37 @@ fn a_node_local_failure_while_calling_a_position_fails_the_scan() {
         Err(outbe_primitives::error::PrecompileError::Storage(_))
     ));
     StorageHandle::enter(&mut storage, |storage| {
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
     });
     teardown();
 }
 
 #[test]
-fn a_full_window_above_the_call_price_calls_the_position() {
+fn a_full_window_above_the_call_price_calls_the_credis() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
+        let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
 
-        let position = CredisContract::new(storage.clone())
-            .get_position(position_id)
+        let record = CredisContract::new(storage.clone())
+            .get_credis(credis_id)
             .unwrap();
-        assert_eq!(position.called_at, at, "stamped with the run's timestamp");
+        assert_eq!(record.called_at, at, "stamped with the run's timestamp");
         assert_eq!(
-            outbe_credis::settlement_deadline(&position),
+            outbe_credis::settlement_deadline(&record),
             at + NOTICE,
             "the settlement window opens at the call"
         );
-
-        // The owner's called-position counter tracks the unresolved call.
-        assert!(CredisContract::new(storage.clone())
-            .has_called_position(alice())
-            .unwrap());
 
         // Idempotent: a second run does not move the deadline.
         assert_eq!(scan(&storage, at), 0);
         assert_eq!(
             CredisContract::new(storage.clone())
-                .get_position(position_id)
+                .get_credis(credis_id)
                 .unwrap()
                 .called_at,
             at
@@ -229,17 +223,17 @@ fn a_full_window_above_the_call_price_calls_the_position() {
 
 /// The breach test is strictly above the call price, as it is for Nod, Gem and
 /// Intex. A window that closes exactly on the call price every single day must
-/// therefore leave the position open.
+/// therefore leave the Credis open.
 #[test]
-fn a_full_window_exactly_at_the_call_price_does_not_call_the_position() {
+fn a_full_window_exactly_at_the_call_price_does_not_call_the_credis() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, at_call());
+        let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, at_call());
 
         assert_eq!(scan(&storage, at), 0);
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
 
         // One minor unit higher on every day is a breach window.
         fill_days(
@@ -249,7 +243,7 @@ fn a_full_window_exactly_at_the_call_price_does_not_call_the_position() {
             above_call(),
         );
         assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
     teardown();
 }
@@ -260,10 +254,10 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
+        let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         // Scatter the full slack of below-call days through the window. The rule
-        // counts breach days rather than requiring a run, so their position must
+        // counts breach days rather than requiring a run, so their Credis must
         // not matter: exactly `CALL_THRESHOLD_DAYS` still calls.
         let slack = CALL_LOOKBACK_DAYS - CALL_THRESHOLD_DAYS;
         let stride = (CALL_LOOKBACK_DAYS - 1) / slack;
@@ -280,7 +274,7 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
         }
 
         assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
     teardown();
 }
@@ -291,7 +285,7 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
+        let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         // One more below-call day than the window can absorb.
         let below = CALL_LOOKBACK_DAYS - CALL_THRESHOLD_DAYS + 1;
@@ -300,12 +294,12 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
         }
 
         assert_eq!(scan(&storage, at), 0);
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
 
         // Raising one of them back over the call price completes the threshold.
         set_vwap(&storage, day_back(at, 1), above_call());
         assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
     teardown();
 }
@@ -316,7 +310,7 @@ fn missing_days_do_not_count_as_breaches() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open(&storage, 1);
+        let credis_id = open(&storage, 1);
         advance_to(&storage, at);
 
         // Publish one day short of the threshold and leave the rest of the window
@@ -329,7 +323,7 @@ fn missing_days_do_not_count_as_breaches() {
         finalize_through(&storage, at);
 
         assert_eq!(scan(&storage, at), 0);
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
 
         // Filling one more published day reaches the threshold, even though the
         // rest of the window still has no price at all.
@@ -339,20 +333,20 @@ fn missing_days_do_not_count_as_breaches() {
             above_call(),
         );
         assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
     teardown();
 }
 
 #[test]
-fn a_breach_run_that_predates_the_position_does_not_call_it() {
+fn a_breach_run_that_predates_the_credis_does_not_call_it() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
-        // The series is long and fully breached, but the position is 3 days old,
+        // The series is long and fully breached, but the Credis is 3 days old,
         // so the window reaches back before it existed.
         let at = CREATED_AT + 3 * DAY;
-        let position_id = open(&storage, 1);
+        let credis_id = open(&storage, 1);
         advance_to(&storage, at);
         fill_days(
             &storage,
@@ -362,9 +356,9 @@ fn a_breach_run_that_predates_the_position_does_not_call_it() {
         );
 
         assert_eq!(scan(&storage, at), 0);
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
 
-        // Once the position is old enough for the window to sit entirely after
+        // Once the Credis is old enough for the window to sit entirely after
         // its origination day, the call fires.
         let later = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, later);
@@ -375,22 +369,24 @@ fn a_breach_run_that_predates_the_position_does_not_call_it() {
             above_call(),
         );
         assert_eq!(scan(&storage, later), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
     teardown();
 }
 
-/// A position opened at 00:00 counts its issuance day. One opened at 00:00:01 starts
+/// A Credis opened at 00:00 counts its issuance day. One opened at 00:00:01 starts
 /// counting the next day, so the same threshold run falls one day short.
 #[test]
-fn the_issuance_day_counts_only_for_a_position_opened_at_midnight() {
+fn the_issuance_day_counts_only_for_a_credis_issued_at_midnight() {
     for (offset, called_at_threshold) in [(0, true), (1, false)] {
         let mut storage = env();
         StorageHandle::enter(&mut storage, |storage| {
             bootstrap(&storage, pledge_cost());
             let midnight = (CREATED_AT / DAY + 1) * DAY;
             advance_to(&storage, midnight + offset);
-            let position_id = open(&storage, 1);
+            // Issuance reads the anchor from the day that just closed.
+            seed_previous_closed_day(&storage, REFERENCE_ISO, oracle_rate());
+            let credis_id = open(&storage, 1);
 
             let at = midnight + u64::from(CALL_THRESHOLD_DAYS) * DAY;
             advance_to(&storage, at);
@@ -402,16 +398,16 @@ fn the_issuance_day_counts_only_for_a_position_opened_at_midnight() {
             );
             assert_eq!(scan(&storage, at), u32::from(called_at_threshold));
             if called_at_threshold {
-                assert_eq!(state_of(&storage, position_id), CredisState::Called);
+                assert_eq!(state_of(&storage, credis_id), CredisState::Called);
                 return;
             }
-            assert_eq!(state_of(&storage, position_id), CredisState::Open);
+            assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
 
             let next = at + DAY;
             advance_to(&storage, next);
             set_vwap(&storage, last_closed_day(next), above_call());
             assert_eq!(scan(&storage, next), 1);
-            assert_eq!(state_of(&storage, position_id), CredisState::Called);
+            assert_eq!(state_of(&storage, credis_id), CredisState::Called);
         });
         teardown();
     }
@@ -423,7 +419,7 @@ fn an_unfinalized_day_skips_the_run_without_touching_state() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
+        let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         // Rewind the watermark behind the last closed day: the oracle has not
         // closed it yet, so the run must skip rather than read it as missing.
@@ -434,23 +430,23 @@ fn an_unfinalized_day_skips_the_run_without_touching_state() {
             .unwrap();
 
         assert_eq!(scan(&storage, at), 0);
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
     });
     teardown();
 }
 
 #[test]
-fn the_call_and_the_void_compose_across_runs() {
+fn the_call_and_the_forfeit_compose_across_runs() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
+        let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, above_call());
 
         assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
 
-        // The same block can never void a position that it called: the
+        // The same block can never forfeit a Credis that it called: the
         // window opens at `called_at = now`.
         assert_eq!(expire(&storage, at), 0);
 
@@ -458,14 +454,14 @@ fn the_call_and_the_void_compose_across_runs() {
         let inside = at + NOTICE - DAY;
         advance_to(&storage, inside);
         assert_eq!(expire(&storage, inside), 0);
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
 
-        // The window lapses with the whole principal outstanding: the void burns
+        // The window lapses with the whole principal outstanding: the forfeit burns
         // the entire collateral and credits it to the Promis Reserve.
         let lapsed = at + NOTICE + HOUR;
         advance_to(&storage, lapsed);
         assert_eq!(expire(&storage, lapsed), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Void);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Forfeited);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
@@ -474,11 +470,8 @@ fn the_call_and_the_void_compose_across_runs() {
             pledge_cost()
         );
 
-        // The void cleared the owner's called count and left the deadline queue.
-        assert!(!CredisContract::new(storage.clone())
-            .has_called_position(alice())
-            .unwrap());
-        assert_eq!(queued_at(&storage, position_id), 0);
+        // The forfeit left the deadline queue.
+        assert_eq!(queued_at(&storage, credis_id), 0);
     });
     teardown();
 }
@@ -489,22 +482,22 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open(&storage, 1);
+        let credis_id = open(&storage, 1);
 
-        // Re-point the stored position's ANCHOR at an unregistered currency, so it
+        // Re-point the stored Credis's ANCHOR at an unregistered currency, so it
         // prices off a series that does not exist, and index it there.
         {
             use outbe_primitives::call_bins;
             let credis = CredisContract::new(storage.clone());
-            let mut position = credis.get_position(position_id).unwrap();
-            let bin = call_bins::price_to_bin(position.call_price_minor).unwrap();
-            call_bins::remove(&CallBins(&credis, REFERENCE_ISO), position_id).unwrap();
-            call_bins::insert(&CallBins(&credis, UNPRICED_ISO), position_id, bin).unwrap();
-            position.reference_currency = UNPRICED_ISO;
-            credis.positions.update(&position).unwrap();
+            let mut record = credis.get_credis(credis_id).unwrap();
+            let bin = call_bins::price_to_bin(record.call_price_minor).unwrap();
+            call_bins::remove(&CallBins(&credis, REFERENCE_ISO), credis_id).unwrap();
+            call_bins::insert(&CallBins(&credis, UNPRICED_ISO), credis_id, bin).unwrap();
+            record.reference_currency = UNPRICED_ISO;
+            credis.records.update(&record).unwrap();
         }
 
-        // The seeded reference series is a full breach window, but this position is
+        // The seeded reference series is a full breach window, but this Credis is
         // no longer anchored to it.
         advance_to(&storage, at);
         fill_days(
@@ -518,23 +511,23 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
             0,
             "an unpriced reference currency is never called"
         );
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
     });
     teardown();
 }
 
 /// The call is anchored to the reference currency, never to the issuance currency
-/// the position is denominated in. This test checks both directions, because a
+/// the Credis is denominated in. This test checks both directions, because a
 /// wrong anchor fails silently in one of them. With the two series moving
 /// together, an issuance-keyed scan still reaches the right verdict by coincidence.
 #[test]
 fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
-    // Breach published only on the reference series -> the position is called.
+    // Breach published only on the reference series -> the Credis is called.
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open(&storage, 1);
+        let credis_id = open(&storage, 1);
         assert_ne!(
             ISSUANCE_ISO, REFERENCE_ISO,
             "the fixture must keep the two codes distinct"
@@ -550,7 +543,7 @@ fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
         );
         // COEN/840 stays silent for the whole window.
         assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Called);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Called);
     });
     teardown();
 
@@ -559,7 +552,7 @@ fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let position_id = open(&storage, 1);
+        let credis_id = open(&storage, 1);
 
         advance_to(&storage, at);
         fill_days_for(
@@ -572,15 +565,15 @@ fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
         assert_eq!(
             scan(&storage, at),
             0,
-            "a breach in the issuance currency must not call the position"
+            "a breach in the issuance currency must not call the Credis"
         );
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Issued);
     });
     teardown();
 }
 
-/// Opens one position for each of three distinct owners, so none of them trips
-/// the called-position gate. Returns the ids in call-index order.
+/// Opens one Credis for each of three distinct owners, so none of them trips
+/// the called-Credis gate. Returns the ids in call-index order.
 fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
     let owners: [Address; 3] = [alice(), bob(), cca()];
     for owner in owners {
@@ -592,7 +585,7 @@ fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
         .collect()
 }
 
-/// Positions of the reference currency's walk in flight still to visit in its bin.
+/// Credis of the reference currency's walk in flight still to visit in its bin.
 fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
     let packed = CredisContract::new(storage.clone())
         .call_bin_cursor
@@ -601,10 +594,10 @@ fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
     outbe_primitives::call_bins::unpack_cursor(packed).1
 }
 
-fn is_indexed(storage: &StorageHandle<'_>, position_id: U256) -> bool {
+fn is_indexed(storage: &StorageHandle<'_>, credis_id: U256) -> bool {
     CredisContract::new(storage.clone())
-        .call_position_slot
-        .read(&position_id)
+        .call_credis_slot
+        .read(&credis_id)
         .unwrap()
         != 0
 }
@@ -617,7 +610,7 @@ fn a_completed_pass_resets_the_cursor() {
         for id in &ids {
             assert!(
                 is_indexed(&storage, *id),
-                "an open position waits for its call"
+                "an open Credis waits for its call"
             );
         }
 
@@ -643,12 +636,12 @@ fn sweep_state<'storage>(storage: &StorageHandle<'storage>) -> CredisContract<'s
     CredisContract::new(storage.clone())
 }
 
-/// Pins `day` as the sweep in flight, stopped with `remaining` positions of the
+/// Pins `day` as the sweep in flight, stopped with `remaining` Credis of the
 /// bin `sample` sits in still to visit.
 fn pin_sweep(storage: &StorageHandle<'_>, day: u32, sample: U256, remaining: u32) {
     sweep_state(storage).call_sweep_day.write(day).unwrap();
     let credis = CredisContract::new(storage.clone());
-    let price = credis.get_position(sample).unwrap().call_price_minor;
+    let price = credis.get_credis(sample).unwrap().call_price_minor;
     let bin = outbe_primitives::call_bins::price_to_bin(price).unwrap();
     credis
         .call_bin_cursor
@@ -680,7 +673,7 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             CALL_LOOKBACK_DAYS,
             above_call(),
         );
-        // Two positions of the bin are left to visit: indices 1 and 0.
+        // Two Credis of the bin are left to visit: indices 1 and 0.
         pin_sweep(&storage, last_closed_day(at), ids[0], 2);
 
         assert_eq!(slice(&storage, at), 2);
@@ -688,7 +681,7 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
         assert_eq!(state_of(&storage, ids[1]), CredisState::Called);
         assert_eq!(
             state_of(&storage, ids[2]),
-            CredisState::Open,
+            CredisState::Issued,
             "the entry above the resume point waits for the next pass"
         );
         assert_eq!(cursor_of(&storage), 0);
@@ -722,10 +715,10 @@ fn a_newer_closed_day_waits_for_the_pass_in_flight() {
             sweep_days(&storage),
             (last_closed_day(at), last_closed_day(next))
         );
-        assert_eq!(state_of(&storage, ids[2]), CredisState::Open);
+        assert_eq!(state_of(&storage, ids[2]), CredisState::Issued);
 
         assert_eq!(slice(&storage, next), 2, "the pinned day finishes first");
-        assert_eq!(state_of(&storage, ids[2]), CredisState::Open);
+        assert_eq!(state_of(&storage, ids[2]), CredisState::Issued);
         assert_eq!(sweep_days(&storage), (last_closed_day(next), 0));
         assert_eq!(cursor_of(&storage), 0);
 
@@ -806,7 +799,7 @@ fn a_pinned_day_the_oracle_has_not_finalized_holds_the_sweep() {
         pin_sweep(&storage, last_closed_day(at), ids[0], 2);
 
         assert_eq!(slice(&storage, at), 0);
-        assert_eq!(state_of(&storage, ids[1]), CredisState::Open);
+        assert_eq!(state_of(&storage, ids[1]), CredisState::Issued);
         assert_eq!(sweep_days(&storage), (last_closed_day(at), 0));
         assert_eq!(cursor_of(&storage), 2);
     });
@@ -821,15 +814,15 @@ fn call_by_hand(storage: &StorageHandle<'_>, ids: &[U256], called_at: u64) {
     }
 }
 
-fn queued_at(storage: &StorageHandle<'_>, position_id: U256) -> u64 {
+fn queued_at(storage: &StorageHandle<'_>, credis_id: U256) -> u64 {
     CredisContract::new(storage.clone())
-        .called_position_slot
-        .read(&position_id)
+        .called_credis_slot
+        .read(&credis_id)
         .unwrap()
 }
 
 #[test]
-fn voiding_several_positions_in_one_block_skips_none() {
+fn forfeiting_several_credis_in_one_block_skips_none() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
@@ -837,10 +830,14 @@ fn voiding_several_positions_in_one_block_skips_none() {
 
         let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
-        assert_eq!(expire(&storage, lapsed), 3, "all three voided in one block");
+        assert_eq!(
+            expire(&storage, lapsed),
+            3,
+            "all three forfeited in one block"
+        );
 
         for id in &ids {
-            assert_eq!(state_of(&storage, *id), CredisState::Void);
+            assert_eq!(state_of(&storage, *id), CredisState::Forfeited);
             assert_eq!(queued_at(&storage, *id), 0);
         }
     });
@@ -848,7 +845,7 @@ fn voiding_several_positions_in_one_block_skips_none() {
 }
 
 #[test]
-fn a_void_waits_for_the_hour_its_deadline_falls_in_to_close() {
+fn a_forfeit_waits_for_the_hour_its_deadline_falls_in_to_close() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
@@ -866,13 +863,13 @@ fn a_void_waits_for_the_hour_its_deadline_falls_in_to_close() {
 
         advance_to(&storage, hour_end);
         assert_eq!(expire(&storage, hour_end), 1);
-        assert_eq!(state_of(&storage, ids[0]), CredisState::Void);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Forfeited);
     });
     teardown();
 }
 
 #[test]
-fn every_cycle_tick_voids_without_the_daily_trigger() {
+fn every_cycle_tick_forfeits_without_the_daily_trigger() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
@@ -881,32 +878,32 @@ fn every_cycle_tick_voids_without_the_daily_trigger() {
         let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
         tick(&storage, lapsed);
-        assert_eq!(state_of(&storage, ids[0]), CredisState::Void);
-        assert_eq!(state_of(&storage, ids[1]), CredisState::Open);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Forfeited);
+        assert_eq!(state_of(&storage, ids[1]), CredisState::Issued);
     });
     teardown();
 }
 
 #[test]
-fn settling_a_called_position_in_full_leaves_the_queue() {
+fn settling_a_called_credis_in_full_leaves_the_queue() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
-        let position_id = open(&storage, 1);
-        call_by_hand(&storage, &[position_id], CREATED_AT);
+        let credis_id = open(&storage, 1);
+        call_by_hand(&storage, &[credis_id], CREATED_AT);
         assert_ne!(
-            queued_at(&storage, position_id),
+            queued_at(&storage, credis_id),
             0,
-            "a call queues the position"
+            "a call queues the Credis"
         );
 
         let outstanding = CredisContract::new(storage.clone())
-            .get_position(position_id)
+            .get_credis(credis_id)
             .unwrap()
             .outstanding_principal_minor;
-        settle_principal(&storage, alice(), position_id, outstanding);
-        assert_eq!(state_of(&storage, position_id), CredisState::Settled);
-        assert_eq!(queued_at(&storage, position_id), 0);
+        settle_principal(&storage, alice(), credis_id, outstanding);
+        assert_eq!(state_of(&storage, credis_id), CredisState::Settled);
+        assert_eq!(queued_at(&storage, credis_id), 0);
 
         let lapsed = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, lapsed);
@@ -924,7 +921,7 @@ fn settling_a_called_position_in_full_leaves_the_queue() {
 }
 
 #[test]
-fn the_void_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
+fn the_forfeit_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
     let budget = outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
     let total = budget + 1;
@@ -952,14 +949,14 @@ fn the_void_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
         );
         assert_eq!(expire(&storage, lapsed), 1);
         for id in &ids {
-            assert_eq!(state_of(&storage, *id), CredisState::Void);
+            assert_eq!(state_of(&storage, *id), CredisState::Forfeited);
         }
     });
     teardown();
 }
 
 #[test]
-fn a_failed_void_fails_the_block_and_keeps_the_position_queued() {
+fn a_failed_forfeit_fails_the_block_and_keeps_the_credis_queued() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
@@ -980,22 +977,25 @@ fn a_failed_void_fails_the_block_and_keeps_the_position_queued() {
 }
 
 #[test]
-fn a_void_fails_the_block_only_on_what_may_be_this_nodes_fault() {
-    use crate::expired::void_failure;
+fn a_forfeit_fails_the_block_only_on_what_may_be_this_nodes_fault() {
+    use crate::expired::forfeit_failure;
     use outbe_primitives::error::{PrecompileError, SweepFailure};
     assert_eq!(
-        void_failure(&PrecompileError::Fatal("tee_sidecar_unavailable".into())),
+        forfeit_failure(&PrecompileError::Fatal("tee_sidecar_unavailable".into())),
         SweepFailure::Propagate
     );
     assert_eq!(
-        void_failure(&PrecompileError::Storage("x".into())),
+        forfeit_failure(&PrecompileError::Storage("x".into())),
         SweepFailure::Propagate
     );
     assert_eq!(
-        void_failure(&PrecompileError::Revert(
+        forfeit_failure(&PrecompileError::Revert(
             "forfeiture collateral mismatch".into()
         )),
         SweepFailure::Skip
     );
-    assert_eq!(void_failure(&PrecompileError::OutOfGas), SweepFailure::Stop);
+    assert_eq!(
+        forfeit_failure(&PrecompileError::OutOfGas),
+        SweepFailure::Stop
+    );
 }

@@ -7,11 +7,16 @@
         "name": "reservationId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -28,7 +33,7 @@
     "name": "settleCredis",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -45,7 +50,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "interestMinor",
+        "name": "interestPaidMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -95,7 +100,13 @@
     "name": "CredisIssued",
     "inputs": [
       {
-        "name": "smartAccount",
+        "name": "credisId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -107,7 +118,19 @@
         "internalType": "address"
       },
       {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
         "name": "principalMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "gratisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -120,7 +143,7 @@
     "name": "ExpiryDeferred",
     "inputs": [
       {
-        "name": "positionId",
+        "name": "credisId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"

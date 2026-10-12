@@ -225,6 +225,103 @@ pub fn build_lane(repo: &Path, lane: BuildLane, jobs: usize, output: &Path) -> R
     Ok(())
 }
 
+/// Rebuild the harness while retaining byte-identical release runtime artifacts.
+/// The prior manifest must describe the same checkout, lockfile, toolchain, and lane.
+pub fn refresh_harness_lane(
+    repo: &Path,
+    lane: BuildLane,
+    jobs: usize,
+    prior_path: &Path,
+    output: &Path,
+) -> Result<()> {
+    ensure!((1..=8).contains(&jobs), "--jobs must be between 1 and 8");
+    let repo = repo.canonicalize()?;
+    let prior: BuildManifestV1 = serde_json::from_slice(&fs::read(prior_path)?)?;
+    ensure!(
+        prior.schema_version == BUILD_MANIFEST_SCHEMA_VERSION,
+        "prior manifest schema differs"
+    );
+    ensure!(prior.lane == lane, "prior manifest lane differs");
+    let source_before = source_fingerprint(&repo)?;
+    ensure!(
+        prior.source.git_sha == source_before.git_sha,
+        "checkout commit differs"
+    );
+    ensure!(
+        prior.source.cargo_lock_sha256 == source_before.cargo_lock_sha256,
+        "Cargo.lock differs"
+    );
+    ensure!(
+        prior.source.rust_toolchain_sha256 == source_before.rust_toolchain_sha256,
+        "Rust toolchain differs"
+    );
+    for area in ["bin", "crates", "contracts", "scripts", "release"] {
+        ensure!(
+            command_output(&repo, "git", &["status", "--porcelain", "--", area])?.is_empty(),
+            "production inputs under {area} are dirty; rebuild the complete lane"
+        );
+    }
+    for spec in lane_artifacts(&repo, lane)
+        .into_iter()
+        .filter(|spec| spec.name != "outbe_e2e")
+    {
+        let expected = prior
+            .artifacts
+            .get(spec.name)
+            .ok_or_else(|| eyre::eyre!("prior manifest lacks {}", spec.name))?;
+        ensure!(
+            identify(&spec.path, spec.executable)? == *expected,
+            "runtime artifact {} differs from prior manifest",
+            spec.name
+        );
+    }
+    let harness_command = release_build_command(
+        &jobs.to_string(),
+        &[
+            "-p",
+            "outbe-e2e-harness",
+            "--features",
+            "ocomp-integration",
+            "--bin",
+            "outbe-e2e",
+        ],
+    );
+    run_cargo(&repo, &harness_command)?;
+    ensure!(
+        source_fingerprint(&repo)? == source_before,
+        "source changed during harness build"
+    );
+    let mut artifacts = prior.artifacts;
+    for spec in lane_artifacts(&repo, lane) {
+        let identity = identify(&spec.path, spec.executable)?;
+        if spec.name != "outbe_e2e" {
+            ensure!(
+                artifacts.get(spec.name) == Some(&identity),
+                "runtime artifact {} changed during harness build",
+                spec.name
+            );
+        }
+        artifacts.insert(spec.name.to_owned(), identity);
+    }
+    let mut commands = prior.cargo_commands;
+    commands.push(harness_command);
+    publish_manifest(
+        output,
+        &BuildManifestV1 {
+            schema_version: BUILD_MANIFEST_SCHEMA_VERSION,
+            lane,
+            source: source_before,
+            cargo_commands: commands,
+            artifacts,
+        },
+    )?;
+    eprintln!(
+        "outbe-e2e-build: refreshed harness manifest {}",
+        output.display()
+    );
+    Ok(())
+}
+
 fn release_build_command(jobs: &str, targets: &[&str]) -> Vec<String> {
     let mut command = strings(&["build", "--locked", "--release", "-j", jobs]);
     command.extend(targets.iter().map(|argument| (*argument).to_owned()));

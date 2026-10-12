@@ -54,6 +54,22 @@ impl Rpc {
                 .flatten()
                 .map(|slot| (slot.validator_index, slot.first_signature_rs.to_vec()))
                 .collect(),
+            slot_first_digests: accountability
+                .slots
+                .iter()
+                .flatten()
+                .map(|slot| (slot.validator_index, slot.first_result_digest))
+                .collect(),
+            slot_equivocation_digests: accountability
+                .slots
+                .iter()
+                .flatten()
+                .filter_map(|slot| {
+                    slot.equivocation.as_ref().map(|equivocation| {
+                        (slot.validator_index, equivocation.conflicting_result_digest)
+                    })
+                })
+                .collect(),
             quorum_result_digest: quorum.map(|value| value.result_digest),
             quorum_height: quorum.map(|value| value.quorum_height),
             quorum_signer_bitmap: quorum.map(|value| value.signer_bitmap.clone()),
@@ -235,6 +251,8 @@ pub struct OcompPublicVoteAccountabilityV1 {
     pub quorum_threshold: u16,
     pub slot_validator_indexes: Vec<u16>,
     pub slot_first_signatures: Vec<(u16, Vec<u8>)>,
+    pub slot_first_digests: Vec<(u16, B256)>,
+    pub slot_equivocation_digests: Vec<(u16, B256)>,
     pub quorum_result_digest: Option<B256>,
     pub quorum_height: Option<u64>,
     pub quorum_signer_bitmap: Option<Vec<u8>>,

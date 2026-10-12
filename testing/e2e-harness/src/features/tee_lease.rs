@@ -229,8 +229,10 @@ fn log_u64(line: &str, key: &str) -> Option<u64> {
 fn activation_record(log: &str, version: u64) -> Option<(u64, u64)> {
     let mut completed = false;
     for line in log.lines() {
-        if info_message(line, "outbe_consensus::dkg_actor::actor::round")
-            == Some(DKG_COMPLETE_MARKER)
+        if info_message(
+            line,
+            "outbe_consensus::dkg_actor::actor::ceremony::completion",
+        ) == Some(DKG_COMPLETE_MARKER)
         {
             completed = true;
         }
@@ -1503,6 +1505,9 @@ fn recovered_nodes_resume(world: &mut World) {
                 else {
                     return Ok(false);
                 };
+                let membership_height = activation_height
+                    .checked_add(1)
+                    .ok_or_else(|| eyre!("activation height overflow"))?;
                 if !fresh_dkg_activation_is_complete(
                     record.status,
                     record.has_bls_share,
@@ -1512,12 +1517,12 @@ fn recovered_nodes_resume(world: &mut World) {
                     &log,
                 ) || !local.has_threshold_shares
                     || activation_height <= readiness.height
-                    || activation_height > height
+                    || membership_height > height
                     || activation_height != local.last_activation_height
                 {
                     return Ok(false);
                 }
-                let boundary = world.rpc.checkpoint_at(primary, activation_height)?;
+                let boundary = world.rpc.checkpoint_at(primary, membership_height)?;
                 let boundary_record =
                     finalized_validator_at(world, "activation_boundary", &address, boundary)?;
                 ensure!(
@@ -1526,7 +1531,8 @@ fn recovered_nodes_resume(world: &mut World) {
                 );
                 world.state.tee_lease.observations.push(json!({"phase": "fresh_activation",
                 "pid": state().validator_restart_pid, "dkg_cycle": cycle, "activation_height": activation_height,
-                "activation_hash": boundary.block_hash, "material_version": local.version,
+                "membership_height": membership_height, "membership_hash": boundary.block_hash,
+                "material_version": local.version,
                 "local_has_threshold_shares": local.has_threshold_shares}));
                 Ok(true)
             })();
@@ -1666,7 +1672,7 @@ mod tests {
     }
 
     fn activation_fixture() -> &'static str {
-        "INFO outbe_consensus::dkg_actor::actor::round: DKG ceremony complete - threshold material obtained\n\
+        "INFO outbe_consensus::dkg_actor::actor::ceremony::completion: DKG ceremony complete - threshold material obtained\n\
          INFO outbe_engine::stack: VRF/DKG material activated dkg_cycle=9 activation_height=540 vrf_material_version=9"
     }
 
@@ -1843,11 +1849,11 @@ mod tests {
             baseline.lines().rev().collect::<Vec<_>>().join("\n"),
             baseline.replace("complete - threshold", "complete — threshold"),
             baseline.replace(
-                "outbe_consensus::dkg_actor::actor::round",
+                "outbe_consensus::dkg_actor::actor::ceremony::completion",
                 "outbe_engine::stack",
             ),
             baseline.replace(
-                "outbe_consensus::dkg_actor::actor::round",
+                "outbe_consensus::dkg_actor::actor::ceremony::completion",
                 "outbe_consensus::dkg_actor::actor",
             ),
             baseline.replace("INFO", "DEBUG"),
@@ -1885,7 +1891,7 @@ mod tests {
 
     #[test]
     fn lease_activation_accepts_current_dkg_completion_and_activation_logs() {
-        let captured = "2026-09-13T17:18:01.654150Z INFO outbe_consensus::dkg_actor::actor::round: DKG ceremony complete - threshold material obtained\n\
+        let captured = "2026-09-13T17:18:01.654150Z INFO outbe_consensus::dkg_actor::actor::ceremony::completion: DKG ceremony complete - threshold material obtained\n\
             2026-09-13T17:18:44.198768Z INFO outbe_engine::stack: VRF/DKG material activated dkg_cycle=9 activation_height=540 vrf_material_version=9";
         assert_eq!(super::activation_record(captured, 9), Some((9, 540)));
     }

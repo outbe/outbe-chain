@@ -11,38 +11,14 @@ use outbe_validatorset::state::read_committee_snapshot_for_epoch;
 use outbe_validatorset::ValidatorLifecycle;
 use tracing::warn;
 
+use crate::constants::{
+    DEFAULT_EVIDENCE_REWARD_PERCENT, DEFAULT_PROPOSER_FELONY_THRESHOLD,
+    DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD, DEFAULT_SLASH_AMOUNT_PERCENT,
+    DEFAULT_VOTER_FELONY_THRESHOLD, DEFAULT_VOTER_MISDEMEANOR_THRESHOLD,
+};
 use crate::evidence::EvidenceCommittee;
 use crate::precompile::ISlashIndicator;
 use crate::schema::SlashIndicator;
-
-/// Default config values used when the stored value is zero (uninitialized).
-// Felony thresholds are the maximum validator misses TOLERATED within one epoch.
-// The per-epoch reset (`reset_epoch_counters`, run at the epoch boundary) zeroes
-// the miss counters. Thus a validator that crosses the threshold inside an epoch
-// is jailed and slashed immediately. Otherwise its count resets next epoch.
-// The epoch (`config_epoch_length_blocks`) is the ~1-hour window that also drives
-// DKG reshare / active-set rotation / counter reset. Thus a felony threshold MUST
-// stay below the epoch length. Otherwise the reset wipes the counter before it
-// can trigger. The prod epoch is 1200 ~= 1h at ~3s. Dev/localnet seeds a smaller
-// threshold for its short epoch via genesis (see `scripts/bootstrap-testnet.sh`).
-// A voter miss accrues ~1 per finalized block. A proposer miss accrues only on
-// the validator's own leader slots (~1/N). Both are genesis-overridable per
-// network (`config_*_felony_threshold` slots).
-const DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD: u64 = 50;
-const DEFAULT_PROPOSER_FELONY_THRESHOLD: u64 = 150;
-// Graduated escalation requires misdemeanor (warn) < felony (slash). The
-// two voter defaults were inverted (misdemeanor 500 > felony 150). Thus the harsh
-// penalty fired before the warning could ever emit. The defaults are now restored
-// to misdemeanor 150 and felony 500. The voter misdemeanor default equals
-// the proposer felony default (150). It does not sit above that threshold.
-// The voter felony default (500) is above both proposer thresholds. Voters
-// accrue ~1 miss per finalized block vs a proposer's ~1 per own leader slot.
-// Both also sit below the prod epoch length (1200). Thus the felony can still
-// trigger before the per-epoch reset.
-const DEFAULT_VOTER_MISDEMEANOR_THRESHOLD: u64 = 150;
-const DEFAULT_VOTER_FELONY_THRESHOLD: u64 = 500;
-const DEFAULT_SLASH_AMOUNT_PERCENT: u64 = 5;
-const DEFAULT_EVIDENCE_REWARD_PERCENT: u64 = 10;
 
 impl SlashIndicator<'_> {
     // --- Config helpers ---
@@ -104,10 +80,10 @@ impl SlashIndicator<'_> {
     // --- Shared slashing helpers ---
 
     /// The next reshare removes a validator that is already JAILED or EXITING
-    /// from the consensus set. While it stays in the committee snapshot, it must
-    /// NOT be re-felonied (re-jailed + re-slashed 5% at every subsequent miss
-    /// threshold) for the same continuous liveness fault. That would compound to
-    /// far more than the intended single-felony penalty.
+    /// from the consensus set. While it stays in the committee snapshot, do not
+    /// apply another felony for the same continuous liveness fault.
+    /// Repeated jail and 5% slash penalties at subsequent miss thresholds would
+    /// compound to far more than the intended single-felony penalty.
     pub(crate) fn validator_already_penalized(&self, validator: Address) -> Result<bool> {
         let vs = ValidatorSet::new(self.storage.clone());
         Ok(matches!(
@@ -216,9 +192,9 @@ impl SlashIndicator<'_> {
         );
 
         // Reward evidence submitter: mint evidence_reward_percent of slashed amount.
-        // slash_stake now burns slashed tokens from STAKING_ADDRESS, so we
-        // mint the reward directly to the submitter. Net effect: (slashed - reward)
-        // is burned from supply. The reward goes to the submitter.
+        // slash_stake burns slashed tokens from STAKING_ADDRESS.
+        // This method mints the reward directly to the submitter.
+        // The token supply decreases by (slashed - reward).
         let mut reward = U256::ZERO;
         if !slashed_amount.is_zero() {
             let reward_pct = self.evidence_reward_percent()?;
@@ -325,7 +301,7 @@ impl SlashIndicator<'_> {
         self.felony_count.read(&validator)
     }
 
-    /// Returns whether an evidence hash has already been processed.
+    /// Returns whether the precompile already processed an evidence hash.
     pub fn is_evidence_processed(&self, evidence_hash: B256) -> Result<bool> {
         self.evidence_processed.read(&evidence_hash)
     }
@@ -360,8 +336,8 @@ pub(crate) fn canonical_evidence_hash(ev1: &[u8], ev2: &[u8]) -> B256 {
 /// Returns `None` for any non-VRF failure. Those failures are not slashable
 /// through `submitInvalidVrfProofEvidence`, and the caller must revert.
 ///
-/// The codes are stable wire constants once the precompile is live; renaming
-/// or renumbering them is a hard-fork change.
+/// The codes are stable wire constants once the precompile is live.
+/// Changing their names or numbers requires a hard fork.
 pub fn classify_vrf_failure(err: &V2VerifyError) -> Option<u16> {
     match err {
         V2VerifyError::MalformedVrfProof => Some(2),

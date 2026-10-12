@@ -48,7 +48,7 @@ pub fn dispatch(
                     runtime::cancel_pledge(storage.clone(), sender, c.reservationId)
                 }),
                 collateralOf(c) => view(c, |c| {
-                    let collateral = runtime::collateral_of(&storage, c.positionId)?;
+                    let collateral = runtime::collateral_of(&storage, c.credisId)?;
                     Ok(IGratisFactory::collateralOfReturn {
                         source: collateral.source,
                         remainingMinor: collateral.remaining_minor,
