@@ -143,7 +143,6 @@ pub trait DemoTributeProvable: Entity + Owned {
         let (witness, public) = self.derive_demo_tribute_witness(rng, signer, binding, path)?;
         generator.generate(&witness, &public)
     }
-
 }
 
 impl<E: Entity + Owned + ?Sized> DemoTributeProvable for E {}

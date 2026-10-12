@@ -360,7 +360,10 @@ fn load_l2_circuits(
                         resolved.starts_with(&chain_root) && resolved != chain_root,
                         "L2 package {artifacts}: path escapes its chain"
                     );
-                    println!("cargo:rerun-if-changed={}", root.join("Nargo.toml").display());
+                    println!(
+                        "cargo:rerun-if-changed={}",
+                        root.join("Nargo.toml").display()
+                    );
                     rerun_sources(&root);
                     let nargo_toml: toml::Value = toml::from_str(
                         &fs::read_to_string(root.join("Nargo.toml"))
@@ -1186,7 +1189,8 @@ fn vk_mode(pin: &str, chain_id: u64, path: &str) -> VkMode {
 fn apply_vk_mode(circuit: &Loaded, mode: &VkMode, artifacts: &str) {
     if let VkMode::Fixed(pin) = mode {
         assert_eq!(
-            circuit.vk_hash, *pin,
+            circuit.vk_hash,
+            *pin,
             "L2 package {artifacts}: derived vk {} != pinned {}",
             hex_str(&circuit.vk_hash),
             hex_str(pin)
@@ -1220,7 +1224,9 @@ fn compile_l2_package(
         status.success(),
         "nargo compile failed for {artifacts}: {status}"
     );
-    let json_path = scratch_package.join("target").join(format!("{module}.json"));
+    let json_path = scratch_package
+        .join("target")
+        .join(format!("{module}.json"));
     let json: Value = serde_json::from_str(
         &fs::read_to_string(&json_path)
             .unwrap_or_else(|error| panic!("read {}: {error}", json_path.display())),
@@ -1261,7 +1267,8 @@ fn compile_l2_package(
 }
 
 fn write_vk(bb: &Path, json_path: &Path, output: &Path) -> PathBuf {
-    fs::create_dir_all(output).unwrap_or_else(|error| panic!("mkdir {}: {error}", output.display()));
+    fs::create_dir_all(output)
+        .unwrap_or_else(|error| panic!("mkdir {}: {error}", output.display()));
     let status = Command::new(bb)
         .arg("write_vk")
         .arg("-b")
@@ -1307,7 +1314,10 @@ fn rerun_nr(dir: &Path) {
             if entry.file_name() != "target" {
                 rerun_nr(&path);
             }
-        } else if path.extension().is_some_and(|ext| ext == "nr" || ext == "toml") {
+        } else if path
+            .extension()
+            .is_some_and(|ext| ext == "nr" || ext == "toml")
+        {
             println!("cargo:rerun-if-changed={}", path.display());
         }
     }
@@ -1375,7 +1385,8 @@ fn assert_tool_version(bin: &Path, tool: &str, pin: &str) {
         first
     };
     assert_eq!(
-        version, pin,
+        version,
+        pin,
         "{} --version reports {first:?}; pinned {tool} is {pin}",
         bin.display()
     );

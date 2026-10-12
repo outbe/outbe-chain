@@ -8,7 +8,6 @@ description = "Noir ACVM witness solver and Barretenberg UltraHonkKeccak verifie
 
 [dependencies]
 outbe-zk = { path = "../outbe-zk" }
-ark-bn254.workspace = true
 ark-ff.workspace = true
 base64.workspace = true
 flate2 = "1"

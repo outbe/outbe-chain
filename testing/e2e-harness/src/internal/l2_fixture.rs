@@ -61,8 +61,6 @@ pub(crate) fn circuit_selector(l2_chain_id: u64) -> u32 {
     u32::try_from(l2_chain_id).expect("sandbox L2 chain id fits the uint32 offer selector")
 }
 
-/// The TributeDraft an offer commits to. Same type the enclave hashes.
-
 /// One offer's circuit selector and zk calldata fields. This struct keeps the
 /// proof, its Merkle root and the root signature as bytes. The CLI path renders
 /// the hex that the product client takes. The raw-ABI paths use the bytes

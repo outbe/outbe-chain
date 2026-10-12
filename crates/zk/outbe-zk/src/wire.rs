@@ -79,7 +79,9 @@ pub fn decode_verify_call(input: &[u8]) -> Result<VerifyCall<'_>, ProofMarshalin
         .checked_add(padding)
         .ok_or(ProofMarshalingError::MalformedAbi("padding overflow"))?;
     if input.len() != encoded_end {
-        Err(ProofMarshalingError::MalformedAbi("non-canonical total length"))?;
+        Err(ProofMarshalingError::MalformedAbi(
+            "non-canonical total length",
+        ))?;
     }
     if input[data_end..encoded_end].iter().any(|byte| *byte != 0) {
         Err(ProofMarshalingError::MalformedAbi("non-zero padding"))?;
