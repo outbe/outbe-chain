@@ -54,9 +54,12 @@ pub const DAY_TYPE_PAIR: AddressPair = AddressPair::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0c, 0xc8, 0x40,
 ]);
 
-/// Largest whole price one vote may quote. The stored rate is this many units
-/// times the pair scale, so one million on COEN/ISO is raw `1e12`.
-pub(crate) const MAX_VOTE_PRICE_WHOLE: u64 = 1_000_000;
+/// Largest whole price one vote may quote, in the pair's quote currency.
+/// Guards the VWAP sums against U256 overflow, with room to spare; a single
+/// bad quote is handled by the tally median, not by this cap. One billion
+/// covers every ISO 4217 currency: at 25,000 VND per USD it is a COEN worth
+/// 40,000 USD.
+pub(crate) const MAX_VOTE_PRICE_WHOLE: u64 = 1_000_000_000;
 
 /// Largest whole volume one vote may quote. The stored volume is this many
 /// units times the pair scale, so one trillion on COEN/ISO is raw `1e18`.

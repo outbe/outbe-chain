@@ -59,6 +59,10 @@ pub(super) fn usd() -> Address {
     AssetType::IsoCurrency(840).into()
 }
 
+pub(super) fn eur() -> Address {
+    AssetType::IsoCurrency(978).into()
+}
+
 /// A pair in the given quoting direction. Storage lookup sorts, so this doubles
 /// as the key for either direction.
 pub(super) fn pair_key(base: Address, quote: Address) -> AddressPair {

@@ -19,11 +19,14 @@ impl OracleContract<'_> {
     /// The caller must be the validator itself or a delegated feeder.
     /// Each tuple contains (base, quote, rate, volume) for one pair, quoted in
     /// the direction the pair was registered in.
+    ///
+    /// Returns the validator the vote counts for and how many tuples were
+    /// admitted.
     pub fn submit_vote(
         &mut self,
         caller: Address,
         tuples: &[(Address, Address, U256, U256)],
-    ) -> Result<Address> {
+    ) -> Result<(Address, u32)> {
         let validator = self.resolve_validator_for_feeder(caller)?;
         let resolved = self.resolve_vote_pairs(tuples)?;
 
@@ -33,10 +36,25 @@ impl OracleContract<'_> {
             return Err(OracleError::AlreadyVotedThisPeriod.into());
         }
 
-        // Reject an out-of-range quote before the voted flag, so the feeder can
-        // resubmit a market-sized vote in the same period.
-        for (pair, (_, _, rate, volume)) in resolved.iter().zip(tuples) {
-            Self::reject_vote_outside_market_bounds(*pair, *rate, *volume)?;
+        // A quote outside the market bounds drops only its own pair; the other
+        // pairs still count and `VoteSubmitted.tupleCount` reports how many
+        // were admitted. A vote with no admissible pair is rejected whole,
+        // before the voted flag, so the feeder can resubmit in the same period.
+        let mut kept_pairs = Vec::with_capacity(resolved.len());
+        let mut kept_tuples = Vec::with_capacity(tuples.len());
+        let mut last_rejection = None;
+        for (pair, tuple) in resolved.iter().zip(tuples) {
+            let (_, _, rate, volume) = *tuple;
+            match Self::reject_vote_outside_market_bounds(*pair, rate, volume) {
+                Ok(()) => {
+                    kept_pairs.push(*pair);
+                    kept_tuples.push(*tuple);
+                }
+                Err(error) => last_rejection = Some(error),
+            }
+        }
+        if let (true, Some(error)) = (kept_tuples.is_empty(), last_rejection) {
+            return Err(error);
         }
 
         // Mark as voted FIRST to prevent concurrent overwrite (ORC-AUD-037).
@@ -44,12 +62,12 @@ impl OracleContract<'_> {
         // submitVote TX in the same block sees this flag immediately.
         self.vote_exists.write(&validator, true)?;
 
-        self.store_vote_tuples(validator, &resolved, tuples)?;
+        self.store_vote_tuples(validator, &kept_pairs, &kept_tuples)?;
 
         // Add to voter list for tally iteration
         self.voter_list.push(validator)?;
 
-        Ok(validator)
+        Ok((validator, kept_tuples.len() as u32))
     }
 
     /// Resolves the pair of every tuple in submission order. Rejects a

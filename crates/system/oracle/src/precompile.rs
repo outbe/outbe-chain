@@ -330,14 +330,13 @@ fn submit_vote(
     value: U256,
 ) -> Result<Bytes> {
     mutate_and_emit(oracle, c, caller, value, |oracle, sender, c| {
-        let tuple_count = c.tuples.len() as u32;
         let tuples: Vec<_> = c
             .tuples
             .iter()
             .map(|t| (t.base, t.quote, t.exchangeRate, t.volume))
             .collect();
-        let validator = oracle.submit_vote(sender, &tuples)?;
-        // Emit event after successful vote
+        let (validator, tuple_count) = oracle.submit_vote(sender, &tuples)?;
+        // Emit event after successful vote; the count excludes rejected tuples.
         Ok(IOracle::VoteSubmitted {
             validator,
             tupleCount: tuple_count,
