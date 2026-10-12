@@ -6,7 +6,7 @@ pragma solidity ^0.8.30;
 interface ICredis {
     /// Emitted once, when a Credis opens: Credis are never burned.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
-    // Declared for ERC-721 shape only. A Credis is bound to its smart account, so these two
+    // Declared for ERC-721 shape only. A Credis is bound to its owner, so these two
     // are never emitted.
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
@@ -126,7 +126,7 @@ interface ICredis {
     function getCredis(uint256 credisId) external view returns (Credis memory);
     function ownerOf(uint256 credisId) external view returns (address);
 
-    // ERC-721 transfer surface. A Credis is bound to its smart account: transfers and
+    // ERC-721 transfer surface. A Credis is bound to its owner: transfers and
     // approvals always revert.
     function transferFrom(address from, address to, uint256 credisId) external;
     function safeTransferFrom(address from, address to, uint256 credisId) external;

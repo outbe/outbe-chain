@@ -2308,7 +2308,7 @@ fn reserve_stables_rejects_an_inactive_caller() {
             storage.clone(),
             stranger(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                owner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2330,7 +2330,7 @@ fn reserve_stables_requires_a_pledge_source() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                owner: receiver(),
                 source: Address::ZERO,
                 asset: asset(),
                 amount: U256::from(10),
@@ -2348,7 +2348,7 @@ fn a_reservation_holds_then_releases_once() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                owner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2358,7 +2358,7 @@ fn a_reservation_holds_then_releases_once() {
         let held = runtime::reservation_of(&storage, id).unwrap();
         assert_eq!(held.asset, asset());
         assert_eq!(held.amount, U256::from(10));
-        assert_eq!(held.smart_account, receiver());
+        assert_eq!(held.owner, receiver());
         assert_eq!(held.cca, cca());
         assert_eq!(held.source, pledger());
         assert_eq!(held.vault, vault());
@@ -2401,7 +2401,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                owner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(50),
@@ -2418,7 +2418,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
         )
         .unwrap_err();
         assert!(
-            err.to_string().contains("reservation account mismatch"),
+            err.to_string().contains("reservation owner mismatch"),
             "{err}"
         );
         assert_eq!(
@@ -2450,7 +2450,7 @@ fn an_unspent_reservation_returns_to_the_origin_vault() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                owner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2477,7 +2477,7 @@ fn a_stranger_cannot_return_a_live_reservation() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                owner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2501,7 +2501,7 @@ fn seed_expired_reservation(storage: &StorageHandle<'_>) -> U256 {
             id,
             asset: asset(),
             amount: U256::from(10),
-            smart_account: receiver(),
+            owner: receiver(),
             cca: cca(),
             vault: vault(),
             expires_at: 1_700_000_000 - 1,
@@ -2548,7 +2548,7 @@ fn release_rejects_an_expired_reservation() {
 fn reservations_are_gated_like_a_withdrawal() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let reserve_call = IVaultRouter::reserveStablesCall {
-            smartAccount: receiver(),
+            owner: receiver(),
             source: pledger(),
             asset: asset(),
             amount: U256::from(10),
@@ -2603,7 +2603,7 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                owner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2639,7 +2639,7 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                owner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),

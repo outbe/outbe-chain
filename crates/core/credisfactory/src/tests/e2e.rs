@@ -79,7 +79,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
             "reservation cca mismatch",
         );
         let mut undeployed = reservation.clone();
-        undeployed.smart_account = bob();
+        undeployed.owner = bob();
         VaultRouterContract::new(storage.clone())
             .reservations
             .update(&undeployed)
@@ -154,7 +154,7 @@ fn a_cancelled_pledge_cannot_back_an_issue() {
 }
 
 #[test]
-fn a_source_backs_another_smart_account_and_repayments_return_to_the_source() {
+fn a_source_backs_another_owner_and_repayments_return_to_the_source() {
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());

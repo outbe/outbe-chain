@@ -488,7 +488,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "smartAccount",
+            "name": "owner",
             "type": "address",
             "internalType": "address"
           },
@@ -552,7 +552,7 @@
     "name": "reserveStables",
     "inputs": [
       {
-        "name": "smartAccount",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       },
@@ -883,7 +883,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "smartAccount",
+        "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1114,11 +1114,6 @@
   },
   {
     "type": "error",
-    "name": "ReservationAccountMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ReservationExists",
     "inputs": [
       {
@@ -1165,6 +1160,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ReservationOwnerMismatch",
+    "inputs": []
   },
   {
     "type": "error",

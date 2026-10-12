@@ -459,7 +459,7 @@ fn issue_credis_requires_the_stake_to_equal_the_collateral() {
 }
 
 #[test]
-fn the_stake_stays_with_the_smart_account_through_settlement_and_forfeit() {
+fn the_stake_stays_with_the_owner_through_settlement_and_forfeit() {
     for forfeit in [false, true] {
         let mut provider = env();
         StorageHandle::enter(&mut provider, |storage| {
@@ -752,8 +752,8 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
     assert_eq!(
         [views, called_views],
         [
-            b256!("0xe22a7fe8985294750c5e2aad26bae4ef610cfdf5c25156bfe7dbcc718b73d8a4"),
-            b256!("0xb089f5ec74cdc88da98c0df7db26f3ad9dfedc2218e945022b413da641df52b1"),
+            b256!("0x7e6b406253d988cd27b5cbfb246b1bd7322f9f4911148d6dc6c7ba5fae5f4bc3"),
+            b256!("0x6c25580c8311832a45e33c6d99fd5a9d5e36e5edda93ee221756a1f921ba8b13"),
         ]
     );
     assert_eq!(
