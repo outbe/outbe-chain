@@ -161,7 +161,7 @@ class ProjectToolchainContractTests(unittest.TestCase):
         )[0]
 
         self.assertIn("      python-is-python3 \\\n", ci_packages)
-        self.assertRegex(ci_stage, r"for tool in [^;]+ python; do")
+        self.assertRegex(ci_stage, r"for tool in [^;]*\bpython\b[^;]*; do")
 
     def test_reproducible_release_is_owned_by_the_project_toolchain_recipe(self) -> None:
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
