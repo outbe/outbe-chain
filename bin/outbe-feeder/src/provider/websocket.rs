@@ -21,7 +21,7 @@ use tokio::time::{sleep, Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use super::{checked_candle, checked_ticker, CandlePrice, Provider, TickerPrice, VolumeInput};
-use crate::config::ProviderEndpointConfig;
+use crate::config::ApiProviderConfig;
 use crate::fixed::FixedValue;
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::units::SCALE_1E18;
@@ -93,7 +93,7 @@ impl ExchangeKind {
         }
     }
 
-    fn websocket_url(self, endpoint: Option<&ProviderEndpointConfig>) -> String {
+    fn websocket_url(self, endpoint: Option<&ApiProviderConfig>) -> String {
         let configured = endpoint
             .map(|value| value.websocket.trim())
             .unwrap_or_default();
@@ -248,7 +248,7 @@ pub(crate) struct StreamingProvider {
 impl StreamingProvider {
     pub(crate) fn new(
         kind: ExchangeKind,
-        endpoint: Option<&ProviderEndpointConfig>,
+        endpoint: Option<&ApiProviderConfig>,
         pairs: &[(String, String)],
         fallback: Box<dyn Provider>,
     ) -> Option<Self> {
@@ -1429,10 +1429,12 @@ mod tests {
             }
         });
 
-        let endpoint = ProviderEndpointConfig {
+        let endpoint = ApiProviderConfig {
             name: "binance".to_owned(),
+            markets: vec![],
             rest: String::new(),
             websocket: format!("ws://{address}"),
+            api_key: String::new(),
         };
         let pairs = vec![("ETH".to_owned(), "840".to_owned())];
         let provider = StreamingProvider::new(

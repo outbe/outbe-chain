@@ -442,17 +442,18 @@ def feeder_config(
             "840" if price_provider == "mock_http" else "USDT",
         )
     )
+    markets_line = f'markets = [{{ quote = "{source_quote}" }}]'
     if price_provider == "mock_http":
-        provider_endpoint = f'''[[provider_endpoints]]
+        api_provider = f'''[[api_providers]]
 name = "mock_http"
-rest = "{config.get("price_feed_rest", "https://prc.testnet.outbe.net")}"'''
-    elif price_provider in {"binance", "kraken", "okx", "gate", "huobi", "mexc", "coinbase"}:
+rest = "{config.get("price_feed_rest", "https://prc.testnet.outbe.net")}"
+{markets_line}'''
+    else:
         websocket = str(config.get("price_feed_websocket", "")).strip()
         websocket_line = f'\nwebsocket = "{websocket}"' if websocket else ""
-        provider_endpoint = f'''[[provider_endpoints]]
-name = "{price_provider}"{websocket_line}'''
-    else:
-        provider_endpoint = ""
+        api_provider = f'''[[api_providers]]
+name = "{price_provider}"{websocket_line}
+{markets_line}'''
     return f"""# Price oracle feeder for validator-{index}.
 [chain]
 rpc_endpoint = "http://127.0.0.1:{port_of(config, "rpc_port")}"
@@ -475,16 +476,11 @@ bind_address = "127.0.0.1:{port_of(config, "feeder_health_port")}"
 # chainlink, binance, kraken, okx, gate, huobi, mexc, coinbase, mock_http); an
 # invented name is rejected at startup. `mock_http` uses the configured REST
 # endpoint; exchange providers use live WebSocket market streams.
-{provider_endpoint}
+{api_provider}
 
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
-
-[[currency_pairs.sources]]
-provider = "{price_provider}"
-base = "COEN"
-quote = "{source_quote}"
 
 [[deviation_thresholds]]
 base = "COEN"

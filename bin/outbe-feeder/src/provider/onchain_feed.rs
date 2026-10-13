@@ -1,11 +1,11 @@
 //! Price feeds read from another oracle's on-chain contract: Chainlink Data
 //! Feeds, RedStone push feeds, and any other vendor whose contract exposes
-//! Chainlink's `AggregatorV3Interface` (`latestRoundData`, `decimals`,
-//! `description`).
+//! Chainlink's `AggregatorV3Interface` (`latestRoundData`, `decimals`).
 //!
-//! Every `[onchain_feeds.<name>]` table is one provider instance; `<name>`
-//! is the provider name used in `currency_pairs.sources`, so one feeder can
-//! hold the same market from several vendors as separate sources.
+//! Every `[[onchain_providers]]` entry is one feed contract on one network,
+//! under a name the operator chooses; a source names it as its provider, so
+//! one feeder can hold the same market from several vendors as separate
+//! sources.
 //!
 //! Feeds are read with `eth_call` at the `latest` block. Vendors sign each
 //! round, so reorg protection adds nothing; freshness comes from the round's
@@ -25,13 +25,12 @@ use tokio::sync::RwLock;
 use super::dex::math::scale_fp18;
 use super::evm_rpc::Rpc;
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
-use crate::config::FeederConfig;
+use crate::config::{FeederConfig, MarketConfig};
 use crate::fixed::FixedValue;
 
 sol! {
     interface AggregatorV3 {
         function decimals() external view returns (uint8);
-        function description() external view returns (string memory);
         function latestRoundData() external view returns (
             uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
     }
@@ -43,34 +42,42 @@ sol! {
 pub(crate) const MAX_FEED_AGE_SECS: u64 = 90_000;
 const MAX_FUTURE_SECS: u64 = 60;
 
-/// One provider instance: an EVM network and its feeds, keyed in the config
-/// by the provider name used in `currency_pairs.sources`.
+/// One `[[onchain_providers]]` entry: a vendor's feed contracts on one EVM
+/// network, listed by the quote each feed prices the pair base in.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OnchainFeedConfig {
+    /// Provider name used in `currency_pairs.sources`.
+    pub name: String,
     pub chain_id: u64,
     pub rpc_endpoint: String,
-    /// Feeds keyed by `BASE/QUOTE`, e.g. `"ETH/840"`.
-    pub feeds: BTreeMap<String, FeedConfig>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct FeedConfig {
-    /// `BASE/QUOTE`, filled from the table key.
-    #[serde(skip)]
-    pub key: String,
+    /// The quote the feed prices the pair base in.
+    pub quote: String,
+    /// The vendor's name for the pair base, when it differs (`ETH` for WETH).
+    #[serde(default)]
+    pub base: Option<String>,
     /// Feed contract (the vendor's proxy address); it must implement
     /// Chainlink's `AggregatorV3Interface`. The implementation behind a proxy
-    /// may rotate.
+    /// may rotate. The operator is responsible for the address: nothing
+    /// on-chain is checked against the market it is listed under.
     pub contract: Address,
-    /// Expected on-chain `description()`, e.g. `ETH / USD` (Chainlink) or
-    /// `RedStone Price Feed for ETH`, guarding against a mistyped address.
-    pub description: String,
+    /// The feed keyed by `BASE/QUOTE`, built from the source that names this
+    /// entry; see [`collect_feeds`].
+    #[serde(skip)]
+    pub markets: BTreeMap<String, FeedConfig>,
+}
+
+/// One feed as the provider reads it.
+#[derive(Clone, Debug)]
+pub(crate) struct FeedConfig {
+    /// `BASE/QUOTE`.
+    pub key: String,
+    pub contract: Address,
 }
 
 impl OnchainFeedConfig {
-    pub fn validate(&self, name: &str) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
+        let name = &self.name;
         ensure!(
             !name.trim().is_empty() && !name.contains(char::is_whitespace),
             "onchain_feed provider name must be a single non-empty word"
@@ -83,11 +90,11 @@ impl OnchainFeedConfig {
             "onchain_feed RPC requires HTTP(S)"
         );
         ensure!(
-            !self.feeds.is_empty(),
-            "onchain_feed provider {name} has no feeds"
+            !self.markets.is_empty(),
+            "onchain_feed provider {name} feed is not attached to a pair"
         );
         let mut addresses = BTreeSet::new();
-        for (key, feed) in &self.feeds {
+        for (key, feed) in &self.markets {
             ensure!(
                 key.split_once('/').is_some_and(
                     |(base, quote)| !base.trim().is_empty() && !quote.trim().is_empty()
@@ -99,10 +106,6 @@ impl OnchainFeedConfig {
                 "onchain_feed feed {key} in provider {name} has no contract address"
             );
             ensure!(
-                !feed.description.trim().is_empty(),
-                "onchain_feed feed {key} in provider {name} has no description"
-            );
-            ensure!(
                 addresses.insert(feed.contract),
                 "contract {} configured twice in onchain_feed provider {name}",
                 feed.contract
@@ -112,39 +115,71 @@ impl OnchainFeedConfig {
     }
 }
 
-/// Validates `[onchain_feeds.<name>]` tables and the sources that
-/// reference them by name. Built-in provider names are reserved.
-pub(crate) fn validate_config(config: &FeederConfig, builtin: &[&str]) -> Result<()> {
-    for (name, section) in &config.onchain_feeds {
-        section.validate(name)?;
-        ensure!(
-            !builtin.contains(&name.as_str()),
-            "onchain_feed provider name '{name}' is a built-in provider"
-        );
-        ensure!(
-            !config.provider_endpoints.iter().any(|e| &e.name == name),
-            "configure onchain_feed RPC in onchain_feeds, not provider_endpoints"
-        );
-    }
-    for pair in &config.currency_pairs {
-        for source in &pair.sources {
-            let Some(section) = config.onchain_feeds.get(&source.provider) else {
-                continue;
+/// The market every entry lists, as `(provider name, market)`.
+pub(crate) fn listed_markets(config: &FeederConfig) -> Vec<(String, MarketConfig)> {
+    config
+        .onchain_providers
+        .iter()
+        .map(|entry| {
+            let market = MarketConfig {
+                quote: entry.quote.clone(),
+                base: entry.base.clone(),
+                pair: None,
             };
-            let key = format!("{}/{}", source.base, source.quote);
-            ensure!(
-                section.feeds.contains_key(&key),
-                "missing feed {key} in onchain_feed provider {}",
-                source.provider
-            );
-        }
+            (entry.name.clone(), market)
+        })
+        .collect()
+}
+
+/// Rebuilds every entry's feed map from the source that names it.
+pub(crate) fn collect_feeds(config: &mut FeederConfig) {
+    for entry in &mut config.onchain_providers {
+        entry.markets = config
+            .currency_pairs
+            .iter()
+            .flat_map(|pair| &pair.sources)
+            .filter(|source| source.provider == entry.name && source.quote == entry.quote)
+            .map(|source| {
+                let key = format!("{}/{}", source.base, source.quote);
+                let feed = FeedConfig {
+                    key: key.clone(),
+                    contract: entry.contract,
+                };
+                (key, feed)
+            })
+            .collect();
+    }
+}
+
+/// Validates `[[onchain_providers]]` entries and the sources that name them.
+/// Built-in provider names are reserved.
+pub(crate) fn validate_config(config: &FeederConfig, builtin: &[&str]) -> Result<()> {
+    let mut names = BTreeSet::new();
+    for entry in &config.onchain_providers {
+        entry.validate()?;
+        let name = entry.name.as_str();
+        ensure!(
+            names.insert(name),
+            "duplicate onchain_providers entry '{name}'"
+        );
+        ensure!(
+            !builtin.contains(&name),
+            "onchain_providers name '{name}' is a built-in provider"
+        );
+        ensure!(
+            !config.api_providers.iter().any(|e| e.name == name),
+            "configure the feed RPC in onchain_providers, not api_providers"
+        );
     }
     Ok(())
 }
 
-/// Whether `name` is an `[onchain_feeds.<name>]` table.
+/// Whether `name` is an `[[onchain_providers]]` entry.
 pub(crate) fn is_section_name(config: &FeederConfig, name: &str) -> bool {
-    config.onchain_feeds.contains_key(name)
+    config
+        .onchain_providers
+        .iter()
+        .any(|entry| entry.name == name)
 }
 
 pub(crate) struct OnchainFeedProvider {
@@ -154,26 +189,18 @@ pub(crate) struct OnchainFeedProvider {
     feeds: HashMap<String, FeedConfig>,
     /// Set once `eth_chainId` has been confirmed.
     chain_verified: AtomicBool,
-    /// Feed key -> `decimals()`, cached after `description()` is verified.
+    /// Feed key -> `decimals()`, cached on first read.
     decimals: RwLock<HashMap<String, u8>>,
 }
 
 impl OnchainFeedProvider {
-    pub fn new(name: &str, section: &OnchainFeedConfig) -> Result<Self> {
-        section.validate(name)?;
+    pub fn new(section: &OnchainFeedConfig) -> Result<Self> {
+        section.validate()?;
         Ok(Self {
-            name: name.to_owned(),
+            name: section.name.clone(),
             rpc: Rpc::new(&section.rpc_endpoint)?,
             chain_id: section.chain_id,
-            feeds: section
-                .feeds
-                .iter()
-                .map(|(key, feed)| {
-                    let mut feed = feed.clone();
-                    feed.key = key.clone();
-                    (key.clone(), feed)
-                })
-                .collect(),
+            feeds: section.markets.clone().into_iter().collect(),
             chain_verified: AtomicBool::new(false),
             decimals: RwLock::new(HashMap::new()),
         })
@@ -196,16 +223,6 @@ impl OnchainFeedProvider {
         if let Some(decimals) = self.decimals.read().await.get(&feed.key) {
             return Ok(*decimals);
         }
-        let description = self
-            .rpc
-            .call_latest(feed.contract, AggregatorV3::descriptionCall {})
-            .await?;
-        ensure!(
-            description == feed.description,
-            "feed {} description is {description:?}, expected {:?}",
-            feed.key.clone(),
-            feed.description
-        );
         let decimals = self
             .rpc
             .call_latest(feed.contract, AggregatorV3::decimalsCall {})
@@ -297,7 +314,6 @@ mod tests {
     #[derive(Default)]
     struct Fixture {
         wrong_chain: AtomicBool,
-        wrong_description: AtomicBool,
         negative: AtomicBool,
         fail_round: AtomicBool,
         /// Seconds between the round's updatedAt and wall-clock time.
@@ -322,13 +338,6 @@ mod tests {
                     let data: Bytes = serde_json::from_value(params[0]["data"].clone()).unwrap();
                     let output = if data[..4] == selector("decimals()") {
                         U256::from(8u8).abi_encode()
-                    } else if data[..4] == selector("description()") {
-                        (if self.wrong_description.load(Ordering::Relaxed) {
-                            "BTC / USD"
-                        } else {
-                            "ETH / USD"
-                        })
-                        .abi_encode()
                     } else if data[..4] == selector("latestRoundData()") {
                         if self.fail_round.load(Ordering::Relaxed) {
                             return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"execution reverted"}});
@@ -358,19 +367,24 @@ mod tests {
         }
     }
 
-    fn feed(contract: Address, description: &str) -> FeedConfig {
-        FeedConfig {
-            key: String::new(),
+    fn feed(key: &str, contract: Address) -> (String, FeedConfig) {
+        let feed = FeedConfig {
+            key: key.to_owned(),
             contract,
-            description: description.into(),
-        }
+        };
+        (key.to_owned(), feed)
     }
 
+    /// A `chainlink` entry for ETH/USD, with the market a source gives it.
     fn config(endpoint: &str) -> OnchainFeedConfig {
         OnchainFeedConfig {
+            name: "chainlink".to_owned(),
             chain_id: 1,
             rpc_endpoint: endpoint.to_owned(),
-            feeds: BTreeMap::from([("ETH/840".to_owned(), feed(AGGREGATOR, "ETH / USD"))]),
+            quote: "840".to_owned(),
+            base: Some("ETH".to_owned()),
+            contract: AGGREGATOR,
+            markets: BTreeMap::from([feed("ETH/840", AGGREGATOR)]),
         }
     }
 
@@ -378,7 +392,7 @@ mod tests {
         let fixture = Arc::new(Fixture::default());
         let state = Arc::clone(&fixture);
         let server = test_server::start(Arc::new(move |request| state.response(request))).await;
-        let provider = OnchainFeedProvider::new("chainlink", &config(&server.endpoint)).unwrap();
+        let provider = OnchainFeedProvider::new(&config(&server.endpoint)).unwrap();
         (fixture, server, provider)
     }
 
@@ -441,36 +455,23 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
-
-        let (fixture, _server, provider) = fresh_provider().await;
-        fixture.wrong_description.store(true, Ordering::Relaxed);
-        assert!(provider
-            .get_ticker_prices(&eth_usd())
-            .await
-            .unwrap()
-            .is_empty());
     }
 
     #[test]
     fn config_validation_and_source_routing() {
-        assert!(config("http://localhost:8545")
-            .validate("chainlink")
-            .is_ok());
+        assert!(config("http://localhost:8545").validate().is_ok());
         let mut bad = config("http://localhost:8545");
-        bad.feeds.get_mut("ETH/840").unwrap().description.clear();
-        assert!(bad.validate("chainlink").is_err());
+        bad.markets.extend([feed("ETH/978", AGGREGATOR)]);
+        assert!(bad.validate().is_err(), "contract used twice");
         let mut bad = config("http://localhost:8545");
-        bad.feeds
-            .insert("BTC/840".into(), feed(AGGREGATOR, "BTC / USD"));
-        assert!(bad.validate("chainlink").is_err(), "contract used twice");
-        let mut bad = config("http://localhost:8545");
-        bad.feeds
-            .insert("ETH840".into(), feed(Address::repeat_byte(2), "x"));
-        assert!(bad.validate("chainlink").is_err(), "key without a slash");
+        bad.markets = BTreeMap::from([feed("ETH840", Address::repeat_byte(2))]);
+        assert!(bad.validate().is_err(), "key without a slash");
         let mut bad = config("ws://localhost:8545");
-        bad.feeds.clear();
-        assert!(bad.validate("chainlink").is_err());
-        assert!(config("http://localhost:8545").validate("").is_err());
+        bad.markets.clear();
+        assert!(bad.validate().is_err());
+        let mut bad = config("http://localhost:8545");
+        bad.name.clear();
+        assert!(bad.validate().is_err());
 
         let mut feeder: FeederConfig = toml::from_str(
             r#"
@@ -485,58 +486,53 @@ mod tests {
             [[currency_pairs]]
             base = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
             quote = "840"
-            [[currency_pairs.sources]]
-            provider = "chainlink"
-            base = "ETH"
+            [[onchain_providers]]
+            name = "chainlink"
+            chain_id = 1
+            rpc_endpoint = "http://localhost:8545"
             quote = "840"
+            base = "ETH"
+            contract = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
         "#,
         )
         .unwrap();
-        assert!(
-            feeder.validate().is_err(),
-            "source without a matching section"
-        );
-        feeder
-            .onchain_feeds
-            .insert("chainlink".into(), config("http://localhost:8545"));
+        feeder.resolve_sources().unwrap();
         feeder.validate().unwrap();
-
-        // The same market from a second vendor is a second source.
-        let mut redstone = config("http://localhost:8545");
-        redstone.feeds.insert(
-            "ETH/840".into(),
-            feed(
-                address!("0x67F6838e58859d612E4ddF04dA396d6DABB66Dc4"),
-                "RedStone Price Feed for ETH",
-            ),
-        );
-        feeder
-            .onchain_feeds
-            .insert("redstone_push".into(), redstone);
-        feeder.currency_pairs[0]
-            .sources
-            .push(crate::config::CurrencyPairSource {
-                provider: "redstone_push".into(),
+        assert_eq!(
+            feeder.currency_pairs[0].sources,
+            vec![crate::config::CurrencyPairSource {
+                provider: "chainlink".into(),
                 base: "ETH".into(),
                 quote: "840".into(),
-            });
+            }]
+        );
+
+        // The same market from a second vendor is a second entry.
+        let mut redstone = config("http://localhost:8545");
+        redstone.name = "redstone_push".into();
+        redstone.contract = address!("0x67F6838e58859d612E4ddF04dA396d6DABB66Dc4");
+        feeder.onchain_providers.push(redstone);
+        feeder.resolve_sources().unwrap();
         feeder.validate().unwrap();
+        assert_eq!(feeder.currency_pairs[0].sources.len(), 2);
+        assert_eq!(
+            feeder.onchain_providers[1].markets["ETH/840"].contract,
+            address!("0x67F6838e58859d612E4ddF04dA396d6DABB66Dc4")
+        );
         let providers = crate::provider::create_providers(&feeder).unwrap();
         let mut names: Vec<&str> = providers.iter().map(|p| p.name()).collect();
         names.sort_unstable();
         assert_eq!(names, ["chainlink", "redstone_push"]);
 
-        let section = feeder.onchain_feeds.remove("redstone_push").unwrap();
-        feeder
-            .onchain_feeds
-            .insert("binance".into(), section.clone());
+        feeder.onchain_providers[1].name = "binance".into();
+        feeder.resolve_sources().unwrap();
         assert!(feeder.validate().is_err(), "built-in name is reserved");
-        feeder.onchain_feeds.remove("binance");
-        let mut moved = section;
-        let eth = moved.feeds.remove("ETH/840").unwrap();
-        moved.feeds.insert("ETH/USD".into(), eth);
-        feeder.onchain_feeds.insert("redstone_push".into(), moved);
-        assert!(feeder.validate().is_err(), "source without matching feed");
+        feeder.onchain_providers[1].name = "redstone_push".into();
+        feeder.onchain_providers[1].quote = "978".into();
+        assert!(
+            feeder.resolve_sources().is_err(),
+            "a feed quoted in a currency no pair is quoted in"
+        );
     }
 
     /// Live mainnet read of a Chainlink and a RedStone feed; run with
@@ -545,21 +541,17 @@ mod tests {
     #[ignore]
     async fn live_mainnet_feeds() {
         let mut cfg = config("https://ethereum-rpc.publicnode.com");
-        cfg.feeds.insert(
-            "USDC/840".into(),
+        cfg.markets.extend([
             feed(
+                "USDC/840",
                 address!("0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6"),
-                "USDC / USD",
             ),
-        );
-        cfg.feeds.insert(
-            "BTC/840".into(),
             feed(
+                "BTC/840",
                 address!("0xAB7f623fb2F6fea6601D4350FA0E2290663C28Fc"),
-                "RedStone Price Feed for BTC",
             ),
-        );
-        let provider = OnchainFeedProvider::new("mixed", &cfg).unwrap();
+        ]);
+        let provider = OnchainFeedProvider::new(&cfg).unwrap();
         let pairs = vec![
             ("ETH".into(), "840".into()),
             ("USDC".into(), "840".into()),
