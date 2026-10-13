@@ -531,8 +531,8 @@ mod pricing;
 mod proceeds;
 
 #[cfg(test)]
-pub(crate) use mining::{compute_pow_hash, validate_pow};
-pub(crate) use mining::{issued_token_id, settled_token_id};
+pub(crate) use mining::compute_pow_hash;
+pub(crate) use mining::{issued_token_id, settled_token_id, validate_pow};
 pub use mining::{mine_promis, MiningProof};
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;

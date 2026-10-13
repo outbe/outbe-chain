@@ -4,6 +4,8 @@
 //! Rust-to-Rust call, not a precompile selector, and it mirrors the Intex write
 //! API. The user-facing surface (settle / minePromis) lives in the precompile.
 
+use alloy_primitives::{Address, U256};
+use outbe_intex::SeriesId;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
@@ -42,4 +44,15 @@ pub fn discard_day_contributors(
 /// This keeps a single source of truth instead of hardcoded values.
 pub fn read_params(storage: &StorageHandle<'_>) -> Result<IntexParams> {
     config::read(storage)
+}
+
+/// The `minePromis` proof-of-work check, for off-chain miners.
+pub fn validate_pow(
+    owner: Address,
+    promis_amount: U256,
+    series_id: SeriesId,
+    seq: u32,
+    nonce: u64,
+) -> Result<()> {
+    runtime::validate_pow(owner, promis_amount, series_id, seq, nonce)
 }
