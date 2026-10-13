@@ -174,6 +174,8 @@ pub(crate) const WAA_POOL: u8 = 0;
 /// `claimReward` pool selector for the SRA pool.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const SRA_POOL: u8 = 1;
+/// Currency the canonical reward call names on both axes.
+const REWARD_CALL_ISO: u16 = 840;
 sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
 sol!("../../contracts/precompiles/src/ISlashIndicator.sol");
 sol!("../../contracts/precompiles/src/IRadicleRegistry.sol");
@@ -1525,8 +1527,8 @@ pub(crate) fn send_reward_call(
     let data = IAgentReward::claimRewardCall {
         pool: WAA_POOL,
         amount: U256::ZERO,
-        issuanceCurrency: crate::world::settlement_currency::USD_ISO,
-        referenceCurrency: crate::world::settlement_currency::USD_ISO,
+        issuanceCurrency: REWARD_CALL_ISO,
+        referenceCurrency: REWARD_CALL_ISO,
     }
     .abi_encode();
     block_on(async move {
