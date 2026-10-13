@@ -460,6 +460,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         ) {
             return IIntexNFT1155.IntexState.Expired;
         }
+        if (data.state == IIntexNFT1155.IntexState.Issued && _crossedFloor(data)) {
+            return IIntexNFT1155.IntexState.Qualified;
+        }
         return data.state;
     }
 
@@ -490,9 +493,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             data.totalSupply = _s().settledSupply[tokenId];
         } else {
             data.state = _effectiveState(data);
-            if (data.state == IIntexNFT1155.IntexState.Issued && _crossedFloor(data)) {
-                data.state = IIntexNFT1155.IntexState.Qualified;
-            }
         }
         return IntexMetadata.tokenURI(data, settled);
     }

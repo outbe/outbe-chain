@@ -14,8 +14,9 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::api::IVaultRouterCrosschainExtention;
 use crate::errors::VaultRouterError;
+use crate::runtime::{erc20_approve, erc20_transfer, erc20_transfer_from};
 use crate::schema::VaultRouterContract;
-use crate::sol_ext::{IERC7786GatewaySource, IERC7786TokenBridge, IGatewayQuote, IERC20};
+use crate::sol_ext::{IERC7786GatewaySource, IERC7786TokenBridge, IGatewayQuote};
 
 const SELF: Address = VAULT_ROUTER_ADDRESS;
 
@@ -96,11 +97,14 @@ pub fn quote_deposit(
 pub fn deposit(
     storage: StorageHandle<'_>,
     user: Address,
-    amount: U256,
-    destination_gas_limit: U256,
-    acknowledgement_gas_limit: U256,
+    call: IVaultRouterCrosschainExtention::crosschainDepositCall,
     value: U256,
 ) -> Result<(B256, B256)> {
+    let IVaultRouterCrosschainExtention::crosschainDepositCall {
+        assetsAmount: amount,
+        destinationGasLimit: destination_gas_limit,
+        acknowledgementGasLimit: acknowledgement_gas_limit,
+    } = call;
     validate_amount(user, amount)?;
     storage.with_checkpoint(|| {
         let config = configuration(&storage)?;
@@ -173,11 +177,14 @@ pub fn quote_withdraw(
 pub fn withdraw(
     storage: StorageHandle<'_>,
     user: Address,
-    amount: U256,
-    request_gas_limit: U256,
-    return_gas_limit: U256,
+    call: IVaultRouterCrosschainExtention::crosschainWithdrawCall,
     value: U256,
 ) -> Result<(B256, B256)> {
+    let IVaultRouterCrosschainExtention::crosschainWithdrawCall {
+        sharesAmount: amount,
+        requestGasLimit: request_gas_limit,
+        returnGasLimit: return_gas_limit,
+    } = call;
     validate_amount(user, amount)?;
     ensure_shares(&storage, user, amount)?;
     storage.with_checkpoint(|| {
@@ -271,20 +278,23 @@ pub fn receive_deposit_acknowledgement(
 pub fn receive_withdrawal_return(
     storage: StorageHandle<'_>,
     caller: Address,
-    source_domain: u32,
-    from: &Bytes,
-    amount: U256,
-    extra_data: &Bytes,
+    call: IVaultRouterCrosschainExtention::onCrosschainTokensReceivedCall,
 ) -> Result<()> {
+    let IVaultRouterCrosschainExtention::onCrosschainTokensReceivedCall {
+        sourceDomain: source_domain,
+        from,
+        amount,
+        extraData: extra_data,
+    } = call;
     storage.with_checkpoint(|| {
         let config = configuration(&storage)?;
         if source_domain != config.destination_domain {
             return Err(VaultRouterError::InvalidCrosschainSender.into());
         }
-        authenticate_remote(&config, caller, config.token_bridge, from)?;
+        authenticate_remote(&config, caller, config.token_bridge, &from)?;
 
         let (kind, operation_id, user, declared_amount) =
-            <(U256, B256, Address, U256)>::abi_decode_validate(extra_data)
+            <(U256, B256, Address, U256)>::abi_decode_validate(&extra_data)
                 .map_err(|_| VaultRouterError::InvalidCrosschainCallback)?;
         if kind != U256::from(WITHDRAW_RETURN) || declared_amount != amount {
             return Err(VaultRouterError::InvalidCrosschainCallback.into());
@@ -574,51 +584,6 @@ fn token_bridge_quote(
     )?;
     IERC7786TokenBridge::quoteSendCall::abi_decode_returns(&ret)
         .map_err(|_| VaultRouterError::UndecodableReturn("token bridge quoteSend").into())
-}
-
-fn erc20_approve(
-    storage: &StorageHandle<'_>,
-    token: Address,
-    spender: Address,
-    amount: U256,
-) -> Result<()> {
-    storage.call(
-        token,
-        U256::ZERO,
-        IERC20::approveCall { spender, amount }.abi_encode().into(),
-    )?;
-    Ok(())
-}
-
-fn erc20_transfer_from(
-    storage: &StorageHandle<'_>,
-    token: Address,
-    from: Address,
-    to: Address,
-    amount: U256,
-) -> Result<()> {
-    storage.call(
-        token,
-        U256::ZERO,
-        IERC20::transferFromCall { from, to, amount }
-            .abi_encode()
-            .into(),
-    )?;
-    Ok(())
-}
-
-fn erc20_transfer(
-    storage: &StorageHandle<'_>,
-    token: Address,
-    to: Address,
-    amount: U256,
-) -> Result<()> {
-    storage.call(
-        token,
-        U256::ZERO,
-        IERC20::transferCall { to, amount }.abi_encode().into(),
-    )?;
-    Ok(())
 }
 
 /// OpenZeppelin InteroperableAddress.formatEvmV1(chainId, address).

@@ -1,6 +1,6 @@
 //! ERC-20 and ERC-4626 sub-calls. From the callee's perspective `msg.sender` is this precompile.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_primitives::error::Result;
@@ -9,18 +9,18 @@ use outbe_primitives::storage::StorageHandle;
 use crate::errors::VaultRouterError;
 use crate::sol_ext::{IReferenceCurrency, IVaultV2, IERC20};
 
-pub(super) fn erc20_approve(
+pub(crate) fn erc20_approve(
     storage: &StorageHandle<'_>,
     token: Address,
     spender: Address,
     amount: U256,
 ) -> Result<()> {
     let calldata = IERC20::approveCall { spender, amount }.abi_encode();
-    storage.call(token, U256::ZERO, calldata.into())?;
-    Ok(())
+    let ret = storage.call(token, U256::ZERO, calldata.into())?;
+    ensure_token_success(&ret)
 }
 
-pub(super) fn erc20_transfer_from(
+pub(crate) fn erc20_transfer_from(
     storage: &StorageHandle<'_>,
     token: Address,
     from: Address,
@@ -29,10 +29,7 @@ pub(super) fn erc20_transfer_from(
 ) -> Result<()> {
     let calldata = IERC20::transferFromCall { from, to, amount }.abi_encode();
     let ret = storage.call(token, U256::ZERO, calldata.into())?;
-    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
-        return Err(VaultRouterError::TokenOperationFailed.into());
-    }
-    Ok(())
+    ensure_token_success(&ret)
 }
 
 pub(super) fn erc20_balance_of(
@@ -51,7 +48,7 @@ pub(super) fn erc20_decimals(storage: &StorageHandle<'_>, token: Address) -> Res
         .map_err(|_| VaultRouterError::UndecodableReturn("ERC20 decimals").into())
 }
 
-pub(super) fn erc20_transfer(
+pub(crate) fn erc20_transfer(
     storage: &StorageHandle<'_>,
     token: Address,
     to: Address,
@@ -59,6 +56,10 @@ pub(super) fn erc20_transfer(
 ) -> Result<()> {
     let calldata = IERC20::transferCall { to, amount }.abi_encode();
     let ret = storage.call(token, U256::ZERO, calldata.into())?;
+    ensure_token_success(&ret)
+}
+
+fn ensure_token_success(ret: &Bytes) -> Result<()> {
     if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
         return Err(VaultRouterError::TokenOperationFailed.into());
     }

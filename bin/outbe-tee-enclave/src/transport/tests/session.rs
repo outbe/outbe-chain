@@ -1034,3 +1034,84 @@ fn sign_node_host_hash(signing: &k256::ecdsa::SigningKey, hash: B256) -> Result<
     bytes[64] = recovery.to_byte();
     Ok(bytes)
 }
+
+#[test]
+fn a_keyless_enclave_answers_not_ready_and_a_forbidden_command_answers_error() {
+    use outbe_tee::codec::{decode_response, encode_request};
+
+    let root = tempfile::tempdir().unwrap();
+    let boot = Arc::new(EnclaveBootConfig::new(
+        testnet_chain_word(),
+        root.path().to_path_buf(),
+        0,
+    ));
+    let keys = Arc::new(EnclaveKeys::new([7; 32], Some([1; 32])).unwrap());
+    let initialization = Arc::new(production_dcap_state(boot.clone(), &keys));
+    let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+    let challenge = match initialization.challenge_response(&keys).unwrap() {
+        EnclaveResponse::InitializationChallenge { challenge, .. } => challenge,
+        response => panic!("unexpected challenge response: {response:?}"),
+    };
+    let node_host_private = [0x51; 32];
+    let node_host_public =
+        x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(node_host_private))
+            .to_bytes();
+    let (manifest, node_signature) =
+        signed_initialization_manifest(&keys, challenge, node_host_public);
+    let mut buf = [0u8; 2048];
+    let mut open = |first: EnclaveRequest| {
+        let (mut client, server) = spawn_production_connection(
+            keys.clone(),
+            boot.clone(),
+            offer_key.clone(),
+            initialization.clone(),
+        );
+        write_frame(&mut client, &encode_request(&first).unwrap()).unwrap();
+        let mut handshake = snow::Builder::new(NOISE_PARAMS.parse().unwrap())
+            .local_private_key(&node_host_private)
+            .remote_public_key(&keys.noise_public())
+            .build_initiator()
+            .unwrap();
+        let len = handshake.write_message(&[], &mut buf).unwrap();
+        write_frame(&mut client, &buf[..len]).unwrap();
+        let reply = read_frame(&mut client).unwrap();
+        handshake.read_message(&reply, &mut buf).unwrap();
+        (client, server, handshake.into_transport_mode().unwrap())
+    };
+
+    let (mut client, server, mut noise) = open(EnclaveRequest::Initialize {
+        manifest: manifest.encode_canonical().unwrap(),
+        node_signature: node_signature.to_vec(),
+    });
+    let frame = read_frame(&mut client).unwrap();
+    let mut reply = [0u8; 2048];
+    let len = noise.read_message(&frame, &mut reply).unwrap();
+    assert!(matches!(
+        decode_response(&reply[..len]).unwrap(),
+        EnclaveResponse::Initialized { .. }
+    ));
+    drop(client);
+    server.join().unwrap().unwrap();
+
+    let (mut client, server, mut noise) = open(EnclaveRequest::OpenSession);
+    let mut ask = |request: EnclaveRequest| {
+        let request = encode_request(&request).unwrap();
+        let len = noise.write_message(&request, &mut reply).unwrap();
+        write_frame(&mut client, &reply[..len]).unwrap();
+        let frame = read_frame(&mut client).unwrap();
+        let len = noise.read_message(&frame, &mut reply).unwrap();
+        decode_response(&reply[..len]).unwrap()
+    };
+    assert!(matches!(
+        ask(EnclaveRequest::ReadTributeAmountsV2 {
+            tributes: Vec::new()
+        }),
+        EnclaveResponse::NotReady { message } if message == "command denied by enclave state matrix"
+    ));
+    assert!(matches!(
+        ask(EnclaveRequest::GetQuote { nonce: [0; 32] }),
+        EnclaveResponse::Error { message } if message == "command denied by enclave state matrix"
+    ));
+    drop(client);
+    server.join().unwrap().unwrap();
+}

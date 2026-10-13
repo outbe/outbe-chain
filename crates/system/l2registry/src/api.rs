@@ -7,7 +7,7 @@ use commonware_cryptography::bls12381::primitives::{
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_zk_canonical::L2CircuitVersion;
+use outbe_zk::L2CircuitVersion;
 
 use crate::errors::L2RegistryError;
 use crate::schema::L2RegistryContract;
@@ -62,10 +62,10 @@ pub fn check_zk_merkle_root_signature(
 /// retain real signature and proof verification, and never gain bindings on
 /// non-development host chains.
 pub fn l2_circuits(host_chain_id: u64, l2_chain_id: u64) -> &'static [L2CircuitVersion] {
-    let declared = outbe_zk_canonical::l2_circuits(l2_chain_id);
+    let declared = outbe_zk::l2_circuits(l2_chain_id);
     if declared.is_empty() && outbe_primitives::chain::is_devnet(host_chain_id) && l2_chain_id != 0
     {
-        outbe_zk_canonical::l2_circuits(57_005)
+        outbe_zk::l2_circuits(57_005)
     } else {
         declared
     }

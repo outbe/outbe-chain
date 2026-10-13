@@ -1071,9 +1071,11 @@ fn explicit_long_vwap_uses_daily_interiors_and_exact_raw_edges() {
                 .unwrap();
         }
 
+        // Wider than a day, so through the internal reader the day
+        // finalization uses; the public range read rejects such a window.
         assert_eq!(
-            oracle.calculate_vwap(pair, start, end).unwrap(),
-            U256::from(23_333_333u64)
+            oracle.try_calculate_vwap(pair, start, end).unwrap(),
+            Some(U256::from(23_333_333u64))
         );
     });
 }
@@ -1092,10 +1094,35 @@ fn explicit_long_vwap_rejects_an_evicted_partial_edge_instead_of_approximating()
             .unwrap();
         oracle.snapshot_oldest_idx.write(1).unwrap();
 
-        let error = oracle.calculate_vwap(pair, start, end).unwrap_err();
+        let error = oracle.try_calculate_vwap(pair, start, end).unwrap_err();
         assert!(
             error.to_string().contains("no VWAP data"),
             "an unavailable raw edge must fail instead of using the full-day aggregate: {error:?}"
+        );
+    });
+}
+
+#[test]
+fn range_vwap_rejects_a_window_wider_than_the_lookback_duration() {
+    with_bare_coen840_oracle(|oracle, pair| {
+        let day = 1_780_012_800u64;
+        oracle
+            .write_snapshot(day + 60, &[(pair, coen_iso(10), coen_iso(1))])
+            .unwrap();
+
+        assert_eq!(
+            oracle.calculate_vwap(pair, day, day + 86_400).unwrap(),
+            coen_iso(10)
+        );
+        let error = oracle.calculate_vwap(pair, day, day + 86_401).unwrap_err();
+        assert!(
+            error.to_string().contains("lookback_duration"),
+            "unexpected error: {error}"
+        );
+        let error = oracle.calculate_vwaps(day, day + 86_401).unwrap_err();
+        assert!(
+            error.to_string().contains("lookback_duration"),
+            "unexpected error: {error}"
         );
     });
 }
@@ -1459,7 +1486,7 @@ fn gas_cost_vwap_50h_window_with_varying_snapshot_counts() {
             }
 
             let _vwap = oracle
-                .calculate_vwap(pair_key(COEN, usd()), start_ts, start_ts + window_seconds)
+                .try_calculate_vwap(pair_key(COEN, usd()), start_ts, start_ts + window_seconds)
                 .unwrap();
 
             // Gas estimation: each snapshot in range costs ~5 sloads

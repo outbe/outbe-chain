@@ -24,7 +24,7 @@ outbe-consensus.workspace = true
 outbe-primitives.workspace = true
 outbe-operator.workspace = true
 outbe-zerofee.workspace = true
-outbe-zk-canonical.workspace = true
+outbe-zk.workspace = true
 # TEE enclave client + wire protocol (the `tee join` offer-key registration).
 outbe-tee.workspace = true
 outbe-update.workspace = true
