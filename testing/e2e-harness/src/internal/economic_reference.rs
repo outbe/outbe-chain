@@ -90,11 +90,11 @@ mod tests {
 
     #[test]
     fn capped_reward_floors_before_native_conversion() {
-        // Independent Decimal day-1 emission = 268480452713195.
-        // floor(4% emission) = 10739218108527. floor(32% pool) = 3436549794728.
+        // Independent Decimal day-1 emission = 268480452000000.
+        // floor(4% emission) = 10739218080000. floor(32% pool) = 3436549785600.
         assert_eq!(
             single_beneficiary_reward(1),
-            uint!(3436549794728000000000000_U256)
+            uint!(3436549785600000000000000_U256)
         );
         assert_eq!(
             single_beneficiary_reward(3_072),

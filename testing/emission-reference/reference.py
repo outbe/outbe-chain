@@ -62,9 +62,7 @@ def day_emission_limit(day_number: int) -> int:
     else:
         emission = O2 - D / (1 + (-(day - 2048) / K2).exp())
 
-    emission_units = int(
-        (emission * SCALE_1E6).to_integral_value(rounding=ROUND_FLOOR)
-    )
+    emission_units = int(emission.to_integral_value(rounding=ROUND_FLOOR)) * SCALE_1E6
     return max(emission_units, FLOOR_DAY_EMISSION)
 
 
@@ -75,7 +73,7 @@ def build_vectors() -> dict[str, object]:
     ]
     return {
         "schema": "outbe-emission-scale6-v1",
-        "algorithm": "founder-two-phase-sigmoid-decimal-floor-v1",
+        "algorithm": "founder-two-phase-sigmoid-whole-coen-floor-v1",
         "constants": {
             "units_per_coen": str(SCALE_1E6),
             "initial_day_emission_units": str(INITIAL_DAY_EMISSION),
@@ -114,6 +112,8 @@ def check_vectors(path: Path) -> None:
         raise SystemExit("emission vector decreases before the phase-one peak")
     if any(current > previous for previous, current in zip(values[1_024:], values[1_025:])):
         raise SystemExit("emission vector increases after the phase-one peak")
+    if any(value % SCALE_1E6 for value in values):
+        raise SystemExit("emission vector must contain only whole COEN amounts")
     if values[-1] != FLOOR_DAY_EMISSION:
         raise SystemExit("threshold vector does not equal the emission floor")
 
