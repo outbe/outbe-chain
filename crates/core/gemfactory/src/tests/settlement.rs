@@ -379,6 +379,85 @@ fn the_quote_prices_both_rails() {
     });
 }
 
+/// The settlement deadline of a called Gem falls on an hour boundary, where the
+/// required snapshot changes. The quote taken before it is stale at the
+/// deadline, and one second later the deadline itself refuses the payment.
+/// Neither attempt writes.
+#[test]
+fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(usd_rate));
+    let (gem_id, quoted) = StorageHandle::enter(&mut provider, |storage| {
+        register_currency(&storage, 978, six_decimal_unit());
+        seed_day_vwap(&storage, 840, usd_rate);
+        let gem_id = issue_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            978,
+            840,
+        )
+        .unwrap();
+        let (_, _, quoted) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        (gem_id, quoted)
+    });
+    let deadline = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+        .unwrap()
+        .cutoff()
+        + 3_600;
+    StorageHandle::enter(&mut provider, |storage| {
+        let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
+        let bucket = gem_api::bucket_of(&storage, gem_id).unwrap();
+        GemContract::new(storage.clone())
+            .bucket_called_at
+            .write(
+                &bucket,
+                deadline - u64::from(item.call_notice_period_seconds),
+            )
+            .unwrap();
+    });
+
+    provider.set_timestamp(U256::from(deadline));
+    StorageHandle::enter(&mut provider, |storage| {
+        let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
+        assert_eq!(item.state, GemState::Called as u8);
+        let (_, _, required) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        let stale = runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR, quoted);
+        assert_eq!(
+            err_msg(stale),
+            format!(
+                "{:?}",
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::GemFactoryError::VwapSnapshotMismatch {
+                        authorized: quoted,
+                        required,
+                    }
+                )
+            )
+        );
+    });
+
+    provider.set_timestamp(U256::from(deadline + 1));
+    StorageHandle::enter(&mut provider, |storage| {
+        let (_, _, required) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        let late = runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR, required);
+        assert_eq!(
+            err_msg(late),
+            format!(
+                "{:?}",
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::GemFactoryError::DeadlineExpired
+                )
+            )
+        );
+        assert_eq!(
+            gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
+            GemState::Called as u8
+        );
+    });
+}
+
 #[test]
 fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
