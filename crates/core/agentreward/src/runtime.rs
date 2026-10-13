@@ -108,6 +108,8 @@ impl AgentRewardContract<'_> {
     ///
     /// Any failure reverts the call and leaves the balance intact. A missing VWAP
     /// waits for the next day, which brings a new VWAP with it.
+    // Preserve the public claim API, including its block-scoped readers.
+    #[allow(clippy::too_many_arguments)]
     pub fn claim_reward(
         &mut self,
         scope: &ExecutionScope,
