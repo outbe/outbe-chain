@@ -7,10 +7,12 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::units::{NATIVE_UNITS_PER_PROTOCOL_UNIT, SCALE_1E6_U128};
 
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 use crate::constants::{
-    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, ORIGIN_ROUTER_ADDRESS,
+    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
+    ORIGIN_ROUTER_ADDRESS,
 };
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
@@ -34,7 +36,7 @@ const ANCHOR: u64 = NOW - NOW % 86_400;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
 /// The load any first priced brief picks, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
 const LOAD_MINOR: u128 = 100_000 * PROMIS_LOAD_MINOR;
-const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = 1_000_000_000_000;
+const WCOEN_UNITS_PER_PROTOCOL_UNIT: u128 = NATIVE_UNITS_PER_PROTOCOL_UNIT.as_limbs()[0] as u128;
 
 // --- PROMIS load ladder ---
 
@@ -50,6 +52,17 @@ fn ladder(current: Option<u32>, rate_minor: u128) -> u32 {
 
 fn ladder_load(current: Option<u32>, rate_minor: u128) -> u128 {
     runtime::promis_load_minor(ladder(current, rate_minor))
+}
+
+#[test]
+fn the_reference_price_cap_matches_the_codec() {
+    use outbe_primitives::test_utils::sol_interface::sol_constant;
+    const CODEC: &str =
+        include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
+    assert_eq!(
+        sol_constant(CODEC, "MAX_REFERENCE_PRICES").and_then(|v| usize::try_from(v).ok()),
+        Some(MAX_REFERENCE_PRICES)
+    );
 }
 
 #[test]
@@ -2071,12 +2084,12 @@ fn clear_refunds_equal_locked_minus_paid() {
             .unwrap();
         assert_eq!(
             result.paid_amounts[w_idx],
-            LOAD_MINOR * 300 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+            LOAD_MINOR * 300 / SCALE_1E6_U128 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
         assert_eq!(result.refunded_amounts[w_idx], 0);
         assert_eq!(
             result.refunded_amounts[l_idx],
-            LOAD_MINOR * 200 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+            LOAD_MINOR * 200 / SCALE_1E6_U128 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
         assert_eq!(supply, result.issued_units);
     });
@@ -2133,21 +2146,21 @@ fn clear_rate_escrow_scales_by_basis() {
         let idx = |a: Address| result.all_bidders.iter().position(|&x| x == a).unwrap();
         assert_eq!(
             result.paid_amounts[idx(bidder(0))],
-            LOAD_MINOR * 600_000 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+            LOAD_MINOR * 600_000 / SCALE_1E6_U128 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
         assert_eq!(
             result.refunded_amounts[idx(bidder(0))],
-            LOAD_MINOR * 200_000 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+            LOAD_MINOR * 200_000 / SCALE_1E6_U128 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
         assert_eq!(
             result.paid_amounts[idx(bidder(1))],
-            LOAD_MINOR * 600_000 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+            LOAD_MINOR * 600_000 / SCALE_1E6_U128 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
         assert_eq!(result.refunded_amounts[idx(bidder(1))], 0);
         assert_eq!(result.paid_amounts[idx(bidder(2))], 0);
         assert_eq!(
             result.refunded_amounts[idx(bidder(2))],
-            LOAD_MINOR * 400_000 / 1_000_000 * WCOEN_UNITS_PER_PROTOCOL_UNIT
+            LOAD_MINOR * 400_000 / SCALE_1E6_U128 * WCOEN_UNITS_PER_PROTOCOL_UNIT
         );
     });
 }

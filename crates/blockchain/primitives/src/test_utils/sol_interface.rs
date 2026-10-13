@@ -1,6 +1,6 @@
-//! Drift checks between Solidity interface files and Rust precompile
-//! annotations. Tests use it to compare one `function` declaration with the
-//! expected argument types, `view` modifier and return types.
+//! Drift checks between Solidity sources and Rust. Tests use it to compare one
+//! `function` declaration with the expected argument types, `view` modifier and
+//! return types, or one literal `constant` with its Rust counterpart.
 
 /// One Solidity function declaration reduced to comparable type lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +31,26 @@ pub fn sol_function_canonical(sol: &str, name: &str) -> Option<SolFnCanonical> {
         is_view,
         ret_types,
     })
+}
+
+/// Reads a `constant NAME = <literal>;` declaration. The literal may use `_`
+/// separators and an `eN` exponent.
+pub fn sol_constant(sol: &str, name: &str) -> Option<u128> {
+    let needle = format!(" constant {name} =");
+    let start = sol.find(&needle)? + needle.len();
+    let end = sol[start..].find(';')? + start;
+    let literal: String = sol[start..end]
+        .trim()
+        .chars()
+        .filter(|c| *c != '_')
+        .collect();
+    match literal.split_once('e') {
+        Some((mantissa, exponent)) => mantissa
+            .parse::<u128>()
+            .ok()?
+            .checked_mul(10u128.checked_pow(exponent.parse().ok()?)?),
+        None => literal.parse().ok(),
+    }
 }
 
 /// Returns the index of the parenthesis that closes the one at `open`.
@@ -68,7 +88,22 @@ fn canonical_type_list(list: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sol_function_canonical;
+    use super::{sol_constant, sol_function_canonical};
+
+    #[test]
+    fn sol_constant_reads_plain_separated_and_exponent_literals() {
+        const SAMPLE: &str = "library L {\n\
+                uint8 internal constant SIX = 6;\n\
+                uint32 internal constant MILLION = 1_000_000;\n\
+                uint256 internal constant TRILLION = 1e12;\n\
+                uint256 internal constant DERIVED = 10 ** SIX;\n\
+            }";
+        assert_eq!(sol_constant(SAMPLE, "SIX"), Some(6));
+        assert_eq!(sol_constant(SAMPLE, "MILLION"), Some(1_000_000));
+        assert_eq!(sol_constant(SAMPLE, "TRILLION"), Some(1_000_000_000_000));
+        assert_eq!(sol_constant(SAMPLE, "DERIVED"), None);
+        assert_eq!(sol_constant(SAMPLE, "MISSING"), None);
+    }
 
     /// Pins the parser output for names, `calldata`/`memory` markers, `view` and
     /// a declaration without `returns`.
