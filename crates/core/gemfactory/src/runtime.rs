@@ -12,7 +12,7 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
-use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency};
+use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency, OBLIGATION_DECIMALS};
 
 use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
@@ -494,7 +494,6 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
-    const OBLIGATION_DECIMALS: u32 = 12;
     let percent = U256::from(100u64);
     let obligation = item
         .entry_price_minor

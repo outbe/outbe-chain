@@ -3,14 +3,14 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
-use outbe_common::settlement::floor_to_asset_units;
+use outbe_common::settlement::{floor_to_asset_units, OBLIGATION_DECIMALS};
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result, SweepFailure};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::units::{PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_intex::payout::ContributorLeafData;
 use outbe_intex::{IntexState, SeriesRecord};
@@ -279,10 +279,6 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
         .map(|v| v / U256::from(PRICE_RATE_DEN))
         .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
 }
-
-/// Decimals a price x PROMIS load product carries: both protocol factors stay
-/// on the six-decimal scale independently of native COEN denomination.
-const PRODUCT_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
 /// Disjoint unit counts of a series, for a reader that must not redo the arithmetic.
 pub(crate) fn series_unit_counts(

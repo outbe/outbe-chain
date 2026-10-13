@@ -4,9 +4,10 @@
 
 use alloy_primitives::U256;
 use core::fmt;
+use outbe_primitives::units::{MAX_ASSET_DECIMALS, PROTOCOL_AMOUNT_DECIMALS};
 
-/// Widest asset the factories settle in.
-pub const MAX_ASSET_DECIMALS: u8 = 18;
+/// Decimals of a price × load product.
+pub const OBLIGATION_DECIMALS: u32 = 2 * PROTOCOL_AMOUNT_DECIMALS as u32;
 
 /// Ways the floor can refuse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,11 +142,11 @@ mod tests {
     #[test]
     fn a_positive_obligation_never_floors_to_nothing() {
         assert_eq!(
-            floor_to_asset_units(U256::ONE, U256::ONE, 12, 0),
+            floor_to_asset_units(U256::ONE, U256::ONE, OBLIGATION_DECIMALS, 0),
             Err(RoundingError::RoundsToZero)
         );
         assert_eq!(
-            floor_to_asset_units(U256::ZERO, U256::ONE, 12, 0),
+            floor_to_asset_units(U256::ZERO, U256::ONE, OBLIGATION_DECIMALS, 0),
             Ok(U256::ZERO)
         );
     }

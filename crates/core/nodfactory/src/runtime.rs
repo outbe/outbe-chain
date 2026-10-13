@@ -14,7 +14,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
-use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency};
+use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency, OBLIGATION_DECIMALS};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodBucket, LoadedNodItem};
@@ -400,7 +400,6 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
-    const OBLIGATION_DECIMALS: u32 = 12;
     let overflow = || PrecompileError::Revert("nod cost overflow".into());
     let obligation = entry_price_minor
         .checked_mul(gratis_load_minor)
