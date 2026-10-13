@@ -9,10 +9,9 @@ use outbe_lysis::program_v1::{
     ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
 };
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::units::SCALE_1E6_U256;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-
-const SIX_DECIMAL_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,7 +123,7 @@ fn group_table(input: &CorpusInput, result: &ProgramResultV1) -> Vec<Value> {
         .map(|(league, (nominal, population))| {
             (
                 *league,
-                *nominal * SIX_DECIMAL_SCALE / result.total_nominal,
+                *nominal * SCALE_1E6_U256 / result.total_nominal,
                 *population,
             )
         })
@@ -133,8 +132,8 @@ fn group_table(input: &CorpusInput, result: &ProgramResultV1) -> Vec<Value> {
         .iter()
         .fold(U256::ZERO, |sum, (_, share, _)| sum + *share);
     if let Some((_, share, _)) = shares.last_mut() {
-        if share_sum < SIX_DECIMAL_SCALE {
-            *share += SIX_DECIMAL_SCALE - share_sum;
+        if share_sum < SCALE_1E6_U256 {
+            *share += SCALE_1E6_U256 - share_sum;
         }
     }
     shares
@@ -372,20 +371,20 @@ fn boundary_record_counts_keep_raw_id_order() {
                         owner,
                         worldwide_day: day,
                         issuance_currency: 840,
-                        nominal_amount_minor: U256::from(1_000_000_u64) * SIX_DECIMAL_SCALE,
+                        nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E6_U256,
                         reference_currency: 840,
                         tribute_price_minor: U256::ZERO,
                         exclude_from_intex_issuance: false,
                     },
                     first_league: ObservationValueV1::Value((ordinal % 15 + 1) as u16),
                     second_league: ObservationValueV1::Value((ordinal % 15 + 1) as u16),
-                    entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
+                    entry_price_minor: ObservationValueV1::Value(SCALE_1E6_U256),
                     nod_target_available: true,
                 }
             })
             .collect::<Vec<_>>();
         tributes.reverse();
-        let nominal = U256::from(count) * U256::from(1_000_000_u64) * SIX_DECIMAL_SCALE;
+        let nominal = U256::from(count) * U256::from(1_000_000_u64) * SCALE_1E6_U256;
         let result = execute(ProgramInputV1 {
             worldwide_day: day,
             logical_evaluation_time: 1_784_765_900,

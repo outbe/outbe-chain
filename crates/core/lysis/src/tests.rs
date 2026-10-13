@@ -12,11 +12,10 @@ use outbe_primitives::time::{
     date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key, WorldwideDay,
     SECONDS_PER_DAY,
 };
-
-const SIX_DECIMAL_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+use outbe_primitives::units::SCALE_1E6_U256;
 
 fn coen(whole: u64) -> U256 {
-    U256::from(whole) * SIX_DECIMAL_SCALE
+    U256::from(whole) * SCALE_1E6_U256
 }
 
 fn seed_entry_prices(storage: &StorageHandle<'_>, now: u64, iso: u16, vwap: U256, current: U256) {
@@ -37,7 +36,7 @@ fn seed_entry_prices(storage: &StorageHandle<'_>, now: u64, iso: u16, vwap: U256
     oracle
         .write_snapshot(
             date_key_to_utc_timestamp(previous_day),
-            &[(pair, vwap, SIX_DECIMAL_SCALE)],
+            &[(pair, vwap, SCALE_1E6_U256)],
         )
         .unwrap();
     oracle.finalize_utc_day_vwap(previous_day).unwrap();
@@ -298,13 +297,6 @@ fn test_many_fi_groups() {
     for (i, &frac) in result.iter().enumerate() {
         assert!(frac <= bound, "fraction[{i}] too large");
     }
-}
-
-/// f_fp must be clamped to [LYSIS_LIMIT_MIN, LYSIS_LIMIT_MAX/2].
-#[test]
-fn test_default_constants() {
-    // Verify constants match expected values within integer precision
-    assert_eq!(SCALE, SIX_DECIMAL_SCALE);
 }
 
 #[test]
@@ -637,7 +629,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     }
     let mut y_fp: Vec<U256> = group_interest
         .values()
-        .map(|gi| *gi * SIX_DECIMAL_SCALE / total_interest)
+        .map(|gi| *gi * SCALE_1E6_U256 / total_interest)
         .collect();
     let y_sum: U256 = y_fp.iter().copied().sum();
     if let Some(last) = y_fp.last_mut() {

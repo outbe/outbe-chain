@@ -53,7 +53,7 @@ contract EscrowAdapter is
     uint32 public constant COMMIT_BOND_ABANDON_DELAY = 30 days;
 
     /// @notice Decimals every payment token must report.
-    uint8 public constant PAYMENT_TOKEN_DECIMALS = 18;
+    uint8 public constant PAYMENT_TOKEN_DECIMALS = BridgeMsgCodec.NATIVE_DECIMALS;
 
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {

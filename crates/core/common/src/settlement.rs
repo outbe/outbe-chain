@@ -4,9 +4,10 @@
 
 use alloy_primitives::U256;
 use core::fmt;
+use outbe_primitives::units::{MAX_ASSET_DECIMALS, PROTOCOL_AMOUNT_DECIMALS};
 
-/// Widest asset the factories settle in.
-pub const MAX_ASSET_DECIMALS: u8 = 18;
+/// Decimals of a price x load product.
+pub const OBLIGATION_DECIMALS: u8 = 2 * PROTOCOL_AMOUNT_DECIMALS;
 
 /// Ways the floor can refuse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +40,7 @@ impl fmt::Display for RoundingError {
 pub fn floor_to_asset_units(
     numerator: U256,
     denominator: U256,
-    obligation_decimals: u32,
+    obligation_decimals: u8,
     asset_decimals: u8,
 ) -> Result<U256, RoundingError> {
     if asset_decimals > MAX_ASSET_DECIMALS {
@@ -49,6 +50,7 @@ pub fn floor_to_asset_units(
         return Err(RoundingError::ZeroRate);
     }
     let asset_decimals = u32::from(asset_decimals);
+    let obligation_decimals = u32::from(obligation_decimals);
     let (numerator, denominator) = if asset_decimals >= obligation_decimals {
         let scaled = numerator
             .checked_mul(pow10(asset_decimals - obligation_decimals))
@@ -141,11 +143,11 @@ mod tests {
     #[test]
     fn a_positive_obligation_never_floors_to_nothing() {
         assert_eq!(
-            floor_to_asset_units(U256::ONE, U256::ONE, 12, 0),
+            floor_to_asset_units(U256::ONE, U256::ONE, OBLIGATION_DECIMALS, 0),
             Err(RoundingError::RoundsToZero)
         );
         assert_eq!(
-            floor_to_asset_units(U256::ZERO, U256::ONE, 12, 0),
+            floor_to_asset_units(U256::ZERO, U256::ONE, OBLIGATION_DECIMALS, 0),
             Ok(U256::ZERO)
         );
     }

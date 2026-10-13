@@ -61,8 +61,14 @@ library BridgeMsgCodec {
     /// @notice Numeric fixed-point scale for bid/clearing rates (`1e6` = 100%).
     uint32 internal constant SCALE_1E6 = 1_000_000;
 
+    /// @notice Decimals of protocol amounts and COEN/ISO prices.
+    uint8 internal constant PROTOCOL_DECIMALS = 6;
+
+    /// @notice Decimals of native COEN and wCOEN.
+    uint8 internal constant NATIVE_DECIMALS = 18;
+
     /// @notice 18-decimal wCOEN units in one six-decimal protocol unit.
-    uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 1e12;
+    uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 10 ** (NATIVE_DECIMALS - PROTOCOL_DECIMALS);
 
     /// @notice `quantity` Intexes at `rate` of the six-decimal `basis`, in 18-decimal payment
     ///         units: the lock a bid takes and the payment a winner makes. Mirrors the clearing

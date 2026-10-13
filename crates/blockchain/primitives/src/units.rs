@@ -30,7 +30,12 @@ pub const SCALE_1E6_U256: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 pub const PROTOCOL_AMOUNT_DECIMALS: u8 = 6;
 
 /// Native atomic units represented by one minimal six-decimal protocol unit.
-pub const NATIVE_UNITS_PER_PROTOCOL_UNIT: U256 = U256::from_limbs([1_000_000_000_000, 0, 0, 0]);
+pub const NATIVE_UNITS_PER_PROTOCOL_UNIT: U256 = U256::from_limbs([
+    10u64.pow((NATIVE_TOKEN_DECIMALS - PROTOCOL_AMOUNT_DECIMALS) as u32),
+    0,
+    0,
+    0,
+]);
 
 /// One whole native COEN, expressed in the EVM account-balance representation.
 pub const ONE_COEN: U256 = SCALE_1E18;
@@ -40,6 +45,9 @@ pub const ONE_UNIT: U256 = U256::ONE;
 
 /// Number of decimal places.
 pub const NATIVE_TOKEN_DECIMALS: u8 = 18;
+
+/// Most decimals a stablecoin or settlement asset may report.
+pub const MAX_ASSET_DECIMALS: u8 = 18;
 
 /// Converts a six-decimal protocol amount into native COEN atomic units.
 ///
@@ -77,6 +85,22 @@ mod tests {
         assert_eq!(SCALE_1E6_U128, 1_000_000);
         assert_eq!(SCALE_1E6_U256, U256::from(1_000_000u64));
         assert_eq!(NATIVE_TOKEN_DECIMALS, 18);
+    }
+
+    #[test]
+    fn the_intex_codec_uses_the_same_units() {
+        use crate::test_utils::sol_interface::sol_constant;
+        const CODEC: &str =
+            include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
+        assert_eq!(
+            sol_constant(CODEC, "PROTOCOL_DECIMALS"),
+            Some(PROTOCOL_AMOUNT_DECIMALS)
+        );
+        assert_eq!(
+            sol_constant(CODEC, "NATIVE_DECIMALS"),
+            Some(NATIVE_TOKEN_DECIMALS)
+        );
+        assert_eq!(sol_constant(CODEC, "SCALE_1E6"), Some(SCALE_1E6_U128));
     }
 
     #[test]

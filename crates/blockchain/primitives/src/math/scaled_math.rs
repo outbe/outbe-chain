@@ -6,6 +6,7 @@
 use alloy_primitives::{U256, U512};
 
 use crate::error::{PrecompileError, Result};
+use crate::units::MAX_ASSET_DECIMALS;
 
 /// Quote asset-atomic principal against a canonical six-decimal
 /// COEN/currency VWAP (`issuanceCurrencyVwapMinor`).
@@ -20,7 +21,7 @@ use crate::error::{PrecompileError, Result};
 /// decimals. Zero inputs, a zero floor, and an output that does not fit
 /// `U256` fail. `V` is that canonical six-decimal price.
 pub fn checked_quote(principal: U256, decimals: u8, vwap_minor: U256) -> Result<(U256, U256)> {
-    if decimals > 18 {
+    if decimals > MAX_ASSET_DECIMALS {
         return Err(PrecompileError::Revert("unsupported asset decimals".into()));
     }
     if principal.is_zero() || vwap_minor.is_zero() {

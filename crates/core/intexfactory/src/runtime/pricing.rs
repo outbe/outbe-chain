@@ -22,8 +22,13 @@ pub(crate) fn settlement_units(
         Some((to, from)) => (obligation.checked_mul(to).ok_or_else(overflow)?, from),
         None => (obligation, U256::ONE),
     };
-    floor_to_asset_units(numerator, denominator, PRODUCT_DECIMALS, payment_decimals)
-        .map_err(|e| IntexFactoryError::from(e).into())
+    floor_to_asset_units(
+        numerator,
+        denominator,
+        OBLIGATION_DECIMALS,
+        payment_decimals,
+    )
+    .map_err(|e| IntexFactoryError::from(e).into())
 }
 
 /// Whether the series has qualified. It is derived from finalized daily VWAPs and never stored.

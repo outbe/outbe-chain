@@ -125,7 +125,7 @@ pub fn process_bids_done(
     } = inbound;
     require_origin_router(caller)?;
     require_nonzero_worldwide_day(worldwide_day)?;
-    if total_batches == 0 || total_batches > 256 {
+    if total_batches == 0 || total_batches > MAX_BID_BATCHES {
         return Err(PrecompileError::Revert(
             "processBidsDone: invalid total batches".into(),
         ));

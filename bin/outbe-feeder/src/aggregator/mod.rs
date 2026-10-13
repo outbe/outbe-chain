@@ -268,9 +268,8 @@ mod tests {
         OracleConfig,
     };
     use crate::provider::mock::MockProvider;
-    use outbe_primitives::units::SCALE_1E18;
+    use outbe_primitives::units::{SCALE_1E18, SCALE_1E6_U128 as COEN_ISO_SCALE};
 
-    const COEN_ISO_SCALE: u128 = 1_000_000;
     const ETH_TOKEN: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
 
     fn fp(value: &str) -> FixedValue {

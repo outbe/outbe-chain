@@ -14,6 +14,7 @@ use outbe_primitives::{
     math::scaled_math::checked_quote,
     storage::StorageHandle,
     time::{previous_date_key, timestamp_to_date_key},
+    units::MAX_ASSET_DECIMALS,
 };
 fn invalid(message: &str) -> PrecompileError {
     PrecompileError::Revert(message.into())
@@ -30,7 +31,7 @@ pub(crate) fn quote(
     let data = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
     let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&data)
         .map_err(|_| invalid("invalid asset decimals"))?;
-    if decimals > 18 {
+    if decimals > MAX_ASSET_DECIMALS {
         return Err(invalid("unsupported asset decimals"));
     }
     let data = storage.staticcall(

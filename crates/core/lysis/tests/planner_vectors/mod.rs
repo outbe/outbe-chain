@@ -14,9 +14,9 @@ use outbe_lysis::program_v1::artifacts::{
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
     finalize_gratis_leaf, gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair,
-    output_finalize, shuffle_buckets, AmountRecordV1, AmountRunV1,
-    FidelityAggregateV1, FidelityLeaguePartialV1, FidelityReduceValueV1, GratisIncomingV1,
-    GratisLeafPrefixV1, GratisSegmentSummaryV1, GratisSummaryValueV1,
+    output_finalize, shuffle_buckets, AmountRecordV1, AmountRunV1, FidelityAggregateV1,
+    FidelityLeaguePartialV1, FidelityReduceValueV1, GratisIncomingV1, GratisLeafPrefixV1,
+    GratisSegmentSummaryV1, GratisSummaryValueV1,
 };
 use outbe_lysis::program_v1::planner::{
     primary_work_unit_count, LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
@@ -45,9 +45,8 @@ use outbe_ocomp_protocol::{
     ListKind, ObjectKind, OrderedListLimits,
 };
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::units::SCALE_1E6_U256;
 use std::collections::BTreeMap;
-
-const SIX_DECIMAL_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 fn tribute(seed: u32, day: WorldwideDay, nominal: u64, excluded: bool) -> TributeInputV1 {
     let mut owner_bytes = [0_u8; 20];

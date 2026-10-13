@@ -263,6 +263,9 @@ pub fn dispatch(
                         },
                     )
                 }),
+                powDifficulty(_) => metadata::<IIntexFactory::powDifficultyCall>(|| {
+                    Ok(outbe_common::pow::POW_DIFFICULTY)
+                }),
                 // The only payable selector: credits auction proceeds (msg.value)
                 // from the source chain into the day's pot. A ready pot is burned.
                 distribute(c) => mutate_void_payable(
