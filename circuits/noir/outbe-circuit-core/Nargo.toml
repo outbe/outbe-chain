@@ -1,0 +1,14 @@
+[package]
+name = "outbe_circuit_core"
+type = "lib"
+authors = ["outbe"]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+# Poseidon2 (owner commitment + binding pre-hash + Merkle nodes) uses the
+# stdlib `std::hash::poseidon2_permutation`, so no external poseidon dep.
+# Grumpkin Schnorr signature verification (Aztec's noir-lang/schnorr).
+# Uses Noir's `embedded_curve_ops` foreign call for native arithmetic
+# on Grumpkin (no field emulation; ~5-6k constraints per verify, vs
+# ~42k for the previous secp256k1 ECDSA path).
+schnorr = { tag = "v0.2.0", git = "https://github.com/noir-lang/schnorr" }

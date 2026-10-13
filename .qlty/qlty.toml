@@ -41,6 +41,8 @@ exclude_patterns = [
   "**/testdata/**",
   "**/vendor/**",
   "crates/poseidon/src/poseidon/constants.rs",
+  # One codegen script. Inline qlty-ignore and [[triage]] do not hide its smells.
+  "crates/zk/outbe-zk/build.rs",
 ]
 
 test_patterns = [
@@ -61,6 +63,7 @@ test_patterns = [
 
 [smells]
 mode = "comment"
+
 
 [[source]]
 name = "default"

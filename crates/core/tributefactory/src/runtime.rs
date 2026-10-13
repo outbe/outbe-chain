@@ -10,13 +10,13 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::time::timestamp_to_date_key;
 use outbe_primitives::time::WorldwideDay;
-use outbe_protocol::protocol::zkproof::{decode_public_words, read_u64_be_padded};
 #[cfg(any(test, feature = "bench-utils"))]
 use outbe_tee::protocol::TributeOfferResult;
 use outbe_tee::protocol::{
     EncryptedTributeOffer, TributeOfferStatus, TributePublicInputs, TributeZkContext,
 };
 use outbe_tribute::TributeContract;
+use outbe_zk::wire::{decode_public_words, read_u64_be_padded};
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
 
 use crate::errors::TributeFactoryError;
@@ -208,20 +208,10 @@ fn resolve_verification_key(
             chain_id: l2_chain_id,
             version: version.to_owned(),
         })?;
-    let circuit = outbe_zk_canonical::noir::CIRCUIT_REGISTRY
-        .iter()
-        .find(|entry| {
-            entry.circuit_hash == binding.circuit_hash && entry.version == binding.version
-        })
-        .ok_or_else(|| {
-            PrecompileError::Fatal(
-                "L2 circuit binding has no canonical verification metadata".into(),
-            )
-        })?;
-    if circuit.proof_system != "bb-keccak-v1" {
+    if binding.proof_system != "bb-keccak-v1" {
         return Err(TributeFactoryError::UnsupportedZkCircuit.into());
     }
-    Ok(circuit.vk_bytes)
+    Ok(binding.vk_bytes)
 }
 
 fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<TributePublicInputs> {
@@ -349,7 +339,7 @@ pub(crate) fn validate_agent_reward_addresses(
 mod zk_result_tests {
     use super::*;
     use outbe_tee::protocol::TributeZkExpectedHashes;
-    use outbe_zk_canonical::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
+    use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
 
     fn verification_key() -> &'static [u8] {
         resolve_verification_key(outbe_primitives::chain::DEVNET_CHAIN_ID, 0xdead, "1.1.0").unwrap()

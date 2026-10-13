@@ -28,6 +28,8 @@ jobs:
       RUSTUP_TOOLCHAIN: nightly-2026-09-14
     steps:
       - uses: actions/checkout@v6
+      - name: Install circuit compilers
+        run: mise install
       - uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
@@ -69,6 +71,8 @@ jobs:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
     steps:
       - uses: actions/checkout@v6
+      - name: Install circuit compilers
+        run: mise install
       - run: mise run build-release
       - run: cargo test --verbose
       - name: CVE scan (binaries)

@@ -5,7 +5,7 @@ use alloy_sol_types::SolCall;
 use clap::{Args, Subcommand};
 use eyre::Result;
 use outbe_primitives::time::WorldwideDay;
-use outbe_zk_canonical::{noir::L2_CIRCUITS_REGISTRY, L2CircuitVersion};
+use outbe_zk::{noir::L2_CIRCUITS_REGISTRY, L2CircuitVersion};
 use serde_json::Value;
 
 use crate::abi::{

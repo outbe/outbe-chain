@@ -43,6 +43,7 @@ jobs:
             bash -lc '
               set -euo pipefail
               git config --global --add safe.directory /workspace
+              mise install
               cargo nextest run --locked --package outbe-chain \
                 --features snapshot-integration --test-threads 2 \
                 -E "binary(snapshot_create) | binary(snapshot_files) | binary(snapshot_validate) | test(copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_restart)"

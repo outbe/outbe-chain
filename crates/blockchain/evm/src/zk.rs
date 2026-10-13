@@ -7,7 +7,7 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::dispatch::reject_value;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_protocol::protocol::zkproof::decode_verify_call;
+use outbe_zk::wire::decode_verify_call;
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
 use tracing::trace;
 
@@ -92,10 +92,7 @@ pub fn groth16_base_gas(_input: &[u8]) -> u64 {
 pub(crate) fn zk_verify(input: &[u8]) -> Result<[u8; 32]> {
     let call =
         decode_verify_call(input).map_err(|error| PrecompileError::Revert(error.to_string()))?;
-    let Some(descriptor) = outbe_zk_canonical::noir::CIRCUIT_REGISTRY
-        .iter()
-        .find(|descriptor| descriptor.circuit_hash == call.circuit_hash)
-    else {
+    let Some(descriptor) = outbe_zk::circuit_by_hash(&call.circuit_hash) else {
         trace!(circuit_hash = ?call.circuit_hash, "zk_verify: unknown circuit_hash");
         return Ok([0u8; 32]);
     };
