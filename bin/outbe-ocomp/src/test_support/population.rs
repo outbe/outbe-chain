@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, U256};
 use outbe_compressed_entities::{derive_poseidon_entity_id, TributeBodyV1};
-use outbe_ocomp_protocol::result::ContributorActionV1;
 use outbe_primitives::time::WorldwideDay;
 
 pub fn tribute_population(day: WorldwideDay, tribute_count: u32) -> Vec<TributeBodyV1> {
@@ -24,17 +23,4 @@ pub fn tribute_population(day: WorldwideDay, tribute_count: u32) -> Vec<TributeB
         .collect::<Vec<_>>();
     tributes.sort_by_key(|tribute| tribute.tribute_id);
     tributes
-}
-pub fn contributor_population(tributes: &[TributeBodyV1]) -> Vec<ContributorActionV1> {
-    let mut contributors_by_owner = tributes
-        .iter()
-        .map(|tribute| ContributorActionV1 {
-            owner: tribute.owner,
-            source_tribute_id: *tribute.tribute_id,
-            nominal_amount_minor: tribute.nominal_amount_minor,
-        })
-        .collect::<Vec<_>>();
-    contributors_by_owner
-        .sort_by_key(|contributor| (contributor.owner, contributor.source_tribute_id));
-    contributors_by_owner
 }

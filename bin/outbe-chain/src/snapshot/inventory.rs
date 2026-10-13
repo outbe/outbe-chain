@@ -194,11 +194,7 @@ pub(crate) fn enumerate_native_files(layout: &NativeLayout) -> eyre::Result<Nati
             JobPublicRecords => children(&root.join("supervisor-v1/jobs"))?
                 .into_iter()
                 .flat_map(|job| {
-                    [
-                        "admissions",
-                        "contributor-payout-v1.bin",
-                        "contributor-payout-v1.bin.tmp",
-                    ]
+                    ["admissions"]
                     .into_iter()
                     .map(move |name| PathBuf::from("supervisor-v1/jobs").join(&job).join(name))
                 })

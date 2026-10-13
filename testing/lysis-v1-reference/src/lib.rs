@@ -52,7 +52,8 @@ struct CorpusTribute {
     nominal: String,
     reference_currency: u16,
     tribute_price: String,
-    excluded: bool,
+    #[serde(rename = "excluded")]
+    _excluded: bool,
     f1: Option<u16>,
     f2: Option<u16>,
     entry_price: Option<String>,
@@ -525,7 +526,6 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
     let unit = scale();
     let mut remaining = allocation.clone();
     let mut actions = Vec::with_capacity(tributes.len());
-    let mut contributors = BTreeMap::<String, BigUint>::new();
     for (ordinal, tribute) in tributes.iter().enumerate() {
         let first = tribute
             .f1
@@ -596,24 +596,10 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
             "owner": tribute.owner,
             "worldwide_day": tribute.worldwide_day,
             "league": second,
-            "gratis_load": load.to_string(),
             "entry_price": entry_price.to_string(),
-            "cost": cost.to_string(),
             "issuance_currency": tribute.issuance_currency,
             "reference_currency": currency,
         }));
-        if !tribute.excluded {
-            let current = contributors
-                .get(&tribute.owner)
-                .cloned()
-                .unwrap_or_default();
-            let updated = checked_add_u256(
-                &current,
-                &decimal(&tribute.nominal)?,
-                ReferenceFailure::ordinal("CONTRIBUTOR_OVERFLOW", ordinal),
-            )?;
-            contributors.insert(tribute.owner.clone(), updated);
-        }
     }
 
     Ok(json!({
@@ -623,13 +609,6 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
         "remaining_lysis_limit_minor": remaining.to_string(),
         "group_table": table,
         "nod_actions": actions,
-        "contributors": contributors
-            .into_iter()
-            .map(|(owner, nominal)| json!({
-                "owner": owner,
-                "nominal": nominal.to_string(),
-            }))
-            .collect::<Vec<_>>(),
         "observations": observations,
     }))
 }

@@ -1,4 +1,4 @@
-//! Bounded, Lysis-specific owner/bucket shuffle run artifacts.
+//! Bounded, Lysis-specific bucket shuffle run artifacts.
 //!
 //! This closed schema is deliberately not a generic DAG or spill-file
 //! framework. A `UnitArtifactV1` embeds one root object. Bounded descendants
@@ -6,7 +6,7 @@
 
 use std::collections::VecDeque;
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 
 use crate::{
     codec::{CanonicalReader, CanonicalWriter},
@@ -15,7 +15,6 @@ use crate::{
     hash::hash_framed,
     list::StreamingOrderedListRoot,
     registry::{HashDomain, ListKind},
-    result::ContributorActionV1,
     schema::{
         encode_nested_value, impl_nested_record_codec, impl_top_level_codec, require, wire_enum_u8,
         wire_struct, NestedCodec, SchemaLimits,
@@ -46,7 +45,6 @@ pub struct ShuffleRunBuildContextV1 {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VerifiedShuffleRecordV1 {
-    Owner(ContributorActionV1),
     Bucket(ShuffleBucketRecordV1),
 }
 
@@ -63,7 +61,6 @@ where
     leaf_count: u32,
     previous_leaf_record_count: Option<u32>,
     yielded_record_count: u32,
-    previous_owner: Option<(Address, B256)>,
     previous_bucket: Option<(B256, u32)>,
     finished: bool,
 }
@@ -82,7 +79,6 @@ where
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum VerifiedShuffleRecordKeyV1 {
-    Owner(Address, B256),
     Bucket(B256, u32),
 }
 
@@ -131,24 +127,18 @@ where
         leaf_count: 0,
         previous_leaf_record_count: None,
         yielded_record_count: 0,
-        previous_owner: None,
         previous_bucket: None,
         finished: false,
     })
 }
 
 enum ShufflePageRecords {
-    Owner(Vec<ContributorActionV1>),
     Bucket(Vec<ShuffleBucketRecordV1>),
 }
 
 impl ShufflePageRecords {
     fn into_verified(self) -> Vec<VerifiedShuffleRecordV1> {
         match self {
-            Self::Owner(records) => records
-                .into_iter()
-                .map(VerifiedShuffleRecordV1::Owner)
-                .collect(),
             Self::Bucket(records) => records
                 .into_iter()
                 .map(VerifiedShuffleRecordV1::Bucket)
@@ -196,7 +186,7 @@ where
     R: FnMut(&CasObjectRefV1) -> Result<Vec<u8>, ProtocolError>,
 {
     root.validate_root_semantics(limits)?;
-    let root_page_end = exact_shuffle_page_count(root.kind, root.record_count)?;
+    let root_page_end = exact_shuffle_page_count(root.record_count)?;
     require(
         root.page_span.end_page == root_page_end,
         "shuffle root exact page count",
@@ -224,13 +214,6 @@ where
                 let expected = selected_shuffle_child(left, right, page_ordinal)?;
                 artifact = resolve_shuffle_child(&context, &expected, limits, &mut resolver)?;
                 continue;
-            }
-            ShuffleRunPayloadV1::OwnerLeaf(records) => {
-                require(
-                    context.kind == ShuffleRunKindV1::Owner,
-                    "shuffle page owner kind",
-                )?;
-                ShufflePageRecords::Owner(records)
             }
             ShuffleRunPayloadV1::BucketLeaf(records) => {
                 require(
@@ -273,11 +256,11 @@ where
 
 mod builder;
 mod verifier;
-pub use builder::{build_bucket_shuffle_run, build_owner_shuffle_run};
+pub use builder::build_bucket_shuffle_run;
 use verifier::{
     exact_shuffle_page_count, require_shuffle_context, require_shuffle_page_leaf,
     require_valid_run_span, resolve_shuffle_child, validate_bucket_records, validate_child,
-    validate_owner_records, validate_shuffle_run_artifact,
+    validate_shuffle_run_artifact,
 };
 
 impl<R> Iterator for VerifiedShuffleRunIterV1<'_, R>
@@ -390,34 +373,23 @@ fn shuffle_record_key(
     kind: ShuffleRunKindV1,
     record: &VerifiedShuffleRecordV1,
 ) -> Result<VerifiedShuffleRecordKeyV1, ProtocolError> {
-    match (kind, record) {
-        (ShuffleRunKindV1::Owner, VerifiedShuffleRecordV1::Owner(record)) => Ok(
-            VerifiedShuffleRecordKeyV1::Owner(record.owner, record.source_tribute_id),
-        ),
-        (ShuffleRunKindV1::Bucket, VerifiedShuffleRecordV1::Bucket(record)) => Ok(
-            VerifiedShuffleRecordKeyV1::Bucket(record.bucket_key, record.raw_ordinal),
-        ),
-        _ => Err(ProtocolError::InvalidInvariant(
-            "merged shuffle record kind",
-        )),
-    }
+    let _kind = kind;
+    let VerifiedShuffleRecordV1::Bucket(record) = record;
+    Ok(VerifiedShuffleRecordKeyV1::Bucket(
+        record.bucket_key,
+        record.raw_ordinal,
+    ))
 }
 
 fn strict_shuffle_key_order(
     previous: VerifiedShuffleRecordKeyV1,
     current: VerifiedShuffleRecordKeyV1,
 ) -> bool {
-    match (previous, current) {
-        (
-            VerifiedShuffleRecordKeyV1::Owner(previous_owner, _),
-            VerifiedShuffleRecordKeyV1::Owner(current_owner, _),
-        ) => previous_owner < current_owner,
-        (
-            VerifiedShuffleRecordKeyV1::Bucket(previous_bucket, previous_ordinal),
-            VerifiedShuffleRecordKeyV1::Bucket(current_bucket, current_ordinal),
-        ) => (previous_bucket, previous_ordinal) < (current_bucket, current_ordinal),
-        _ => false,
-    }
+    let (
+        VerifiedShuffleRecordKeyV1::Bucket(previous_bucket, previous_ordinal),
+        VerifiedShuffleRecordKeyV1::Bucket(current_bucket, current_ordinal),
+    ) = (previous, current);
+    (previous_bucket, previous_ordinal) < (current_bucket, current_ordinal)
 }
 
 impl<R> VerifiedShuffleRunIterV1<'_, R>
@@ -427,15 +399,6 @@ where
     fn open_artifact(&mut self, artifact: ShuffleRunArtifactV1) -> Result<(), ProtocolError> {
         self.require_context(&artifact)?;
         match artifact.payload {
-            ShuffleRunPayloadV1::OwnerLeaf(records) => {
-                self.open_leaf(
-                    artifact.page_span,
-                    artifact.first_record_ordinal,
-                    artifact.record_count,
-                )?;
-                self.pending_records
-                    .extend(records.into_iter().map(VerifiedShuffleRecordV1::Owner));
-            }
             ShuffleRunPayloadV1::BucketLeaf(records) => {
                 self.open_leaf(
                     artifact.page_span,
@@ -506,20 +469,6 @@ where
         record: VerifiedShuffleRecordV1,
     ) -> Result<VerifiedShuffleRecordV1, ProtocolError> {
         match &record {
-            VerifiedShuffleRecordV1::Owner(record) => {
-                require(
-                    self.context.kind == ShuffleRunKindV1::Owner,
-                    "shuffle traversal record kind",
-                )?;
-                let key = (record.owner, record.source_tribute_id);
-                require(
-                    self.previous_owner
-                        .is_none_or(|previous| previous.0 < key.0)
-                        && self.previous_bucket.is_none(),
-                    "global owner shuffle order",
-                )?;
-                self.previous_owner = Some(key);
-            }
             VerifiedShuffleRecordV1::Bucket(record) => {
                 require(
                     self.context.kind == ShuffleRunKindV1::Bucket,
@@ -527,8 +476,7 @@ where
                 )?;
                 let key = (record.bucket_key, record.raw_ordinal);
                 require(
-                    self.previous_bucket.is_none_or(|previous| previous < key)
-                        && self.previous_owner.is_none(),
+                    self.previous_bucket.is_none_or(|previous| previous < key),
                     "global bucket shuffle order",
                 )?;
                 self.previous_bucket = Some(key);
@@ -550,23 +498,15 @@ where
                 && self.yielded_record_count == self.context.root_record_count,
             "shuffle traversal exact counts",
         )?;
-        if self.context.root_record_count == 0 {
-            require(
-                self.context.kind == ShuffleRunKindV1::Owner
-                    && self.leaf_count == 1
-                    && self.previous_leaf_record_count == Some(0),
-                "canonical empty owner shuffle run",
-            )
-        } else {
-            require(
-                self.previous_leaf_record_count.is_some_and(|count| {
+        require(
+            self.context.root_record_count != 0
+                && self.previous_leaf_record_count.is_some_and(|count| {
                     count > 0
                         && usize::try_from(count)
                             .is_ok_and(|count| count <= MAX_SHUFFLE_LEAF_RECORDS)
                 }),
-                "non-empty final shuffle leaf",
-            )
-        }
+            "non-empty final shuffle leaf",
+        )
     }
 }
 
@@ -634,7 +574,6 @@ impl ShuffleSourceCoverageV1 {
 
 wire_enum_u8! {
     pub enum ShuffleRunKindV1 {
-        Owner = 1,
         Bucket = 2,
     }
 }
@@ -673,7 +612,6 @@ wire_struct! {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShuffleRunPayloadV1 {
-    OwnerLeaf(Vec<ContributorActionV1>),
     BucketLeaf(Vec<ShuffleBucketRecordV1>),
     Node {
         left: ShuffleRunChildV1,
@@ -684,7 +622,6 @@ pub enum ShuffleRunPayloadV1 {
 impl NestedCodec for ShuffleRunPayloadV1 {
     fn validate(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         match self {
-            Self::OwnerLeaf(records) => validate_owner_records(records, limits),
             Self::BucketLeaf(records) => validate_bucket_records(records, limits),
             Self::Node { left, right } => {
                 left.validate(limits)?;
@@ -699,12 +636,10 @@ impl NestedCodec for ShuffleRunPayloadV1 {
         limits: &SchemaLimits,
     ) -> Result<(), ProtocolError> {
         output.write_u8(match self {
-            Self::OwnerLeaf(_) => 1,
             Self::BucketLeaf(_) => 2,
             Self::Node { .. } => 3,
         })?;
         match self {
-            Self::OwnerLeaf(records) => records.encode_nested(output, limits),
             Self::BucketLeaf(records) => records.encode_nested(output, limits),
             Self::Node { left, right } => {
                 left.encode_nested(output, limits)?;
@@ -718,9 +653,6 @@ impl NestedCodec for ShuffleRunPayloadV1 {
         limits: &SchemaLimits,
     ) -> Result<Self, ProtocolError> {
         match input.read_u8()? {
-            1 => Ok(Self::OwnerLeaf(Vec::<ContributorActionV1>::decode_nested(
-                input, limits,
-            )?)),
             2 => Ok(Self::BucketLeaf(
                 Vec::<ShuffleBucketRecordV1>::decode_nested(input, limits)?,
             )),
@@ -772,17 +704,6 @@ impl ShuffleRunArtifactV1 {
         limits: &SchemaLimits,
     ) -> Result<B256, ProtocolError> {
         match &self.payload {
-            ShuffleRunPayloadV1::OwnerLeaf(records) => {
-                validate_owner_records(records, limits)?;
-                ordered_leaf_root(
-                    ListKind::ContributorActions,
-                    records
-                        .iter()
-                        .map(|record| encode_nested_value(record, limits)),
-                    records.len(),
-                    limits,
-                )
-            }
             ShuffleRunPayloadV1::BucketLeaf(records) => {
                 validate_bucket_records(records, limits)?;
                 ordered_leaf_root(

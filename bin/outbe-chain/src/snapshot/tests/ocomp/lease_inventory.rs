@@ -12,8 +12,8 @@ use outbe_compressed_entities::{
 };
 use outbe_ocomp::control::poc_schema_limits;
 use outbe_ocomp_protocol::intent::{
-    ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType, FrozenMetadosisValuesV1,
-    JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+    ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
+    MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
     TributeInputBindingV1,
 };
 use outbe_offchain_storage::{
@@ -87,12 +87,6 @@ fn intent(collection_root: B256, count: u32, nominal: U256) -> JobIntentV1 {
                 target_generation: 1,
                 namespace_root_before: hash(9),
                 max_nod_count: count,
-            },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: day,
-                expected_series_version: 1,
-                max_contributor_count: count,
-                max_eligible_nominal_total: nominal,
             },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: day,

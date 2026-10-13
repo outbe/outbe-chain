@@ -66,10 +66,7 @@ pub fn verify_lysis_shuffle_phase_replay(
     replay_inbox: &WorkerInbox,
     limits: &SchemaLimits,
 ) -> Result<(), LysisShuffleAdoptionError> {
-    if !matches!(
-        spec.phase,
-        UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle
-    ) {
+    if spec.phase != UnitPhase::BucketShuffle {
         return Err(ProtocolError::InvalidInvariant("shuffle replay phase").into());
     }
     reported.validate_against(spec, limits)?;
@@ -118,15 +115,12 @@ pub fn admit_reported_lysis_shuffle_unit(
     )?;
     let artifact = UnitArtifactV1::decode_canonical(reported.bytes(), limits)?;
     artifact.validate_against(spec, limits)?;
-    let expected_kind = match spec.phase {
-        UnitPhase::OwnerShuffle => outbe_ocomp_protocol::shuffle::ShuffleRunKindV1::Owner,
-        UnitPhase::BucketShuffle => outbe_ocomp_protocol::shuffle::ShuffleRunKindV1::Bucket,
-        _ => {
-            return Err(
-                ProtocolError::InvalidInvariant("reported unit is a Lysis shuffle phase").into(),
-            );
-        }
-    };
+    if spec.phase != UnitPhase::BucketShuffle {
+        return Err(
+            ProtocolError::InvalidInvariant("reported unit is a Lysis shuffle phase").into(),
+        );
+    }
+    let expected_kind = outbe_ocomp_protocol::shuffle::ShuffleRunKindV1::Bucket;
     let root = ShuffleRunArtifactV1::decode_canonical(artifact.phase_payload(limits)?, limits)?;
     root.validate_root_semantics(limits)?;
     let header = artifact.output_header(limits)?;

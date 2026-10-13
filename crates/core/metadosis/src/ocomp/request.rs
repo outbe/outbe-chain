@@ -5,7 +5,7 @@ use outbe_compressed_entities::{
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::{
     intent::{
-        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
+        ActivationPreconditionsV1, DayType,
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
@@ -155,7 +155,6 @@ struct RequestCandidate {
 
 struct RequestTargets {
     nod: outbe_nod::schema::NodOcompTargetProjection,
-    contributors: outbe_intex::api::OcompContributorTargetProjection,
 }
 
 struct AdmittedRequest {
@@ -261,8 +260,6 @@ fn seal_request_admission(
     let exact_collection = roots.tribute;
     let mut tribute = TributeContract::new(ctx.storage.clone());
     let nod_target = NodContract::new(ctx.storage.clone()).ocomp_target_projection(wwd)?;
-    let contributor_target =
-        outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd)?;
 
     let sealed_tribute_projection = if stored_tribute_projection.is_sealed {
         stored_tribute_projection
@@ -293,10 +290,7 @@ fn seal_request_admission(
 
     Ok(AdmittedRequest {
         tribute: sealed_tribute_projection,
-        targets: RequestTargets {
-            nod: nod_target,
-            contributors: contributor_target,
-        },
+        targets: RequestTargets { nod: nod_target },
         envelope_projection,
         envelope_hash,
         current_vwap,
@@ -391,7 +385,6 @@ fn request_activation_preconditions(
     let pending_nonce = request.pending_nonce;
     let sealed_tribute_projection = admitted.tribute;
     let nod_target = &admitted.targets.nod;
-    let contributor_target = &admitted.targets.contributors;
     let envelope_projection = admitted.envelope_projection;
     let activation_preconditions = ActivationPreconditionsV1 {
         tribute: TributeInputBindingV1 {
@@ -407,12 +400,6 @@ fn request_activation_preconditions(
             target_generation: nod_target.target_generation,
             namespace_root_before: nod_target.namespace_root_before,
             max_nod_count: sealed_tribute_projection.tribute_count,
-        },
-        contributors: ContributorTargetPreconditionV1 {
-            worldwide_day: wwd.value(),
-            expected_series_version: contributor_target.expected_series_version,
-            max_contributor_count: sealed_tribute_projection.tribute_count,
-            max_eligible_nominal_total: sealed_tribute_projection.tribute_nominal_total_minor,
         },
         metadosis: MetadosisAttemptPreconditionV1 {
             wwd: wwd.value(),

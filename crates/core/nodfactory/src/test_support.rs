@@ -17,7 +17,8 @@ use outbe_primitives::{
 };
 use outbe_tee::{
     nod_materialization::{
-        NodMaterializationAuthorityV2, NodSourceV2, PrepareEncryptedNodsRequestV2,
+        LeagueFractionInputV2, NodMaterializationAuthorityV2, NodSourceV2,
+        PrepareEncryptedNodsRequestV2,
     },
     TransportError,
 };
@@ -166,12 +167,23 @@ impl MaterializationFixture {
                     .ok_or_else(|| "fixture source missing".to_string())
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mut leagues = std::collections::BTreeSet::new();
+        for action in &batch.actions {
+            leagues.insert(action.league_id);
+        }
         let request = PrepareEncryptedNodsRequestV2 {
             authority: authority.clone(),
             batch: batch
                 .encode_canonical(&poc_schema_limits())
                 .map_err(|e| e.to_string())?,
             sources,
+            league_fractions: leagues
+                .into_iter()
+                .map(|league_id| LeagueFractionInputV2 {
+                    league_id,
+                    fraction_fp: U256::from(1_000_000),
+                })
+                .collect(),
         };
         prepare(&request).map_err(|e| e.to_string())
     }
@@ -205,8 +217,8 @@ fn source_body(
             offer_input_hash: action.tribute_id,
         },
         &TributeAmountsV2 {
-            issuance_amount_minor: action.gratis_load_minor,
-            nominal_amount_minor: action.gratis_load_minor,
+            issuance_amount_minor: U256::from(1_000),
+            nominal_amount_minor: U256::from(1_000),
         },
     )
     .map_err(|e| e.to_string())?;

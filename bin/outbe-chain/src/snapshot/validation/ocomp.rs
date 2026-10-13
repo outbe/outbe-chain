@@ -9,11 +9,7 @@ use super::Incomplete;
 use crate::snapshot::projection_store::projection_database;
 
 use super::canonical_state::CanonicalState;
-use outbe_intex::schema::CertifiedContributorGenerationProjection;
 use outbe_nod::schema::NodCertifiedGenerationProjection;
-use outbe_ocomp::payout_artifact::{
-    verify_contributor_payout_artifact, PayoutArtifactError, CONTRIBUTOR_PAYOUT_ARTIFACT_FILE,
-};
 use outbe_ocomp::{
     admission_catalog::AdmissionCatalogReader,
     bundle::PinnedProtocolBundle,
@@ -89,8 +85,6 @@ use projection::verify_present_projection_structure;
 pub(crate) use admissions::verify_local_result;
 
 pub(crate) use pins::verify_lease_inputs;
-
-pub(crate) use frames::verify_paid_bitmap;
 
 pub(crate) use frames::verify_series_day;
 

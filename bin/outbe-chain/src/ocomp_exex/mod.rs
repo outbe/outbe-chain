@@ -24,7 +24,6 @@ use outbe_ocomp::embedded_runtime::EmbeddedComputeOutcomeV1;
 use outbe_ocomp::embedded_runtime::EmbeddedMaterializationOutcomeV1;
 use outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1;
 use outbe_ocomp::embedded_runtime::EmbeddedOcompDomainV1;
-use outbe_ocomp::embedded_runtime::EmbeddedPayoutOutcomeV1;
 use outbe_ocomp::embedded_runtime::EmbeddedVoteOutcomeV1;
 use outbe_ocomp::supervisor::DiscoveryRecord;
 
@@ -38,7 +37,6 @@ use outbe_primitives::projection::ProjectionReadinessPublisher;
 use outbe_primitives::projection::ProjectionStatus;
 
 /// Days each embedded payout tick looks back over.
-const PAYOUT_LOOKBACK_DAYS: u32 = 30;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The drain and finalized reader share one publication order. Once either
@@ -159,9 +157,6 @@ struct EmbeddedOcompExExV1<P> {
     materialization_tx: mpsc::Sender<EmbeddedMaterializationOutcomeV1>,
     materialization_rx: mpsc::Receiver<EmbeddedMaterializationOutcomeV1>,
     materialization_active: Option<MaterializationAttemptKeyV1>,
-    payout_tx: mpsc::Sender<EmbeddedPayoutOutcomeV1>,
-    payout_rx: mpsc::Receiver<EmbeddedPayoutOutcomeV1>,
-    payout_active: bool,
     materialization_attempt_heights: BTreeMap<MaterializationAttemptKeyV1, u64>,
     chain_id: u64,
     genesis_hash: B256,
@@ -216,8 +211,6 @@ use materialization::{
     authenticated_finalized_proposer, finalized_materialization_proposer,
     should_wake_nod_materializer,
 };
-
-mod payout;
 
 mod run;
 pub use run::run_ocomp_exex;

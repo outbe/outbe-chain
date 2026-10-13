@@ -53,39 +53,6 @@ pub(crate) fn single_beneficiary_rewards(day: u64) -> (U256, U256) {
     )
 }
 
-/// Certified contributor batches can arrive in any order. Every leaf receives
-/// its floored proportional share. The round burns the undistributed remainder.
-pub(crate) fn contributor_shares(amount: U256, nominal: &[U256]) -> (Vec<U256>, U256) {
-    assert!(
-        !nominal.is_empty(),
-        "expected contributor population is empty"
-    );
-    let total = nominal.iter().fold(U256::ZERO, |sum, value| {
-        assert!(!value.is_zero(), "expected contributor nominal is zero");
-        sum.checked_add(*value)
-            .expect("expected nominal total fits U256")
-    });
-    let shares: Vec<_> = nominal
-        .iter()
-        .map(|value| {
-            amount
-                .checked_mul(*value)
-                .expect("expected contributor share fits U256")
-                / total
-        })
-        .collect();
-    let paid = shares.iter().fold(U256::ZERO, |sum, share| {
-        sum.checked_add(*share)
-            .expect("expected paid total fits U256")
-    });
-    (
-        shares,
-        amount
-            .checked_sub(paid)
-            .expect("expected shares do not exceed proceeds"),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,13 +60,13 @@ mod tests {
 
     #[test]
     fn waa_cap_and_full_sra_pool_floor_before_native_conversion() {
-        // Independent Decimal day-1 emission = 268480452713195.
-        // floor(4% emission) = 10739218108527. floor(32% pool) = 3436549794728.
+        // Independent Decimal day-1 emission = 268480452000000.
+        // floor(4% emission) = 10739218080000. floor(32% pool) = 3436549785600.
         assert_eq!(
             single_beneficiary_rewards(1),
             (
-                uint!(3436549794728000000000000_U256),
-                uint!(10739218108527000000000000_U256),
+                uint!(3436549785600000000000000_U256),
+                uint!(10739218080000000000000000_U256),
             )
         );
         assert_eq!(
@@ -112,18 +79,5 @@ mod tests {
     fn emission_day_uses_utc_calendar_boundaries() {
         assert_eq!(emission_day(86_399, 86_400), 1);
         assert_eq!(emission_day(86_400, 172_799), 0);
-    }
-
-    #[test]
-    fn contributor_flooring_keeps_dust_out_of_every_recipient() {
-        let (shares, burned) = contributor_shares(U256::from(11), &[1, 2, 3].map(U256::from));
-        assert_eq!(shares, [1, 3, 5].map(U256::from));
-        assert_eq!(burned, U256::from(2));
-        for (count, each, dust) in [(1, 1_000_000, 0), (10, 100_000, 0), (257, 3_891, 13)] {
-            let (shares, burned) =
-                contributor_shares(U256::from(1_000_000), &vec![U256::from(2_000_000); count]);
-            assert_eq!(shares, vec![U256::from(each); count]);
-            assert_eq!(burned, U256::from(dust));
-        }
     }
 }

@@ -170,14 +170,6 @@ fn intent(count: usize) -> JobIntentV1 {
     intent.activation_preconditions.tribute.exact_count = u32::try_from(count).unwrap();
     intent.activation_preconditions.tribute.exact_nominal_total = nominal;
     intent.activation_preconditions.nod.max_nod_count = u32::try_from(count).unwrap();
-    intent
-        .activation_preconditions
-        .contributors
-        .max_contributor_count = u32::try_from(count).unwrap();
-    intent
-        .activation_preconditions
-        .contributors
-        .max_eligible_nominal_total = nominal;
     intent.frozen_metadosis_values.day_limit = nominal;
     intent.frozen_metadosis_values.lysis_limit_minor = nominal;
     intent.validate_semantics().unwrap();

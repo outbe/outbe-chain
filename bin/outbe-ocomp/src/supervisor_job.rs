@@ -2,8 +2,8 @@
 //!
 //! This module does not introduce another scheduler or computation interface.
 //! It composes the already verified export, planner, one-unit worker boundary,
-//! admission catalog and finalizer. It also writes the contributor payout
-//! artifact. Result-vote signing and submission happen outside this module.
+//! admission catalog and finalizer. Result-vote signing and submission happen
+//! outside this module.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,7 +27,6 @@ use crate::input_artifacts::poc_input_list_limits;
 use crate::input_ref_catalog::VerifiedInputChunkRefCatalog;
 use crate::lysis_finalization::finalize_verified_lysis_v1;
 use crate::lysis_scheduler::admit_reported_lysis_unit_v1;
-use crate::payout_artifact::write_contributor_payout_artifact;
 use crate::supervisor::DiscoveryRecord;
 use crate::worker_transport::{SupervisorWorkerDispatcherV1, MAX_REGISTERED_WORKERS};
 
@@ -319,10 +318,6 @@ impl SupervisorJobRunnerV1 {
         let finalized = stage(
             "finalize verified Lysis result",
             finalize_verified_lysis_v1(record, &audit, &self.cas, &self.reader, limits),
-        )?;
-        stage(
-            "write contributor payout artifact",
-            write_contributor_payout_artifact(&audit, &local_job_root),
         )?;
         Ok(CompletedSupervisorJobV1 {
             job_id,

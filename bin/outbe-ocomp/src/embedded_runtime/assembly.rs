@@ -225,7 +225,6 @@ impl LaneAssembly<'_> {
             ocomp_key_hash,
             rpc_url,
             journal_root: layout.vote_submission_root.clone(),
-            payout_journal_root: layout.payout_submission_root.clone(),
             materialization_reference_root: layout.materialization_reference_root.clone(),
             materialization_submission_root: layout.materialization_submission_root.clone(),
             cas_root: layout.cas_root.clone(),

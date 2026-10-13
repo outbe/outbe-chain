@@ -13,7 +13,7 @@ use eyre::{eyre, Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::config::ProviderEndpointConfig;
+use crate::config::ApiProviderConfig;
 use crate::fixed::JsonDecimal;
 
 use super::{CandlePrice, Provider, TickerPrice, VolumeInput};
@@ -27,7 +27,7 @@ pub struct MockHttpProvider {
 }
 
 impl MockHttpProvider {
-    pub fn new(endpoint: &ProviderEndpointConfig) -> Result<Self> {
+    pub fn new(endpoint: &ApiProviderConfig) -> Result<Self> {
         let base_url = if endpoint.rest.trim().is_empty() {
             DEFAULT_MOCK_HTTP_URL.to_string()
         } else {

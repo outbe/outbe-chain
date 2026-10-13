@@ -4,13 +4,12 @@
 //! writes) constructed via `IntexContract::new(storage)`. They only
 //! touch local storage. Orchestration and validation live in `api.rs`.
 
-use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::WorldwideDay;
 
 use crate::errors::IntexError;
-use crate::schema::{CertifiedPayoutRound, IntexContract, SeriesId, SeriesRecord};
+use crate::schema::{IntexContract, SeriesId, SeriesRecord};
 
 impl IntexContract<'_> {
     // ---------------------------------------------------------------------
@@ -41,11 +40,6 @@ impl IntexContract<'_> {
         self.append_to_global_index(record.series_id)
     }
 
-    /// Whether the day has produced any series yet.
-    pub(crate) fn day_has_series(&self, worldwide_day: WorldwideDay) -> Result<bool> {
-        Ok(self.day_series_count.read(&worldwide_day)? != 0)
-    }
-
     pub(crate) fn update_series_record(&mut self, record: &SeriesRecord) -> Result<()> {
         self.series.update(record)
     }
@@ -70,33 +64,7 @@ impl IntexContract<'_> {
     }
 
     // ---------------------------------------------------------------------
-    // Creator-reward: certified payout round + paid-leaf bitmap
-    // ---------------------------------------------------------------------
-
-    pub(crate) fn get_payout_round(&self, wwd: u32) -> Result<Option<CertifiedPayoutRound>> {
-        self.ocomp_payout_round.get(wwd)
-    }
-
-    pub(crate) fn create_payout_round(&mut self, record: &CertifiedPayoutRound) -> Result<()> {
-        self.ocomp_payout_round.create(record)
-    }
-
-    pub(crate) fn update_payout_round(&mut self, record: &CertifiedPayoutRound) -> Result<()> {
-        self.ocomp_payout_round.update(record)
-    }
-
-    pub(crate) fn read_paid_word(&self, wwd: u32, word_index: u32) -> Result<U256> {
-        self.ocomp_paid_leaves
-            .read(&Self::paid_bitmap_key(wwd, word_index))
-    }
-
-    pub(crate) fn write_paid_word(&mut self, wwd: u32, word_index: u32, word: U256) -> Result<()> {
-        self.ocomp_paid_leaves
-            .write(&Self::paid_bitmap_key(wwd, word_index), word)
-    }
-
-    // ---------------------------------------------------------------------
-    // Creator-reward: proceeds fan-in (awaiting set, dense swap-pop)
+    // Proceeds fan-in (awaiting set, dense swap-pop)
     // ---------------------------------------------------------------------
 
     /// Append a WorldwideDay to the awaiting-proceeds set (idempotent).

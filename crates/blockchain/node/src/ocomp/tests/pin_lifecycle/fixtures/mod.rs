@@ -55,7 +55,6 @@ pub(super) fn intent_for_candidate(candidate: CandidatePinV1) -> JobIntentV1 {
     intent.wwd = candidate.wwd;
     intent.activation_preconditions.tribute.wwd = candidate.wwd;
     intent.activation_preconditions.nod.wwd = candidate.wwd;
-    intent.activation_preconditions.contributors.worldwide_day = candidate.wwd;
     intent.activation_preconditions.metadosis.wwd = candidate.wwd;
     intent.ce_sealed_root = candidate.ce_sealed_root;
     intent.protocol_bundle_hash = candidate.protocol_bundle_hash;
@@ -129,12 +128,6 @@ pub(super) fn production_intent(block_number: u64) -> JobIntentV1 {
                 target_generation: 1,
                 namespace_root_before: B256::repeat_byte(10),
                 max_nod_count: 0,
-            },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: 7,
-                expected_series_version: 1,
-                max_contributor_count: 0,
-                max_eligible_nominal_total: U256::ZERO,
             },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: 7,
@@ -305,7 +298,6 @@ pub(super) fn canonical_terminal_fixture(
             },
             outcome: ActivationOutcome::Applied,
             nod_receipt_hash: Some(B256::repeat_byte(0x96)),
-            contributor_receipt_hash: Some(B256::repeat_byte(0x97)),
             tribute_receipt_hash: Some(B256::repeat_byte(0x98)),
             carry_over_receipt_hash: Some(B256::repeat_byte(0x99)),
             request_limit_split_receipt_hash: intent
@@ -316,7 +308,6 @@ pub(super) fn canonical_terminal_fixture(
                 outbe_ocomp_protocol::registry::HashDomain::Effects,
                 [
                     B256::repeat_byte(0x96),
-                    B256::repeat_byte(0x97),
                     B256::repeat_byte(0x98),
                     B256::repeat_byte(0x99),
                 ]

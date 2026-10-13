@@ -3,10 +3,7 @@
 use alloy_consensus::Sealable;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use eyre::ensure;
-use outbe_intex::schema::{
-    CertifiedContributorGenerationProjection, CertifiedPayoutRound, IntexContract, SeriesId,
-    SeriesRecord,
-};
+use outbe_intex::schema::{IntexContract, SeriesId, SeriesRecord};
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 #[cfg(all(test, feature = "snapshot-integration"))]
 use outbe_ocomp_protocol::receipts::AggregateActivationReceiptV1;
@@ -226,26 +223,6 @@ impl<'a> CanonicalState<'a> {
 
     pub(crate) fn intex_read_series(&self, id: SeriesId) -> eyre::Result<SeriesRecord> {
         self.with_storage(|storage| outbe_intex::api::read_series(&storage, id))
-    }
-
-    pub(crate) fn intex_certified_contributor_generation(
-        &self,
-        day: WorldwideDay,
-    ) -> eyre::Result<Option<CertifiedContributorGenerationProjection>> {
-        self.with_storage(|storage| {
-            outbe_intex::api::certified_contributor_generation(&storage, day)
-        })
-    }
-
-    pub(crate) fn intex_certified_payout_round(
-        &self,
-        day: u32,
-    ) -> eyre::Result<Option<CertifiedPayoutRound>> {
-        self.with_storage(|storage| outbe_intex::api::certified_payout_round(&storage, day))
-    }
-
-    pub(crate) fn intex_paid_leaves_word(&self, day: u32, word_index: u32) -> eyre::Result<U256> {
-        self.with_storage(|storage| outbe_intex::api::paid_leaves_word(&storage, day, word_index))
     }
 
     pub(crate) fn metadosis_active_lysis_generation(

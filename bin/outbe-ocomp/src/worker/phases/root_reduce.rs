@@ -6,6 +6,7 @@ use super::super::validate_scan_artifact;
 use super::super::UnitExecutionAuthority;
 use super::super::WorkerError;
 use super::decode_shuffle_producer_root;
+use super::tribute_nominal::{shard_eligible_nominal_total, shard_tribute_nominals};
 
 use crate::cas::FilesystemCasReader;
 
@@ -33,19 +34,16 @@ use outbe_lysis::program_v1::result::RootReduceSummaryV1;
 
 use outbe_ocomp_protocol::common::BoundedBytes;
 
+use outbe_ocomp_protocol::input::InputChunkKind;
 use outbe_ocomp_protocol::input::InputManifestV1;
 
 use outbe_ocomp_protocol::result::NodActionV1 as ProtocolNodActionV1;
 use outbe_ocomp_protocol::result::OutputManifestEntryV1;
 use outbe_ocomp_protocol::result::ResultChunkV1;
 
-use outbe_ocomp_protocol::shuffle::verified_shuffle_run_page;
-
 use outbe_ocomp_protocol::shuffle::ShuffleBucketRecordV1;
 
 use outbe_ocomp_protocol::shuffle::ShuffleRunKindV1;
-
-use outbe_ocomp_protocol::shuffle::VerifiedShuffleRecordV1;
 
 use outbe_ocomp_protocol::unit::InputPurpose;
 
@@ -79,9 +77,6 @@ pub(in super::super) fn execute_root_reduce_unit(
         cancelled,
     } = authority;
     require_lease_active(cancelled)?;
-    if !input_chunks.is_empty() {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
     let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
     let phase_ordinal = unit_index
         .checked_sub(topology.phase_offset(UnitPhase::RootReduce)?)
@@ -134,11 +129,15 @@ pub(in super::super) fn execute_root_reduce_unit(
             plan_hash,
             &expected,
             &resolved,
+            input_chunks,
             reader,
             inbox,
             limits,
             cancelled,
         );
+    }
+    if !input_chunks.is_empty() {
+        return Err(WorkerError::UnitBindingMismatch);
     }
     if resolved.len() != 2 {
         return Err(WorkerError::UnitBindingMismatch);
@@ -198,18 +197,26 @@ fn execute_root_reduce_leaf(
     plan_hash: B256,
     expected: &[PlannedProducerV1],
     resolved: &[Option<&UnitArtifactV1>],
-    reader: &FilesystemCasReader,
+    input_chunks: &[(
+        outbe_ocomp_protocol::input::InputChunkRefV1,
+        outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
+    )],
+    _reader: &FilesystemCasReader,
     inbox: &WorkerInbox,
     limits: &SchemaLimits,
     cancelled: Option<&AtomicBool>,
 ) -> Result<UnitArtifactV1, WorkerError> {
     require_lease_active(cancelled)?;
+    if input_chunks.iter().any(|(reference, chunk)| {
+        reference.kind != InputChunkKind::Tribute || chunk.kind != InputChunkKind::Tribute
+    }) {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let nominals = shard_tribute_nominals(input_chunks, shard_ordinal)?;
+    let eligible_from_bodies = shard_eligible_nominal_total(input_chunks, shard_ordinal)?;
     let [finalized_position @ PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
         phase: UnitPhase::OutputFinalize,
         ordinal,
-    }), owner_position @ PlannedProducerV1::Unit(PlannedUnitPositionV1::RunSpan {
-        phase: UnitPhase::OwnerShuffle,
-        ..
     }), bucket_position @ PlannedProducerV1::Unit(PlannedUnitPositionV1::RunSpan {
         phase: UnitPhase::BucketShuffle,
         ..
@@ -217,7 +224,7 @@ fn execute_root_reduce_leaf(
     else {
         return Err(WorkerError::UnitBindingMismatch);
     };
-    let [Some(finalized_artifact), Some(owner_artifact), Some(bucket_artifact)] = resolved else {
+    let [Some(finalized_artifact), Some(bucket_artifact)] = resolved else {
         return Err(WorkerError::UnitBindingMismatch);
     };
     if *ordinal != shard_ordinal {
@@ -256,13 +263,6 @@ fn execute_root_reduce_leaf(
         limits,
     )?;
 
-    let owner_root = decode_shuffle_producer_root(
-        spec,
-        owner_artifact,
-        ShuffleRunKindV1::Owner,
-        *owner_position,
-        limits,
-    )?;
     let bucket_root = decode_shuffle_producer_root(
         spec,
         bucket_artifact,
@@ -271,32 +271,11 @@ fn execute_root_reduce_leaf(
         limits,
     )?;
     require_root_reduce_shuffle_population(
-        owner_root.source_coverage_count,
         bucket_root.source_coverage_count,
-        owner_root.source_coverage_root,
-        bucket_root.source_coverage_root,
-        owner_root.record_count,
         bucket_root.record_count,
         plan.tribute_count,
     )?;
 
-    let owner_page = verified_shuffle_run_page(owner_root, shard_ordinal, limits, |reference| {
-        reader
-            .read_verified(reference)
-            .map(|object| object.bytes().to_vec())
-            .map_err(|_| {
-                outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-                    "authenticated owner shuffle descendant",
-                )
-            })
-    })?;
-    let contributors = owner_page
-        .into_iter()
-        .map(|record| match record {
-            VerifiedShuffleRecordV1::Owner(contributor) => Ok(contributor),
-            VerifiedShuffleRecordV1::Bucket(_) => Err(WorkerError::UnitBindingMismatch),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let nod_actions = finalized
         .ordered_records
         .iter()
@@ -307,9 +286,7 @@ fn execute_root_reduce_leaf(
             owner: record.nod_action.owner,
             wwd: record.nod_action.worldwide_day.value(),
             league_id: record.nod_action.league_id,
-            gratis_load_minor: record.nod_action.gratis_load_minor,
             entry_price_minor: record.nod_action.entry_price_minor,
-            settlement_cost_minor: record.nod_action.settlement_cost_minor,
             issuance_currency: record.nod_action.issuance_currency,
             reference_currency: record.nod_action.reference_currency,
         })
@@ -331,7 +308,6 @@ fn execute_root_reduce_leaf(
         chunk_ordinal: shard_ordinal,
         first_nod_ordinal: expected_start,
         ordered_nod_actions: nod_actions.clone(),
-        ordered_eligible_contributors: contributors.clone(),
     };
     let chunk_hash = chunk.result_chunk_hash(limits)?;
     let chunk_bytes = chunk.encode_canonical(limits)?;
@@ -350,29 +326,20 @@ fn execute_root_reduce_leaf(
         .iter()
         .map(|record| record.encode_canonical_record(limits))
         .collect::<Result<Vec<_>, _>>()?;
-    let contributor_records = contributors
-        .iter()
-        .map(|action| action.encode_canonical_record(limits))
-        .collect::<Result<Vec<_>, _>>()?;
+    let nominal_total = checked_sum(
+        nominals.values().copied(),
+        "root reducer tribute nominal total",
+    )?;
+    if nominals.len() != usize::try_from(tribute_count).map_err(|_| WorkerError::UnitBindingMismatch)?
+        || nominal_total != finalized.checked_tribute_nominal_total
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    if eligible_from_bodies != finalized.checked_eligible_nominal_total {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
     let manifest_records = vec![output_manifest_entry.encode_canonical_record(limits)?];
     let chunk_hash_records = vec![chunk_hash.as_slice().to_vec()];
-
-    let eligible_nominal_total = checked_sum(
-        contributors
-            .iter()
-            .map(|action| action.nominal_amount_minor),
-        "root reducer eligible nominal total",
-    )?;
-    let lysis_allocation_minor = checked_sum(
-        nod_actions.iter().map(|action| action.gratis_load_minor),
-        "root reducer Nod Gratis total",
-    )?;
-    let nod_cost_total = checked_sum(
-        nod_actions
-            .iter()
-            .map(|action| action.settlement_cost_minor),
-        "root reducer Nod cost total",
-    )?;
     let summary = RootReduceSummaryV1 {
         protocol_bundle_hash: spec.protocol_bundle_hash,
         job_id: spec.job_id,
@@ -392,12 +359,6 @@ fn execute_root_reduce_leaf(
             &bucket_records,
             limits.max_bounded_bytes,
         )?,
-        contributor_actions: LysisListSubtreeCarrierV1::from_primary_page(
-            ListKind::ContributorActions,
-            shard_ordinal,
-            &contributor_records,
-            limits.max_bounded_bytes,
-        )?,
         output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
             ListKind::CompleteOutputManifest,
             shard_ordinal,
@@ -413,12 +374,10 @@ fn execute_root_reduce_leaf(
         tribute_count,
         nod_count: tribute_count,
         bucket_count: tribute_count,
-        contributor_count: u32::try_from(contributors.len())
-            .map_err(|_| WorkerError::UnitBindingMismatch)?,
         tribute_nominal_total: finalized.checked_tribute_nominal_total,
-        eligible_nominal_total,
-        lysis_allocation_minor,
-        nod_cost_total,
+        eligible_nominal_total: finalized.checked_eligible_nominal_total,
+        lysis_allocation_minor: finalized.checked_segment_gratis_total,
+        nod_cost_total: finalized.checked_settlement_cost_total,
         first_error_ordinal: None,
     };
     require_complete_root_summary(&summary, plan, manifest)?;
@@ -476,20 +435,11 @@ pub(in super::super) fn require_root_reduce_finalized_binding(
 
 #[allow(clippy::too_many_arguments)]
 pub(in super::super) fn require_root_reduce_shuffle_population(
-    owner_source_count: u32,
     bucket_source_count: u32,
-    owner_source_root: B256,
-    bucket_source_root: B256,
-    owner_record_count: u32,
     bucket_record_count: u32,
     tribute_count: u32,
 ) -> Result<(), WorkerError> {
-    if owner_source_count != tribute_count
-        || bucket_source_count != tribute_count
-        || owner_source_root != bucket_source_root
-        || owner_record_count > tribute_count
-        || bucket_record_count != tribute_count
-    {
+    if bucket_source_count != tribute_count || bucket_record_count != tribute_count {
         return Err(WorkerError::UnitBindingMismatch);
     }
     Ok(())
@@ -599,10 +549,6 @@ fn empty_root_reduce_leaf(
             ListKind::BucketRecords,
             padded_ordinal,
         )?,
-        contributor_actions: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
-            ListKind::ContributorActions,
-            padded_ordinal,
-        )?,
         output_manifest_entries: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
             ListKind::CompleteOutputManifest,
             padded_ordinal,
@@ -614,7 +560,6 @@ fn empty_root_reduce_leaf(
         tribute_count: 0,
         nod_count: 0,
         bucket_count: 0,
-        contributor_count: 0,
         tribute_nominal_total: U256::ZERO,
         eligible_nominal_total: U256::ZERO,
         lysis_allocation_minor: U256::ZERO,

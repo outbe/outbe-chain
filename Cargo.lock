@@ -8964,7 +8964,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-macros",
- "outbe-ocomp-protocol",
  "outbe-oracle",
  "outbe-primitives",
  "revm",

@@ -1395,26 +1395,34 @@ struct FeederConfigInput<'a> {
 
 fn write_feeder_config(path: &Path, input: &FeederConfigInput<'_>) -> Result<()> {
     let mut config = format!(
-        "[chain]\nrpc_endpoint = \"{}\"\nchain_id = {}\ngasless_oracle_votes = true\n\n[account]\nprivate_key = \"{}\"\nvalidator_address = \"{}\"\n\n[oracle]\nvote_period = {}\npoll_interval_secs = 1\n\n[health]\nenabled = false\n\n[[provider_endpoints]]\nname = \"mock_http\"\nrest = \"{}\"\n",
+        "[chain]\nrpc_endpoint = \"{}\"\nchain_id = {}\ngasless_oracle_votes = true\n\n[account]\nprivate_key = \"{}\"\nvalidator_address = \"{}\"\n\n[oracle]\nvote_period = {}\npoll_interval_secs = 1\n\n[health]\nenabled = false\n",
         input.rpc_url,
         input.chain_id,
         input.private_key,
         input.validator_address,
         input.vote_period,
-        input.mock_url,
     );
     for pair in input.pairs {
         config.push_str(&format!(
             "\n[[currency_pairs]]\nbase = \"{}\"\nquote = \"{}\"\n",
             pair.base, pair.quote
         ));
+    }
+    // Every market names its pair outright: the harness runs pairs that share
+    // a quote, which the feeder cannot tell apart by quote alone.
+    config.push_str(&format!(
+        "\n[[api_providers]]\nname = \"mock_http\"\nrest = \"{}\"\nmarkets = [\n",
+        input.mock_url
+    ));
+    for pair in input.pairs {
         for source in &pair.sources {
             config.push_str(&format!(
-                "\n[[currency_pairs.sources]]\nprovider = \"mock_http\"\nbase = \"{}\"\nquote = \"{}\"\n",
-                source.base, source.quote
+                "  {{ quote = \"{}\", base = \"{}\", pair = \"{}/{}\" }},\n",
+                source.quote, source.base, pair.base, pair.quote
             ));
         }
     }
+    config.push_str("]\n");
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -1722,9 +1730,9 @@ mod tests {
         assert!(contents.contains("poll_interval_secs = 1"));
         assert!(contents.contains("gasless_oracle_votes = true"));
         assert!(contents.contains("enabled = false"));
-        assert!(contents.contains("[[currency_pairs.sources]]"));
-        assert!(contents.contains("quote = \"USDT\""));
-        assert!(contents.contains("quote = \"USDC\""));
+        assert!(contents.contains("[[api_providers]]"));
+        assert!(contents.contains("{ quote = \"USDT\", base = \"COEN\", pair = \"COEN/840\" }"));
+        assert!(contents.contains("{ quote = \"USDC\", base = \"COEN\", pair = \"COEN/840\" }"));
         assert!(!contents.contains("providers ="));
         #[cfg(unix)]
         {

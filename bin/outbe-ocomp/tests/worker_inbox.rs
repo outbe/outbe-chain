@@ -8,7 +8,10 @@ use outbe_ocomp::control::poc_schema_limits;
 use outbe_ocomp::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
 use outbe_ocomp_protocol::{
     result::ResultChunkV1,
-    shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
+    shuffle::{
+        ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1,
+        ShuffleRunPayloadV1,
+    },
     unit::CanonicalRunSpan,
     ObjectKind,
 };
@@ -20,7 +23,7 @@ fn shuffle_leaf_bytes() -> Vec<u8> {
         job_id: B256::repeat_byte(2),
         attempt: 0,
         unit_id: B256::repeat_byte(3),
-        kind: ShuffleRunKindV1::Owner,
+        kind: ShuffleRunKindV1::Bucket,
         run_span: CanonicalRunSpan {
             start_run: 0,
             end_run: 1,
@@ -30,11 +33,16 @@ fn shuffle_leaf_bytes() -> Vec<u8> {
             end_page: 1,
         },
         first_record_ordinal: 0,
-        record_count: 0,
+        record_count: 1,
         source_coverage_root: B256::repeat_byte(4),
         source_coverage_count: 256,
         ordered_record_root: B256::ZERO,
-        payload: ShuffleRunPayloadV1::OwnerLeaf(Vec::new()),
+        payload: ShuffleRunPayloadV1::BucketLeaf(vec![ShuffleBucketRecordV1 {
+            bucket_key: B256::repeat_byte(5),
+            raw_ordinal: 0,
+            tribute_id: B256::repeat_byte(6),
+            nod_id: B256::repeat_byte(7),
+        }]),
     }
     .with_recomputed_ordered_record_root(&poc_schema_limits())
     .expect("bind shuffle leaf root")
@@ -50,7 +58,6 @@ fn result_chunk_bytes() -> Vec<u8> {
         chunk_ordinal: 0,
         first_nod_ordinal: 0,
         ordered_nod_actions: Vec::new(),
-        ordered_eligible_contributors: Vec::new(),
     }
     .encode_canonical(&poc_schema_limits())
     .expect("canonical result chunk")

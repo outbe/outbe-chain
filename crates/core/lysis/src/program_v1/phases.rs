@@ -10,7 +10,6 @@ use outbe_primitives::time::WorldwideDay;
 use super::{
     execute::{
         calculate_cost, calculate_gratis_load, compute_fraction_map_from_groups,
-        validate_required_gratis,
     },
     FidelityPhaseV1, LeagueFractionV1, NodActionV1, ObservedTributeV1, ProgramErrorV1,
 };
@@ -23,7 +22,6 @@ pub struct FidelityObservationV1 {
     pub tribute_id: WwdEntityId,
     pub pre_distribution_league: u16,
     pub issuance_league: u16,
-    pub nominal_amount_minor: U256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -55,14 +53,19 @@ pub struct AmountRecordV1 {
     pub owner: Address,
     pub worldwide_day: WorldwideDay,
     pub league_id: u16,
-    pub nominal_amount_minor: U256,
     pub gratis_fraction_fp: U256,
-    pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
-    pub settlement_cost_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
+}
+
+struct AmountMathV1 {
+    record: AmountRecordV1,
+    nominal_amount_minor: U256,
+    gratis_load_minor: U256,
+    settlement_cost_minor: U256,
+    eligible: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,20 +74,15 @@ pub struct AmountRunV1 {
     pub end_ordinal: u32,
     pub ordered_records: Vec<AmountRecordV1>,
     pub checked_segment_gratis_total: U256,
+    pub checked_segment_nominal_total: U256,
+    pub checked_segment_eligible_nominal_total: U256,
+    pub checked_segment_settlement_cost_total: U256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FinalizedOutputRecordV1 {
     pub raw_ordinal: u32,
     pub nod_action: NodActionV1,
-    pub contributor_action: Option<FinalizedContributorV1>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FinalizedContributorV1 {
-    pub owner: Address,
-    pub source_tribute_id: WwdEntityId,
-    pub nominal_amount_minor: U256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,13 +91,9 @@ pub struct FinalizedOutputRunV1 {
     pub end_ordinal: u32,
     pub ordered_records: Vec<FinalizedOutputRecordV1>,
     pub checked_tribute_nominal_total: U256,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OwnerOrderedRunV1 {
-    pub run_ordinal: u32,
-    pub ordered_contributors: Vec<FinalizedContributorV1>,
+    pub checked_segment_gratis_total: U256,
     pub checked_eligible_nominal_total: U256,
+    pub checked_settlement_cost_total: U256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -244,7 +238,6 @@ pub fn fidelity_map(
             tribute_id: item.tribute.tribute_id,
             pre_distribution_league: first,
             issuance_league: second,
-            nominal_amount_minor: item.tribute.nominal_amount_minor,
         });
     }
 
@@ -395,6 +388,9 @@ pub fn amount_map(
 
     let mut ordered_records = Vec::with_capacity(observed.len());
     let mut checked_segment_gratis_total = U256::ZERO;
+    let mut checked_segment_nominal_total = U256::ZERO;
+    let mut checked_segment_eligible_nominal_total = U256::ZERO;
+    let mut checked_segment_settlement_cost_total = U256::ZERO;
     for (local_ordinal, (item, fidelity)) in observed.iter().zip(fidelity_observations).enumerate()
     {
         let raw_ordinal = start_ordinal
@@ -402,13 +398,34 @@ pub fn amount_map(
                 u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
             )
             .ok_or(ProgramErrorV1::OutputCountMismatch)?;
-        let record = amount_record(raw_ordinal, item, fidelity, &fraction_by_league)?;
-        checked_segment_gratis_total = checked_segment_gratis_total
-            .checked_add(record.gratis_load_minor)
-            .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                message: format!("Gratis total overflow at {raw_ordinal}"),
-            })?;
-        ordered_records.push(record);
+        let math = amount_record(raw_ordinal, item, fidelity, &fraction_by_league)?;
+        checked_segment_gratis_total = checked_add_amount(
+            checked_segment_gratis_total,
+            math.gratis_load_minor,
+            raw_ordinal,
+            "Gratis total overflow",
+        )?;
+        checked_segment_nominal_total = checked_add_amount(
+            checked_segment_nominal_total,
+            math.nominal_amount_minor,
+            raw_ordinal,
+            "nominal total overflow",
+        )?;
+        checked_segment_settlement_cost_total = checked_add_amount(
+            checked_segment_settlement_cost_total,
+            math.settlement_cost_minor,
+            raw_ordinal,
+            "settlement cost total overflow",
+        )?;
+        if math.eligible {
+            checked_segment_eligible_nominal_total = checked_add_amount(
+                checked_segment_eligible_nominal_total,
+                math.nominal_amount_minor,
+                raw_ordinal,
+                "eligible nominal total overflow",
+            )?;
+        }
+        ordered_records.push(math.record);
     }
     let count =
         u32::try_from(ordered_records.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
@@ -419,6 +436,20 @@ pub fn amount_map(
             .ok_or(ProgramErrorV1::OutputCountMismatch)?,
         ordered_records,
         checked_segment_gratis_total,
+        checked_segment_nominal_total,
+        checked_segment_eligible_nominal_total,
+        checked_segment_settlement_cost_total,
+    })
+}
+
+fn checked_add_amount(
+    total: U256,
+    amount: U256,
+    raw_ordinal: u32,
+    message: &str,
+) -> Result<U256, ProgramErrorV1> {
+    total.checked_add(amount).ok_or_else(|| ProgramErrorV1::Arithmetic {
+        message: format!("{message} at {raw_ordinal}"),
     })
 }
 
@@ -442,10 +473,9 @@ fn amount_record(
     item: &ObservedTributeV1,
     fidelity: &FidelityObservationV1,
     fraction_by_league: &BTreeMap<u16, U256>,
-) -> Result<AmountRecordV1, ProgramErrorV1> {
+) -> Result<AmountMathV1, ProgramErrorV1> {
     if fidelity.raw_ordinal != raw_ordinal
         || fidelity.tribute_id != item.tribute.tribute_id
-        || fidelity.nominal_amount_minor != item.tribute.nominal_amount_minor
         || fidelity.pre_distribution_league != fidelity.issuance_league
     {
         return Err(ProgramErrorV1::OutputCountMismatch);
@@ -503,58 +533,43 @@ fn amount_record(
     }
     let settlement_cost_minor =
         calculate_cost(entry_price_minor, gratis_load_minor, raw_ordinal as usize)?;
-    Ok(AmountRecordV1 {
-        raw_ordinal,
-        tribute_id: item.tribute.tribute_id,
-        owner: item.tribute.owner,
-        worldwide_day: item.tribute.worldwide_day,
-        league_id: second_league,
+    Ok(AmountMathV1 {
+        record: AmountRecordV1 {
+            raw_ordinal,
+            tribute_id: item.tribute.tribute_id,
+            owner: item.tribute.owner,
+            worldwide_day: item.tribute.worldwide_day,
+            league_id: second_league,
+            gratis_fraction_fp: fraction,
+            entry_price_minor,
+            issuance_currency: item.tribute.issuance_currency,
+            reference_currency: item.tribute.reference_currency,
+            exclude_from_intex_issuance: item.tribute.exclude_from_intex_issuance,
+        },
         nominal_amount_minor: item.tribute.nominal_amount_minor,
-        gratis_fraction_fp: fraction,
         gratis_load_minor,
-        entry_price_minor,
         settlement_cost_minor,
-        issuance_currency: item.tribute.issuance_currency,
-        reference_currency: item.tribute.reference_currency,
-        exclude_from_intex_issuance: item.tribute.exclude_from_intex_issuance,
+        eligible: !item.tribute.exclude_from_intex_issuance,
     })
 }
 
 pub fn gratis_summary(
     start_ordinal: u32,
-    gratis_loads: &[U256],
+    record_count: usize,
+    checked_segment_gratis_total: U256,
 ) -> Result<GratisSegmentSummaryV1, ProgramErrorV1> {
-    if gratis_loads.is_empty()
-        || gratis_loads.len()
+    if record_count == 0
+        || record_count
             > usize::try_from(PRIMARY_WORK_SHARD_SIZE)
                 .map_err(|_| ProgramErrorV1::OutputCountMismatch)?
+        || checked_segment_gratis_total.is_zero()
     {
         return Err(ProgramErrorV1::OutputCountMismatch);
     }
-    let count =
-        u32::try_from(gratis_loads.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
+    let count = u32::try_from(record_count).map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
     let end_ordinal = start_ordinal
         .checked_add(count)
         .ok_or(ProgramErrorV1::OutputCountMismatch)?;
-    let mut checked_segment_gratis_total = U256::ZERO;
-    for (local_ordinal, load) in gratis_loads.iter().copied().enumerate() {
-        let raw_ordinal = start_ordinal
-            .checked_add(
-                u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
-            )
-            .ok_or(ProgramErrorV1::OutputCountMismatch)?;
-        if load.is_zero() {
-            return Err(ProgramErrorV1::ZeroGratisLoad {
-                ordinal: raw_ordinal as usize,
-            });
-        }
-        checked_segment_gratis_total =
-            checked_segment_gratis_total
-                .checked_add(load)
-                .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                    message: format!("Gratis total overflow at {raw_ordinal}"),
-                })?;
-    }
     Ok(GratisSegmentSummaryV1 {
         start_ordinal,
         end_ordinal,
@@ -637,29 +652,27 @@ pub fn gratis_prefix_down(
 pub fn finalize_gratis_leaf(
     incoming_remaining: Option<U256>,
     start_ordinal: u32,
-    gratis_loads: &[U256],
+    record_count: usize,
+    checked_segment_gratis_total: U256,
 ) -> Result<GratisLeafPrefixV1, ProgramErrorV1> {
-    if gratis_loads.is_empty()
-        || gratis_loads.len()
+    if record_count == 0
+        || record_count
             > usize::try_from(PRIMARY_WORK_SHARD_SIZE)
                 .map_err(|_| ProgramErrorV1::OutputCountMismatch)?
+        || checked_segment_gratis_total.is_zero()
     {
         return Err(ProgramErrorV1::OutputCountMismatch);
     }
     let incoming_remaining = incoming_remaining.ok_or(ProgramErrorV1::OutputCountMismatch)?;
-    let mut remaining = incoming_remaining;
-    for (local_ordinal, load) in gratis_loads.iter().copied().enumerate() {
-        let raw_ordinal = start_ordinal
-            .checked_add(
-                u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
-            )
-            .ok_or(ProgramErrorV1::OutputCountMismatch)?;
-        remaining = validate_required_gratis(remaining, load, raw_ordinal as usize)?;
-    }
+    let outgoing_remaining = incoming_remaining
+        .checked_sub(checked_segment_gratis_total)
+        .ok_or(ProgramErrorV1::GratisLoadExceedsRemaining {
+            ordinal: start_ordinal as usize,
+        })?;
     Ok(GratisLeafPrefixV1 {
         segment_ordinal: start_ordinal / PRIMARY_WORK_SHARD_SIZE,
         incoming_remaining,
-        outgoing_remaining: remaining,
+        outgoing_remaining,
         first_error_ordinal: None,
     })
 }
@@ -674,9 +687,16 @@ pub fn output_finalize(
     {
         return Err(ProgramErrorV1::OutputCountMismatch);
     }
-    let mut remaining = prefix.incoming_remaining;
+    let outgoing = prefix
+        .incoming_remaining
+        .checked_sub(amounts.checked_segment_gratis_total)
+        .ok_or(ProgramErrorV1::GratisLoadExceedsRemaining {
+            ordinal: amounts.start_ordinal as usize,
+        })?;
+    if outgoing != prefix.outgoing_remaining {
+        return Err(ProgramErrorV1::OutputCountMismatch);
+    }
     let mut ordered_records = Vec::with_capacity(amounts.ordered_records.len());
-    let mut checked_tribute_nominal_total = U256::ZERO;
     for amount in &amounts.ordered_records {
         if amount.raw_ordinal
             != amounts
@@ -689,16 +709,6 @@ pub fn output_finalize(
         {
             return Err(ProgramErrorV1::OutputCountMismatch);
         }
-        remaining = validate_required_gratis(
-            remaining,
-            amount.gratis_load_minor,
-            amount.raw_ordinal as usize,
-        )?;
-        checked_tribute_nominal_total = checked_tribute_nominal_total
-            .checked_add(amount.nominal_amount_minor)
-            .ok_or(ProgramErrorV1::TotalNominalOverflow {
-                ordinal: amount.raw_ordinal as usize,
-            })?;
         let nod_id =
             derive_poseidon_entity_id(amount.owner, amount.worldwide_day).map_err(|error| {
                 ProgramErrorV1::Arithmetic {
@@ -713,31 +723,20 @@ pub fn output_finalize(
                 owner: amount.owner,
                 worldwide_day: amount.worldwide_day,
                 league_id: amount.league_id,
-                gratis_load_minor: amount.gratis_load_minor,
                 entry_price_minor: amount.entry_price_minor,
-                settlement_cost_minor: amount.settlement_cost_minor,
                 issuance_currency: amount.issuance_currency,
                 reference_currency: amount.reference_currency,
             },
-            contributor_action: (!amount.exclude_from_intex_issuance).then_some(
-                FinalizedContributorV1 {
-                    owner: amount.owner,
-                    source_tribute_id: amount.tribute_id,
-                    nominal_amount_minor: amount.nominal_amount_minor,
-                },
-            ),
         });
     }
-    if prefix.incoming_remaining - remaining != amounts.checked_segment_gratis_total
-        || remaining != prefix.outgoing_remaining
-        || amounts.end_ordinal
-            != amounts
-                .start_ordinal
-                .checked_add(
-                    u32::try_from(ordered_records.len())
-                        .map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
-                )
-                .ok_or(ProgramErrorV1::OutputCountMismatch)?
+    if amounts.end_ordinal
+        != amounts
+            .start_ordinal
+            .checked_add(
+                u32::try_from(ordered_records.len())
+                    .map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+            )
+            .ok_or(ProgramErrorV1::OutputCountMismatch)?
     {
         return Err(ProgramErrorV1::OutputCountMismatch);
     }
@@ -745,7 +744,10 @@ pub fn output_finalize(
         start_ordinal: amounts.start_ordinal,
         end_ordinal: amounts.end_ordinal,
         ordered_records,
-        checked_tribute_nominal_total,
+        checked_tribute_nominal_total: amounts.checked_segment_nominal_total,
+        checked_segment_gratis_total: amounts.checked_segment_gratis_total,
+        checked_eligible_nominal_total: amounts.checked_segment_eligible_nominal_total,
+        checked_settlement_cost_total: amounts.checked_segment_settlement_cost_total,
     })
 }
 
@@ -775,34 +777,6 @@ fn validate_finalized_leaf(run: &FinalizedOutputRunV1) -> Result<u32, ProgramErr
         }
     }
     Ok(run.start_ordinal / PRIMARY_WORK_SHARD_SIZE)
-}
-
-pub fn shuffle_owners(run: &FinalizedOutputRunV1) -> Result<OwnerOrderedRunV1, ProgramErrorV1> {
-    let run_ordinal = validate_finalized_leaf(run)?;
-    let mut ordered_contributors = run
-        .ordered_records
-        .iter()
-        .filter_map(|record| record.contributor_action.clone())
-        .collect::<Vec<_>>();
-    ordered_contributors.sort_by_key(|action| (action.owner, action.source_tribute_id));
-    let mut previous_owner = None;
-    let mut checked_eligible_nominal_total = U256::ZERO;
-    for contributor in &ordered_contributors {
-        if previous_owner == Some(contributor.owner) {
-            return Err(ProgramErrorV1::OutputCountMismatch);
-        }
-        previous_owner = Some(contributor.owner);
-        checked_eligible_nominal_total = checked_eligible_nominal_total
-            .checked_add(contributor.nominal_amount_minor)
-            .ok_or(ProgramErrorV1::ContributorOverflow {
-                ordinal: run.start_ordinal as usize,
-            })?;
-    }
-    Ok(OwnerOrderedRunV1 {
-        run_ordinal,
-        ordered_contributors,
-        checked_eligible_nominal_total,
-    })
 }
 
 pub fn shuffle_buckets(run: &FinalizedOutputRunV1) -> Result<BucketOrderedRunV1, ProgramErrorV1> {

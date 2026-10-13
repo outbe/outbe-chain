@@ -207,7 +207,6 @@ fn inventory_selects_native_public_domains_and_excludes_signing_authority() {
         (NativeRoot::Ocomp, DomainKind::ExportReceipts, layout.ocomp_root.clone(), format!("exporter-v1/receipts/{job}/receipt.ref")),
         (NativeRoot::Ocomp, DomainKind::ExportBindings, layout.ocomp_root.clone(), format!("supervisor-v1/export-bindings/{job}/binding.lock")),
         (NativeRoot::Ocomp, DomainKind::JobPublicRecords, layout.ocomp_root.clone(), format!("supervisor-v1/jobs/{job}/admissions/catalog.header")),
-        (NativeRoot::Ocomp, DomainKind::JobPublicRecords, layout.ocomp_root.clone(), format!("supervisor-v1/jobs/{job}/contributor-payout-v1.bin")),
         (NativeRoot::Ocomp, DomainKind::MaterializationReferences, layout.ocomp_root.clone(), format!("supervisor-v1/materialization-references/{job}/17/{job}.materialization-refs-v1.json")),
         (NativeRoot::Ocomp, DomainKind::MaterializationReferences, layout.ocomp_root.clone(), format!("supervisor-v1/materialization-references/{job}/23/{job}.materialization-refs-v1.tmp")),
         (NativeRoot::Ocomp, DomainKind::MaterializationReferences, layout.ocomp_root.clone(), format!("supervisor-v1/materialization-references/{bundle}/5/{bundle}.materialization-refs-v1.json")),

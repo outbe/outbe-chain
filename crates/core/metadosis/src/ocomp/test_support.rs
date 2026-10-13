@@ -35,7 +35,7 @@ use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
     hash::hash_framed,
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
+        intent_storage_key, ActivationPreconditionsV1, DayType,
         ExpectedFinalizedIntentBindingV1, FinalizedIntentProofV1, FinalizedIntentVerificationError,
         FinalizedRequestBindingV1, FrozenMetadosisValuesV1, JobIntentV1,
         MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
@@ -95,7 +95,6 @@ pub const TEST_LOGICAL_TIME: u64 = 1_000;
 #[cfg(test)]
 pub(crate) enum ActivationReceiptFault {
     Nod,
-    Contributor,
     Tribute,
     CarryOver,
     RequestSplit,
@@ -114,9 +113,6 @@ pub(crate) fn inject_receipt_fault(
 ) {
     match ACTIVATION_RECEIPT_FAULT.with(Cell::take) {
         Some(ActivationReceiptFault::Nod) => receipts.nod.nod_root = hash(210),
-        Some(ActivationReceiptFault::Contributor) => {
-            receipts.contributor.contributor_count += 1;
-        }
         Some(ActivationReceiptFault::Tribute) => receipts.tribute.retired_generation += 1,
         Some(ActivationReceiptFault::CarryOver) => {
             receipts.carry_over.credited_unused_lysis_limit_minor += U256::from(1);

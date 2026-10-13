@@ -15,7 +15,6 @@ pub struct SemanticSnapshot {
     pub active_job_id: B256,
     pub active_nod_root: B256,
     pub nod: outbe_nod::schema::NodCertifiedGenerationProjection,
-    pub contributor: outbe_intex::schema::CertifiedContributorGenerationProjection,
     pub tribute_generation: u64,
     pub tribute_count: u32,
     pub tribute_nominal: U256,
@@ -266,10 +265,6 @@ impl ActivationFixture {
                 .ocomp_certified_generation(TEST_WWD)
                 .unwrap()
                 .unwrap();
-            let contributor =
-                outbe_intex::api::certified_contributor_generation(&storage, TEST_WWD)
-                    .unwrap()
-                    .unwrap();
             let tribute = TributeContract::new(storage.clone());
             let admission = tribute.pre_admission_projection(TEST_WWD).unwrap();
             let totals = tribute.get_day_totals(TEST_WWD).unwrap();
@@ -279,7 +274,6 @@ impl ActivationFixture {
                 active_job_id: active.job_id,
                 active_nod_root: active.nod_root,
                 nod,
-                contributor,
                 tribute_generation: admission.source_generation,
                 tribute_count: totals.tribute_count,
                 tribute_nominal: totals.tribute_nominal_total_minor,

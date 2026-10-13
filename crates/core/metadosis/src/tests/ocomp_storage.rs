@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
+        intent_storage_key, ActivationPreconditionsV1, DayType,
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
@@ -238,12 +238,6 @@ fn intent(
                 target_generation: 0,
                 namespace_root_before: B256::ZERO,
                 max_nod_count: 1,
-            },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: WWD.value(),
-                expected_series_version: 0,
-                max_contributor_count: 1,
-                max_eligible_nominal_total: U256::from(10),
             },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: WWD.value(),
