@@ -46,7 +46,7 @@ export function registerCredisTools(server: McpServer, ctx: Ctx): void {
     "credis_reserve",
     "Reserve exact stablecoin principal and fix the pledge valuation for 15 minutes. Returns the reservationId.",
     {
-      owner: address,
+      owner: address.describe("Address that holds the Credis and receives the CCA's COEN stake"),
       source: address.describe("Main account that pledges the Gratis collateral"),
       asset: address,
       amount: rawAmount,
