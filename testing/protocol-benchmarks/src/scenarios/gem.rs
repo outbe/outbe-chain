@@ -264,10 +264,12 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
             &storage,
             &prepared.world.scope,
             &prepared.world.parent,
-            ALICE,
-            position_id,
-            BOB,
-            U256::from(10) * six_decimal_unit(),
+            outbe_gemfactory::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id,
+                owner: BOB,
+                promis_load: U256::from(10) * six_decimal_unit(),
+            },
         )
         .map_err(|error| error.to_string()),
     })?;

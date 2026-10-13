@@ -152,7 +152,7 @@ impl AgentRewardContract<'_> {
                 RewardPool::Cca => GemTypes::Cca,
             };
             let gem_id =
-                issue_reward_gem(&self.storage, scope, parent, address, gem_type, gem_load)?;
+                issue_reward_gem(&self.storage, scope, parent, (address, gem_load), gem_type)?;
             self.storage
                 .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
             self.write_pool_claimable_reward(pool, address, balance - burned)?;
@@ -250,10 +250,10 @@ pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    owner: Address,
+    recipient: (Address, U256),
     gem_type: GemTypes,
-    load: U256,
 ) -> Result<U256> {
+    let (owner, load) = recipient;
     let entry_price = resolve_gem_entry_price(storage)?.ok_or_else(|| {
         PrecompileError::Revert("agentreward has no usable COEN price yet".into())
     })?;

@@ -211,10 +211,12 @@ fn admitted_at_quote(
         storage,
         &world.scope,
         &world.parent,
-        BOB,
-        gem_id,
-        asset,
-        snapshot,
+        crate::schema::GemSettlementParams {
+            caller: BOB,
+            gem_id,
+            asset,
+            snapshot_id: snapshot,
+        },
     );
     assert!(err_msg(res).contains("unexpected amount"));
     let now = storage.timestamp().unwrap().to::<u64>();
@@ -412,10 +414,12 @@ fn merchant_entry_price(storage: &StorageHandle, world: &GemWorld, source_entry:
         storage,
         &world.scope,
         &world.parent,
-        ALICE,
-        id,
-        BOB,
-        six_decimal_unit(),
+        crate::schema::MerchantGemIssueParams {
+            caller: ALICE,
+            position_id: id,
+            owner: BOB,
+            promis_load: six_decimal_unit(),
+        },
     )
     .unwrap();
     gem_view(storage, world, gem_id).bucket.entry_price_minor

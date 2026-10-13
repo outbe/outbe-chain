@@ -61,8 +61,10 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
             handle,
             &world.scope,
             &world.parent,
-            unpaid,
-            find_valid_nonce(unpaid, BOB),
+            crate::schema::GemMiningProof {
+                gem_id: unpaid,
+                nonce: find_valid_nonce(unpaid, BOB),
+            },
             promis_auth(BOB, load, 0),
         )
         .unwrap_err();
@@ -82,8 +84,10 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
             handle,
             &world.scope,
             &world.parent,
-            paid,
-            nonce,
+            crate::schema::GemMiningProof {
+                gem_id: paid,
+                nonce,
+            },
             promis_auth(ALICE, load, 0),
         )
         .unwrap();

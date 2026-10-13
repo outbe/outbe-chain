@@ -503,12 +503,7 @@ impl CompressedTreeService {
             .map_err(|_| TreeServiceError::LockPoisoned("finalization boundary"))?;
         let current = self.db.marker()?;
         let batch = provisional.freeze(block_hash);
-        if current.height == batch.block_number
-            && current.block_hash == batch.block_hash
-            && current.parent_block_hash == batch.parent_block_hash
-            && current.parent_root == batch.parent_root()
-            && current.new_root == batch.new_root()
-        {
+        if current == batch.marker(current.commitment_scheme_version) {
             return Ok(PublicationOutcome::AlreadyPublished);
         }
         if batch.block_number != current.height.saturating_add(1)

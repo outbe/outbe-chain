@@ -66,10 +66,12 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE,
-            U256::ZERO,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE,
+                snapshot_id: U256::ZERO,
+            },
         )
         .unwrap_err();
 
@@ -105,10 +107,12 @@ fn settle_rejects_wrong_settlement_currency() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE_EUR,
-            U256::ZERO,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE_EUR,
+                snapshot_id: U256::ZERO,
+            },
         );
         assert!(err_msg(res).contains("does not match the gem"));
     });
@@ -133,10 +137,12 @@ fn settle_rejects_non_qualified_state() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE,
-            U256::ZERO,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE,
+                snapshot_id: U256::ZERO,
+            },
         );
         assert!(err_msg(res).contains("invalid state"));
     });

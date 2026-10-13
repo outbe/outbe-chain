@@ -71,7 +71,19 @@ fn deliver_oldest_reward_gem_batch_inner(
                 "validator reward Gem UTC day {reward_utc_day} delivered {delivered} of {recipient_count} recipients"
             ))
         })?;
-    issue_reward_gem(ctx, scope, parent, &batch, owner, load, entry_price)?;
+    outbe_gemfactory::api::issue_gem(
+        &ctx.storage,
+        scope,
+        parent,
+        outbe_gemfactory::GemIssueParams {
+            owner,
+            gem_type: batch.gem_type,
+            promis_load: load,
+            issuance_currency: batch.issuance_currency,
+            reference_currency: batch.reference_currency,
+            entry_price,
+        },
+    )?;
     let delivered_recipients = delivered.checked_add(1).ok_or_else(|| {
         reward_gem_retryable_error("validator reward Gem delivered count overflow")
     })?;
@@ -260,31 +272,6 @@ fn resolve_reward_entry_price(
         outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
     );
     outbe_oracle::api::get_utc_day_vwap_for_iso(ctx.storage.clone(), day, reference_currency)
-}
-
-fn issue_reward_gem(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    batch: &QueuedRewardGemBatch,
-    owner: Address,
-    load: U256,
-    entry_price: U256,
-) -> Result<()> {
-    outbe_gemfactory::api::issue_gem(
-        &ctx.storage,
-        scope,
-        parent,
-        outbe_gemfactory::GemIssueParams {
-            owner,
-            gem_type: batch.gem_type,
-            promis_load: load,
-            issuance_currency: batch.issuance_currency,
-            reference_currency: batch.reference_currency,
-            entry_price,
-        },
-    )?;
-    Ok(())
 }
 
 fn retire_reward_gem_fifo_head(

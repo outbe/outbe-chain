@@ -175,10 +175,12 @@ fn a_drained_position_leaves_the_queue() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            id,
-            BOB,
-            sent_capacity(six_decimal_u128()),
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load: sent_capacity(six_decimal_u128()),
+            },
         )
         .unwrap();
 
@@ -215,9 +217,18 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
         let capacity = sent_capacity(six_decimal_u128());
 
         let load = U256::from(10u64) * six_decimal_unit();
-        let gem_id =
-            runtime::issue_merchant_gem(storage, &world.scope, &world.parent, ALICE, id, BOB, load)
-                .unwrap();
+        let gem_id = runtime::issue_merchant_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load: load,
+            },
+        )
+        .unwrap();
 
         let item = gem_view(storage, world, gem_id);
         assert_eq!(item.item.owner, BOB);
@@ -258,10 +269,12 @@ fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            id,
-            BOB,
-            six_decimal_unit(),
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load: six_decimal_unit(),
+            },
         )
         .unwrap();
         let item = gem_view(storage, world, gem_id);
@@ -280,10 +293,12 @@ fn issue_merchant_gem_charges_one_minor_unit_when_the_cost_rounds_to_zero() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            id,
-            BOB,
-            U256::ONE,
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load: U256::ONE,
+            },
         )
         .unwrap();
         let item = gem_view(storage, world, gem_id);
@@ -306,10 +321,12 @@ fn issue_merchant_gem_rejects_non_merchant() {
             storage,
             &world.scope,
             &world.parent,
-            BOB,
-            id,
-            BOB,
-            six_decimal_unit(),
+            crate::schema::MerchantGemIssueParams {
+                caller: BOB,
+                position_id: id,
+                owner: BOB,
+                promis_load: six_decimal_unit(),
+            },
         );
         assert!(err_msg(r).contains("position owner"));
     });
@@ -326,8 +343,17 @@ fn issue_merchant_gem_over_capacity_rejects() {
             six_decimal_u128(),
         );
         let over = sent_capacity(six_decimal_u128()) + U256::from(1u64);
-        let r =
-            runtime::issue_merchant_gem(storage, &world.scope, &world.parent, ALICE, id, BOB, over);
+        let r = runtime::issue_merchant_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load: over,
+            },
+        );
         assert!(err_msg(r).contains("capacity"));
     });
 }
@@ -358,10 +384,12 @@ fn issue_merchant_gem_after_expiry_rejects() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            position_id,
-            BOB,
-            six_decimal_unit(),
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id,
+                owner: BOB,
+                promis_load: six_decimal_unit(),
+            },
         );
         assert!(err_msg(r).contains("expired"));
     });
@@ -398,10 +426,12 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
                 &storage,
                 &world.scope,
                 &world.parent,
-                ALICE,
-                id,
-                BOB,
-                load,
+                crate::schema::MerchantGemIssueParams {
+                    caller: ALICE,
+                    position_id: id,
+                    owner: BOB,
+                    promis_load: load,
+                },
             );
             let remaining = runtime::position_data(&storage, id)
                 .unwrap()
@@ -440,10 +470,12 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            id,
-            BOB,
-            six_decimal_unit(),
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load: six_decimal_unit(),
+            },
         )
         .unwrap();
         let item = gem_view(storage, world, gem_id);
@@ -540,10 +572,12 @@ fn issue_merchant_gem_takes_each_maximum_independently() {
                 storage,
                 &world.scope,
                 &world.parent,
-                ALICE,
-                id,
-                BOB,
-                six_decimal_unit(),
+                crate::schema::MerchantGemIssueParams {
+                    caller: ALICE,
+                    position_id: id,
+                    owner: BOB,
+                    promis_load: six_decimal_unit(),
+                },
             )
             .unwrap();
             let item = gem_view(storage, world, gem_id);
@@ -589,10 +623,12 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            id,
-            BOB,
-            six_decimal_unit(),
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load: six_decimal_unit(),
+            },
         );
         assert!(err_msg(r).contains("oracle nominal unavailable"));
     });
@@ -615,10 +651,12 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
             &storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            position,
-            BOB,
-            six_decimal_unit(),
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: position,
+                owner: BOB,
+                promis_load: six_decimal_unit(),
+            },
         )
         .unwrap();
         let wallet_gem = issue_at_live_rate(

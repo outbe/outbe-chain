@@ -54,10 +54,12 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
             &storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE,
-            required,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE,
+                snapshot_id: required,
+            },
         )
     });
     let error = err_msg(result);

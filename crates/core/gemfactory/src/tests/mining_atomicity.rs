@@ -39,9 +39,14 @@ fn a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched() {
         // A modify authorization for the wrong amount: the enclave rejects the
         // mint as a business failure (not an infrastructure fault).
         let wrong = promis_auth(ALICE, load - U256::ONE, 0);
-        let error =
-            runtime::mine_promis(storage, &world.scope, &world.parent, gem_id, nonce, wrong)
-                .unwrap_err();
+        let error = runtime::mine_promis(
+            storage,
+            &world.scope,
+            &world.parent,
+            crate::schema::GemMiningProof { gem_id, nonce },
+            wrong,
+        )
+        .unwrap_err();
         assert!(
             matches!(error, outbe_primitives::error::PrecompileError::Revert(_)),
             "{error:?}"
@@ -67,8 +72,7 @@ fn a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched() {
             storage,
             &world.scope,
             &world.parent,
-            gem_id,
-            nonce,
+            crate::schema::GemMiningProof { gem_id, nonce },
             promis_auth(ALICE, load, 0),
         )
         .unwrap();
@@ -94,8 +98,7 @@ fn a_mining_that_fails_after_any_write_keeps_the_settled_gem_and_mines_once_on_r
                 &storage,
                 &world.scope,
                 &world.parent,
-                gem_id,
-                nonce,
+                crate::schema::GemMiningProof { gem_id, nonce },
                 promis_auth(ALICE, load, 0),
             )
         })

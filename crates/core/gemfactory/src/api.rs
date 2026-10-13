@@ -29,41 +29,26 @@ pub fn issue_merchant_gem(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
-    position_id: U256,
-    owner: Address,
-    promis_load: U256,
+    params: crate::schema::MerchantGemIssueParams,
 ) -> Result<U256> {
-    runtime::issue_merchant_gem(
-        storage,
-        scope,
-        parent,
-        caller,
-        position_id,
-        owner,
-        promis_load,
-    )
+    runtime::issue_merchant_gem(storage, scope, parent, params)
 }
 
 pub fn settle_gem(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
-    gem_id: U256,
-    asset: Address,
-    snapshot_id: U256,
+    params: crate::schema::GemSettlementParams,
 ) -> Result<()> {
-    runtime::settle_gem(storage, scope, parent, caller, gem_id, asset, snapshot_id)
+    runtime::settle_gem(storage, scope, parent, params)
 }
 
 pub fn mine_promis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    gem_id: U256,
-    nonce: u64,
+    params: crate::schema::GemMiningProof,
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
-    runtime::mine_promis(storage, scope, parent, gem_id, nonce, auth)
+    runtime::mine_promis(storage, scope, parent, params, auth)
 }

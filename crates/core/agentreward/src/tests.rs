@@ -932,9 +932,8 @@ fn reward_timestamp_narrowing_rejects_overflow() {
             &storage,
             &world.scope,
             &world.parent,
-            Address::repeat_byte(1),
+            (Address::repeat_byte(1), U256::from(100)),
             GemTypes::Cca,
-            U256::from(100),
         )
         .unwrap_err();
         assert!(error.to_string().contains("timestamp overflow"));

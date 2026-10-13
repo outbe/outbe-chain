@@ -110,24 +110,15 @@ pub fn encode_gem_bucket_v1(body: &GemBucketBodyV1) -> Result<Vec<u8>, Canonical
 }
 
 pub fn decode_gem_bucket_v1(bytes: &[u8]) -> Result<GemBucketBodyV1, CanonicalBodyError> {
-    let mut fields = Fields::new(bytes);
-    let bucket_key = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 1)?, 1)?);
-    let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 2)?);
-    let entry_price_minor = decode_u256(required_bytes(&mut fields, 3)?, 3)?;
-    let reference_currency = optional_u16(&mut fields, 4)?;
-    let settled_gems = optional_varint(&mut fields, 5)?;
-    fields.finish()?;
+    let fields = decode_bucket_fields(bytes, 3)?;
     let body = GemBucketBodyV1 {
-        bucket_key,
-        worldwide_day,
-        entry_price_minor,
-        reference_currency,
-        settled_gems,
+        bucket_key: fields.bucket_key,
+        worldwide_day: fields.worldwide_day,
+        entry_price_minor: fields.entry_price_minor,
+        reference_currency: fields.reference_currency,
+        settled_gems: fields.settled,
     };
-    if encode_gem_bucket_v1(&body)? != bytes {
-        return Err(CanonicalBodyError::NonCanonicalEncoding);
-    }
-    Ok(body)
+    canonical_decoded(body, bytes, encode_gem_bucket_v1)
 }
 
 pub fn decode_stored_gem_bucket_v1(bytes: &[u8]) -> Result<GemBucketBodyV1, CanonicalBodyError> {

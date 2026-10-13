@@ -19,8 +19,7 @@ fn mine_promis_full_genesis_flow() {
             storage,
             &world.scope,
             &world.parent,
-            gem_id,
-            nonce,
+            crate::schema::GemMiningProof { gem_id, nonce },
             promis_auth(ALICE, load, 0),
         )
         .unwrap();
@@ -58,7 +57,13 @@ fn mine_promis_rejects_non_settled() {
         )
         .unwrap();
         // WALLET is Issued, not Settled. Mine should reject before PoW.
-        let res = runtime::mine_promis(storage, &world.scope, &world.parent, gem_id, 0, no_auth());
+        let res = runtime::mine_promis(
+            storage,
+            &world.scope,
+            &world.parent,
+            crate::schema::GemMiningProof { gem_id, nonce: 0 },
+            no_auth(),
+        );
         assert!(err_msg(res).contains("invalid state"));
     });
 }
@@ -78,8 +83,7 @@ fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
             storage,
             &world.scope,
             &world.parent,
-            gem_id,
-            nonce,
+            crate::schema::GemMiningProof { gem_id, nonce },
             promis_auth(ALICE, load, 0),
         )
         .unwrap();

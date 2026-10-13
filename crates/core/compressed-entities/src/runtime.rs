@@ -260,36 +260,32 @@ fn require_capability_current(
 fn memberships_for_verified(body: &VerifiedBody) -> Result<Vec<IndexRecord>> {
     let id = body.entity_id();
     if let Some(tribute) = body.payload.as_encrypted_tribute() {
-        return Ok(vec![
+        Ok(vec![
             IndexRecord::owner(IndexKind::TributeByOwner, tribute.context.owner, id),
             IndexRecord::day(tribute.context.worldwide_day, id),
-        ]);
-    }
-    if let Some(tribute) = body.payload.as_tribute() {
-        return Ok(vec![
+        ])
+    } else if let Some(tribute) = body.payload.as_tribute() {
+        Ok(vec![
             IndexRecord::owner(IndexKind::TributeByOwner, tribute.owner, id),
             IndexRecord::day(tribute.worldwide_day, id),
-        ]);
-    }
-    if let Some(item) = body.payload.as_encrypted_nod_item() {
-        return Ok(vec![
+        ])
+    } else if let Some(item) = body.payload.as_encrypted_nod_item() {
+        Ok(vec![
             IndexRecord::owner(IndexKind::NodByOwner, item.encrypted.terms.owner, id),
             IndexRecord::nod_all(id),
-        ]);
-    }
-    if let Some(item) = body.payload.as_nod_item() {
-        return Ok(vec![
+        ])
+    } else if let Some(item) = body.payload.as_nod_item() {
+        Ok(vec![
             IndexRecord::owner(IndexKind::NodByOwner, item.owner, id),
             IndexRecord::nod_all(id),
-        ]);
+        ])
+    } else if let Some(item) = body.payload.as_gem() {
+        Ok(vec![IndexRecord::gem_owner(item.owner, id)])
+    } else if body.payload.as_nod_bucket().is_some() || body.payload.as_gem_bucket().is_some() {
+        Ok(Vec::new())
+    } else {
+        Err(fatal("verified payload has no typed variant"))
     }
-    if let Some(item) = body.payload.as_gem() {
-        return Ok(vec![IndexRecord::gem_owner(item.owner, id)]);
-    }
-    if body.payload.as_nod_bucket().is_some() || body.payload.as_gem_bucket().is_some() {
-        return Ok(Vec::new());
-    }
-    Err(fatal("verified payload has no typed variant"))
 }
 
 fn emit_stored(

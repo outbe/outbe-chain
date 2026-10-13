@@ -343,17 +343,8 @@ impl GemContract<'_> {
     /// Writes the call terms a new bucket sealed at issuance. Later gems that join the
     /// same bucket inherit this copy. Nothing reads the profile again.
     pub(crate) fn seal_bucket_call_terms(&mut self, bucket: B256, terms: CallTerms) -> Result<()> {
-        self.bucket_call_price_minor
-            .write(&bucket, terms.call_price_minor)?;
-        self.bucket_currency
-            .write(&bucket, terms.reference_currency)?;
-        self.bucket_call_rate.write(&bucket, terms.call_rate)?;
-        self.bucket_call_window_seconds
-            .write(&bucket, terms.call_window_seconds)?;
-        self.bucket_call_threshold_seconds
-            .write(&bucket, terms.call_threshold_seconds)?;
-        self.bucket_call_notice_period_seconds
-            .write(&bucket, terms.call_notice_period_seconds)?;
+        self.seal_bucket_prices(bucket, &terms)?;
+        self.seal_bucket_calendar(bucket, &terms)?;
         outbe_primitives::call_breach::widen_scan_terms(
             &self.max_call_window_seconds,
             &self.min_call_threshold_seconds,
@@ -361,6 +352,24 @@ impl GemContract<'_> {
             terms.call_window_seconds,
             terms.call_threshold_seconds,
         )
+    }
+    fn seal_bucket_prices(&self, bucket: B256, terms: &CallTerms) -> Result<()> {
+        self.bucket_call_price_minor
+            .write(&bucket, terms.call_price_minor)?;
+        self.bucket_currency
+            .write(&bucket, terms.reference_currency)?;
+        self.bucket_call_rate.write(&bucket, terms.call_rate)?;
+        Ok(())
+    }
+
+    fn seal_bucket_calendar(&self, bucket: B256, terms: &CallTerms) -> Result<()> {
+        self.bucket_call_window_seconds
+            .write(&bucket, terms.call_window_seconds)?;
+        self.bucket_call_threshold_seconds
+            .write(&bucket, terms.call_threshold_seconds)?;
+        self.bucket_call_notice_period_seconds
+            .write(&bucket, terms.call_notice_period_seconds)?;
+        Ok(())
     }
 
     /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.

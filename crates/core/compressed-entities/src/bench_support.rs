@@ -210,7 +210,6 @@ pub fn staged_batch(
     ProvisionalTreeBatch::new_fixture_single_collection(
         identity.block_number,
         identity.parent_block_hash,
-        roots.parent_root,
         roots.new_root,
         branches,
         leaves,

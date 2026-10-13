@@ -170,57 +170,15 @@ impl NodRepositoryReader {
         self.scan_stored_primary(request, NOD_BUCKETS_NAMESPACE, decode_stored_bucket)
     }
 
-    fn scan_stored_primary(
-        &self,
-        request: IdPageRequest,
-        name: &'static str,
-        decode: fn(WwdEntityId, &[u8]) -> Result<StoredBody, NodRepositoryError>,
-    ) -> Result<StoredBodyPage, NodRepositoryError> {
-        let limit = validate_id_page_request(request)?;
-        let after = request.after.map(item_key).transpose()?;
-        let page = self.storage.scan_prefix(
-            namespace(name)?,
-            ScanRequest::new(&[], after.as_ref(), limit)?,
-        )?;
-        validate_audit_page(&page, after.as_ref(), limit, name)?;
-        let next_after = page
-            .next_after
-            .as_ref()
-            .map(|key| parse_primary_key(key.as_bytes()))
-            .transpose()?;
-        let mut entries = Vec::with_capacity(page.entries.len());
-        for entry in page.entries {
-            let id = parse_primary_key(entry.key.as_bytes())?;
-            entries.push((id, decode(id, entry.value.as_bytes())?));
-        }
-        Ok(StoredBodyPage {
-            entries,
-            next_after,
-        })
-    }
-
     /// Verifies exact item/owner-index membership using bounded pages and scratch.
     /// The caller supplies a stable read-only storage view for the entire audit.
     pub fn audit_indexes(&self, work: &CeAuditWork) -> Result<(), CeAuditError> {
         let expected = NodAuditEntries::new(&self.storage, NODS_NAMESPACE)
             .map_err(index_audit_error)?
-            .map(|entry| {
-                let entry = entry.map_err(index_audit_error)?;
-                let id = parse_primary_key(entry.key.as_bytes()).map_err(index_audit_error)?;
-                let body = decode_item(id, entry.value.as_bytes()).map_err(index_audit_error)?;
-                Ok(owner_audit_record(id, body.owner))
-            });
+            .map(primary_owner_audit_record);
         let actual = NodAuditEntries::new(&self.storage, NODS_BY_OWNER_NAMESPACE)
             .map_err(index_audit_error)?
-            .map(|entry| {
-                let entry = entry.map_err(index_audit_error)?;
-                if entry.key.as_bytes().len() != OWNER_INDEX_KEY_LEN {
-                    return Err(index_audit_error(NodRepositoryError::MalformedIndexKey));
-                }
-                let owner = Address::from_slice(&entry.key.as_bytes()[..20]);
-                let id = parse_owner_index(&entry, owner).map_err(index_audit_error)?;
-                Ok(owner_audit_record(id, owner))
-            });
+            .map(indexed_owner_audit_record);
         work.compare_records(PRIMARY_KEY_LEN, expected, actual)
     }
 
@@ -262,7 +220,13 @@ impl NodRepositoryReader {
         &self,
         nod_ids: &[WwdEntityId],
     ) -> Result<Vec<Option<NodItemRecordWithMetadata>>, NodRepositoryError> {
-        self.primary_records(NODS_NAMESPACE, nod_ids, item_key, decode_item)
+        outbe_offchain_storage::repository_pages::read_records(
+            &self.storage,
+            namespace(NODS_NAMESPACE)?,
+            nod_ids,
+            item_key,
+            |id, record| decode_record(id, record, decode_item),
+        )
     }
 
     /// Loads one Nod bucket and verifies its embedded key.
@@ -306,11 +270,12 @@ impl NodRepositoryReader {
         &self,
         bucket_ids: &[WwdEntityId],
     ) -> Result<Vec<Option<NodBucketRecordWithMetadata>>, NodRepositoryError> {
-        self.primary_records(
-            NOD_BUCKETS_NAMESPACE,
+        outbe_offchain_storage::repository_pages::read_records(
+            &self.storage,
+            namespace(NOD_BUCKETS_NAMESPACE)?,
             bucket_ids,
             bucket_storage_key,
-            decode_bucket,
+            |id, record| decode_record(id, record, decode_bucket),
         )
     }
 
@@ -320,31 +285,6 @@ impl NodRepositoryReader {
         key: Key,
     ) -> Result<Option<StoredValue>, NodRepositoryError> {
         Ok(self.storage.get_record(namespace(name)?, &key)?)
-    }
-
-    /// Batch-loads primary records in `ids` order and decodes each one present.
-    fn primary_records<T>(
-        &self,
-        name: &'static str,
-        ids: &[WwdEntityId],
-        key: fn(WwdEntityId) -> Result<Key, NodRepositoryError>,
-        decode: BodyDecoder<T>,
-    ) -> Result<Vec<Option<RecordWithMetadata<T>>>, NodRepositoryError> {
-        let keys = ids
-            .iter()
-            .copied()
-            .map(key)
-            .collect::<Result<Vec<_>, _>>()?;
-        let records = self.storage.get_records(namespace(name)?, &keys)?;
-        records
-            .into_iter()
-            .zip(ids.iter().copied())
-            .map(|(record, id)| {
-                record
-                    .map(|record| decode_record(id, record, decode))
-                    .transpose()
-            })
-            .collect()
     }
 
     fn scan(
@@ -508,20 +448,7 @@ fn validate_audit_page(
     limit: usize,
     index: &'static str,
 ) -> Result<(), NodRepositoryError> {
-    if page.entries.len() > limit {
-        return Err(
-            StorageError::Corruption(format!("Nod {index} page exceeds requested limit")).into(),
-        );
-    }
-    check_continuation(page, index)?;
-    let mut previous = after;
-    for entry in &page.entries {
-        if previous.is_some_and(|previous| previous.as_bytes() >= entry.key.as_bytes()) {
-            return Err(NodRepositoryError::NonAscendingIdPage { index });
-        }
-        previous = Some(&entry.key);
-    }
-    Ok(())
+    page_rules(index).validate(page, after, limit)
 }
 
 /// The iterator retains at most one native bounded page. Only an absent continuation
@@ -875,52 +802,8 @@ fn id_page_from_entries(
     index: &'static str,
     parse: impl FnMut(&ScanEntry) -> Result<WwdEntityId, NodRepositoryError>,
 ) -> Result<IdPage, NodRepositoryError> {
-    check_continuation(&page, index)?;
-    let ids = ascending_ids(&page.entries, after, index, parse)?;
-    let next_after = page
-        .next_after
-        .is_some()
-        .then(|| {
-            ids.last()
-                .copied()
-                .ok_or(NodRepositoryError::InvalidPageContinuation { index })
-        })
-        .transpose()?;
+    let (ids, next_after) = page_rules(index).id_page(page, after, parse)?;
     Ok(IdPage { ids, next_after })
-}
-
-/// Rejects a continuation that is not the key of the page's last entry.
-fn check_continuation(
-    page: &outbe_offchain_storage::ScanPage,
-    index: &'static str,
-) -> Result<(), NodRepositoryError> {
-    if page
-        .next_after
-        .as_ref()
-        .is_some_and(|next| page.entries.last().map(|entry| &entry.key) != Some(next))
-    {
-        return Err(NodRepositoryError::InvalidPageContinuation { index });
-    }
-    Ok(())
-}
-
-fn ascending_ids(
-    entries: &[ScanEntry],
-    after: Option<WwdEntityId>,
-    index: &'static str,
-    mut parse: impl FnMut(&ScanEntry) -> Result<WwdEntityId, NodRepositoryError>,
-) -> Result<Vec<WwdEntityId>, NodRepositoryError> {
-    let mut ids = Vec::with_capacity(entries.len());
-    let mut previous = after;
-    for entry in entries {
-        let id = parse(entry)?;
-        if previous.is_some_and(|previous| id <= previous) {
-            return Err(NodRepositoryError::NonAscendingIdPage { index });
-        }
-        ids.push(id);
-        previous = Some(id);
-    }
-    Ok(ids)
 }
 
 fn next_cursor(has_more: bool, records: &[NodItemState]) -> Option<WwdEntityId> {
@@ -982,3 +865,40 @@ pub fn from_canonical_bucket(body: NodBucketBodyV1) -> NodBucketState {
         reference_currency: body.reference_currency,
     }
 }
+
+fn page_rules(
+    index: &'static str,
+) -> outbe_offchain_storage::repository_pages::PageRules<NodRepositoryError> {
+    outbe_offchain_storage::repository_page_rules!(NodRepositoryError, index, "Nod")
+}
+
+fn primary_owner_audit_record(
+    entry: Result<ScanEntry, NodRepositoryError>,
+) -> Result<[u8; OWNER_INDEX_KEY_LEN], CeAuditError> {
+    let entry = entry.map_err(index_audit_error)?;
+    let id = parse_primary_key(entry.key.as_bytes()).map_err(index_audit_error)?;
+    let body = decode_item(id, entry.value.as_bytes()).map_err(index_audit_error)?;
+    Ok(owner_audit_record(id, body.owner))
+}
+
+fn indexed_owner_audit_record(
+    entry: Result<ScanEntry, NodRepositoryError>,
+) -> Result<[u8; OWNER_INDEX_KEY_LEN], CeAuditError> {
+    let entry = entry.map_err(index_audit_error)?;
+    if entry.key.as_bytes().len() != OWNER_INDEX_KEY_LEN {
+        return Err(index_audit_error(NodRepositoryError::MalformedIndexKey));
+    }
+    let owner = Address::from_slice(&entry.key.as_bytes()[..20]);
+    let id = parse_owner_index(&entry, owner).map_err(index_audit_error)?;
+    Ok(owner_audit_record(id, owner))
+}
+
+outbe_offchain_storage::repository_primary_scan!(
+    NodRepositoryReader,
+    NodRepositoryError,
+    WwdEntityId,
+    IdPageRequest,
+    StoredBody,
+    StoredBodyPage,
+    crate::repository
+);

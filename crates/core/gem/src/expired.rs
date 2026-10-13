@@ -20,15 +20,7 @@ pub(crate) fn sweep_expired(
     parent: &impl ParentBodySource,
 ) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
-    let mut expiry = GemExpiry {
-        bodies: Bodies {
-            storage: &ctx.storage,
-            scope,
-            parent,
-        },
-        gem: GemContract::new(ctx.storage.clone()),
-        burned: 0,
-    };
+    let mut expiry = GemExpiry::new(ctx, scope, parent);
     let mut budget = SweepBudget::per_block();
     expiry_queue::sweep(
         &ExpiryHours(&queue),
@@ -88,5 +80,19 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for GemExpiry<'_, '_, P> {
             bucketKey: bucket,
             retryAt: retry_at,
         })
+    }
+}
+
+impl<'a, 's, P: ParentBodySource> GemExpiry<'a, 's, P> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>, scope: &'a ExecutionScope, parent: &'a P) -> Self {
+        Self {
+            bodies: Bodies {
+                storage: &ctx.storage,
+                scope,
+                parent,
+            },
+            gem: GemContract::new(ctx.storage.clone()),
+            burned: 0,
+        }
     }
 }

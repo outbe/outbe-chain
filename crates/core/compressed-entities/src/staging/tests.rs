@@ -206,8 +206,10 @@ fn catalog_envelope_binds_collection_shards_derivations_and_canonical_size() {
     .unwrap();
     let shard_set = ProvisionalShardSetBatch::new(
         16,
-        parent_root,
-        new_root,
+        crate::staging::RootTransition {
+            parent: parent_root,
+            new: new_root,
+        },
         parent_roots.clone(),
         new_roots.clone(),
         BTreeMap::from([(1, changed.clone())]),
@@ -232,10 +234,16 @@ fn catalog_envelope_binds_collection_shards_derivations_and_canonical_size() {
     let provisional = ProvisionalTreeBatch::new(
         8,
         b256(7),
-        sealed_root(parent_catalog_root).unwrap(),
-        sealed_root(new_catalog_root).unwrap(),
-        parent_catalog_root,
-        new_catalog_root,
+        crate::staging::CatalogRoots {
+            sealed: crate::staging::RootTransition {
+                parent: sealed_root(parent_catalog_root).unwrap(),
+                new: sealed_root(new_catalog_root).unwrap(),
+            },
+            catalog: crate::staging::RootTransition {
+                parent: parent_catalog_root,
+                new: new_catalog_root,
+            },
+        },
         BTreeMap::from([(collection_key, CollectionOperation::Mutate(collection))]),
         Some(catalog_batch),
     )
@@ -262,20 +270,24 @@ fn catalog_envelope_binds_collection_shards_derivations_and_canonical_size() {
 
     assert!(ProvisionalShardSetBatch::new(
         16,
-        parent_root,
-        new_root,
+        crate::staging::RootTransition {
+            parent: parent_root,
+            new: new_root
+        },
         vec![B256::ZERO; 15],
         new_roots.clone(),
-        BTreeMap::from([(1, changed.clone())]),
+        BTreeMap::from([(1, changed.clone())])
     )
     .is_err());
     assert!(ProvisionalShardSetBatch::new(
         16,
-        parent_root,
-        new_root,
+        crate::staging::RootTransition {
+            parent: parent_root,
+            new: new_root
+        },
         parent_roots.clone(),
         new_roots.clone(),
-        BTreeMap::from([(2, changed.clone())]),
+        BTreeMap::from([(2, changed.clone())])
     )
     .is_err());
     let misderived = ProvisionalShardBatch::new(
@@ -287,11 +299,13 @@ fn catalog_envelope_binds_collection_shards_derivations_and_canonical_size() {
     .unwrap();
     assert!(ProvisionalShardSetBatch::new(
         16,
-        parent_root,
-        new_root,
+        crate::staging::RootTransition {
+            parent: parent_root,
+            new: new_root
+        },
         parent_roots,
         new_roots,
-        BTreeMap::from([(1, misderived)]),
+        BTreeMap::from([(1, misderived)])
     )
     .is_err());
 }
@@ -316,10 +330,16 @@ fn adr011_retirement_operation_has_pinned_discriminant_size_and_checksum() {
     let provisional = ProvisionalTreeBatch::new(
         8,
         b256(7),
-        sealed_root(parent_catalog_root).unwrap(),
-        sealed_root(new_catalog_root).unwrap(),
-        parent_catalog_root,
-        new_catalog_root,
+        crate::staging::CatalogRoots {
+            sealed: crate::staging::RootTransition {
+                parent: sealed_root(parent_catalog_root).unwrap(),
+                new: sealed_root(new_catalog_root).unwrap(),
+            },
+            catalog: crate::staging::RootTransition {
+                parent: parent_catalog_root,
+                new: new_catalog_root,
+            },
+        },
         BTreeMap::from([(collection_key, CollectionOperation::Retire(retirement))]),
         Some(ProvisionalCatalogBatch {
             parent_catalog_root,
@@ -345,7 +365,6 @@ fn publication_is_structurally_idempotent_and_never_evicts() {
     let provisional = ProvisionalTreeBatch::new_fixture_single_collection(
         8,
         b256(7),
-        b256(17),
         b256(18),
         BTreeMap::new(),
         BTreeMap::from([(key_in_shard(0, 0), TreeChange::Set(leaf(2)))]),
@@ -368,7 +387,6 @@ fn publication_is_structurally_idempotent_and_never_evicts() {
     let competing = ProvisionalTreeBatch::new_fixture_single_collection(
         8,
         b256(7),
-        b256(17),
         b256(19),
         BTreeMap::new(),
         BTreeMap::from([(key_in_shard(0, 1), TreeChange::Set(leaf(3)))]),
@@ -387,7 +405,6 @@ fn same_hash_with_different_typed_batch_is_corruption() {
     let first = ProvisionalTreeBatch::new_fixture_single_collection(
         8,
         b256(7),
-        b256(17),
         b256(18),
         BTreeMap::new(),
         BTreeMap::from([(key_in_shard(0, 0), TreeChange::Set(leaf(2)))]),
@@ -397,7 +414,6 @@ fn same_hash_with_different_typed_batch_is_corruption() {
     let conflicting = ProvisionalTreeBatch::new_fixture_single_collection(
         8,
         b256(7),
-        b256(17),
         b256(19),
         BTreeMap::new(),
         BTreeMap::from([(key_in_shard(0, 0), TreeChange::Set(leaf(3)))]),
@@ -427,7 +443,6 @@ fn finalization_and_restart_remove_only_by_explicit_policy() {
                 ProvisionalTreeBatch::new_fixture_single_collection(
                     height,
                     b256(7),
-                    b256(17),
                     b256(18),
                     BTreeMap::new(),
                     BTreeMap::from([(

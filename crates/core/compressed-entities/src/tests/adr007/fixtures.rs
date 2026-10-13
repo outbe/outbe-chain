@@ -53,7 +53,6 @@ impl AuthenticatedParentTree for TestAuthenticatedTree {
             block_number,
             B256::ZERO,
             B256::ZERO,
-            B256::ZERO,
             Default::default(),
             Default::default(),
         )

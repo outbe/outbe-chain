@@ -96,10 +96,12 @@ pub fn dispatch(
                     &storage,
                     scope,
                     parent,
-                    sender,
-                    c.positionId,
-                    c.owner,
-                    c.promisLoadMinor,
+                    crate::schema::MerchantGemIssueParams {
+                        caller: sender,
+                        position_id: c.positionId,
+                        owner: c.owner,
+                        promis_load: c.promisLoadMinor,
+                    },
                 )
             }),
             settleGem(c) => mutate_void(&storage, c, caller, |sender, c| {
@@ -107,10 +109,12 @@ pub fn dispatch(
                     &storage,
                     scope,
                     parent,
-                    sender,
-                    c.gemId,
-                    c.asset,
-                    c.snapshotId,
+                    crate::schema::GemSettlementParams {
+                        caller: sender,
+                        gem_id: c.gemId,
+                        asset: c.asset,
+                        snapshot_id: c.snapshotId,
+                    },
                 )
             }),
             minePromis(c) => mutate(&storage, c, caller, |_sender, c| {
@@ -118,7 +122,16 @@ pub fn dispatch(
                     mac: c.mac.0,
                     op_nonce: c.opNonce,
                 };
-                runtime::mine_promis(&storage, scope, parent, c.gemId, c.nonce, auth)
+                runtime::mine_promis(
+                    &storage,
+                    scope,
+                    parent,
+                    crate::schema::GemMiningProof {
+                        gem_id: c.gemId,
+                        nonce: c.nonce,
+                    },
+                    auth,
+                )
             }),
             getStatistics(_) => metadata::<IGemFactory::getStatisticsCall>(|| {
                 let factory = GemFactoryContract::new(storage.clone());

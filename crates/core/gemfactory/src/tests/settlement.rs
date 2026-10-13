@@ -77,10 +77,12 @@ fn erc20_settle_rejects_a_foreign_currency_asset_before_paying() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE_EUR,
-            U256::ZERO,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE_EUR,
+                snapshot_id: U256::ZERO,
+            },
         );
         assert!(err_msg(res).contains("does not match"));
         assert_eq!(
@@ -237,10 +239,12 @@ fn settling_on_an_unregistered_issuance_leg_is_refused() {
             storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE_EUR,
-            U256::ZERO,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE_EUR,
+                snapshot_id: U256::ZERO,
+            },
         );
         assert!(err_msg(res).contains("oracle nominal unavailable"));
         assert_eq!(
@@ -299,10 +303,12 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
             &storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE,
-            U256::ZERO,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE,
+                snapshot_id: U256::ZERO,
+            },
         );
         assert!(err_msg(res).contains("no registered vault"));
     });
@@ -460,10 +466,12 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             &storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE_EUR,
-            quoted,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE_EUR,
+                snapshot_id: quoted,
+            },
         );
         assert!(err_msg(res).contains("unexpected amount"));
     });
@@ -478,10 +486,12 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             &storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE_EUR,
-            quoted,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE_EUR,
+                snapshot_id: quoted,
+            },
         );
         assert_eq!(
             err_msg(res),
@@ -507,10 +517,12 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             &storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE_EUR,
-            other_policy.to_u256(),
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE_EUR,
+                snapshot_id: other_policy.to_u256(),
+            },
         );
         assert_eq!(
             err_msg(res),
@@ -528,10 +540,12 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             &storage,
             &world.scope,
             &world.parent,
-            ALICE,
-            gem_id,
-            STABLE,
-            quoted,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE,
+                snapshot_id: quoted,
+            },
         );
         assert!(err_msg(reference).contains("unexpected amount"));
         assert_eq!(

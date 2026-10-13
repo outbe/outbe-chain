@@ -1,3 +1,5 @@
+mod rebuild;
+
 use std::path::Path;
 
 use alloy_primitives::B256;
@@ -30,48 +32,17 @@ fn invalid(message: impl Into<String>) -> CeAuditError {
 pub(in crate::persistence) fn audit(
     source: &impl DbTx,
     source_path: &Path,
-    identity: &EnvironmentIdentity,
-    required: ExactParentIdentity,
+    identity: (&EnvironmentIdentity, ExactParentIdentity),
     work: &CeAuditWork,
     visitor: &mut impl CeAuditVisitor,
 ) -> Result<CeAuditReport, CeAuditError> {
+    let (identity, required) = identity;
     let source_path = source_path.canonicalize()?;
     let scratch_path = work.root.canonicalize()?;
     if scratch_path.starts_with(&source_path) || source_path.starts_with(&scratch_path) {
         return Err(invalid("audit scratch overlaps the source environment"));
     }
-    let marker = read_marker(source, &source_path)?;
-    if marker.height != required.block_number
-        || marker.block_hash != required.block_hash
-        || marker.new_root != required.root
-        || marker.commitment_scheme_version != required.commitment_scheme_version
-    {
-        return Err(invalid("CE marker differs from required block identity"));
-    }
-    for row in source.cursor_read::<tables::CeMetadata>()?.walk(None)? {
-        let (key, bytes) = row?;
-        if key == IDENTITY_KEY {
-            if EnvironmentIdentity::decode(&bytes)? != *identity {
-                return Err(invalid("CE environment identity changed"));
-            }
-        } else if key != LAST_APPLIED_KEY {
-            return Err(invalid("unknown CE metadata record"));
-        }
-    }
-    let catalog = read_required_tree_root(source, &source_path, TreeNamespace::Catalog)?;
-    if marker.height == 0
-        && (marker.block_hash != identity.genesis_hash
-            || marker.parent_block_hash != B256::ZERO
-            || marker.parent_root != B256::ZERO
-            || catalog != B256::ZERO)
-    {
-        return Err(invalid(
-            "genesis must use its native empty catalog and configured block identity",
-        ));
-    }
-    if sealed_root(catalog).map_err(|error| invalid(error.to_string()))? != required.root {
-        return Err(invalid("sealed catalog root differs from required root"));
-    }
+    verify_source(source, &source_path, identity, required)?;
     let mut database = create_db(scratch_path.join("trees"), DatabaseArguments::default())
         .map_err(|error| invalid(format!("create audit scratch database: {error:#}")))?;
     database.create_and_track_tables_for::<tables::CeTables>()?;
@@ -106,67 +77,16 @@ pub(in crate::persistence) fn audit(
         } else {
             1
         };
-        let store = ScratchTreeStore::new(&rebuilt, namespace);
-        let mut tree = PoseidonSmt::open_with_store(TreeRoot::EMPTY, store);
-        let mut buffer = Vec::new();
-        let mut cursor = source.cursor_read::<tables::CeLeaves>()?;
-        let mut row = cursor.seek(namespace_bytes.clone())?;
-        while let Some((key, value)) = row {
-            if !key.starts_with(&namespace_bytes) {
-                break;
-            }
-            let key = TreeKey::decode(&key[namespace_bytes.len()..])?;
-            let value = LeafValue::decode(&value)?;
-            let smt_key =
-                SmtKey::from_be_bytes(key.encode()).map_err(|error| invalid(error.to_string()))?;
-            if let TreeNamespace::CollectionShard(_, shard) = namespace {
-                if shard_index(smt_key, shard_count).map_err(|error| invalid(error.to_string()))?
-                    != shard
-                {
-                    return Err(invalid("leaf is stored in the wrong native shard"));
-                }
-            }
-            if namespace == TreeNamespace::Catalog {
-                let collection = CollectionKey::try_from(key.into_inner())
-                    .map_err(|error| invalid(error.to_string()))?;
-                verify_collection(source, &source_path, collection)?;
-            }
-            if buffer.capacity() == 0 {
-                buffer
-                    .try_reserve_exact(work.limits.records_per_run)
-                    .map_err(|_| invalid("cannot reserve tree leaf buffer"))?;
-            }
-            buffer.push((
-                smt_key,
-                TreeLeaf::from_be_bytes(value.encode())
-                    .map_err(|error| invalid(error.to_string()))?,
-            ));
-            report.peak_buffered_leaves = report.peak_buffered_leaves.max(buffer.len());
-            if buffer.len() == work.limits.records_per_run {
-                tree.update_all(std::mem::take(&mut buffer))
-                    .map_err(|error| invalid(error.to_string()))?;
-            }
-            visitor.visit_leaf(namespace, key, value)?;
-            report.leaves = report
-                .leaves
-                .checked_add(1)
-                .ok_or_else(|| invalid("leaf count overflow"))?;
-            row = cursor.next()?;
-        }
-        tree.update_all(buffer)
-            .map_err(|error| invalid(error.to_string()))?;
-        if B256::from(
-            tree.root()
-                .map_err(|error| invalid(error.to_string()))?
-                .as_bytes(),
-        ) != expected_root
-        {
-            return Err(invalid(format!("rebuilt root differs for {namespace:?}")));
-        }
-        report.trees = report
-            .trees
-            .checked_add(1)
-            .ok_or_else(|| invalid("tree count overflow"))?;
+        let config = rebuild::RebuildContext {
+            namespace_bytes,
+            source_path: &source_path,
+            work,
+            namespace,
+            shard_count,
+            expected_root,
+            report: &mut report,
+        };
+        rebuild::rebuild(source, &rebuilt, config, visitor)?;
     }
     // Compare both directions, including records unreachable from any root.
     compare_table::<tables::CeLeaves>(source, &rebuilt)?;
@@ -234,4 +154,52 @@ fn domain_for_collection(key: CollectionKey) -> Result<CeDomain, CeAuditError> {
         }
     }
     Ok(CeDomain::Tribute)
+}
+
+fn verify_source(
+    source: &impl DbTx,
+    source_path: &Path,
+    identity: &EnvironmentIdentity,
+    required: ExactParentIdentity,
+) -> Result<(), CeAuditError> {
+    let marker = read_marker(source, source_path)?;
+    if marker.height != required.block_number
+        || marker.block_hash != required.block_hash
+        || marker.new_root != required.root
+        || marker.commitment_scheme_version != required.commitment_scheme_version
+    {
+        return Err(invalid("CE marker differs from required block identity"));
+    }
+    verify_metadata(source, identity)?;
+    let catalog = read_required_tree_root(source, source_path, TreeNamespace::Catalog)?;
+    if marker.height == 0
+        && (
+            marker.block_hash,
+            marker.parent_block_hash,
+            marker.parent_root,
+            catalog,
+        ) != (identity.genesis_hash, B256::ZERO, B256::ZERO, B256::ZERO)
+    {
+        return Err(invalid(
+            "genesis must use its native empty catalog and configured block identity",
+        ));
+    }
+    if sealed_root(catalog).map_err(|error| invalid(error.to_string()))? != required.root {
+        return Err(invalid("sealed catalog root differs from required root"));
+    }
+    Ok(())
+}
+
+fn verify_metadata(source: &impl DbTx, identity: &EnvironmentIdentity) -> Result<(), CeAuditError> {
+    for row in source.cursor_read::<tables::CeMetadata>()?.walk(None)? {
+        let (key, bytes) = row?;
+        if key == IDENTITY_KEY {
+            if EnvironmentIdentity::decode(&bytes)? != *identity {
+                return Err(invalid("CE environment identity changed"));
+            }
+        } else if key != LAST_APPLIED_KEY {
+            return Err(invalid("unknown CE metadata record"));
+        }
+    }
+    Ok(())
 }

@@ -29,7 +29,22 @@ use crate::{
     CeDomain, CollectionKey,
 };
 
+mod envelope;
+use envelope::{aggregate_b256_roots, validate_catalog_envelope, validate_shard_envelope};
+
 pub type ShardIndex = u32;
+
+#[derive(Clone, Copy)]
+pub(crate) struct RootTransition {
+    pub(crate) parent: B256,
+    pub(crate) new: B256,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CatalogRoots {
+    pub(crate) sealed: RootTransition,
+    pub(crate) catalog: RootTransition,
+}
 
 /// A staged store mutation. Deletes exist only in candidate memory. Finalized
 /// MDBX applies them by removing the corresponding record.
@@ -100,16 +115,16 @@ pub struct ProvisionalShardSetBatch {
 impl ProvisionalShardSetBatch {
     pub(crate) fn new(
         shard_count: u32,
-        parent_shard_top_root: B256,
-        new_shard_top_root: B256,
+        roots: RootTransition,
         parent_shard_roots: Vec<B256>,
         new_shard_roots: Vec<B256>,
         changed_shards: BTreeMap<ShardIndex, ProvisionalShardBatch>,
     ) -> Result<Self, StagingError> {
+        let parent_shard_top_root = roots.parent;
+        let new_shard_top_root = roots.new;
         validate_shard_envelope(
             shard_count,
-            parent_shard_top_root,
-            new_shard_top_root,
+            roots,
             &parent_shard_roots,
             &new_shard_roots,
             &changed_shards,
@@ -336,10 +351,16 @@ impl ProvisionalTreeBatch {
         Self::new(
             block_number,
             parent_block_hash,
-            parent_r_sealed,
-            parent_r_sealed,
-            parent_catalog_root,
-            parent_catalog_root,
+            CatalogRoots {
+                sealed: RootTransition {
+                    parent: parent_r_sealed,
+                    new: parent_r_sealed,
+                },
+                catalog: RootTransition {
+                    parent: parent_catalog_root,
+                    new: parent_catalog_root,
+                },
+            },
             BTreeMap::new(),
             None,
         )
@@ -350,7 +371,6 @@ impl ProvisionalTreeBatch {
     pub(crate) fn new_fixture_single_collection(
         block_number: u64,
         parent_block_hash: B256,
-        _parent_root: B256,
         new_root: B256,
         branch_changes: BTreeMap<BranchKey, TreeChange<BranchNode>>,
         leaf_changes: BTreeMap<TreeKey, TreeChange<LeafValue>>,
@@ -375,8 +395,10 @@ impl ProvisionalTreeBatch {
         let shard = ProvisionalShardBatch::new(B256::ZERO, new_root, branch_changes, leaf_changes)?;
         let shard_set = ProvisionalShardSetBatch::new(
             domain.shard_count(),
-            parent_shard_top_root,
-            new_shard_top_root,
+            crate::staging::RootTransition {
+                parent: parent_shard_top_root,
+                new: new_shard_top_root,
+            },
             std::mem::take(&mut parent_shard_roots),
             new_shard_roots,
             BTreeMap::from([(0, shard)]),
@@ -406,34 +428,41 @@ impl ProvisionalTreeBatch {
         Self::new(
             block_number,
             parent_block_hash,
-            parent_r_sealed,
-            new_r_sealed,
-            parent_catalog_root,
-            new_catalog_root,
+            CatalogRoots {
+                sealed: RootTransition {
+                    parent: parent_r_sealed,
+                    new: new_r_sealed,
+                },
+                catalog: RootTransition {
+                    parent: parent_catalog_root,
+                    new: new_catalog_root,
+                },
+            },
             BTreeMap::from([(collection_key, collection)]),
             Some(catalog_batch),
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         block_number: u64,
         parent_block_hash: B256,
-        parent_r_sealed: B256,
-        new_r_sealed: B256,
-        parent_catalog_root: B256,
-        new_catalog_root: B256,
+        roots: CatalogRoots,
         changed_collections: BTreeMap<CollectionKey, CollectionOperation>,
         catalog_batch: Option<ProvisionalCatalogBatch>,
     ) -> Result<Self, StagingError> {
-        validate_catalog_envelope(
-            parent_r_sealed,
-            new_r_sealed,
-            parent_catalog_root,
-            new_catalog_root,
-            &changed_collections,
-            catalog_batch.as_ref(),
-        )?;
+        let CatalogRoots {
+            sealed:
+                RootTransition {
+                    parent: parent_r_sealed,
+                    new: new_r_sealed,
+                },
+            catalog:
+                RootTransition {
+                    parent: parent_catalog_root,
+                    new: new_catalog_root,
+                },
+        } = roots;
+        validate_catalog_envelope(roots, &changed_collections, catalog_batch.as_ref())?;
         let mut batch = Self {
             block_number,
             parent_block_hash,
@@ -497,10 +526,16 @@ impl StagedTreeBatch {
 
     pub fn validate_encoded_size(&self) -> Result<(), StagingError> {
         validate_catalog_envelope(
-            self.parent_r_sealed,
-            self.new_r_sealed,
-            self.parent_catalog_root,
-            self.new_catalog_root,
+            CatalogRoots {
+                sealed: RootTransition {
+                    parent: self.parent_r_sealed,
+                    new: self.new_r_sealed,
+                },
+                catalog: RootTransition {
+                    parent: self.parent_catalog_root,
+                    new: self.new_catalog_root,
+                },
+            },
             &self.changed_collections,
             self.catalog_batch.as_ref(),
         )?;
@@ -524,207 +559,6 @@ impl StagedTreeBatch {
     pub const fn block_hash(&self) -> B256 {
         self.block_hash
     }
-}
-
-fn validate_shard_envelope(
-    shard_count: u32,
-    parent_root: B256,
-    new_root: B256,
-    parent_shard_roots: &[B256],
-    new_shard_roots: &[B256],
-    changed_shards: &BTreeMap<ShardIndex, ProvisionalShardBatch>,
-) -> Result<(), StagingError> {
-    let expected_len = usize::try_from(shard_count)
-        .map_err(|_| StagingError::InvalidShardEnvelope("shard count is not representable"))?;
-    if shard_count == 0 || shard_count > 256 || !shard_count.is_power_of_two() {
-        return Err(StagingError::InvalidShardEnvelope("invalid shard count"));
-    }
-    if parent_shard_roots.len() != expected_len || new_shard_roots.len() != expected_len {
-        return Err(StagingError::InvalidShardEnvelope(
-            "root vector length mismatch",
-        ));
-    }
-    let parent = aggregate_b256_roots(parent_shard_roots)?;
-    let new = aggregate_b256_roots(new_shard_roots)?;
-    if parent != parent_root || new != new_root {
-        return Err(StagingError::InvalidShardEnvelope(
-            "aggregate root mismatch",
-        ));
-    }
-    for index in 0..shard_count {
-        let position = usize::try_from(index)
-            .map_err(|_| StagingError::InvalidShardEnvelope("shard index overflow"))?;
-        let changed = parent_shard_roots[position] != new_shard_roots[position];
-        match (changed, changed_shards.get(&index)) {
-            (true, Some(batch)) => {
-                if batch.parent_shard_root != parent_shard_roots[position]
-                    || batch.new_shard_root != new_shard_roots[position]
-                {
-                    return Err(StagingError::InvalidShardEnvelope(
-                        "changed shard root mismatch",
-                    ));
-                }
-                for key in batch.leaf_changes.keys() {
-                    let smt_key = SmtTreeKey::from_be_bytes(key.encode())
-                        .map_err(|_| StagingError::InvalidShardEnvelope("invalid leaf key"))?;
-                    if shard_index(smt_key, shard_count).map_err(|_| {
-                        StagingError::InvalidShardEnvelope("invalid shard derivation")
-                    })? != index
-                    {
-                        return Err(StagingError::InvalidShardEnvelope("misderived leaf shard"));
-                    }
-                }
-            }
-            (false, None) => {}
-            (true, None) => {
-                return Err(StagingError::InvalidShardEnvelope("missing changed shard"));
-            }
-            (false, Some(_)) => {
-                return Err(StagingError::InvalidShardEnvelope(
-                    "unchanged shard included",
-                ));
-            }
-        }
-    }
-    if changed_shards.keys().any(|index| *index >= shard_count) {
-        return Err(StagingError::InvalidShardEnvelope(
-            "shard index out of range",
-        ));
-    }
-    Ok(())
-}
-
-fn aggregate_b256_roots(roots: &[B256]) -> Result<B256, StagingError> {
-    aggregate_b256_shard_roots(roots)
-        .map_err(|_| StagingError::InvalidShardEnvelope("invalid shard root aggregate"))
-}
-
-fn validate_catalog_envelope(
-    parent_r_sealed: B256,
-    new_r_sealed: B256,
-    parent_catalog_root: B256,
-    new_catalog_root: B256,
-    changed_collections: &BTreeMap<CollectionKey, CollectionOperation>,
-    catalog_batch: Option<&ProvisionalCatalogBatch>,
-) -> Result<(), StagingError> {
-    if sealed_root(parent_catalog_root)
-        .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid parent sealed-root wrapper"))?
-        != parent_r_sealed
-        || sealed_root(new_catalog_root)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid new sealed-root wrapper"))?
-            != new_r_sealed
-    {
-        return Err(StagingError::InvalidCatalogEnvelope(
-            "sealed-root wrapper mismatch",
-        ));
-    }
-    match (changed_collections.is_empty(), catalog_batch) {
-        (true, None) if parent_catalog_root == new_catalog_root => return Ok(()),
-        (true, _) => {
-            return Err(StagingError::InvalidCatalogEnvelope(
-                "identity candidate contains catalog changes",
-            ));
-        }
-        (false, None) => {
-            return Err(StagingError::InvalidCatalogEnvelope(
-                "changed collections require one aggregate catalog batch",
-            ));
-        }
-        (false, Some(batch)) => {
-            if batch.parent_catalog_root != parent_catalog_root
-                || batch.new_catalog_root != new_catalog_root
-                || parent_catalog_root == new_catalog_root
-            {
-                return Err(StagingError::InvalidCatalogEnvelope(
-                    "catalog batch root mismatch",
-                ));
-            }
-            if batch.leaf_changes.len() != changed_collections.len() {
-                return Err(StagingError::InvalidCatalogEnvelope(
-                    "catalog leaf changes do not cover changed collections",
-                ));
-            }
-            for (key, operation) in changed_collections {
-                let tree_key = TreeKey::try_from(B256::from(*key.as_bytes()))?;
-                match operation {
-                    CollectionOperation::Mutate(collection) => {
-                        let domain = CeDomain::try_from(collection.domain_id).map_err(|_| {
-                            StagingError::InvalidCatalogEnvelope("unknown collection domain")
-                        })?;
-                        if collection.shard_set.shard_count != domain.shard_count() {
-                            return Err(StagingError::InvalidCatalogEnvelope(
-                                "collection shard count does not match domain topology",
-                            ));
-                        }
-                        validate_shard_envelope(
-                            collection.shard_set.shard_count,
-                            collection.shard_set.parent_shard_top_root,
-                            collection.shard_set.new_shard_top_root,
-                            &collection.shard_set.parent_shard_roots,
-                            &collection.shard_set.new_shard_roots,
-                            &collection.shard_set.changed_shards,
-                        )?;
-                        let expected_parent = collection
-                            .parent_collection_root
-                            .map(|_| {
-                                collection_root(
-                                    domain,
-                                    *key,
-                                    collection.shard_set.parent_shard_top_root,
-                                )
-                            })
-                            .transpose()
-                            .map_err(|_| {
-                                StagingError::InvalidCatalogEnvelope("invalid parent collection")
-                            })?;
-                        if expected_parent != collection.parent_collection_root
-                            || (collection.parent_collection_root.is_none()
-                                && collection
-                                    .shard_set
-                                    .parent_shard_roots
-                                    .iter()
-                                    .any(|root| *root != B256::ZERO))
-                            || collection_root(
-                                domain,
-                                *key,
-                                collection.shard_set.new_shard_top_root,
-                            )
-                            .map_err(|_| {
-                                StagingError::InvalidCatalogEnvelope("invalid new collection")
-                            })? != collection.new_collection_root
-                        {
-                            return Err(StagingError::InvalidCatalogEnvelope(
-                                "collection root mismatch",
-                            ));
-                        }
-                        let expected = LeafValue::try_from(collection.new_collection_root)?;
-                        if batch.leaf_changes.get(&tree_key) != Some(&TreeChange::Set(expected)) {
-                            return Err(StagingError::InvalidCatalogEnvelope(
-                                "catalog leaf is not the changed collection root",
-                            ));
-                        }
-                    }
-                    CollectionOperation::Retire(retirement) => {
-                        let domain = CeDomain::try_from(retirement.domain_id).map_err(|_| {
-                            StagingError::InvalidCatalogEnvelope("unknown retirement domain")
-                        })?;
-                        RetirementBatch::new(
-                            domain,
-                            *key,
-                            retirement.parent_collection_root,
-                            retirement.parent_shard_roots.clone(),
-                        )?;
-                        if batch.leaf_changes.get(&tree_key) != Some(&TreeChange::Delete) {
-                            return Err(StagingError::InvalidCatalogEnvelope(
-                                "retired catalog leaf is not deleted",
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 fn be4_len(len: usize) -> Result<[u8; 4], StagingError> {

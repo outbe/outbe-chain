@@ -502,11 +502,9 @@ fn claim_gem_and_assert_gas_only_cost(
         assert!(!expected_load.is_zero());
         assert_claimed_gem(
             &gem,
-            beneficiary,
             pool,
-            expected_load,
-            terms.0,
-            terms.1,
+            (beneficiary, expected_load),
+            (terms.0, terms.1),
             timestamp,
         );
         assert_eq!(gem.gemId, added[0]);
@@ -654,13 +652,13 @@ fn claim_gem_terms_at(url: &str, height: u64) -> (U256, U256) {
 
 fn assert_claimed_gem(
     gem: &eth::IGem::GemData,
-    owner: Address,
     pool: u8,
-    load: U256,
-    price: U256,
-    floor: U256,
+    recipient: (Address, U256),
+    pricing: (U256, U256),
     timestamp: u64,
 ) {
+    let (owner, load) = recipient;
+    let (price, floor) = pricing;
     let kind = match pool {
         WAA_POOL => 3,
         SRA_POOL => 2,
@@ -827,11 +825,9 @@ mod claim_tests {
         let check = |gem: &eth::IGem::GemData| {
             assert_claimed_gem(
                 gem,
-                Address::repeat_byte(1),
                 WAA_POOL,
-                U256::from(123),
-                U256::from(1_000_001),
-                U256::from(1_050_001),
+                (Address::repeat_byte(1), U256::from(123)),
+                (U256::from(1_000_001), U256::from(1_050_001)),
                 100,
             )
         };
@@ -856,11 +852,9 @@ mod claim_tests {
         sra.gemType = 2;
         assert_claimed_gem(
             &sra,
-            Address::repeat_byte(1),
             SRA_POOL,
-            U256::from(123),
-            U256::from(1_000_001),
-            U256::from(1_050_001),
+            (Address::repeat_byte(1), U256::from(123)),
+            (U256::from(1_000_001), U256::from(1_050_001)),
             100,
         );
     }

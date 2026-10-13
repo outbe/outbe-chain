@@ -11,7 +11,7 @@ use outbe_compressed_entities::{
     WwdEntityId, BODY_SCHEMA_V1,
 };
 use outbe_offchain_storage::{
-    Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
+    Key, Namespace, ScanEntry, ScanRequest, StorageMetadata, StorageReaderHandle,
     StorageWriterHandle, StoredValue, Value, MAX_SCAN_ENTRIES,
 };
 
@@ -72,56 +72,14 @@ impl GemRepositoryReader {
         self.scan_stored_primary(request, GEM_BUCKETS_NAMESPACE, decode_stored_bucket)
     }
 
-    fn scan_stored_primary(
-        &self,
-        request: IdPageRequest,
-        name: &'static str,
-        decode: fn(WwdEntityId, &[u8]) -> Result<StoredBody, GemRepositoryError>,
-    ) -> Result<StoredBodyPage, GemRepositoryError> {
-        let limit = validate_id_page_request(request)?;
-        let after = request.after.map(item_key).transpose()?;
-        let page = self.storage.scan_prefix(
-            namespace(name)?,
-            ScanRequest::new(&[], after.as_ref(), limit)?,
-        )?;
-        validate_audit_page(&page, after.as_ref(), limit, name)?;
-        let next_after = page
-            .next_after
-            .as_ref()
-            .map(|key| parse_primary_key(key.as_bytes()))
-            .transpose()?;
-        let mut entries = Vec::with_capacity(page.entries.len());
-        for entry in page.entries {
-            let id = parse_primary_key(entry.key.as_bytes())?;
-            entries.push((id, decode(id, entry.value.as_bytes())?));
-        }
-        Ok(StoredBodyPage {
-            entries,
-            next_after,
-        })
-    }
-
     /// Verifies exact item/owner-index membership using bounded pages and scratch.
     pub fn audit_indexes(&self, work: &CeAuditWork) -> Result<(), CeAuditError> {
         let expected = GemAuditEntries::new(&self.storage, GEMS_NAMESPACE)
             .map_err(index_audit_error)?
-            .map(|entry| {
-                let entry = entry.map_err(index_audit_error)?;
-                let id = parse_primary_key(entry.key.as_bytes()).map_err(index_audit_error)?;
-                let body = decode_item(id, entry.value.as_bytes()).map_err(index_audit_error)?;
-                Ok(owner_audit_record(id, body.owner))
-            });
+            .map(primary_owner_audit_record);
         let actual = GemAuditEntries::new(&self.storage, GEMS_BY_OWNER_NAMESPACE)
             .map_err(index_audit_error)?
-            .map(|entry| {
-                let entry = entry.map_err(index_audit_error)?;
-                if entry.key.as_bytes().len() != OWNER_INDEX_KEY_LEN {
-                    return Err(index_audit_error(GemRepositoryError::MalformedIndexKey));
-                }
-                let owner = Address::from_slice(&entry.key.as_bytes()[..20]);
-                let id = parse_owner_index(&entry, owner).map_err(index_audit_error)?;
-                Ok(owner_audit_record(id, owner))
-            });
+            .map(indexed_owner_audit_record);
         work.compare_records(PRIMARY_KEY_LEN, expected, actual)
     }
 
@@ -190,7 +148,13 @@ impl GemRepositoryReader {
         &self,
         gem_ids: &[WwdEntityId],
     ) -> Result<Vec<Option<GemItemRecordWithMetadata>>, GemRepositoryError> {
-        self.primary_records(GEMS_NAMESPACE, gem_ids, item_key, decode_item)
+        outbe_offchain_storage::repository_pages::read_records(
+            &self.storage,
+            namespace(GEMS_NAMESPACE)?,
+            gem_ids,
+            item_key,
+            |id, record| decode_record(id, record, decode_item),
+        )
     }
 
     /// Loads one gem bucket and verifies its embedded key.
@@ -228,11 +192,12 @@ impl GemRepositoryReader {
         &self,
         bucket_ids: &[WwdEntityId],
     ) -> Result<Vec<Option<GemBucketRecordWithMetadata>>, GemRepositoryError> {
-        self.primary_records(
-            GEM_BUCKETS_NAMESPACE,
+        outbe_offchain_storage::repository_pages::read_records(
+            &self.storage,
+            namespace(GEM_BUCKETS_NAMESPACE)?,
             bucket_ids,
             bucket_storage_key,
-            decode_bucket,
+            |id, record| decode_record(id, record, decode_bucket),
         )
     }
 
@@ -314,30 +279,6 @@ impl GemRepositoryReader {
         Ok(self.storage.get_record(namespace(name)?, &key)?)
     }
 
-    fn primary_records<T>(
-        &self,
-        name: &'static str,
-        ids: &[WwdEntityId],
-        key: fn(WwdEntityId) -> Result<Key, GemRepositoryError>,
-        decode: BodyDecoder<T>,
-    ) -> Result<Vec<Option<RecordWithMetadata<T>>>, GemRepositoryError> {
-        let keys = ids
-            .iter()
-            .copied()
-            .map(key)
-            .collect::<Result<Vec<_>, _>>()?;
-        let records = self.storage.get_records(namespace(name)?, &keys)?;
-        records
-            .into_iter()
-            .zip(ids.iter().copied())
-            .map(|(record, id)| {
-                record
-                    .map(|record| decode_record(id, record, decode))
-                    .transpose()
-            })
-            .collect()
-    }
-
     fn scan(
         &self,
         name: &'static str,
@@ -367,20 +308,7 @@ fn validate_audit_page(
     limit: usize,
     index: &'static str,
 ) -> Result<(), GemRepositoryError> {
-    if page.entries.len() > limit {
-        return Err(
-            StorageError::Corruption(format!("gem {index} page exceeds requested limit")).into(),
-        );
-    }
-    check_continuation(page, index)?;
-    let mut previous = after;
-    for entry in &page.entries {
-        if previous.is_some_and(|previous| previous.as_bytes() >= entry.key.as_bytes()) {
-            return Err(GemRepositoryError::NonAscendingIdPage { index });
-        }
-        previous = Some(&entry.key);
-    }
-    Ok(())
+    page_rules(index).validate(page, after, limit)
 }
 
 /// The iterator retains at most one native bounded page.
@@ -696,51 +624,8 @@ fn id_page_from_entries(
     index: &'static str,
     parse: impl FnMut(&ScanEntry) -> Result<WwdEntityId, GemRepositoryError>,
 ) -> Result<IdPage, GemRepositoryError> {
-    check_continuation(&page, index)?;
-    let ids = ascending_ids(&page.entries, after, index, parse)?;
-    let next_after = page
-        .next_after
-        .is_some()
-        .then(|| {
-            ids.last()
-                .copied()
-                .ok_or(GemRepositoryError::InvalidPageContinuation { index })
-        })
-        .transpose()?;
+    let (ids, next_after) = page_rules(index).id_page(page, after, parse)?;
     Ok(IdPage { ids, next_after })
-}
-
-fn check_continuation(
-    page: &outbe_offchain_storage::ScanPage,
-    index: &'static str,
-) -> Result<(), GemRepositoryError> {
-    if page
-        .next_after
-        .as_ref()
-        .is_some_and(|next| page.entries.last().map(|entry| &entry.key) != Some(next))
-    {
-        return Err(GemRepositoryError::InvalidPageContinuation { index });
-    }
-    Ok(())
-}
-
-fn ascending_ids(
-    entries: &[ScanEntry],
-    after: Option<WwdEntityId>,
-    index: &'static str,
-    mut parse: impl FnMut(&ScanEntry) -> Result<WwdEntityId, GemRepositoryError>,
-) -> Result<Vec<WwdEntityId>, GemRepositoryError> {
-    let mut ids = Vec::with_capacity(entries.len());
-    let mut previous = after;
-    for entry in entries {
-        let id = parse(entry)?;
-        if previous.is_some_and(|previous| id <= previous) {
-            return Err(GemRepositoryError::NonAscendingIdPage { index });
-        }
-        ids.push(id);
-        previous = Some(id);
-    }
-    Ok(ids)
 }
 
 fn next_cursor(has_more: bool, records: &[GemItemState]) -> Option<WwdEntityId> {
@@ -821,3 +706,40 @@ pub fn from_canonical_bucket(body: GemBucketBodyV1) -> Result<GemBucketState, Ge
         settled_gems: body.settled_gems,
     })
 }
+
+fn page_rules(
+    index: &'static str,
+) -> outbe_offchain_storage::repository_pages::PageRules<GemRepositoryError> {
+    outbe_offchain_storage::repository_page_rules!(GemRepositoryError, index, "gem")
+}
+
+fn primary_owner_audit_record(
+    entry: Result<ScanEntry, GemRepositoryError>,
+) -> Result<[u8; OWNER_INDEX_KEY_LEN], CeAuditError> {
+    let entry = entry.map_err(index_audit_error)?;
+    let id = parse_primary_key(entry.key.as_bytes()).map_err(index_audit_error)?;
+    let body = decode_item(id, entry.value.as_bytes()).map_err(index_audit_error)?;
+    Ok(owner_audit_record(id, body.owner))
+}
+
+fn indexed_owner_audit_record(
+    entry: Result<ScanEntry, GemRepositoryError>,
+) -> Result<[u8; OWNER_INDEX_KEY_LEN], CeAuditError> {
+    let entry = entry.map_err(index_audit_error)?;
+    if entry.key.as_bytes().len() != OWNER_INDEX_KEY_LEN {
+        return Err(index_audit_error(GemRepositoryError::MalformedIndexKey));
+    }
+    let owner = Address::from_slice(&entry.key.as_bytes()[..20]);
+    let id = parse_owner_index(&entry, owner).map_err(index_audit_error)?;
+    Ok(owner_audit_record(id, owner))
+}
+
+outbe_offchain_storage::repository_primary_scan!(
+    GemRepositoryReader,
+    GemRepositoryError,
+    WwdEntityId,
+    IdPageRequest,
+    StoredBody,
+    StoredBodyPage,
+    crate::repository
+);

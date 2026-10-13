@@ -246,11 +246,14 @@ pub fn issue_merchant_gem(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
-    position_id: U256,
-    owner: Address,
-    promis_load: U256,
+    params: crate::schema::MerchantGemIssueParams,
 ) -> Result<U256> {
+    let crate::schema::MerchantGemIssueParams {
+        caller,
+        position_id,
+        owner,
+        promis_load,
+    } = params;
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
@@ -324,11 +327,14 @@ pub fn settle_gem(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
-    gem_id: U256,
-    asset: Address,
-    snapshot_id: U256,
+    params: crate::schema::GemSettlementParams,
 ) -> Result<()> {
+    let crate::schema::GemSettlementParams {
+        caller,
+        gem_id,
+        asset,
+        snapshot_id,
+    } = params;
     let gem = load_view(storage, scope, parent, gem_id)?;
     let now = storage.timestamp()?.to::<u64>();
     // The qualification walk goes last.
@@ -617,10 +623,10 @@ pub fn mine_promis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    gem_id: U256,
-    nonce: u64,
+    params: crate::schema::GemMiningProof,
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
+    let crate::schema::GemMiningProof { gem_id, nonce } = params;
     let item =
         gem_api::get_item(storage, scope, parent, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     // Anyone may submit. The owner's modify key authorizes the mint.
