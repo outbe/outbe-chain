@@ -432,14 +432,14 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
     {
       tool: "agentreward_claim",
       contract: "agentreward",
-      args: { pool: 0, amount: "1.5", wait: false },
+      args: { pool: 0, amount: "1.5", issuance_currency: 840, reference_currency: 978, wait: false },
       amountIndex: 1,
       value: 0n,
     },
     {
       tool: "agentreward_claim",
       contract: "agentreward",
-      args: { pool: 2, amount: "1.5", wait: false },
+      args: { pool: 2, amount: "1.5", issuance_currency: 840, reference_currency: 978, wait: false },
       amountIndex: 1,
       value: 0n,
     },
@@ -456,6 +456,9 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
     assert.equal(decoded.args?.[item.amountIndex], 1_500_000_000_000_000_000n, item.tool);
     assert.equal(transaction.value, item.value, `${item.tool} msg.value`);
     if ("pool" in item.args) assert.equal(decoded.args?.[0], item.args.pool);
+    if ("reference_currency" in item.args) {
+      assert.deepEqual(decoded.args?.slice(2), [item.args.issuance_currency, item.args.reference_currency]);
+    }
   }
 });
 
