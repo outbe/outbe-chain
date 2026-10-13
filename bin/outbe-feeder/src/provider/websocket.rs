@@ -9,7 +9,6 @@ use std::io::Read as _;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use alloy_primitives::{U256, U512};
 use async_trait::async_trait;
 use eyre::{eyre, Result, WrapErr};
 use flate2::read::GzDecoder;
@@ -23,8 +22,6 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use super::{checked_candle, checked_ticker, CandlePrice, Provider, TickerPrice, VolumeInput};
 use crate::config::ApiProviderConfig;
 use crate::fixed::FixedValue;
-use outbe_primitives::stablecoin::iso_4217_alpha;
-use outbe_primitives::units::SCALE_1E18;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 const STALE_CONNECTION_AFTER: Duration = Duration::from_secs(60);
@@ -106,34 +103,22 @@ impl ExchangeKind {
         format!("wss://{configured}{}", self.default_path())
     }
 
+    /// The exchange market for `base/quote`, both written in the exchange's
+    /// own symbols: the config says which market prices a pair, the code
+    /// never substitutes one. Addresses and ISO codes are not exchange symbols.
     fn pair_route(self, base: &str, quote: &str) -> Option<PairRoute> {
-        if base.starts_with("0x") || quote.starts_with("0x") {
+        if [base, quote]
+            .iter()
+            .any(|asset| asset.starts_with("0x") || is_iso_symbol(asset))
+        {
             return None;
         }
-        let (market_base, market_quote, inverted) =
-            if is_iso_symbol(base) && (!is_iso_symbol(quote) || base == "840") {
-                (quote, base, true)
-            } else {
-                (base, quote, false)
-            };
-        let provider_asset = |asset: &str| -> Option<String> {
-            if asset == "840" {
-                return Some(match self {
-                    Self::Kraken | Self::Coinbase => "USD".to_owned(),
-                    _ => "USDT".to_owned(),
-                });
-            }
-            if let Ok(code) = asset.parse::<u16>() {
-                return String::from_utf8(iso_4217_alpha(code)?.to_vec()).ok();
-            }
-            if self == Self::Kraken && asset.eq_ignore_ascii_case("BTC") {
-                Some("XBT".to_owned())
-            } else {
-                Some(asset.to_owned())
-            }
+        let provider_base = if self == Self::Kraken && base.eq_ignore_ascii_case("BTC") {
+            "XBT".to_owned()
+        } else {
+            base.to_owned()
         };
-        let provider_base = provider_asset(market_base)?;
-        let provider_quote = provider_asset(market_quote)?;
+        let provider_quote = quote.to_owned();
         let provider_symbol = match self {
             Self::Kraken => format!("{provider_base}/{provider_quote}"),
             Self::Okx | Self::Coinbase => format!("{provider_base}-{provider_quote}"),
@@ -148,7 +133,6 @@ impl ExchangeKind {
             fallback_key: format!("{provider_base}/{provider_quote}"),
             fallback_pair: (provider_base, provider_quote),
             provider_symbol,
-            inverted,
         })
     }
 
@@ -157,6 +141,25 @@ impl ExchangeKind {
             .iter()
             .any(|(base, quote)| self.pair_route(base, quote).is_some())
     }
+}
+
+/// An exchange market is written in the exchange's own symbols. The code
+/// substitutes nothing for an ISO code: which dollar market prices the pair,
+/// USDT, USDC or USD, is the operator's choice.
+pub(crate) fn validate_exchange_markets(endpoint: &ApiProviderConfig) -> Result<()> {
+    if ExchangeKind::for_name(&endpoint.name).is_none() {
+        return Ok(());
+    }
+    for market in &endpoint.markets {
+        if is_iso_symbol(&market.quote) {
+            return Err(eyre!(
+                "exchange '{}' market quote '{}' is an ISO code; write the exchange's market, such as USDT, USDC or USD",
+                endpoint.name,
+                market.quote
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn is_iso_symbol(value: &str) -> bool {
@@ -171,54 +174,11 @@ struct PairRoute {
     fallback_key: String,
     fallback_pair: (String, String),
     provider_symbol: String,
-    inverted: bool,
 }
 
 impl PairRoute {
     fn matches(&self, symbol: &str) -> bool {
         normalize_symbol(&self.provider_symbol) == normalize_symbol(symbol)
-    }
-
-    fn ticker(&self, value: &TickerPrice) -> Option<TickerPrice> {
-        let (price, volume) = self.values(value.price, value.volume)?;
-        Some(TickerPrice { price, volume })
-    }
-
-    fn candles(&self, values: &[CandlePrice]) -> Option<Vec<CandlePrice>> {
-        values
-            .iter()
-            .map(|value| {
-                let (price, volume) = self.values(value.price, value.volume)?;
-                Some(CandlePrice {
-                    price,
-                    volume,
-                    timestamp: value.timestamp,
-                })
-            })
-            .collect()
-    }
-
-    fn values(&self, price: FixedValue, volume: FixedValue) -> Option<(FixedValue, FixedValue)> {
-        if !self.inverted {
-            return Some((price, volume));
-        }
-        if price.is_zero() {
-            return None;
-        }
-        let scale = U512::from(SCALE_1E18);
-        let inverse = scale
-            .checked_mul(scale)?
-            .checked_div(U512::from(price.raw()))?;
-        let converted_volume = U512::from(volume.raw())
-            .checked_mul(U512::from(price.raw()))?
-            .checked_div(scale)?;
-        if inverse > U512::from(U256::MAX) || converted_volume > U512::from(U256::MAX) {
-            return None;
-        }
-        Some((
-            FixedValue::from_raw(inverse.wrapping_to::<U256>()),
-            FixedValue::from_raw(converted_volume.wrapping_to::<U256>()),
-        ))
     }
 }
 
@@ -369,10 +329,7 @@ impl Provider for StreamingProvider {
                 .collect::<Vec<_>>();
             let fallback = self.fallback.get_ticker_prices(&fallback_pairs).await?;
             for route in routes {
-                if let Some(value) = fallback
-                    .get(&route.fallback_key)
-                    .and_then(|value| route.ticker(value))
-                {
+                if let Some(value) = fallback.get(&route.fallback_key).cloned() {
                     values.insert(route.key.clone(), value);
                 }
             }
@@ -407,10 +364,7 @@ impl Provider for StreamingProvider {
                 .collect::<Vec<_>>();
             let fallback = self.fallback.get_candle_prices(&fallback_pairs).await?;
             for route in routes {
-                if let Some(value) = fallback
-                    .get(&route.fallback_key)
-                    .and_then(|value| route.candles(value))
-                {
+                if let Some(value) = fallback.get(&route.fallback_key).cloned() {
                     values.insert(route.key.clone(), value);
                 }
             }
@@ -956,9 +910,6 @@ fn parse_coinbase(
 }
 
 fn insert_ticker(cache: &SharedCache, route: &PairRoute, price: FixedValue, volume: FixedValue) {
-    let Some((price, volume)) = route.values(price, volume) else {
-        return;
-    };
     let Some(ticker) = checked_ticker(
         "websocket",
         &route.key,
@@ -991,9 +942,6 @@ fn insert_candle(
     volume: FixedValue,
     timestamp: u64,
 ) {
-    let Some((price, volume)) = route.values(price, volume) else {
-        return;
-    };
     let Some(candle) = checked_candle(
         "websocket",
         &route.key,
@@ -1144,11 +1092,10 @@ mod tests {
 
     fn route() -> Vec<PairRoute> {
         vec![PairRoute {
-            key: "ETH/840".to_owned(),
+            key: "ETH/USDT".to_owned(),
             fallback_key: "ETH/USDT".to_owned(),
             fallback_pair: ("ETH".to_owned(), "USDT".to_owned()),
             provider_symbol: "ETHUSDT".to_owned(),
-            inverted: false,
         }]
     }
 
@@ -1176,46 +1123,14 @@ mod tests {
     }
 
     #[test]
-    fn reverse_iso_market_uses_exchange_orientation_and_fixed_point_inverse() {
-        let route = ExchangeKind::Binance
-            .pair_route("840", "BTC")
-            .expect("USD/BTC can use the BTC/USDT exchange market");
-        assert_eq!(route.provider_symbol, "BTCUSDT");
-        assert_eq!(route.fallback_pair, ("BTC".to_owned(), "USDT".to_owned()));
-        assert!(route.inverted);
-
-        let cache = Arc::new(RwLock::new(MarketCache::default()));
-        insert_ticker(
-            &cache,
-            &route,
-            FixedValue::parse("2").unwrap(),
-            FixedValue::parse("3").unwrap(),
-        );
-        let cache = cache.read().unwrap();
-        assert_eq!(
-            cache.tickers["840/BTC"].price,
-            FixedValue::parse("0.5").unwrap()
-        );
-        assert_eq!(
-            cache.tickers["840/BTC"].volume,
-            FixedValue::parse("6").unwrap()
-        );
-
-        let eur = ExchangeKind::Coinbase
-            .pair_route("978", "BTC")
-            .expect("EUR/BTC can use the BTC/EUR exchange market");
-        assert_eq!(eur.provider_symbol, "BTC-EUR");
-
-        let eur_usd = ExchangeKind::Binance
-            .pair_route("978", "840")
-            .expect("EUR/USD maps both ISO codes to exchange symbols");
-        assert_eq!(eur_usd.provider_symbol, "EURUSDT");
-        assert!(!eur_usd.inverted);
-        let usd_eur = ExchangeKind::Binance
-            .pair_route("840", "978")
-            .expect("USD/EUR uses the liquid EUR/USD direction and inverts it");
-        assert_eq!(usd_eur.provider_symbol, "EURUSDT");
-        assert!(usd_eur.inverted);
+    fn exchange_markets_are_written_in_exchange_symbols() {
+        // No ISO code is substituted: the config names the exchange market.
+        assert!(ExchangeKind::Binance.pair_route("COEN", "840").is_none());
+        assert!(ExchangeKind::Kraken.pair_route("840", "BTC").is_none());
+        assert!(ExchangeKind::Coinbase.pair_route("ETH", "978").is_none());
+        let kraken = ExchangeKind::Kraken.pair_route("BTC", "USD").unwrap();
+        assert_eq!(kraken.provider_symbol, "XBT/USD");
+        assert_eq!(kraken.fallback_pair, ("XBT".to_owned(), "USD".to_owned()));
     }
 
     #[test]
@@ -1232,8 +1147,8 @@ mod tests {
         );
 
         let cache = cache.read().unwrap();
-        assert_eq!(cache.candles["ETH/840"].len(), 1);
-        assert!(cache.candles["ETH/840"][0].volume.is_zero());
+        assert_eq!(cache.candles["ETH/USDT"].len(), 1);
+        assert!(cache.candles["ETH/USDT"][0].volume.is_zero());
     }
 
     #[test]
@@ -1243,7 +1158,6 @@ mod tests {
             .expect("COEN/USDT is an explicit provider market");
         assert_eq!(binance.key, "COEN/USDT");
         assert_eq!(binance.provider_symbol, "COENUSDT");
-        assert!(!binance.inverted);
 
         let coinbase = ExchangeKind::Coinbase
             .pair_route("COEN", "USDC")
@@ -1287,12 +1201,12 @@ mod tests {
             process_payload(kind, candle, &route(), &cache).unwrap();
             let cache = cache.read().unwrap();
             assert_eq!(
-                cache.tickers["ETH/840"].price,
+                cache.tickers["ETH/USDT"].price,
                 FixedValue::parse("2500.125").unwrap(),
                 "{kind:?} ticker"
             );
             assert_eq!(
-                cache.candles["ETH/840"][0].price,
+                cache.candles["ETH/USDT"][0].price,
                 FixedValue::parse("2501.25").unwrap(),
                 "{kind:?} candle"
             );
@@ -1313,11 +1227,11 @@ mod tests {
 
         let cache = cache.read().unwrap();
         assert_eq!(
-            cache.tickers["ETH/840"].price,
+            cache.tickers["ETH/USDT"].price,
             FixedValue::parse("2500.125").unwrap()
         );
         assert_eq!(
-            cache.candles["ETH/840"][0].price,
+            cache.candles["ETH/USDT"][0].price,
             FixedValue::parse("2501.25").unwrap()
         );
     }
@@ -1342,7 +1256,7 @@ mod tests {
 
         let cache = cache.read().unwrap();
         assert_eq!(
-            cache.tickers["ETH/840"].price,
+            cache.tickers["ETH/USDT"].price,
             FixedValue::parse("2500.125").unwrap()
         );
         assert!(cache.candles.is_empty());
@@ -1436,7 +1350,7 @@ mod tests {
             websocket: format!("ws://{address}"),
             api_key: String::new(),
         };
-        let pairs = vec![("ETH".to_owned(), "840".to_owned())];
+        let pairs = vec![("ETH".to_owned(), "USDT".to_owned())];
         let provider = StreamingProvider::new(
             ExchangeKind::Binance,
             Some(&endpoint),
@@ -1449,7 +1363,7 @@ mod tests {
         loop {
             let values = provider.cached_tickers(&pairs);
             if values
-                .get("ETH/840")
+                .get("ETH/USDT")
                 .is_some_and(|ticker| ticker.price == FixedValue::parse("2501.25").unwrap())
             {
                 break;

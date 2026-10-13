@@ -18,11 +18,7 @@ fn map_symbol(base: &str, quote: &str) -> Option<String> {
         "BTC" => "XBT",
         other => other,
     };
-    // ISO 4217 numeric quote -> this exchange's stable-pair symbol.
-    let q = match quote {
-        "840" => "USD",
-        other => other,
-    };
+    let q = quote;
     Some(format!("{b}{q}"))
 }
 

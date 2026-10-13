@@ -14,11 +14,7 @@ fn map_symbol(base: &str, quote: &str) -> Option<String> {
     if base.starts_with("COEN") || base.starts_with("0x") {
         return None;
     }
-    // ISO 4217 numeric quote -> this exchange's stable-pair symbol.
-    let q = match quote {
-        "840" => "USD",
-        other => other,
-    };
+    let q = quote;
     Some(format!("{base}-{q}"))
 }
 

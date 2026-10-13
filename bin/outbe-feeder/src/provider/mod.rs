@@ -16,7 +16,7 @@ pub mod pyth;
 pub mod redstone;
 #[cfg(test)]
 pub(crate) mod test_server;
-mod websocket;
+pub(crate) mod websocket;
 
 use eyre::{eyre, Result};
 use std::collections::HashMap;

@@ -39,9 +39,10 @@ enabled = true
 bind_address = "0.0.0.0:9002"
 
 # The Oracle pairs to vote on. Every market a provider lists below feeds the
-# pair its quote names: 840, USD, USDT and USDC are the dollar pair (V1 prices
-# the stablecoins at par), a numeric ISO code is that pair. Every market price
-# joins one volume-weighted mean per pair.
+# pair its quote names: USDT and USDC are the dollar pair, an ISO code such
+# as USD, 840 or EUR is that currency's pair. An exchange market is written
+# in the exchange's own symbols; the feeder substitutes nothing. Every market
+# price joins one volume-weighted mean per pair.
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
@@ -110,7 +111,7 @@ threshold = "2.0"
 | `health.enabled` | no | Enables health/status HTTP server (default: true) |
 | `health.bind_address` | no | Health server bind address (default: `0.0.0.0:9002`) |
 | `currency_pairs[].base` | yes | On-chain base asset: `COEN`, an ISO 4217 numeric code, or a `0x` token address |
-| `currency_pairs[].quote` | yes | On-chain quote asset in the same format. Every market listed below feeds the pair its quote names: `840`, `USD`, `USDT`, `USDC` feed the `840` pair, a numeric ISO code feeds that pair |
+| `currency_pairs[].quote` | yes | On-chain quote asset in the same format. Every market listed below feeds the pair its quote names: `USDT` and `USDC` feed the `840` pair, an ISO code (`USD`, `840`, `EUR`, `978`) feeds that currency's pair |
 | `api_providers[].name` | one entry per exchange or gateway used | Built-in provider name |
 | `api_providers[].markets[].quote` | yes | Quote symbol the provider trades the pair base in |
 | `api_providers[].markets[].base` | no | The provider's name for the pair base, when it differs (default: the pair's `base`) |
@@ -136,6 +137,8 @@ At startup, the feeder validates:
 - ISO markets use `COEN/ISO`; reverse `ISO/COEN` configuration is rejected
 - All provider names are known: `mock`, `mock_http`, `pyth`, `redstone`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`, or an `onchain_providers` entry name
 - WebSocket endpoints are only accepted for streaming exchange providers
+- An exchange market is quoted in the exchange's symbol (`USDT`, `USDC`, `USD`),
+  never an ISO code: the feeder substitutes no market for a currency
 - API provider names are unique
 
 Provider prices and volumes are parsed and aggregated as deterministic FP18
