@@ -11,12 +11,15 @@
 FROM rust:1.96-bookworm AS builder
 
 RUN apt-get update && apt-get install -y \
+    ca-certificates \
     cmake \
     clang \
+    curl \
     libc++-dev \
     libc++abi-dev \
     libssl-dev \
     pkg-config \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -25,6 +28,10 @@ WORKDIR /build
 COPY . .
 
 WORKDIR /build
+
+# outbe-zk compiles the in-tree Noir circuits from build.rs. Install the exact
+# checksum-pinned nargo and bb versions before Cargo reaches that crate.
+RUN scripts/release/install-zk-build-tools.sh /usr/local/bin
 
 # Build release binaries
 RUN cargo build --release --bin outbe-chain --bin outbe-keygen --bin outbe-cli
