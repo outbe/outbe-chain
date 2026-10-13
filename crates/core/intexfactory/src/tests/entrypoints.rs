@@ -33,6 +33,23 @@ fn dispatch_mine_promis_routes_to_runtime() {
 }
 
 #[test]
+fn dispatch_pow_difficulty_serves_the_protocol_difficulty() {
+    with_factory(|s| {
+        let out = precompile::dispatch(
+            s.clone(),
+            &IIntexFactory::powDifficultyCall {}.abi_encode(),
+            owner(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            usize::from(IIntexFactory::powDifficultyCall::abi_decode_returns(&out).unwrap()),
+            outbe_common::pow::POW_DIFFICULTY
+        );
+    });
+}
+
+#[test]
 fn config_unset_resolves_by_chain_id() {
     with_factory(|s| {
         let f = IntexFactoryContract::new(s.clone());

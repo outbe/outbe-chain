@@ -54,6 +54,9 @@ interface IIntexFactory {
         external
         returns (uint256 promisMinor);
 
+    /// @notice Leading zero bytes `minePromis` requires of the work hash.
+    function powDifficulty() external view returns (uint8);
+
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
     ///         The day's payout round opens once every winning chain has routed
