@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
+use outbe_compressed_entities::{ExecutionReaders, ParentBodySource};
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
@@ -23,13 +24,62 @@ mod abi {
 }
 pub use abi::IGemFactory;
 
+// Genesis cannot seed a Gem body, so a scenario that needs a paid Gem on a fresh chain
+// asks a throwaway build for one.
+#[cfg(feature = "e2e-test")]
+alloy_sol_types::sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IGemFactoryTestArming {
+        function issueSettledGemForTest(address owner, uint256 promisLoadMinor, uint16 currency) external returns (uint256 gemId);
+    }
+}
+
+#[cfg(feature = "e2e-test")]
+fn issue_settled_gem_for_test(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    scope: &outbe_compressed_entities::ExecutionScope,
+    parent: &impl ParentBodySource,
+    call: IGemFactoryTestArming::issueSettledGemForTestCall,
+) -> Result<U256> {
+    // One six-decimal unit: a positive entry price with a floor that never blocks.
+    let unit = U256::from(1_000_000u64);
+    outbe_gem::api::issue_settled_for_test(
+        storage,
+        scope,
+        parent,
+        outbe_gem::GemAddParams {
+            owner: call.owner,
+            gem_type: crate::schema::GemTypes::Wallet as u8,
+            promis_load_minor: call.promisLoadMinor,
+            entry_price_minor: unit,
+            floor_price_minor: unit,
+            issuance_currency: call.currency,
+            reference_currency: call.currency,
+            issued_at: storage.timestamp()?.to::<u64>(),
+        },
+    )
+}
+
+/// Dispatches Gem Factory calls through the block-scoped compressed-body lifecycle.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
+    let ExecutionReaders { scope, parent } = readers;
+    #[cfg(feature = "e2e-test")]
+    if let Ok(call) =
+        <IGemFactoryTestArming::issueSettledGemForTestCall as alloy_sol_types::SolCall>::abi_decode(
+            data,
+        )
+    {
+        outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
+        let gem_id = issue_settled_gem_for_test(&storage, scope, parent, call)?;
+        return Ok(<IGemFactoryTestArming::issueSettledGemForTestCall as alloy_sol_types::SolCall>::abi_encode_returns(&gem_id).into());
+    }
     dispatch_call(data, IGemFactory::IGemFactoryCalls::abi_decode, |call| {
         use IGemFactory::IGemFactoryCalls::*;
         match call {
@@ -44,21 +94,44 @@ pub fn dispatch(
             issueGem(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::issue_merchant_gem(
                     &storage,
-                    sender,
-                    c.positionId,
-                    c.owner,
-                    c.promisLoadMinor,
+                    scope,
+                    parent,
+                    crate::schema::MerchantGemIssueParams {
+                        caller: sender,
+                        position_id: c.positionId,
+                        owner: c.owner,
+                        promis_load: c.promisLoadMinor,
+                    },
                 )
             }),
             settleGem(c) => mutate_void(&storage, c, caller, |sender, c| {
-                runtime::settle_gem(&storage, sender, c.gemId, c.asset, c.snapshotId)
+                runtime::settle_gem(
+                    &storage,
+                    scope,
+                    parent,
+                    crate::schema::GemSettlementParams {
+                        caller: sender,
+                        gem_id: c.gemId,
+                        asset: c.asset,
+                        snapshot_id: c.snapshotId,
+                    },
+                )
             }),
             minePromis(c) => mutate(&storage, c, caller, |_sender, c| {
                 let auth = outbe_promisfactory::api::ModifyAuth {
                     mac: c.mac.0,
                     op_nonce: c.opNonce,
                 };
-                runtime::mine_promis(&storage, c.gemId, c.nonce, auth)
+                runtime::mine_promis(
+                    &storage,
+                    scope,
+                    parent,
+                    crate::schema::GemMiningProof {
+                        gem_id: c.gemId,
+                        nonce: c.nonce,
+                    },
+                    auth,
+                )
             }),
             getStatistics(_) => metadata::<IGemFactory::getStatisticsCall>(|| {
                 let factory = GemFactoryContract::new(storage.clone());
@@ -70,7 +143,7 @@ pub fn dispatch(
 
             quoteSettlement(c) => metadata::<IGemFactory::quoteSettlementCall>(|| {
                 let (settlement_currency, amount, snapshot_id) =
-                    runtime::quote_settlement(&storage, c.gemId, c.asset)?;
+                    runtime::quote_settlement(&storage, scope, parent, c.gemId, c.asset)?;
                 Ok(IGemFactory::quoteSettlementReturn {
                     settlementCurrency: settlement_currency,
                     paymentMinor: amount,

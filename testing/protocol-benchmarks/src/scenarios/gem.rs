@@ -66,6 +66,8 @@ enum PreparedGemPath {
 
 pub struct PreparedGem {
     provider: HashMapStorageProvider,
+    /// Gems are compressed bodies: the mint runs under this open block scope.
+    world: outbe_gem::test_support::GemWorld,
     path: PreparedGemPath,
 }
 
@@ -134,7 +136,9 @@ fn seed_series(storage: &StorageHandle<'_>) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
-fn new_provider(needs_oracle: bool) -> Result<HashMapStorageProvider, String> {
+fn new_provider(
+    needs_oracle: bool,
+) -> Result<(HashMapStorageProvider, outbe_gem::test_support::GemWorld), String> {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(1);
     provider.set_timestamp(U256::from(T_NOW));
@@ -142,10 +146,13 @@ fn new_provider(needs_oracle: bool) -> Result<HashMapStorageProvider, String> {
         INTEX_NFT1155_ADDRESS,
         Bytes::from(U256::from(PARK_UNITS).to_be_bytes::<32>().to_vec()),
     );
+    let world = StorageHandle::enter(&mut provider, |storage| {
+        outbe_gem::test_support::GemWorld::open(&storage)
+    });
     if needs_oracle {
         StorageHandle::enter(&mut provider, seed_oracle)?;
     }
-    Ok(provider)
+    Ok((provider, world))
 }
 
 impl BenchmarkScenario for GemScenario {
@@ -176,20 +183,25 @@ impl BenchmarkScenario for GemScenario {
 
     fn prepare(&self, _profile: Profile) -> Result<Self::Prepared, String> {
         match self.path {
-            GemPath::Direct(gem_type) => Ok(PreparedGem {
-                provider: new_provider(true)?,
-                path: PreparedGemPath::Direct(gem_type),
-            }),
+            GemPath::Direct(gem_type) => {
+                let (provider, world) = new_provider(true)?;
+                Ok(PreparedGem {
+                    provider,
+                    world,
+                    path: PreparedGemPath::Direct(gem_type),
+                })
+            }
             GemPath::Position => {
-                let mut provider = new_provider(true)?;
+                let (mut provider, world) = new_provider(true)?;
                 StorageHandle::enter(&mut provider, |storage| seed_series(&storage))?;
                 Ok(PreparedGem {
                     provider,
+                    world,
                     path: PreparedGemPath::Position,
                 })
             }
             GemPath::Merchant => {
-                let mut provider = new_provider(true)?;
+                let (mut provider, world) = new_provider(true)?;
                 let position_id = StorageHandle::enter(&mut provider, |storage| {
                     seed_series(&storage)?;
                     outbe_gemfactory::api::issue_gem_position(
@@ -202,6 +214,7 @@ impl BenchmarkScenario for GemScenario {
                 })?;
                 Ok(PreparedGem {
                     provider,
+                    world,
                     path: PreparedGemPath::Merchant {
                         position_id,
                         initial_capacity: U256::from(SCALE_1E6_U64) * U256::from(PARK_UNITS),
@@ -226,6 +239,8 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
     let output = StorageHandle::enter(&mut provider, |storage| match prepared.path {
         PreparedGemPath::Direct(gem_type) => outbe_gemfactory::api::issue_gem(
             &storage,
+            &prepared.world.scope,
+            &prepared.world.parent,
             outbe_gemfactory::GemIssueParams {
                 owner: ALICE,
                 gem_type,
@@ -247,10 +262,14 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
         .map_err(|error| error.to_string()),
         PreparedGemPath::Merchant { position_id, .. } => outbe_gemfactory::api::issue_merchant_gem(
             &storage,
-            ALICE,
-            position_id,
-            BOB,
-            U256::from(10) * six_decimal_unit(),
+            &prepared.world.scope,
+            &prepared.world.parent,
+            outbe_gemfactory::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id,
+                owner: BOB,
+                promis_load: U256::from(10) * six_decimal_unit(),
+            },
         )
         .map_err(|error| error.to_string()),
     })?;
@@ -274,7 +293,13 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
     match prepared.path {
         PreparedGemPath::Direct(gem_type) => {
             let gem = StorageHandle::enter(&mut provider, |storage| {
-                outbe_gem::api::get_gem(&storage, output).map_err(|error| error.to_string())
+                outbe_gem::api::get_item(
+                    &storage,
+                    &prepared.world.scope,
+                    &prepared.world.parent,
+                    output,
+                )
+                .map_err(|error| error.to_string())
             })?
             .ok_or_else(|| "created Gem is not canonically readable".to_owned())?;
             if gem.gem_type != gem_type as u8 {
@@ -306,8 +331,13 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
             initial_capacity,
         } => {
             let (gem, remaining) = StorageHandle::enter(&mut provider, |storage| {
-                let gem =
-                    outbe_gem::api::get_gem(&storage, output).map_err(|error| error.to_string())?;
+                let gem = outbe_gem::api::get_item(
+                    &storage,
+                    &prepared.world.scope,
+                    &prepared.world.parent,
+                    output,
+                )
+                .map_err(|error| error.to_string())?;
                 let remaining = GemFactoryContract::new(storage)
                     .positions
                     .get(position_id)

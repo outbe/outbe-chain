@@ -28,6 +28,31 @@ pub struct GemIssueParams {
     pub entry_price: U256,
 }
 
+/// One merchant issuance, authorized by the position owner.
+#[derive(Debug, Clone, Copy)]
+pub struct MerchantGemIssueParams {
+    pub caller: Address,
+    pub position_id: U256,
+    pub owner: Address,
+    pub promis_load: U256,
+}
+
+/// One payment and its required price snapshot.
+#[derive(Debug, Clone, Copy)]
+pub struct GemSettlementParams {
+    pub caller: Address,
+    pub gem_id: U256,
+    pub asset: Address,
+    pub snapshot_id: U256,
+}
+
+/// The proof of work submitted for a settled Gem.
+#[derive(Debug, Clone, Copy)]
+pub struct GemMiningProof {
+    pub gem_id: U256,
+    pub nonce: u64,
+}
+
 /// A merchant's Gem Factory position: the pool of Promis capacity from which the
 /// Gem Factory issues Merchant gems. The position is a single-owner, non-transferable
 /// NFT (owner = `merchant`), keyed by `position_id`. `merchant == 0` means "no

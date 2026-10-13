@@ -26,6 +26,7 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "schema_version",
     "system_packages",
     "target",
+    "zk_tools",
 }
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 EXPECTED_APT_SOURCE_PATHS = (
@@ -54,6 +55,7 @@ EXPECTED_SYSTEM_PACKAGES = (
     "pkg-config",
 )
 EXPECTED_HOST_ONLY_PACKAGES = ("libsgx-dcap-default-qpl",)
+EXPECTED_ZK_TOOLS = ("barretenberg", "nargo")
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -164,6 +166,24 @@ def load_and_validate_pin(path: Path) -> dict[str, Any]:
         raise ValueError("project toolchain has an unsupported host-only package set")
     if set(host_only_packages).intersection(packages):
         raise ValueError("host-only packages must not enter the release build image")
+
+    zk_tools = pin["zk_tools"]
+    if not isinstance(zk_tools, dict) or tuple(zk_tools) != EXPECTED_ZK_TOOLS:
+        raise ValueError("project toolchain has an unsupported ZK tool set")
+    for name, tool in zk_tools.items():
+        if (
+            not isinstance(tool, dict)
+            or set(tool) != {"archive_sha256", "archive_url", "version"}
+            or not isinstance(tool["version"], str)
+            or not tool["version"]
+            or any(character.isspace() for character in tool["version"])
+            or not isinstance(tool["archive_sha256"], str)
+            or not SHA256_RE.fullmatch(tool["archive_sha256"])
+            or not isinstance(tool["archive_url"], str)
+            or not tool["archive_url"].startswith("https://github.com/")
+            or f"/v{tool['version']}/" not in tool["archive_url"]
+        ):
+            raise ValueError(f"project {name} tool must use an exact GitHub archive pin")
     return pin
 
 

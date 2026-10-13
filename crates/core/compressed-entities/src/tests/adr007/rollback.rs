@@ -213,6 +213,22 @@ fn every_mutation_write_and_event_boundary_rolls_back_for_all_typed_collections(
             FixtureBody::NodBucket(bucket_original),
             FixtureBody::NodBucket(bucket_updated),
         ),
+        (
+            FixtureBody::Gem(super::gem_ce::gem()),
+            FixtureBody::Gem(crate::GemBodyV1 {
+                state: 3,
+                called_at: 8,
+                settled_at: 9,
+                ..super::gem_ce::gem()
+            }),
+        ),
+        (
+            FixtureBody::GemBucket(super::gem_ce::bucket()),
+            FixtureBody::GemBucket(crate::GemBucketBodyV1 {
+                settled_gems: 1,
+                ..super::gem_ce::bucket()
+            }),
+        ),
     ] {
         for mutation in [
             FaultMutation::Mint,

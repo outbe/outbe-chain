@@ -49,11 +49,20 @@ pub(super) fn verify_present_projection_structure(
     )?;
     let tribute = TributeRepositoryReader::new(reader.clone());
     let nod = outbe_nod::nod_reader(reader.clone());
+    let gem = outbe_gem::gem_reader(reader.clone());
     tribute.audit_indexes(&work)?;
     nod.audit_indexes(&work)?;
     nod.audit_partition_locations(&work)?;
+    gem.audit_indexes(&work)?;
+    gem.audit_partition_locations(&work)?;
     let mut live = 0_u64;
-    for domain in [CeDomain::Tribute, CeDomain::NodItem, CeDomain::NodBucket] {
+    for domain in [
+        CeDomain::Tribute,
+        CeDomain::NodItem,
+        CeDomain::NodBucket,
+        CeDomain::Gem,
+        CeDomain::GemBucket,
+    ] {
         let mut after = None;
         loop {
             let request = IdPageRequest {
@@ -61,6 +70,8 @@ pub(super) fn verify_present_projection_structure(
                 limit: MAX_ID_PAGE_LIMIT,
             };
             let page = match domain {
+                CeDomain::Gem => gem.scan_stored_items(request)?,
+                CeDomain::GemBucket => gem.scan_stored_buckets(request)?,
                 CeDomain::Tribute => tribute.scan_stored_bodies(request)?,
                 CeDomain::NodItem => nod.scan_stored_items(request)?,
                 CeDomain::NodBucket => nod.scan_stored_buckets(request)?,

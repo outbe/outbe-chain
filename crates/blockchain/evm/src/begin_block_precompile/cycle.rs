@@ -42,6 +42,39 @@ pub(super) fn run_cycle_tick_at_activation(
     ))
 }
 
+/// Offline/component execution without installed body readers. Tests get an
+/// in-memory parent and a block-local compressed-entity lifecycle, the same way the
+/// CycleTick fallback does; production fails closed.
+pub(super) fn run_reward_gem_delivery_without_readers(ctx: &BlockRuntimeContext) -> Result<()> {
+    #[cfg(test)]
+    {
+        use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
+        use std::sync::Arc;
+
+        let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
+        let parent = outbe_offchain_data::runtime_body_readers(storage);
+        let scope = outbe_compressed_entities::ExecutionScope::default();
+        let compressed =
+            outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
+        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
+            &compressed,
+        )?;
+        outbe_rewards::api::deliver_oldest_reward_gem_batch(ctx, &scope, &parent)?;
+        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
+            &compressed,
+        )
+        .map(|_| ())
+    }
+
+    #[cfg(not(test))]
+    {
+        let _ = ctx;
+        Err(PrecompileError::Fatal(
+            "RewardsGemDelivery execution body read authority was not supplied".into(),
+        ))
+    }
+}
+
 pub(super) fn run_cycle_tick_with_readers_at_activation(
     ctx: &BlockRuntimeContext,
     scope: &outbe_compressed_entities::ExecutionScope,

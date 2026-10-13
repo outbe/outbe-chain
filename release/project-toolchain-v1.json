@@ -66,5 +66,17 @@
     "libstdc++6": "14.2.0-4ubuntu2~24.04.1",
     "pkg-config": "1.8.1-2build1"
   },
-  "target": "x86_64-unknown-linux-gnu"
+  "target": "x86_64-unknown-linux-gnu",
+  "zk_tools": {
+    "barretenberg": {
+      "archive_sha256": "d207ec90fbfa2fba24d7a47b7a75892ee052b7984252b866a4a0c1b5296e1571",
+      "archive_url": "https://github.com/AztecProtocol/barretenberg/releases/download/v5.0.0-nightly.20260522/barretenberg-amd64-linux.tar.gz",
+      "version": "5.0.0-nightly.20260522"
+    },
+    "nargo": {
+      "archive_sha256": "384c4fc800905b213e26aabd738a96a4a85b1a76ffc27fb19aeb6d33494a787b",
+      "archive_url": "https://github.com/noir-lang/noir/releases/download/v1.0.0-beta.22/nargo-x86_64-unknown-linux-gnu.tar.gz",
+      "version": "1.0.0-beta.22"
+    }
+  }
 }

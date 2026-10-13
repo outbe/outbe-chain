@@ -4,6 +4,12 @@ use thiserror::Error;
 
 use crate::WwdEntityId;
 
+mod gem;
+pub use gem::{
+    decode_gem_bucket_v1, decode_gem_v1, decode_stored_gem_bucket_v1, decode_stored_gem_v1,
+    encode_gem_bucket_v1, encode_gem_v1, GemBodyV1, GemBucketBodyV1,
+};
+
 mod nod_v2;
 pub use nod_v2::{
     decode_nod_item_v2, decode_stored_nod_item_v2, encode_nod_item_v2, NodItemBodyV2,
@@ -14,7 +20,7 @@ pub use tribute_v2::{
     decode_stored_tribute_v2, decode_tribute_v2, encode_tribute_v2, TRIBUTE_BODY_SCHEMA_V2,
 };
 
-/// Fork-supported schema for the first three canonical body messages.
+/// Fork-supported schema for the canonical plaintext body messages.
 pub const BODY_SCHEMA_V1: u32 = 1;
 
 /// Canonical v1 Tribute payload.
@@ -261,25 +267,15 @@ pub fn encode_nod_bucket_v1(body: &NodBucketBodyV1) -> Result<Vec<u8>, Canonical
 
 /// Strictly decodes one canonical v1 Nod bucket payload.
 pub fn decode_nod_bucket_v1(bytes: &[u8]) -> Result<NodBucketBodyV1, CanonicalBodyError> {
-    let mut fields = Fields::new(bytes);
-    let bucket_key = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 1)?, 1)?);
-    let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 2)?);
-    let entry_price_minor = decode_u256(required_bytes(&mut fields, 6)?, 6)?;
-    let reference_currency = optional_u16(&mut fields, 7)?;
-    let settled_nods = optional_varint(&mut fields, 8)?;
-    fields.finish()?;
-
+    let fields = decode_bucket_fields(bytes, 6)?;
     let body = NodBucketBodyV1 {
-        bucket_key,
-        worldwide_day,
-        entry_price_minor,
-        reference_currency,
-        settled_nods,
+        bucket_key: fields.bucket_key,
+        worldwide_day: fields.worldwide_day,
+        entry_price_minor: fields.entry_price_minor,
+        reference_currency: fields.reference_currency,
+        settled_nods: fields.settled,
     };
-    if encode_nod_bucket_v1(&body)? != bytes {
-        return Err(CanonicalBodyError::NonCanonicalEncoding);
-    }
-    Ok(body)
+    canonical_decoded(body, bytes, encode_nod_bucket_v1)
 }
 
 /// Decodes a StoredBody and requires its fork-active Nod bucket schema.
@@ -556,4 +552,39 @@ pub enum CanonicalBodyError {
     NonCanonicalEncoding,
     #[error("unsupported body schema version {actual}")]
     UnsupportedSchema { actual: u32 },
+}
+
+struct BucketFields {
+    bucket_key: B256,
+    worldwide_day: WorldwideDay,
+    entry_price_minor: U256,
+    reference_currency: u16,
+    settled: u64,
+}
+
+fn decode_bucket_fields(
+    bytes: &[u8],
+    value_field: u32,
+) -> Result<BucketFields, CanonicalBodyError> {
+    let mut fields = Fields::new(bytes);
+    let body = BucketFields {
+        bucket_key: B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 1)?, 1)?),
+        worldwide_day: WorldwideDay::new(optional_u32(&mut fields, 2)?),
+        entry_price_minor: decode_u256(required_bytes(&mut fields, value_field)?, value_field)?,
+        reference_currency: optional_u16(&mut fields, value_field + 1)?,
+        settled: optional_varint(&mut fields, value_field + 2)?,
+    };
+    fields.finish()?;
+    Ok(body)
+}
+
+fn canonical_decoded<T>(
+    body: T,
+    bytes: &[u8],
+    encode: fn(&T) -> Result<Vec<u8>, CanonicalBodyError>,
+) -> Result<T, CanonicalBodyError> {
+    if encode(&body)? != bytes {
+        return Err(CanonicalBodyError::NonCanonicalEncoding);
+    }
+    Ok(body)
 }

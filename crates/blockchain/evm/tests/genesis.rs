@@ -26,7 +26,7 @@ use std::process::Command;
 
 use alloy_primitives::{Address, U256};
 use outbe_evm::system_tx::{expected_begin_block_kinds, SystemTxKind};
-use outbe_gem::{GemContract, GemState};
+use outbe_gem::GemContract;
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_FACTORY_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -564,18 +564,15 @@ fn load_seeded_storage(provider: &mut HashMapStorageProvider, genesis: &Value, a
     }
 }
 
-/// The seeder writes raw slots. This test reads them back through the schemas that own them.
+/// The seeder writes raw slots. This test reads them back through the schemas that own
+/// them. Gem bodies are compressed entities and cannot be seeded: the Gem account
+/// carries only its profile and an empty supply.
 #[test]
 fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     const SEED: &str = r#"{
       "intex_factory": { "profile": "dev" },
       "gem_profile": { "profile": "prod" },
-      "nod_profile": { "profile": "prod" },
-      "gems": [
-        { "owner": "0x5555555555555555555555555555555555555555",
-          "promis_load": "1000000",
-          "issued_at": 1700000000 }
-      ]
+      "nod_profile": { "profile": "prod" }
     }"#;
     let (_tmp, genesis, _raw) =
         run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
@@ -588,7 +585,6 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
         outbe_primitives::addresses::NOD_ADDRESS,
     );
 
-    let owner = Address::repeat_byte(0x55);
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             IntexFactoryContract::new(storage.clone())
@@ -609,13 +605,10 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
             gem.config_profile.read().unwrap(),
             outbe_gem::config::PROFILE_PROD
         );
-        assert_eq!(gem.total_supply().unwrap(), 1);
-        assert_eq!(gem.balance_of(owner).unwrap(), 1);
-        let gem_id = gem.token_of_owner_by_index(owner, 0).unwrap();
-        assert_eq!(gem.token_by_index(0).unwrap(), gem_id);
-        let item = gem.get_gem(gem_id).unwrap().expect("seeded gem record");
-        assert_eq!(item.owner, owner);
-        assert_eq!(item.state, GemState::Settled as u8);
-        assert_eq!(item.settled_at, 1_700_000_000);
+        assert_eq!(
+            gem.total_supply().unwrap(),
+            0,
+            "genesis carries no Gem bodies"
+        );
     });
 }

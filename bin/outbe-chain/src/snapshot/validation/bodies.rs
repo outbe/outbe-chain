@@ -93,34 +93,15 @@ impl ProjectionBodyView {
     ) -> eyre::Result<ProjectionBodyReport> {
         let tribute = TributeRepositoryReader::new(self.reader.clone());
         let nod = outbe_nod::nod_reader(self.reader.clone());
+        let gem = outbe_gem::gem_reader(self.reader.clone());
         tribute.audit_indexes(work)?;
         nod.audit_indexes(work)?;
         nod.audit_partition_locations(work)?;
+        gem.audit_indexes(work)?;
+        gem.audit_partition_locations(work)?;
         let same_frontier = marker.height == self.checkpoint.block_number
             && marker.block_hash == self.checkpoint.block_hash;
-        for domain in [CeDomain::Tribute, CeDomain::NodItem, CeDomain::NodBucket] {
-            let mut after = None;
-            loop {
-                let request = IdPageRequest {
-                    after,
-                    limit: MAX_ID_PAGE_LIMIT,
-                };
-                let page = match domain {
-                    CeDomain::Tribute => tribute.scan_stored_bodies(request)?,
-                    CeDomain::NodItem => nod.scan_stored_items(request)?,
-                    CeDomain::NodBucket => nod.scan_stored_buckets(request)?,
-                };
-                if same_frontier {
-                    for (id, body) in page.entries {
-                        expected.push_body(domain, id, &body.encode())?;
-                    }
-                }
-                after = page.next_after;
-                if after.is_none() {
-                    break;
-                }
-            }
-        }
+        verify_body_pages((&tribute, &nod, &gem), &mut expected, same_frontier)?;
         let equality = if same_frontier {
             Ok(expected.finish()?)
         } else {
@@ -145,4 +126,58 @@ impl ProjectionBodyView {
     ) -> eyre::Result<()> {
         Ok(RetainedTributeReader::new(self.reader.clone()).audit_retained(work, visitor)?)
     }
+}
+
+type BodyReaders<'a> = (
+    &'a TributeRepositoryReader,
+    &'a outbe_nod::NodRepositoryReader,
+    &'a outbe_gem::GemRepositoryReader,
+);
+fn verify_body_pages(
+    readers: BodyReaders<'_>,
+    expected: &mut CeBodyAudit<'_>,
+    same_frontier: bool,
+) -> eyre::Result<()> {
+    for domain in [
+        CeDomain::Tribute,
+        CeDomain::NodItem,
+        CeDomain::NodBucket,
+        CeDomain::Gem,
+        CeDomain::GemBucket,
+    ] {
+        let mut after = None;
+        loop {
+            let request = IdPageRequest {
+                after,
+                limit: MAX_ID_PAGE_LIMIT,
+            };
+            let page = scan_body_domain(readers, domain, request)?;
+            if same_frontier {
+                for (id, body) in page.entries {
+                    expected.push_body(domain, id, &body.encode())?;
+                }
+            }
+            after = page.next_after;
+            if after.is_none() {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn scan_body_domain(
+    readers: BodyReaders<'_>,
+    domain: CeDomain,
+    request: IdPageRequest,
+) -> eyre::Result<outbe_compressed_entities::StoredBodyPage> {
+    let (tribute, nod, gem) = readers;
+    let page = match domain {
+        CeDomain::Gem => gem.scan_stored_items(request)?,
+        CeDomain::GemBucket => gem.scan_stored_buckets(request)?,
+        CeDomain::Tribute => tribute.scan_stored_bodies(request)?,
+        CeDomain::NodItem => nod.scan_stored_items(request)?,
+        CeDomain::NodBucket => nod.scan_stored_buckets(request)?,
+    };
+    Ok(page)
 }

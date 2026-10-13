@@ -205,6 +205,36 @@ pub(super) fn with_execution_scope(
     result.and(cleanup)
 }
 
+/// Like [`with_execution_scope`], with a Gem parent for reward Gem delivery.
+pub(super) fn with_gem_execution_scope(
+    ctx: &BlockRuntimeContext,
+    f: impl FnOnce(
+        &ExecutionScope,
+        &outbe_gem::GemRepositoryReader,
+    ) -> outbe_primitives::error::Result<()>,
+) -> outbe_primitives::error::Result<()> {
+    ctx.storage
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))?;
+    ctx.storage.sstore(
+        COMPRESSED_ENTITIES_ADDRESS,
+        U256::from(1),
+        U256::from_be_slice(
+            outbe_compressed_entities::sealed_root(B256::ZERO)
+                .unwrap()
+                .as_slice(),
+        ),
+    )?;
+    let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
+    let parent = outbe_gem::gem_reader(storage);
+    let scope = ExecutionScope::default();
+    let lifecycle = CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
+    <CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
+    let result = f(&scope, &parent);
+    let cleanup =
+        <CompressedEntitiesLifecycle as BlockLifecycle>::end_block(&lifecycle).map(|_| ());
+    result.and(cleanup)
+}
+
 pub(super) fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
     with_execution_scope(ctx, |scope, parent| {
         crate::runtime::dispatch_triggers(ctx, scope, parent)

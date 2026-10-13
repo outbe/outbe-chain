@@ -66,6 +66,8 @@ impl Fixture {
                 EntityRef::Tribute(id),
                 EntityRef::NodItem(id),
                 EntityRef::NodBucket(id),
+                EntityRef::Gem(id),
+                EntityRef::GemBucket(id),
             ]
             .into_iter()
             .enumerate()
@@ -173,7 +175,7 @@ fn native_ce_audit_binds_genesis_and_all_nonzero_domains_to_their_exact_header()
         let mut visitor = Count::default();
         let report = verify_ce(&fixture.reader, &fixture.header, &work, &mut visitor).unwrap();
         assert_eq!(report.sealed_root, before.new_root);
-        assert_eq!(report.leaves, if populated { 6 } else { 0 });
+        assert_eq!(report.leaves, if populated { 10 } else { 0 });
         assert_eq!(visitor.0, report.leaves);
         assert_eq!(fixture.reader.marker().unwrap(), before);
         assert_eq!(super::headers::fingerprint(fixture._source.path()), files);

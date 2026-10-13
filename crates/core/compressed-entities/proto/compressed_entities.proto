@@ -45,3 +45,26 @@ message NodBucketBody {
   uint32 reference_currency = 7;
   uint64 settled_nods = 8;
 }
+
+message GemBody {
+  bytes gem_id = 1;
+  bytes owner = 2;
+  uint32 gem_type = 3;
+  bytes promis_load_minor = 4;
+  bytes floor_price_minor = 5;
+  uint32 issuance_currency = 6;
+  uint32 reference_currency = 7;
+  uint64 issued_at = 8;
+  bytes bucket_key = 9;
+  uint32 state = 10;
+  uint64 called_at = 11;
+  uint64 settled_at = 12;
+}
+
+message GemBucketBody {
+  bytes bucket_key = 1;
+  uint32 worldwide_day = 2;
+  bytes entry_price_minor = 3;
+  uint32 reference_currency = 4;
+  uint64 settled_gems = 5;
+}

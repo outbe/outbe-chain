@@ -1,14 +1,15 @@
 use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISION};
 
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
-use crate::schema::{GemData, GemState};
+use crate::schema::{GemState, GemView};
 
-pub(crate) fn token_uri(item: &GemData, qualified: bool, now: u64) -> String {
-    let id = nft_card::short_id(item.gem_id);
-    let settled = item.state == GemState::Settled as u8;
-    let deadline = (item.called_at != 0 && !settled)
-        .then(|| item.called_at + u64::from(item.call_notice_period_seconds));
-    let state = match item.effective_state(now) {
+pub(crate) fn token_uri(view: &GemView, qualified: bool, now: u64) -> String {
+    let item = &view.item;
+    let id = nft_card::short_id(item.gem_id.to_u256());
+    let settled = item.is_settled();
+    let called_at = view.called_at();
+    let deadline = (called_at != 0 && !settled).then(|| view.settlement_deadline());
+    let state = match view.effective_state(now) {
         s if s == GemState::Forfeited as u8 => nft_card::FORFEITED,
         s if s == GemState::Called as u8 => nft_card::CALLED,
         s if s == GemState::Settled as u8 => nft_card::SETTLED,
@@ -23,7 +24,7 @@ pub(crate) fn token_uri(item: &GemData, qualified: bool, now: u64) -> String {
         ),
         (
             "Entry Price",
-            nft_card::amount_grouped(item.entry_price_minor, PRICE_PRECISION),
+            nft_card::amount_grouped(view.bucket.entry_price_minor, PRICE_PRECISION),
         ),
     ];
     if state == nft_card::ISSUED {
@@ -34,14 +35,18 @@ pub(crate) fn token_uri(item: &GemData, qualified: bool, now: u64) -> String {
     }
     rows.push((
         "Call Price",
-        nft_card::amount_grouped(item.call_price_minor, PRICE_PRECISION),
+        nft_card::amount_grouped(view.terms.call_price_minor, PRICE_PRECISION),
     ));
     let mut traits = vec![
         Trait::text("State", state.label),
         gem_type(item.gem_type),
-        Trait::amount("Entry Price", item.entry_price_minor, PRICE_PRECISION),
+        Trait::amount(
+            "Entry Price",
+            view.bucket.entry_price_minor,
+            PRICE_PRECISION,
+        ),
         Trait::amount("Floor Price", item.floor_price_minor, PRICE_PRECISION),
-        Trait::amount("Call Price", item.call_price_minor, PRICE_PRECISION),
+        Trait::amount("Call Price", view.terms.call_price_minor, PRICE_PRECISION),
         Trait::amount("Promis Load", item.promis_load_minor, AMOUNT_PRECISION),
         Trait::integer("Issuance Currency", item.issuance_currency),
         Trait::integer("Reference Currency", item.reference_currency),
@@ -49,7 +54,7 @@ pub(crate) fn token_uri(item: &GemData, qualified: bool, now: u64) -> String {
     ];
     if let Some(deadline) = deadline {
         rows.push(("Call Deadline", nft_card::timestamp_utc(deadline)));
-        traits.push(Trait::date("Called At", item.called_at));
+        traits.push(Trait::date("Called At", called_at));
         traits.push(Trait::date("Call Deadline", deadline));
     }
 

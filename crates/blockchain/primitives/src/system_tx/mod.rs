@@ -152,6 +152,16 @@ pub const SYSTEM_TX_ARTIFACT_GAS_LIMIT: u64 = 10_000_000_000;
 /// keeps the mandatory phase from sitting exactly on that boundary.
 pub const OCOMP_LIFECYCLE_CE_GAS_RESERVE: u64 = 20_000;
 
+/// Visible compressed-entity gas reserved for one validator reward Gem delivery.
+///
+/// Delivery mints one Gem body per block and, for the first recipient of a day, its
+/// bucket body. The compressed-entity store prepays end-block cleanup on first touch:
+/// 55,000 for a body, 25,000 for the owner index record, 5,000 for each touched-list
+/// length, and a bucket read of at most a few hundred gas. That is at most 150,760;
+/// the rest keeps the mandatory phase off the boundary. The compressed-entities crate
+/// pins this bound against its constants.
+pub const REWARD_GEM_DELIVERY_CE_GAS_RESERVE: u64 = 200_000;
+
 /// Minimum visible gas charged by a system transaction envelope.
 pub const SYSTEM_TX_VISIBLE_GAS_FLOOR: u64 = 21_000;
 

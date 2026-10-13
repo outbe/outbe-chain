@@ -145,7 +145,7 @@ fn whole_committee_ocomp_deadline_and_successor_blocks_execute() {
 }
 
 #[test]
-fn reward_gem_delivery_drains_one_max_batch_while_cycle_appends_the_next() {
+fn reward_gem_delivery_mints_one_recipient_per_block_while_cycle_appends_the_next() {
     reward_delivery::run();
 }
 
@@ -349,9 +349,10 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
                 &[(reward_owner_a, 1), (reward_owner_b, 1)],
             )
             .unwrap();
+            // One mint per block: the very first issuance must overflow the counter.
             outbe_gemfactory::schema::GemFactoryContract::new(storage)
                 .total_gems_issued
-                .write(U256::MAX - U256::ONE)
+                .write(U256::MAX)
                 .unwrap();
         });
     state.database.insert_account_info(
@@ -374,7 +375,7 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
                 outbe_gemfactory::schema::GemFactoryContract::new(storage)
                     .total_gems_issued
                     .read()?,
-                U256::MAX - U256::ONE
+                U256::MAX
             );
             Ok::<_, outbe_primitives::error::PrecompileError>(())
         })
@@ -421,6 +422,9 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         .next()
         .expect("HookEvents system tx should be present");
     let rewards_visible_gas = rewards_tx.tx().gas_limit();
+    let rewards_intrinsic_gas =
+        outbe_primitives::system_tx::system_tx_intrinsic_gas(rewards_tx.tx().input())
+            .expect("RewardsGemDelivery intrinsic gas computes");
 
     // CycleTick is consensus-critical. RewardsGemDelivery is deliberately
     // retryable, so an ordinary revert records a soft failure and later
@@ -433,9 +437,11 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         .execute_transaction(rewards_tx)
         .expect("RewardsGemDelivery revert should soft-fail")
         .tx_gas_used();
-    assert_eq!(
-        revert_gas, rewards_visible_gas,
-        "GAS-11: reverted delivery should charge visible envelope gas"
+    // A failure receipt publishes the visible base plus the CE gas actually spent,
+    // never the unused CE reserve of the signed envelope.
+    assert!(
+        (rewards_intrinsic_gas..rewards_visible_gas).contains(&revert_gas),
+        "GAS-11: reverted delivery charges {revert_gas}, expected within [{rewards_intrinsic_gas}, {rewards_visible_gas})"
     );
     let failure_receipt = executor
         .receipts()
@@ -446,10 +452,7 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         "seeded delivery unexpectedly succeeded: logs={:?}",
         failure_receipt.logs
     );
-    assert_eq!(
-        failure_receipt.cumulative_gas_used,
-        cycle_gas + rewards_visible_gas
-    );
+    assert_eq!(failure_receipt.cumulative_gas_used, cycle_gas + revert_gas);
     assert_eq!(failure_receipt.logs.len(), 1);
     assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
     assert_eq!(
@@ -484,13 +487,8 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         .tx_gas_used();
     assert_eq!(
         executor.inner.cumulative_tx_gas_used,
-        cycle_gas
-            + rewards_visible_gas
-            + tee_bootstrap_gas
-            + oracle_gas
-            + hook_events_gas
-            + user_gas,
-        "GAS-11: soft-failed system tx must charge only visible envelope gas"
+        cycle_gas + revert_gas + tee_bootstrap_gas + oracle_gas + hook_events_gas + user_gas,
+        "GAS-11: soft-failed system tx must charge only its published visible gas"
     );
     drop(executor);
 
@@ -505,26 +503,47 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
         assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
         assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 1);
-        assert_eq!(gem.balance_of(reward_owner_a)?, 0);
-        assert_eq!(gem.balance_of(reward_owner_b)?, 0);
+        assert_eq!(gem.total_supply()?, 0);
 
         outbe_gemfactory::schema::GemFactoryContract::new(storage.clone())
             .total_gems_issued
             .write(U256::ZERO)?;
         let retry_ctx = BlockRuntimeContext::new(retry_context, storage.clone());
+        // The retry mints compressed bodies, so it runs under an open block scope.
+        let world = outbe_gem::test_support::GemWorld::unopened();
+        outbe_compressed_entities::begin_block(storage.clone(), &world.scope)?;
         assert!(matches!(
-            outbe_rewards::api::deliver_oldest_reward_gem_batch(&retry_ctx)?,
+            outbe_rewards::api::deliver_oldest_reward_gem_batch(
+                &retry_ctx,
+                &world.scope,
+                &world.parent
+            )?,
             outbe_rewards::api::RewardGemDeliveryOutcome::Delivered {
                 reward_utc_day: 20_240_101,
                 recipient_count: 2,
                 delivered_promis_load_amount,
-            } if delivered_promis_load_amount == U256::from(200u64)
+                delivered_recipients: 1,
+                batch_complete: false,
+            } if delivered_promis_load_amount == U256::from(100u64)
         ));
-        assert_eq!(rewards.reward_gem_queue_head.read()?, 1);
+        // One compressed Gem body per block: the head stays until its second recipient.
+        assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
         assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
-        assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 0);
-        assert_eq!(gem.balance_of(reward_owner_a)?, 1);
-        assert_eq!(gem.balance_of(reward_owner_b)?, 1);
+        assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 1);
+        assert_eq!(rewards.reward_gem_delivered_count.read(&20_240_101)?, 1);
+        assert_eq!(gem.total_supply()?, 1);
+        assert_eq!(
+            outbe_gem::api::list_by_owner(&storage, &world.scope, &world.parent, reward_owner_a)?
+                .len(),
+            1
+        );
+        assert!(outbe_gem::api::list_by_owner(
+            &storage,
+            &world.scope,
+            &world.parent,
+            reward_owner_b
+        )?
+        .is_empty());
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .expect("the unchanged FIFO head must deliver on a later retry");
@@ -736,7 +755,7 @@ fn stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote() {
                 topup_settled: rewards.daily_topup_settled.read(&PREVIOUS_DAY).unwrap(),
                 queue_head: rewards.reward_gem_queue_head.read().unwrap(),
                 queue_tail: rewards.reward_gem_queue_tail.read().unwrap(),
-                voter_gems: u64::from(gem.balance_of(voter).unwrap()),
+                voter_gems: gem.total_supply().unwrap(),
                 feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
                 formation_exists: outbe_metadosis::api::day_limit_formation_receipt(
                     storage,
