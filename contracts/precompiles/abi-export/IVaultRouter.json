@@ -528,6 +528,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "policyRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "issuanceCurrency",
             "type": "uint16",
             "internalType": "uint16"
@@ -536,6 +541,16 @@
             "name": "assetDecimals",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "referenceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "callAnchorPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
           },
           {
             "name": "source",
@@ -570,6 +585,11 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [

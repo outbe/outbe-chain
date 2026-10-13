@@ -232,6 +232,10 @@ fn pledge_window_closes(world: &mut World) {
 #[when("the CCA reserves 300 stablecoins for the Credis owner")]
 fn reserve(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
+    // The call anchor is the previous closed USD day at the reservation, apart from the
+    // window the pledge is valued on: reuse Intex's E2E-only history fixture.
+    test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, 1, CALL_ANCHOR)
+        .expect("previous closed USD VWAP");
     let f = world.state.credis.as_ref().expect("fixture");
     assert_eq!(
         eth::read_call(
@@ -253,6 +257,7 @@ fn reserve(world: &mut World) {
             source: f.user,
             asset: f.currency.asset,
             amount: PRINCIPAL,
+            referenceCurrency: USD,
         },
         None,
     );
@@ -332,6 +337,13 @@ fn pledge(world: &mut World) {
     )
     .expect("reservation");
     assert_eq!(reservation.source, f.user);
+    assert_eq!(
+        (
+            reservation.referenceCurrency,
+            reservation.callAnchorPriceMinor
+        ),
+        (USD, CALL_ANCHOR)
+    );
     let nonce = eth::read_call(
         &url,
         addresses::GRATIS_ADDR,
@@ -376,10 +388,6 @@ fn pledge(world: &mut World) {
 #[when("the CCA issues Credis against the pledge and reservation")]
 fn issue(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
-    // The call anchor is the previous closed USD day at issuance, apart from the
-    // window the pledge was valued on: reuse Intex's E2E-only history fixture.
-    test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, 1, CALL_ANCHOR)
-        .expect("previous closed USD VWAP");
     let f = world.state.credis.as_ref().expect("fixture");
     let stake = outbe_primitives::units::checked_protocol_to_native(f.gratis_minor)
         .expect("fixture stake fits native units");
@@ -389,7 +397,6 @@ fn issue(world: &mut World) {
         &f.cca_key,
         &ICredisFactory::issueCredisCall {
             reservationId: f.reservation,
-            referenceCurrency: USD,
         },
         Some(stake),
     );

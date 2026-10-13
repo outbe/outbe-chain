@@ -2463,6 +2463,7 @@ fn reserve_stables_rejects_an_inactive_caller() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap_err();
@@ -2485,10 +2486,113 @@ fn reserve_stables_requires_a_pledge_source() {
                 source: Address::ZERO,
                 asset: asset(),
                 amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap_err();
         assert!(err.to_string().contains("zero address"), "{err}");
+    });
+}
+
+fn reserve_in(
+    storage: &StorageHandle<'_>,
+    reference_currency: u16,
+) -> outbe_primitives::error::Result<U256> {
+    runtime::reserve_stables(
+        storage.clone(),
+        cca(),
+        IVaultRouter::reserveStablesCall {
+            credisOwner: receiver(),
+            source: pledger(),
+            asset: asset(),
+            amount: U256::from(10),
+            referenceCurrency: reference_currency,
+        },
+    )
+}
+
+#[test]
+fn a_reservation_needs_every_call_term() {
+    let rejected = |storage: &StorageHandle<'_>, reference_currency: u16, reason: &str| {
+        let err = reserve_in(storage, reference_currency).unwrap_err();
+        assert!(err.to_string().contains(reason), "{err}");
+        let router = VaultRouterContract::new(storage.clone());
+        assert!(router.reservation_nonce.read().unwrap().is_zero());
+        assert!(runtime::reservation_of(storage, U256::ONE)
+            .unwrap()
+            .asset
+            .is_zero());
+    };
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let day = outbe_primitives::time::previous_date_key(
+            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        );
+        let oracle = OracleContract::new(storage.clone());
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
+            .unwrap()
+            .unwrap();
+
+        rejected(&storage, 999, "not a registered reference currency");
+
+        oracle.policy_rate.write(&USD_ISO_CODE, U256::ZERO).unwrap();
+        rejected(&storage, USD_ISO_CODE, "no policy rate");
+        oracle
+            .policy_rate
+            .write(&USD_ISO_CODE, U256::from(43_000))
+            .unwrap();
+
+        oracle.utc_day_vwap_last_finalized.write(day - 1).unwrap();
+        rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+
+        oracle.record_utc_day_vwap(day, index, U256::ZERO).unwrap();
+        rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+        oracle
+            .record_utc_day_vwap(day, index, U256::from(2_000_000))
+            .unwrap();
+
+        OracleContract::new(storage.clone())
+            .reference_currencies
+            .push(EUR_ISO_CODE)
+            .unwrap();
+        rejected(&storage, EUR_ISO_CODE, "reference pair unavailable");
+
+        reserve_in(&storage, USD_ISO_CODE).unwrap();
+    });
+}
+
+/// The anchor is the reference currency's own previous-day VWAP; the policy rate and
+/// the pledge valuation stay with the issuance currency.
+#[test]
+fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let day = outbe_primitives::time::previous_date_key(
+            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        );
+        outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(EUR_ISO_CODE))
+            .unwrap();
+        let oracle = OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(EUR_ISO_CODE).unwrap();
+        oracle
+            .policy_rate
+            .write(&EUR_ISO_CODE, U256::from(99_000))
+            .unwrap();
+        for (iso, vwap) in [(EUR_ISO_CODE, 2_500_000u64), (USD_ISO_CODE, 9_000_000)] {
+            let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
+                .unwrap()
+                .unwrap();
+            oracle
+                .record_utc_day_vwap(day, index, U256::from(vwap))
+                .unwrap();
+        }
+
+        let id = reserve_in(&storage, EUR_ISO_CODE).unwrap();
+        let held = runtime::reservation_of(&storage, id).unwrap();
+        assert_eq!(held.issuance_currency, USD_ISO_CODE);
+        assert_eq!(held.reference_currency, EUR_ISO_CODE);
+        assert_eq!(held.call_anchor_price_minor, U256::from(2_500_000));
+        assert_eq!(held.policy_rate, U256::from(43_000));
+        assert_eq!(held.valuation_price_minor, U256::from(2_000_000));
     });
 }
 
@@ -2503,6 +2607,7 @@ fn reserve_stables_requires_a_credis_owner() {
                 source: receiver(),
                 asset: asset(),
                 amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap_err();
@@ -2521,6 +2626,7 @@ fn a_reservation_holds_then_releases_once() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
@@ -2534,6 +2640,9 @@ fn a_reservation_holds_then_releases_once() {
         assert_eq!(held.gratis_minor, U256::from(5));
         assert_eq!(held.asset_decimals, 6);
         assert_eq!(held.issuance_currency, USD_ISO_CODE);
+        assert_eq!(held.reference_currency, USD_ISO_CODE);
+        assert_eq!(held.policy_rate, U256::from(43_000));
+        assert_eq!(held.call_anchor_price_minor, U256::from(2_000_000));
         assert!(!held.snapshot_id.is_zero());
         assert_eq!(held.expires_at, 1_700_000_000 + 15 * 60);
 
@@ -2574,6 +2683,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(50),
+                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
@@ -2620,6 +2730,7 @@ fn an_unspent_reservation_returns_to_the_origin_vault() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
@@ -2647,6 +2758,7 @@ fn a_stranger_cannot_return_a_live_reservation() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
@@ -2714,6 +2826,7 @@ fn release_rejects_an_expired_reservation() {
 fn reservations_are_gated_like_a_withdrawal() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let reserve_call = IVaultRouter::reserveStablesCall {
+            referenceCurrency: USD_ISO_CODE,
             credisOwner: receiver(),
             source: pledger(),
             asset: asset(),
@@ -2773,6 +2886,7 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap_err();
@@ -2809,6 +2923,7 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();

@@ -27,8 +27,11 @@ interface IVaultRouter {
         uint256 snapshotId;
         uint256 entryPriceMinor;
         uint256 valuationPriceMinor;
+        uint256 policyRate;
         uint16 issuanceCurrency;
         uint8 assetDecimals;
+        uint16 referenceCurrency;
+        uint256 callAnchorPriceMinor;
         address source;
     }
 
@@ -204,10 +207,15 @@ interface IVaultRouter {
     ///         router's custody for `credisOwner`, guaranteeing it can later be
     ///         delivered for 15 minutes. Caller must be an active CCA. Only `source`
     ///         may pledge the Gratis collateral for this reservation. The quote fixes the
-    ///         pledge valuation only: the Credis call terms are read at issuance.
-    function reserveStables(address credisOwner, address source, address asset, uint256 amount)
-        external
-        returns (uint256 reservationId);
+    ///         pledge valuation and the Credis call terms: `referenceCurrency`, its previous
+    ///         closed UTC-day VWAP as the call anchor, and the issuance currency's policy rate.
+    function reserveStables(
+        address credisOwner,
+        address source,
+        address asset,
+        uint256 amount,
+        uint16 referenceCurrency
+    ) external returns (uint256 reservationId);
 
     /// @notice Validates `receiver` as the reservation's Credis owner, pays `amount` to
     ///         the recorded CCA to cover COEN delivered to that owner, and

@@ -50,7 +50,7 @@ interface ICredis {
 
     /// Call terms, sealed at issuance in the reference currency.
     struct CallTerms {
-        /// Call anchor price, scale 1e6: the previous closed UTC-day VWAP at issuance.
+        /// Call anchor price, scale 1e6: the previous closed UTC-day VWAP, fixed by the reservation.
         uint256 callAnchorPriceMinor;
         /// callAnchorPriceMinor * 1.64.
         uint256 callPriceMinor;
@@ -98,7 +98,7 @@ interface ICredis {
         uint256 gratisMinor;
         /// The share of G still locked; 0 once Settled or Forfeited.
         uint256 outstandingGratisMinor;
-        /// r - the annual policy rate of the issuance currency, scale 1e6, fixed at issuance.
+        /// r - the annual policy rate of the issuance currency, scale 1e6, fixed by the reservation.
         uint256 policyRate;
         /// Entry price in the issuance currency, scale 1e6, fixed by the reservation.
         uint256 entryPriceMinor;

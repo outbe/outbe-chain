@@ -13,15 +13,15 @@
         "fidelity": "full"
       },
       "calldata": {
-        "bytes": 68,
-        "zero_bytes": 61,
-        "nonzero_bytes": 7,
+        "bytes": 36,
+        "zero_bytes": 31,
+        "nonzero_bytes": 5,
         "transaction_base_gas": 21000,
-        "zero_byte_gas": 244,
-        "nonzero_byte_gas": 112
+        "zero_byte_gas": 124,
+        "nonzero_byte_gas": 80
       },
       "gas_totals": {
-        "user_transaction": 236356
+        "user_transaction": 235804
       },
       "gas_components": [
         {
@@ -33,14 +33,14 @@
         {
           "ledger": "user_transaction",
           "key": "calldata.zero_bytes",
-          "gas": 244,
-          "operations": 61
+          "gas": 124,
+          "operations": 31
         },
         {
           "ledger": "user_transaction",
           "key": "calldata.nonzero_bytes",
-          "gas": 112,
-          "operations": 7
+          "gas": 80,
+          "operations": 5
         },
         {
           "ledger": "user_transaction",
@@ -78,13 +78,6 @@
         },
         {
           "ledger": "user_transaction",
-          "key": "storage.oracle.read",
-          "gas": 700,
-          "operations": 7,
-          "module": "oracle"
-        },
-        {
-          "ledger": "user_transaction",
           "key": "storage.other.read",
           "gas": 1200,
           "operations": 12,
@@ -100,8 +93,8 @@
         {
           "ledger": "user_transaction",
           "key": "storage.vault_router.read",
-          "gas": 1400,
-          "operations": 14,
+          "gas": 1700,
+          "operations": 17,
           "module": "vault_router"
         }
       ],
@@ -707,54 +700,6 @@
           "gas": 5000
         },
         {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x37",
-          "operation": "read",
-          "count": 2,
-          "gas": 200
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x3b",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x42a7b7dd785cd69714a189dffb3fd7d7174edc9ece837694ce50f7078f7c31ae",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0x7c5e3abb0610475094feae94b2b8d9f23360e0891496dc7a926bfce0d52091ec",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0xb2329b75437839d4117f9edf6f977f00f98f5fe4982fb47d75847512fa53863c",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "oracle",
-          "address": "0x000000000000000000000000000000000000ee05",
-          "slot": "0xfa9240513fa8af0cd3aa94db0c237a129a63076f21ab227c30018c124938bc88",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
           "module": "other",
           "address": "0x0000000000000000000000000000000000001011",
           "slot": "0x3e1bb713a7067490315b070c10893ff3a9e19f5eac09871d13a08e8f5ccfd374",
@@ -845,6 +790,14 @@
         {
           "module": "vault_router",
           "address": "0x0000000000000000000000000000000000001017",
+          "slot": "0x3f32b1e6928a174926c4b104dac81e478b6c8ab881d899ad155ded3e9d1b4426",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "vault_router",
+          "address": "0x0000000000000000000000000000000000001017",
           "slot": "0x5db1dfd2ced311e642486f0e890a646498a1bdee1ad9403b0a73141af8a4c411",
           "operation": "read",
           "count": 1,
@@ -861,6 +814,14 @@
         {
           "module": "vault_router",
           "address": "0x0000000000000000000000000000000000001017",
+          "slot": "0x6e777cacfc4ad3a3cac3b8e17ccbbe9f6893bdc61d89783315eee44e3959da21",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "vault_router",
+          "address": "0x0000000000000000000000000000000000001017",
           "slot": "0x820fef5837650fa3b8e45045b88059d8deaf0810350ec511c47ef768a28c2c9b",
           "operation": "read",
           "count": 1,
@@ -870,6 +831,14 @@
           "module": "vault_router",
           "address": "0x0000000000000000000000000000000000001017",
           "slot": "0x873299c6a6c39b8b92f01922bb622df4a3236ea2876aac2da76f6c092cf7e98f",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "vault_router",
+          "address": "0x0000000000000000000000000000000000001017",
+          "slot": "0x97f6617e72684f128d84ea8b55c40e794b94716acf5a4e8c39cb395494fddcca",
           "operation": "read",
           "count": 1,
           "gas": 100

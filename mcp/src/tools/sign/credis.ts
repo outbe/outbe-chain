@@ -44,19 +44,27 @@ async function issueStake(ctx: Ctx, reservationId: bigint): Promise<bigint> {
 export function registerCredisTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "credis_reserve",
-    "Reserve exact stablecoin principal and fix the pledge valuation for 15 minutes. Returns the reservationId.",
+    "Reserve exact stablecoin principal and freeze the Credis terms for 15 minutes: the pledge valuation, the call " +
+      "anchor (previous closed UTC-day VWAP in the elected reference currency) and the issuance currency's policy " +
+      "rate. Returns the reservationId.",
     {
       credis_owner: address.describe("Address that holds the Credis and receives the CCA's COEN stake"),
       source: address.describe("Main account that pledges the Gratis collateral"),
       asset: address,
       amount: rawAmount,
+      reference_currency: z
+        .number()
+        .int()
+        .min(1)
+        .max(65535)
+        .describe("ISO 4217 numeric code of the reference currency the call anchor is quoted in"),
       wait: waitFlag,
     },
-    handler(async ({ credis_owner, source, asset, amount, wait }) =>
+    handler(async ({ credis_owner, source, asset, amount, reference_currency, wait }) =>
       submit(ctx, {
         contract: "vaultrouter",
         method: "reserveStables",
-        args: [credis_owner, source, asset, BigInt(amount)],
+        args: [credis_owner, source, asset, BigInt(amount), reference_currency],
         wait,
         outcome: (receipt) => ({
           reservationId: (eventArgs(receipt, "vaultrouter", "ReservationCreated")?.id as bigint | undefined)?.toString() ?? null,
@@ -92,22 +100,20 @@ export function registerCredisTools(server: McpServer, ctx: Ctx): void {
   );
   server.tool(
     "credis_issue",
-    "Issue Credis against the reservation's pledge and deliver the reserved principal. The call terms are read " +
-      "now, in the elected reference currency. The CCA stakes native COEN equal to the reserved Gratis collateral; " +
-      "omit `stake` to use exactly that. Returns the credisId.",
+    "Issue Credis against the reservation's pledge and terms and deliver the reserved principal. The CCA stakes " +
+      "native COEN equal to the reserved Gratis collateral; omit `stake` to use exactly that. Returns the credisId.",
     {
       reservation_id: rawAmount,
-      reference_currency: z.number().int().min(1).max(65535),
       stake: coenAmount.optional(),
       wait: waitFlag,
     },
-    handler(async ({ reservation_id, reference_currency, stake, wait }) => {
+    handler(async ({ reservation_id, stake, wait }) => {
       const reservationId = BigInt(reservation_id);
       const value = stake === undefined ? await issueStake(ctx, reservationId) : parseNativeAmount(ctx.chain, stake);
       return submit(ctx, {
         contract: "credisfactory",
         method: "issueCredis",
-        args: [reservationId, reference_currency],
+        args: [reservationId],
         value,
         wait,
         outcome: (receipt) => ({

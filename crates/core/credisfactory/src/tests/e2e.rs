@@ -7,6 +7,7 @@ use outbe_gratisfactory::runtime::{cancel_pledge, pledge_of};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
 use outbe_tee::protocol::GratisOp;
+use outbe_vaultrouter::VaultRouterContract;
 
 fn fidelity_of(storage: &StorageHandle<'_>, account: Address) -> Vec<u8> {
     outbe_fidelity::FidelityContract::new(storage.clone())
@@ -30,7 +31,7 @@ fn expect_issue_error(
     stake: U256,
     text: &str,
 ) {
-    let err = runtime::issue_credis(storage.clone(), caller, id, REFERENCE_ISO, stake).unwrap_err();
+    let err = runtime::issue_credis(storage.clone(), caller, id, stake).unwrap_err();
     assert!(
         err.to_string().contains(text),
         "expected {text:?}, got {err}"
@@ -80,8 +81,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
         assert_eq!(pledge_of(&storage, id).unwrap().source, alice());
 
         let (credis_id, amount) =
-            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
-                .unwrap();
+            runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
         assert_eq!(amount, reservation.amount);
         assert!(pledge_of(&storage, id).unwrap().source.is_zero());
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
@@ -134,8 +134,7 @@ fn a_cancelled_pledge_cannot_back_an_issue() {
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         fund_stake(&storage, pledge_stake());
-        let err = runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
-            .unwrap_err();
+        let err = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap_err();
         assert!(err.to_string().contains("pledge not found"), "{err}");
     });
     teardown();
@@ -160,10 +159,9 @@ fn a_source_backs_another_owner_and_repayments_return_to_the_source() {
         );
         pledge(&storage, alice(), id, 1);
         fund_stake(&storage, pledge_stake());
-        let credis_id =
-            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
-                .unwrap()
-                .0;
+        let credis_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
+            .unwrap()
+            .0;
         let record = CredisContract::new(storage.clone())
             .get_credis(credis_id)
             .unwrap();
@@ -305,92 +303,49 @@ fn forfeit_burns_only_remaining_credis_backing_and_leaves_fidelity_untouched() {
     teardown();
 }
 
-fn issue_with(
-    storage: &StorageHandle<'_>,
-    id: U256,
-    reference: u16,
-) -> outbe_primitives::error::Result<(U256, U256)> {
-    runtime::issue_credis(storage.clone(), cca(), id, reference, pledge_stake())
-}
-
-/// The pledge terms come from the reservation, whatever the price does after it. The
-/// reference currency, the call anchor and the policy rate are fixed at issuance,
-/// from the day that just closed.
+/// The reservation fixes every Credis term: neither midnight, an unfinalized day that
+/// just closed nor a changed policy rate moves them before issuance.
 #[test]
-fn issuance_reads_the_call_terms_at_issuance_across_midnight() {
+fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
         let midnight = (CREATED_AT / DAY + 1) * DAY;
         advance_to(&storage, midnight - 300);
         let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
-        let reservation = outbe_vaultrouter::api::reservation_of(&storage, id).unwrap();
+        let mut reservation = outbe_vaultrouter::api::reservation_of(&storage, id).unwrap();
+        reservation.call_anchor_price_minor = U256::from(2_500_000u64);
+        VaultRouterContract::new(storage.clone())
+            .reservations
+            .update(&reservation)
+            .unwrap();
         pledge(&storage, alice(), id, 1);
         advance_to(&storage, midnight + 300);
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle
             .policy_rate
-            .write(&ISSUANCE_ISO, U256::from(50_000))
+            .write(&ISSUANCE_ISO, U256::from(999_999))
             .unwrap();
-        set_coen_rate(&storage, U256::from(7_000_000u64));
+        oracle.utc_day_vwap_last_finalized.write(0).unwrap();
         fund_stake(&storage, pledge_stake());
-
-        // The day that just closed has no VWAP yet: issuance reverts and keeps the pledge.
-        let err = issue_with(&storage, id, REFERENCE_ISO).unwrap_err();
-        assert!(err.to_string().contains("VWAP is unavailable"), "{err}");
-        assert_eq!(pledge_of(&storage, id).unwrap().source, alice());
-        assert_eq!(
-            outbe_vaultrouter::api::reservation_of(&storage, id).unwrap(),
-            reservation
-        );
-
-        // The anchor follows the reference currency, never the issuance one.
-        let anchor = U256::from(2_500_000u64);
-        seed_previous_closed_day(&storage, ISSUANCE_ISO, U256::from(9_000_000u64));
-        seed_previous_closed_day(&storage, REFERENCE_ISO, anchor);
-        let (credis_id, principal) = issue_with(&storage, id, REFERENCE_ISO).unwrap();
+        let (credis_id, principal) =
+            runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
         let record = CredisContract::new(storage).get_credis(credis_id).unwrap();
         assert_eq!(principal, reservation.amount);
         assert_eq!(record.gratis_minor, reservation.gratis_minor);
         assert_eq!(record.entry_price_minor, reservation.entry_price_minor);
-        assert_eq!(record.reference_currency, REFERENCE_ISO);
-        assert_eq!(record.policy_rate, U256::from(50_000));
-        assert_eq!(record.call_anchor_price_minor, anchor);
+        assert_eq!(record.reference_currency, reservation.reference_currency);
+        assert_eq!(record.policy_rate, reservation.policy_rate);
+        assert_eq!(
+            record.call_anchor_price_minor,
+            reservation.call_anchor_price_minor
+        );
         assert_eq!(
             record.call_price_minor,
-            outbe_credis::calc_call_price(anchor).unwrap()
+            outbe_credis::calc_call_price(reservation.call_anchor_price_minor).unwrap()
         );
         assert_eq!(record.issued_at, midnight + 300);
         assert_eq!(record.last_settled_at, record.issued_at);
-    });
-    teardown();
-}
-
-#[test]
-fn issuance_rejects_an_unregistered_reference_currency_or_a_missing_rate() {
-    let mut provider = env();
-    StorageHandle::enter(&mut provider, |storage| {
-        bootstrap(&storage, pledge_cost());
-        let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
-        pledge(&storage, alice(), id, 1);
-        fund_stake(&storage, pledge_stake());
-        let reservation = outbe_vaultrouter::api::reservation_of(&storage, id).unwrap();
-        let rejected = |reference: u16, reason: &str| {
-            let err = issue_with(&storage, id, reference).unwrap_err();
-            assert!(err.to_string().contains(reason), "{err}");
-            assert_eq!(pledge_of(&storage, id).unwrap().source, alice());
-            assert_eq!(
-                outbe_vaultrouter::api::reservation_of(&storage, id).unwrap(),
-                reservation
-            );
-        };
-
-        rejected(999, "not a registered reference currency");
-        outbe_oracle::schema::OracleContract::new(storage.clone())
-            .policy_rate
-            .write(&ISSUANCE_ISO, U256::ZERO)
-            .unwrap();
-        rejected(REFERENCE_ISO, "no policy rate");
     });
     teardown();
 }
