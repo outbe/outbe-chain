@@ -397,31 +397,15 @@ impl EnclaveClient {
     }
 
     pub fn request(&mut self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-        let plain = crate::codec::encode_call(crate::call_context::resolve()?, req)?;
-        let mut ct = vec![0u8; plain.len() + 64];
-        let n = self
-            .noise
-            .write_message(&plain, &mut ct)
-            .map_err(|e| TransportError::Noise(e.to_string()))?;
-        with_io_phase(
-            write_frame(&mut self.stream, &ct[..n]),
-            "encrypted enclave request write",
-        )?;
-
-        let resp_ct = with_io_phase(
-            read_frame(&mut self.stream),
-            "encrypted enclave response read",
-        )?;
-        let mut pt = vec![0u8; resp_ct.len()];
-        let n = self
-            .noise
-            .read_message(&resp_ct, &mut pt)
-            .map_err(|e| TransportError::Noise(e.to_string()))?;
-        let resp = decode_response(&pt[..n])?;
-        if let EnclaveResponse::Error { message } = &resp {
-            return Err(TransportError::EnclaveError(message.clone()));
-        }
-        Ok(resp)
+        encrypted_round_trip(
+            &mut self.stream,
+            &mut self.noise,
+            req,
+            [
+                "encrypted enclave request write",
+                "encrypted enclave response read",
+            ],
+        )
     }
 
     /// Ask the enclave to sign one exact canonical GramineDirectDev
@@ -599,11 +583,7 @@ impl AuthorizedEnclaveClient {
             .noise
             .read_message(&ciphertext, &mut plaintext)
             .map_err(|error| TransportError::Noise(error.to_string()))?;
-        let response = decode_response(&plaintext[..length])?;
-        if let EnclaveResponse::Error { message } = &response {
-            return Err(TransportError::EnclaveError(message.clone()));
-        }
-        Ok(response)
+        enclave_answer(decode_response(&plaintext[..length])?)
     }
 
     /// Send an operation with an explicit block context. Retries preserve it.
@@ -1177,30 +1157,44 @@ impl RemoteEnclaveClient {
     }
 
     fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-        let plaintext = crate::codec::encode_call(crate::call_context::resolve()?, request)?;
-        let mut ciphertext = vec![0_u8; plaintext.len() + 64];
-        let length = self
-            .noise
-            .write_message(&plaintext, &mut ciphertext)
-            .map_err(|error| TransportError::Noise(error.to_string()))?;
-        with_io_phase(
-            write_frame(&mut self.stream, &ciphertext[..length]),
-            "remote encrypted enclave request write",
-        )?;
-        let ciphertext = with_io_phase(
-            read_frame(&mut self.stream),
-            "remote encrypted enclave response read",
-        )?;
-        let mut plaintext = vec![0_u8; ciphertext.len()];
-        let length = self
-            .noise
-            .read_message(&ciphertext, &mut plaintext)
-            .map_err(|error| TransportError::Noise(error.to_string()))?;
-        let response = decode_response(&plaintext[..length])?;
-        if let EnclaveResponse::Error { message } = response {
-            return Err(TransportError::EnclaveError(message));
-        }
-        Ok(response)
+        encrypted_round_trip(
+            &mut self.stream,
+            &mut self.noise,
+            request,
+            [
+                "remote encrypted enclave request write",
+                "remote encrypted enclave response read",
+            ],
+        )
+    }
+}
+
+fn encrypted_round_trip(
+    stream: &mut Transport,
+    noise: &mut snow::TransportState,
+    request: &EnclaveRequest,
+    [write_phase, read_phase]: [&'static str; 2],
+) -> Result<EnclaveResponse, TransportError> {
+    let plaintext = crate::codec::encode_call(crate::call_context::resolve()?, request)?;
+    let mut ciphertext = vec![0_u8; plaintext.len() + 64];
+    let length = noise
+        .write_message(&plaintext, &mut ciphertext)
+        .map_err(|error| TransportError::Noise(error.to_string()))?;
+    with_io_phase(write_frame(stream, &ciphertext[..length]), write_phase)?;
+    let ciphertext = with_io_phase(read_frame(stream), read_phase)?;
+    let mut plaintext = vec![0_u8; ciphertext.len()];
+    let length = noise
+        .read_message(&ciphertext, &mut plaintext)
+        .map_err(|error| TransportError::Noise(error.to_string()))?;
+    enclave_answer(decode_response(&plaintext[..length])?)
+}
+
+/// An enclave refusal becomes an error: a not-ready enclave is this node's fault.
+fn enclave_answer(response: EnclaveResponse) -> Result<EnclaveResponse, TransportError> {
+    match response {
+        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
+        EnclaveResponse::NotReady { message } => Err(TransportError::Unavailable(message)),
+        response => Ok(response),
     }
 }
 

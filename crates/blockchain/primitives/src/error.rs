@@ -72,6 +72,10 @@ pub enum PrecompileError {
     /// Fatal / unrecoverable error.
     #[error("fatal: {0}")]
     Fatal(String),
+
+    /// This node's enclave could not serve the request. Another node's enclave would.
+    #[error("enclave unavailable: {0}")]
+    EnclaveUnavailable(String),
 }
 
 /// Result type alias for precompile operations.
@@ -135,7 +139,10 @@ impl PrecompileError {
             | Self::TreeUnavailable(_)
             | Self::TransactionCeWorkLimitExceeded
             | Self::BlockCeWorkCapacityExhausted
-            | Self::Fatal(_)) => Err(revm::precompile::PrecompileError::Fatal(error.to_string())),
+            | Self::Fatal(_)
+            | Self::EnclaveUnavailable(_)) => {
+                Err(revm::precompile::PrecompileError::Fatal(error.to_string()))
+            }
         }
     }
 }
@@ -152,13 +159,14 @@ pub enum SweepFailure {
 }
 
 impl PrecompileError {
-    /// A failure of this node's own storage or readers, which another node would not hit.
+    /// A failure of this node's own storage, readers or enclave, which another node would not hit.
     pub fn is_node_local(&self) -> bool {
         match self {
             Self::Storage(_)
             | Self::BodyReadUnavailable(_)
             | Self::BodyReadRequestDeadline
             | Self::TreeUnavailable(_)
+            | Self::EnclaveUnavailable(_)
             | Self::SubCall(SubCallError::DatabaseError(_)) => true,
             Self::OutOfGas
             | Self::BodyReadCorruption(_)
@@ -280,6 +288,11 @@ mod tests {
                 PrecompileError::Fatal("x".into()),
                 false,
                 SweepFailure::Skip,
+            ),
+            (
+                PrecompileError::EnclaveUnavailable("x".into()),
+                true,
+                SweepFailure::Propagate,
             ),
         ];
         for (error, node_local, failure) in table {
