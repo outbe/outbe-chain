@@ -15,7 +15,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::api::{IVaultRouter, IVaultRouterCrosschainExtention};
+use crate::api::IVaultRouter;
 use crate::errors::VaultRouterError;
 use crate::schema::VaultRouterContract;
 
@@ -25,10 +25,9 @@ mod rebalance;
 mod reservations;
 
 use calls::{
-    asset_iso_code, erc20_balance_of, vault_asset, vault_deposit, vault_owner,
-    vault_preview_withdraw, vault_withdraw,
+    asset_iso_code, erc20_approve, erc20_balance_of, erc20_transfer, erc20_transfer_from,
+    vault_asset, vault_deposit, vault_owner, vault_preview_withdraw, vault_withdraw,
 };
-pub(crate) use calls::{erc20_approve, erc20_transfer, erc20_transfer_from};
 pub use liquidity::{
     add_liquidity_source, add_liquidity_target, registered_liquidity_source,
     registered_liquidity_target, remove_liquidity_source, remove_liquidity_target,
@@ -49,67 +48,6 @@ fn ensure_owner(storage: &StorageHandle<'_>, sender: Address) -> Result<()> {
     let contract = VaultRouterContract::new(storage.clone());
     if contract.owner.read()? != sender {
         return Err(VaultRouterError::Unauthorized.into());
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// cross-chain configuration
-// ---------------------------------------------------------------------------
-
-/// Configures the Outbe ERC-7786 bridge. A zero address disables the
-/// cross-chain vault flow without affecting local liquidity operations.
-pub fn set_crosschain_bridge(
-    storage: StorageHandle<'_>,
-    sender: Address,
-    bridge: Address,
-) -> Result<()> {
-    ensure_owner(&storage, sender)?;
-    ensure_no_pending_crosschain_operations(&storage)?;
-    let mut contract = VaultRouterContract::new(storage);
-    let old_bridge = contract.crosschain_bridge.read()?;
-    contract.crosschain_bridge.write(bridge)?;
-    contract.emit(IVaultRouterCrosschainExtention::CrosschainBridgeUpdated {
-        oldBridge: old_bridge,
-        newBridge: bridge,
-    })
-}
-
-/// Registers the fixed vault adapter for a remote EVM chain. Passing the zero
-/// address clears the peer while retaining the chain key's default value.
-pub fn set_remote_vault_router(
-    storage: StorageHandle<'_>,
-    sender: Address,
-    chain_id: U256,
-    router: Address,
-) -> Result<()> {
-    ensure_owner(&storage, sender)?;
-    ensure_no_pending_crosschain_operations(&storage)?;
-    let local_chain_id = U256::from(storage.chain_id()?);
-    if chain_id.is_zero() || chain_id == local_chain_id {
-        return Err(VaultRouterError::InvalidDestinationChain.into());
-    }
-
-    let mut contract = VaultRouterContract::new(storage);
-    let old_router = contract.remote_vault_routers.read(&chain_id)?;
-    if router.is_zero() {
-        contract.remote_vault_routers.clear(&chain_id)?;
-    } else {
-        contract.remote_vault_routers.write(&chain_id, router)?;
-    }
-    contract.emit(IVaultRouterCrosschainExtention::RemoteVaultRouterUpdated {
-        chainId: chain_id,
-        oldRouter: old_router,
-        newRouter: router,
-    })
-}
-
-fn ensure_no_pending_crosschain_operations(storage: &StorageHandle<'_>) -> Result<()> {
-    let pending = VaultRouterContract::new(storage.clone())
-        .pending_crosschain_operations
-        .read()?;
-    if !pending.is_zero() {
-        return Err(VaultRouterError::CrosschainOperationsPending(pending).into());
     }
     Ok(())
 }
