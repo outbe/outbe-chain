@@ -26,6 +26,7 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "schema_version",
     "system_packages",
     "target",
+    "zk_tools",
 }
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 EXPECTED_APT_SOURCE_PATHS = (
@@ -54,6 +55,7 @@ EXPECTED_SYSTEM_PACKAGES = (
     "pkg-config",
 )
 EXPECTED_HOST_ONLY_PACKAGES = ("libsgx-dcap-default-qpl",)
+EXPECTED_ZK_TOOLS = ("barretenberg", "nargo")
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -164,6 +166,24 @@ def load_and_validate_pin(path: Path) -> dict[str, Any]:
         raise ValueError("project toolchain has an unsupported host-only package set")
     if set(host_only_packages).intersection(packages):
         raise ValueError("host-only packages must not enter the release build image")
+
+    zk_tools = pin["zk_tools"]
+    if not isinstance(zk_tools, dict) or tuple(zk_tools) != EXPECTED_ZK_TOOLS:
+        raise ValueError("project toolchain has an unsupported ZK tool set")
+    for name, tool in zk_tools.items():
+        if (
+            not isinstance(tool, dict)
+            or set(tool) != {"archive_sha256", "archive_url", "version"}
+            or not isinstance(tool["version"], str)
+            or not tool["version"]
+            or any(character.isspace() for character in tool["version"])
+            or not isinstance(tool["archive_sha256"], str)
+            or not SHA256_RE.fullmatch(tool["archive_sha256"])
+            or not isinstance(tool["archive_url"], str)
+            or not tool["archive_url"].startswith("https://github.com/")
+            or f"/v{tool['version']}/" not in tool["archive_url"]
+        ):
+            raise ValueError(f"project {name} tool must use an exact GitHub archive pin")
     return pin
 
 
@@ -221,6 +241,7 @@ def repository_differences(repo_root: Path) -> list[str]:
     rust = pin["rust"]
     gramine = pin["gramine"]
     packages = pin["system_packages"]
+    zk_tools = pin["zk_tools"]
 
     rust_toolchain = tomllib.loads(
         (repo_root / "rust-toolchain.toml").read_text(encoding="utf-8")
@@ -236,6 +257,20 @@ def repository_differences(repo_root: Path) -> list[str]:
         label="rust-toolchain components",
         actual=sorted(rust_toolchain.get("components", [])),
         expected=rust["components"],
+    )
+
+    mise = tomllib.loads((repo_root / "mise.toml").read_text(encoding="utf-8"))
+    _require_equal(
+        differences,
+        label="mise Nargo version",
+        actual=mise.get("tools", {}).get("nargo", {}).get("version"),
+        expected=zk_tools["nargo"]["version"],
+    )
+    _require_equal(
+        differences,
+        label="mise Barretenberg version",
+        actual=mise.get("tools", {}).get("bb", {}).get("version"),
+        expected=zk_tools["barretenberg"]["version"],
     )
 
     elf = _read_json(repo_root / "release/reproducible-elf-build-v1.json")
@@ -371,6 +406,14 @@ def repository_differences(repo_root: Path) -> list[str]:
     for image in elf_base_images:
         if f"FROM {image} " not in recipe:
             differences.append(f"project toolchain recipe does not consume {image}")
+    for name, tool in zk_tools.items():
+        if tool["archive_url"] not in recipe:
+            differences.append(f"project toolchain recipe does not fetch pinned {name}")
+        if f"--checksum=sha256:{tool['archive_sha256']}" not in recipe:
+            differences.append(f"project toolchain recipe does not verify pinned {name}")
+        binary = "bb" if name == "barretenberg" else "nargo"
+        if f"/usr/local/bin/{binary}" not in recipe:
+            differences.append(f"project toolchain recipe does not install {name}")
     if "FROM toolchain AS builder" not in recipe or "FROM scratch AS artifacts" not in recipe:
         differences.append("project toolchain recipe does not own the release artifact stages")
     if f"COPY {APT_SOURCES_PATH} /etc/apt/sources.list.d/ubuntu.sources" not in recipe:
@@ -403,6 +446,15 @@ def repository_differences(repo_root: Path) -> list[str]:
             differences.append(
                 f"native-DCAP build contract duplicates project package version {version}"
             )
+
+    zk_build = (repo_root / "crates/zk/outbe-zk/build.rs").read_text(encoding="utf-8")
+    for constant, name in (
+        ("NARGO_VERSION", "nargo"),
+        ("BB_VERSION", "barretenberg"),
+    ):
+        version = zk_tools[name]["version"]
+        if f'const {constant}: &str = "{version}";' not in zk_build:
+            differences.append(f"outbe-zk does not require pinned {name} {version}")
     return differences
 
 

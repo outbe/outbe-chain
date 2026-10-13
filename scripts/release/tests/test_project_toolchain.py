@@ -57,6 +57,11 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertEqual(pin["platform"], "linux/amd64")
         self.assertEqual(pin["rust"]["version"], "1.96.0")
         self.assertEqual(pin["gramine"]["version"], "1.9")
+        self.assertEqual(pin["zk_tools"]["nargo"]["version"], "1.0.0-beta.22")
+        self.assertEqual(
+            pin["zk_tools"]["barretenberg"]["version"],
+            "5.0.0-nightly.20260522",
+        )
         self.assertEqual(
             pin["host_only_packages"]["libsgx-dcap-default-qpl"],
             "1.26.100.1-noble1",
@@ -79,6 +84,8 @@ class ProjectToolchainContractTests(unittest.TestCase):
             for relative in (
                 "Dockerfile.project-toolchain",
                 "crates/system/tee/build.rs",
+                "crates/zk/outbe-zk/build.rs",
+                "mise.toml",
                 "rust-toolchain.toml",
                 "release/apt/ubuntu.sources",
                 "release/dcap-native-qvl-v1.json",
@@ -108,6 +115,15 @@ class ProjectToolchainContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "system package set"):
                 load_verifier().load_and_validate_pin(path)
 
+    def test_incomplete_zk_tool_pin_fails_closed(self) -> None:
+        pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+        del pin["zk_tools"]["nargo"]["archive_sha256"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "project-toolchain-v1.json"
+            path.write_text(json.dumps(pin), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "nargo tool"):
+                load_verifier().load_and_validate_pin(path)
+
     def test_native_dcap_build_contract_reads_the_release_pins(self) -> None:
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
         source = TEE_BUILD_SCRIPT.read_text(encoding="utf-8")
@@ -131,6 +147,9 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertIn(f"gramineproject/gramine:{pin['gramine']['version']}-", recipe)
         for package, version in pin["system_packages"].items():
             self.assertIn(f"{package}={version}", recipe)
+        for tool in pin["zk_tools"].values():
+            self.assertIn(tool["archive_url"], recipe)
+            self.assertIn(f"--checksum=sha256:{tool['archive_sha256']}", recipe)
 
         self.assertIn("/opt/outbe/toolchain/verify_dcap_native_qvl.py", recipe)
         self.assertIn("/opt/outbe/toolchain/project-toolchain-v1.json", recipe)
@@ -295,7 +314,7 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertNotIn("qpl", recipe)
         self.assertNotIn("pccs", recipe)
         self.assertNotRegex(recipe, r"from\s+\S+:(latest|main|master)(?:\s|$)")
-        self.assertEqual(len(re.findall(r"^from\s+", recipe, re.MULTILINE)), 4)
+        self.assertEqual(len(re.findall(r"^from\s+", recipe, re.MULTILINE)), 5)
         external_images = re.findall(
             r"^from\s+(\S+)\s+as\s+(?:rust|toolchain)$", recipe, re.MULTILINE
         )
