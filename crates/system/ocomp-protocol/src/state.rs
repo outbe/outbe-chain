@@ -19,7 +19,6 @@ wire_struct! {
         pub program_semantics_hash: B256,
         pub nod_root: B256,
         pub bucket_root: B256,
-        pub contributor_root: B256,
         pub output_manifest_root: B256,
         pub exact_counts: ExactCountsV1,
         pub result_evidence_hash: B256,

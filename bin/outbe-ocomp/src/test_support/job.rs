@@ -3,7 +3,7 @@ use outbe_ocomp_protocol::{
     common::BoundedBytes,
     control::{FinalizedJobSpecV1, FinalizedJobSummaryV1},
     intent::{
-        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
+        ActivationPreconditionsV1, DayType,
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
@@ -116,7 +116,6 @@ fn single_tribute_preconditions(
     ActivationPreconditionsV1 {
         tribute: tribute_binding(day, nominal, collection),
         nod: nod_precondition(day, nod_root),
-        contributors: contributor_precondition(day, nominal),
         metadosis: pending_metadosis_precondition(day),
     }
 }
@@ -138,14 +137,6 @@ fn nod_precondition(wwd: u32, namespace_root_before: B256) -> NodTargetPrecondit
         target_generation: 1,
         namespace_root_before,
         max_nod_count: 1,
-    }
-}
-fn contributor_precondition(worldwide_day: u32, nominal: U256) -> ContributorTargetPreconditionV1 {
-    ContributorTargetPreconditionV1 {
-        worldwide_day,
-        expected_series_version: 1,
-        max_contributor_count: 1,
-        max_eligible_nominal_total: nominal,
     }
 }
 fn pending_metadosis_precondition(wwd: u32) -> MetadosisAttemptPreconditionV1 {

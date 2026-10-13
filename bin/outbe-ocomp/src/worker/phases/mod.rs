@@ -1,6 +1,8 @@
 mod enumerate;
 pub(super) use enumerate::execute_enumerate_unit;
 
+mod tribute_nominal;
+
 mod fidelity;
 pub(super) use fidelity::{execute_fidelity_map_unit, execute_fixed_reduce_unit};
 

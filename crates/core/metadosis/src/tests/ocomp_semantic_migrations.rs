@@ -4,7 +4,7 @@ use outbe_ocomp_protocol::{
     receipts::ActivationOutcome, state::OcompJobStatus, vote::OcompVoteAccountabilityV1,
 };
 use outbe_primitives::{
-    addresses::{INTEX_ADDRESS, NOD_ADDRESS, PROMIS_LIMIT_ADDRESS, TRIBUTE_ADDRESS},
+    addresses::{NOD_ADDRESS, PROMIS_LIMIT_ADDRESS, TRIBUTE_ADDRESS},
     error::PrecompileError,
 };
 use outbe_primitives::{
@@ -831,7 +831,6 @@ fn deadline_records_missing_removed_validator_without_fatal() {
 fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() {
     for (owner, address) in [
         ("Nod", NOD_ADDRESS),
-        ("Contributor", INTEX_ADDRESS),
         ("Tribute", TRIBUTE_ADDRESS),
         ("CarryOver", PROMIS_LIMIT_ADDRESS),
     ] {
@@ -860,7 +859,6 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
 
     for fault in [
         ActivationReceiptFault::Nod,
-        ActivationReceiptFault::Contributor,
         ActivationReceiptFault::Tribute,
         ActivationReceiptFault::CarryOver,
         ActivationReceiptFault::RequestSplit,

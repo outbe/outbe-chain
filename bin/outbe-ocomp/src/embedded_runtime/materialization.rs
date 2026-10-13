@@ -123,6 +123,17 @@ impl MaterializationJob {
             .map_err(|error| stage("pin NOD materialization references", error))?;
         let preparation = PreparedNodMaterializationStoreV2::open(submission_root, limits)
             .map_err(|error| stage("open encrypted NOD preparation", error))?;
+        let league_fractions = audit
+            .league_fractions()
+            .map_err(|error| stage("read league fractions", error))?
+            .into_iter()
+            .map(|(league_id, fraction_fp)| {
+                outbe_tee::nod_materialization::LeagueFractionInputV2 {
+                    league_id,
+                    fraction_fp,
+                }
+            })
+            .collect();
         let protected = prepare_protected_materialization(
             outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
                 chain_id,
@@ -135,6 +146,7 @@ impl MaterializationJob {
             head,
             &built,
             sources,
+            league_fractions,
             &preparation,
         )
         .map_err(|error| stage("prepare encrypted NOD materialization", error))?;

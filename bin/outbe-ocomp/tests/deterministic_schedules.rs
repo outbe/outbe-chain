@@ -39,7 +39,7 @@ use outbe_ocomp_protocol::{
         materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind, InputManifestV1,
     },
     intent::{
-        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
+        ActivationPreconditionsV1, DayType,
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
@@ -711,12 +711,6 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
                 target_generation: 1,
                 namespace_root_before: B256::repeat_byte(0x56),
                 max_nod_count: TRIBUTE_COUNT,
-            },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: day.value(),
-                expected_series_version: 1,
-                max_contributor_count: TRIBUTE_COUNT,
-                max_eligible_nominal_total: nominal_total,
             },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: day.value(),

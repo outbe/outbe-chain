@@ -120,11 +120,8 @@ pub(in super::super) fn execute_gratis_prefix_unit(
         }
         let summary = gratis_summary(
             amount.start_ordinal,
-            &amount
-                .ordered_records
-                .iter()
-                .map(|record| record.gratis_load_minor)
-                .collect::<Vec<_>>(),
+            amount.ordered_records.len(),
+            amount.checked_segment_gratis_total,
         )
         .map_err(LysisArtifactErrorV1::from)?;
         (

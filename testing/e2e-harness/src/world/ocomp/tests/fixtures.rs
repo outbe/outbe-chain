@@ -124,14 +124,12 @@ pub(super) fn canonical_artifact_fixture(
         roots: ResultRootsV1 {
             nod_root: B256::repeat_byte(10),
             bucket_root: B256::repeat_byte(11),
-            contributor_root: B256::repeat_byte(12),
             output_manifest_root: B256::repeat_byte(13),
         },
         counts: ExactCountsV1 {
             tribute_count: 1,
             nod_count: 1,
             bucket_count: 0,
-            contributor_count: 0,
             semantic_event_count: 0,
         },
         conservation: ConservationTotalsV1 {

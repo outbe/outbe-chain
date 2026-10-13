@@ -4,9 +4,7 @@ use crate::{
     activation::ActivationCallCoreV1,
     error::ProtocolError,
     hash::{framed_identity_hash, hash_framed},
-    intent::{
-        ContributorTargetPreconditionV1, DayType, NodTargetPreconditionV1, TributeInputBindingV1,
-    },
+    intent::{DayType, NodTargetPreconditionV1, TributeInputBindingV1},
     registry::HashDomain,
     schema::{
         encode_nested_value, impl_top_level_codec, require, wire_enum_u8, wire_struct, NestedCodec,
@@ -17,7 +15,6 @@ use crate::{
 wire_enum_u8! {
     pub enum OwnerKind {
         Nod = 1,
-        Contributor = 2,
         Tribute = 3,
         CarryOver = 4,
     }
@@ -62,18 +59,6 @@ wire_struct! {
     }
 }
 impl_top_level_codec!(NodBatchReceiptV1, NodBatchReceiptV1);
-
-wire_struct! {
-    pub struct ContributorReceiptV1 {
-        pub binding: EffectBindingV1,
-        pub contributor_target_precondition: ContributorTargetPreconditionV1,
-        pub contributor_count: u32,
-        pub contributor_root: B256,
-        pub eligible_nominal_total: U256,
-        pub state_event_digest: B256,
-    }
-}
-impl_top_level_codec!(ContributorReceiptV1, ContributorReceiptV1);
 
 wire_struct! {
     pub struct TributeReceiptV1 {
@@ -133,17 +118,6 @@ wire_struct! {
 }
 
 wire_struct! {
-    pub struct ContributorStateEventProjectionV1 {
-        pub worldwide_day: u32,
-        pub series_version_before: u64,
-        pub series_version_after: u64,
-        pub contributor_count: u32,
-        pub contributor_root: B256,
-        pub eligible_nominal_total: U256,
-    }
-}
-
-wire_struct! {
     pub struct TributeStateEventProjectionV1 {
         pub wwd: u32,
         pub source_generation: u64,
@@ -168,7 +142,6 @@ wire_struct! {
         pub binding: EffectBindingV1,
         pub outcome: ActivationOutcome,
         pub nod_receipt_hash: Option<B256>,
-        pub contributor_receipt_hash: Option<B256>,
         pub tribute_receipt_hash: Option<B256>,
         pub carry_over_receipt_hash: Option<B256>,
         pub request_limit_split_receipt_hash: B256,
@@ -236,14 +209,6 @@ pub fn nod_state_event_digest(
     owner_state_event_digest(OwnerKind::Nod, binding, projection, limits)
 }
 
-pub fn contributor_state_event_digest(
-    binding: &EffectBindingV1,
-    projection: &ContributorStateEventProjectionV1,
-    limits: &SchemaLimits,
-) -> Result<B256, ProtocolError> {
-    owner_state_event_digest(OwnerKind::Contributor, binding, projection, limits)
-}
-
 pub fn tribute_state_event_digest(
     binding: &EffectBindingV1,
     projection: &TributeStateEventProjectionV1,
@@ -269,7 +234,6 @@ macro_rules! receipt_hash {
 }
 
 receipt_hash!(NodBatchReceiptV1, receipt_hash, NodReceipt);
-receipt_hash!(ContributorReceiptV1, receipt_hash, ContributorReceipt);
 receipt_hash!(TributeReceiptV1, receipt_hash, TributeReceipt);
 receipt_hash!(RequestLimitSplitReceiptV1, receipt_hash, LimitSplitReceipt);
 receipt_hash!(CarryOverReceiptV1, receipt_hash, CarryOverReceipt);
@@ -298,11 +262,6 @@ macro_rules! validate_projection_digest {
 }
 
 validate_projection_digest!(NodBatchReceiptV1, NodStateEventProjectionV1, Nod);
-validate_projection_digest!(
-    ContributorReceiptV1,
-    ContributorStateEventProjectionV1,
-    Contributor
-);
 validate_projection_digest!(TributeReceiptV1, TributeStateEventProjectionV1, Tribute);
 validate_projection_digest!(
     CarryOverReceiptV1,
@@ -313,23 +272,20 @@ validate_projection_digest!(
 impl AggregateActivationReceiptV1 {
     fn owner_receipts_present(&self) -> bool {
         self.nod_receipt_hash.is_some()
-            && self.contributor_receipt_hash.is_some()
             && self.tribute_receipt_hash.is_some()
             && self.carry_over_receipt_hash.is_some()
     }
 
     fn owner_receipts_absent(&self) -> bool {
         self.nod_receipt_hash.is_none()
-            && self.contributor_receipt_hash.is_none()
             && self.tribute_receipt_hash.is_none()
             && self.carry_over_receipt_hash.is_none()
     }
 
     fn expected_effect_commitment(&self) -> Result<B256, ProtocolError> {
         if self.outcome == ActivationOutcome::Applied {
-            let (Some(nod), Some(contributor), Some(tribute), Some(carry_over)) = (
+            let (Some(nod), Some(tribute), Some(carry_over)) = (
                 self.nod_receipt_hash,
-                self.contributor_receipt_hash,
                 self.tribute_receipt_hash,
                 self.carry_over_receipt_hash,
             ) else {
@@ -337,9 +293,8 @@ impl AggregateActivationReceiptV1 {
                     "aggregate receipt effect hashes",
                 ));
             };
-            let mut payload = Vec::with_capacity(128);
+            let mut payload = Vec::with_capacity(96);
             payload.extend_from_slice(nod.as_slice());
-            payload.extend_from_slice(contributor.as_slice());
             payload.extend_from_slice(tribute.as_slice());
             payload.extend_from_slice(carry_over.as_slice());
             hash_framed(HashDomain::Effects, &payload)
@@ -371,7 +326,7 @@ impl AggregateActivationReceiptV1 {
 
     pub fn validate_applied_event_summary(
         &self,
-        owner_digests: [B256; 4],
+        owner_digests: [B256; 3],
     ) -> Result<(), ProtocolError> {
         self.validate_semantics()?;
         require(
@@ -387,8 +342,8 @@ impl AggregateActivationReceiptV1 {
     framed_identity_hash!(terminal_receipt_hash, TerminalReceipt, validate_semantics());
 }
 
-pub fn apply_event_summary_hash(owner_digests: [B256; 4]) -> Result<B256, ProtocolError> {
-    let mut payload = Vec::with_capacity(128);
+pub fn apply_event_summary_hash(owner_digests: [B256; 3]) -> Result<B256, ProtocolError> {
+    let mut payload = Vec::with_capacity(96);
     for digest in owner_digests {
         payload.extend_from_slice(digest.as_slice());
     }

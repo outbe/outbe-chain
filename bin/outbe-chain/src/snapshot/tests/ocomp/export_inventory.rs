@@ -23,9 +23,9 @@ use outbe_ocomp_protocol::{
         InputManifestV1,
     },
     intent::{
-        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        TributeInputBindingV1,
     },
     profile::ProtocolBundleV1,
     state::{OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus},
@@ -99,12 +99,6 @@ fn finalized_job_spec(
                 target_generation: 1,
                 namespace_root_before: hash(seed.wrapping_add(9)),
                 max_nod_count: 1,
-            },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: day,
-                expected_series_version: 1,
-                max_contributor_count: 1,
-                max_eligible_nominal_total: nominal,
             },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: day,

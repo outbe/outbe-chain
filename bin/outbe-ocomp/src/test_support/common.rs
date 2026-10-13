@@ -30,7 +30,7 @@ fn hash(byte: u8) -> B256 {
 
 #[path = "population.rs"]
 mod population;
-pub use population::{contributor_population, tribute_population};
+pub use population::tribute_population;
 pub fn nod_actions(tributes: &[TributeBodyV1], first_ordinal: u32) -> Vec<NodActionV1> {
     tributes
         .iter()
@@ -46,9 +46,7 @@ pub fn nod_actions(tributes: &[TributeBodyV1], first_ordinal: u32) -> Vec<NodAct
                 owner: tribute.owner,
                 wwd: tribute.worldwide_day.value(),
                 league_id: 1,
-                gratis_load_minor: U256::ONE,
                 entry_price_minor: U256::ZERO,
-                settlement_cost_minor: U256::from(2),
                 issuance_currency: tribute.issuance_currency,
                 reference_currency: tribute.reference_currency,
             }
@@ -159,7 +157,6 @@ pub fn root_summary_fixture(
 ) -> RootReduceSummaryV1 {
     let index = chunk.chunk_ordinal;
     let actions = &chunk.ordered_nod_actions;
-    let contributors = &chunk.ordered_eligible_contributors;
     let start = usize::try_from(chunk.first_nod_ordinal).unwrap();
     let count = u32::try_from(actions.len()).unwrap();
     let nod_records = actions
@@ -168,10 +165,6 @@ pub fn root_summary_fixture(
         .collect::<Vec<_>>();
     let bucket_records = (start..start + actions.len())
         .map(|ordinal| ordinal.to_be_bytes().to_vec())
-        .collect::<Vec<_>>();
-    let contributor_records = contributors
-        .iter()
-        .map(|action| action.encode_canonical_record(limits).unwrap())
         .collect::<Vec<_>>();
     let manifest_records = vec![entry.encode_canonical_record(limits).unwrap()];
     let chunk_hash_records = vec![entry.result_chunk_hash.as_slice().to_vec()];
@@ -182,9 +175,7 @@ pub fn root_summary_fixture(
     let raw_nominal_total = tributes.iter().fold(U256::ZERO, |total, tribute| {
         total.checked_add(tribute.nominal_amount_minor).unwrap()
     });
-    let nod_cost_total = actions.iter().fold(U256::ZERO, |total, action| {
-        total.checked_add(action.settlement_cost_minor).unwrap()
-    });
+    let nod_cost_total = U256::from(count) * U256::from(2);
     RootReduceSummaryV1 {
         protocol_bundle_hash: chunk.protocol_bundle_hash,
         job_id: chunk.job_id,
@@ -194,7 +185,6 @@ pub fn root_summary_fixture(
         covered_primary_count: 1,
         nod_actions: carrier(ListKind::NodActions, &nod_records),
         bucket_records: carrier(ListKind::BucketRecords, &bucket_records),
-        contributor_actions: carrier(ListKind::ContributorActions, &contributor_records),
         output_manifest_entries: carrier(ListKind::CompleteOutputManifest, &manifest_records),
         result_chunk_hashes: LysisListSubtreeCarrierV1::from_primary_page(
             ListKind::ResultChunkHashes,
@@ -206,7 +196,6 @@ pub fn root_summary_fixture(
         tribute_count: count,
         nod_count: count,
         bucket_count: count,
-        contributor_count: u32::try_from(contributors.len()).unwrap(),
         tribute_nominal_total: raw_nominal_total,
         eligible_nominal_total: raw_nominal_total,
         lysis_allocation_minor: U256::from(count),

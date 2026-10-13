@@ -43,7 +43,6 @@ fn rebind_intent_worldwide_day(intent: &mut JobIntentV1, worldwide_day: u32) {
     intent.wwd = worldwide_day;
     intent.activation_preconditions.tribute.wwd = worldwide_day;
     intent.activation_preconditions.nod.wwd = worldwide_day;
-    intent.activation_preconditions.contributors.worldwide_day = worldwide_day;
     intent.activation_preconditions.metadosis.wwd = worldwide_day;
 }
 

@@ -19,7 +19,7 @@ use outbe_ocomp_protocol::{
     common::BoundedBytes,
     input::{CheckpointIdentityV1, InputChunkKind, InputManifestV1},
     registry::ObjectKind,
-    result::{ContributorActionV1, OutputManifestEntryV1, ResultChunkV1},
+    result::{OutputManifestEntryV1, ResultChunkV1},
     unit::{UnitArtifactV1, UnitPhase, WorkOutputHeaderV1},
     ListKind,
 };

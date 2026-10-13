@@ -70,20 +70,6 @@ pub(super) fn snapshot_fullnode_preserves_copied_result_checked(
     Ok(())
 }
 
-// Harness-only fragment, called after existing capacity completion and
-// contributors_are_paid, BEFORE the next-day request changes current generation.
-// Pass the copied generation/payout evidence and queue_sequence captured at E.
-// Existing armProceedsForTest fixture remains part of this scenario's disclosure.
-alloy_sol_types::sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface ISnapshotPayoutRead {
-        struct ContributorLeaf { address owner; uint256 sourceTributeId; uint256 nominal; }
-        struct ContributorRound { uint256 amount; uint32 contributorCount; uint256 paidSoFar; uint32 paidLeafCount; }
-        function contributorPayoutRound(uint32 worldwideDay) external view returns (ContributorRound memory);
-        function payContributorBatch(uint32 worldwideDay, uint32 startIndex, ContributorLeaf[] leaves, bytes32[] proof) external;
-    }
-}
-
 pub(super) struct SnapshotOwnerSample<T> {
     pub(super) before: u64,
     pub(super) observation: Result<Option<T>, String>,

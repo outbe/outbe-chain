@@ -40,6 +40,7 @@ pub fn materialize_certified_nods(
     readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     caller: Address,
     batch: &NodMaterializationBatchV1,
+    loads: &[U256],
     limits: &SchemaLimits,
 ) -> Result<NodMaterializationOutcomeV1> {
     crate::materialization::authorize_materializer(storage.clone(), caller)?;
@@ -51,7 +52,7 @@ pub fn materialize_certified_nods(
             outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
     };
     crate::materialization::materialize_certified_nods_authorized(
-        storage, readers, batch, profile, limits,
+        storage, readers, batch, loads, profile, limits,
     )
 }
 

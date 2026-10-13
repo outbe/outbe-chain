@@ -137,7 +137,7 @@ impl LysisPlanTopologyV1 {
                 }),
             ]),
             PlannedUnitPositionV1::RunSpan {
-                phase: UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle,
+                phase: UnitPhase::BucketShuffle,
                 level: 0,
                 index,
                 start_run,
@@ -156,8 +156,7 @@ impl LysisPlanTopologyV1 {
                 index,
                 start_run,
                 end_run,
-            } if matches!(phase, UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle)
-                && level > 0 =>
+            } if phase == UnitPhase::BucketShuffle && level > 0 =>
             {
                 let expected = self.run_span_position(phase, level, index)?;
                 if expected
@@ -182,7 +181,6 @@ impl LysisPlanTopologyV1 {
                     phase: UnitPhase::OutputFinalize,
                     ordinal: index,
                 }),
-                PlannedProducerV1::Unit(self.shuffle_root(UnitPhase::OwnerShuffle)?),
                 PlannedProducerV1::Unit(self.shuffle_root(UnitPhase::BucketShuffle)?),
             ]),
             PlannedUnitPositionV1::TreeNode {

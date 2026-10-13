@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    encode_tribute_v2, test_support::single_collection_body_proof, CeDomain, StoredBody,
-    TRIBUTE_BODY_SCHEMA_V2,
+    CeDomain, StoredBody, TRIBUTE_BODY_SCHEMA_V2, encode_tribute_v2,
+    test_support::single_collection_body_proof,
 };
 use outbe_ocomp_protocol::{
     list::{leaf_hash, root_hash},
@@ -16,7 +16,8 @@ use outbe_primitives::{
     wwd_entity_id::WwdEntityId,
 };
 use outbe_tee::nod_materialization::{
-    NodMaterializationAuthorityV2, NodSourceV2, PrepareEncryptedNodsRequestV2,
+    LeagueFractionInputV2, NodMaterializationAuthorityV2, NodSourceV2,
+    PrepareEncryptedNodsRequestV2,
 };
 use outbe_tee_enclave::{
     nod_encryption::decrypt_nod,
@@ -45,7 +46,7 @@ fn materialization_binds_current_authority_and_exact_authenticated_source() {
     };
     let amounts = TributeAmountsV2 {
         issuance_amount_minor: U256::from(1000),
-        nominal_amount_minor: U256::from(900),
+        nominal_amount_minor: U256::from(123),
     };
     let tribute = encrypt_tribute(&secret, &creator, context.clone(), &amounts).unwrap();
     let source_body = StoredBody::new(TRIBUTE_BODY_SCHEMA_V2, encode_tribute_v2(&tribute).unwrap())
@@ -61,9 +62,7 @@ fn materialization_binds_current_authority_and_exact_authenticated_source() {
         owner,
         wwd: 20250115,
         league_id: 0,
-        gratis_load_minor: U256::from(123),
         entry_price_minor: U256::from(700),
-        settlement_cost_minor: U256::from(123),
         issuance_currency: 840,
         reference_currency: 978,
     };
@@ -104,6 +103,10 @@ fn materialization_binds_current_authority_and_exact_authenticated_source() {
         sources: vec![NodSourceV2 {
             tribute,
             proof: postcard::to_allocvec(&source_proof).unwrap(),
+        }],
+        league_fractions: vec![LeagueFractionInputV2 {
+            league_id: 0,
+            fraction_fp: U256::from(1_000_000),
         }],
     };
     let carrier = prepare(&secret, &request).unwrap();

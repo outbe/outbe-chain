@@ -33,10 +33,9 @@ fn entitled_frame_enforces_the_fixed_owner_cursor_and_terminal_completion() {
     StorageHandle::enter(&mut provider, |storage| {
         storage
             .with_lysis_activation_frame(B256::repeat_byte(2), |capability| {
-                assert!(capability.authorize_contributor_installation().is_err());
+                assert!(capability.authorize_carry_over_credit().is_err());
                 capability.authorize_nod_installation()?;
                 assert!(capability.authorize_nod_installation().is_err());
-                capability.authorize_contributor_installation()?;
                 capability.authorize_carry_over_credit()?;
                 capability.authorize_tribute_retirement()?;
                 capability.authorize_terminal_receipt()

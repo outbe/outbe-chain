@@ -20,10 +20,9 @@ use crate::{
     common::{BoundedBytes, ProofBytes},
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{
-        ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
-        ContributorTargetPreconditionV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
-        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
-        ParentProofKind, TributeInputBindingV1,
+        ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2, DayType,
+        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+        MetadosisExpectedStatus, NodTargetPreconditionV1, ParentProofKind, TributeInputBindingV1,
     },
     profile::{CapacityProfileV1, ProtocolBundleV1},
     result::{ConservationTotalsV1, ExactCountsV1, LysisArithmeticSummaryV1, ResultRootsV1},
@@ -130,7 +129,6 @@ pub struct ActivationFixtureSource {
 pub struct ActivationFixtureTargets {
     pub nod_target_generation: u64,
     pub namespace_root_before: B256,
-    pub contributor_series_version: u64,
     pub metadosis_state_version: u64,
 }
 
@@ -154,12 +152,6 @@ pub fn activation_preconditions_fixture(
             target_generation: targets.nod_target_generation,
             namespace_root_before: targets.namespace_root_before,
             max_nod_count: source.exact_count,
-        },
-        contributors: ContributorTargetPreconditionV1 {
-            worldwide_day: source.wwd,
-            expected_series_version: targets.contributor_series_version,
-            max_contributor_count: source.exact_count,
-            max_eligible_nominal_total: source.exact_nominal_total,
         },
         metadosis: MetadosisAttemptPreconditionV1 {
             wwd: source.wwd,
@@ -187,7 +179,6 @@ pub fn fixed_activation_preconditions() -> ActivationPreconditionsV1 {
         ActivationFixtureTargets {
             nod_target_generation: 5,
             namespace_root_before: hash(32),
-            contributor_series_version: 8,
             metadosis_state_version: 12,
         },
     )
@@ -303,14 +294,12 @@ pub fn fixed_lysis_arithmetic_summary() -> LysisArithmeticSummaryV1 {
         roots: ResultRootsV1 {
             nod_root: hash(50),
             bucket_root: hash(51),
-            contributor_root: hash(52),
             output_manifest_root: hash(53),
         },
         counts: ExactCountsV1 {
             tribute_count: 1,
             nod_count: 1,
             bucket_count: 0,
-            contributor_count: 0,
             semantic_event_count: 0,
         },
         conservation: ConservationTotalsV1 {

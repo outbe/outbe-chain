@@ -57,7 +57,6 @@ pub(crate) struct CanonicalOcompAudit {
     pub complete_exports: u64,
     pub input_chunks: u64,
     pub nod: NodInputsAudit,
-    pub payout_days: u64,
 }
 
 pub(crate) fn verify_canonical_obligations(
@@ -383,7 +382,6 @@ pub(crate) fn verify_canonical_obligations(
         parameters.nod_materialization_batch_subtree_height,
         maximum_records,
     )?;
-    let payout_days = inventory.verify_payout_files(&layout.ocomp_root)?;
     let bounds = std::mem::take(&mut inventory.bounds);
     Ok(CanonicalOcompAudit {
         projection,
@@ -395,6 +393,5 @@ pub(crate) fn verify_canonical_obligations(
         complete_exports,
         input_chunks,
         nod,
-        payout_days,
     })
 }

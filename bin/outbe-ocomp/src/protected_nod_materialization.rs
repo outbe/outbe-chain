@@ -129,6 +129,7 @@ pub fn prepare_protected_materialization(
     head: &NodMaterializationHeadV1,
     built: &BuiltNodMaterializationBatchV1,
     sources: Vec<NodSourceV2>,
+    league_fractions: Vec<outbe_tee::nod_materialization::LeagueFractionInputV2>,
     store: &PreparedNodMaterializationStoreV2,
 ) -> Result<ProtectedNodMaterializationV2, ProtectedNodPreparationError> {
     if let Some(carrier) = store.load()? {
@@ -154,6 +155,7 @@ pub fn prepare_protected_materialization(
                     authority: authority.clone(),
                     batch: batch.encode_canonical(&store.limits)?,
                     sources: sources[..batch.actions.len()].to_vec(),
+                    league_fractions: league_fractions.clone(),
                 },
             )?)
         },
@@ -439,9 +441,7 @@ mod tests {
                 owner: Address::repeat_byte(1),
                 wwd: day,
                 league_id: 1,
-                gratis_load_minor: U256::from(1000),
                 entry_price_minor: U256::from(510),
-                settlement_cost_minor: U256::from(2),
                 issuance_currency: 840,
                 reference_currency: 840,
             })
@@ -535,6 +535,7 @@ mod tests {
                 dependencies: Vec::new(),
             },
             Vec::new(),
+            Vec::new(),
             &store,
         )
         .unwrap();
@@ -608,7 +609,7 @@ mod tests {
         ));
         assert_eq!(calls, 1);
         let mut bad = original;
-        bad.actions[0].gratis_load_minor += alloy_primitives::U256::from(1);
+        bad.actions[0].entry_price_minor += alloy_primitives::U256::from(1);
         assert!(prepare_capacity_bounded(&head, bad, 3, &limits, |_| panic!(
             "invalid proof must not reach enclave"
         ))

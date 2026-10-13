@@ -8,19 +8,6 @@ pragma solidity ^0.8.30;
 ///      reads for off-chain observability. `promisLoadMinor` is returned as uint256
 ///      (its storage representation). The Origin `uint128` bounds it.
 interface IIntex {
-    /// @notice Constant-size owner event for one certified contributor root.
-    ///         There is deliberately no matching public installation selector.
-    event CertifiedContributorRootInstalled(
-        bytes32 indexed activationCallId,
-        uint32 indexed worldwideDay,
-        uint64 seriesVersionBefore,
-        uint64 seriesVersionAfter,
-        uint32 contributorCount,
-        bytes32 contributorRoot,
-        uint256 eligibleNominalTotal,
-        bytes32 stateEventDigest
-    );
-
     struct SeriesData {
         bytes14 seriesId;
         uint256 promisLoadMinor;
@@ -61,21 +48,4 @@ interface IIntex {
 
     /// @notice The series id at a dense-enumeration index.
     function seriesAt(uint64 index) external view returns (bytes14);
-
-    /// @notice Certified contributor authority for one day, as quorum installed it.
-    ///         All fields are zero when no generation exists.
-    struct CertifiedContributorGeneration {
-        uint64 seriesVersion;
-        bytes32 contributorRoot;
-        uint32 contributorCount;
-        uint256 eligibleNominalTotal;
-    }
-
-    /// @notice Read the certified contributor authority for `worldwideDay`. An
-    ///         off-chain payout sender compares its local records against this
-    ///         before building a proof.
-    function certifiedContributorGeneration(uint32 worldwideDay)
-        external
-        view
-        returns (CertifiedContributorGeneration memory);
 }

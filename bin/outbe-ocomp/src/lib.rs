@@ -27,8 +27,6 @@ pub mod nod_materialization;
 pub mod nod_materialization_submitter;
 pub mod nod_proof;
 pub mod opening_stage;
-pub mod payout_artifact;
-pub mod payout_submitter;
 pub mod private_tribute_reader;
 pub mod protected_nod_materialization;
 pub mod public_rpc;

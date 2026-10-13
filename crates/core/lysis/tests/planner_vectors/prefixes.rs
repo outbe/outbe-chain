@@ -35,16 +35,16 @@ fn an_entry_beyond_the_call_price_bound_is_never_certified() {
             owner,
             worldwide_day: day,
             league_id: 1,
-            nominal_amount_minor: U256::from(100),
             gratis_fraction_fp: SIX_DECIMAL_SCALE,
-            gratis_load_minor: U256::from(1),
             entry_price_minor: entry,
-            settlement_cost_minor: U256::from(1),
             issuance_currency: 840,
             reference_currency: 978,
             exclude_from_intex_issuance: false,
         }],
         checked_segment_gratis_total: U256::from(1),
+        checked_segment_nominal_total: U256::from(100),
+        checked_segment_eligible_nominal_total: U256::from(100),
+        checked_segment_settlement_cost_total: U256::from(1),
     };
     let limits = poc_schema_limits();
     assert!(matches!(
@@ -129,8 +129,8 @@ fn fidelity_reducer_handles_every_padded_empty_shape_for_one_to_eight_shards() {
 fn two_direction_gratis_prefix_preserves_exact_sequential_budget_semantics() {
     let first_loads = vec![U256::from(1_u8); 256];
     let second_loads = vec![U256::from(1_u8)];
-    let first = gratis_summary(0, &first_loads).unwrap();
-    let second = gratis_summary(256, &second_loads).unwrap();
+    let first = gratis_summary(0, first_loads.len(), U256::from(256_u16)).unwrap();
+    let second = gratis_summary(256, second_loads.len(), U256::from(1_u8)).unwrap();
     let root = gratis_summary_reduce_pair(
         GratisSummaryValueV1::Summary(first.clone()),
         GratisSummaryValueV1::Summary(second.clone()),
@@ -158,13 +158,15 @@ fn two_direction_gratis_prefix_preserves_exact_sequential_budget_semantics() {
     let first_leaf = finalize_gratis_leaf(
         exact[0].as_ref().unwrap().incoming_remaining,
         0,
-        &first_loads,
+        first_loads.len(),
+        U256::from(256_u16),
     )
     .unwrap();
     let second_leaf = finalize_gratis_leaf(
         exact[1].as_ref().unwrap().incoming_remaining,
         256,
-        &second_loads,
+        second_loads.len(),
+        U256::from(1_u8),
     )
     .unwrap();
     assert_eq!(first_leaf.outgoing_remaining, U256::from(1_u8));
@@ -180,7 +182,8 @@ fn two_direction_gratis_prefix_preserves_exact_sequential_budget_semantics() {
     let error = finalize_gratis_leaf(
         exhausted[1].as_ref().unwrap().incoming_remaining,
         256,
-        &second_loads,
+        second_loads.len(),
+        U256::from(1_u8),
     )
     .unwrap_err();
     assert_eq!(
@@ -191,7 +194,7 @@ fn two_direction_gratis_prefix_preserves_exact_sequential_budget_semantics() {
 
 #[test]
 fn gratis_prefix_treats_padding_as_identity_not_as_work() {
-    let summary = gratis_summary(0, &[U256::from(9_u8)]).unwrap();
+    let summary = gratis_summary(0, 1, U256::from(9_u8)).unwrap();
     let reduced = gratis_summary_reduce_pair(
         GratisSummaryValueV1::Summary(summary.clone()),
         GratisSummaryValueV1::Empty,

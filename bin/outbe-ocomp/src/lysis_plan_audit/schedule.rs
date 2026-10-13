@@ -80,13 +80,19 @@ impl VerifiedPlanSchedule<'_> {
                 )?;
                 self.push_input_kind_refs(InputChunkKind::Oracle, &mut ordered_input_refs)?;
             }
+            UnitPhase::RootReduce => {
+                if let PlannedUnitPositionV1::TreeNode {
+                    level: 0, index, ..
+                } = position
+                {
+                    self.push_primary_input_ref(index, &mut ordered_input_refs)?;
+                }
+            }
             UnitPhase::FixedReduce
             | UnitPhase::GratisPrefix
             | UnitPhase::GratisPrefixDown
             | UnitPhase::OutputFinalize
-            | UnitPhase::OwnerShuffle
-            | UnitPhase::BucketShuffle
-            | UnitPhase::RootReduce => {}
+            | UnitPhase::BucketShuffle => {}
         }
 
         let canonical_spec = spec.encode_canonical(self.limits)?;
@@ -191,7 +197,7 @@ impl VerifiedPlanSchedule<'_> {
                     )
                     .map_err(Into::into)
             }
-            UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle => {
+            UnitPhase::BucketShuffle => {
                 let exact = producer_ids
                     .iter()
                     .copied()

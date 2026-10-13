@@ -8,8 +8,8 @@ use outbe_ocomp_protocol::{
 };
 
 use super::apply_plan::{
-    carry_over_apply, contributor_apply, nod_apply, tribute_apply, LysisApplyPlanPartsV1,
-    LysisApplyPlanV1, NodGenerationApplyPartsV1, RequestLimitSplitApplyV1,
+    carry_over_apply, nod_apply, tribute_apply, LysisApplyPlanPartsV1, LysisApplyPlanV1,
+    NodGenerationApplyPartsV1, RequestLimitSplitApplyV1,
 };
 
 const RETIRED_TRIBUTE_GENERATION_V1: u64 = 1;
@@ -54,17 +54,7 @@ pub fn verify_result(inputs: LysisResultInputsV1<'_>) -> Result<LysisApplyPlanV1
     )?;
     ensure(commits_every_root(result), "Lysis apply committed roots")?;
     ensure(
-        result.counts.nod_count <= intent.activation_preconditions.nod.max_nod_count
-            && result.counts.contributor_count
-                <= intent
-                    .activation_preconditions
-                    .contributors
-                    .max_contributor_count
-            && result.conservation.eligible_nominal_total
-                <= intent
-                    .activation_preconditions
-                    .contributors
-                    .max_eligible_nominal_total,
+        result.counts.nod_count <= intent.activation_preconditions.nod.max_nod_count,
         "Lysis apply target bounds",
     )?;
 
@@ -120,12 +110,6 @@ pub fn verify_result(inputs: LysisResultInputsV1<'_>) -> Result<LysisApplyPlanV1
             lysis_allocation_minor: result.conservation.lysis_allocation_minor,
             issued_at: nod_issued_at,
         }),
-        contributors: contributor_apply(
-            intent.activation_preconditions.contributors.clone(),
-            result.roots.contributor_root,
-            result.counts.contributor_count,
-            result.conservation.eligible_nominal_total,
-        ),
         tribute: tribute_apply(
             intent.activation_preconditions.tribute.clone(),
             result.counts.tribute_count,
@@ -146,7 +130,6 @@ fn commits_every_root(result: &LysisResultV1) -> bool {
         result.gratis_prefix_root,
         result.roots.nod_root,
         result.roots.bucket_root,
-        result.roots.contributor_root,
         result.roots.output_manifest_root,
     ]
     .iter()
