@@ -37,7 +37,7 @@ pub struct IssueCredisParams {
     pub asset: Address,
     /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
-    /// ISO 4217 numeric code of the reference currency elected at issuance and
+    /// ISO 4217 numeric code of the reference currency elected at the reservation and
     /// fixed for the Credis's life.
     pub reference_currency: u16,
     /// `r`, the issuance currency's policy rate, 1e6 scaled.
@@ -46,7 +46,7 @@ pub struct IssueCredisParams {
     pub principal_minor: U256,
     /// Entry price in the issuance currency, scale 1e6, fixed by the reservation.
     pub entry_price_minor: U256,
-    /// Call anchor price in the reference currency, scale 1e6, sealed at issuance.
+    /// Call anchor price in the reference currency, scale 1e6, fixed by the reservation.
     pub call_anchor_price_minor: U256,
     /// `G` - pledged Gratis collateral.
     pub gratis_minor: U256,
