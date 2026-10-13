@@ -54,7 +54,7 @@ fn inactive_weights_are_excluded_and_residue_stays_excess() {
         assert_eq!(reward(&storage, U256::from(11)), U256::ZERO);
         assert_eq!(claimable(&storage, ALICE), native(13));
         AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, BOB, U256::ZERO)
+            .claim_reward(RewardPool::Cca, BOB, U256::ZERO, USD, USD)
             .unwrap();
         assert_eq!(storage.balance(BOB).unwrap(), U256::ZERO);
         assert_eq!(
@@ -236,6 +236,8 @@ fn cca_pool_queries_and_claims_are_isolated() {
         let claim = IAgentReward::claimRewardCall {
             pool: 2,
             amount: U256::ZERO,
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
         }
         .abi_encode();
         // A registered caller cannot spend another account's rewards. Unregistered calls also fail.
@@ -249,7 +251,9 @@ fn cca_pool_queries_and_claims_are_isolated() {
                 storage.clone(),
                 &IAgentReward::claimRewardCall {
                     pool,
-                    amount: U256::ZERO
+                    amount: U256::ZERO,
+                    issuanceCurrency: USD,
+                    referenceCurrency: USD,
                 }
                 .abi_encode(),
                 ALICE,
@@ -271,9 +275,12 @@ fn cca_pool_queries_and_claims_are_isolated() {
         for pool in [0, 1] {
             let output = dispatch(
                 storage.clone(),
+                // An empty pool is a no-op whatever currencies the call names.
                 &IAgentReward::claimRewardCall {
                     pool,
                     amount: U256::ZERO,
+                    issuanceCurrency: 0,
+                    referenceCurrency: 0,
                 }
                 .abi_encode(),
                 BOB,
@@ -347,7 +354,7 @@ fn deregistered_cca_claims_from_agentreward_after_withdrawing_bond() {
             )
             .unwrap();
         AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO)
+            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO, USD, USD)
             .unwrap();
         assert_eq!(claimable(&storage, ALICE), U256::ZERO);
         assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
@@ -438,10 +445,10 @@ fn a_second_claim_does_not_mint_or_move_the_bond() {
         originate(&storage, ALICE, 1);
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
         let gem_id = AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO)
+            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO, USD, USD)
             .unwrap();
         assert!(AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO)
+            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO, USD, USD)
             .is_err());
         assert_eq!(claimable(&storage, ALICE), U256::ZERO);
         assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);

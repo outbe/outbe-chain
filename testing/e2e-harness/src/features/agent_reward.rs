@@ -427,7 +427,12 @@ fn claim_gem_and_assert_gas_only_cost(
     );
     let receipt = world
         .rpc
-        .claim_agent_reward_gem(key, pool)
+        .claim_agent_reward_gem(
+            key,
+            pool,
+            crate::world::settlement_currency::USD_ISO,
+            crate::world::settlement_currency::USD_ISO,
+        )
         .expect("ordinary paid AgentReward Gem claim");
     let gas_cost_coen_units = crate::world::rpc::Rpc::receipt_gas_cost(&receipt)
         .expect("exact AgentReward claim gas cost");

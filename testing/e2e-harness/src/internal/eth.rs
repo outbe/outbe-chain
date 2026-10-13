@@ -1525,6 +1525,8 @@ pub(crate) fn send_reward_call(
     let data = IAgentReward::claimRewardCall {
         pool: WAA_POOL,
         amount: U256::ZERO,
+        issuanceCurrency: crate::world::settlement_currency::USD_ISO,
+        referenceCurrency: crate::world::settlement_currency::USD_ISO,
     }
     .abi_encode();
     block_on(async move {
