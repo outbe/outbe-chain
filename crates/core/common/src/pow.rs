@@ -91,10 +91,8 @@ pub fn validate_mining_pow(
 /// The protocol's single verdict on a work hash, whatever preimage produced it:
 /// a right whose own scheme differs still weighs its work here.
 pub fn meets_difficulty(hash: &[u8; 32]) -> Result<(), PowError> {
-    if hash[..usize::from(POW_DIFFICULTY)]
-        .iter()
-        .any(|byte| *byte != 0)
-    {
+    let difficulty = usize::from(POW_DIFFICULTY);
+    if hash[..difficulty].iter().any(|byte| *byte != 0) {
         return Err(PowError::InsufficientProofOfWork);
     }
     Ok(())

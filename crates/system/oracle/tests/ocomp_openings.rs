@@ -9,9 +9,8 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::ORACLE_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    units::SCALE_1E6_U256 as COEN_ISO_SCALE,
 };
-
-use outbe_primitives::units::SCALE_1E6_U256 as COEN_ISO_SCALE;
 
 fn scaled(whole: u64, scale: U256) -> U256 {
     U256::from(whole) * scale

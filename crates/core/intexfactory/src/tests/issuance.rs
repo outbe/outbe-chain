@@ -182,14 +182,22 @@ fn the_message_caps_match_the_codec() {
     use outbe_primitives::test_utils::sol_interface::sol_constant;
     const CODEC: &str =
         include_str!("../../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
-    let cap = |name| sol_constant(CODEC, name).and_then(|v| usize::try_from(v).ok());
     assert_eq!(
-        cap("MAX_RECIPIENTS_PER_ISSUANCE"),
+        sol_constant(CODEC, "MAX_RECIPIENTS_PER_ISSUANCE"),
         Some(MAX_RECIPIENTS_PER_ISSUANCE)
     );
-    assert_eq!(cap("MAX_SERIES_PER_ISSUANCE"), Some(MAX_SERIES_PER_MESSAGE));
-    assert_eq!(cap("MAX_SERIES_PER_MARK"), Some(MAX_SERIES_PER_MARK));
-    assert_eq!(cap("MAX_REFERENCE_PRICES"), Some(MAX_VWAP_ROWS));
+    assert_eq!(
+        sol_constant(CODEC, "MAX_SERIES_PER_ISSUANCE"),
+        Some(MAX_SERIES_PER_MESSAGE)
+    );
+    assert_eq!(
+        sol_constant(CODEC, "MAX_SERIES_PER_MARK"),
+        Some(MAX_SERIES_PER_MARK)
+    );
+    assert_eq!(
+        sol_constant(CODEC, "MAX_REFERENCE_PRICES"),
+        Some(MAX_VWAP_ROWS)
+    );
 }
 
 #[test]

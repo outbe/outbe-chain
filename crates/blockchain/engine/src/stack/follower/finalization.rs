@@ -2,6 +2,7 @@ use super::*;
 use commonware_codec::Encode as _;
 use outbe_consensus::{
     block::ConsensusBlock,
+    bls::MAX_COMMITTEE_MEMBERS,
     finalization::parent_cert_store::FinalizedParentCertStore,
     marshal_types::{Finalization, MarshalMailbox},
 };
@@ -36,7 +37,7 @@ fn same_block_finalization(
     for record in parent_store.finalizations_for_block(height.get(), block.block_hash()) {
         if let Ok(candidate) = outbe_consensus::follow::decode_public_finalization(
             &record.encoded_proof,
-            outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
+            MAX_COMMITTEE_MEMBERS,
         ) {
             if candidate.proposal.payload == digest {
                 return Some(candidate);

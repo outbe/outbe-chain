@@ -30,6 +30,7 @@ use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
 
 use crate::block::ConsensusBlock;
+use crate::bls::MAX_COMMITTEE_MEMBERS;
 use crate::marshal_types::Finalization;
 
 /// Recover an exact direct certificate from the child's on-chain accounting
@@ -61,7 +62,7 @@ pub fn parent_finalization_from_child(
             continue;
         }
         let certificate =
-            decode_public_finalization(&metadata.proof, crate::bls::MAX_COMMITTEE_MEMBERS).ok()?;
+            decode_public_finalization(&metadata.proof, MAX_COMMITTEE_MEMBERS).ok()?;
         if certificate.proposal.payload == parent.digest()
             && certificate.proposal.round.epoch().get() == metadata.finalized_epoch
         {

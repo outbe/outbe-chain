@@ -236,9 +236,6 @@ pub fn dispatch(
                 isSeriesQualified(c) => metadata::<IIntexFactory::isSeriesQualifiedCall>(|| {
                     runtime::is_series_qualified(&storage, SeriesId::from(c.seriesId))
                 }),
-                powDifficulty(_) => metadata::<IIntexFactory::powDifficultyCall>(|| {
-                    Ok(outbe_common::pow::POW_DIFFICULTY)
-                }),
                 maxUtcDayVwapSince(c) => view(c, |c| {
                     outbe_oracle::api::max_utc_day_vwap_since(
                         storage.clone(),
@@ -265,6 +262,9 @@ pub fn dispatch(
                             auth,
                         },
                     )
+                }),
+                powDifficulty(_) => metadata::<IIntexFactory::powDifficultyCall>(|| {
+                    Ok(outbe_common::pow::POW_DIFFICULTY)
                 }),
                 // The only payable selector: credits auction proceeds (msg.value)
                 // from the source chain into the day's pot.

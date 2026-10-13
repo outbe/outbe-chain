@@ -198,11 +198,10 @@ pub fn compute_scurve_value(peak_price: U256, day_index: usize) -> U256 {
 mod tests {
     use alloy_primitives::Address;
     use outbe_primitives::address_pair::AddressPair;
+    use outbe_primitives::units::SCALE_1E6_U64 as COEN840_SCALE;
 
     use super::*;
     use crate::schema::OracleContract;
-
-    use outbe_primitives::units::SCALE_1E6_U64 as COEN840_SCALE;
 
     fn price6(whole: u64) -> U256 {
         U256::from(whole) * U256::from(COEN840_SCALE)

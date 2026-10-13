@@ -22,6 +22,7 @@ library IntexMetadata {
     /// @dev Every COEN/ISO price arrives directly in six-decimal ISO stable-units.
     uint8 private constant PRICE_DECIMALS = BridgeMsgCodec.PROTOCOL_DECIMALS;
     uint8 private constant PRICE_PRECISION = 6;
+    /// @dev Shared numeric scale carried by six-decimal monetary fields.
     uint256 private constant SCALE_1E6 = 10 ** BridgeMsgCodec.PROTOCOL_DECIMALS;
 
     /// @notice Build the `data:application/json;base64,...` URI for a token.

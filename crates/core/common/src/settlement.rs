@@ -6,7 +6,7 @@ use alloy_primitives::U256;
 use core::fmt;
 use outbe_primitives::units::{MAX_ASSET_DECIMALS, PROTOCOL_AMOUNT_DECIMALS};
 
-/// Decimals of a price × load product.
+/// Decimals of a price x load product.
 pub const OBLIGATION_DECIMALS: u8 = 2 * PROTOCOL_AMOUNT_DECIMALS;
 
 /// Ways the floor can refuse.

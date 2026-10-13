@@ -46,7 +46,7 @@ pub const ONE_UNIT: U256 = U256::ONE;
 /// Number of decimal places.
 pub const NATIVE_TOKEN_DECIMALS: u8 = 18;
 
-/// Widest stablecoin or settlement asset the protocol accepts.
+/// Most decimals a stablecoin or settlement asset may report.
 pub const MAX_ASSET_DECIMALS: u8 = 18;
 
 /// Converts a six-decimal protocol amount into native COEN atomic units.
@@ -94,11 +94,11 @@ mod tests {
             include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
         assert_eq!(
             sol_constant(CODEC, "PROTOCOL_DECIMALS"),
-            Some(PROTOCOL_AMOUNT_DECIMALS.into())
+            Some(PROTOCOL_AMOUNT_DECIMALS)
         );
         assert_eq!(
             sol_constant(CODEC, "NATIVE_DECIMALS"),
-            Some(NATIVE_TOKEN_DECIMALS.into())
+            Some(NATIVE_TOKEN_DECIMALS)
         );
         assert_eq!(sol_constant(CODEC, "SCALE_1E6"), Some(SCALE_1E6_U128));
     }
