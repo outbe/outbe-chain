@@ -102,10 +102,11 @@ impl AgentRewardContract<'_> {
     /// own risk control. The part that the agent does not claim keeps accruing.
     ///
     /// The Gem carries the caller's currencies. Its entry price is the previous
-    /// UTC day's COEN VWAP in `reference_currency`.
+    /// UTC day's COEN VWAP in `reference_currency`, which must be an Oracle
+    /// reference currency.
     ///
-    /// Any failure reverts the call and leaves the balance for the next day, which
-    /// brings a new VWAP with it.
+    /// Any failure reverts the call and leaves the balance intact. A missing VWAP
+    /// waits for the next day, which brings a new VWAP with it.
     pub fn claim_reward(
         &mut self,
         pool: RewardPool,
@@ -256,9 +257,10 @@ pub(crate) fn issue_reward_gem(
     load: U256,
     (issuance_currency, reference_currency): (u16, u16),
 ) -> Result<U256> {
+    outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
     let entry_price = resolve_gem_entry_price(storage, reference_currency)?.ok_or_else(|| {
         PrecompileError::Revert(format!(
-            "agentreward has no COEN price in {reference_currency} yet"
+            "agentreward has no previous-day COEN price in {reference_currency}"
         ))
     })?;
     outbe_gemfactory::api::issue_gem(

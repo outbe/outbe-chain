@@ -313,7 +313,9 @@ fn a_claim_without_a_previous_day_vwap_keeps_the_balance() {
         seed_oracle(&storage, ONE_COEN);
         seed_day_vwap(&storage, U256::ZERO);
         let err = claim_waa(&storage, contract, alice, backing).unwrap_err();
-        assert!(err.to_string().contains("no COEN price in 840"));
+        assert!(err
+            .to_string()
+            .contains("no previous-day COEN price in 840"));
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
     });
 }
@@ -324,7 +326,11 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
     let backing = native(500);
 
     with_contract_mut(|storage, contract| {
-        // No pair, no quote, no closed day.
+        // USD is a reference currency, with no pair, no quote and no closed day.
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .reference_currencies
+            .push(USD)
+            .unwrap();
         contract
             .storage
             .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
@@ -336,7 +342,9 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
         let err = contract
             .claim_reward(RewardPool::Waa, alice, U256::ZERO, USD, USD)
             .unwrap_err();
-        assert!(err.to_string().contains("no COEN price in 840"));
+        assert!(err
+            .to_string()
+            .contains("no previous-day COEN price in 840"));
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
         assert_eq!(
             storage
@@ -368,15 +376,19 @@ fn a_claim_refuses_a_reference_outside_the_reference_set() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let backing = native(500);
 
-    with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN);
-        price_coen_in(&storage, MYR, ONE_COEN, false);
-        let err = claim_waa_in(&storage, contract, alice, backing, USD, MYR).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("458 is not a registered reference currency"));
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
-    });
+    for priced in [false, true] {
+        with_contract_mut(|storage, contract| {
+            seed_oracle(&storage, ONE_COEN);
+            if priced {
+                price_coen_in(&storage, MYR, ONE_COEN, false);
+            }
+            let err = claim_waa_in(&storage, contract, alice, backing, USD, MYR).unwrap_err();
+            assert!(err
+                .to_string()
+                .contains("458 is not a registered reference currency"));
+            assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
+        });
+    }
 }
 
 #[test]
@@ -391,7 +403,9 @@ fn a_claim_in_an_unpriced_reference_keeps_the_balance() {
             .push(EUR)
             .unwrap();
         let err = claim_waa_in(&storage, contract, alice, backing, USD, EUR).unwrap_err();
-        assert!(err.to_string().contains("no COEN price in 978"));
+        assert!(err
+            .to_string()
+            .contains("no previous-day COEN price in 978"));
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
     });
 }
@@ -401,15 +415,16 @@ fn a_claim_refuses_an_issuance_that_is_not_an_iso_code() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let backing = native(500);
 
-    with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN);
-        for issuance in [0, 1000] {
+    for issuance in [0, 1000] {
+        with_contract_mut(|storage, contract| {
+            seed_oracle(&storage, ONE_COEN);
             let err = claim_waa_in(&storage, contract, alice, backing, issuance, USD).unwrap_err();
             assert!(err
                 .to_string()
                 .contains(&format!("{issuance} is not an ISO 4217 currency code")));
-        }
-    });
+            assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
+        });
+    }
 }
 
 #[test]
