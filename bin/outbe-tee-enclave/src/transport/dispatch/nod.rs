@@ -140,8 +140,12 @@ pub(super) fn read_amount(
     chain: B256,
     nod: &EncryptedNodV2,
 ) -> EnclaveResponse {
+    let Some(key) = offer.get() else {
+        return EnclaveResponse::NotReady {
+            message: "no resident network key".into(),
+        };
+    };
     response((|| {
-        let key = offer.get().ok_or("no resident network key")?;
         if nod.terms.chain_id != resident_chain_id(chain)? {
             return Err("NOD read chain mismatch");
         }

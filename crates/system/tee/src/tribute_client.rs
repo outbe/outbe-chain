@@ -44,6 +44,6 @@ pub(crate) fn request_local_enclave(
 ) -> Result<([u8; 32], EnclaveResponse), TransportError> {
     let (key, response) =
         crate::try_with_enclave(|session| (session.attestation_pub(), session.request(&request)))
-            .ok_or_else(|| TransportError::EnclaveError("TEE sidecar unavailable".into()))?;
+            .ok_or_else(|| TransportError::Unavailable("TEE sidecar is not configured".into()))?;
     Ok((key, response?))
 }
