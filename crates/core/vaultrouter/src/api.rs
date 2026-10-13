@@ -93,7 +93,9 @@ pub fn withdraw(
 fn call_router<C: SolCall>(storage: &StorageHandle<'_>, call: C) -> Result<C::Return> {
     let ret = storage.call(VAULT_ROUTER_ADDRESS, U256::ZERO, call.abi_encode().into())?;
     C::abi_decode_returns(&ret).map_err(|_| {
-        let name = C::SIGNATURE.split('(').next().unwrap_or(C::SIGNATURE);
+        let name = C::SIGNATURE
+            .split_once('(')
+            .map_or(C::SIGNATURE, |(name, _)| name);
         PrecompileError::Revert(format!("{name} undecodable"))
     })
 }

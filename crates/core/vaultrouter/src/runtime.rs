@@ -25,10 +25,9 @@ mod rebalance;
 mod reservations;
 
 use calls::{
-    asset_iso_code, erc20_balance_of, vault_asset, vault_deposit, vault_owner,
-    vault_preview_withdraw, vault_withdraw,
+    asset_iso_code, erc20_approve, erc20_balance_of, erc20_transfer, erc20_transfer_from,
+    vault_asset, vault_deposit, vault_owner, vault_preview_withdraw, vault_withdraw,
 };
-use calls::{erc20_approve, erc20_transfer, erc20_transfer_from};
 pub use liquidity::{
     add_liquidity_source, add_liquidity_target, registered_liquidity_source,
     registered_liquidity_target, remove_liquidity_source, remove_liquidity_target,
