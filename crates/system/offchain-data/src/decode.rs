@@ -4,20 +4,25 @@ use outbe_compressed_entities::{
     body_commitment, decode_nod_bucket_v1, derive_poseidon_entity_id, StoredBody, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
+use outbe_gem::precompile::IGem;
 use outbe_nod::precompile::INod;
 use outbe_offchain_storage::Value;
-use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
+use outbe_primitives::addresses::{GEM_ADDRESS, NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
 use outbe_tribute::precompile::ITribute;
 
 use super::state::ProjectionSource;
 use super::{FinalizedBlock, ProjectionError};
 
+mod gem;
+
 #[derive(Clone, Copy)]
 pub(super) enum EntityIdentity {
     Tribute(WwdEntityId),
     Nod(WwdEntityId),
     Bucket(WwdEntityId),
+    Gem(WwdEntityId),
+    GemBucket(WwdEntityId),
 }
 
 pub(super) struct StoredEntityEvent {
@@ -40,6 +45,10 @@ pub(super) enum ProjectionEvent {
     NodDeleted(DeletedEntityEvent),
     BucketStored(StoredEntityEvent),
     BucketDeleted(DeletedEntityEvent),
+    GemStored(StoredEntityEvent),
+    GemDeleted(DeletedEntityEvent),
+    GemBucketStored(StoredEntityEvent),
+    GemBucketDeleted(DeletedEntityEvent),
 }
 
 impl ProjectionEvent {
@@ -48,6 +57,10 @@ impl ProjectionEvent {
             Self::TributeStored(event) => Some(EntityIdentity::Tribute(event.identity)),
             Self::TributeDeleted(event) => Some(EntityIdentity::Tribute(event.identity)),
             Self::TributePartitionRetired { .. } => None,
+            Self::GemStored(event) => Some(EntityIdentity::Gem(event.identity)),
+            Self::GemDeleted(event) => Some(EntityIdentity::Gem(event.identity)),
+            Self::GemBucketStored(event) => Some(EntityIdentity::GemBucket(event.identity)),
+            Self::GemBucketDeleted(event) => Some(EntityIdentity::GemBucket(event.identity)),
             Self::NodStored(event) => Some(EntityIdentity::Nod(event.identity)),
             Self::NodDeleted(event) => Some(EntityIdentity::Nod(event.identity)),
             Self::BucketStored(event) => Some(EntityIdentity::Bucket(event.identity)),
@@ -70,6 +83,13 @@ pub(super) fn is_projection_pair(emitter: Address, signature: B256) -> bool {
             INod::NodBucketBodyStored::SIGNATURE_HASH,
             INod::NodBucketBodyDeleted::SIGNATURE_HASH,
         ]
+    } else if emitter == GEM_ADDRESS {
+        &[
+            IGem::GemBodyStored::SIGNATURE_HASH,
+            IGem::GemBodyDeleted::SIGNATURE_HASH,
+            IGem::GemBucketBodyStored::SIGNATURE_HASH,
+            IGem::GemBucketBodyDeleted::SIGNATURE_HASH,
+        ]
     } else {
         &[]
     };
@@ -85,6 +105,9 @@ pub(super) fn decode_event(
     }
     if source.emitter == NOD_ADDRESS {
         return decode_nod_event(source, data);
+    }
+    if source.emitter == GEM_ADDRESS {
+        return gem::decode_gem_event(source, data);
     }
     Ok(None)
 }

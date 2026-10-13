@@ -2,32 +2,35 @@ use super::*;
 
 #[test]
 fn a_position_reports_its_full_terms() {
-    with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
-        let id = seed_and_send(
-            storage,
-            six_decimal_unit(),
-            six_decimal_unit(),
-            six_decimal_u128(),
-        );
-        let data = runtime::position_data(storage, id).unwrap();
-        assert_eq!(data.merchant, ALICE);
-        assert_eq!(data.sourceEntryPriceMinor, six_decimal_unit());
-        assert_eq!(data.sourceFloorPriceMinor, six_decimal_unit());
-        assert_eq!(data.issuanceCurrency, 840);
-        assert_eq!(data.referenceCurrency, 840);
-        assert_eq!(data.issuedAt, T_NOW);
-        assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
-        assert_eq!(
-            data.remainingCapacityMinor,
-            sent_capacity(six_decimal_u128())
-        );
-    });
+    with_storage(
+        Some(U256::from(2u64) * six_decimal_unit()),
+        |storage, _world| {
+            let id = seed_and_send(
+                storage,
+                six_decimal_unit(),
+                six_decimal_unit(),
+                six_decimal_u128(),
+            );
+            let data = runtime::position_data(storage, id).unwrap();
+            assert_eq!(data.merchant, ALICE);
+            assert_eq!(data.sourceEntryPriceMinor, six_decimal_unit());
+            assert_eq!(data.sourceFloorPriceMinor, six_decimal_unit());
+            assert_eq!(data.issuanceCurrency, 840);
+            assert_eq!(data.referenceCurrency, 840);
+            assert_eq!(data.issuedAt, T_NOW);
+            assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
+            assert_eq!(
+                data.remainingCapacityMinor,
+                sent_capacity(six_decimal_u128())
+            );
+        },
+    );
 }
 
 #[test]
 fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         // EUR trades live, but the window it converts at holds no euro price.
         let eur_pair = outbe_oracle::api::AddressPair::new_coen_to(978);
         outbe_oracle::api::register_pair(storage.clone(), eur_pair).unwrap();
@@ -49,6 +52,7 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
         seed_day_vwap(storage, 840, rate);
         let gem_id = issue_at_live_rate(
             storage,
+            world,
             ALICE,
             GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
@@ -56,16 +60,25 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
             978,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
+        seed_qualifying_day(storage, world, gem_id);
 
-        let error = runtime::settle_gem(storage, ALICE, gem_id, STABLE, U256::ZERO).unwrap_err();
+        let error = runtime::settle_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            ALICE,
+            gem_id,
+            STABLE,
+            U256::ZERO,
+        )
+        .unwrap_err();
 
         assert!(
             error.to_string().contains("oracle nominal unavailable"),
             "{error}"
         );
         assert_eq!(
-            gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            gem_view(storage, world, gem_id).item.state,
             GemState::Issued as u8
         );
     });
@@ -74,9 +87,10 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
 #[test]
 fn settle_rejects_wrong_settlement_currency() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         let gem_id = issue_at_live_rate(
             storage,
+            world,
             ALICE,
             GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
@@ -84,10 +98,18 @@ fn settle_rejects_wrong_settlement_currency() {
             840,
         )
         .unwrap();
-        seed_qualifying_day(storage, gem_id);
+        seed_qualifying_day(storage, world, gem_id);
         // Paying a USD gem with a EUR (978) stablecoin matches neither of its
         // currencies, so it reverts before any vault interaction.
-        let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE_EUR, U256::ZERO);
+        let res = runtime::settle_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            ALICE,
+            gem_id,
+            STABLE_EUR,
+            U256::ZERO,
+        );
         assert!(err_msg(res).contains("does not match the gem"));
     });
 }
@@ -95,9 +117,10 @@ fn settle_rejects_wrong_settlement_currency() {
 #[test]
 fn settle_rejects_non_qualified_state() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         let gem_id = issue_at_live_rate(
             storage,
+            world,
             ALICE,
             GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
@@ -106,7 +129,15 @@ fn settle_rejects_non_qualified_state() {
         )
         .unwrap();
         // WALLET is born Issued and no closed day has cleared its floor yet.
-        let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE, U256::ZERO);
+        let res = runtime::settle_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            ALICE,
+            gem_id,
+            STABLE,
+            U256::ZERO,
+        );
         assert!(err_msg(res).contains("invalid state"));
     });
 }

@@ -20,7 +20,7 @@ use crate::{
     sealed_root,
     sharding::{aggregate_b256_shard_roots, shard_index},
     smt::{PoseidonSmt, TreeKey as SmtKey, TreeLeaf, TreeRoot},
-    CeDomain, CollectionKey, K_PROVISIONAL,
+    CeDomain, CollectionKey, WwdEntityId,
 };
 
 fn invalid(message: impl Into<String>) -> CeAuditError {
@@ -82,14 +82,30 @@ pub(in crate::persistence) fn audit(
         leaves: 0,
         peak_buffered_leaves: 0,
     };
+    // Shard namespaces are contiguous by collection in this immutable snapshot.
+    let mut verified_collection = None;
     for row in source.cursor_read::<tables::CeTreeRoots>()?.walk(None)? {
         let (namespace_bytes, root_bytes) = row?;
         let namespace = TreeNamespace::decode(&namespace_bytes)?;
         let expected_root = decode_b256(&root_bytes, "tree root")?;
         validate_root(expected_root)?;
-        if let TreeNamespace::CollectionShard(collection, _) = namespace {
-            verify_collection(source, &source_path, collection)?;
-        }
+        let shard_count = if let TreeNamespace::CollectionShard(collection, shard) = namespace {
+            let domain = match verified_collection {
+                Some((key, domain)) if key == collection => domain,
+                _ => {
+                    let domain = domain_for_collection(collection)?;
+                    verify_collection(source, &source_path, collection)?;
+                    verified_collection = Some((collection, domain));
+                    domain
+                }
+            };
+            if shard >= domain.shard_count() {
+                return Err(invalid("shard is outside its collection topology"));
+            }
+            domain.shard_count()
+        } else {
+            1
+        };
         let store = ScratchTreeStore::new(&rebuilt, namespace);
         let mut tree = PoseidonSmt::open_with_store(TreeRoot::EMPTY, store);
         let mut buffer = Vec::new();
@@ -104,20 +120,16 @@ pub(in crate::persistence) fn audit(
             let smt_key =
                 SmtKey::from_be_bytes(key.encode()).map_err(|error| invalid(error.to_string()))?;
             if let TreeNamespace::CollectionShard(_, shard) = namespace {
-                if shard_index(smt_key, K_PROVISIONAL)
-                    .map_err(|error| invalid(error.to_string()))?
+                if shard_index(smt_key, shard_count).map_err(|error| invalid(error.to_string()))?
                     != shard
                 {
                     return Err(invalid("leaf is stored in the wrong native shard"));
                 }
             }
             if namespace == TreeNamespace::Catalog {
-                verify_collection(
-                    source,
-                    &source_path,
-                    CollectionKey::try_from(key.into_inner())
-                        .map_err(|error| invalid(error.to_string()))?,
-                )?;
+                let collection = CollectionKey::try_from(key.into_inner())
+                    .map_err(|error| invalid(error.to_string()))?;
+                verify_collection(source, &source_path, collection)?;
             }
             if buffer.capacity() == 0 {
                 buffer
@@ -167,13 +179,12 @@ fn verify_collection(
     path: &Path,
     collection: CollectionKey,
 ) -> Result<(), CeAuditError> {
-    let roots = read_collection_roots(source, path, collection, K_PROVISIONAL)?
+    let domain = domain_for_collection(collection)?;
+    let roots = read_collection_roots(source, path, collection, domain.shard_count())?
         .ok_or_else(|| invalid("catalog entry has no materialized collection roots"))?;
     let top = aggregate_b256_shard_roots(&roots).map_err(|error| invalid(error.to_string()))?;
-    // Every native v1 domain has the same K. This helper commits the collection
-    // key and K, not the domain ID. The hashed key is never inverted into a domain.
-    let expected = collection_root(CeDomain::Tribute, collection, top)
-        .map_err(|error| invalid(error.to_string()))?;
+    let expected =
+        collection_root(domain, collection, top).map_err(|error| invalid(error.to_string()))?;
     let key = prefixed_key(TreeNamespace::Catalog, collection.as_bytes());
     let actual = source
         .get::<tables::CeLeaves>(key)?
@@ -205,4 +216,22 @@ fn compare_table<T: Table<Key = Vec<u8>, Value = Vec<u8>>>(
         a = left.next()?;
         b = right.next()?;
     }
+}
+
+fn domain_for_collection(key: CollectionKey) -> Result<CeDomain, CeAuditError> {
+    // Singleton keys are fixed; all other keys belong to Tribute WWD collections.
+    for domain in [
+        CeDomain::NodItem,
+        CeDomain::NodBucket,
+        CeDomain::Gem,
+        CeDomain::GemBucket,
+    ] {
+        if crate::collection_key(domain, WwdEntityId::from([0; 32]))
+            .map_err(|error| invalid(error.to_string()))?
+            == key
+        {
+            return Ok(domain);
+        }
+    }
+    Ok(CeDomain::Tribute)
 }

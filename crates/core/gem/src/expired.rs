@@ -1,4 +1,5 @@
 use alloy_primitives::{B256, U256};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
@@ -6,17 +7,26 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
-use crate::errors::GemError;
 use crate::precompile::IGem::ExpiryDeferred;
+use crate::runtime::Bodies;
 use crate::schema::GemContract;
 use crate::state::ExpiryHours;
 
-/// Forfeit-burn the gems of the called buckets whose notice period closed.
-pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
+/// Forfeit-burn the unpaid gems of the called buckets whose notice period closed.
+/// Returns the gems burned.
+pub(crate) fn sweep_expired(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut expiry = GemExpiry {
+        bodies: Bodies {
+            storage: &ctx.storage,
+            scope,
+            parent,
+        },
         gem: GemContract::new(ctx.storage.clone()),
-        now: ctx.block.timestamp,
         burned: 0,
     };
     let mut budget = SweepBudget::per_block();
@@ -31,14 +41,14 @@ pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 }
 
 /// One block's burns across the due hours.
-struct GemExpiry<'storage> {
-    gem: GemContract<'storage>,
-    now: u64,
+struct GemExpiry<'a, 's, P> {
+    bodies: Bodies<'a, 's, P>,
+    gem: GemContract<'s>,
     burned: u32,
 }
 
 /// A called bucket's members are its unpaid gems: a settled one has left it.
-impl ExpiryHandler<B256> for GemExpiry<'_> {
+impl<P: ParentBodySource> ExpiryHandler<B256> for GemExpiry<'_, '_, P> {
     type Member = U256;
 
     fn due(&mut self, bucket: B256) -> Result<Due> {
@@ -61,10 +71,13 @@ impl ExpiryHandler<B256> for GemExpiry<'_> {
             .read(&GemContract::bucket_member_key(bucket, index))
     }
 
-    fn expire_member(&mut self, _bucket: B256, gem_id: U256) -> Result<()> {
-        if !self.gem.forfeit(gem_id, self.now)? {
-            return Err(GemError::InvalidState.into());
-        }
+    /// A forfeit loads a body and deletes it, which costs more than a slot write.
+    fn charge(&self, budget: &mut SweepBudget) -> bool {
+        budget.body_write()
+    }
+
+    fn expire_member(&mut self, bucket: B256, gem_id: U256) -> Result<()> {
+        crate::runtime::forfeit_member(&self.bodies, &mut self.gem, bucket, gem_id)?;
         self.burned = self.burned.saturating_add(1);
         Ok(())
     }

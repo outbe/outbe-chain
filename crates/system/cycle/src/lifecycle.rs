@@ -66,7 +66,7 @@ impl BlockLifecycle for CycleLifecycle {
         // What fell due is settled first, so its returns reach the ProtocolCycle
         // that forms the day.
         outbe_nod::hooks::sweep_forfeits(&ctx.runtime, ctx.scope, &ctx.parent)?;
-        outbe_gem::hooks::sweep_forfeits(&ctx.runtime)?;
+        outbe_gem::hooks::sweep_forfeits(&ctx.runtime, ctx.scope, &ctx.parent)?;
         outbe_intexfactory::hooks::sweep_proceeds(&ctx.runtime)?;
         outbe_intexfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         outbe_credisfactory::hooks::sweep_forfeits(&ctx.runtime)?;

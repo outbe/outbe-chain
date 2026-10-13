@@ -4,6 +4,12 @@ use thiserror::Error;
 
 use crate::WwdEntityId;
 
+mod gem;
+pub use gem::{
+    decode_gem_bucket_v1, decode_gem_v1, decode_stored_gem_bucket_v1, decode_stored_gem_v1,
+    encode_gem_bucket_v1, encode_gem_v1, GemBodyV1, GemBucketBodyV1,
+};
+
 mod nod_v2;
 pub use nod_v2::{
     decode_nod_item_v2, decode_stored_nod_item_v2, encode_nod_item_v2, NodItemBodyV2,
@@ -14,7 +20,7 @@ pub use tribute_v2::{
     decode_stored_tribute_v2, decode_tribute_v2, encode_tribute_v2, TRIBUTE_BODY_SCHEMA_V2,
 };
 
-/// Fork-supported schema for the first three canonical body messages.
+/// Fork-supported schema for the canonical plaintext body messages.
 pub const BODY_SCHEMA_V1: u32 = 1;
 
 /// Canonical v1 Tribute payload.

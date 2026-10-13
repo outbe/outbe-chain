@@ -687,7 +687,9 @@ fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV2, N
     expected.expect("nonempty validator cohort")
 }
 
-fn compressed_body(
+/// One finalized compressed-entity body from `port`, after proving the selected header
+/// is the same finalized header on every committee port. `None` is a verified absence.
+pub(crate) fn compressed_body(
     world: &World,
     port: u16,
     domain_id: u16,
@@ -701,7 +703,7 @@ fn compressed_body(
     let package = world
         .rpc
         .compressed_entity_ready(port, request)
-        .expect("finalized compressed Nod proof");
+        .expect("finalized compressed-entity proof");
     assert!(
         package.header.block_number >= minimum,
         "proof predates finalized transaction"
@@ -736,7 +738,7 @@ fn compressed_body(
         &trusted,
         &package.result,
     )
-    .expect("independent Nod proof verification");
+    .expect("independent compressed-entity proof verification");
     match package.result {
         PointReadResultV1::Present { body_bytes, .. } => {
             assert_eq!(verified, VerifiedPointReadV1::Present);
@@ -746,7 +748,7 @@ fn compressed_body(
             assert!(matches!(verified, VerifiedPointReadV1::Absent));
             None
         }
-        PointReadResultV1::Unavailable => panic!("Nod proof unavailable"),
+        PointReadResultV1::Unavailable => panic!("compressed-entity proof unavailable"),
     }
 }
 

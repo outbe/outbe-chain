@@ -93,12 +93,21 @@ impl ProjectionBodyView {
     ) -> eyre::Result<ProjectionBodyReport> {
         let tribute = TributeRepositoryReader::new(self.reader.clone());
         let nod = outbe_nod::nod_reader(self.reader.clone());
+        let gem = outbe_gem::gem_reader(self.reader.clone());
         tribute.audit_indexes(work)?;
         nod.audit_indexes(work)?;
         nod.audit_partition_locations(work)?;
+        gem.audit_indexes(work)?;
+        gem.audit_partition_locations(work)?;
         let same_frontier = marker.height == self.checkpoint.block_number
             && marker.block_hash == self.checkpoint.block_hash;
-        for domain in [CeDomain::Tribute, CeDomain::NodItem, CeDomain::NodBucket] {
+        for domain in [
+            CeDomain::Tribute,
+            CeDomain::NodItem,
+            CeDomain::NodBucket,
+            CeDomain::Gem,
+            CeDomain::GemBucket,
+        ] {
             let mut after = None;
             loop {
                 let request = IdPageRequest {
@@ -106,6 +115,8 @@ impl ProjectionBodyView {
                     limit: MAX_ID_PAGE_LIMIT,
                 };
                 let page = match domain {
+                    CeDomain::Gem => gem.scan_stored_items(request)?,
+                    CeDomain::GemBucket => gem.scan_stored_buckets(request)?,
                     CeDomain::Tribute => tribute.scan_stored_bodies(request)?,
                     CeDomain::NodItem => nod.scan_stored_items(request)?,
                     CeDomain::NodBucket => nod.scan_stored_buckets(request)?,

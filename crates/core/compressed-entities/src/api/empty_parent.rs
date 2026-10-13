@@ -76,6 +76,8 @@ fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedLeaves> {
             EntityRef::Tribute(id) => (CeDomain::Tribute, Collection::Tribute, id),
             EntityRef::NodItem(id) => (CeDomain::NodItem, Collection::NodItem, id),
             EntityRef::NodBucket(id) => (CeDomain::NodBucket, Collection::NodBucket, id),
+            EntityRef::Gem(id) => (CeDomain::Gem, Collection::Gem, id),
+            EntityRef::GemBucket(id) => (CeDomain::GemBucket, Collection::GemBucket, id),
         };
         let Some(commitment) = mutation.final_leaf else {
             continue;

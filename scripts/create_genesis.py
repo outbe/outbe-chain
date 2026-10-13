@@ -103,7 +103,6 @@ SEED_SECTIONS = (
     "radicle_registry",
     "metadosis",
     "oracle",
-    "gems",
     "tributes",
     "intex_factory",
     "gem_profile",

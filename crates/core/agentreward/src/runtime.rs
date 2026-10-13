@@ -1,6 +1,7 @@
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, B256, U256};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::dsl::Map;
@@ -109,6 +110,8 @@ impl AgentRewardContract<'_> {
     /// brings a new VWAP with it.
     pub fn claim_reward(
         &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         pool: RewardPool,
         address: Address,
         amount: U256,
@@ -148,7 +151,8 @@ impl AgentRewardContract<'_> {
                 RewardPool::Sra => GemTypes::Sra,
                 RewardPool::Cca => GemTypes::Cca,
             };
-            let gem_id = issue_reward_gem(&self.storage, address, gem_type, gem_load)?;
+            let gem_id =
+                issue_reward_gem(&self.storage, scope, parent, address, gem_type, gem_load)?;
             self.storage
                 .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
             self.write_pool_claimable_reward(pool, address, balance - burned)?;
@@ -244,6 +248,8 @@ fn read_tribute_counts(
 /// Shared issuance economics and claim-day pricing for WAA, SRA and CCA rewards.
 pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     owner: Address,
     gem_type: GemTypes,
     load: U256,
@@ -253,6 +259,8 @@ pub(crate) fn issue_reward_gem(
     })?;
     outbe_gemfactory::api::issue_gem(
         storage,
+        scope,
+        parent,
         outbe_gemfactory::GemIssueParams {
             owner,
             gem_type,

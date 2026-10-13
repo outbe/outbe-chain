@@ -593,6 +593,11 @@ impl ParentBodySource for NodRepositoryReader {
         match entity {
             EntityRef::NodItem(nod_id) => self.get_stored_item(nod_id),
             EntityRef::NodBucket(bucket_id) => self.get_stored_bucket(bucket_id),
+            EntityRef::Gem(_) | EntityRef::GemBucket(_) => {
+                return Err(ParentBodySourceError::Corruption(
+                    "Nod repository cannot serve a Gem entity".into(),
+                ));
+            }
             EntityRef::Tribute(_) => {
                 return Err(ParentBodySourceError::Corruption(
                     "Nod repository cannot serve a Tribute entity".into(),
@@ -610,6 +615,11 @@ impl ParentBodySource for NodRepositoryReader {
         match query {
             QueryRef::NodByOwner(owner) => self.list_ids_by_owner(owner, request),
             QueryRef::NodAll => self.list_ids_all(request),
+            QueryRef::GemByOwner(_) => {
+                return Err(ParentBodySourceError::Corruption(
+                    "Nod repository cannot serve a Gem query".into(),
+                ));
+            }
             QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => {
                 return Err(ParentBodySourceError::Corruption(
                     "Nod repository cannot serve a Tribute query".into(),

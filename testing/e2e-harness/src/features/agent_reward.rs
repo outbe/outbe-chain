@@ -455,17 +455,24 @@ fn claim_gem_and_assert_gas_only_cost(
         .expect("claim timestamp");
     let mut expected_body = None;
     for port in ports {
-        let before_at_receipt = gem_inventory_at(world, port, beneficiary, height - 1);
-        assert_eq!(
-            before_at_receipt, inventory_before,
-            "claim inventory changed before execution"
-        );
-        let after = gem_inventory_at(world, port, beneficiary, height);
-        assert_eq!(
-            after.len(),
-            inventory_before.len() + 1,
-            "claim must mint exactly one beneficiary Gem"
-        );
+        // Gem bodies are compressed entities: a view answers from the finalized body
+        // projection, which has no history and trails finality by a moment. The
+        // pre-claim inventory was captured live before the claim; the post-claim one is
+        // polled until the projection shows the mint.
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let after = loop {
+            let after = gem_inventory_at(world, port, beneficiary, height);
+            if after.len() == inventory_before.len() + 1 {
+                break after;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "claim must mint exactly one beneficiary Gem on port {port}: before={} after={}",
+                inventory_before.len(),
+                after.len()
+            );
+            sleep(Duration::from_millis(500));
+        };
         let added: Vec<_> = after
             .iter()
             .filter(|id| !inventory_before.contains(id))

@@ -1051,14 +1051,7 @@ fn prepare_credis_seed(
     balances.insert(format!("{user:#x}"), json!("1000000000000000000000"));
     // One billion COEN for the CCA bond plus 10,000 for origination and gas.
     balances.insert(format!("{cca:#x}"), json!("1000010000000000000000000000"));
-    root.entry("gems")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()
-        .ok_or_else(|| eyre!("seed gems is not an array"))?
-        .push(
-            json!({"owner": format!("{user:#x}"), "promis_load": "1000000000",
-            "issuance_currency": 840, "reference_currency": 840}),
-        );
+    // The user's paid Gem is a compressed body: the scenario issues it at runtime.
     Ok(())
 }
 
@@ -1689,7 +1682,7 @@ mod tests {
         let mut cfg = crate::internal::config::Config::for_scenario(&env, 1);
         cfg.seed = directory.path().join("input-seed.json");
         fs::create_dir_all(&cfg.dir).unwrap();
-        let original = json!({"balance": {"existing": "17"}, "gems": [], "unrelated": true});
+        let original = json!({"balance": {"existing": "17"}, "unrelated": true});
         fs::write(&cfg.seed, serde_json::to_vec(&original).unwrap()).unwrap();
         let localnet = Localnet::new(cfg);
         let user = Address::repeat_byte(1);
@@ -1699,8 +1692,10 @@ mod tests {
             .unwrap();
         let path = localnet.prepare_scenario_seed(&profile).unwrap();
         let seed: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(seed["gems"][0]["owner"], format!("{user:#x}"));
-        assert_eq!(seed["gems"][0]["promis_load"], "1000000000");
+        assert!(
+            seed.get("gems").is_none(),
+            "Gem bodies are not genesis-seeded"
+        );
         assert_eq!(seed["balance"]["existing"], "17");
         assert_eq!(seed["unrelated"], true);
         assert_eq!(
@@ -1714,7 +1709,6 @@ mod tests {
         let ordinary: serde_json::Value =
             serde_json::from_slice(&fs::read(ordinary).unwrap()).unwrap();
         assert_eq!(ordinary["balance"], original["balance"]);
-        assert_eq!(ordinary["gems"], original["gems"]);
         assert!(BootstrapProfile::default()
             .with_credis_accounts(user, user)
             .is_err());

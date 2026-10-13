@@ -169,3 +169,82 @@ fn finalized_mongo_retirement_commits_shared_retention_and_preserves_nod_shard()
         client.database(&database).drop().run().unwrap();
     }
 }
+
+#[test]
+fn finalized_gem_projection_uses_id_shards_and_shared_indexes_and_buckets() {
+    use super::gem_support;
+    use alloy_sol_types::SolEvent;
+    use outbe_offchain_storage::{StorageReader, StorageScope};
+    use outbe_primitives::addresses::GEM_ADDRESS;
+    let root = tempfile::tempdir().unwrap();
+    let source = Arc::new(RocksPartitionDataSource::open(root.path()).unwrap());
+    let storage = Arc::new(PartitionedStorage::new(
+        source,
+        entity_partition_routing().unwrap(),
+    ));
+    let mut projection =
+        outbe_offchain_data::open_projection(config(1), storage.clone(), storage.clone()).unwrap();
+    let body = gem_support::item(0xff);
+    let bucket = gem_support::bucket();
+    projection
+        .project_block(&single_receipt_block(
+            1,
+            1,
+            1,
+            vec![
+                log(
+                    0,
+                    GEM_ADDRESS,
+                    gem_support::stored(&body, B256::ZERO).encode_log_data(),
+                ),
+                log(
+                    1,
+                    GEM_ADDRESS,
+                    gem_support::bucket_stored(&bucket, B256::ZERO).encode_log_data(),
+                ),
+            ],
+        ))
+        .unwrap();
+    for (namespace, key, scope) in [
+        (
+            "gems",
+            body.gem_id.to_vec(),
+            outbe_gem::partitioning::item_scope(body.gem_id).unwrap(),
+        ),
+        (
+            "gems_by_owner",
+            [body.owner.as_slice(), body.gem_id.as_slice()].concat(),
+            StorageScope::shared("gem").unwrap(),
+        ),
+        (
+            "gem_buckets",
+            bucket.entity_id().to_vec(),
+            StorageScope::shared("gem").unwrap(),
+        ),
+    ] {
+        assert_eq!(
+            storage
+                .storage_scope(
+                    &outbe_offchain_storage::Namespace::new(namespace).unwrap(),
+                    &outbe_offchain_storage::Key::new(key).unwrap()
+                )
+                .unwrap(),
+            Some(scope)
+        );
+    }
+    drop(projection);
+    drop(storage);
+    assert!(root.path().join("gem/gem-shards/255/CURRENT").is_file());
+    assert!(root.path().join("gem/shared/CURRENT").is_file());
+    let scratch = tempfile::tempdir().unwrap();
+    let reader = Arc::new(PartitionedStorage::read_only(
+        Arc::new(RocksPartitionReadView::open(root.path(), scratch.path()).unwrap()),
+        entity_partition_routing().unwrap(),
+    ));
+    let gem = outbe_gem::gem_reader(reader);
+    assert_eq!(
+        gem.get_stored_item(body.gem_id).unwrap().unwrap().payload(),
+        outbe_compressed_entities::encode_gem_v1(&body).unwrap()
+    );
+    assert!(gem.get_stored_bucket(bucket.entity_id()).unwrap().is_some());
+}

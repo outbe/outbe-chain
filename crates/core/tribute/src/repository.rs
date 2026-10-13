@@ -665,6 +665,11 @@ impl ParentBodySource for TributeRepositoryReader {
         match query {
             QueryRef::TributeByOwner(owner) => self.list_ids_by_owner(owner, request),
             QueryRef::TributeByDay(worldwide_day) => self.list_ids_by_day(worldwide_day, request),
+            QueryRef::GemByOwner(_) => {
+                return Err(ParentBodySourceError::Corruption(
+                    "Tribute repository cannot serve a Gem query".into(),
+                ));
+            }
             QueryRef::NodByOwner(_) | QueryRef::NodAll => {
                 return Err(ParentBodySourceError::Corruption(
                     "Tribute repository cannot serve a Nod query".into(),

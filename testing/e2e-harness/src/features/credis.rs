@@ -26,6 +26,33 @@ use crate::world::{settlement_currency, test_issuance, World};
 
 const CALL_ANCHOR: U256 = U256::from_limbs([800_000, 0, 0, 0]);
 
+alloy_sol_types::sol! {
+    interface IGemFactoryTestArming {
+        function issueSettledGemForTest(address owner, uint256 promisLoadMinor, uint16 currency) external returns (uint256 gemId);
+    }
+}
+
+/// The first Gem of `owner`, once the compressed-body projection serves it.
+fn wait_for_gem_of(url: &str, owner: Address) -> U256 {
+    let mut id = None;
+    crate::features::entity_lifecycle::chain::poll_until(
+        Duration::from_secs(120),
+        || format!("the Gem issued to {owner} never reached its owner's index"),
+        || {
+            id = eth::read_call(
+                url,
+                addresses::GEM_ADDR,
+                &eth::IGem::tokenOfOwnerByIndexCall {
+                    owner,
+                    index: U256::ZERO,
+                },
+            );
+            id.is_some()
+        },
+    );
+    id.expect("owner's Gem id")
+}
+
 #[given("a prepared Credis localnet with funded actors and vault liquidity")]
 fn prepare(world: &mut World) {
     let (user, cca_key, cca) = credis::actors();
@@ -126,15 +153,20 @@ fn prepare(world: &mut World) {
     let keys =
         eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Gratis).expect("user Gratis keys");
     let chain = chain_id_b256(world);
-    let gem = eth::read_call(
+    // Genesis carries no Gem bodies: a throwaway build hands the user a paid Gem, and
+    // the owner index answers once the body projection caught up with the block.
+    send(
         &url,
-        addresses::GEM_ADDR,
-        &eth::IGem::tokenOfOwnerByIndexCall {
+        addresses::GEM_FACTORY_ADDR,
+        DEPLOYER_KEY,
+        &IGemFactoryTestArming::issueSettledGemForTestCall {
             owner: user,
-            index: U256::ZERO,
+            promisLoadMinor: INITIAL_GRATIS,
+            currency: USD,
         },
-    )
-    .expect("seeded settled Gem");
+        None,
+    );
+    let gem = wait_for_gem_of(&url, user);
     let promis_nonce = eth::read_call(
         &url,
         addresses::PROMIS_ADDR,

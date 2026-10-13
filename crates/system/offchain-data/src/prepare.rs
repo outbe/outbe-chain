@@ -204,3 +204,51 @@ pub(super) fn validate_transition(
         actual: current,
     })
 }
+
+fn validate_gem_item_transition(
+    identity: WwdEntityId,
+    old: Option<&outbe_gem::GemItemState>,
+    previous: B256,
+    first_in_block: bool,
+) -> Result<(), ProjectionError> {
+    if first_in_block {
+        return Ok(());
+    }
+    let current = match old {
+        Some(body) => {
+            let payload =
+                outbe_compressed_entities::encode_gem_v1(&outbe_gem::canonical_item(body))
+                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let commitment =
+                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
+                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            B256::from(*commitment.as_bytes())
+        }
+        None => B256::ZERO,
+    };
+    validate_transition("Gem item", identity, current, previous)
+}
+
+fn validate_gem_bucket_transition(
+    identity: WwdEntityId,
+    old: Option<&outbe_gem::GemBucketState>,
+    previous: B256,
+    first_in_block: bool,
+) -> Result<(), ProjectionError> {
+    if first_in_block {
+        return Ok(());
+    }
+    let current = match old {
+        Some(body) => {
+            let payload =
+                outbe_compressed_entities::encode_gem_bucket_v1(&outbe_gem::canonical_bucket(body))
+                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let commitment =
+                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
+                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            B256::from(*commitment.as_bytes())
+        }
+        None => B256::ZERO,
+    };
+    validate_transition("Gem bucket", identity, current, previous)
+}

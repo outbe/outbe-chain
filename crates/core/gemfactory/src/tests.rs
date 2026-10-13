@@ -1,6 +1,7 @@
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_gem::{api as gem_api, GemContract, GemState};
+use outbe_gem::test_support::GemWorld;
+use outbe_gem::{api as gem_api, GemContract, GemItemState, GemState, GemView};
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -86,7 +87,7 @@ fn stub_stablecoin(
     storage.stub_sub_call_at_selector(asset, IERC20::balanceOfCall::SELECTOR, word(0));
 }
 
-fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
+fn test_storage(rate: Option<U256>) -> (HashMapStorageProvider, GemWorld) {
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
     // Stub IntexNFT1155: `sendToGemFactory` returns SENT_UNITS (32-byte uint256).
@@ -110,7 +111,7 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         IVaultRouter::depositCall::SELECTOR,
         word(1),
     );
-    StorageHandle::enter(&mut storage, |handle| {
+    let world = StorageHandle::enter(&mut storage, |handle| {
         // These cases assert the PROD gem terms. An unset profile would resolve
         // by chain id, and the test chain is not mainnet.
         outbe_gem::schema::GemContract::new(handle.clone())
@@ -125,13 +126,27 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         if let Some(rate) = rate {
             outbe_oracle::test_support::publish_day_type_rate(&handle, rate, 1, T_NOW).unwrap();
         }
+        // One scope for this provider. Later enters reuse it.
+        GemWorld::open(&handle)
     });
-    storage
+    (storage, world)
 }
 
-fn with_storage<R>(rate: Option<U256>, f: impl FnOnce(&StorageHandle) -> R) -> R {
-    let mut storage = test_storage(rate);
-    StorageHandle::enter(&mut storage, |handle| f(&handle))
+fn with_storage<R>(rate: Option<U256>, f: impl FnOnce(&StorageHandle, &GemWorld) -> R) -> R {
+    let (mut storage, world) = test_storage(rate);
+    StorageHandle::enter(&mut storage, |handle| f(&handle, &world))
+}
+
+fn gem_view(storage: &StorageHandle<'_>, world: &GemWorld, gem_id: U256) -> GemView {
+    gem_api::get_view(storage, &world.scope, &world.parent, gem_id)
+        .unwrap()
+        .unwrap()
+}
+
+fn gem_item(storage: &StorageHandle<'_>, world: &GemWorld, gem_id: U256) -> GemItemState {
+    gem_api::get_item(storage, &world.scope, &world.parent, gem_id)
+        .unwrap()
+        .unwrap()
 }
 
 fn six_decimal_unit() -> U256 {
@@ -159,6 +174,7 @@ fn find_valid_nonce(gem_id: U256, owner: Address) -> u64 {
 /// matches the rate the fixture published.
 fn issue_at_live_rate(
     storage: &StorageHandle<'_>,
+    world: &GemWorld,
     owner: Address,
     gem_type: GemTypes,
     promis_load: U256,
@@ -168,6 +184,8 @@ fn issue_at_live_rate(
     let price = outbe_oracle::api::fresh_coen_rate_for(storage.clone(), reference_currency)?;
     runtime::issue_gem(
         storage,
+        &world.scope,
+        &world.parent,
         GemIssueParams {
             owner,
             gem_type,
@@ -181,20 +199,35 @@ fn issue_at_live_rate(
 
 /// Pays `gem_id` by ERC20 at `asset`'s quote and returns what it quoted. The
 /// stubbed token moves no balance, so an admitted payment stops at the delta check.
-fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) -> (u16, U256) {
-    let (currency, amount, snapshot) = runtime::quote_settlement(storage, gem_id, asset).unwrap();
-    let res = runtime::settle_gem(storage, BOB, gem_id, asset, snapshot);
+fn admitted_at_quote(
+    storage: &StorageHandle<'_>,
+    world: &GemWorld,
+    gem_id: U256,
+    asset: Address,
+) -> (u16, U256) {
+    let (currency, amount, snapshot) =
+        runtime::quote_settlement(storage, &world.scope, &world.parent, gem_id, asset).unwrap();
+    let res = runtime::settle_gem(
+        storage,
+        &world.scope,
+        &world.parent,
+        BOB,
+        gem_id,
+        asset,
+        snapshot,
+    );
     assert!(err_msg(res).contains("unexpected amount"));
+    let now = storage.timestamp().unwrap().to::<u64>();
     assert_eq!(
-        gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
+        gem_view(storage, world, gem_id).effective_state(now),
         GemState::Issued as u8
     );
     (currency, amount)
 }
 
 /// Close the gem's first full day above its floor, which qualifies it.
-fn seed_qualifying_day(storage: &StorageHandle<'_>, gem_id: U256) {
-    let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+fn seed_qualifying_day(storage: &StorageHandle<'_>, world: &GemWorld, gem_id: U256) {
+    let item = gem_item(storage, world, gem_id);
     let oracle = OracleContract::new(storage.clone());
     let pair = oracle
         .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(
@@ -234,11 +267,16 @@ fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
     seed_day_vwap(storage, iso, rate);
 }
 
-// TODO(reserve-config): the paid `settle_gem` path (Reserve vault deposit)
-// is not exercisable in the storage-only harness for ANY gem type now that
-// Genesis also carries a non-zero cost. Unit coverage forces `Settled` via
-// `gem_api::set_state` to reach the mine path. Localnet covers the real paid
-// settle with a configured `RESERVE_ASSET` / `RESERVE_VAULT`.
+// The paid `settle_gem` path (Reserve vault deposit) is not exercisable in the
+// storage-only harness: the stubbed token moves no balance. Mine coverage
+// records Settled through `gem_api::settle_gem` after a qualifying day, which
+// does not deposit. Localnet covers the paid settle.
+
+/// Qualifies `gem_id` and records Settled. The body stays until it is mined.
+fn force_settled(storage: &StorageHandle<'_>, world: &GemWorld, gem_id: U256) {
+    seed_qualifying_day(storage, world, gem_id);
+    gem_api::settle_gem(storage, &world.scope, &world.parent, gem_id).unwrap();
+}
 
 // --- Merchant gems ---
 
@@ -318,7 +356,7 @@ fn send_whole_holding(storage: &StorageHandle) -> outbe_primitives::error::Resul
 
 /// The refusal leaves storage and events as they were, before any burn.
 fn assert_called_source_cannot_be_sent(called_at: u64) {
-    let mut provider = test_storage(None);
+    let (mut provider, _world) = test_storage(None);
     // An empty burn answer fails to decode, so a burn before the state check would show.
     provider.stub_sub_call_at(
         outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
@@ -368,13 +406,19 @@ fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
         .unwrap();
 }
 
-fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
+fn merchant_entry_price(storage: &StorageHandle, world: &GemWorld, source_entry: U256) -> U256 {
     let id = seed_and_send(storage, source_entry, source_entry, six_decimal_u128());
-    let gem_id = runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
-    gem_api::get_gem(storage, gem_id)
-        .unwrap()
-        .unwrap()
-        .entry_price_minor
+    let gem_id = runtime::issue_merchant_gem(
+        storage,
+        &world.scope,
+        &world.parent,
+        ALICE,
+        id,
+        BOB,
+        six_decimal_unit(),
+    )
+    .unwrap();
+    gem_view(storage, world, gem_id).bucket.entry_price_minor
 }
 
 mod capacity_conservation;

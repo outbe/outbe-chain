@@ -85,6 +85,8 @@ fn prepare_seal_output(ctx: &CompressedEntitiesLifecycleContext<'_, '_>) -> Resu
                 Collection::Tribute => EntityRef::Tribute(entity_id),
                 Collection::NodItem => EntityRef::NodItem(entity_id),
                 Collection::NodBucket => EntityRef::NodBucket(entity_id),
+                Collection::Gem => EntityRef::Gem(entity_id),
+                Collection::GemBucket => EntityRef::GemBucket(entity_id),
             },
             final_leaf,
         })

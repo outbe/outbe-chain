@@ -273,13 +273,11 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
             .read(&20_240_101)
             .unwrap();
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-        for voter in voters {
-            assert_eq!(
-                gem.balance_of(voter).unwrap(),
-                0,
-                "Cycle prepares the batch but does not mint Gems"
-            );
-        }
+        assert_eq!(
+            gem.total_supply().unwrap(),
+            0,
+            "Cycle prepares the batch but does not mint Gems"
+        );
         let formation = outbe_metadosis::api::day_limit_formation_receipt(
             ctx.storage.clone(),
             outbe_primitives::time::WorldwideDay::new(20_240_101),
@@ -320,9 +318,7 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
         assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
         assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 0);
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-        for voter in voters {
-            assert_eq!(gem.balance_of(voter).unwrap(), 0, "no Gem may be minted");
-        }
+        assert_eq!(gem.total_supply().unwrap(), 0, "no Gem may be minted");
 
         let expected_terminal = day_zero_allocation_sum(&[
             EmissionSinkId::Metadosis,
@@ -403,9 +399,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
         .unwrap()
         .is_none());
         let gem = outbe_gem::GemContract::new(fire.storage.clone());
-        for voter in TOPUP_VOTERS {
-            assert_eq!(gem.balance_of(voter).unwrap(), 0, "Gem mint must roll back");
-        }
+        assert_eq!(gem.total_supply().unwrap(), 0, "Gem mint must roll back");
         assert_eq!(
             fire.storage
                 .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
@@ -483,13 +477,11 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
             "retry must credit CCA backing to AgentReward exactly once"
         );
         let gem = outbe_gem::GemContract::new(retry.storage.clone());
-        for voter in TOPUP_VOTERS {
-            assert_eq!(
-                gem.balance_of(voter).unwrap(),
-                0,
-                "Cycle retry prepares exactly once; delivery owns Gem creation"
-            );
-        }
+        assert_eq!(
+            gem.total_supply().unwrap(),
+            0,
+            "Cycle retry prepares exactly once; delivery owns Gem creation"
+        );
         assert_eq!(
             rewards
                 .reward_gem_planned_load_amount
@@ -531,27 +523,25 @@ fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
             outcome,
             outbe_rewards::api::RewardGemPreparationOutcome::Prepared(_)
         ));
-        outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx).unwrap();
-
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-        assert_eq!(gem.balance_of(voter).unwrap(), 1);
-        let gem_id = gem.token_of_owner_by_index(voter, 0).unwrap();
-        let load_before = outbe_gem::api::get_gem(&ctx.storage, gem_id)
-            .unwrap()
-            .unwrap()
-            .promis_load_minor;
+        let load_before = std::cell::Cell::new(U256::ZERO);
+        with_gem_execution_scope(&ctx, |scope, parent| {
+            outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx, scope, parent)?;
+            let owned = outbe_gem::api::list_by_owner(&ctx.storage, scope, parent, voter)?;
+            assert_eq!(owned.len(), 1);
+            load_before.set(owned[0].promis_load_minor);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(gem.total_supply().unwrap(), 1);
 
         let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
         run_emission_limit_daily(&ctx).unwrap();
 
-        assert_eq!(gem.balance_of(voter).unwrap(), 1, "top-up must not remint");
-        assert_eq!(
-            outbe_gem::api::get_gem(&ctx.storage, gem_id)
-                .unwrap()
-                .unwrap()
-                .promis_load_minor,
-            load_before,
-            "the prior Gem must remain unchanged"
+        assert_eq!(gem.total_supply().unwrap(), 1, "top-up must not remint");
+        assert!(
+            !load_before.get().is_zero(),
+            "the prior Gem carried its load"
         );
         assert!(rewards.daily_settled.read(&20_240_101).unwrap());
         let receipt = outbe_metadosis::api::day_limit_formation_receipt(

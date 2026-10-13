@@ -183,6 +183,8 @@ fn dataset_checksum(entities: impl IntoIterator<Item = EntityRef>) -> B256 {
             EntityRef::Tribute(_) => 1,
             EntityRef::NodItem(_) => 2,
             EntityRef::NodBucket(_) => 3,
+            EntityRef::Gem(_) => 4,
+            EntityRef::GemBucket(_) => 5,
         });
         bytes.extend_from_slice(entity.entity_id().as_slice());
     }

@@ -2,6 +2,28 @@
 pragma solidity ^0.8.30;
 
 interface IGem {
+    event GemBodyStored(
+        uint256 gemId,
+        uint32 commitmentSchemeVersion,
+        uint32 schemaVersion,
+        bytes32 previousCommitment,
+        bytes32 newCommitment,
+        bytes canonicalPayload
+    );
+
+    event GemBodyDeleted(uint256 gemId, bytes32 previousCommitment);
+
+    event GemBucketBodyStored(
+        uint256 bucketId,
+        uint32 commitmentSchemeVersion,
+        uint32 schemaVersion,
+        bytes32 previousCommitment,
+        bytes32 newCommitment,
+        bytes canonicalPayload
+    );
+
+    event GemBucketBodyDeleted(uint256 bucketId, bytes32 previousCommitment);
+
     struct GemData {
         uint256 gemId;
         address owner;
@@ -46,9 +68,8 @@ interface IGem {
     function symbol() external view returns (string memory);
     function tokenURI(uint256 gemId) external view returns (string memory);
 
-    // ERC-721 Enumerable
+    // Supply and per-owner lookup; the ERC-721 Enumerable interface id is not supported.
     function totalSupply() external view returns (uint256);
-    function tokenByIndex(uint256 index) external view returns (uint256);
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
 
     // outbe-specific views

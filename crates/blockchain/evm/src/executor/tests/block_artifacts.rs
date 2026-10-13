@@ -6,6 +6,213 @@ mod proposer_parity;
 mod withdrawals;
 
 #[test]
+fn proposer_and_validator_r_sealed_match_after_gem_issue_settle_and_mine() {
+    use outbe_compressed_entities::{Commitment, EntityRef, WwdEntityId};
+    use outbe_gem::precompile::IGem;
+    use outbe_gemfactory::{precompile::IGemFactory, schema::GemPosition, GemFactoryContract};
+    use outbe_offchain_data::runtime_body_readers;
+    use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
+    use outbe_primitives::{addresses::GEM_FACTORY_ADDRESS, time::WorldwideDay};
+
+    outbe_chain_constants::initialize(None).unwrap();
+    // The minimal parity variant issues a Gem from a seeded merchant position.
+    let block_ts = fixtures::TEST_BLOCK_TIMESTAMP_BASE + 1;
+    let position_id = U256::from(1);
+    let user: reth_ethereum::TransactionSigned = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 0,
+        gas_limit: 3_000_000,
+        max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
+        max_priority_fee_per_gas: 0,
+        to: TxKind::Call(GEM_FACTORY_ADDRESS),
+        value: U256::ZERO,
+        input: IGemFactory::issueGemCall {
+            positionId: position_id,
+            owner: OWNER,
+            promisLoadMinor: U256::from(1_000_000),
+        }
+        .abi_encode()
+        .into(),
+        access_list: Default::default(),
+    }
+    .into_signed(Signature::test_signature())
+    .into();
+    let user = user.try_into_recovered().unwrap();
+    let mut signed_body = Vec::new();
+    let mut header_extra_data = Bytes::new();
+    let mut observations = Vec::new();
+    for replay in [false, true] {
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let chain_spec = test_chain_spec();
+        let parent_hash = chain_spec.genesis_hash();
+        let mut state =
+            state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+                GemFactoryContract::new(storage.clone())
+                    .positions
+                    .create(&GemPosition {
+                        position_id,
+                        merchant: Address(*user.signer()),
+                        source_intex_id: outbe_intex::SeriesId::pack(
+                            WorldwideDay::new(outbe_primitives::time::timestamp_to_date_key(
+                                block_ts,
+                            )),
+                            *b"USD",
+                            b'U',
+                        )
+                        .unwrap(),
+                        remaining_capacity_minor: U256::from(2_000_000),
+                        source_entry_price_minor: U256::from(1_000_000),
+                        source_floor_price_minor: U256::from(50_000),
+                        issuance_currency: 840,
+                        reference_currency: 840,
+                        issued_at: block_ts - 1,
+                        expires_at: block_ts + 86_400,
+                    })
+                    .unwrap();
+                seed_previous_day_vwap(&storage, block_ts, U256::from(1_000_000u64));
+                outbe_oracle::api::set_exchange_rate(
+                    storage,
+                    Address::ZERO,
+                    outbe_oracle::api::DAY_TYPE_PAIR,
+                    outbe_oracle::api::RateObservation {
+                        rate: U256::from(1_000_000u64),
+                        block_number: 1,
+                        timestamp: block_ts,
+                    },
+                )
+                .unwrap();
+            });
+        state.database.insert_account_info(
+            Address(*user.signer()),
+            AccountInfo {
+                balance: U256::from(10u64).pow(U256::from(18)),
+                ..Default::default()
+            },
+        );
+        let marker_code = Bytecode::new_legacy([0xef].into());
+        state.database.insert_account_info(
+            GEM_FACTORY_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code),
+                ..Default::default()
+            },
+        );
+        let (_directory, tree_service) = persistent_test_tree(chain_spec.genesis_hash());
+        let config = OutbeEvmConfig::new_with_runtime_body_readers(
+            chain_spec,
+            runtime_body_readers(Arc::new(MemoryStorage::new())),
+        )
+        .with_evm_signer(signer)
+        .with_compressed_tree_service(tree_service.clone());
+        if !replay {
+            signed_body = begin_system_txs_for_test(
+                &config,
+                BeginBlockFixture {
+                    block_number: 1,
+                    parent_hash,
+                    extra_data: &Bytes::new(),
+                    parent_consensus_metadata: None,
+                    proposer,
+                    bootstrap: BootstrapFixture::StandardForBlock,
+                },
+            );
+        }
+        let mut ctx =
+            block_one_execution_ctx(Some(signed_body.len() + 1), header_extra_data.clone());
+        ctx.inner.parent_hash = parent_hash;
+        ctx.proposer_evm_address = Some(proposer);
+        if replay {
+            ctx.expected_begin_system_txs = signed_body.clone();
+        }
+        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, ctx);
+        executor.apply_pre_execution_changes().unwrap();
+        for (index, tx) in signed_body.clone().into_iter().enumerate() {
+            executor
+                .execute_transaction(tx)
+                .unwrap_or_else(|error| panic!("system transaction {index} failed: {error}"));
+        }
+        executor.execute_transaction(user.clone()).unwrap();
+        executor.finalize_compressed_entities().unwrap();
+        let sealed = executor.compressed_entities_seal_output().unwrap();
+        if !replay {
+            executor.prepare_final_header_artifacts(0).unwrap();
+            header_extra_data = executor.final_extra_data().clone();
+        }
+        let artifact = decode_outbe_block_artifacts(executor.final_extra_data().as_ref())
+            .unwrap()
+            .compressed_entities_root
+            .unwrap();
+        assert_eq!(artifact.r_sealed, sealed.new_root);
+        assert_eq!(artifact.commitment_scheme_version, ACTIVE_COMMITMENT_SCHEME);
+        let (evm, result) = executor.finish().expect("Gem block header must validate");
+        drop(evm);
+        state.merge_transitions(BundleRetention::Reverts);
+        assert!(state
+            .bundle_state
+            .state()
+            .contains_key(&outbe_primitives::addresses::GEM_ADDRESS));
+        assert_eq!(result.receipts.len(), signed_body.len() + 1);
+        assert!(result.receipts.iter().all(|receipt| receipt.success));
+        let logs = || {
+            result
+                .receipts
+                .iter()
+                .flat_map(|receipt| &receipt.logs)
+                .filter(|log| log.address == outbe_primitives::addresses::GEM_ADDRESS)
+        };
+        let gem = logs()
+            .find_map(|log| IGem::GemBodyStored::decode_log_data(&log.data).ok())
+            .expect("user transaction must mint a Gem body");
+        let bucket = logs()
+            .find_map(|log| IGem::GemBucketBodyStored::decode_log_data(&log.data).ok())
+            .expect("user transaction must mint a Gem bucket body");
+        assert_eq!(gem.previousCommitment, B256::ZERO);
+        assert_eq!(bucket.previousCommitment, B256::ZERO);
+        let block_hash = B256::repeat_byte(0x47);
+        tree_service
+            .publish_candidate(block_hash, sealed.staged_tree_batch)
+            .unwrap();
+        tree_service
+            .apply_finalized(1, block_hash, sealed.new_root)
+            .unwrap();
+        let tree = tree_service
+            .open_parent(ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 1,
+                block_hash,
+                root: sealed.new_root,
+            })
+            .unwrap();
+        for (entity, commitment) in [
+            (
+                EntityRef::Gem(WwdEntityId::from(gem.gemId)),
+                gem.newCommitment,
+            ),
+            (
+                EntityRef::GemBucket(WwdEntityId::from(bucket.bucketId)),
+                bucket.newCommitment,
+            ),
+        ] {
+            assert_ne!(commitment, B256::ZERO);
+            assert_eq!(
+                tree.read_leaf_verified(entity, sealed.new_root).unwrap(),
+                Some(Commitment::try_from(commitment.0).unwrap()),
+            );
+        }
+        observations.push((
+            post_state_root(&state.bundle_state),
+            artifact,
+            result.receipts,
+            result.gas_used,
+        ));
+    }
+    assert_eq!(observations[0], observations[1]);
+}
+
+#[test]
 fn compressed_entities_header_semantics_reject_missing_wrong_scheme_and_wrong_root() {
     let root = B256::repeat_byte(0xA1);
     assert!(validate_compressed_entities_root_scheme(None)

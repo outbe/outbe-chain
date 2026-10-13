@@ -45,6 +45,8 @@ pub fn derived_shard(entity: EntityRef, shard_count: u32) -> Result<u32, String>
         EntityRef::Tribute(identity) => (Collection::Tribute, identity),
         EntityRef::NodItem(identity) => (Collection::NodItem, identity),
         EntityRef::NodBucket(identity) => (Collection::NodBucket, identity),
+        EntityRef::Gem(identity) => (Collection::Gem, identity),
+        EntityRef::GemBucket(identity) => (Collection::GemBucket, identity),
     };
     let key =
         crate::smt::derive_tree_key(collection, identity).map_err(|error| error.to_string())?;

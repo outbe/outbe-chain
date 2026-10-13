@@ -17,7 +17,7 @@ fn a_series_past_its_deadline_cannot_be_sent() {
 
 #[test]
 fn a_qualified_series_is_sent_once_without_a_promis_limit_credit() {
-    with_storage(Some(six_decimal_unit()), |storage| {
+    with_storage(Some(six_decimal_unit()), |storage, _world| {
         let floor = six_decimal_unit();
         seed_source_series(
             storage,
@@ -62,7 +62,7 @@ fn a_qualified_series_is_sent_once_without_a_promis_limit_credit() {
 
 #[test]
 fn issue_gem_position_burns_sends_and_issues_nft() {
-    with_storage(None, |storage| {
+    with_storage(None, |storage, _world| {
         let id = seed_and_send(
             storage,
             six_decimal_unit(),
@@ -88,7 +88,7 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
 
 #[test]
 fn sending_marks_the_units_realized_on_the_source_series() {
-    with_storage(None, |storage| {
+    with_storage(None, |storage, _world| {
         seed_and_send(
             storage,
             six_decimal_unit(),
@@ -107,7 +107,7 @@ fn sending_marks_the_units_realized_on_the_source_series() {
 /// The position stays visible afterwards, as the spent object it is.
 #[test]
 fn an_expired_position_returns_its_remainder() {
-    with_storage(None, |storage| {
+    with_storage(None, |storage, _world| {
         let id = seed_and_send(
             storage,
             six_decimal_unit(),
@@ -135,7 +135,7 @@ fn an_expired_position_returns_its_remainder() {
 /// A storage fault is this node's own: it fails the block instead of skipping the position.
 #[test]
 fn a_storage_fault_in_the_position_sweep_fails_the_block() {
-    let mut provider = test_storage(None);
+    let (mut provider, _world) = test_storage(None);
     let id = StorageHandle::enter(&mut provider, |storage| {
         seed_and_send(
             &storage,
@@ -163,7 +163,7 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
 
 #[test]
 fn a_drained_position_leaves_the_queue() {
-    with_storage(Some(six_decimal_unit()), |storage| {
+    with_storage(Some(six_decimal_unit()), |storage, world| {
         seed_day_vwap(storage, 840, six_decimal_unit());
         let id = seed_and_send(
             storage,
@@ -171,8 +171,16 @@ fn a_drained_position_leaves_the_queue() {
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        runtime::issue_merchant_gem(storage, ALICE, id, BOB, sent_capacity(six_decimal_u128()))
-            .unwrap();
+        runtime::issue_merchant_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            ALICE,
+            id,
+            BOB,
+            sent_capacity(six_decimal_u128()),
+        )
+        .unwrap();
 
         let factory = GemFactoryContract::new(storage.clone());
         assert!(factory.live_queue_slot(0).unwrap().is_none());
@@ -185,7 +193,7 @@ fn a_drained_position_leaves_the_queue() {
 
 #[test]
 fn issue_gem_position_unknown_source_rejects() {
-    with_storage(None, |storage| {
+    with_storage(None, |storage, _world| {
         let r =
             runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS));
         assert!(err_msg(r).contains("source intex"));
@@ -195,7 +203,7 @@ fn issue_gem_position_unknown_source_rejects() {
 #[test]
 fn issue_merchant_gem_mints_issued_and_drains_capacity() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         seed_day_vwap(storage, 840, rate);
         // source entry below coen -> entry follows coen.
         let id = seed_and_send(
@@ -207,23 +215,25 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
         let capacity = sent_capacity(six_decimal_u128());
 
         let load = U256::from(10u64) * six_decimal_unit();
-        let gem_id = runtime::issue_merchant_gem(storage, ALICE, id, BOB, load).unwrap();
+        let gem_id =
+            runtime::issue_merchant_gem(storage, &world.scope, &world.parent, ALICE, id, BOB, load)
+                .unwrap();
 
-        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
-        assert_eq!(item.owner, BOB);
-        assert_eq!(item.gem_type, GemTypes::Merchant as u8);
-        assert_eq!(item.state, GemState::Issued as u8);
-        assert_eq!(item.entry_price_minor, rate); // max(coen, source_entry) = coen
+        let item = gem_view(storage, world, gem_id);
+        assert_eq!(item.item.owner, BOB);
+        assert_eq!(item.item.gem_type, GemTypes::Merchant as u8);
+        assert_eq!(item.item.state, GemState::Issued as u8);
+        assert_eq!(item.bucket.entry_price_minor, rate); // max(coen, source_entry) = coen
         assert_eq!(
             runtime::gem_cost_minor(&item).unwrap(),
             U256::from(20u64) * six_decimal_unit()
         ); // entry * load
         assert_eq!(
-            item.floor_price_minor,
+            item.item.floor_price_minor,
             rate * U256::from(108u64) / U256::from(100u64)
         );
         assert_eq!(
-            item.call_price_minor,
+            item.terms.call_price_minor,
             rate * U256::from(228u64) / U256::from(100u64)
         );
 
@@ -237,29 +247,46 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
 #[test]
 fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         seed_day_vwap(storage, 840, rate);
         // source entry above coen, source floor above 1.08 * entry -> both dominate.
         let source_entry = U256::from(3u64) * six_decimal_unit();
         let source_floor = U256::from(5u64) * six_decimal_unit();
         let id = seed_and_send(storage, source_entry, source_floor, six_decimal_u128());
 
-        let gem_id =
-            runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
-        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
-        assert_eq!(item.entry_price_minor, source_entry);
-        assert_eq!(item.floor_price_minor, source_floor);
+        let gem_id = runtime::issue_merchant_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            ALICE,
+            id,
+            BOB,
+            six_decimal_unit(),
+        )
+        .unwrap();
+        let item = gem_view(storage, world, gem_id);
+        assert_eq!(item.bucket.entry_price_minor, source_entry);
+        assert_eq!(item.item.floor_price_minor, source_floor);
     });
 }
 
 #[test]
 fn issue_merchant_gem_charges_one_minor_unit_when_the_cost_rounds_to_zero() {
-    with_storage(Some(U256::ONE), |storage| {
+    with_storage(Some(U256::ONE), |storage, world| {
         seed_day_vwap(storage, 840, U256::ONE);
         let id = seed_and_send(storage, U256::ONE, U256::ONE, six_decimal_u128());
 
-        let gem_id = runtime::issue_merchant_gem(storage, ALICE, id, BOB, U256::ONE).unwrap();
-        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
+        let gem_id = runtime::issue_merchant_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            ALICE,
+            id,
+            BOB,
+            U256::ONE,
+        )
+        .unwrap();
+        let item = gem_view(storage, world, gem_id);
         assert_eq!(runtime::gem_cost_minor(&item).unwrap(), U256::ONE);
     });
 }
@@ -267,7 +294,7 @@ fn issue_merchant_gem_charges_one_minor_unit_when_the_cost_rounds_to_zero() {
 #[test]
 fn issue_merchant_gem_rejects_non_merchant() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         let id = seed_and_send(
             storage,
             six_decimal_unit(),
@@ -275,7 +302,15 @@ fn issue_merchant_gem_rejects_non_merchant() {
             six_decimal_u128(),
         );
         // BOB is not the position's merchant (ALICE) - must reject.
-        let r = runtime::issue_merchant_gem(storage, BOB, id, BOB, six_decimal_unit());
+        let r = runtime::issue_merchant_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            BOB,
+            id,
+            BOB,
+            six_decimal_unit(),
+        );
         assert!(err_msg(r).contains("position owner"));
     });
 }
@@ -283,7 +318,7 @@ fn issue_merchant_gem_rejects_non_merchant() {
 #[test]
 fn issue_merchant_gem_over_capacity_rejects() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         let id = seed_and_send(
             storage,
             six_decimal_unit(),
@@ -291,7 +326,8 @@ fn issue_merchant_gem_over_capacity_rejects() {
             six_decimal_u128(),
         );
         let over = sent_capacity(six_decimal_u128()) + U256::from(1u64);
-        let r = runtime::issue_merchant_gem(storage, ALICE, id, BOB, over);
+        let r =
+            runtime::issue_merchant_gem(storage, &world.scope, &world.parent, ALICE, id, BOB, over);
         assert!(err_msg(r).contains("capacity"));
     });
 }
@@ -299,7 +335,7 @@ fn issue_merchant_gem_over_capacity_rejects() {
 #[test]
 fn issue_merchant_gem_after_expiry_rejects() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         // Craft a position whose issued_at is already past the validity window.
         let position_id = U256::from(1u64);
         let mut factory = GemFactoryContract::new(storage.clone());
@@ -318,7 +354,15 @@ fn issue_merchant_gem_after_expiry_rejects() {
             })
             .unwrap();
 
-        let r = runtime::issue_merchant_gem(storage, ALICE, position_id, BOB, six_decimal_unit());
+        let r = runtime::issue_merchant_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            ALICE,
+            position_id,
+            BOB,
+            six_decimal_unit(),
+        );
         assert!(err_msg(r).contains("expired"));
     });
 }
@@ -326,7 +370,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
 #[test]
 fn a_merchant_gem_issues_until_the_second_its_position_expires() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    let mut provider = test_storage(Some(rate));
+    let (mut provider, world) = test_storage(Some(rate));
     let (id, expires_at) = StorageHandle::enter(&mut provider, |storage| {
         let id = seed_and_send(
             &storage,
@@ -350,7 +394,15 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
     let mut issue = |now: u64, load: U256| {
         provider.set_timestamp(U256::from(now));
         StorageHandle::enter(&mut provider, |storage| {
-            let issued = runtime::issue_merchant_gem(&storage, ALICE, id, BOB, load);
+            let issued = runtime::issue_merchant_gem(
+                &storage,
+                &world.scope,
+                &world.parent,
+                ALICE,
+                id,
+                BOB,
+                load,
+            );
             let remaining = runtime::position_data(&storage, id)
                 .unwrap()
                 .remainingCapacityMinor;
@@ -376,7 +428,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
 fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let vwap = U256::from(3u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         seed_day_vwap(storage, 840, vwap);
         let id = seed_and_send(
             storage,
@@ -384,16 +436,24 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        let gem_id =
-            runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
-        let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
-        assert_eq!(item.entry_price_minor, vwap);
+        let gem_id = runtime::issue_merchant_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            ALICE,
+            id,
+            BOB,
+            six_decimal_unit(),
+        )
+        .unwrap();
+        let item = gem_view(storage, world, gem_id);
+        assert_eq!(item.bucket.entry_price_minor, vwap);
         assert_eq!(
-            item.floor_price_minor,
+            item.item.floor_price_minor,
             vwap * U256::from(108u64) / U256::from(100u64)
         );
         assert_eq!(
-            item.call_price_minor,
+            item.terms.call_price_minor,
             vwap * U256::from(228u64) / U256::from(100u64)
         );
     });
@@ -403,7 +463,7 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
 fn issue_merchant_gem_ignores_the_trailing_settlement_window() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let vwap = U256::from(3u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         seed_day_vwap(storage, 840, vwap);
         let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
         OracleContract::new(storage.clone())
@@ -416,7 +476,10 @@ fn issue_merchant_gem_ignores_the_trailing_settlement_window() {
                 )],
             )
             .unwrap();
-        assert_eq!(merchant_entry_price(storage, six_decimal_unit()), vwap);
+        assert_eq!(
+            merchant_entry_price(storage, world, six_decimal_unit()),
+            vwap
+        );
     });
 }
 
@@ -424,9 +487,12 @@ fn issue_merchant_gem_ignores_the_trailing_settlement_window() {
 fn issue_merchant_gem_ignores_a_spot_above_the_previous_day_vwap() {
     let rate = U256::from(5u64) * six_decimal_unit();
     let vwap = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         seed_day_vwap(storage, 840, vwap);
-        assert_eq!(merchant_entry_price(storage, six_decimal_unit()), vwap);
+        assert_eq!(
+            merchant_entry_price(storage, world, six_decimal_unit()),
+            vwap
+        );
     });
 }
 
@@ -434,9 +500,12 @@ fn issue_merchant_gem_ignores_a_spot_above_the_previous_day_vwap() {
 fn issue_merchant_gem_source_entry_dominates_the_market_price() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let source_entry = U256::from(4u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         seed_day_vwap(storage, 840, U256::from(3u64) * six_decimal_unit());
-        assert_eq!(merchant_entry_price(storage, source_entry), source_entry);
+        assert_eq!(
+            merchant_entry_price(storage, world, source_entry),
+            source_entry
+        );
     });
 }
 
@@ -464,14 +533,22 @@ fn issue_merchant_gem_takes_each_maximum_independently() {
             U256::from(6u64) * unit,
         ),
     ] {
-        with_storage(Some(rate), |storage| {
+        with_storage(Some(rate), |storage, world| {
             seed_day_vwap(storage, 840, vwap);
             let id = seed_and_send(storage, source_entry, source_floor, six_decimal_u128());
-            let gem_id =
-                runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit()).unwrap();
-            let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
-            assert_eq!(item.entry_price_minor, entry);
-            assert_eq!(item.floor_price_minor, floor);
+            let gem_id = runtime::issue_merchant_gem(
+                storage,
+                &world.scope,
+                &world.parent,
+                ALICE,
+                id,
+                BOB,
+                six_decimal_unit(),
+            )
+            .unwrap();
+            let item = gem_view(storage, world, gem_id);
+            assert_eq!(item.bucket.entry_price_minor, entry);
+            assert_eq!(item.item.floor_price_minor, floor);
         });
     }
 }
@@ -482,14 +559,15 @@ fn a_genesis_floor_is_zero_at_every_entry_price() {
     let unit = six_decimal_unit();
     let load = U256::from(10u64) * unit;
     for rate in [unit, U256::from(2u64) * unit, U256::from(7u64) * unit] {
-        with_storage(Some(rate), |storage| {
+        with_storage(Some(rate), |storage, world| {
             let gem_id =
-                issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
-            let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
-            assert_eq!(item.floor_price_minor, U256::ZERO);
-            assert_eq!(item.entry_price_minor, rate);
+                issue_at_live_rate(storage, world, ALICE, GemTypes::Genesis, load, 840, 840)
+                    .unwrap();
+            let item = gem_view(storage, world, gem_id);
+            assert_eq!(item.item.floor_price_minor, U256::ZERO);
+            assert_eq!(item.bucket.entry_price_minor, rate);
             assert_eq!(
-                item.call_price_minor,
+                item.terms.call_price_minor,
                 rate * U256::from(228u64) / U256::from(100u64)
             );
             assert_eq!(runtime::gem_cost_minor(&item).unwrap(), load * rate / unit);
@@ -500,14 +578,22 @@ fn a_genesis_floor_is_zero_at_every_entry_price() {
 #[test]
 fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
+    with_storage(Some(rate), |storage, world| {
         let id = seed_and_send(
             storage,
             six_decimal_unit(),
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        let r = runtime::issue_merchant_gem(storage, ALICE, id, BOB, six_decimal_unit());
+        let r = runtime::issue_merchant_gem(
+            storage,
+            &world.scope,
+            &world.parent,
+            ALICE,
+            id,
+            BOB,
+            six_decimal_unit(),
+        );
         assert!(err_msg(r).contains("oracle nominal unavailable"));
     });
 }
@@ -516,7 +602,7 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
 #[test]
 fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    let mut provider = test_storage(Some(rate));
+    let (mut provider, world) = test_storage(Some(rate));
     let (position, expected) = StorageHandle::enter(&mut provider, |storage| {
         seed_day_vwap(&storage, 840, rate);
         let position = seed_and_send(
@@ -525,11 +611,19 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
             six_decimal_unit(),
             six_decimal_u128(),
         );
-        let merchant_gem =
-            runtime::issue_merchant_gem(&storage, ALICE, position, BOB, six_decimal_unit())
-                .unwrap();
+        let merchant_gem = runtime::issue_merchant_gem(
+            &storage,
+            &world.scope,
+            &world.parent,
+            ALICE,
+            position,
+            BOB,
+            six_decimal_unit(),
+        )
+        .unwrap();
         let wallet_gem = issue_at_live_rate(
             &storage,
+            &world,
             ALICE,
             GemTypes::Wallet,
             six_decimal_unit(),
@@ -538,8 +632,8 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
         )
         .unwrap();
         let expected = [(merchant_gem, position), (wallet_gem, U256::ZERO)].map(|(gem_id, pos)| {
-            let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
-            (item, pos, gem_api::bucket_of(&storage, gem_id).unwrap())
+            let item = gem_view(&storage, &world, gem_id);
+            (item, pos, gem_item(&storage, &world, gem_id).bucket_key)
         });
         (position, expected)
     });
@@ -552,11 +646,14 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_bucket() {
         .collect();
     assert_eq!(issued.len(), 2);
     for (event, (item, position_id, bucket)) in issued.iter().zip(&expected) {
-        assert_eq!(event.gemId, item.gem_id);
-        assert_eq!(event.callPriceMinor, item.call_price_minor);
-        assert_eq!(event.callWindow, item.call_window_seconds);
-        assert_eq!(event.callThreshold, item.call_threshold_seconds);
-        assert_eq!(event.callNoticePeriod, item.call_notice_period_seconds);
+        assert_eq!(event.gemId, item.item.gem_id.to_u256());
+        assert_eq!(event.callPriceMinor, item.terms.call_price_minor);
+        assert_eq!(event.callWindow, item.terms.call_window_seconds);
+        assert_eq!(event.callThreshold, item.terms.call_threshold_seconds);
+        assert_eq!(
+            event.callNoticePeriod,
+            item.terms.call_notice_period_seconds
+        );
         assert_eq!(event.positionId, *position_id);
         assert_eq!(event.bucketKey, *bucket);
         assert!(!bucket.is_zero());

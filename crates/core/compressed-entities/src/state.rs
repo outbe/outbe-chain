@@ -249,11 +249,15 @@ impl<'storage> State<'storage> {
             Collection::Tribute => EntityRef::Tribute(entity_id),
             Collection::NodItem => EntityRef::NodItem(entity_id),
             Collection::NodBucket => EntityRef::NodBucket(entity_id),
+            Collection::Gem => EntityRef::Gem(entity_id),
+            Collection::GemBucket => EntityRef::GemBucket(entity_id),
         };
         let domain = match collection {
             Collection::Tribute => CeDomain::Tribute,
             Collection::NodItem => CeDomain::NodItem,
             Collection::NodBucket => CeDomain::NodBucket,
+            Collection::Gem => CeDomain::Gem,
+            Collection::GemBucket => CeDomain::GemBucket,
         };
         let collection_key =
             collection_key(domain, entity_id).map_err(|error| fatal(error.to_string()))?;
@@ -311,6 +315,8 @@ impl<'storage> State<'storage> {
                 Collection::Tribute => CeDomain::Tribute,
                 Collection::NodItem => CeDomain::NodItem,
                 Collection::NodBucket => CeDomain::NodBucket,
+                Collection::Gem => CeDomain::Gem,
+                Collection::GemBucket => CeDomain::GemBucket,
             };
             if collection_key(domain, entity_id).map_err(|error| fatal(error.to_string()))? == key {
                 return Err(fatal(
