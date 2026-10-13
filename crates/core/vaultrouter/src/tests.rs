@@ -1138,6 +1138,63 @@ fn withdraw_transfers_to_an_undeployed_receiver() {
     });
 }
 
+#[test]
+fn deposit_rejects_a_false_transfer_from() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(vault(), word(U256::from(123u64)));
+    storage.stub_sub_call_at_selector(
+        asset(),
+        IERC20::transferFromCall::SELECTOR,
+        word(U256::ZERO),
+    );
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        VaultRouterContract::new(storage.clone())
+            .asset_vault_set(asset())
+            .insert(vault())
+            .unwrap();
+
+        let err = runtime::deposit(
+            storage.clone(),
+            source_account(),
+            asset(),
+            U256::from(10),
+            IVaultRouter::StablesSource::IntexCostAmount,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
+    });
+}
+
+#[test]
+fn withdraw_rejects_a_false_transfer() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(vault(), word(U256::from(50u64)));
+    storage.stub_sub_call_at_selector(asset(), IERC20::transferCall::SELECTOR, word(U256::ZERO));
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        VaultRouterContract::new(storage.clone())
+            .asset_vault_set(asset())
+            .insert(vault())
+            .unwrap();
+
+        let err = runtime::withdraw(
+            storage.clone(),
+            target_account(),
+            IVaultRouter::withdrawCall {
+                asset: asset(),
+                amount: U256::from(10),
+                receiver: receiver(),
+            },
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
+    });
+}
+
 // --- ABI-path registry gating ------------------------------------------------
 
 #[test]
