@@ -55,7 +55,7 @@ quote = "USDC"
 # A USD-quoted feed from the RedStone gateway; needs the [redstone] section.
 [[currency_pairs.sources]]
 provider = "redstone"
-base = "USDC"
+base = "COEN"
 quote = "840"
 
 # A market read from an on-chain feed contract; see [onchain_feeds] below.
