@@ -226,11 +226,10 @@ feed today; a COEN push feed, once deployed, is configured here like any other.
 ### DEX providers
 
 DEX v1 reads the current pool spot rate and independently collects one-hour
-COEN volume, matching the 60 one-minute candles exchange sources aggregate. It returns tickers, with no candles or time averaging of the rate.
-All configured `COEN/USDC` and `COEN/USDT` source markets feed the same
-`COEN/840` Oracle pair through the existing deviation filter and volume-weighted
-source mean. **V1 assumes USDC = USDT = 1 USD.** There is no stablecoin/USD feed
-or depeg correction. The rate is the core AMM price before fees, slippage or
+base volume, matching the 60 one-minute candles exchange sources aggregate. It returns tickers, with no candles or time averaging of the rate.
+A pool feeds the Oracle pair its `quote` names, like any other market, through
+the existing deviation filter and volume-weighted source mean. There is no
+stablecoin/USD feed or depeg correction. The rate is the core AMM price before fees, slippage or
 hook-specific trade adjustments. Nonzero hooks are supported; volume describes
 core `Swap` balance deltas, not additional hook transfers or router turnover.
 

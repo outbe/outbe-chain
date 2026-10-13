@@ -153,10 +153,6 @@ impl DexProviderConfig {
         let mut pools = BTreeSet::new();
         for market in &self.markets {
             ensure!(
-                market.base == "COEN" && matches!(market.quote.as_str(), "USDC" | "USDT"),
-                "DEX v1 supports COEN/USDC and COEN/USDT"
-            );
-            ensure!(
                 !market.base_token.is_zero()
                     && !market.quote_token.is_zero()
                     && market.base_token != market.quote_token,
@@ -315,10 +311,6 @@ pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
             if !matches!(source.provider.as_str(), "uniswap" | "pancakeswap") {
                 continue;
             }
-            ensure!(
-                pair.base == "COEN" && pair.quote == "840",
-                "DEX v1 sources must feed COEN/840 (USD parity assumption)"
-            );
             ensure!(
                 config
                     .dex_providers
