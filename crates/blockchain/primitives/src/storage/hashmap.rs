@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes, Log, LogData, B256, U256};
 use revm::context::journaled_state::JournalCheckpoint;
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::state::{AccountInfo, Bytecode};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 #[cfg(feature = "bench-utils")]
 use serde::{Deserialize, Serialize};
@@ -74,6 +74,10 @@ pub struct HashMapStorageProvider {
     /// Per-address-and-selector return data stubs. These take priority over
     /// address-wide stubs so tests can model contracts with multiple views.
     sub_call_selector_stubs: HashMap<(Address, [u8; 4]), Bytes>,
+    /// Per-address-and-selector return data served in order, one per call,
+    /// ahead of the fixed stubs. Models a view whose answer changes between
+    /// calls, such as a balance around a transfer.
+    sub_call_selector_sequences: HashMap<(Address, [u8; 4]), VecDeque<Bytes>>,
     lysis_activation_entitled: bool,
     lysis_activation_attempted: bool,
     lysis_activation_call_id: Option<B256>,
@@ -129,6 +133,7 @@ impl HashMapStorageProvider {
             sub_call_stub: false,
             sub_call_stubs: HashMap::new(),
             sub_call_selector_stubs: HashMap::new(),
+            sub_call_selector_sequences: HashMap::new(),
             lysis_activation_entitled: false,
             lysis_activation_attempted: false,
             lysis_activation_call_id: None,
@@ -232,6 +237,19 @@ impl HashMapStorageProvider {
     ) {
         self.sub_call_selector_stubs
             .insert((address, selector), returndata);
+    }
+
+    /// Register returndata for one function selector at `address`, served in
+    /// order: the first call gets the first entry. Once the sequence is used
+    /// up, the fixed stubs answer again.
+    pub fn stub_sub_call_sequence_at_selector(
+        &mut self,
+        address: Address,
+        selector: [u8; 4],
+        returndata: impl IntoIterator<Item = Bytes>,
+    ) {
+        self.sub_call_selector_sequences
+            .insert((address, selector), returndata.into_iter().collect());
     }
 
     // Test helper methods
@@ -710,11 +728,15 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             .get(..4)
             .and_then(|bytes| bytes.try_into().ok())
         {
-            if let Some(returndata) = self
-                .sub_call_selector_stubs
-                .get(&(input.target, selector))
-                .cloned()
-            {
+            let next = self
+                .sub_call_selector_sequences
+                .get_mut(&(input.target, selector))
+                .and_then(VecDeque::pop_front);
+            if let Some(returndata) = next.or_else(|| {
+                self.sub_call_selector_stubs
+                    .get(&(input.target, selector))
+                    .cloned()
+            }) {
                 return Ok(SubCallOutput {
                     status: SubCallStatus::Success,
                     returndata,

@@ -62,7 +62,7 @@ Feature: Off-chain computation and Metadosis
     And the public Tribute owner settles its Nod and redeems its exact Gratis into COEN
     When the offer execution UTC day reaches its next ProtocolCycle settlement
     Then every validator observes the same nonzero WAA and SRA AgentReward
-    When both beneficiaries claim their complete AgentReward as Gems with paid transactions
+    When both beneficiaries claim their complete AgentReward as Gems with paid transactions, WAA issued in 458 against 840 and SRA issued in 978 against 840
     Then the paid Gem claims clear both claimables and debit the AgentReward escrow exactly
     And validator 0 settles its protocol reward Gem and redeems its exact Promis into COEN
     And a third party pays another public Nod in ERC20 and mines Gratis only for its owner

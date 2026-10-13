@@ -1,10 +1,6 @@
 //! ABI dispatch for the vaultrouter precompile at `VAULT_ROUTER_ADDRESS`.
 
-#[cfg(test)]
-use alloy_primitives::FixedBytes;
 use alloy_primitives::{Address, Bytes, U256};
-#[cfg(test)]
-use alloy_sol_types::SolCall;
 use alloy_sol_types::SolInterface;
 
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
@@ -13,36 +9,15 @@ use outbe_primitives::storage::types::StorageSet;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api::IVaultRouter;
-#[cfg(test)]
-use crate::api::IVaultRouterCrosschainExtention as CrosschainExt;
-#[cfg(test)]
-use crate::crosschain;
 use crate::runtime;
 use crate::schema::VaultRouterContract;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
-///
-/// Empty because only `dispatch_local` is wired. The crosschain extension
-/// declares three payable selectors in its interface and forwards their value
-/// as a bridge fee. To enable it behind the gate below, list them here and flip
-/// this address to a payable route in the same change.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
 pub fn dispatch(
-    storage: StorageHandle<'_>,
-    data: &[u8],
-    caller: Address,
-    value: U256,
-) -> Result<Bytes> {
-    // TODO(crosschain): Enable `IVaultRouterCrosschainExtention` only through an explicit
-    // feature/configuration gate, then route its selectors to `dispatch_crosschain`.
-    // Until that opt-in exists, the deployed precompile exposes only `IVaultRouter`.
-    dispatch_local(storage, data, caller, value)
-}
-
-fn dispatch_local(
     storage: StorageHandle<'_>,
     data: &[u8],
     caller: Address,
@@ -204,166 +179,6 @@ fn dispatch_local(
             }),
         }
     })
-}
-
-#[cfg(test)]
-pub(crate) fn dispatch_crosschain(
-    storage: StorageHandle<'_>,
-    data: &[u8],
-    caller: Address,
-    value: U256,
-) -> Result<Bytes> {
-    dispatch_call(
-        data,
-        CrosschainExt::IVaultRouterCrosschainExtentionCalls::abi_decode,
-        |call| {
-            use CrosschainExt::IVaultRouterCrosschainExtentionCalls::*;
-            if !matches!(
-                &call,
-                crosschainDeposit(_) | crosschainWithdraw(_) | receiveMessage(_)
-            ) {
-                outbe_primitives::dispatch::reject_value(&value)?;
-            }
-            match call {
-                // --- fixed cross-chain peer configuration ---
-                crosschainBridge(c) => view(c, |_c| {
-                    VaultRouterContract::new(storage.clone())
-                        .crosschain_bridge
-                        .read()
-                }),
-                remoteVaultRouter(c) => view(c, |c| {
-                    VaultRouterContract::new(storage.clone())
-                        .remote_vault_routers
-                        .read(&c.chainId)
-                }),
-                setCrosschainBridge(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    runtime::set_crosschain_bridge(storage.clone(), sender, c.bridge)
-                }),
-                setRemoteVaultRouter(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    runtime::set_remote_vault_router(storage.clone(), sender, c.chainId, c.router)
-                }),
-
-                // --- fixed cross-chain WCOEN vault flow ---
-                crosschainAsset(c) => view(c, |_c| {
-                    VaultRouterContract::new(storage.clone())
-                        .crosschain_asset
-                        .read()
-                }),
-                crosschainTokenBridge(c) => view(c, |_c| {
-                    VaultRouterContract::new(storage.clone())
-                        .crosschain_token_bridge
-                        .read()
-                }),
-                crosschainDestinationChainId(c) => view(c, |_c| {
-                    VaultRouterContract::new(storage.clone())
-                        .crosschain_destination_chain_id
-                        .read()
-                }),
-                setCrosschainAsset(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    crosschain::set_asset(
-                        storage.clone(),
-                        sender,
-                        c.asset,
-                        c.tokenBridge,
-                        c.destinationChainId,
-                    )
-                }),
-                crosschainOperationNonce(c) => view(c, |_c| {
-                    VaultRouterContract::new(storage.clone())
-                        .crosschain_operation_nonce
-                        .read()
-                }),
-                pendingCrosschainOperations(c) => view(c, |_c| {
-                    VaultRouterContract::new(storage.clone())
-                        .pending_crosschain_operations
-                        .read()
-                }),
-                crosschainShares(c) => view(c, |c| {
-                    VaultRouterContract::new(storage.clone())
-                        .crosschain_shares
-                        .read(&c.user)
-                }),
-                totalCrosschainShares(c) => view(c, |_c| {
-                    VaultRouterContract::new(storage.clone())
-                        .total_crosschain_shares
-                        .read()
-                }),
-                crosschainOperation(c) => view(c, |c| {
-                    let contract = VaultRouterContract::new(storage.clone());
-                    let kind = contract.operation_kinds.read(&c.operationId)?;
-                    let status = contract.operation_statuses.read(&c.operationId)?;
-                    Ok(CrosschainExt::crosschainOperationReturn {
-                        user: contract.operation_users.read(&c.operationId)?,
-                        amount: contract.operation_amounts.read(&c.operationId)?,
-                        kind: CrosschainExt::CrosschainOperationKind::try_from(kind)
-                            .unwrap_or(CrosschainExt::CrosschainOperationKind::Unknown),
-                        status: CrosschainExt::CrosschainOperationStatus::try_from(status)
-                            .unwrap_or(CrosschainExt::CrosschainOperationStatus::Unknown),
-                    })
-                }),
-                quoteCrosschainDeposit(c) => view(c, |c| {
-                    let (native_fee, operation_id) = crosschain::quote_deposit(
-                        &storage,
-                        caller,
-                        c.assetsAmount,
-                        c.destinationGasLimit,
-                        c.acknowledgementGasLimit,
-                    )?;
-                    Ok(CrosschainExt::quoteCrosschainDepositReturn {
-                        nativeFee: native_fee,
-                        operationId: operation_id,
-                    })
-                }),
-                crosschainDeposit(c) => mutate(&storage, c, caller, |user, c| {
-                    let (operation_id, send_id) =
-                        crosschain::deposit(storage.clone(), user, c, value)?;
-                    Ok(CrosschainExt::crosschainDepositReturn {
-                        operationId: operation_id,
-                        sendId: send_id,
-                    })
-                }),
-                quoteCrosschainWithdraw(c) => view(c, |c| {
-                    let (native_fee, operation_id) = crosschain::quote_withdraw(
-                        &storage,
-                        caller,
-                        c.sharesAmount,
-                        c.requestGasLimit,
-                        c.returnGasLimit,
-                    )?;
-                    Ok(CrosschainExt::quoteCrosschainWithdrawReturn {
-                        nativeFee: native_fee,
-                        operationId: operation_id,
-                    })
-                }),
-                crosschainWithdraw(c) => mutate(&storage, c, caller, |user, c| {
-                    let (operation_id, send_id) =
-                        crosschain::withdraw(storage.clone(), user, c, value)?;
-                    Ok(CrosschainExt::crosschainWithdrawReturn {
-                        operationId: operation_id,
-                        sendId: send_id,
-                    })
-                }),
-                receiveMessage(c) => mutate(&storage, c, caller, |_bridge, c| {
-                    crosschain::receive_deposit_acknowledgement(
-                        storage.clone(),
-                        caller,
-                        value,
-                        &c.sender,
-                        &c.payload,
-                    )?;
-                    Ok(FixedBytes::<4>::from_slice(
-                        &CrosschainExt::receiveMessageCall::SELECTOR,
-                    ))
-                }),
-                onCrosschainTokensReceived(c) => mutate(&storage, c, caller, |_token_bridge, c| {
-                    crosschain::receive_withdrawal_return(storage.clone(), caller, c)?;
-                    Ok(FixedBytes::<4>::from_slice(
-                        &CrosschainExt::onCrosschainTokensReceivedCall::SELECTOR,
-                    ))
-                }),
-            }
-        },
-    )
 }
 
 /// Reads the set element at `index`. Reverts (like OZ `EnumerableSet.at`) when
