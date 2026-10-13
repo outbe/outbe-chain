@@ -17,6 +17,13 @@ const fixture = JSON.parse(readFileSync(new URL("./pow.vectors.json", import.met
   }[];
 };
 
+test("the miner refuses a difficulty wider than the hash", () => {
+  const vector = fixture.vectors[0];
+  assert.throws(() =>
+    grindNonce(vector.owner, BigInt(vector.promis_amount), vector.series_id, vector.seq, 33),
+  );
+});
+
 test("the miner finds the node's first valid nonce and hash for every shared vector", () => {
   assert.ok(fixture.vectors.length > 0);
   for (const vector of fixture.vectors) {

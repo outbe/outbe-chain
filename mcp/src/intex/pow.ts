@@ -37,8 +37,9 @@ export function grindNonce(
   seq: number,
   difficulty: number,
 ): PowSolution {
+  if (difficulty > 32) throw new Error(`PoW difficulty ${difficulty} exceeds the 32-byte hash`);
   const prefix = preimage(holder, promisMinor, seriesId, seq);
-  // The precompile caps nonce at u64::MAX. Difficulty 1 resolves far below that.
+  // The precompile caps nonce at u64::MAX.
   for (let nonce = 0n; nonce <= 0xffff_ffff_ffff_ffffn; nonce++) {
     const data = concat([prefix, toBytes(toHex(nonce, { size: 8 }))]);
     const hash = sha256(data, "bytes");

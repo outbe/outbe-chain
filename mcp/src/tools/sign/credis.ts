@@ -10,7 +10,6 @@ import { HEX32, address, coenAmount, waitFlag } from "../schemas.js";
 import { handler } from "../util.js";
 import { submit } from "./submit.js";
 
-
 const rawAmount = z
   .string()
   .regex(/^(0|[1-9][0-9]*)$/)
