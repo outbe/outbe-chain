@@ -60,7 +60,9 @@ pub fn parent_finalization_from_child(
         {
             continue;
         }
-        let certificate = decode_public_finalization(&metadata.proof, 256).ok()?;
+        let certificate =
+            decode_public_finalization(&metadata.proof, crate::bls::MAX_VALIDATORS as usize)
+                .ok()?;
         if certificate.proposal.payload == parent.digest()
             && certificate.proposal.round.epoch().get() == metadata.finalized_epoch
         {

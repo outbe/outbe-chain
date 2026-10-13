@@ -96,8 +96,11 @@ pub(super) fn compact_header(
 ) -> Result<(outbe_consensus::block::ConsensusBlock, CertifiedHeaderV1)> {
     let finalization = json_hex_bytes(public, "finalizationHex")?;
     let encoded = json_hex_bytes(public, "blockHex")?;
-    let certified =
-        outbe_consensus::follow::decode_public_finalized_block(&finalization, &encoded, 256)?;
+    let certified = outbe_consensus::follow::decode_public_finalized_block(
+        &finalization,
+        &encoded,
+        outbe_consensus::bls::MAX_VALIDATORS as usize,
+    )?;
     eyre::ensure!(
         certified.finalization.proposal.payload == certified.block.digest(),
         "finality certificate payload mismatch"
