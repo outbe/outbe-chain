@@ -3,14 +3,13 @@ import { type Address, type TransactionReceipt, parseEventLogs, zeroAddress } fr
 import { z } from "zod";
 import { type Ctx, parseNativeAmount, readView } from "../../chain.js";
 import { ensureAllowance } from "../../net/erc20.js";
+import { NATIVE_UNITS_PER_PROTOCOL_UNIT } from "../../intex/units.js";
 import { contextNetwork } from "../../net/resolver.js";
 import { resolveContract } from "../../registry.js";
 import { HEX32, address, coenAmount, waitFlag } from "../schemas.js";
 import { handler } from "../util.js";
 import { submit } from "./submit.js";
 
-/** Native wei per protocol minor unit: protocol amounts carry 6 decimals, native COEN 18. */
-const NATIVE_PER_PROTOCOL_UNIT = 1_000_000_000_000n;
 
 const rawAmount = z
   .string()
@@ -37,7 +36,7 @@ async function issueStake(ctx: Ctx, reservationId: bigint): Promise<bigint> {
     throw new Error(`reservation ${reservationId} has no pledge; pledge it with gratis_pledge first`);
   }
   const { result } = await readView(ctx, resolveContract("vaultrouter"), "reservationOf", [reservationId]);
-  return (result as { gratisMinor: bigint }).gratisMinor * NATIVE_PER_PROTOCOL_UNIT;
+  return (result as { gratisMinor: bigint }).gratisMinor * NATIVE_UNITS_PER_PROTOCOL_UNIT;
 }
 
 /** Credis reservation, Gratis pledge, issuance and repayment. */

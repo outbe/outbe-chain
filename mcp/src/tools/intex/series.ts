@@ -6,6 +6,7 @@ import { handler, ok } from "../util.js";
 import { FACTORY_ABI, INTEX_ABI } from "../../intex/registry.js";
 import { epochIso, intexState, fromSeriesId } from "../../intex/format.js";
 import { addr, seriesMetadata, seriesQualified } from "../../intex/reads.js";
+import { PROTOCOL_DECIMALS } from "../../intex/units.js";
 import { seriesArg } from "./args.js";
 import type { IntexDeps } from "./deps.js";
 
@@ -41,10 +42,10 @@ export function registerSeriesTools(server: McpServer, deps: IntexDeps): void {
         network: n.name,
         seriesId: fromSeriesId(d.seriesId),
         // scales per crates/core/intex/src/schema.rs (SeriesRecord):
-        promisLoadMinor: { raw: d.promisLoadMinor.toString(), value: formatUnits(d.promisLoadMinor, 6) },
-        entryPriceMinor: { raw: d.entryPriceMinor.toString(), value: formatUnits(d.entryPriceMinor, 6), scale: "1e6 ISO stable-unit" },
-        floorPriceMinor: { raw: d.floorPriceMinor.toString(), value: formatUnits(d.floorPriceMinor, 6), scale: "1e6 ISO stable-unit" },
-        callPriceMinor: { raw: d.callPriceMinor.toString(), value: formatUnits(d.callPriceMinor, 6), scale: "1e6 ISO stable-unit" },
+        promisLoadMinor: { raw: d.promisLoadMinor.toString(), value: formatUnits(d.promisLoadMinor, PROTOCOL_DECIMALS) },
+        entryPriceMinor: { raw: d.entryPriceMinor.toString(), value: formatUnits(d.entryPriceMinor, PROTOCOL_DECIMALS), scale: "1e6 ISO stable-unit" },
+        floorPriceMinor: { raw: d.floorPriceMinor.toString(), value: formatUnits(d.floorPriceMinor, PROTOCOL_DECIMALS), scale: "1e6 ISO stable-unit" },
+        callPriceMinor: { raw: d.callPriceMinor.toString(), value: formatUnits(d.callPriceMinor, PROTOCOL_DECIMALS), scale: "1e6 ISO stable-unit" },
         issuedUnits: Number(counts.issuedUnits),
         // Disjoint classes summing to issuedUnits. Active units lose their load to
         // the pool once the call window closes and they are forfeited.
