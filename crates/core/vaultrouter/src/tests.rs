@@ -2342,6 +2342,24 @@ fn reserve_stables_requires_a_pledge_source() {
 }
 
 #[test]
+fn reserve_stables_requires_an_owner() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let err = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            IVaultRouter::reserveStablesCall {
+                owner: Address::ZERO,
+                source: receiver(),
+                asset: asset(),
+                amount: U256::from(10),
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("zero address"), "{err}");
+    });
+}
+
+#[test]
 fn a_reservation_holds_then_releases_once() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let id = runtime::reserve_stables(
