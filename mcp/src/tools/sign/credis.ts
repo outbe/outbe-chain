@@ -124,6 +124,27 @@ export function registerCredisTools(server: McpServer, ctx: Ctx): void {
     }),
   );
   server.tool(
+    "credis_forfeit",
+    "Forfeit the caller's Issued or Called Credis. Nothing is repaid: the source's remaining pledged Gratis is " +
+      "burned and the outstanding principal is written off. Only the Credis owner may call it.",
+    { credis_id: rawAmount, wait: waitFlag },
+    handler(async ({ credis_id, wait }) =>
+      submit(ctx, {
+        contract: "credisfactory",
+        method: "forfeitCredis",
+        args: [BigInt(credis_id)],
+        wait,
+        outcome: (receipt) => {
+          const forfeited = eventArgs(receipt, "credis", "CredisForfeited");
+          return {
+            gratisBurnedMinor: (forfeited?.gratisBurnedMinor as bigint | undefined)?.toString() ?? null,
+            principalWrittenOffMinor: (forfeited?.principalWrittenOffMinor as bigint | undefined)?.toString() ?? null,
+          };
+        },
+      }),
+    ),
+  );
+  server.tool(
     "credis_settle",
     "Repay a Credis; released collateral returns to the source's liquid Gratis. Approves CredisFactory for " +
       "`amount` of the position's asset first when the allowance is short.",
