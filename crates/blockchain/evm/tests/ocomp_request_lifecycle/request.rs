@@ -381,11 +381,6 @@ fn open_voting_with_randao_checks(
                 .unwrap(),
             0
         );
-        assert!(
-            outbe_intex::api::certified_contributor_generation(&storage, prepared.wwd)
-                .unwrap()
-                .is_none()
-        );
         let tribute = TributeContract::new(storage);
         assert_eq!(tribute.total_supply().unwrap(), 1);
         let totals = tribute.get_day_totals(prepared.wwd).unwrap();

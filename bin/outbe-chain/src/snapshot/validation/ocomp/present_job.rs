@@ -435,6 +435,12 @@ pub(super) fn verify_complete_present_results<'a>(
                         .encode_canonical_record(&limits)?,
                     limits.max_bounded_bytes,
                 )?;
+                allocation = allocation
+                    .checked_add(chunk.summary().lysis_allocation_minor)
+                    .ok_or_else(|| eyre::eyre!("result allocation overflow"))?;
+                cost = cost
+                    .checked_add(chunk.summary().nod_cost_total)
+                    .ok_or_else(|| eyre::eyre!("result NOD cost overflow"))?;
                 let tx = sorted.db.tx_mut()?;
                 for action in &chunk.chunk().ordered_nod_actions {
                     nod.push(
@@ -457,12 +463,6 @@ pub(super) fn verify_complete_present_results<'a>(
                         "duplicate native bucket record sort key"
                     );
                     tx.put::<InventoryRows>(key, record.encode_canonical_record(&limits)?)?;
-                    allocation = allocation
-                        .checked_add(action.gratis_load_minor)
-                        .ok_or_else(|| eyre::eyre!("result allocation overflow"))?;
-                    cost = cost
-                        .checked_add(action.settlement_cost_minor)
-                        .ok_or_else(|| eyre::eyre!("result NOD cost overflow"))?;
                 }
                 tx.commit()?;
                 increment_present(&mut chunks, 1)?;

@@ -5,9 +5,9 @@
   "migration_baseline_revision": "04606071023a237e43d5a3ca47642ee202983e86",
   "decision_reference": "outbe-plan/off-chain-poc-lysis-v1-semantics.md",
   "reference_path": "testing/lysis-v1-reference/src/lib.rs",
-  "reference_sha256": "8f3237dfede357f0a938ff43ec602a972559d0f8b5e2bc3ff7bdf9b2bbd9371b",
+  "reference_sha256": "f496d35a7730230e9bccc7aaac2040a00b2ff121c9740cd10b3c7a5dc2d6bc02",
   "case_path": "crates/core/lysis/vectors/lysis-v1/cases.jsonl",
-  "case_file_sha256": "95872f0307388940d9507c9e6fb06d9554966f1047c19e7773b79efcbae58788",
+  "case_file_sha256": "3c919f533fde73ecb2b5b96d0cada1ae0b10bfd2ae66feed4db7c9d356e80e93",
   "case_count": 16,
   "required_arithmetic_vectors": [
     "u256-wrapping-multiply",

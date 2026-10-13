@@ -583,7 +583,6 @@ mod tests {
                     input.binding.activation_call_id,
                     |capability| {
                         capability.authorize_nod_installation()?;
-                        capability.authorize_contributor_installation()?;
                         capability.authorize_carry_over_credit()?;
                         let receipt = retire_certified_partition(
                             &storage,
@@ -799,7 +798,6 @@ mod tests {
             let _enclave = crate::enclave_client::test_enclave::scope();
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
-                capability.authorize_contributor_installation()?;
                 capability.authorize_carry_over_credit()?;
                 assert!(retire_certified_partition(
                     &storage,
@@ -837,7 +835,6 @@ mod tests {
                     &poc_schema_limits(),
                 )
                 .is_err());
-                capability.authorize_contributor_installation()?;
                 capability.authorize_carry_over_credit()?;
                 let receipt = retire_certified_partition(
                     &storage,

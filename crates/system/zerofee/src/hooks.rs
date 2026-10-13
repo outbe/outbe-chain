@@ -5,12 +5,11 @@ use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 
 use outbe_hyperlanecontroller::precompile::IHyperlaneController;
-use outbe_intexfactory::precompile::IIntexFactory;
 use outbe_oracle::precompile::IOracle;
 use outbe_validatorset::delegation::ValidatorDelegateRole;
 
-use crate::envelope::{active_validator_for_role, validator_for_role, ValidatorCallHook};
-use crate::{hyperlane, intexfactory, oracle};
+use crate::envelope::{active_validator_for_role, ValidatorCallHook};
+use crate::{hyperlane, oracle};
 
 /// A minimal, execution-layer independent transaction view for zero-fee hooks.
 #[derive(Clone, Copy)]
@@ -36,8 +35,6 @@ impl fmt::Debug for ZeroFeeTransaction<'_> {
 pub enum ZeroFeeHookId {
     /// `Oracle.submitVote(ExchangeRateTuple[])`.
     OracleSubmitVote,
-    /// `IntexFactory.payContributorBatch(uint32,uint32,ContributorLeaf[],bytes32[])`.
-    IntexFactoryPayContributorBatch,
     /// `HyperlaneController.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes)`.
     HyperlaneSubmitCheckpoint,
 }
@@ -352,15 +349,6 @@ static ORACLE_SUBMIT_VOTE_HOOK: ValidatorCallHook<IOracle::submitVoteCall> = Val
     oracle::validate_oracle_submit_vote_state,
 );
 
-/// `IntexFactory.payContributorBatch`: a validator or its OCOMP delegate.
-static INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK: ValidatorCallHook<
-    IIntexFactory::payContributorBatchCall,
-> = ValidatorCallHook::new(
-    ZeroFeeHookId::IntexFactoryPayContributorBatch,
-    intexfactory::CONTRIBUTOR_BATCH_ENVELOPE,
-    |storage, signer| validator_for_role(storage, signer, ValidatorDelegateRole::Ocomp),
-);
-
 /// `HyperlaneController.submitCheckpoint`: an active validator or its oracle
 /// delegate.
 static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ValidatorCallHook<
@@ -373,7 +361,6 @@ static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ValidatorCallHook<
 
 static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] = &[
     &ORACLE_SUBMIT_VOTE_HOOK,
-    &INTEX_FACTORY_PAY_CONTRIBUTOR_BATCH_HOOK,
     &HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
 ];
 

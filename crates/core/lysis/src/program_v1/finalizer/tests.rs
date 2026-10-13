@@ -47,13 +47,10 @@ fn a_result_chunk_with_an_entry_beyond_the_call_price_bound_is_not_finalized() {
             owner,
             wwd: day.value(),
             league_id: 1,
-            gratis_load_minor: U256::from(1),
             entry_price_minor: U256::MAX / U256::from(100 + u32::from(u16::MAX)) + U256::from(1),
-            settlement_cost_minor: U256::from(1),
             issuance_currency: 840,
             reference_currency: 840,
         }],
-        ordered_eligible_contributors: Vec::new(),
     };
     let bytes = chunk.encode_canonical(&limits).unwrap();
     let mut summary = canonical_empty_summary(

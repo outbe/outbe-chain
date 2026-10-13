@@ -4,8 +4,8 @@ use outbe_ocomp_protocol::{
     intent::DayType,
     receipts::{
         apply_event_summary_hash, desis_request_brief_hash, CarryOverReceiptV1,
-        CarryOverStateEventProjectionV1, ContributorReceiptV1, ContributorStateEventProjectionV1,
-        EffectBindingV1, NodBatchReceiptV1, NodStateEventProjectionV1, RequestLimitSplitReceiptV1,
+        CarryOverStateEventProjectionV1, EffectBindingV1, NodBatchReceiptV1,
+        NodStateEventProjectionV1, RequestLimitSplitReceiptV1,
         TributeReceiptV1, TributeStateEventProjectionV1,
     },
     registry::HashDomain,
@@ -18,7 +18,6 @@ use super::apply_plan::LysisApplyPlanV1;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LysisOwnerReceiptsV1 {
     pub nod: NodBatchReceiptV1,
-    pub contributor: ContributorReceiptV1,
     pub tribute: TributeReceiptV1,
     pub carry_over: CarryOverReceiptV1,
 }
@@ -28,7 +27,6 @@ pub struct VerifiedLysisReceiptsV1 {
     binding: EffectBindingV1,
     request_limit_split_receipt_hash: B256,
     nod_receipt_hash: B256,
-    contributor_receipt_hash: B256,
     tribute_receipt_hash: B256,
     carry_over_receipt_hash: B256,
     effect_commitment: B256,
@@ -45,7 +43,6 @@ pub struct LysisTerminalPermitV1<'permit, 'frame> {
     binding: EffectBindingV1,
     request_limit_split_receipt_hash: B256,
     nod_receipt_hash: B256,
-    contributor_receipt_hash: B256,
     tribute_receipt_hash: B256,
     carry_over_receipt_hash: B256,
     effect_commitment: B256,
@@ -71,11 +68,6 @@ impl LysisTerminalPermitV1<'_, '_> {
     #[must_use]
     pub const fn nod_receipt_hash(&self) -> B256 {
         self.nod_receipt_hash
-    }
-
-    #[must_use]
-    pub const fn contributor_receipt_hash(&self) -> B256 {
-        self.contributor_receipt_hash
     }
 
     #[must_use]
@@ -124,11 +116,6 @@ impl VerifiedLysisReceiptsV1 {
     }
 
     #[must_use]
-    pub const fn contributor_receipt_hash(&self) -> B256 {
-        self.contributor_receipt_hash
-    }
-
-    #[must_use]
     pub const fn tribute_receipt_hash(&self) -> B256 {
         self.tribute_receipt_hash
     }
@@ -168,7 +155,6 @@ impl VerifiedLysisReceiptsV1 {
             binding: self.binding.clone(),
             request_limit_split_receipt_hash: self.request_limit_split_receipt_hash,
             nod_receipt_hash: self.nod_receipt_hash,
-            contributor_receipt_hash: self.contributor_receipt_hash,
             tribute_receipt_hash: self.tribute_receipt_hash,
             carry_over_receipt_hash: self.carry_over_receipt_hash,
             effect_commitment: self.effect_commitment,
@@ -186,7 +172,6 @@ pub fn verify_receipts(
     verify_request_receipt(plan, request_receipt, limits)?;
 
     verify_nod_receipt(plan, &receipts.nod, limits)?;
-    verify_contributor_receipt(plan, &receipts.contributor, limits)?;
     verify_tribute_receipt(plan, &receipts.tribute, limits)?;
     verify_carry_over_receipt(plan, &receipts.carry_over, limits)?;
 
@@ -208,13 +193,11 @@ pub fn verify_receipts(
     )?;
 
     let nod_receipt_hash = receipts.nod.receipt_hash(limits)?;
-    let contributor_receipt_hash = receipts.contributor.receipt_hash(limits)?;
     let tribute_receipt_hash = receipts.tribute.receipt_hash(limits)?;
     let carry_over_receipt_hash = receipts.carry_over.receipt_hash(limits)?;
-    let mut effects = Vec::with_capacity(128);
+    let mut effects = Vec::with_capacity(96);
     for receipt_hash in [
         nod_receipt_hash,
-        contributor_receipt_hash,
         tribute_receipt_hash,
         carry_over_receipt_hash,
     ] {
@@ -223,7 +206,6 @@ pub fn verify_receipts(
     let effect_commitment = hash_framed(HashDomain::Effects, &effects)?;
     let event_summary_hash = apply_event_summary_hash([
         receipts.nod.state_event_digest,
-        receipts.contributor.state_event_digest,
         receipts.tribute.state_event_digest,
         receipts.carry_over.state_event_digest,
     ])?;
@@ -232,7 +214,6 @@ pub fn verify_receipts(
         binding: plan.binding().clone(),
         request_limit_split_receipt_hash: plan.request_limit_split_receipt_hash(),
         nod_receipt_hash,
-        contributor_receipt_hash,
         tribute_receipt_hash,
         carry_over_receipt_hash,
         effect_commitment,
@@ -307,42 +288,6 @@ fn verify_nod_receipt(
         nod_amount_total: expected.nod_amount_total(),
         lysis_allocation_minor: expected.lysis_allocation_minor(),
         issued_at: expected.issued_at(),
-    };
-    receipt.validate_projection(&projection, limits)?;
-    Ok(())
-}
-
-fn verify_contributor_receipt(
-    plan: &LysisApplyPlanV1,
-    receipt: &ContributorReceiptV1,
-    limits: &SchemaLimits,
-) -> Result<(), ProtocolError> {
-    ensure(
-        receipt.binding == *plan.binding(),
-        "Lysis contributor binding",
-    )?;
-    let expected = plan.contributors();
-    ensure(
-        receipt.contributor_target_precondition == *expected.precondition()
-            && receipt.contributor_count == expected.contributor_count()
-            && receipt.contributor_root == expected.contributor_root()
-            && receipt.eligible_nominal_total == expected.eligible_nominal_total(),
-        "Lysis contributor receipt",
-    )?;
-    let version_after = expected
-        .precondition()
-        .expected_series_version
-        .checked_add(1)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "contributor series version",
-        })?;
-    let projection = ContributorStateEventProjectionV1 {
-        worldwide_day: expected.precondition().worldwide_day,
-        series_version_before: expected.precondition().expected_series_version,
-        series_version_after: version_after,
-        contributor_count: expected.contributor_count(),
-        contributor_root: expected.contributor_root(),
-        eligible_nominal_total: expected.eligible_nominal_total(),
     };
     receipt.validate_projection(&projection, limits)?;
     Ok(())

@@ -191,7 +191,7 @@ pub fn admit_reported_lysis_unit_v1(
                 admission: admitted.admission,
             }
         }
-        UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle => {
+        UnitPhase::BucketShuffle => {
             if !input_chunks.is_empty() {
                 return Err(LysisSchedulerError::InputShape);
             }

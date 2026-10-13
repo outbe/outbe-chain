@@ -6,12 +6,12 @@
 //! A root calculated from observed actions verifies the commitment, not the
 //! correctness of their economic fields. Those require fixture-derived values.
 
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_primitives::{B256, U256, keccak256};
 use outbe_compressed_entities::TributeBodyV1;
 use outbe_ocomp_protocol::result::NodActionV1;
 
 const NOD_LIST_KIND: [u8; 2] = 1u16.to_be_bytes();
-const RECORD_BYTES: usize = 194;
+const RECORD_BYTES: usize = 130;
 
 /// Exact single-league fixture model. The caller verifies the source population
 /// and every owner's snapshotted league before supplying these input terms.
@@ -68,9 +68,7 @@ pub(crate) fn single_league_actions(
                 owner: tribute.owner,
                 wwd: tribute.worldwide_day.value(),
                 league_id: league,
-                gratis_load_minor: load,
                 entry_price_minor: entry_price,
-                settlement_cost_minor: cost,
                 issuance_currency: tribute.issuance_currency,
                 reference_currency: tribute.reference_currency,
             }
@@ -86,9 +84,7 @@ fn record(action: &NodActionV1) -> Vec<u8> {
     bytes.extend(action.owner.as_slice());
     bytes.extend(action.wwd.to_be_bytes());
     bytes.extend(action.league_id.to_be_bytes());
-    bytes.extend(action.gratis_load_minor.to_be_bytes::<32>());
     bytes.extend(action.entry_price_minor.to_be_bytes::<32>());
-    bytes.extend(action.settlement_cost_minor.to_be_bytes::<32>());
     bytes.extend(action.issuance_currency.to_be_bytes());
     bytes.extend(action.reference_currency.to_be_bytes());
     assert_eq!(bytes.len(), RECORD_BYTES, "V1 Nod record width");
@@ -175,7 +171,7 @@ mod tests {
     use super::*;
     use alloy_primitives::{Address, U256};
     use outbe_ocomp_protocol::{
-        list::{ordered_list_root, OrderedListLimits},
+        list::{OrderedListLimits, ordered_list_root},
         profile::poc_schema_limits,
         registry::ListKind,
     };
@@ -188,9 +184,7 @@ mod tests {
             owner: Address::repeat_byte((ordinal + 1) as u8),
             wwd: 20_714,
             league_id: 3,
-            gratis_load_minor: U256::from(987_654_321),
             entry_price_minor: U256::from(1_000_000),
-            settlement_cost_minor: U256::from(987_654_321),
             issuance_currency: 949,
             reference_currency: 840,
         }
@@ -221,8 +215,16 @@ mod tests {
                     }
                 })
                 .collect();
-            let expected =
-                single_league_actions(&inputs, 3, U256::from(budget), U256::from(1_000_003));
+            let entry_price = U256::from(1_000_003);
+            let expected = single_league_actions(&inputs, 3, U256::from(budget), entry_price);
+            let scale = U256::from(1_000_000);
+            let nominal = U256::from(2_000_000);
+            let total = nominal * U256::from(count);
+            let fraction = U256::from(budget) * scale / total;
+            let expected_load = nominal * fraction / scale;
+            let expected_cost = entry_price * expected_load / scale;
+            assert_eq!(expected_load, U256::from(load));
+            assert_eq!(expected_cost, U256::from(cost));
             for (ordinal, action) in expected.iter().enumerate() {
                 assert_eq!(action.raw_ordinal, ordinal as u32);
                 assert_eq!(action.tribute_id[31], ordinal as u8);
@@ -230,9 +232,7 @@ mod tests {
                 assert_eq!(action.owner, Address::repeat_byte(ordinal as u8 + 1));
                 assert_eq!(action.wwd, 20260908);
                 assert_eq!(action.league_id, 3);
-                assert_eq!(action.gratis_load_minor, U256::from(load));
-                assert_eq!(action.entry_price_minor, U256::from(1_000_003));
-                assert_eq!(action.settlement_cost_minor, U256::from(cost));
+                assert_eq!(action.entry_price_minor, entry_price);
                 assert_eq!(
                     (action.issuance_currency, action.reference_currency),
                     (840, 840)
@@ -268,7 +268,7 @@ mod tests {
     fn every_field_order_population_and_padding_are_bound() {
         let actions: Vec<_> = (0..10).map(action).collect();
         let expected = nod_root(&actions);
-        for field in 0..11 {
+        for field in 0..9 {
             let mut changed = actions.clone();
             let last = &mut changed[9];
             match field {
@@ -278,11 +278,9 @@ mod tests {
                 3 => last.owner = Address::ZERO,
                 4 => last.wwd += 1,
                 5 => last.league_id += 1,
-                6 => last.gratis_load_minor += U256::from(1),
-                7 => last.entry_price_minor += U256::from(1),
-                8 => last.settlement_cost_minor += U256::from(1),
-                9 => last.issuance_currency += 1,
-                10 => last.reference_currency += 1,
+                6 => last.entry_price_minor += U256::from(1),
+                7 => last.issuance_currency += 1,
+                8 => last.reference_currency += 1,
                 _ => unreachable!(),
             }
             assert_ne!(nod_root(&changed), expected, "unbound field {field}");

@@ -25,7 +25,6 @@ wire_enum_u8! {
         AmountRecords = 13,
         GratisPrefixTable = 14,
         FinalizedOutputRecords = 15,
-        OwnerOrderedRecords = 16,
         BucketOrderedRecords = 17,
         RootSummary = 18,
     }
@@ -47,7 +46,6 @@ wire_enum_u8! {
         AmountMap = 4,
         GratisPrefix = 5,
         OutputFinalize = 6,
-        OwnerShuffle = 7,
         BucketShuffle = 8,
         RootReduce = 9,
         // Top-down half of the deterministic parallel Gratis prefix scan.
@@ -266,7 +264,7 @@ impl UnitSpecV1 {
                     UnitInterval::BinaryReducerNode(_)
                 )
                 | (
-                    UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle,
+                    UnitPhase::BucketShuffle,
                     UnitInterval::CanonicalRunSpan(_)
                 )
         );

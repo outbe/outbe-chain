@@ -5,7 +5,7 @@
 //! field: callers cannot provide a result root, conservation scalar or
 //! arithmetic commitment.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, B256, U256};
 use outbe_ocomp_protocol::{
     hash_framed,
     input::InputManifestV1,
@@ -102,6 +102,7 @@ pub struct VerifiedLysisFinalizationInputsV1<'a, U, C, B> {
     pub unit_artifacts: U,
     pub result_chunks: C,
     pub bucket_records: B,
+    pub eligible_nominal_total: U256,
 }
 
 pub fn finalize_v1<U, C, B>(
@@ -135,6 +136,13 @@ where
     )?;
     let bucket_root =
         stream_bucket_records(inputs.root_reduce_summary, inputs.bucket_records, limits)?;
+    if streamed.reduced_summary.eligible_nominal_total != inputs.eligible_nominal_total
+        || streamed.eligible_nominal_total != inputs.eligible_nominal_total
+    {
+        return Err(LysisFinalizationErrorV1::Authority(
+            "eligible nominal total",
+        ));
+    }
     if streamed.reduced_summary != *inputs.root_reduce_summary {
         return Err(LysisFinalizationErrorV1::Authority(
             "independently reduced ROOT_REDUCE summary",
@@ -156,7 +164,6 @@ where
         tribute_count: streamed.tribute_count,
         nod_count: streamed.nod_count,
         bucket_count: streamed.bucket_count,
-        contributor_count: streamed.contributor_count,
         semantic_event_count: 0,
     };
     let conservation = ConservationTotalsV1 {
@@ -175,7 +182,6 @@ where
     let roots = ResultRootsV1 {
         nod_root: streamed.nod_root,
         bucket_root,
-        contributor_root: streamed.contributor_root,
         output_manifest_root: streamed.output_manifest_root,
     };
     let carry_over_credit = CarryOverCreditActionV1 {
@@ -532,14 +538,12 @@ fn encode_gratis_prefix_record(
 
 struct StreamedResultV1 {
     nod_root: B256,
-    contributor_root: B256,
     output_manifest_root: B256,
     result_chunk_list_root: B256,
     reduced_summary: RootReduceSummaryV1,
     tribute_count: u32,
     nod_count: u32,
     bucket_count: u32,
-    contributor_count: u32,
     tribute_nominal_total: U256,
     eligible_nominal_total: U256,
     lysis_allocation_minor: U256,
@@ -566,21 +570,16 @@ struct ResultChunkStreamV1<'a> {
     binding: ResultBindingV1<'a>,
     limits: &'a SchemaLimits,
     nod_root: StreamingOrderedListRoot,
-    contributor_root: StreamingOrderedListRoot,
     output_manifest_root: StreamingOrderedListRoot,
     result_chunk_list_root: StreamingOrderedListRoot,
     summary_frontier: SummaryFrontierV1,
     next_chunk: u32,
     next_nod_ordinal: u32,
     previous_tribute: Option<B256>,
-    previous_contributor: Option<(Address, B256)>,
     tribute_count: u32,
     nod_count: u32,
-    contributor_count: u32,
     tribute_nominal_total: U256,
     eligible_nominal_total: U256,
-    lysis_allocation_minor: U256,
-    nod_cost_total: U256,
 }
 
 type EncodedRecords = Vec<Vec<u8>>;
@@ -589,11 +588,8 @@ struct LeafRecordsV1<'a> {
     chunk_ordinal: u32,
     nod_records: &'a [Vec<u8>],
     bucket_records: &'a [Vec<u8>],
-    contributor_records: &'a [Vec<u8>],
     manifest_record: &'a [u8],
     result_chunk_hash: B256,
-    eligible_nominal_total: U256,
-    chunk: &'a ResultChunkV1,
 }
 
 impl<'a> ResultChunkStreamV1<'a> {
@@ -607,10 +603,6 @@ impl<'a> ResultChunkStreamV1<'a> {
             binding,
             limits,
             nod_root: StreamingOrderedListRoot::new(ListKind::NodActions, final_summary.nod_count)?,
-            contributor_root: StreamingOrderedListRoot::new(
-                ListKind::ContributorActions,
-                final_summary.contributor_count,
-            )?,
             output_manifest_root: StreamingOrderedListRoot::new(
                 ListKind::CompleteOutputManifest,
                 primary_count,
@@ -623,14 +615,10 @@ impl<'a> ResultChunkStreamV1<'a> {
             next_chunk: 0,
             next_nod_ordinal: 0,
             previous_tribute: None,
-            previous_contributor: None,
             tribute_count: 0,
             nod_count: 0,
-            contributor_count: 0,
             tribute_nominal_total: U256::ZERO,
             eligible_nominal_total: U256::ZERO,
-            lysis_allocation_minor: U256::ZERO,
-            nod_cost_total: U256::ZERO,
         })
     }
 
@@ -646,7 +634,7 @@ impl<'a> ResultChunkStreamV1<'a> {
         self.require_chunk_descriptor(&item, &chunk)?;
         self.require_primary_coverage(&chunk)?;
         let (nod_records, bucket_record_bytes) = self.stream_nod_actions(&chunk)?;
-        let (contributor_records, chunk_eligible) = self.stream_contributors(&chunk)?;
+        let chunk_eligible = item.summary.eligible_nominal_total;
         self.eligible_nominal_total = checked_add(
             self.eligible_nominal_total,
             chunk_eligible,
@@ -669,11 +657,8 @@ impl<'a> ResultChunkStreamV1<'a> {
                 chunk_ordinal: self.next_chunk,
                 nod_records: &nod_records,
                 bucket_records: &bucket_record_bytes,
-                contributor_records: &contributor_records,
                 manifest_record: &manifest_record,
                 result_chunk_hash: item.output_manifest_entry.result_chunk_hash,
-                eligible_nominal_total: chunk_eligible,
-                chunk: &chunk,
             },
             self.limits,
         )?;
@@ -777,16 +762,6 @@ impl<'a> ResultChunkStreamV1<'a> {
                 tribute_id: action.tribute_id,
                 nod_id: action.nod_id,
             });
-            self.lysis_allocation_minor = checked_add(
-                self.lysis_allocation_minor,
-                action.gratis_load_minor,
-                "Lysis allocation",
-            )?;
-            self.nod_cost_total = checked_add(
-                self.nod_cost_total,
-                action.settlement_cost_minor,
-                "Nod cost total",
-            )?;
         }
         bucket_records.sort_by_key(|record| (record.bucket_key, record.raw_ordinal));
         let bucket_record_bytes = bucket_records
@@ -794,36 +769,6 @@ impl<'a> ResultChunkStreamV1<'a> {
             .map(|record| record.encode_canonical_record(self.limits))
             .collect::<Result<Vec<_>, _>>()?;
         Ok((nod_records, bucket_record_bytes))
-    }
-
-    fn stream_contributors(
-        &mut self,
-        chunk: &ResultChunkV1,
-    ) -> Result<(EncodedRecords, U256), LysisFinalizationErrorV1> {
-        let mut contributor_records = Vec::with_capacity(chunk.ordered_eligible_contributors.len());
-        let mut chunk_eligible = U256::ZERO;
-        for action in &chunk.ordered_eligible_contributors {
-            let key = (action.owner, action.source_tribute_id);
-            if self
-                .previous_contributor
-                .is_some_and(|previous| previous >= key)
-            {
-                return Err(LysisFinalizationErrorV1::Authority(
-                    "global contributor order",
-                ));
-            }
-            self.previous_contributor = Some(key);
-            let record = action.encode_canonical_record(self.limits)?;
-            self.contributor_root
-                .push(&record, self.limits.max_bounded_bytes)?;
-            contributor_records.push(record);
-            chunk_eligible = checked_add(
-                chunk_eligible,
-                action.nominal_amount_minor,
-                "eligible nominal total",
-            )?;
-        }
-        Ok((contributor_records, chunk_eligible))
     }
 
     fn advance(
@@ -836,10 +781,6 @@ impl<'a> ResultChunkStreamV1<'a> {
                 what: "chunk Nod count",
             }
         })?;
-        let chunk_contributor_count = u32::try_from(chunk.ordered_eligible_contributors.len())
-            .map_err(|_| ProtocolError::IntegerOverflow {
-                what: "chunk contributor count",
-            })?;
         self.tribute_count = self.tribute_count.checked_add(chunk_nod_count).ok_or(
             ProtocolError::IntegerOverflow {
                 what: "Tribute count",
@@ -849,12 +790,6 @@ impl<'a> ResultChunkStreamV1<'a> {
             .nod_count
             .checked_add(chunk_nod_count)
             .ok_or(ProtocolError::IntegerOverflow { what: "Nod count" })?;
-        self.contributor_count = self
-            .contributor_count
-            .checked_add(chunk_contributor_count)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "contributor count",
-            })?;
         self.tribute_nominal_total = checked_add(
             self.tribute_nominal_total,
             chunk_tribute_nominal_total,
@@ -890,20 +825,20 @@ impl<'a> ResultChunkStreamV1<'a> {
                 plan_hash: self.binding.plan_hash,
             },
         )?;
+        let lysis_allocation_minor = reduced_summary.lysis_allocation_minor;
+        let nod_cost_total = reduced_summary.nod_cost_total;
         Ok(StreamedResultV1 {
             nod_root: self.nod_root.finish()?,
-            contributor_root: self.contributor_root.finish()?,
             output_manifest_root: self.output_manifest_root.finish()?,
             result_chunk_list_root: self.result_chunk_list_root.finish()?,
             reduced_summary,
             tribute_count: self.tribute_count,
             nod_count: self.nod_count,
             bucket_count: self.nod_count,
-            contributor_count: self.contributor_count,
             tribute_nominal_total: self.tribute_nominal_total,
             eligible_nominal_total: self.eligible_nominal_total,
-            lysis_allocation_minor: self.lysis_allocation_minor,
-            nod_cost_total: self.nod_cost_total,
+            lysis_allocation_minor,
+            nod_cost_total,
         })
     }
 }
@@ -926,12 +861,6 @@ fn require_leaf_summary(
         leaf.bucket_records,
         limits.max_bounded_bytes,
     )?;
-    let expected_contributor = LysisListSubtreeCarrierV1::from_primary_page(
-        ListKind::ContributorActions,
-        leaf.chunk_ordinal,
-        leaf.contributor_records,
-        limits.max_bounded_bytes,
-    )?;
     let expected_manifest = LysisListSubtreeCarrierV1::from_primary_page(
         ListKind::CompleteOutputManifest,
         leaf.chunk_ordinal,
@@ -944,20 +873,6 @@ fn require_leaf_summary(
         &[leaf.result_chunk_hash.as_slice()],
         B256::len_bytes(),
     )?;
-    let lysis_allocation_minor = leaf
-        .chunk
-        .ordered_nod_actions
-        .iter()
-        .try_fold(U256::ZERO, |total, action| {
-            checked_add(total, action.gratis_load_minor, "leaf Nod Gratis")
-        })?;
-    let nod_cost_total = leaf
-        .chunk
-        .ordered_nod_actions
-        .iter()
-        .try_fold(U256::ZERO, |total, action| {
-            checked_add(total, action.settlement_cost_minor, "leaf Nod cost")
-        })?;
     let nod_count = u32::try_from(leaf.nod_records.len()).unwrap_or(u32::MAX);
     let expected = RootReduceSummaryV1 {
         protocol_bundle_hash: binding.plan.protocol_bundle_hash,
@@ -968,17 +883,15 @@ fn require_leaf_summary(
         covered_primary_count: 1,
         nod_actions: expected_nod,
         bucket_records: expected_bucket,
-        contributor_actions: expected_contributor,
         output_manifest_entries: expected_manifest,
         result_chunk_hashes: expected_result_hash,
         tribute_count: nod_count,
         nod_count,
         bucket_count: u32::try_from(leaf.bucket_records.len()).unwrap_or(u32::MAX),
-        contributor_count: u32::try_from(leaf.contributor_records.len()).unwrap_or(u32::MAX),
         tribute_nominal_total: summary.tribute_nominal_total,
-        eligible_nominal_total: leaf.eligible_nominal_total,
-        lysis_allocation_minor,
-        nod_cost_total,
+        eligible_nominal_total: summary.eligible_nominal_total,
+        lysis_allocation_minor: summary.lysis_allocation_minor,
+        nod_cost_total: summary.nod_cost_total,
         first_error_ordinal: None,
     };
     if *summary != expected {
@@ -1120,10 +1033,6 @@ fn canonical_empty_summary(
             ListKind::BucketRecords,
             padded_ordinal,
         )?,
-        contributor_actions: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
-            ListKind::ContributorActions,
-            padded_ordinal,
-        )?,
         output_manifest_entries: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
             ListKind::CompleteOutputManifest,
             padded_ordinal,
@@ -1135,7 +1044,6 @@ fn canonical_empty_summary(
         tribute_count: 0,
         nod_count: 0,
         bucket_count: 0,
-        contributor_count: 0,
         tribute_nominal_total: U256::ZERO,
         eligible_nominal_total: U256::ZERO,
         lysis_allocation_minor: U256::ZERO,

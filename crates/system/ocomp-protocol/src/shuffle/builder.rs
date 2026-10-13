@@ -1,12 +1,11 @@
 //! Build bounded shuffle runs and stage their canonical CAS objects.
 
-use alloy_primitives::{keccak256, Address, B256};
+use alloy_primitives::{keccak256, B256};
 
 use crate::{
     control::CasObjectRefV1,
     error::ProtocolError,
     registry::ObjectKind,
-    result::ContributorActionV1,
     schema::{require, SchemaLimits},
 };
 
@@ -22,33 +21,12 @@ trait ShuffleRunRecord {
     fn into_verified(self) -> VerifiedShuffleRecordV1;
 }
 
-impl ShuffleRunRecord for ContributorActionV1 {
-    const KIND: ShuffleRunKindV1 = ShuffleRunKindV1::Owner;
-
-    fn into_verified(self) -> VerifiedShuffleRecordV1 {
-        VerifiedShuffleRecordV1::Owner(self)
-    }
-}
-
 impl ShuffleRunRecord for ShuffleBucketRecordV1 {
     const KIND: ShuffleRunKindV1 = ShuffleRunKindV1::Bucket;
 
     fn into_verified(self) -> VerifiedShuffleRecordV1 {
         VerifiedShuffleRecordV1::Bucket(self)
     }
-}
-
-pub fn build_owner_shuffle_run<I, S>(
-    context: ShuffleRunBuildContextV1,
-    records: I,
-    limits: &SchemaLimits,
-    stage: S,
-) -> Result<ShuffleRunArtifactV1, ProtocolError>
-where
-    I: IntoIterator<Item = Result<ContributorActionV1, ProtocolError>>,
-    S: FnMut(&[u8]) -> Result<CasObjectRefV1, ProtocolError>,
-{
-    build_typed_shuffle_run(context, records, limits, stage)
 }
 
 pub fn build_bucket_shuffle_run<I, S>(
@@ -99,7 +77,6 @@ struct ShuffleRunBuilder<'a, S> {
     page: Vec<VerifiedShuffleRecordV1>,
     page_ordinal: u32,
     first_record_ordinal: u32,
-    previous_owner: Option<(Address, B256)>,
     previous_bucket: Option<(B256, u32)>,
 }
 
@@ -129,7 +106,6 @@ where
             page: Vec::with_capacity(MAX_SHUFFLE_LEAF_RECORDS),
             page_ordinal: 0,
             first_record_ordinal: 0,
-            previous_owner: None,
             previous_bucket: None,
         })
     }
@@ -159,9 +135,7 @@ where
     }
 
     fn finish(mut self) -> Result<ShuffleRunArtifactV1, ProtocolError> {
-        if !self.page.is_empty()
-            || (self.first_record_ordinal == 0 && self.kind == ShuffleRunKindV1::Owner)
-        {
+        if !self.page.is_empty() {
             let records = core::mem::take(&mut self.page);
             let leaf = self.build_leaf(records)?;
             self.push_subtree(leaf)?;
@@ -186,35 +160,17 @@ where
     }
 
     fn validate_record(&mut self, record: &VerifiedShuffleRecordV1) -> Result<(), ProtocolError> {
-        match record {
-            VerifiedShuffleRecordV1::Owner(record) => {
-                require(
-                    self.kind == ShuffleRunKindV1::Owner,
-                    "shuffle build record kind",
-                )?;
-                let key = (record.owner, record.source_tribute_id);
-                require(
-                    self.previous_owner
-                        .is_none_or(|previous| previous.0 < key.0)
-                        && self.previous_bucket.is_none(),
-                    "global owner shuffle order",
-                )?;
-                self.previous_owner = Some(key);
-            }
-            VerifiedShuffleRecordV1::Bucket(record) => {
-                require(
-                    self.kind == ShuffleRunKindV1::Bucket,
-                    "shuffle build record kind",
-                )?;
-                let key = (record.bucket_key, record.raw_ordinal);
-                require(
-                    self.previous_bucket.is_none_or(|previous| previous < key)
-                        && self.previous_owner.is_none(),
-                    "global bucket shuffle order",
-                )?;
-                self.previous_bucket = Some(key);
-            }
-        }
+        let VerifiedShuffleRecordV1::Bucket(record) = record;
+        require(
+            self.kind == ShuffleRunKindV1::Bucket,
+            "shuffle build record kind",
+        )?;
+        let key = (record.bucket_key, record.raw_ordinal);
+        require(
+            self.previous_bucket.is_none_or(|previous| previous < key),
+            "global bucket shuffle order",
+        )?;
+        self.previous_bucket = Some(key);
         Ok(())
     }
 
@@ -226,30 +182,15 @@ where
             u32::try_from(records.len()).map_err(|_| ProtocolError::IntegerOverflow {
                 what: "shuffle leaf record count",
             })?;
-        let payload = match self.kind {
-            ShuffleRunKindV1::Owner => ShuffleRunPayloadV1::OwnerLeaf(
-                records
-                    .into_iter()
-                    .map(|record| match record {
-                        VerifiedShuffleRecordV1::Owner(record) => Ok(record),
-                        VerifiedShuffleRecordV1::Bucket(_) => Err(ProtocolError::InvalidInvariant(
-                            "shuffle build owner record",
-                        )),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-            ShuffleRunKindV1::Bucket => ShuffleRunPayloadV1::BucketLeaf(
-                records
-                    .into_iter()
-                    .map(|record| match record {
-                        VerifiedShuffleRecordV1::Bucket(record) => Ok(record),
-                        VerifiedShuffleRecordV1::Owner(_) => Err(ProtocolError::InvalidInvariant(
-                            "shuffle build bucket record",
-                        )),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-        };
+        let payload = ShuffleRunPayloadV1::BucketLeaf(
+            records
+                .into_iter()
+                .map(|record| {
+                    let VerifiedShuffleRecordV1::Bucket(record) = record;
+                    record
+                })
+                .collect(),
+        );
         let page_span = ShufflePageSpanV1 {
             start_page: self.page_ordinal,
             end_page: self

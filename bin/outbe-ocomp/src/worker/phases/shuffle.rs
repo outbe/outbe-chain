@@ -12,7 +12,6 @@ use outbe_lysis::program_v1::artifacts::decode_finalized_output_run;
 use outbe_lysis::program_v1::artifacts::LysisArtifactErrorV1;
 
 use outbe_lysis::program_v1::phases::shuffle_buckets;
-use outbe_lysis::program_v1::phases::shuffle_owners;
 
 use outbe_lysis::program_v1::planner::LysisPlanTopologyV1;
 
@@ -23,10 +22,7 @@ use outbe_lysis::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
 
 use outbe_ocomp_protocol::common::BoundedBytes;
 
-use outbe_ocomp_protocol::result::ContributorActionV1 as ProtocolContributorActionV1;
-
 use outbe_ocomp_protocol::shuffle::build_bucket_shuffle_run;
-use outbe_ocomp_protocol::shuffle::build_owner_shuffle_run;
 use outbe_ocomp_protocol::shuffle::merge_verified_shuffle_runs;
 
 use outbe_ocomp_protocol::shuffle::verified_shuffle_run_records;
@@ -65,12 +61,7 @@ pub(in super::super) fn execute_shuffle_unit(
         cancelled,
     } = authority;
     require_lease_active(cancelled)?;
-    if !input_chunks.is_empty()
-        || !matches!(
-            spec.phase,
-            UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle
-        )
-    {
+    if !input_chunks.is_empty() || spec.phase != UnitPhase::BucketShuffle {
         return Err(WorkerError::UnitBindingMismatch);
     }
     let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
@@ -91,8 +82,6 @@ pub(in super::super) fn execute_shuffle_unit(
     let run_span = outbe_ocomp_protocol::unit::CanonicalRunSpan { start_run, end_run };
     let purpose = if level == 0 {
         InputPurpose::FinalizedOutputRecords
-    } else if spec.phase == UnitPhase::OwnerShuffle {
-        InputPurpose::OwnerOrderedRecords
     } else {
         InputPurpose::BucketOrderedRecords
     };
@@ -123,7 +112,7 @@ pub(in super::super) fn execute_shuffle_unit(
         return Err(WorkerError::UnitBindingMismatch);
     }
 
-    let (coverage, owner_records, bucket_records) = if level == 0 {
+    if level == 0 {
         if resolved.len() != 1 || end_run != start_run + 1 {
             return Err(WorkerError::UnitBindingMismatch);
         }
@@ -150,45 +139,27 @@ pub(in super::super) fn execute_shuffle_unit(
             header.output_coverage_count,
             limits,
         )?;
-        if spec.phase == UnitPhase::OwnerShuffle {
-            let owner_run = shuffle_owners(&finalized).map_err(LysisArtifactErrorV1::from)?;
-            let records = owner_run
-                .ordered_contributors
-                .into_iter()
-                .map(|record| {
-                    Ok(ProtocolContributorActionV1 {
-                        owner: record.owner,
-                        source_tribute_id: *record.source_tribute_id,
-                        nominal_amount_minor: record.nominal_amount_minor,
-                    })
+        let bucket_run = shuffle_buckets(&finalized).map_err(LysisArtifactErrorV1::from)?;
+        let records = bucket_run
+            .ordered_records
+            .into_iter()
+            .map(|record| {
+                Ok(ShuffleBucketRecordV1 {
+                    bucket_key: record.bucket_key,
+                    raw_ordinal: record.raw_ordinal,
+                    tribute_id: *record.tribute_id,
+                    nod_id: *record.nod_id,
                 })
-                .collect::<Vec<_>>();
-            (coverage, Some(records), None)
-        } else {
-            let bucket_run = shuffle_buckets(&finalized).map_err(LysisArtifactErrorV1::from)?;
-            let records = bucket_run
-                .ordered_records
-                .into_iter()
-                .map(|record| {
-                    Ok(ShuffleBucketRecordV1 {
-                        bucket_key: record.bucket_key,
-                        raw_ordinal: record.raw_ordinal,
-                        tribute_id: *record.tribute_id,
-                        nod_id: *record.nod_id,
-                    })
-                })
-                .collect::<Vec<_>>();
-            (coverage, None, Some(records))
-        }
+            })
+            .collect::<Vec<_>>();
+        return build_bucket_shuffle_unit_artifact(
+            spec, run_span, coverage, records, limits, inbox,
+        );
     } else {
         if resolved.len() != 2 {
             return Err(WorkerError::UnitBindingMismatch);
         }
-        let expected_kind = if spec.phase == UnitPhase::OwnerShuffle {
-            ShuffleRunKindV1::Owner
-        } else {
-            ShuffleRunKindV1::Bucket
-        };
+        let expected_kind = ShuffleRunKindV1::Bucket;
         let left = decode_shuffle_producer_root(
             spec,
             resolved[0].ok_or(WorkerError::UnitBindingMismatch)?,
@@ -246,78 +217,14 @@ pub(in super::super) fn execute_shuffle_unit(
                 })
         })?;
         let merged = merge_verified_shuffle_runs(expected_kind, left_records, right_records);
-        if spec.phase == UnitPhase::OwnerShuffle {
-            let records = merged.map(|record| match record? {
-                VerifiedShuffleRecordV1::Owner(record) => Ok(record),
-                VerifiedShuffleRecordV1::Bucket(_) => {
-                    Err(outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-                        "owner shuffle producer kind",
-                    ))
-                }
-            });
-            return build_owner_shuffle_unit_artifact(
-                spec, run_span, coverage, records, limits, inbox,
-            );
-        }
-        let records = merged.map(|record| match record? {
-            VerifiedShuffleRecordV1::Bucket(record) => Ok(record),
-            VerifiedShuffleRecordV1::Owner(_) => {
-                Err(outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-                    "bucket shuffle producer kind",
-                ))
-            }
+        let records = merged.map(|record| {
+            let VerifiedShuffleRecordV1::Bucket(record) = record?;
+            Ok(record)
         });
         return build_bucket_shuffle_unit_artifact(
             spec, run_span, coverage, records, limits, inbox,
         );
-    };
-
-    if let Some(records) = owner_records {
-        build_owner_shuffle_unit_artifact(spec, run_span, coverage, records, limits, inbox)
-    } else {
-        build_bucket_shuffle_unit_artifact(
-            spec,
-            run_span,
-            coverage,
-            bucket_records.ok_or(WorkerError::UnitBindingMismatch)?,
-            limits,
-            inbox,
-        )
     }
-}
-
-fn build_owner_shuffle_unit_artifact<I>(
-    spec: &UnitSpecV1,
-    run_span: outbe_ocomp_protocol::unit::CanonicalRunSpan,
-    coverage: ShuffleSourceCoverageV1,
-    records: I,
-    limits: &SchemaLimits,
-    inbox: &WorkerInbox,
-) -> Result<UnitArtifactV1, WorkerError>
-where
-    I: IntoIterator<
-        Item = Result<ProtocolContributorActionV1, outbe_ocomp_protocol::ProtocolError>,
-    >,
-{
-    if spec.phase != UnitPhase::OwnerShuffle {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
-    let context = ShuffleRunBuildContextV1 {
-        protocol_bundle_hash: spec.protocol_bundle_hash,
-        job_id: spec.job_id,
-        attempt: spec.attempt,
-        unit_id: spec.unit_id(limits)?,
-        run_span,
-        source_coverage_root: coverage.root,
-        source_coverage_count: coverage.count,
-    };
-    let mut stage = |bytes: &[u8]| {
-        inbox.stage_shuffle_object(bytes, limits).map_err(|_| {
-            outbe_ocomp_protocol::ProtocolError::InvalidInvariant("shuffle object staging")
-        })
-    };
-    let root = build_owner_shuffle_run(context, records, limits, &mut stage)?;
-    finish_shuffle_unit_artifact(spec, root, limits)
 }
 
 fn build_bucket_shuffle_unit_artifact<I>(
@@ -388,10 +295,7 @@ pub(in super::super) fn decode_shuffle_producer_root(
     else {
         return Err(WorkerError::UnitBindingMismatch);
     };
-    let expected_phase = match expected_kind {
-        ShuffleRunKindV1::Owner => UnitPhase::OwnerShuffle,
-        ShuffleRunKindV1::Bucket => UnitPhase::BucketShuffle,
-    };
+    let expected_phase = UnitPhase::BucketShuffle;
     if phase != expected_phase || artifact.phase != expected_phase {
         return Err(WorkerError::UnitBindingMismatch);
     }

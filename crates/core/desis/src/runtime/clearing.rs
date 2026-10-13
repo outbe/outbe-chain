@@ -213,8 +213,8 @@ fn clear_inner(
     }
 
     if result.issued_units == 0 {
-        // No series anywhere, so no proceeds can arrive for the day.
-        outbe_intexfactory::api::discard_day_contributors(&storage, worldwide_day)?;
+        // No series anywhere. Finalize the day so a later arrival burns.
+        outbe_intexfactory::api::finalize_empty_day(&storage, worldwide_day)?;
     } else {
         let mut legs = Vec::new();
         for group in issuance_groups(&result, &config, worldwide_day, snapshot)? {

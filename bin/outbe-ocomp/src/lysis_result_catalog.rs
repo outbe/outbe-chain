@@ -5,7 +5,7 @@
 //! CAS object. The yielded items and `Complete` are evidence inputs for a future
 //! finalizer. Neither is a result, signature, or finalization capability.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{B256, U256};
 use outbe_lysis::program_v1::{
     artifacts::LysisArtifactErrorV1,
     planner::{
@@ -102,8 +102,6 @@ pub fn verified_result_chunk_at(
         || chunk.first_nod_ordinal != primary_shard.start_ordinal
         || chunk.result_chunk_hash(audit.limits())? != admitted_entry.result_chunk_hash
         || u32::try_from(chunk.ordered_nod_actions.len()).ok() != Some(summary.nod_count)
-        || u32::try_from(chunk.ordered_eligible_contributors.len()).ok()
-            != Some(summary.contributor_count)
     {
         return Err(ProtocolError::InvalidInvariant("exact result chunk semantic binding").into());
     }
@@ -185,7 +183,6 @@ pub struct ExactLysisResultCatalogCursorV1<'a> {
     summary_eligible_nominal_total: U256,
     chunk_eligible_nominal_total: U256,
     previous_nod_tribute_id: Option<B256>,
-    previous_contributor_key: Option<(Address, B256)>,
     observed_result_entries: Option<StreamingOrderedListRoot>,
     reloaded_result_entries: Option<StreamingOrderedListRoot>,
     stage: LysisResultCatalogStageV1,
@@ -204,7 +201,6 @@ impl<'a> ExactLysisResultCatalogCursorV1<'a> {
             summary_eligible_nominal_total: U256::ZERO,
             chunk_eligible_nominal_total: U256::ZERO,
             previous_nod_tribute_id: None,
-            previous_contributor_key: None,
             observed_result_entries: Some(StreamingOrderedListRoot::new(
                 ListKind::CompleteOutputManifest,
                 audit.plan().primary_work_unit_count,
@@ -319,8 +315,6 @@ impl<'a> ExactLysisResultCatalogCursorV1<'a> {
             || chunk.result_chunk_hash(self.audit.limits())? != entry.result_chunk_hash
             || u32::try_from(chunk.ordered_nod_actions.len()).ok()
                 != Some(pending.summary.nod_count)
-            || u32::try_from(chunk.ordered_eligible_contributors.len()).ok()
-                != Some(pending.summary.contributor_count)
         {
             return Err(
                 ProtocolError::InvalidInvariant("exact result chunk semantic binding").into(),
@@ -382,18 +376,6 @@ impl<'a> ExactLysisResultCatalogCursorV1<'a> {
                 );
             }
             self.previous_nod_tribute_id = Some(action.tribute_id);
-        }
-        for action in &chunk.ordered_eligible_contributors {
-            let key = (action.owner, action.source_tribute_id);
-            if self
-                .previous_contributor_key
-                .is_some_and(|previous| previous >= key)
-            {
-                return Err(
-                    ProtocolError::InvalidInvariant("global result contributor order").into(),
-                );
-            }
-            self.previous_contributor_key = Some(key);
         }
         Ok(())
     }
@@ -584,63 +566,18 @@ fn require_chunk_summary(
         .iter()
         .map(|action| action.encode_canonical_record(limits))
         .collect::<Result<Vec<_>, _>>()?;
-    let contributor_records = chunk
-        .ordered_eligible_contributors
-        .iter()
-        .map(|action| action.encode_canonical_record(limits))
-        .collect::<Result<Vec<_>, _>>()?;
     let nod_actions = LysisListSubtreeCarrierV1::from_primary_page(
         ListKind::NodActions,
         chunk_ordinal,
         &nod_records,
         limits.max_bounded_bytes,
     )?;
-    let contributor_actions = LysisListSubtreeCarrierV1::from_primary_page(
-        ListKind::ContributorActions,
-        chunk_ordinal,
-        &contributor_records,
-        limits.max_bounded_bytes,
-    )?;
-    let eligible_nominal_total = chunk.ordered_eligible_contributors.iter().try_fold(
-        alloy_primitives::U256::ZERO,
-        |total, action| {
-            total
-                .checked_add(action.nominal_amount_minor)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "result chunk eligible nominal total",
-                })
-        },
-    )?;
-    let lysis_allocation_minor = chunk.ordered_nod_actions.iter().try_fold(
-        alloy_primitives::U256::ZERO,
-        |total, action| {
-            total
-                .checked_add(action.gratis_load_minor)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "result chunk Nod Gratis total",
-                })
-        },
-    )?;
-    let nod_cost_total = chunk.ordered_nod_actions.iter().try_fold(
-        alloy_primitives::U256::ZERO,
-        |total, action| {
-            total
-                .checked_add(action.settlement_cost_minor)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "result chunk Nod cost total",
-                })
-        },
-    )?;
-    if summary.nod_actions != nod_actions
-        || summary.contributor_actions != contributor_actions
-        || summary.lysis_allocation_minor != lysis_allocation_minor
-        || summary.nod_cost_total != nod_cost_total
-    {
+    if summary.nod_actions != nod_actions {
         return Err(
             ProtocolError::InvalidInvariant("result chunk ROOT_REDUCE carrier binding").into(),
         );
     }
-    Ok(eligible_nominal_total)
+    Ok(summary.eligible_nominal_total)
 }
 
 #[derive(Debug, Error)]
