@@ -143,15 +143,16 @@ pub fn finalize_verified_lysis_v1(
     let buckets =
         authoritative_bucket_shuffle_records(audit.admissions(), reader, limits)?.map(|record| {
             match record {
-                Ok(VerifiedShuffleRecordV1::Bucket(bucket)) => Ok(bucket),
-                Ok(VerifiedShuffleRecordV1::Owner(_)) => Err(LysisFinalizationErrorV1::Authority(
-                    "BucketShuffle cursor record kind",
-                )),
+                Ok(record) => {
+                    let VerifiedShuffleRecordV1::Bucket(bucket) = record;
+                    Ok(bucket)
+                }
                 Err(_) => Err(LysisFinalizationErrorV1::Authority(
                     "cold-reloaded authoritative BucketShuffle cursor",
                 )),
             }
         });
+    let eligible_nominal_total = audit.eligible_nominal_total()?;
     let result = finalize_v1(
         VerifiedLysisFinalizationInputsV1 {
             finalized_job_id: summary.job_id,
@@ -162,6 +163,7 @@ pub fn finalize_verified_lysis_v1(
             unit_artifacts: units,
             result_chunks: chunks,
             bucket_records: buckets,
+            eligible_nominal_total,
         },
         limits,
     )?;

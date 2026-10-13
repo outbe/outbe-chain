@@ -119,7 +119,7 @@ impl LysisPlannerV1 {
         producer_unit_ids: &[B256],
         limits: &SchemaLimits,
     ) -> Result<UnitSpecV1, PlannerErrorV1> {
-        if !matches!(phase, UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle) {
+        if phase != UnitPhase::BucketShuffle {
             return Err(PlannerErrorV1::ProducerMembershipMismatch);
         }
         let topology = LysisPlanTopologyV1::new(self.primary_work_unit_count())?;
@@ -140,8 +140,6 @@ impl LysisPlannerV1 {
         }
         let purpose = if level == 0 {
             InputPurpose::FinalizedOutputRecords
-        } else if phase == UnitPhase::OwnerShuffle {
-            InputPurpose::OwnerOrderedRecords
         } else {
             InputPurpose::BucketOrderedRecords
         };
@@ -341,10 +339,6 @@ impl LysisPlannerV1 {
                 ..
             } => InputPurpose::FinalizedOutputRecords,
             PlannedUnitPositionV1::RunSpan {
-                phase: UnitPhase::OwnerShuffle,
-                ..
-            } => InputPurpose::OwnerOrderedRecords,
-            PlannedUnitPositionV1::RunSpan {
                 phase: UnitPhase::BucketShuffle,
                 ..
             } => InputPurpose::BucketOrderedRecords,
@@ -382,7 +376,7 @@ impl LysisPlannerV1 {
                 return Ok(shard.record_count());
             }
             PlannedUnitPositionV1::RunSpan {
-                phase: UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle,
+                phase: UnitPhase::BucketShuffle,
                 start_run,
                 end_run,
                 ..

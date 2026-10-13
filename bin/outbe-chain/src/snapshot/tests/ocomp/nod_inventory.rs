@@ -72,7 +72,6 @@ fn fixture(root: &Path, job_seed: u8, day: WorldwideDay, tribute_count: u32) -> 
     let job_id = hash(job_seed);
 
     let tributes = outbe_ocomp::test_support::tribute_population(day, tribute_count);
-    let contributors_by_owner = outbe_ocomp::test_support::contributor_population(&tributes);
     let nod_action_tributes = tributes.clone();
     let openings =
         outbe_ocomp::test_support::fixture_openings(&bundle, job_id, day, &tributes, &limits);
@@ -139,7 +138,6 @@ fn fixture(root: &Path, job_seed: u8, day: WorldwideDay, tribute_count: u32) -> 
         plan_hash,
         tributes: &tributes,
         nod_action_tributes: &nod_action_tributes,
-        contributors_by_owner: &contributors_by_owner,
         limits: &limits,
     };
 
@@ -308,7 +306,6 @@ struct RootPageInputs<'a> {
     plan_hash: B256,
     tributes: &'a [outbe_compressed_entities::TributeBodyV1],
     nod_action_tributes: &'a [outbe_compressed_entities::TributeBodyV1],
-    contributors_by_owner: &'a [outbe_ocomp_protocol::result::ContributorActionV1],
     limits: &'a outbe_ocomp_protocol::SchemaLimits,
 }
 fn root_page_artifact(
@@ -324,7 +321,6 @@ fn root_page_artifact(
         plan_hash,
         tributes,
         nod_action_tributes,
-        contributors_by_owner,
         limits,
     } = *inputs;
     let start = usize::try_from(index * 256).unwrap();
@@ -342,7 +338,6 @@ fn root_page_artifact(
             )
             .unwrap();
     }
-    let contributors = contributors_by_owner[start..end].to_vec();
     let chunk = ResultChunkV1 {
         protocol_bundle_hash: bundle_hash,
         job_id,
@@ -350,7 +345,6 @@ fn root_page_artifact(
         chunk_ordinal: index,
         first_nod_ordinal: u32::try_from(start).unwrap(),
         ordered_nod_actions: actions.clone(),
-        ordered_eligible_contributors: contributors.clone(),
     };
     let chunk_hash = chunk.result_chunk_hash(limits).unwrap();
     let mut chunk_ref = cas

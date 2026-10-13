@@ -5,9 +5,6 @@ use outbe_ocomp::{cas, control, input_artifacts, input_ref_catalog};
 #[path = "../src/test_support/snapshot.rs"]
 mod snapshot_test_support;
 
-#[path = "snapshot_readers/payout.rs"]
-mod payout;
-
 #[path = "snapshot_readers/receipt_listing.rs"]
 mod receipt_listing;
 

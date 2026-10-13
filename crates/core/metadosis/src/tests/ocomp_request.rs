@@ -228,8 +228,6 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         let nod_target = NodContract::new(storage.clone())
             .ocomp_target_projection(wwd)
             .unwrap();
-        let contributor_target =
-            outbe_intex::api::ocomp_contributor_target_projection(&storage, wwd).unwrap();
         assert_eq!(
             record
                 .intent
@@ -249,14 +247,6 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
                 .nod
                 .namespace_root_before,
             nod_target.namespace_root_before
-        );
-        assert_eq!(
-            record
-                .intent
-                .activation_preconditions
-                .contributors
-                .expected_series_version,
-            contributor_target.expected_series_version
         );
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
         assert_eq!(
@@ -990,36 +980,11 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
             .write(&fixture.wwd, fixture.block_number)
             .unwrap();
 
-        outbe_intex::api::create_series(
-            &storage,
-            outbe_intex::CreateSeriesParams {
-                series_id: outbe_intex::SeriesId::pack(fixture.wwd, *b"USD", b'U').unwrap(),
-                worldwide_day: fixture.wwd,
-                issued_units: 1,
-                promis_load_minor: 1,
-                entry_price_minor: U256::from(1),
-                floor_price_minor: U256::from(1),
-                call_price_minor: U256::from(1),
-                call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window_seconds: 24 * 60 * 60,
-                    call_threshold_seconds: 24 * 60 * 60,
-                    call_notice_period_seconds: 1,
-                },
-                issued_at: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
-            },
-        )
-        .unwrap();
-
         let expected_tribute = tribute.pre_admission_projection(fixture.wwd).unwrap();
         let expected_nod = nod.ocomp_target_projection(fixture.wwd).unwrap();
-        let expected_contributors =
-            outbe_intex::api::ocomp_contributor_target_projection(&storage, fixture.wwd).unwrap();
         assert_ne!(expected_tribute.source_generation, 0);
         assert_ne!(expected_nod.target_generation, 0);
         assert!(!expected_nod.namespace_root_before.is_zero());
-        assert_ne!(expected_contributors.expected_series_version, 0);
 
         let before_nod_supply = nod.total_supply().unwrap();
         let before_tribute_supply = tribute.total_supply().unwrap();
@@ -1067,14 +1032,6 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
                 .nod
                 .namespace_root_before,
             expected_nod.namespace_root_before
-        );
-        assert_eq!(
-            record
-                .intent
-                .activation_preconditions
-                .contributors
-                .expected_series_version,
-            expected_contributors.expected_series_version
         );
         assert!(metadosis
             .request_limit_receipt(fixture.wwd, &poc_schema_limits())

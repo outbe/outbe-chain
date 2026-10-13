@@ -5,7 +5,8 @@ use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
 
 use super::VwapAccumulator;
-use crate::constants::{MIN_WINDOW_COVERAGE, VWAP_HOUR_SECONDS};
+use crate::constants::VWAP_HOUR_SECONDS;
+use crate::coverage::{hour_spans, CoverageTally};
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
 use crate::state::hourly_vwap_cell;
@@ -14,7 +15,7 @@ use crate::window::VwapSnapshotId;
 impl OracleContract<'_> {
     /// VWAP over the snapshot's window once its cutoff has passed.
     ///
-    /// Coverage is judged three times by the share in [`MIN_WINDOW_COVERAGE`]:
+    /// Coverage is judged three times by the share in [`crate::constants::MIN_WINDOW_COVERAGE`]:
     /// - An hour counts only when the pair has at least that share of the tally
     ///   rounds the hour's blocks allowed.
     /// - At least that share of the window's hours must count. An hour without
@@ -72,52 +73,27 @@ impl OracleContract<'_> {
         start: u64,
         bounds: &[u64],
     ) -> Result<Option<U256>> {
-        let vote_period = self.config_vote_period.read()?.max(1);
-        let (numerator, denominator) = MIN_WINDOW_COVERAGE;
-        let covered = |actual: u64, possible: u64| {
-            actual.saturating_mul(denominator) >= possible.saturating_mul(numerator)
-        };
-        let last = bounds.len() - 1;
-        let window_end = bounds[last];
-        let hours = last as u64;
-        let mut window_first = None;
-        let mut counted_hours = 0u64;
-        let mut counted = 0u64;
+        let vote_period = self.config_vote_period.read()?;
+        let mut tally = CoverageTally::new(bounds, vote_period);
         let mut total = VwapAccumulator::default();
-        for (index, &first_block) in bounds[..last].iter().enumerate() {
-            if first_block == 0 {
-                continue; // no block in this hour, so no round and no snapshot
-            }
-            window_first.get_or_insert(first_block);
-            // The hour ends where the next hour with blocks begins.
-            let end_block = bounds[index + 1..]
-                .iter()
-                .copied()
-                .find(|block| *block != 0)
-                .unwrap_or(window_end);
-            let possible = end_block.saturating_sub(first_block) / vote_period;
-            let hour = start + index as u64 * VWAP_HOUR_SECONDS;
+        for span in hour_spans(bounds, vote_period) {
+            let hour = start + span.index as u64 * VWAP_HOUR_SECONDS;
             let mut sums = VwapAccumulator::default();
             let snapshots = self.add_hour(pair, hour, &mut sums)?;
-            if snapshots == 0 || !covered(snapshots, possible) {
-                continue;
+            if tally.record(span, snapshots) {
+                total.add(
+                    pair,
+                    sums.price_volume,
+                    sums.volume,
+                    "window sum accumulation",
+                    "window volume sum",
+                )?;
             }
-            counted_hours += 1;
-            counted = counted.saturating_add(snapshots);
-            total.add(
-                pair,
-                sums.price_volume,
-                sums.volume,
-                "window sum accumulation",
-                "window volume sum",
-            )?;
         }
-        let Some(window_first) = window_first else {
-            return Ok(None);
-        };
-        let possible = window_end.saturating_sub(window_first) / vote_period;
-        let enough = covered(counted_hours, hours) && covered(counted, possible);
-        Ok(enough.then(|| total.finish()).flatten())
+        Ok(tally
+            .verdict()
+            .filter(|verdict| verdict.covered())
+            .and_then(|_| total.finish()))
     }
 
     /// Adds one whole hour's sums to `total` and returns how many snapshots

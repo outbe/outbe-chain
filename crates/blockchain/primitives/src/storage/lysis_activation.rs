@@ -7,7 +7,6 @@ use crate::error::{PrecompileError, Result};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LysisActivationCursor {
     Nod,
-    Contributor,
     CarryOver,
     Tribute,
     Terminal,
@@ -18,7 +17,7 @@ enum LysisActivationCursor {
 ///
 /// This value has no public constructor, codec or clone implementation. Its
 /// invariant lifetime ties it to one [`StorageHandle::with_lysis_activation_frame`]
-/// closure, and its cursor can only advance through the four named owners and
+/// closure, and its cursor can only advance through the named owners and
 /// terminal receipt in the protocol order.
 ///
 /// [`StorageHandle::with_lysis_activation_frame`]: super::StorageHandle::with_lysis_activation_frame
@@ -45,16 +44,8 @@ impl<'frame> CertifiedLysisActivation<'frame> {
     pub fn authorize_nod_installation(&mut self) -> Result<()> {
         self.advance(
             LysisActivationCursor::Nod,
-            LysisActivationCursor::Contributor,
-            "Nod",
-        )
-    }
-
-    pub fn authorize_contributor_installation(&mut self) -> Result<()> {
-        self.advance(
-            LysisActivationCursor::Contributor,
             LysisActivationCursor::CarryOver,
-            "contributor",
+            "Nod",
         )
     }
 
@@ -116,10 +107,9 @@ mod tests {
     #[test]
     fn owner_cursor_is_fixed_and_one_shot() {
         let mut capability = CertifiedLysisActivation::new(B256::repeat_byte(1));
-        assert!(capability.authorize_contributor_installation().is_err());
+        assert!(capability.authorize_carry_over_credit().is_err());
         capability.authorize_nod_installation().unwrap();
         assert!(capability.authorize_nod_installation().is_err());
-        capability.authorize_contributor_installation().unwrap();
         capability.authorize_carry_over_credit().unwrap();
         capability.authorize_tribute_retirement().unwrap();
         capability.authorize_terminal_receipt().unwrap();

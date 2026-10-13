@@ -6,26 +6,17 @@
 //! Rust-to-Rust only. Thus the API needs no trusted-caller checks.
 //!
 //! The registry is a thin ledger. Its record validation is the `issued_at`
-//! existence sentinel. OCOMP activation installs the certified contributor root,
-//! and that root is the contributor authority. Series creation stays independent
-//! of it because activation may come before the auction completes. Other business
-//! validation (caps, defaults, zero economic parameters) belongs to the caller
-//! (IntexFactory).
+//! existence sentinel. Other business validation (caps, defaults, zero economic
+//! parameters) belongs to the caller (IntexFactory).
 
-use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::error::Result;
+use alloy_primitives::{Address, U256};
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 
 use crate::errors::IntexError;
-use crate::payout::{
-    encode_contributor_leaf, verify_contributor_leaf_range, ContributorLeafData,
-    CONTRIBUTOR_CHUNK_CAPACITY, CONTRIBUTOR_LEAF_BYTES,
-};
-use crate::schema::SeriesRecordEntryExt;
 use crate::schema::{
-    CertifiedContributorGenerationProjection, CertifiedPayoutRound, CreateSeriesParams,
-    IntexContract, IntexState, SeriesId, SeriesRecord,
+    CreateSeriesParams, IntexContract, IntexState, SeriesId, SeriesRecord, SeriesRecordEntryExt,
 };
 
 /// Qualification is derived from a finalized full-day observation, never stored.
@@ -37,19 +28,6 @@ pub fn is_qualified(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Resul
         series.floor_price_minor,
         first_full_day(u64::from(series.issued_at)),
     )
-}
-
-/// Immutable contributor target state consumed by OCOMP JobIntent assembly.
-///
-/// An absent series starts at version 0 and an existing series at version 1.
-/// A certified root installation advances that exact version once. The
-/// version is active output authority, not reservation state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct OcompContributorTargetProjection {
-    pub worldwide_day: u32,
-    pub expected_series_version: u64,
-    pub contributor_count: u32,
-    pub contributor_total: U256,
 }
 
 /// Create a new Intex series record. The record always starts in `Issued`.
@@ -377,170 +355,6 @@ pub fn series_exists(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
     IntexContract::new(storage.clone()).series_exists(series_id)
 }
 
-/// Reads the exact create-only contributor target state for one worldwide day.
-pub fn ocomp_contributor_target_projection(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-) -> Result<OcompContributorTargetProjection> {
-    let registry = IntexContract::new(storage.clone());
-    let base_version = u64::from(registry.day_has_series(worldwide_day)?);
-    let (expected_series_version, contributor_count, contributor_total) =
-        match registry.ocomp_certified_contributor_generation(worldwide_day)? {
-            Some(certified) => {
-                if certified.series_version < base_version {
-                    return Err(outbe_primitives::error::PrecompileError::Fatal(
-                        "Intex certified contributor version precedes the series ledger".into(),
-                    ));
-                }
-                (
-                    certified.series_version,
-                    certified.contributor_count,
-                    certified.eligible_nominal_total,
-                )
-            }
-            None => (base_version, 0, U256::ZERO),
-        };
-    Ok(OcompContributorTargetProjection {
-        worldwide_day: worldwide_day.value(),
-        expected_series_version,
-        contributor_count,
-        contributor_total,
-    })
-}
-
-/// Read the constant-size certified contributor proof authority for a WorldwideDay.
-pub fn certified_contributor_generation(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-) -> Result<Option<CertifiedContributorGenerationProjection>> {
-    IntexContract::new(storage.clone()).ocomp_certified_contributor_generation(worldwide_day)
-}
-
-// -------------------------------------------------------------------------
-// Creator-reward: certified payout round over the contributor root
-// -------------------------------------------------------------------------
-
-/// Reads the open payout round for a day, if any.
-pub fn certified_payout_round(
-    storage: &StorageHandle<'_>,
-    wwd: u32,
-) -> Result<Option<CertifiedPayoutRound>> {
-    IntexContract::new(storage.clone()).get_payout_round(wwd)
-}
-
-/// Opens the single payout round for a day with a frozen distribution amount.
-pub fn open_certified_payout_round(
-    storage: &StorageHandle<'_>,
-    wwd: u32,
-    amount: U256,
-) -> Result<()> {
-    let mut registry = IntexContract::new(storage.clone());
-    if registry.get_payout_round(wwd)?.is_some() {
-        return Err(IntexError::CertifiedRoundExists(wwd).into());
-    }
-    registry.create_payout_round(&CertifiedPayoutRound {
-        wwd,
-        amount,
-        paid_so_far: U256::ZERO,
-        paid_leaf_count: 0,
-        active: 1,
-    })
-}
-
-/// Rejects a batch whose leaves were already paid.
-///
-/// This is the cheapest possible gate: one word read. Thus a racing duplicate
-/// costs a single SLOAD instead of a full proof verification.
-pub fn require_certified_leaves_unpaid(
-    storage: &StorageHandle<'_>,
-    wwd: u32,
-    start_index: u32,
-    leaf_count: u32,
-) -> Result<()> {
-    let (word_index, mask) = leaf_mask(start_index, leaf_count)?;
-    let word = IntexContract::new(storage.clone()).read_paid_word(wwd, word_index)?;
-    if !(word & mask).is_zero() {
-        return Err(IntexError::ContributorLeavesAlreadyPaid(wwd).into());
-    }
-    Ok(())
-}
-
-/// Verifies one chunk-aligned batch against the day's certified contributor
-/// root and returns the authority its shares must be derived from.
-pub fn verify_certified_contributor_batch(
-    storage: &StorageHandle<'_>,
-    wwd: u32,
-    start_index: u32,
-    leaves: &[ContributorLeafData],
-    siblings: &[B256],
-) -> Result<CertifiedContributorGenerationProjection> {
-    let generation = certified_contributor_generation(storage, WorldwideDay::new(wwd))?.ok_or(
-        IntexError::BadContributorBatch("day has no certified contributor root"),
-    )?;
-    let encoded: Vec<[u8; CONTRIBUTOR_LEAF_BYTES]> =
-        leaves.iter().map(encode_contributor_leaf).collect();
-    verify_contributor_leaf_range(
-        generation.contributor_count,
-        start_index,
-        &encoded,
-        siblings,
-        generation.contributor_root,
-    )?;
-    Ok(generation)
-}
-
-/// Marks a verified batch paid and advances the round's counters.
-pub fn mark_certified_leaves_paid(
-    storage: &StorageHandle<'_>,
-    wwd: u32,
-    start_index: u32,
-    leaf_count: u32,
-    paid_amount: U256,
-) -> Result<()> {
-    let (word_index, mask) = leaf_mask(start_index, leaf_count)?;
-    let mut registry = IntexContract::new(storage.clone());
-    let word = registry.read_paid_word(wwd, word_index)?;
-    if !(word & mask).is_zero() {
-        return Err(IntexError::ContributorLeavesAlreadyPaid(wwd).into());
-    }
-    let mut round = registry
-        .get_payout_round(wwd)?
-        .ok_or(IntexError::BadContributorBatch("payout round is not open"))?;
-    round.paid_so_far = round
-        .paid_so_far
-        .checked_add(paid_amount)
-        .ok_or(IntexError::BadContributorBatch("paid amount overflow"))?;
-    round.paid_leaf_count = round
-        .paid_leaf_count
-        .checked_add(leaf_count)
-        .ok_or(IntexError::BadContributorBatch("paid leaf count overflow"))?;
-    registry.write_paid_word(wwd, word_index, word | mask)?;
-    registry.update_payout_round(&round)
-}
-
-/// Reads one 256-leaf word of the paid bitmap.
-pub fn paid_leaves_word(storage: &StorageHandle<'_>, wwd: u32, word_index: u32) -> Result<U256> {
-    IntexContract::new(storage.clone()).read_paid_word(wwd, word_index)
-}
-
-/// Locates a chunk-aligned batch in the paid bitmap: one word, `leaf_count` low bits.
-fn leaf_mask(start_index: u32, leaf_count: u32) -> Result<(u32, U256)> {
-    if leaf_count == 0 || leaf_count > CONTRIBUTOR_CHUNK_CAPACITY {
-        return Err(IntexError::BadContributorBatch("batch leaf count out of range").into());
-    }
-    if !start_index.is_multiple_of(CONTRIBUTOR_CHUNK_CAPACITY) {
-        return Err(IntexError::BadContributorBatch("batch start is not chunk-aligned").into());
-    }
-    let word_index = start_index / CONTRIBUTOR_CHUNK_CAPACITY;
-    // A full chunk fills the word; `1 << 256` does not fit U256.
-    let mask = if leaf_count == CONTRIBUTOR_CHUNK_CAPACITY {
-        U256::MAX
-    } else {
-        (U256::from(1u8) << (leaf_count as usize)) - U256::from(1u8)
-    };
-    Ok((word_index, mask))
-}
-
 /// Number of series ever created (for dense enumeration).
 pub fn total_series(storage: &StorageHandle<'_>) -> Result<u64> {
     IntexContract::new(storage.clone()).read_total_series()
@@ -552,7 +366,7 @@ pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<SeriesId>
 }
 
 // -------------------------------------------------------------------------
-// Creator-reward: multi-chain proceeds fan-in aggregation
+// Proceeds fan-in across the day's winning chains
 // -------------------------------------------------------------------------
 
 /// Arm proceeds fan-in for a day:
@@ -561,13 +375,22 @@ pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<SeriesId>
 /// - enroll the day in the awaiting-proceeds set.
 ///
 /// A day may issue several series, so the expected set accumulates into their union.
+/// A finalized day (`u64::MAX`) stays finalized. `u64::MAX` is not a valid arm deadline.
 pub fn arm_proceeds(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     winning_chains: &[u32],
     deadline: u64,
 ) -> Result<()> {
+    if deadline == u64::MAX {
+        return Err(PrecompileError::Revert(
+            "proceeds deadline cannot be the finalized marker".into(),
+        ));
+    }
     let mut registry = IntexContract::new(storage.clone());
+    if registry.proceeds_deadline.read(&worldwide_day)? == u64::MAX {
+        return Ok(());
+    }
     let mut expected: u32 = 0;
     for &chain in winning_chains {
         let key = IntexContract::proceeds_chain_key(worldwide_day, chain);
@@ -618,7 +441,8 @@ pub fn proceeds_ready(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) 
     Ok(expected > 0 && registry.proceeds_arrived_count.read(&worldwide_day)? == expected)
 }
 
-/// Fan-in deadline for a WorldwideDay (0 if never armed).
+/// Fan-in deadline for a WorldwideDay.
+/// `0` means never armed. `u64::MAX` means finalized.
 pub fn proceeds_deadline(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<u64> {
     IntexContract::new(storage.clone())
         .proceeds_deadline
@@ -633,12 +457,13 @@ pub fn take_proceeds_pot(storage: &StorageHandle<'_>, worldwide_day: WorldwideDa
     Ok(pot)
 }
 
-/// Finalize proceeds aggregation for a WorldwideDay across all its series.
+/// Finalize proceeds aggregation for a WorldwideDay.
+/// `proceeds_deadline` becomes `u64::MAX`, so a later credit burns as late.
 /// The per-(day, chain) flags remain harmless dead entries because a WorldwideDay never recurs.
 pub fn finalize_proceeds(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     registry.proceeds_pot.clear(&worldwide_day)?;
-    registry.proceeds_deadline.clear(&worldwide_day)?;
+    registry.proceeds_deadline.write(&worldwide_day, u64::MAX)?;
     registry.proceeds_expected_count.clear(&worldwide_day)?;
     registry.proceeds_arrived_count.clear(&worldwide_day)?;
     registry.remove_awaiting_proceeds(worldwide_day)

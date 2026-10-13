@@ -1,56 +1,6 @@
 //! frames obligations for the offline OCOMP audit.
 use super::*;
 
-/// Counts from a complete native payout bitmap, including non-prefix payments.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct BitmapAudit {
-    pub words: u64,
-    pub paid: u64,
-    pub unpaid: u64,
-}
-
-pub(crate) fn verify_paid_bitmap(
-    contributor_count: u32,
-    paid_leaf_count: u32,
-    maximum_words: Option<u64>,
-    mut read_word: impl FnMut(u32) -> eyre::Result<U256>,
-) -> eyre::Result<BitmapAudit> {
-    ensure!(
-        paid_leaf_count <= contributor_count,
-        "paid leaf count exceeds certified count"
-    );
-    let words = u64::from(contributor_count).div_ceil(256);
-    let mut paid = 0_u64;
-    for index in 0..words {
-        if maximum_words.is_some_and(|maximum| index >= maximum) {
-            return Err(Incomplete(format!(
-                "payout bitmap scan stopped at {index}/{words} words"
-            ))
-            .into());
-        }
-        let word = read_word(u32::try_from(index)?)?;
-        let bits = (u64::from(contributor_count) - index * 256).min(256);
-        if bits < 256 {
-            ensure!(
-                (word >> bits).is_zero(),
-                "paid bitmap contains bits above certified contributor count"
-            );
-        }
-        paid = paid
-            .checked_add(word.count_ones() as u64)
-            .ok_or_else(|| eyre::eyre!("paid bitmap count overflow"))?;
-    }
-    ensure!(
-        paid == u64::from(paid_leaf_count),
-        "paid bitmap popcount differs from paid leaf count"
-    );
-    Ok(BitmapAudit {
-        words,
-        paid,
-        unpaid: u64::from(contributor_count) - paid,
-    })
-}
-
 /// Native SeriesId::worldwide_day is intentionally permissive. Validate its
 /// stored spelling and date before using it to discover canonical obligations.
 pub(crate) fn verify_series_day(id: SeriesId) -> eyre::Result<WorldwideDay> {

@@ -50,14 +50,14 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
                     owner,
                     worldwide_day: day,
                     issuance_currency: 978,
-                    nominal_amount_minor: U256::from(1_000_000_u64) * SIX_DECIMAL_SCALE,
+                    nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E6_U256,
                     reference_currency: 840,
                     tribute_price_minor: U256::ZERO,
                     exclude_from_intex_issuance: ordinal.is_multiple_of(11),
                 },
                 first_league: ObservationValueV1::Value(league),
                 second_league: ObservationValueV1::Value(league),
-                entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
+                entry_price_minor: ObservationValueV1::Value(SCALE_1E6_U256),
                 nod_target_available: true,
             }
         })
@@ -105,14 +105,14 @@ fn fidelity_phase_rejects_missing_mismatched_and_non_adjacent_evidence() {
             owner,
             worldwide_day: day,
             issuance_currency: 978,
-            nominal_amount_minor: SIX_DECIMAL_SCALE,
+            nominal_amount_minor: SCALE_1E6_U256,
             reference_currency: 840,
             tribute_price_minor: U256::ZERO,
             exclude_from_intex_issuance: false,
         },
         first_league: ObservationValueV1::Unavailable,
         second_league: ObservationValueV1::Value(7),
-        entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
+        entry_price_minor: ObservationValueV1::Value(SCALE_1E6_U256),
         nod_target_available: true,
     };
     assert!(fidelity_map(0, &[observed.clone()]).is_err());
@@ -159,12 +159,13 @@ fn dust_cost_matches_between_worker_sequential_lysis_and_nod_settlement() {
     let amount = amount_map(0, &tributes, &fidelity.observations, &fractions).unwrap();
     let limits = poc_schema_limits();
     let amount = decode_amount_run(&encode_amount_run(&amount, &limits).unwrap(), &limits).unwrap();
-    let loads = amount
-        .ordered_records
-        .iter()
-        .map(|record| record.gratis_load_minor)
-        .collect::<Vec<_>>();
-    let prefix = finalize_gratis_leaf(Some(budget), 0, &loads).unwrap();
+    let prefix = finalize_gratis_leaf(
+        Some(budget),
+        amount.start_ordinal,
+        amount.ordered_records.len(),
+        amount.checked_segment_gratis_total,
+    )
+    .unwrap();
     let finalized = output_finalize(&amount, &prefix).unwrap();
     let finalized = decode_finalized_output_run(
         &encode_finalized_output_run(&finalized, &limits).unwrap(),
@@ -180,18 +181,14 @@ fn dust_cost_matches_between_worker_sequential_lysis_and_nod_settlement() {
     assert_eq!(sequential.remaining_lysis_limit_minor, U256::ZERO);
     assert_eq!(prefix.outgoing_remaining, U256::ZERO);
     assert_eq!(amount.checked_segment_gratis_total, budget);
-    for (action, tribute) in actions.iter().zip(&tributes) {
-        assert_eq!(
-            action.gratis_load_minor,
-            tribute.tribute.nominal_amount_minor
-        );
+    for action in &actions {
         assert_eq!(action.entry_price_minor, entry_price);
-        assert_eq!(action.settlement_cost_minor, U256::from(1));
-        assert_eq!(
-            action.settlement_cost_minor,
-            outbe_nod::api::settlement_cost_minor(entry_price, action.gratis_load_minor).unwrap()
-        );
     }
+    assert_eq!(amount.checked_segment_nominal_total, budget);
+    assert_eq!(
+        amount.checked_segment_settlement_cost_total,
+        U256::from(u64::try_from(amount.ordered_records.len()).unwrap())
+    );
 }
 
 #[test]
@@ -213,14 +210,14 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
                     owner,
                     worldwide_day: day,
                     issuance_currency: 978,
-                    nominal_amount_minor: U256::from(1_000_000_u64) * SIX_DECIMAL_SCALE,
+                    nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E6_U256,
                     reference_currency: 840,
-                    tribute_price_minor: U256::from(2_u8) * SIX_DECIMAL_SCALE,
+                    tribute_price_minor: U256::from(2_u8) * SCALE_1E6_U256,
                     exclude_from_intex_issuance: ordinal.is_multiple_of(11),
                 },
                 first_league: ObservationValueV1::Value(league),
                 second_league: ObservationValueV1::Value(league),
-                entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
+                entry_price_minor: ObservationValueV1::Value(SCALE_1E6_U256),
                 nod_target_available: true,
             }
         })
@@ -249,13 +246,6 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     assert!(fractions
         .windows(2)
         .all(|pair| pair[0].fraction < pair[1].fraction));
-    let loads = sequential
-        .nod_actions
-        .iter()
-        .map(|action| (action.league_id, action.gratis_load_minor))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    assert!(loads[&1] < loads[&2048]);
-    assert!(loads[&2048] < loads[&4096]);
     let amount_left =
         amount_map(0, &tributes[..256], &fidelity_left.observations, &fractions).unwrap();
     let amount_right = amount_map(
@@ -276,21 +266,15 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     assert!(decode_amount_run(&trailing_amount, &limits).is_err());
 
     let left_summary = gratis_summary(
-        0,
-        &amount_left
-            .ordered_records
-            .iter()
-            .map(|record| record.gratis_load_minor)
-            .collect::<Vec<_>>(),
+        amount_left.start_ordinal,
+        amount_left.ordered_records.len(),
+        amount_left.checked_segment_gratis_total,
     )
     .unwrap();
     let right_summary = gratis_summary(
-        256,
-        &amount_right
-            .ordered_records
-            .iter()
-            .map(|record| record.gratis_load_minor)
-            .collect::<Vec<_>>(),
+        amount_right.start_ordinal,
+        amount_right.ordered_records.len(),
+        amount_right.checked_segment_gratis_total,
     )
     .unwrap();
     let prefixes = gratis_prefix_down(
@@ -301,41 +285,27 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     .unwrap();
     let left_prefix = finalize_gratis_leaf(
         prefixes[0].as_ref().unwrap().incoming_remaining,
-        0,
-        &amount_left
-            .ordered_records
-            .iter()
-            .map(|record| record.gratis_load_minor)
-            .collect::<Vec<_>>(),
+        amount_left.start_ordinal,
+        amount_left.ordered_records.len(),
+        amount_left.checked_segment_gratis_total,
     )
     .unwrap();
     let right_prefix = finalize_gratis_leaf(
         prefixes[1].as_ref().unwrap().incoming_remaining,
-        256,
-        &amount_right
-            .ordered_records
-            .iter()
-            .map(|record| record.gratis_load_minor)
-            .collect::<Vec<_>>(),
+        amount_right.start_ordinal,
+        amount_right.ordered_records.len(),
+        amount_right.checked_segment_gratis_total,
     )
     .unwrap();
     let finalized_left = output_finalize(&amount_left, &left_prefix).unwrap();
     let finalized_right = output_finalize(&amount_right, &right_prefix).unwrap();
     assert_eq!(
         finalized_left.checked_tribute_nominal_total,
-        amount_left
-            .ordered_records
-            .iter()
-            .map(|record| record.nominal_amount_minor)
-            .sum::<U256>()
+        amount_left.checked_segment_nominal_total
     );
     assert_eq!(
         finalized_right.checked_tribute_nominal_total,
-        amount_right
-            .ordered_records
-            .iter()
-            .map(|record| record.nominal_amount_minor)
-            .sum::<U256>()
+        amount_right.checked_segment_nominal_total
     );
     assert_eq!(
         finalized_left
@@ -366,50 +336,25 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
             .collect::<Vec<_>>(),
         sequential.nod_actions
     );
-    let mut contributors = records
+    let eligible_nominal = tributes
         .iter()
-        .filter_map(|record| record.contributor_action.clone())
-        .collect::<Vec<_>>();
-    contributors.sort_by_key(|action| action.owner);
+        .filter(|observed| !observed.tribute.exclude_from_intex_issuance)
+        .map(|observed| observed.tribute.nominal_amount_minor)
+        .sum::<U256>();
     assert_eq!(
-        contributors
-            .iter()
-            .map(|action| (action.owner, action.nominal_amount_minor))
-            .collect::<Vec<_>>(),
-        sequential
-            .contributors
-            .iter()
-            .map(|action| (action.owner, action.nominal_amount_minor))
-            .collect::<Vec<_>>()
+        finalized_left
+            .checked_eligible_nominal_total
+            .checked_add(finalized_right.checked_eligible_nominal_total)
+            .unwrap(),
+        eligible_nominal
     );
     assert_eq!(
         right_prefix.outgoing_remaining,
         sequential.remaining_lysis_limit_minor
     );
 
-    let owner_left = shuffle_owners(&finalized_left).unwrap();
-    let owner_right = shuffle_owners(&finalized_right).unwrap();
-    let mut owner_records = owner_left
-        .ordered_contributors
-        .iter()
-        .chain(&owner_right.ordered_contributors)
-        .collect::<Vec<_>>();
-    owner_records.sort_by_key(|action| (action.owner, action.source_tribute_id));
-    assert_eq!(
-        owner_records
-            .iter()
-            .map(|action| (action.owner, action.nominal_amount_minor))
-            .collect::<Vec<_>>(),
-        sequential
-            .contributors
-            .iter()
-            .map(|action| (action.owner, action.nominal_amount_minor))
-            .collect::<Vec<_>>()
-    );
-
     let bucket_left = shuffle_buckets(&finalized_left).unwrap();
     let bucket_right = shuffle_buckets(&finalized_right).unwrap();
-    assert!(owner_left.ordered_contributors.len() <= 256);
     assert!(bucket_left.ordered_records.len() <= 256);
     let mut bucket_ordinals = bucket_left
         .ordered_records
@@ -419,41 +364,6 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         .collect::<Vec<_>>();
     bucket_ordinals.sort_unstable();
     assert_eq!(bucket_ordinals, (0..257_u32).collect::<Vec<_>>());
-
-    let mut owner_chunk_sizes = Vec::new();
-    let mut previous_merged_owner = None;
-    let owner_summary = merge_owner_runs_streaming(
-        CanonicalRunV1 {
-            span: CanonicalRunSpanV1 {
-                start_run: 0,
-                end_run: 1,
-            },
-            records: owner_left.ordered_contributors.clone(),
-        },
-        CanonicalRunV1 {
-            span: CanonicalRunSpanV1 {
-                start_run: 1,
-                end_run: 2,
-            },
-            records: owner_right.ordered_contributors.clone(),
-        },
-        64,
-        |_, chunk| {
-            owner_chunk_sizes.push(chunk.len());
-            for action in chunk {
-                assert!(previous_merged_owner.is_none_or(|owner| owner < action.owner));
-                previous_merged_owner = Some(action.owner);
-            }
-            Ok::<_, ()>(())
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        owner_summary.record_count as usize,
-        sequential.contributors.len()
-    );
-    assert!(owner_chunk_sizes.iter().all(|count| *count <= 64));
-    assert_eq!(owner_summary.chunk_count as usize, owner_chunk_sizes.len());
 
     let mut bucket_chunk_sizes = Vec::new();
     let mut previous_bucket_key = None;
@@ -505,52 +415,10 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         |_, _| Ok::<_, ()>(()),
     )
     .is_err());
-    assert!(matches!(
-        merge_owner_runs_streaming(
-            CanonicalRunV1 {
-                span: CanonicalRunSpanV1 {
-                    start_run: 0,
-                    end_run: 1,
-                },
-                records: owner_left.ordered_contributors,
-            },
-            CanonicalRunV1 {
-                span: CanonicalRunSpanV1 {
-                    start_run: 1,
-                    end_run: 2,
-                },
-                records: owner_right.ordered_contributors,
-            },
-            64,
-            |_, _| Err::<(), _>("persist failed"),
-        ),
-        Err(StreamingMergeErrorV1::Sink("persist failed"))
-    ));
 
     let mut wrong_coverage = finalized_left.clone();
     wrong_coverage.ordered_records[0].raw_ordinal = 1;
-    assert!(shuffle_owners(&wrong_coverage).is_err());
     assert!(shuffle_buckets(&wrong_coverage).is_err());
-
-    let mut duplicate_owner = finalized_left.clone();
-    let eligible_indices = duplicate_owner
-        .ordered_records
-        .iter()
-        .enumerate()
-        .filter_map(|(index, record)| record.contributor_action.as_ref().map(|_| index))
-        .take(2)
-        .collect::<Vec<_>>();
-    let first_owner = duplicate_owner.ordered_records[eligible_indices[0]]
-        .contributor_action
-        .as_ref()
-        .unwrap()
-        .owner;
-    duplicate_owner.ordered_records[eligible_indices[1]]
-        .contributor_action
-        .as_mut()
-        .unwrap()
-        .owner = first_owner;
-    assert!(shuffle_owners(&duplicate_owner).is_err());
 
     let mut wrong_fidelity_leaf = fidelity_left.observations;
     wrong_fidelity_leaf[0].tribute_id = tributes[256].tribute.tribute_id;
@@ -576,11 +444,8 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
             owner,
             worldwide_day: day,
             league_id: 7,
-            nominal_amount_minor: U256::ZERO,
-            gratis_fraction_fp: SIX_DECIMAL_SCALE,
-            gratis_load_minor: U256::from(1),
-            entry_price_minor: SIX_DECIMAL_SCALE,
-            settlement_cost_minor: U256::from(1),
+            gratis_fraction_fp: SCALE_1E6_U256,
+            entry_price_minor: SCALE_1E6_U256,
             issuance_currency: 840,
             reference_currency: 978,
             exclude_from_intex_issuance: true,
@@ -591,13 +456,16 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
         ordered_records.sort_by_key(|record| record.tribute_id);
         for (ordinal, record) in ordered_records.iter_mut().enumerate() {
             record.raw_ordinal = u32::try_from(ordinal).unwrap();
-            record.nominal_amount_minor = nominals[ordinal];
         }
+        let nominal_total = nominals[0].saturating_add(nominals[1]);
         AmountRunV1 {
             start_ordinal: 0,
             end_ordinal: 2,
             ordered_records,
             checked_segment_gratis_total: U256::from(2),
+            checked_segment_nominal_total: nominal_total,
+            checked_segment_eligible_nominal_total: U256::ZERO,
+            checked_segment_settlement_cost_total: U256::from(2),
         }
     };
     let prefix = GratisLeafPrefixV1 {
@@ -609,19 +477,11 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
 
     let finalized = output_finalize(&run([U256::from(7), U256::from(11)]), &prefix).unwrap();
     assert_eq!(finalized.checked_tribute_nominal_total, U256::from(18));
-    assert!(finalized
-        .ordered_records
-        .iter()
-        .all(|record| record.contributor_action.is_none()));
+    assert_eq!(finalized.checked_eligible_nominal_total, U256::ZERO);
     let limits = poc_schema_limits();
     let encoded = encode_finalized_output_run(&finalized, &limits).unwrap();
     assert_eq!(
         decode_finalized_output_run(&encoded, &limits).unwrap(),
         finalized
     );
-
-    assert!(matches!(
-        output_finalize(&run([U256::MAX, U256::from(1)]), &prefix),
-        Err(ProgramErrorV1::TotalNominalOverflow { ordinal: 1 })
-    ));
 }

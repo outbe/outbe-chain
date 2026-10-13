@@ -7,7 +7,6 @@ pub(super) struct PendingScenario {
     own_evm_key: Vec<u8>,
     own_result_key: Vec<u8>,
     pub(super) fixture: Fixture,
-    leaves: Vec<[u8; CONTRIBUTOR_LEAF_BYTES]>,
     pub(super) closed: ProjectionCheckpoint,
     day: u32,
 }
@@ -29,8 +28,7 @@ pub(super) fn prepare(receiver: &Path) -> PendingScenario {
     let h = signed_frames(&donor_chain, 0, H, &signer)[H as usize];
     let day = outbe_primitives::time::worldwide_day_from_timestamp(H);
     let f = fixture(&donor_public, 0x71, WorldwideDay::from(day), 257);
-    let leaves = artifact(&donor_public, &f);
-    seed_native(&donor_chain, &f, signer.address(), &leaves);
+    seed_native(&donor_chain, &f, signer.address());
     let mut donor_runtime = copied_native::runtime(
         copied_native::provider(&donor_chain),
         &donor_public,
@@ -70,7 +68,6 @@ pub(super) fn prepare(receiver: &Path) -> PendingScenario {
         own_evm_key,
         own_result_key,
         fixture: f,
-        leaves,
         closed: h,
         day,
     }
@@ -110,7 +107,6 @@ pub(super) async fn drive_eligible_frames<P>(
                 // Actual effect entrypoints, including finalized proposer
                 // recovery, native role resolution, and detached workers.
                 resumed.reconcile_materialization(frame).unwrap();
-                resumed.drive_payout(frame.block().header.timestamp());
             }
         }
         resumed.flush_closure_checkpoint().unwrap();
@@ -129,7 +125,6 @@ impl PendingScenario {
         let f = &self.fixture;
         let h = self.closed;
         let signer = &self.signer;
-        let leaves = &self.leaves;
         let head = read_native_pending_head(&copied_native::provider(chain_root));
         assert_eq!(head.next_nod_ordinal, 256);
         assert_eq!(head.nod_count, 257);
@@ -143,17 +138,13 @@ impl PendingScenario {
             &poc_schema_limits(),
         )
         .unwrap();
-        let expected_pay = expected_payout(f, leaves);
-        let active = scripted_active(f, leaves);
-        let replies = native_payout_replies(chain_root, f, active.clone());
+        let active = scripted_active(f);
+        let replies = scripted_active_replies(f, active.clone());
         let rpc = ScriptedRpc::start(
             h,
             signer.address(),
             replies.clone(),
-            BTreeMap::from([
-                (NOD_FACTORY_ADDRESS, expected_nod),
-                (INTEX_FACTORY_ADDRESS, expected_pay),
-            ]),
+            BTreeMap::from([(NOD_FACTORY_ADDRESS, expected_nod)]),
         );
         ScenarioRpc {
             rpc,
@@ -182,13 +173,9 @@ impl PendingScenario {
         quiet.refresh_jobs(H, h.block_hash, true).await.unwrap();
         quiet.flush_closure_checkpoint().unwrap();
         assert_eq!(quiet.closure_checkpoint.current().unwrap(), h);
-        assert!(quiet.materialization_active.is_none() && !quiet.payout_active);
+        assert!(quiet.materialization_active.is_none());
         assert!(matches!(
             quiet.materialization_rx.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Empty)
-        ));
-        assert!(matches!(
-            quiet.payout_rx.try_recv(),
             Err(std::sync::mpsc::TryRecvError::Empty)
         ));
         rpc.assert_quiet();
@@ -215,9 +202,8 @@ impl PendingScenario {
             outbe_primitives::time::worldwide_day_from_timestamp(k_height),
             day
         );
-        // Native state remains unchanged in these non-executed frame fixtures.
-        // Assert the RPC table still matches copied native round/paid authority.
-        assert_eq!(native_payout_replies(chain_root, f, active), replies);
+        // Native frames are not executed. The scripted active-generation reply stays put.
+        assert_eq!(scripted_active_replies(f, active), replies);
         *rpc.point.lock().unwrap() = k;
         k
     }
@@ -238,17 +224,12 @@ impl PendingScenario {
             + 'static,
     {
         let f = &self.fixture;
-        let day = self.day;
-        assert!(resumed.materialization_active.is_some() && resumed.payout_active);
-        // Drop the originals: after each result, Disconnected proves the
+        assert!(resumed.materialization_active.is_some());
+        // Drop the original: after the result, Disconnected proves the
         // producer released its channel. The isolated process bounds a
         // worker stuck before that point. No worker join API is invented.
         drop(std::mem::replace(
             &mut resumed.materialization_tx,
-            std::sync::mpsc::channel().0,
-        ));
-        drop(std::mem::replace(
-            &mut resumed.payout_tx,
             std::sync::mpsc::channel().0,
         ));
         let nod = resumed
@@ -278,30 +259,9 @@ impl PendingScenario {
                 .recv_timeout(Duration::from_secs(2)),
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
         ));
-        let payout = resumed
-            .payout_rx
-            .recv_timeout(Duration::from_secs(45))
-            .expect("actual payout result");
-        assert!(
-            matches!(&payout, EmbeddedPayoutOutcomeV1::Ticked(PayoutTickOutcomeV1::Finalized { worldwide_day, start_index: 0, success: false }) if *worldwide_day == day),
-            "actual payout did not finalize: {payout:?}"
-        );
-        resumed.handle_payout(payout);
-        assert!(matches!(
-            resumed.payout_rx.recv_timeout(Duration::from_secs(2)),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
-        ));
-        assert!(resumed.materialization_active.is_none() && !resumed.payout_active);
+        assert!(resumed.materialization_active.is_none());
         let evidence = rpc.evidence.lock().unwrap();
-        assert_eq!(evidence.sent.len(), 2);
-        // These early Unix-time frames map to the first supported
-        // day. Earlier candidate dates clamp to that same day, and
-        // the submitter stops at its first unpaid round.
-        assert_eq!(
-            evidence.round_days,
-            vec![day],
-            "the copied current unpaid round must be selected"
-        );
+        assert_eq!(evidence.sent.len(), 1);
     }
     pub(super) fn assert_fullnode_results<P>(
         &self,
@@ -309,13 +269,9 @@ impl PendingScenario {
         rpc: &ScriptedRpc,
     ) {
         let public = &self.public;
-        assert!(resumed.materialization_active.is_none() && !resumed.payout_active);
+        assert!(resumed.materialization_active.is_none());
         assert!(matches!(
             resumed.materialization_rx.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Empty)
-        ));
-        assert!(matches!(
-            resumed.payout_rx.try_recv(),
             Err(std::sync::mpsc::TryRecvError::Empty)
         ));
         rpc.assert_quiet();

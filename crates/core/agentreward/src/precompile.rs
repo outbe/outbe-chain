@@ -55,7 +55,8 @@ pub fn dispatch_with_readers(
 }
 
 impl AgentRewardContract<'_> {
-    #[allow(clippy::too_many_arguments)] // ABI fields plus explicit CE read context.
+    // Claim ABI arguments are accompanied by the caller and block-scoped readers.
+    #[allow(clippy::too_many_arguments)]
     fn abi_claim_reward(
         &mut self,
         scope: &outbe_compressed_entities::ExecutionScope,

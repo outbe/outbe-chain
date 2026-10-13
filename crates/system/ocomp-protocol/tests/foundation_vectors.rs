@@ -470,10 +470,6 @@ fn ordered_list_commits_kind_count_position_and_value() {
     let base = ordered_list_root(ListKind::NodActions, &[b"a", b"b"], LIST_LIMITS).unwrap();
     assert_ne!(
         base,
-        ordered_list_root(ListKind::ContributorActions, &[b"a", b"b"], LIST_LIMITS).unwrap()
-    );
-    assert_ne!(
-        base,
         ordered_list_root(ListKind::NodActions, &[b"b", b"a"], LIST_LIMITS).unwrap()
     );
     assert_ne!(

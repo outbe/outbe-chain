@@ -138,6 +138,10 @@ fn dex_config(market: DexMarketConfig, endpoint: String) -> DexProviderConfig {
         log_chunk_blocks: 2_000,
         confirmations: 0,
         max_block_age_secs: 1800,
+        quote: market.quote.clone(),
+        base_token: market.base_token,
+        quote_token: market.quote_token,
+        pool: market.pool.clone(),
         markets: vec![market],
     }
 }
@@ -579,10 +583,6 @@ async fn dex_ticker_flows_through_existing_feeder_as_coen_usd() {
         [[currency_pairs]]
         base = "COEN"
         quote = "840"
-        [[currency_pairs.sources]]
-        provider = "uniswap"
-        base = "COEN"
-        quote = "USDC"
     "#,
     )
     .unwrap();
@@ -594,13 +594,7 @@ async fn dex_ticker_flows_through_existing_feeder_as_coen_usd() {
         pancake.fixture.market.clone(),
         pancake.inner.endpoint.clone(),
     ));
-    config.currency_pairs[0]
-        .sources
-        .push(crate::config::CurrencyPairSource {
-            provider: "pancakeswap".into(),
-            base: "COEN".into(),
-            quote: "USDT".into(),
-        });
+    config.resolve_sources().unwrap();
     config.validate().unwrap();
     let providers = crate::provider::create_providers(&config).unwrap();
     let pairs = [

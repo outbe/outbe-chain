@@ -176,13 +176,32 @@ fn a_chains_series_travel_together_up_to_the_message_caps() {
     );
 }
 
-/// The codec enforces this same number on both encode and decode (`BridgeMsgCodec.sol`).
-/// Nothing links the two languages, so the value is pinned here: changing it must be a
-/// deliberate act.
 #[test]
-fn the_recipient_cap_matches_the_wire() {
-    assert_eq!(MAX_RECIPIENTS_PER_ISSUANCE, 24);
-    assert_eq!(MAX_SERIES_PER_MESSAGE, 8);
+fn the_message_caps_match_the_codec() {
+    use crate::constants::{MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MARK, MAX_VWAP_ROWS};
+    use outbe_primitives::test_utils::sol_interface::sol_constant;
+    const CODEC: &str =
+        include_str!("../../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
+    assert_eq!(
+        sol_constant(CODEC, "MAX_RECIPIENTS_PER_ISSUANCE"),
+        Some(MAX_RECIPIENTS_PER_ISSUANCE)
+    );
+    assert_eq!(
+        sol_constant(CODEC, "MAX_SERIES_PER_ISSUANCE"),
+        Some(MAX_SERIES_PER_MESSAGE)
+    );
+    assert_eq!(
+        sol_constant(CODEC, "MAX_SERIES_PER_MARK"),
+        Some(MAX_SERIES_PER_MARK)
+    );
+    assert_eq!(
+        sol_constant(CODEC, "MAX_REFERENCE_PRICES"),
+        Some(MAX_VWAP_ROWS)
+    );
+    assert_eq!(
+        sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
+        Some(MAX_RECIPIENTS_PER_MESSAGE)
+    );
 }
 
 #[test]

@@ -12,7 +12,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-001
   # OCOMP-TEST-ID: OCM-PUB-004
   # PFS-TEST-ID: PFS-011-01
-  Scenario: A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout
+  Scenario: A public Tribute completes real OCOMP, FullNode verification, NOD, and replay
     Given a fresh four-validator Metadosis capacity localnet at FORMING with a 600-block OCOMP vote window
     Then the fresh capacity day is created in FORMING by finalized block 1
     And the controlled COEN USD quote is finalized through the real price feeder
@@ -55,10 +55,6 @@ Feature: Off-chain computation and Metadosis
     And the original Nod entry-price snapshot survives Oracle updates and restart
     When a late follower replays the finalized OCOMP request and quorum blocks
     Then runtime traces prove proposal import and historical replay without on-chain calculation
-    And the certified contributor authority for that day is identical on every validator
-    And that day has no open contributor payout round before proceeds arrive
-    When the day's auction proceeds arrive from one chain
-    Then every certified contributor is paid their share
     And the public Tribute owner settles its Nod and redeems its exact Gratis into COEN
     When the offer execution UTC day reaches its next ProtocolCycle settlement
     Then every validator observes the same nonzero WAA and SRA AgentReward
@@ -85,11 +81,6 @@ Feature: Off-chain computation and Metadosis
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed materialization cursor and ordinary NOD set remain unchanged
 
-    And the certified contributor authority for that day is identical on every validator
-    And that day has no open contributor payout round before proceeds arrive
-    When the day's auction proceeds arrive from one chain
-    Then every certified contributor is paid their share
-
   @ocomp-capacity @price-oracle
   Scenario: A shard-cap-plus-one public population is completely processed
     Given a fresh four-validator OCOMP public capacity localnet
@@ -106,10 +97,6 @@ Feature: Off-chain computation and Metadosis
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed materialization cursor and ordinary NOD set remain unchanged
     And validator 0 reconstructs that certified generation from canonical history
-    And the certified contributor authority for that day is identical on every validator
-    And that day has no open contributor payout round before proceeds arrive
-    When the day's auction proceeds arrive from one chain
-    Then every certified contributor is paid their share
 
   @ocomp-int-024
   Scenario: A worker failure is isolated from consensus
@@ -280,10 +267,6 @@ Feature: Off-chain computation and Metadosis
     Then the snapshot FullNode preserves the copied Lysis result and canonical state
     And the certified generation is materialized through at least two bounded transactions
     And five deterministic capacity owners enumerate ordinary NODs with matching nodData
-    And the certified contributor authority for that day is identical on every validator
-    And that day has no open contributor payout round before proceeds arrive
-    When the day's auction proceeds arrive from one chain
-    Then every certified contributor is paid their share
     And the snapshot FullNode observes the same completed public actions without submitting them
     When the snapshot FullNode executes a fresh next-day OCOMP job and restarts at current progress
     Then the offline snapshot workflow evidence is complete

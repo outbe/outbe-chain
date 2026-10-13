@@ -10,8 +10,7 @@ use super::{
 };
 use crate::program_v1::execute::validate_canonical_tributes;
 use crate::program_v1::phases::{
-    AmountRecordV1, AmountRunV1, FinalizedContributorV1, FinalizedOutputRecordV1,
-    FinalizedOutputRunV1,
+    AmountRecordV1, AmountRunV1, FinalizedOutputRecordV1, FinalizedOutputRunV1,
 };
 use crate::program_v1::{NodActionV1, TributeInputV1};
 
@@ -90,6 +89,9 @@ pub fn encode_amount_run(
     encoded.write_u32(run.start_ordinal)?;
     encoded.write_u32(run.end_ordinal)?;
     encoded.write_u256(run.checked_segment_gratis_total)?;
+    encoded.write_u256(run.checked_segment_nominal_total)?;
+    encoded.write_u256(run.checked_segment_eligible_nominal_total)?;
+    encoded.write_u256(run.checked_segment_settlement_cost_total)?;
     encoded.write_u32(
         u32::try_from(run.ordered_records.len())
             .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
@@ -100,11 +102,8 @@ pub fn encode_amount_run(
         encoded.write_address20(record.owner)?;
         encoded.write_u32(record.worldwide_day.value())?;
         encoded.write_u16(record.league_id)?;
-        encoded.write_u256(record.nominal_amount_minor)?;
         encoded.write_u256(record.gratis_fraction_fp)?;
-        encoded.write_u256(record.gratis_load_minor)?;
         encoded.write_u256(record.entry_price_minor)?;
-        encoded.write_u256(record.settlement_cost_minor)?;
         encoded.write_u16(record.issuance_currency)?;
         encoded.write_u16(record.reference_currency)?;
         encoded.write_bool(record.exclude_from_intex_issuance)?;
@@ -123,6 +122,9 @@ pub fn decode_amount_run(
     let start_ordinal = input.read_u32()?;
     let end_ordinal = input.read_u32()?;
     let checked_segment_gratis_total = input.read_u256()?;
+    let checked_segment_nominal_total = input.read_u256()?;
+    let checked_segment_eligible_nominal_total = input.read_u256()?;
+    let checked_segment_settlement_cost_total = input.read_u256()?;
     let count = input.read_u32()?;
     validate_shard_size(usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?)?;
     let mut ordered_records = Vec::new();
@@ -138,11 +140,8 @@ pub fn decode_amount_run(
             owner: input.read_address20()?,
             worldwide_day: WorldwideDay::new(input.read_u32()?),
             league_id: input.read_u16()?,
-            nominal_amount_minor: input.read_u256()?,
             gratis_fraction_fp: input.read_u256()?,
-            gratis_load_minor: input.read_u256()?,
             entry_price_minor: input.read_u256()?,
-            settlement_cost_minor: input.read_u256()?,
             issuance_currency: input.read_u16()?,
             reference_currency: input.read_u16()?,
             exclude_from_intex_issuance: input.read_bool()?,
@@ -154,6 +153,9 @@ pub fn decode_amount_run(
         end_ordinal,
         ordered_records,
         checked_segment_gratis_total,
+        checked_segment_nominal_total,
+        checked_segment_eligible_nominal_total,
+        checked_segment_settlement_cost_total,
     };
     validate_amount_run(&run)?;
     if encode_amount_run(&run, limits)? != encoded {
@@ -185,18 +187,14 @@ pub fn encode_finalized_output_run(
         encoded.write_address20(nod.owner)?;
         encoded.write_u32(nod.worldwide_day.value())?;
         encoded.write_u16(nod.league_id)?;
-        encoded.write_u256(nod.gratis_load_minor)?;
         encoded.write_u256(nod.entry_price_minor)?;
-        encoded.write_u256(nod.settlement_cost_minor)?;
         encoded.write_u16(nod.issuance_currency)?;
         encoded.write_u16(nod.reference_currency)?;
-        encoded.write_option(record.contributor_action.as_ref(), |writer, contributor| {
-            writer.write_address20(contributor.owner)?;
-            writer.write_b256(*contributor.source_tribute_id)?;
-            writer.write_u256(contributor.nominal_amount_minor)
-        })?;
     }
     encoded.write_u256(run.checked_tribute_nominal_total)?;
+    encoded.write_u256(run.checked_segment_gratis_total)?;
+    encoded.write_u256(run.checked_eligible_nominal_total)?;
+    encoded.write_u256(run.checked_settlement_cost_total)?;
     Ok(encoded.into_bytes())
 }
 
@@ -227,18 +225,9 @@ pub fn decode_finalized_output_run(
         let owner = input.read_address20()?;
         let worldwide_day = WorldwideDay::new(input.read_u32()?);
         let league_id = input.read_u16()?;
-        let gratis_load_minor = input.read_u256()?;
         let entry_price_minor = input.read_u256()?;
-        let settlement_cost_minor = input.read_u256()?;
         let issuance_currency = input.read_u16()?;
         let reference_currency = input.read_u16()?;
-        let contributor_action = input.read_option(|reader| {
-            Ok(FinalizedContributorV1 {
-                owner: reader.read_address20()?,
-                source_tribute_id: WwdEntityId::from(reader.read_b256()?),
-                nominal_amount_minor: reader.read_u256()?,
-            })
-        })?;
         ordered_records.push(FinalizedOutputRecordV1 {
             raw_ordinal,
             nod_action: NodActionV1 {
@@ -247,22 +236,25 @@ pub fn decode_finalized_output_run(
                 owner,
                 worldwide_day,
                 league_id,
-                gratis_load_minor,
                 entry_price_minor,
-                settlement_cost_minor,
                 issuance_currency,
                 reference_currency,
             },
-            contributor_action,
         });
     }
     let checked_tribute_nominal_total = input.read_u256()?;
+    let checked_segment_gratis_total = input.read_u256()?;
+    let checked_eligible_nominal_total = input.read_u256()?;
+    let checked_settlement_cost_total = input.read_u256()?;
     input.finish()?;
     let run = FinalizedOutputRunV1 {
         start_ordinal,
         end_ordinal,
         ordered_records,
         checked_tribute_nominal_total,
+        checked_segment_gratis_total,
+        checked_eligible_nominal_total,
+        checked_settlement_cost_total,
     };
     validate_finalized_output_run(&run)?;
     if encode_finalized_output_run(&run, limits)? != encoded {
@@ -292,7 +284,6 @@ pub fn encode_enumerated_run(
         output.write_b256(*record.tribute.tribute_id)?;
         output.write_address20(record.tribute.owner)?;
         output.write_u16(record.tribute.issuance_currency)?;
-        output.write_u256(record.tribute.nominal_amount_minor)?;
         output.write_u16(record.tribute.reference_currency)?;
         output.write_u256(record.tribute.tribute_price_minor)?;
         output.write_bool(record.tribute.exclude_from_intex_issuance)?;
@@ -331,7 +322,7 @@ pub fn decode_enumerated_run(
                 owner: input.read_address20()?,
                 worldwide_day,
                 issuance_currency: input.read_u16()?,
-                nominal_amount_minor: input.read_u256()?,
+                nominal_amount_minor: U256::ZERO,
                 reference_currency: input.read_u16()?,
                 tribute_price_minor: input.read_u256()?,
                 exclude_from_intex_issuance: input.read_bool()?,
@@ -397,12 +388,14 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
             .checked_add(count)
             .ok_or(LysisArtifactErrorV1::LengthOverflow)?
         || run.checked_segment_gratis_total.is_zero()
+        || run.checked_segment_nominal_total.is_zero()
+        || run.checked_segment_settlement_cost_total.is_zero()
+        || run.checked_segment_eligible_nominal_total > run.checked_segment_nominal_total
     {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
             "amount run aggregate range",
         ));
     }
-    let mut checked_gratis_total = U256::ZERO;
     let mut previous_id = None;
     for (offset, record) in run.ordered_records.iter().enumerate() {
         let offset = u32::try_from(offset).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
@@ -412,14 +405,8 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
             .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
         let has_zero_field = record.owner.is_zero()
             || record.worldwide_day.value() == 0
-            || [
-                record.nominal_amount_minor,
-                record.gratis_fraction_fp,
-                record.gratis_load_minor,
-                record.entry_price_minor,
-            ]
-            .iter()
-            .any(U256::is_zero);
+            || record.gratis_fraction_fp.is_zero()
+            || record.entry_price_minor.is_zero();
         if record.raw_ordinal != expected_ordinal
             || previous_id.is_some_and(|previous| previous >= record.tribute_id)
             || has_zero_field
@@ -434,16 +421,6 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
             ));
         }
         previous_id = Some(record.tribute_id);
-        checked_gratis_total = checked_gratis_total
-            .checked_add(record.gratis_load_minor)
-            .ok_or(LysisArtifactErrorV1::InvalidEncoding(
-                "amount run Gratis overflow",
-            ))?;
-    }
-    if checked_gratis_total != run.checked_segment_gratis_total {
-        return Err(LysisArtifactErrorV1::InvalidEncoding(
-            "amount run Gratis total",
-        ));
     }
     Ok(())
 }
@@ -454,6 +431,9 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
         .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
     if !run.start_ordinal.is_multiple_of(PRIMARY_WORK_SHARD_SIZE)
         || run.checked_tribute_nominal_total.is_zero()
+        || run.checked_segment_gratis_total.is_zero()
+        || run.checked_settlement_cost_total.is_zero()
+        || run.checked_eligible_nominal_total > run.checked_tribute_nominal_total
         || run.end_ordinal
             != run
                 .start_ordinal
@@ -474,9 +454,7 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
             .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
         let out_of_order = record.raw_ordinal != expected_ordinal
             || previous_tribute.is_some_and(|previous| previous >= nod.source_tribute_id);
-        let has_zero_field = nod.owner.is_zero()
-            || nod.worldwide_day.value() == 0
-            || nod.gratis_load_minor.is_zero();
+        let has_zero_field = nod.owner.is_zero() || nod.worldwide_day.value() == 0;
         let has_invalid_price = nod.entry_price_minor.is_zero()
             || !outbe_nod::pricing::is_issuable_entry(nod.entry_price_minor)
             || nod.reference_currency == 0;
@@ -492,19 +470,6 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
             ));
         }
         previous_tribute = Some(nod.source_tribute_id);
-        if record
-            .contributor_action
-            .as_ref()
-            .is_some_and(|contributor| {
-                contributor.owner != nod.owner
-                    || contributor.source_tribute_id != nod.source_tribute_id
-                    || contributor.nominal_amount_minor.is_zero()
-            })
-        {
-            return Err(LysisArtifactErrorV1::InvalidEncoding(
-                "finalized contributor binding",
-            ));
-        }
     }
     Ok(())
 }

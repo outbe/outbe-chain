@@ -315,30 +315,30 @@ mod tests {
     #[test]
     fn active_allocation_at_maximum_day_emission_is_pinned() {
         let total = crate::day_emission::day_emission_limit(1_024);
-        assert_eq!(total, U256::from(581_610_154_666_666u64));
+        assert_eq!(total, U256::from(581_610_154_000_000u64));
 
         assert_eq!(
             allocate_emission(total).unwrap(),
             vec![
                 EmissionAllocation {
                     id: EmissionSinkId::Validator,
-                    amount: U256::from(23_264_406_186_666u64),
+                    amount: U256::from(23_264_406_160_000u64),
                 },
                 EmissionAllocation {
                     id: EmissionSinkId::Waa,
-                    amount: U256::from(23_264_406_186_666u64),
+                    amount: U256::from(23_264_406_160_000u64),
                 },
                 EmissionAllocation {
                     id: EmissionSinkId::Sra,
-                    amount: U256::from(23_264_406_186_666u64),
+                    amount: U256::from(23_264_406_160_000u64),
                 },
                 EmissionAllocation {
                     id: EmissionSinkId::Cca,
-                    amount: U256::from(23_264_406_186_666u64),
+                    amount: U256::from(23_264_406_160_000u64),
                 },
                 EmissionAllocation {
                     id: EmissionSinkId::Metadosis,
-                    amount: U256::from(488_552_529_920_002u64),
+                    amount: U256::from(488_552_529_360_000u64),
                 },
             ]
         );

@@ -8343,6 +8343,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "base64 0.22.1",
+ "outbe-primitives",
  "ring",
  "serde_json",
 ]
@@ -8961,7 +8962,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-macros",
- "outbe-ocomp-protocol",
  "outbe-oracle",
  "outbe-primitives",
  "revm",

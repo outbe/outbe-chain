@@ -13,6 +13,7 @@
 //! ```
 
 use crate::error::PrecompileError;
+use crate::units::MAX_ASSET_DECIMALS;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -301,7 +302,7 @@ fn validate_payload(payload: &StablecoinCreatePayload) -> Result<(), StablecoinC
     if !is_supported_iso4217(payload.iso4217) {
         return Err(StablecoinCodecError::InvalidIso4217(payload.iso4217));
     }
-    if payload.decimals > 18 {
+    if payload.decimals > MAX_ASSET_DECIMALS {
         return Err(StablecoinCodecError::InvalidDecimals(payload.decimals));
     }
     if payload.supply_cap.is_zero() {

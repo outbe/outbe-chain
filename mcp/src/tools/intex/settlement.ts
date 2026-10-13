@@ -8,7 +8,7 @@ import { networkName, waitFlag } from "../schemas.js";
 import { ensureAllowance } from "../../net/erc20.js";
 import { handler, ok } from "../util.js";
 import { ERC20_ABI, FACTORY_ABI, INTEX_ABI } from "../../intex/registry.js";
-import { POW_DIFFICULTY, grindNonce } from "../../intex/pow.js";
+import { grindNonce } from "../../intex/pow.js";
 import { PROMIS_MINED_EVENT, addr, quoteSettlement, settlementTokens } from "../../intex/reads.js";
 import { accountArg, seriesArg, unitsArg } from "./args.js";
 import type { IntexDeps } from "./deps.js";
@@ -139,12 +139,17 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
         toBlock: "latest",
       });
       const seq = logs.length;
-      const pow = grindNonce(owner, promisMinor, series, seq);
+      const difficulty = await n.client.readContract({
+        address: addr(n, "factory"),
+        abi: FACTORY_ABI,
+        functionName: "powDifficulty",
+      });
+      const pow = grindNonce(owner, promisMinor, series, seq, difficulty);
       throw new Error(
         "minePromis also requires a Promis modify-auth mac and opNonce, which this server cannot produce: " +
           "the modify key is sealed to an ephemeral X25519 key by outbe_deriveKeys(Promis, ...) and no unsealing " +
           "or mac derivation is implemented here. " +
-          `Proof of work is done - nonce ${pow.nonce} (seq ${seq}, difficulty ${POW_DIFFICULTY}, ` +
+          `Proof of work is done - nonce ${pow.nonce} (seq ${seq}, difficulty ${difficulty}, ` +
           `${pow.iterations} iterations, hash ${pow.hash}) ` +
           `for ${promisMinor} Promis on series ${series}. Submit minePromis(${series}, ${owner}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
           "with a client that holds the modify key.",

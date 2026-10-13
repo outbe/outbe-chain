@@ -119,8 +119,6 @@ pub(crate) struct InventoryBounds {
     pub nod_entries: u64,
     pub series: u64,
     pub days: u64,
-    pub unpaid_days: u64,
-    pub bitmap_words: u64,
 }
 
 /// Canonical obligation discovery is independent of local job directories.
@@ -330,9 +328,6 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
         let total_series = state.intex_total_series()?;
         observe_inventory_bound(report.as_deref_mut(), "intex_series", 0, total_series, 0);
         observe_inventory_bound(report.as_deref_mut(), "intex_days", 0, 0, 0);
-        observe_inventory_bound(report.as_deref_mut(), "payout_bitmap_words", 0, 0, 0);
-        let mut bitmap_expected = 0_u64;
-        let mut bitmap_visited = 0_u64;
         for index in 0..total_series {
             scan_budget("Intex series", index, total_series, maximum_records)?;
             let id = state.intex_series_id_at(index)?;
@@ -371,60 +366,6 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                 bounds.days,
                 bounds.days,
             );
-            let certified = state.intex_certified_contributor_generation(day)?;
-            let Some(round) = state.intex_certified_payout_round(day.value())? else {
-                continue;
-            };
-            let certified =
-                certified.ok_or_else(|| eyre::eyre!("payout round lacks certified generation"))?;
-            ensure!(
-                round.wwd == day.value()
-                    && round.active != 0
-                    && certified.worldwide_day == day.value()
-                    && certified.contributor_count > 0
-                    && round.paid_so_far <= round.amount,
-                "inconsistent certified payout round"
-            );
-            bitmap_expected = bitmap_expected
-                .checked_add(u64::from(certified.contributor_count).div_ceil(256))
-                .ok_or_else(|| eyre::eyre!("payout bitmap expected count overflow"))?;
-            observe_inventory_bound(
-                report.as_deref_mut(),
-                "payout_bitmap_words",
-                0,
-                bitmap_expected,
-                bitmap_visited,
-            );
-            let bitmap = verify_paid_bitmap(
-                certified.contributor_count,
-                round.paid_leaf_count,
-                maximum_records,
-                |word| {
-                    let value = state.intex_paid_leaves_word(day.value(), word)?;
-                    bitmap_visited = bitmap_visited
-                        .checked_add(1)
-                        .ok_or_else(|| eyre::eyre!("payout bitmap visited count overflow"))?;
-                    observe_inventory_bound(
-                        report.as_deref_mut(),
-                        "payout_bitmap_words",
-                        0,
-                        bitmap_expected,
-                        bitmap_visited,
-                    );
-                    Ok(value)
-                },
-            )?;
-            bounds.bitmap_words = bounds
-                .bitmap_words
-                .checked_add(bitmap.words)
-                .ok_or_else(|| eyre::eyre!("payout bitmap word count overflow"))?;
-            if bitmap.unpaid > 0 {
-                tx.put::<InventoryRows>(
-                    inventory_key(b'p', &day.value().to_be_bytes()),
-                    Vec::new(),
-                )?;
-                bounds.unpaid_days += 1;
-            }
         }
         tx.commit()?;
         Ok(Self {
@@ -545,61 +486,6 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
         Ok(result)
     }
 
-    /// Check the public handoff for every unpaid canonical day. Intermediate
-    /// plans, CE bodies and signing journals are not authority for this file.
-    pub(crate) fn verify_payout_files(&self, ocomp_root: &Path) -> eyre::Result<u64> {
-        let mut verified = 0_u64;
-        self.visit_payouts(&mut |day, certified| {
-            let active = self
-                .state
-                .metadosis_active_lysis_generation(day)?
-                .ok_or_else(|| {
-                    Incomplete(format!(
-                        "missing active Lysis generation for unpaid day {}",
-                        day.value()
-                    ))
-                })?;
-            ensure!(
-                !active.job_id.is_zero()
-                    && active.contributor_root == certified.contributor_root
-                    && active.exact_counts.contributor_count == certified.contributor_count,
-                "active Lysis generation differs from certified contributors for day {}",
-                day.value()
-            );
-            let path = ocomp_root
-                .join("supervisor-v1")
-                .join("jobs")
-                .join(hex::encode(active.job_id))
-                .join(CONTRIBUTOR_PAYOUT_ARTIFACT_FILE);
-            match verify_contributor_payout_artifact(&path, &certified) {
-                Ok(_) => {}
-                Err(PayoutArtifactError::Io { source, .. })
-                    if source.kind() == std::io::ErrorKind::NotFound =>
-                {
-                    return Err(Incomplete(format!(
-                        "missing payout file for day {}, job {}: {}",
-                        day.value(),
-                        active.job_id,
-                        path.display()
-                    ))
-                    .into());
-                }
-                Err(error) => {
-                    return Err(eyre::Report::new(error).wrap_err(format!(
-                        "payout file for day {}, job {}",
-                        day.value(),
-                        active.job_id
-                    )))
-                }
-            }
-            verified = verified
-                .checked_add(1)
-                .ok_or_else(|| eyre::eyre!("verified payout count overflow"))?;
-            Ok(())
-        })?;
-        Ok(verified)
-    }
-
     pub(crate) fn visit_nod(
         &self,
         visitor: &mut impl FnMut(u64, NodCertifiedGenerationProjection) -> eyre::Result<()>,
@@ -611,33 +497,6 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                 .nod_certified_generation(day)?
                 .ok_or_else(|| eyre::eyre!("validated NOD generation disappeared"))?;
             visitor(sequence, projection)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn visit_payouts(
-        &self,
-        visitor: &mut impl FnMut(
-            WorldwideDay,
-            CertifiedContributorGenerationProjection,
-        ) -> eyre::Result<()>,
-    ) -> eyre::Result<()> {
-        let mut tx = self.db.tx()?;
-        // A callback may stream a large payout file. This immutable scratch
-        // snapshot has no writer whose growth would need the live-node timeout.
-        tx.disable_long_read_transaction_safety();
-        let mut cursor = tx.cursor_read::<InventoryRows>()?;
-        for row in cursor.walk(Some(vec![b'p']))? {
-            let (key, _) = row?;
-            if key.first() != Some(&b'p') {
-                break;
-            }
-            let day = WorldwideDay::new(u32::from_be_bytes(key[1..].try_into()?));
-            let certified = self
-                .state
-                .intex_certified_contributor_generation(day)?
-                .ok_or_else(|| eyre::eyre!("validated contributor generation disappeared"))?;
-            visitor(day, certified)?;
         }
         Ok(())
     }

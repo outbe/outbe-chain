@@ -8,9 +8,8 @@ use outbe_lysis::activation_v1::{
 use outbe_ocomp_protocol::{
     intent::DayType,
     receipts::{
-        carry_over_state_event_digest, contributor_state_event_digest, nod_state_event_digest,
-        tribute_state_event_digest, CarryOverReceiptV1, CarryOverStateEventProjectionV1,
-        ContributorReceiptV1, ContributorStateEventProjectionV1, NodBatchReceiptV1,
+        carry_over_state_event_digest, nod_state_event_digest, tribute_state_event_digest,
+        CarryOverReceiptV1, CarryOverStateEventProjectionV1, NodBatchReceiptV1,
         NodStateEventProjectionV1, TributeReceiptV1, TributeStateEventProjectionV1,
     },
 };
@@ -18,7 +17,7 @@ use outbe_ocomp_protocol::{
 use support::{activation_fixture, hash, recommit_result};
 
 #[test]
-fn structural_verifier_produces_one_closed_four_owner_plan() {
+fn structural_verifier_produces_one_closed_owner_plan() {
     for day_type in [DayType::Green, DayType::Red] {
         let fixture = activation_fixture(day_type);
         let plan = verify_result(inputs(&fixture, &fixture.payload, &fixture.result)).unwrap();
@@ -49,10 +48,6 @@ fn structural_verifier_produces_one_closed_four_owner_plan() {
         assert_eq!(
             plan.nod().output_manifest_root(),
             fixture.result.roots.output_manifest_root
-        );
-        assert_eq!(
-            plan.contributors().contributor_root(),
-            fixture.result.roots.contributor_root
         );
         assert_eq!(
             plan.tribute().input_binding(),
@@ -117,7 +112,7 @@ fn structural_verifier_rejects_catalog_completion_and_semantic_event_mutations()
     assert_result_rejected(&fixture, &catalog_root, &fixture.payload);
 
     let mut exact_count = fixture.result.clone();
-    exact_count.counts.contributor_count += 1;
+    exact_count.counts.bucket_count = exact_count.counts.tribute_count + 1;
     recommit_result(&mut exact_count, &fixture.limits);
     assert_result_rejected(&fixture, &exact_count, &fixture.payload);
 
@@ -289,36 +284,6 @@ fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
     wrong_nod.nod.nod_root = hash(210);
     assert!(verify_receipts(&plan, &fixture.request_receipt, &wrong_nod, &fixture.limits).is_err());
 
-    let mut wrong_contributor = receipts.clone();
-    wrong_contributor.contributor.contributor_count += 1;
-    assert!(verify_receipts(
-        &plan,
-        &fixture.request_receipt,
-        &wrong_contributor,
-        &fixture.limits
-    )
-    .is_err());
-
-    let mut wrong_contributor_root = receipts.clone();
-    wrong_contributor_root.contributor.contributor_root = hash(213);
-    assert!(verify_receipts(
-        &plan,
-        &fixture.request_receipt,
-        &wrong_contributor_root,
-        &fixture.limits
-    )
-    .is_err());
-
-    let mut wrong_contributor_nominal = receipts.clone();
-    wrong_contributor_nominal.contributor.eligible_nominal_total += U256::from(1);
-    assert!(verify_receipts(
-        &plan,
-        &fixture.request_receipt,
-        &wrong_contributor_nominal,
-        &fixture.limits
-    )
-    .is_err());
-
     let mut wrong_tribute_generation = receipts.clone();
     wrong_tribute_generation.tribute.retired_generation += 1;
     assert!(verify_receipts(
@@ -371,7 +336,7 @@ fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
     .is_err());
 
     let mut wrong_event = receipts.clone();
-    wrong_event.nod.state_event_digest = wrong_event.contributor.state_event_digest;
+    wrong_event.nod.state_event_digest = wrong_event.tribute.state_event_digest;
     assert!(verify_receipts(
         &plan,
         &fixture.request_receipt,
@@ -381,7 +346,7 @@ fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
     .is_err());
 
     let mut wrong_binding = receipts.clone();
-    wrong_binding.contributor.binding.job_id = hash(212);
+    wrong_binding.nod.binding.job_id = hash(212);
     assert!(verify_receipts(
         &plan,
         &fixture.request_receipt,
@@ -434,14 +399,6 @@ fn owner_receipts(
         lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
         issued_at: plan.nod().issued_at(),
     };
-    let contributor_projection = ContributorStateEventProjectionV1 {
-        worldwide_day: plan.contributors().precondition().worldwide_day,
-        series_version_before: plan.contributors().precondition().expected_series_version,
-        series_version_after: plan.contributors().precondition().expected_series_version + 1,
-        contributor_count: plan.contributors().contributor_count(),
-        contributor_root: plan.contributors().contributor_root(),
-        eligible_nominal_total: plan.contributors().eligible_nominal_total(),
-    };
     let tribute_projection = TributeStateEventProjectionV1 {
         wwd: plan.tribute().input_binding().wwd,
         source_generation: plan.tribute().input_binding().source_generation,
@@ -466,19 +423,6 @@ fn owner_receipts(
             lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
             issued_at: plan.nod().issued_at(),
             state_event_digest: nod_state_event_digest(&binding, &nod_projection, limits).unwrap(),
-        },
-        contributor: ContributorReceiptV1 {
-            binding: binding.clone(),
-            contributor_target_precondition: plan.contributors().precondition().clone(),
-            contributor_count: plan.contributors().contributor_count(),
-            contributor_root: plan.contributors().contributor_root(),
-            eligible_nominal_total: plan.contributors().eligible_nominal_total(),
-            state_event_digest: contributor_state_event_digest(
-                &binding,
-                &contributor_projection,
-                limits,
-            )
-            .unwrap(),
         },
         tribute: TributeReceiptV1 {
             binding: binding.clone(),

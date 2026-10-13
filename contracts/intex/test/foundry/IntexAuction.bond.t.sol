@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
@@ -42,7 +43,10 @@ contract IntexAuctionBondTest is Test {
     // Protocol-scale basis/rate cross into 18-decimal WCOEN, well below BOND.
     uint16 internal constant QTY = 1;
     uint32 internal constant RATE = 1;
-    uint128 internal constant LOCK_AMOUNT = uint128(uint256(QTY) * PROMIS_LOAD_MINOR * RATE / 1_000_000 * 1e12);
+    uint128 internal constant LOCK_AMOUNT = uint128(
+        uint256(QTY) * PROMIS_LOAD_MINOR * RATE / BridgeMsgCodec.SCALE_1E6
+            * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT
+    );
 
     uint32 constant COMMIT_OFFSET = 100;
     uint32 constant REVEAL_OFFSET = 200;

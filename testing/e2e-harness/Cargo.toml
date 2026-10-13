@@ -16,7 +16,6 @@ ocomp-finality-fixture = [
     "dep:outbe-nod",
     "dep:outbe-node",
     "dep:outbe-ocompregistry",
-    "dep:outbe-oracle",
     "dep:reth-chainspec",
 ]
 tribute-day-directory = [
@@ -96,7 +95,7 @@ outbe-ocompregistry = { workspace = true, optional = true }
 outbe-offchain-data.workspace = true
 outbe-offchain-storage.workspace = true
 mongodb.workspace = true
-outbe-oracle = { workspace = true, optional = true }
+outbe-oracle = { workspace = true }
 outbe-tribute = { workspace = true, optional = true }
 outbe-tee-enclave = { workspace = true, optional = true }
 rand.workspace = true

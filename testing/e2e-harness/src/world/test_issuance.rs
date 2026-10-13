@@ -195,35 +195,18 @@ pub fn issue_series(
     Ok(ids)
 }
 
-/// The SHA-256 preimage `validate_pow` rebuilds: the hex spelling of owner, amount,
-/// series and sequence, then the nonce's own eight bytes.
-fn pow_hash(
-    owner: Address,
-    promis_amount: U256,
-    series: FixedBytes<14>,
-    seq: u32,
-    nonce: u64,
-) -> [u8; 32] {
-    use sha2::{Digest as _, Sha256};
-    // The engine hashes the raw bytes, so anything else mines a nonce it will
-    // reject: SHA256(owner ++ amount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8).
-    let mut data = Vec::with_capacity(20 + 32 + 14 + 4 + 8);
-    data.extend_from_slice(owner.as_slice());
-    data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
-    data.extend_from_slice(series.as_slice());
-    data.extend_from_slice(&seq.to_be_bytes());
-    data.extend_from_slice(&nonce.to_be_bytes());
-    Sha256::digest(&data).into()
-}
-
-/// A nonce whose hash carries the one leading zero byte the engine demands.
+/// A nonce that passes IntexFactory's proof-of-work check.
+#[cfg(feature = "ocomp-integration")]
 pub fn mine_nonce(
     owner: Address,
     promis_amount: U256,
     series: FixedBytes<14>,
     seq: u32,
 ) -> Option<u64> {
-    (0_u64..1_000_000).find(|nonce| pow_hash(owner, promis_amount, series, seq, *nonce)[0] == 0)
+    (0_u64..1_000_000).find(|nonce| {
+        outbe_intexfactory::api::validate_pow(owner, promis_amount, series.into(), seq, *nonce)
+            .is_ok()
+    })
 }
 
 /// Burn settled units into Promis. `mac` authorizes the confidential mint, and the

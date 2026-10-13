@@ -2,18 +2,16 @@ import { type Address, type Hex, concat, sha256, toBytes, toHex } from "viem";
 
 /**
  * Proof-of-work for IntexFactory.minePromis. The precompile requires a nonce
- * such that the PoW hash has POW_DIFFICULTY leading zero bytes. Difficulty is
+ * such that the PoW hash has `powDifficulty()` leading zero bytes. Difficulty is
  * tiny (1 byte => ~256 tries), so a single-threaded grind is instant.
  *
  * Scheme verbatim from crates/core/intexfactory/src/runtime.rs (compute_pow_hash):
  *   preimage = holder[20] ++ promisMinor_be32 ++ seriesId[14] ++ seq_be4
  *   hash     = SHA256(preimage ++ nonce_be8)
- *   valid    = first POW_DIFFICULTY bytes of hash are zero
+ *   valid    = first `difficulty` bytes of hash are zero
  * `seq` is the per-(series, holder) mine counter. Read it as the count of past
  * PromisMined(series, holder) events. promisMinor = series.promisLoadMinor * units.
  */
-
-export const POW_DIFFICULTY = 1; // crates/core/common/src/pow.rs
 
 /** The raw preimage bytes, matching the Rust concatenation. */
 function preimage(holder: Address, promisMinor: bigint, seriesId: Hex, seq: number): Uint8Array {
@@ -31,20 +29,22 @@ export interface PowSolution {
   hash: Hex;
 }
 
-/** Grind a nonce whose PoW hash has POW_DIFFICULTY leading zero bytes. */
+/** Grind a nonce whose PoW hash has `difficulty` leading zero bytes. */
 export function grindNonce(
   holder: Address,
   promisMinor: bigint,
   seriesId: Hex,
   seq: number,
+  difficulty: number,
 ): PowSolution {
+  if (difficulty > 32) throw new Error(`PoW difficulty ${difficulty} exceeds the 32-byte hash`);
   const prefix = preimage(holder, promisMinor, seriesId, seq);
   // The precompile caps nonce at u64::MAX. Difficulty 1 resolves far below that.
   for (let nonce = 0n; nonce <= 0xffff_ffff_ffff_ffffn; nonce++) {
     const data = concat([prefix, toBytes(toHex(nonce, { size: 8 }))]);
     const hash = sha256(data, "bytes");
     let ok = true;
-    for (let i = 0; i < POW_DIFFICULTY; i++) {
+    for (let i = 0; i < difficulty; i++) {
       if (hash[i] !== 0) {
         ok = false;
         break;

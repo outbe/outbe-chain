@@ -1,27 +1,20 @@
 //! Price provider trait and implementations.
 
-pub mod binance;
-pub mod coinbase;
+pub(crate) mod cex;
 pub(crate) mod dex;
 pub(crate) mod evm_rpc;
-pub mod gate;
-pub mod huobi;
-pub mod kraken;
-pub mod mexc;
 pub mod mock;
 pub mod mock_http;
-pub mod okx;
 pub mod onchain_feed;
 pub mod pyth;
 pub mod redstone;
 #[cfg(test)]
 pub(crate) mod test_server;
-mod websocket;
 
 use eyre::{eyre, Result};
 use std::collections::HashMap;
 
-use crate::config::{FeederConfig, ProviderEndpointConfig};
+use crate::config::{ApiProviderConfig, FeederConfig};
 use crate::fixed::FixedValue;
 
 /// Whether an upstream endpoint supplied a volume field.
@@ -186,8 +179,8 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
     provider_names.sort();
     provider_names.dedup();
 
-    let endpoints: HashMap<&str, &ProviderEndpointConfig> = config
-        .provider_endpoints
+    let endpoints: HashMap<&str, &ApiProviderConfig> = config
+        .api_providers
         .iter()
         .map(|endpoint| (endpoint.name.as_str(), endpoint))
         .collect();
@@ -197,24 +190,24 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
             "mock" => Box::new(mock::MockProvider::new()),
             "mock_http" => {
                 let endpoint = endpoints.get("mock_http").ok_or_else(|| {
-                    eyre!("provider mock_http requires a [[provider_endpoints]] entry")
+                    eyre!("provider mock_http requires a [[api_providers]] entry")
                 })?;
                 Box::new(mock_http::MockHttpProvider::new(endpoint)?)
             }
             "pyth" => Box::new(pyth::PythProvider::new()?),
-            "redstone" => Box::new(redstone::RedstoneProvider::new(
-                config
-                    .redstone
-                    .as_ref()
-                    .ok_or_else(|| eyre!("provider redstone requires a [redstone] section"))?,
-            )?),
-            "binance" => Box::new(binance::BinanceProvider::new()?),
-            "kraken" => Box::new(kraken::KrakenProvider::new()?),
-            "okx" => Box::new(okx::OkxProvider::new()?),
-            "gate" => Box::new(gate::GateProvider::new()?),
-            "huobi" => Box::new(huobi::HuobiProvider::new()?),
-            "mexc" => Box::new(mexc::MexcProvider::new()?),
-            "coinbase" => Box::new(coinbase::CoinbaseProvider::new()?),
+            "redstone" => {
+                let endpoint = endpoints
+                    .get("redstone")
+                    .ok_or_else(|| eyre!("provider redstone requires a [[api_providers]] entry"))?;
+                Box::new(redstone::RedstoneProvider::new(endpoint)?)
+            }
+            "binance" => Box::new(cex::binance::BinanceProvider::new()?),
+            "kraken" => Box::new(cex::kraken::KrakenProvider::new()?),
+            "okx" => Box::new(cex::okx::OkxProvider::new()?),
+            "gate" => Box::new(cex::gate::GateProvider::new()?),
+            "huobi" => Box::new(cex::huobi::HuobiProvider::new()?),
+            "mexc" => Box::new(cex::mexc::MexcProvider::new()?),
+            "coinbase" => Box::new(cex::coinbase::CoinbaseProvider::new()?),
             "uniswap" | "pancakeswap" => Box::new(dex::DexProvider::new(
                 config
                     .dex_providers
@@ -223,11 +216,15 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                     .ok_or_else(|| eyre!("provider {name} requires a [[dex_providers]] entry"))?,
             )?),
             other => {
-                let Some(section) = config.onchain_feeds.get(other) else {
+                let Some(entry) = config
+                    .onchain_providers
+                    .iter()
+                    .find(|entry| entry.name == other)
+                else {
                     tracing::warn!(provider = other, "unknown provider, skipping");
                     continue;
                 };
-                Box::new(onchain_feed::OnchainFeedProvider::new(other, section)?)
+                Box::new(onchain_feed::OnchainFeedProvider::new(entry)?)
             }
         };
         let configured_pairs = config
@@ -237,10 +234,10 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
             .filter(|source| source.provider == *name)
             .map(|source| (source.base.clone(), source.quote.clone()))
             .collect::<Vec<_>>();
-        let provider = if let Some(kind) = websocket::ExchangeKind::for_name(name)
-            .filter(|kind| kind.supports_any(&configured_pairs))
+        let provider = if let Some(kind) =
+            cex::ExchangeKind::for_name(name).filter(|kind| kind.supports_any(&configured_pairs))
         {
-            let streaming = websocket::StreamingProvider::new(
+            let streaming = cex::StreamingProvider::new(
                 kind,
                 endpoints.get(name.as_str()).copied(),
                 &configured_pairs,

@@ -29,7 +29,7 @@ impl LysisPlanTopologyV1 {
             | UnitPhase::OutputFinalize => primary,
             UnitPhase::FixedReduce => full_internal,
             UnitPhase::GratisPrefix | UnitPhase::GratisPrefixDown => primary + active_internal,
-            UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle => primary + (primary - 1),
+            UnitPhase::BucketShuffle => primary + (primary - 1),
             UnitPhase::RootReduce if primary == 1 => 1,
             UnitPhase::RootReduce => primary + full_internal,
         }
@@ -101,9 +101,7 @@ impl LysisPlanTopologyV1 {
             | UnitPhase::OutputFinalize => {
                 return Ok(PlannedUnitPositionV1::Primary { phase, ordinal })
             }
-            UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle => {
-                return self.run_span_at(phase, ordinal)
-            }
+            UnitPhase::BucketShuffle => return self.run_span_at(phase, ordinal),
             UnitPhase::FixedReduce => self.full_bottom_up_node_at(ordinal)?,
             UnitPhase::GratisPrefix if ordinal < primary => (0, ordinal),
             UnitPhase::GratisPrefix => self.active_bottom_up_node_at(ordinal - primary)?,
@@ -184,13 +182,13 @@ impl LysisPlanTopologyV1 {
                 index,
             } => self.active_top_down_ordinal(level, index)?,
             PlannedUnitPositionV1::RunSpan {
-                phase: UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle,
+                phase: UnitPhase::BucketShuffle,
                 level: 0,
                 index,
                 ..
             } => index,
             PlannedUnitPositionV1::RunSpan {
-                phase: UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle,
+                phase: UnitPhase::BucketShuffle,
                 level,
                 index,
                 ..

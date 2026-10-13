@@ -3,6 +3,7 @@ pub mod call_sweep;
 pub mod call_window;
 pub mod closed_day;
 pub mod constants;
+pub mod coverage;
 pub mod errors;
 pub mod genesis;
 pub mod lifecycle;

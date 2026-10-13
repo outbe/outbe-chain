@@ -9,6 +9,7 @@
 //! `Decimal` arithmetic.
 
 use alloy_primitives::{uint, U256};
+use outbe_primitives::units::SCALE_1E6_U256;
 use std::sync::LazyLock;
 
 /// Initial day emission: 2^28 COEN expressed in six-decimal `unit`.
@@ -19,8 +20,6 @@ pub const FLOOR_DAY_EMISSION: U256 = uint!(67_108_864_000_000_U256);
 
 /// The founder curve reaches 2^26 COEN on this day and stays there forever.
 pub const FLOOR_DAY_THRESHOLD: u32 = 3_072;
-
-const UNITS_PER_COEN: U256 = uint!(1_000_000_U256);
 
 // Every reachable exponential has |x| <= 4. With terms 0..=64, the real
 // Taylor remainder is below 9.1e-51. The 1e30 fixed-point scale still leaves
@@ -47,9 +46,9 @@ const PHASE_TWO_MIDPOINT_DAY: u32 = 2_048;
 // D  = (P - 2**26) / math.tanh(1024/(2*K2))
 // o2 = (P + 2**26)/2 + D/2
 static TWO_26: LazyLock<U256> =
-    LazyLock::new(|| U256::from(1u64 << 26) * UNITS_PER_COEN * MATH_SCALE);
+    LazyLock::new(|| U256::from(1u64 << 26) * SCALE_1E6_U256 * MATH_SCALE);
 static TWO_28: LazyLock<U256> =
-    LazyLock::new(|| U256::from(1u64 << 28) * UNITS_PER_COEN * MATH_SCALE);
+    LazyLock::new(|| U256::from(1u64 << 28) * SCALE_1E6_U256 * MATH_SCALE);
 static P: LazyLock<U256> = LazyLock::new(|| U256::from(26) * *TWO_26 / U256::from(3));
 static A: LazyLock<U256> = LazyLock::new(|| {
     fixed_div(
@@ -97,7 +96,7 @@ fn fixed_div(value: U256, divisor: U256) -> U256 {
 
 /// Returns the day emission cap for `day_number` days since the chain's
 /// genesis UTC day. It is a closed-form pure function with no storage I/O. It
-/// rounds the result down to the protocol's six-decimal unit. It clamps the
+/// rounds down to whole COEN, expressed in six-decimal `unit`. It clamps the
 /// result to the floor forever once `day_number >= FLOOR_DAY_THRESHOLD`.
 pub fn day_emission_limit(day_number: u32) -> U256 {
     if day_number >= FLOOR_DAY_THRESHOLD {
@@ -127,7 +126,7 @@ pub fn day_emission_limit(day_number: u32) -> U256 {
         );
         o2 - d * MATH_SCALE / (MATH_SCALE + exponent)
     };
-    let reward = emission / MATH_SCALE;
+    let reward = emission / (MATH_SCALE * UNITS_PER_COEN) * UNITS_PER_COEN;
     if reward < FLOOR_DAY_EMISSION {
         FLOOR_DAY_EMISSION
     } else {
@@ -142,18 +141,18 @@ mod tests {
     const REFERENCE_VECTORS: &str =
         include_str!("../../../../testing/emission-reference/vectors.json");
     const PIN_DAY_0: U256 = uint!(268_435_456_000_000_U256);
-    const PIN_DAY_1: U256 = uint!(268_480_452_713_195_U256);
-    const PIN_DAY_365: U256 = uint!(340_810_652_554_498_U256);
-    const PIN_DAY_512: U256 = uint!(425_022_805_333_333_U256);
-    const PIN_DAY_730: U256 = uint!(537_405_916_355_515_U256);
-    const PIN_DAY_1024: U256 = uint!(581_610_154_666_666_U256);
-    const PIN_DAY_1025: U256 = uint!(581_516_499_768_072_U256);
-    const PIN_DAY_1460: U256 = uint!(514_882_469_694_896_U256);
-    const PIN_DAY_2048: U256 = uint!(324_359_509_333_333_U256);
-    const PIN_DAY_2190: U256 = uint!(270_306_028_209_700_U256);
-    const PIN_DAY_2919: U256 = uint!(84_150_920_679_186_U256);
-    const PIN_DAY_2920: U256 = uint!(84_020_175_581_053_U256);
-    const PIN_DAY_3071: U256 = uint!(67_202_518_898_594_U256);
+    const PIN_DAY_1: U256 = uint!(268_480_452_000_000_U256);
+    const PIN_DAY_365: U256 = uint!(340_810_652_000_000_U256);
+    const PIN_DAY_512: U256 = uint!(425_022_805_000_000_U256);
+    const PIN_DAY_730: U256 = uint!(537_405_916_000_000_U256);
+    const PIN_DAY_1024: U256 = uint!(581_610_154_000_000_U256);
+    const PIN_DAY_1025: U256 = uint!(581_516_499_000_000_U256);
+    const PIN_DAY_1460: U256 = uint!(514_882_469_000_000_U256);
+    const PIN_DAY_2048: U256 = uint!(324_359_509_000_000_U256);
+    const PIN_DAY_2190: U256 = uint!(270_306_028_000_000_U256);
+    const PIN_DAY_2919: U256 = uint!(84_150_920_000_000_U256);
+    const PIN_DAY_2920: U256 = uint!(84_020_175_000_000_U256);
+    const PIN_DAY_3071: U256 = uint!(67_202_518_000_000_U256);
     const PIN_DAY_3072: U256 = uint!(67_108_864_000_000_U256);
 
     fn reference_days() -> Vec<(u32, U256)> {
@@ -237,7 +236,9 @@ mod tests {
     #[test]
     fn production_matches_independent_reference_for_full_range() {
         for (day, expected) in reference_days() {
-            assert_eq!(day_emission_limit(day), expected, "day {day}");
+            let actual = day_emission_limit(day);
+            assert_eq!(actual, expected, "day {day}");
+            assert_eq!(actual % UNITS_PER_COEN, U256::ZERO, "day {day}");
         }
     }
 

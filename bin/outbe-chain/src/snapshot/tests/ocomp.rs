@@ -3,92 +3,7 @@ use alloy_primitives::U256;
 use outbe_intex::schema::SeriesId;
 use outbe_primitives::time::WorldwideDay;
 
-use super::super::validation::{
-    ocomp::{verify_paid_bitmap, verify_series_day},
-    Incomplete,
-};
-
-#[test]
-fn every_bitmap_word_and_only_valid_leaf_bits_determine_unpaid_obligations() {
-    for count in [1_u32, 255, 256, 257] {
-        let words = (0..u64::from(count).div_ceil(256))
-            .map(|index| {
-                let remaining = u64::from(count) - index * 256;
-                if remaining >= 256 {
-                    U256::MAX
-                } else {
-                    (U256::ONE << remaining) - U256::ONE
-                }
-            })
-            .collect::<Vec<_>>();
-        let mut visited = vec![];
-        let full = verify_paid_bitmap(count, count, None, |index| {
-            visited.push(index);
-            Ok(words[index as usize])
-        })
-        .unwrap();
-        assert_eq!(visited.len(), words.len());
-        assert_eq!(full.words, words.len() as u64);
-        assert_eq!(full.paid, u64::from(count));
-        assert_eq!(full.unpaid, 0);
-        let mut unpaid = words;
-        let last_bit = (count - 1) % 256;
-        *unpaid.last_mut().unwrap() &= !(U256::ONE << last_bit);
-        let partial =
-            verify_paid_bitmap(count, count - 1, None, |index| Ok(unpaid[index as usize])).unwrap();
-        assert_eq!(partial.unpaid, 1);
-    }
-    let non_prefix = verify_paid_bitmap(257, 2, None, |index| {
-        Ok(if index == 0 {
-            U256::ONE << 7
-        } else {
-            U256::ONE
-        })
-    })
-    .unwrap();
-    assert_eq!(non_prefix.paid, 2);
-    assert_eq!(non_prefix.unpaid, 255);
-}
-
-#[test]
-fn inconsistent_bitmap_counts_and_out_of_range_bits_are_not_complete() {
-    assert!(verify_paid_bitmap(1, 2, None, |_| panic!(
-        "invalid count must reject before reads"
-    ))
-    .is_err());
-    assert!(verify_paid_bitmap(257, 1, None, |_| Ok(U256::ZERO)).is_err());
-    for count in [1_u32, 255, 257] {
-        assert!(verify_paid_bitmap(count, 0, None, |index| Ok(
-            if u64::from(index) + 1 == u64::from(count).div_ceil(256) {
-                U256::ONE << (count % 256)
-            } else {
-                U256::ZERO
-            }
-        ))
-        .is_err());
-    }
-}
-
-#[test]
-fn bitmap_read_failure_and_scan_budget_never_produce_success() {
-    let mut visited = 0;
-    let error = verify_paid_bitmap(257, 0, Some(1), |_| {
-        visited += 1;
-        Ok(U256::ZERO)
-    })
-    .unwrap_err();
-    assert_eq!(visited, 1);
-    assert!(error.downcast_ref::<Incomplete>().is_some());
-    assert!(error.to_string().contains("1/2"));
-    let error = verify_paid_bitmap(257, 0, None, |index| {
-        if index == 1 {
-            eyre::bail!("missing native word");
-        }
-        Ok(U256::ZERO)
-    })
-    .unwrap_err();
-    assert!(error.to_string().contains("missing native word"));
-}
+use super::super::validation::{ocomp::verify_series_day, Incomplete};
 
 #[test]
 fn canonical_series_identity_is_checked_before_decoding_its_day() {
@@ -123,7 +38,7 @@ use super::super::{
 use crate::OutbeHeader;
 use alloy_consensus::Sealable;
 use alloy_primitives::{keccak256, Address, B256};
-use outbe_intex::schema::{CertifiedPayoutRound, IntexContract, SeriesRecord};
+use outbe_intex::schema::{IntexContract, SeriesRecord};
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, types::Storable, StorageHandle};
 use reth_ethereum::{
@@ -426,7 +341,7 @@ fn canonical_fifo_rejects_later_holes_duplicates_complete_entries_and_bad_bounds
     }
 }
 
-fn payout_owner(unpaid: bool, with_round: bool) -> HashMapStorageProvider {
+fn series_owner() -> HashMapStorageProvider {
     let mut owner = queued_owner(0);
     StorageHandle::enter(&mut owner, |storage| {
         let intex = IntexContract::new(storage);
@@ -443,97 +358,29 @@ fn payout_owner(unpaid: bool, with_round: bool) -> HashMapStorageProvider {
                 .write(&(index as u64), record.series_id.to_word())
                 .unwrap();
         }
-        intex
-            .ocomp_contributor_root
-            .write(&DAY, B256::repeat_byte(9))
-            .unwrap();
-        intex
-            .ocomp_contributor_metadata
-            .write(&DAY, U256::ONE | (U256::from(257) << 64))
-            .unwrap();
-        intex
-            .ocomp_eligible_nominal_total
-            .write(&DAY, U256::from(1000))
-            .unwrap();
-        if with_round {
-            intex
-                .ocomp_payout_round
-                .create(&CertifiedPayoutRound {
-                    wwd: DAY.value(),
-                    amount: U256::from(100),
-                    paid_so_far: U256::from(10),
-                    paid_leaf_count: if unpaid { 256 } else { 257 },
-                    active: 1,
-                })
-                .unwrap();
-            intex
-                .ocomp_paid_leaves
-                .write(&IntexContract::paid_bitmap_key(DAY.value(), 0), U256::MAX)
-                .unwrap();
-            intex
-                .ocomp_paid_leaves
-                .write(
-                    &IntexContract::paid_bitmap_key(DAY.value(), 1),
-                    if unpaid { U256::ZERO } else { U256::ONE },
-                )
-                .unwrap();
-        }
     });
     owner
 }
 
 #[test]
-fn permanent_series_index_deduplicates_days_and_finds_old_later_word_obligation() {
-    with_owner_storage(2, payout_owner(true, true), |state, source| {
+fn permanent_series_index_deduplicates_days() {
+    with_owner_storage(2, series_owner(), |state, source| {
         let scratch = tempfile::tempdir().unwrap();
         let inventory =
             CanonicalInventory::scan(state, scratch.path(), &source.protected, None).unwrap();
-        assert_eq!(
-            (
-                inventory.bounds.series,
-                inventory.bounds.days,
-                inventory.bounds.unpaid_days,
-                inventory.bounds.bitmap_words
-            ),
-            (3, 2, 1, 2)
-        );
-        let mut days = vec![];
-        inventory
-            .visit_payouts(&mut |day, certified| {
-                assert_eq!(certified.contributor_count, 257);
-                days.push(day);
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(days, vec![DAY]);
+        assert_eq!((inventory.bounds.series, inventory.bounds.days), (3, 2));
     });
-    for (unpaid, round) in [(false, true), (true, false)] {
-        with_owner_storage(2, payout_owner(unpaid, round), |state, source| {
-            let scratch = tempfile::tempdir().unwrap();
-            let inventory =
-                CanonicalInventory::scan(state, scratch.path(), &source.protected, None).unwrap();
-            assert_eq!(inventory.bounds.unpaid_days, 0);
-            inventory
-                .visit_payouts(&mut |_, _| panic!("no current payout obligation"))
-                .unwrap();
-        });
-    }
 }
 
 #[test]
-fn canonical_index_duplicates_and_inconsistent_rounds_cannot_hide_required_data() {
+fn canonical_series_index_duplicates_cannot_hide_required_data() {
     for damage in [
         "duplicate-series",
-        "round-without-generation",
-        "paid-count",
-        "paid-amount",
-        "tail-bit",
         "series-record-day",
         "index-hole",
         "missing-series-record",
-        "zero-count-open-round",
     ] {
-        let mut owner = payout_owner(true, true);
+        let mut owner = series_owner();
         StorageHandle::enter(&mut owner, |storage| {
             let intex = IntexContract::new(storage);
             match damage {
@@ -542,62 +389,9 @@ fn canonical_index_duplicates_and_inconsistent_rounds_cannot_hide_required_data(
                     .series_id_at_index
                     .write(&1, SeriesId::pack(DAY, *b"GBP", b'U').unwrap().to_word())
                     .unwrap(),
-                "zero-count-open-round" => {
-                    intex
-                        .ocomp_contributor_metadata
-                        .write(&DAY, U256::ONE)
-                        .unwrap();
-                    intex
-                        .ocomp_eligible_nominal_total
-                        .write(&DAY, U256::ZERO)
-                        .unwrap();
-                    intex
-                        .ocomp_payout_round
-                        .update(&CertifiedPayoutRound {
-                            wwd: DAY.value(),
-                            amount: U256::from(100),
-                            paid_so_far: U256::ZERO,
-                            paid_leaf_count: 0,
-                            active: 1,
-                        })
-                        .unwrap();
-                }
                 "duplicate-series" => intex
                     .series_id_at_index
                     .write(&1, series(DAY, *b"USD").series_id.to_word())
-                    .unwrap(),
-                "round-without-generation" => {
-                    intex
-                        .ocomp_contributor_root
-                        .write(&DAY, B256::ZERO)
-                        .unwrap();
-                    intex
-                        .ocomp_contributor_metadata
-                        .write(&DAY, U256::ZERO)
-                        .unwrap();
-                    intex
-                        .ocomp_eligible_nominal_total
-                        .write(&DAY, U256::ZERO)
-                        .unwrap();
-                }
-                "paid-count" | "paid-amount" => {
-                    intex
-                        .ocomp_payout_round
-                        .update(&CertifiedPayoutRound {
-                            wwd: DAY.value(),
-                            amount: U256::from(100),
-                            paid_so_far: U256::from(if damage == "paid-amount" { 101 } else { 10 }),
-                            paid_leaf_count: if damage == "paid-count" { 258 } else { 256 },
-                            active: 1,
-                        })
-                        .unwrap();
-                }
-                "tail-bit" => intex
-                    .ocomp_paid_leaves
-                    .write(
-                        &IntexContract::paid_bitmap_key(DAY.value(), 1),
-                        U256::from(2),
-                    )
                     .unwrap(),
                 "series-record-day" => {
                     let mut record = series(DAY, *b"USD");
@@ -630,7 +424,7 @@ fn canonical_scan_budget_and_scratch_overlap_fail_without_source_changes() {
         assert!(CanonicalInventory::scan(state, scratch.path(), &protected, None).is_err());
         assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
     });
-    with_owner_storage(1, payout_owner(true, false), |state, source| {
+    with_owner_storage(1, series_owner(), |state, source| {
         let scratch = tempfile::tempdir().unwrap();
         let error = CanonicalInventory::scan(state, scratch.path(), &source.protected, Some(1))
             .err()
@@ -644,8 +438,6 @@ fn canonical_scan_budget_and_scratch_overlap_fail_without_source_changes() {
 }
 
 mod active_inventory;
-
-mod payout_inventory;
 
 mod frames_inventory;
 mod nod_inventory;

@@ -8,8 +8,8 @@ fn quote_prices_both_rails() {
     world.qualify(nod_id);
     world.register_settlement_asset(PAYMENT_ASSET, 840);
     world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
+    world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
 
     let (ref_iso, ref_amount, iss_iso, iss_amount) = world.enter(|storage, scope, parent| {
         let (ref_iso, ref_amount, _) =
@@ -30,8 +30,8 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
     let input = dual_currency_params(Address::repeat_byte(0xa8));
     let nod_id = world.issue(&input);
     world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
+    world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
 
     let quoted = world.enter(|storage, scope, parent| {
         use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
@@ -42,7 +42,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
             .unwrap()
             .unwrap();
         outbe_oracle::schema::OracleContract::new(storage.clone())
-            .record_utc_day_vwap(day, index, U256::from(4 * SIX_DECIMALS))
+            .record_utc_day_vwap(day, index, U256::from(4 * SCALE_1E6_U64))
             .unwrap();
         api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
             .unwrap()
@@ -59,8 +59,8 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     world.qualify(nod_id);
     world.register_settlement_asset(PAYMENT_ASSET, 840);
     world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
+    world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let quote = |world: &mut World| {
         world
             .enter(|storage, scope, parent| {
@@ -101,8 +101,8 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
+    world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let quote = |world: &mut World| {
         world
             .enter(|storage, scope, parent| {
@@ -145,8 +145,8 @@ fn a_snapshot_of_another_policy_is_rejected() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
+    world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let (_, _, quoted) = world
         .enter(|storage, scope, parent| {
             api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
@@ -190,8 +190,8 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
+    world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     world.provider.stub_sub_call_at_selector(
         EUR_ASSET,
         IERC20::transferFromCall::SELECTOR,
@@ -286,9 +286,9 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     // The euro trades live, but the window it converts at holds no euro price.
-    world.publish_coen_spot(978, U256::from(SIX_DECIMALS));
+    world.publish_coen_spot(978, U256::from(SCALE_1E6_U64));
 
     let error = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, U256::ZERO).unwrap_err();
     assert_eq!(
@@ -297,7 +297,7 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
     );
     assert!(!is_settled(&mut world, nod_id));
 
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let live = world.enter(|storage, scope, parent| {
         api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
             .unwrap()
@@ -318,7 +318,7 @@ fn issuance_rail_rejects_a_missing_cross_rate() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
 
     let error = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, U256::ZERO).unwrap_err();
     assert!(
@@ -334,8 +334,8 @@ fn quote_settlement_dispatch() {
     let input = dual_currency_params(Address::repeat_byte(0xa7));
     let nod_id = world.issue(&input);
     world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_rate(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_rate(978, U256::from(SIX_DECIMALS));
+    world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
+    world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
 
     let out = world
         .enter(|storage, scope, parent| {
@@ -369,18 +369,18 @@ fn issuance_rail_rejects_a_window_whose_prices_fail_coverage() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
-    world.publish_coen_spot(840, U256::from(2 * SIX_DECIMALS));
-    world.publish_coen_spot(978, U256::from(SIX_DECIMALS));
+    world.publish_coen_spot(840, U256::from(2 * SCALE_1E6_U64));
+    world.publish_coen_spot(978, U256::from(SCALE_1E6_U64));
     let observation = [
         (
             outbe_oracle::api::AddressPair::new_coen_to(840),
-            U256::from(2 * SIX_DECIMALS),
-            U256::from(SIX_DECIMALS),
+            U256::from(2 * SCALE_1E6_U64),
+            U256::from(SCALE_1E6_U64),
         ),
         (
             outbe_oracle::api::AddressPair::new_coen_to(978),
-            U256::from(SIX_DECIMALS),
-            U256::from(SIX_DECIMALS),
+            U256::from(SCALE_1E6_U64),
+            U256::from(SCALE_1E6_U64),
         ),
     ];
 

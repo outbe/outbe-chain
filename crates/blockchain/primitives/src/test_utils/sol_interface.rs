@@ -1,6 +1,7 @@
 //! Drift checks between Solidity interface files and Rust precompile
 //! annotations. Tests use it to compare one `function` declaration with the
-//! expected argument types, `view` modifier and return types.
+//! expected argument types, `view` modifier and return types, or one literal
+//! `constant` with its Rust counterpart.
 
 /// One Solidity function declaration reduced to comparable type lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +32,14 @@ pub fn sol_function_canonical(sol: &str, name: &str) -> Option<SolFnCanonical> {
         is_view,
         ret_types,
     })
+}
+
+/// Reads a literal `constant NAME = <value>;` declaration.
+pub fn sol_constant<T: std::str::FromStr>(sol: &str, name: &str) -> Option<T> {
+    let needle = format!(" constant {name} =");
+    let start = sol.find(&needle)? + needle.len();
+    let end = sol[start..].find(';')? + start;
+    sol[start..end].trim().replace('_', "").parse().ok()
 }
 
 /// Returns the index of the parenthesis that closes the one at `open`.
@@ -68,7 +77,20 @@ fn canonical_type_list(list: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sol_function_canonical;
+    use super::{sol_constant, sol_function_canonical};
+
+    #[test]
+    fn sol_constant_reads_plain_and_separated_literals() {
+        const SAMPLE: &str = "library L {\n\
+                uint8 internal constant SIX = 6;\n\
+                uint32 internal constant MILLION = 1_000_000;\n\
+                uint256 internal constant DERIVED = 10 ** SIX;\n\
+            }";
+        assert_eq!(sol_constant(SAMPLE, "SIX"), Some(6u8));
+        assert_eq!(sol_constant(SAMPLE, "MILLION"), Some(1_000_000u32));
+        assert_eq!(sol_constant::<u128>(SAMPLE, "DERIVED"), None);
+        assert_eq!(sol_constant::<u128>(SAMPLE, "MISSING"), None);
+    }
 
     /// Pins the parser output for names, `calldata`/`memory` markers, `view` and
     /// a declaration without `returns`.

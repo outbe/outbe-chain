@@ -290,6 +290,7 @@ function fixedChain(chain: FakeChain): void {
   chain.register(ERC20_ABI);
   for (const name of ["tokenURI", "contractURI", "uri"]) chain.reply(name, DATA_URI);
   chain.reply("tributeOfferPublicKey", 9n);
+  chain.reply("powDifficulty", 1);
   chain.seed(HASH, 54_322_345, OTHER, "0x1234");
   chain.reply("openOrders", ORDER);
   chain.reply("targets", [97, 54_322_345]);

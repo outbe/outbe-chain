@@ -1,5 +1,7 @@
 //! Canonical proof-backed materialization of certified NOD generations.
 
+#[cfg(any(test, feature = "test-utils"))]
+use alloy_primitives::U256;
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_chain_constants::NodMaterializationProfileV1;
@@ -11,13 +13,13 @@ use outbe_nod::NodContract;
 use outbe_nod::NodIssueParams;
 #[cfg(any(test, feature = "test-utils"))]
 use outbe_ocomp_protocol::nod_materialization::{
-    verify_nod_materialization_batch, NodMaterializationBatchV1,
+    NodMaterializationBatchV1, verify_nod_materialization_batch,
 };
 #[cfg(any(test, feature = "test-utils"))]
 use outbe_ocomp_protocol::result::NodActionV1;
 use outbe_ocomp_protocol::{
-    nod_materialization::{NodMaterializationHeadV1, ProtectedNodMaterializationV2},
     SchemaLimits,
+    nod_materialization::{NodMaterializationHeadV1, ProtectedNodMaterializationV2},
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
@@ -145,12 +147,13 @@ pub fn materialize_certified_nods_authorized(
     storage: &StorageHandle<'_>,
     readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     batch: &NodMaterializationBatchV1,
+    loads: &[U256],
     profile: NodMaterializationProfileV1,
     limits: &SchemaLimits,
 ) -> Result<NodMaterializationOutcomeV1> {
     storage.clone().with_checkpoint(|| {
         consume_materialization_attempt(storage, profile)?;
-        materialize_after_attempt(storage, readers, batch, profile, limits)
+        materialize_after_attempt(storage, readers, batch, loads, profile, limits)
     })
 }
 
@@ -159,6 +162,7 @@ pub(crate) fn materialize_after_attempt(
     storage: &StorageHandle<'_>,
     readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     batch: &NodMaterializationBatchV1,
+    loads: &[U256],
     profile: NodMaterializationProfileV1,
     limits: &SchemaLimits,
 ) -> Result<NodMaterializationOutcomeV1> {
@@ -187,12 +191,18 @@ pub(crate) fn materialize_after_attempt(
         .issued_at;
     require_derived_nod_ids(verified.actions(), worldwide_day)?;
 
-    for action in verified.actions() {
+    if loads.len() != verified.actions().len() || loads.iter().any(|load| load.is_zero()) {
+        return Err(PrecompileError::Fatal(
+            "Nod materialization test load does not match the batch".into(),
+        )
+        .into());
+    }
+    for (action, load) in verified.actions().iter().zip(loads) {
         let params = NodIssueParams {
             owner: action.owner,
             worldwide_day,
             league_id: action.league_id,
-            gratis_load_minor: action.gratis_load_minor,
+            gratis_load_minor: *load,
             entry_price_minor: action.entry_price_minor,
             issuance_currency: action.issuance_currency,
             reference_currency: action.reference_currency,

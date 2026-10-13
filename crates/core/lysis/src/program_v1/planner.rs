@@ -220,7 +220,7 @@ pub struct LysisPlanTopologyV1 {
     tree: PaddedBinaryTreeV1,
 }
 
-const LYSIS_PLAN_PHASE_ORDER: [UnitPhase; 10] = [
+const LYSIS_PLAN_PHASE_ORDER: [UnitPhase; 9] = [
     UnitPhase::Enumerate,
     UnitPhase::FidelityMap,
     UnitPhase::FixedReduce,
@@ -228,7 +228,6 @@ const LYSIS_PLAN_PHASE_ORDER: [UnitPhase; 10] = [
     UnitPhase::GratisPrefix,
     UnitPhase::GratisPrefixDown,
     UnitPhase::OutputFinalize,
-    UnitPhase::OwnerShuffle,
     UnitPhase::BucketShuffle,
     UnitPhase::RootReduce,
 ];

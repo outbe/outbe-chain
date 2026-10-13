@@ -37,8 +37,8 @@ use outbe_ocomp_protocol::{
     profile::{CapacityProfileV1, CorrectnessProfileV1, ProgramId, ProtocolBundleV1},
     receipts::{
         apply_event_summary_hash, desis_request_brief_hash, empty_apply_event_summary_hash,
-        ActivationOutcome, AggregateActivationReceiptV1, CarryOverReceiptV1, ContributorReceiptV1,
-        EffectBindingV1, LimitSplitDestination, NodBatchReceiptV1, RequestLimitSplitReceiptV1,
+        ActivationOutcome, AggregateActivationReceiptV1, CarryOverReceiptV1, EffectBindingV1,
+        LimitSplitDestination, NodBatchReceiptV1, RequestLimitSplitReceiptV1,
         TributeReceiptV1,
     },
     registry::{HashDomain, ListKind, ObjectKind},
@@ -47,7 +47,10 @@ use outbe_ocomp_protocol::{
         CarryOverCreditActionV1, CarryOverReason, CompletionStatus, ConservationTotalsV1,
         LysisArithmeticSummaryV1, LysisResultV1, MetadosisCompletionSummaryV1, ResultChunkV1,
     },
-    shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
+    shuffle::{
+        ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1,
+        ShuffleRunPayloadV1,
+    },
     state::{
         ActiveGenerationV1, LysisTerminalV1, OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus,
         OcompTerminalOutcome,
@@ -696,7 +699,6 @@ fn conflict_receipt() -> AggregateActivationReceiptV1 {
         binding: binding(),
         outcome: ActivationOutcome::ConflictResolved,
         nod_receipt_hash: None,
-        contributor_receipt_hash: None,
         tribute_receipt_hash: None,
         carry_over_receipt_hash: None,
         request_limit_split_receipt_hash: hash(113),
@@ -912,14 +914,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         issued_at: 1_000,
         state_event_digest: hash(110),
     };
-    let contributor_receipt = ContributorReceiptV1 {
-        binding: binding(),
-        contributor_target_precondition: preconditions().contributors,
-        contributor_count: 0,
-        contributor_root: result.roots.contributor_root,
-        eligible_nominal_total: U256::ZERO,
-        state_event_digest: hash(111),
-    };
     let tribute_receipt = TributeReceiptV1 {
         binding: binding(),
         tribute_input_binding: preconditions().tribute,
@@ -955,7 +949,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         program_semantics_hash: hash(8),
         nod_root: result.roots.nod_root,
         bucket_root: result.roots.bucket_root,
-        contributor_root: result.roots.contributor_root,
         output_manifest_root: result.roots.output_manifest_root,
         exact_counts: result.counts.clone(),
         result_evidence_hash: hash(116),
@@ -998,7 +991,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         job_id: hash(59),
         attempt: 0,
         unit_id: hash(117),
-        kind: ShuffleRunKindV1::Owner,
+        kind: ShuffleRunKindV1::Bucket,
         run_span: outbe_ocomp_protocol::unit::CanonicalRunSpan {
             start_run: 0,
             end_run: 1,
@@ -1008,11 +1001,16 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
             end_page: 1,
         },
         first_record_ordinal: 0,
-        record_count: 0,
+        record_count: 1,
         source_coverage_root: hash(118),
         source_coverage_count: 1,
         ordered_record_root: B256::ZERO,
-        payload: ShuffleRunPayloadV1::OwnerLeaf(Vec::new()),
+        payload: ShuffleRunPayloadV1::BucketLeaf(vec![ShuffleBucketRecordV1 {
+            bucket_key: hash(9),
+            raw_ordinal: 0,
+            tribute_id: hash(10),
+            nod_id: hash(11),
+        }]),
     }
     .with_recomputed_ordered_record_root(&LIMITS)
     .unwrap();
@@ -1047,7 +1045,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         chunk_ordinal: 0,
         first_nod_ordinal: 0,
         ordered_nod_actions: Vec::new(),
-        ordered_eligible_contributors: Vec::new(),
     };
     let assert_result_artifacts = || {
         assert_round_trip!(result_chunk, ResultChunkV1, ResultChunkV1);
@@ -1073,11 +1070,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
 
     let assert_settlement_receipts = || {
         assert_round_trip!(nod_receipt, NodBatchReceiptV1, NodBatchReceiptV1);
-        assert_round_trip!(
-            contributor_receipt,
-            ContributorReceiptV1,
-            ContributorReceiptV1
-        );
         assert_round_trip!(tribute_receipt, TributeReceiptV1, TributeReceiptV1);
         assert_round_trip!(
             request_limit_split_receipt,
@@ -1764,18 +1756,17 @@ fn aggregate_receipt_reports_shape_before_effect_and_summary() {
 
 #[test]
 fn applied_receipt_validates_the_fixed_owner_event_order() {
-    let owner_digests = [hash(110), hash(111), hash(112), hash(115)];
-    let receipt_hashes = [hash(120), hash(121), hash(122), hash(123)];
-    let mut effect_payload = Vec::with_capacity(128);
+    let owner_digests = [hash(110), hash(112), hash(115)];
+    let receipt_hashes = [hash(120), hash(122), hash(123)];
+    let mut effect_payload = Vec::with_capacity(96);
     for digest in receipt_hashes {
         effect_payload.extend_from_slice(digest.as_slice());
     }
     let mut receipt = conflict_receipt();
     receipt.outcome = ActivationOutcome::Applied;
     receipt.nod_receipt_hash = Some(receipt_hashes[0]);
-    receipt.contributor_receipt_hash = Some(receipt_hashes[1]);
-    receipt.tribute_receipt_hash = Some(receipt_hashes[2]);
-    receipt.carry_over_receipt_hash = Some(receipt_hashes[3]);
+    receipt.tribute_receipt_hash = Some(receipt_hashes[1]);
+    receipt.carry_over_receipt_hash = Some(receipt_hashes[2]);
     receipt.active_generation_hash = Some(hash(124));
     receipt.effect_commitment = hash_framed(HashDomain::Effects, &effect_payload).unwrap();
     receipt.event_summary_hash = apply_event_summary_hash(owner_digests).unwrap();
@@ -1784,12 +1775,7 @@ fn applied_receipt_validates_the_fixed_owner_event_order() {
         .validate_applied_event_summary(owner_digests)
         .unwrap();
 
-    let reordered = [
-        owner_digests[1],
-        owner_digests[0],
-        owner_digests[2],
-        owner_digests[3],
-    ];
+    let reordered = [owner_digests[1], owner_digests[0], owner_digests[2]];
     assert!(matches!(
         receipt.validate_applied_event_summary(reordered),
         Err(ProtocolError::InvalidInvariant(

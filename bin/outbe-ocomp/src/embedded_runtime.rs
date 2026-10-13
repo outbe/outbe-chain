@@ -47,10 +47,6 @@ use crate::{
         reconcile_finalized_materialization_references, NodMaterializationSubmissionConfigV1,
         NodMaterializationSubmissionOutcomeV1, NodMaterializationSubmitterV1,
     },
-    payout_submitter::{
-        LocalPayoutTransactionPreparerV1, PayoutSubmissionConfigV1, PayoutTickOutcomeV1,
-        SupervisorPayoutSubmitterV1,
-    },
     protected_nod_materialization::{
         materialization_sources, prepare_protected_materialization,
         PreparedNodMaterializationStoreV2,
@@ -132,7 +128,6 @@ struct EmbeddedOcompLayoutV1 {
     job_root: PathBuf,
     local_result_root: PathBuf,
     vote_submission_root: PathBuf,
-    payout_submission_root: PathBuf,
     materialization_reference_root: PathBuf,
     materialization_submission_root: PathBuf,
     sign_once_root: PathBuf,
@@ -171,7 +166,6 @@ impl EmbeddedOcompLayoutV1 {
             job_root: supervisor.join("jobs"),
             local_result_root: node.join("local-results"),
             vote_submission_root: supervisor.join("vote-submissions"),
-            payout_submission_root: supervisor.join("payout-submissions"),
             materialization_reference_root: supervisor.join("materialization-references"),
             materialization_submission_root: supervisor.join("materialization-submissions"),
             sign_once_root: supervisor.join("sign-once"),
@@ -190,7 +184,6 @@ struct ValidatorOcompPolicyV1 {
     ocomp_key_hash: B256,
     rpc_url: String,
     journal_root: PathBuf,
-    payout_journal_root: PathBuf,
     materialization_reference_root: PathBuf,
     materialization_submission_root: PathBuf,
     cas_root: PathBuf,
@@ -332,46 +325,6 @@ impl EmbeddedOcompDomainV1 {
             .name(format!("ocomp-job-{}", short_job(job_id)))
             .spawn(move || job.run())
             .map_err(|error| stage("spawn embedded OCOMP compute thread", error))?;
-        Ok(())
-    }
-
-    /// Drives one payout tick over `days`. Without it, a node-embedded domain
-    /// certifies contributors that nobody ever pays.
-    pub fn spawn_validator_payout(
-        &self,
-        days: Vec<u32>,
-        cancelled: Arc<AtomicBool>,
-        sender: mpsc::Sender<EmbeddedPayoutOutcomeV1>,
-    ) -> Result<(), EmbeddedOcompRuntimeErrorV1> {
-        let policy = self
-            .lanes
-            .values()
-            .find_map(|lane| lane.validator_ocomp.as_ref())
-            .ok_or(EmbeddedOcompRuntimeErrorV1::FullNodeVoteAuthority)?;
-        let signer = policy.materialization_signer.clone();
-        let submission_gate = Arc::clone(&policy.submission_gate);
-        let rpc_url = policy.rpc_url.clone();
-        let config = PayoutSubmissionConfigV1 {
-            journal_root: policy.payout_journal_root.clone(),
-            job_root: policy.job_root.clone(),
-            expected_chain_id: policy.chain_id,
-            sender_address: policy.sender_address,
-            limits: policy.limits,
-        };
-        thread::Builder::new()
-            .name("ocomp-payout".to_owned())
-            .spawn(move || {
-                submission::run_payout(submission::PayoutWork {
-                    days,
-                    signer,
-                    submission_gate,
-                    rpc_url,
-                    config,
-                    cancelled,
-                    sender,
-                })
-            })
-            .map_err(|error| stage("spawn embedded OCOMP payout thread", error))?;
         Ok(())
     }
 
@@ -668,13 +621,6 @@ pub enum EmbeddedComputeOutcomeV1 {
     },
 }
 
-/// Result of one embedded payout tick.
-#[derive(Debug)]
-pub enum EmbeddedPayoutOutcomeV1 {
-    Ticked(PayoutTickOutcomeV1),
-    Failed(String),
-}
-
 pub enum EmbeddedVoteOutcomeV1 {
     Finalized {
         job_id: B256,
@@ -747,14 +693,12 @@ mod tests {
         let roots = ResultRootsV1 {
             nod_root: B256::repeat_byte(0x31),
             bucket_root: B256::repeat_byte(0x32),
-            contributor_root: B256::repeat_byte(0x33),
             output_manifest_root: B256::repeat_byte(0x34),
         };
         let counts = ExactCountsV1 {
             tribute_count: 1,
             nod_count: 1,
             bucket_count: 0,
-            contributor_count: 0,
             semantic_event_count: 0,
         };
         let conservation = ConservationTotalsV1 {

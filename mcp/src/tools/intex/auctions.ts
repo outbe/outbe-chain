@@ -6,7 +6,7 @@ import { networkName } from "../schemas.js";
 import { handler, ok } from "../util.js";
 import { AUCTION_ABI, DESIS_ABI, ORIGIN_ROUTER_ABI } from "../../intex/registry.js";
 import { auctionStage, desisStage, epochIso, isActiveStage } from "../../intex/format.js";
-import { priced } from "../../intex/units.js";
+import { PROTOCOL_DECIMALS, priced } from "../../intex/units.js";
 import { DEFAULT_DAYS_AHEAD, DEFAULT_DAYS_BACK, todayYmd, ymdShift } from "../../intex/dates.js";
 import { bidDays, bidStatus } from "../../intex/bidder.js";
 import { addr, auctionStageOf, discoverByDate } from "../../intex/reads.js";
@@ -70,7 +70,7 @@ export function registerAuctionTools(server: McpServer, deps: IntexDeps): void {
           // Protocol-6 per-Intex PROMIS load. Escrow converts the calculated lock to WCOEN-18.
           promisLoadMinor: {
             raw: d.params.promisLoadMinor.toString(),
-            value: formatUnits(d.params.promisLoadMinor, 6),
+            value: formatUnits(d.params.promisLoadMinor, PROTOCOL_DECIMALS),
             scale: "1e6 PROMIS protocol units",
           },
           callTrigger: {

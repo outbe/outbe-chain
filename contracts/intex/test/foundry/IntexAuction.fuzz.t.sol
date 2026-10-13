@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -36,7 +37,7 @@ contract IntexAuctionFuzzTest is Test {
 
     uint16 internal constant MIN_QTY = 1;
     uint32 internal constant MIN_RATE = 10;
-    uint32 internal constant SCALE_1E6 = 1_000_000;
+    uint32 internal constant SCALE_1E6 = BridgeMsgCodec.SCALE_1E6;
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
     // Escrow basis == promis_load per Intex. Lock = qty * ESCROW_BASIS * rate / 1e6.
     uint64 internal constant ENTRY_PRICE = 1e6;
@@ -73,7 +74,9 @@ contract IntexAuctionFuzzTest is Test {
     function test_Fuzz_RevealBid_ValidProductLocksExactAmount(uint256 qSeed, uint256 rSeed) public {
         uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
         uint32 rate = uint32(bound(rSeed, MIN_RATE, SCALE_1E6));
-        uint128 expected = uint128(uint256(quantity) * ESCROW_BASIS * rate / SCALE_1E6 * 1e12);
+        uint128 expected = uint128(
+            uint256(quantity) * ESCROW_BASIS * rate / SCALE_1E6 * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT
+        );
 
         uint32 worldwideDay = 20260202;
         _start(worldwideDay);

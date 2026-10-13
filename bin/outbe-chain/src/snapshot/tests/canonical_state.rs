@@ -70,7 +70,7 @@ fn external_live_job_view_exposes_public_protocol_types() {
 use std::collections::BTreeMap;
 
 use alloy_consensus::Sealable;
-use outbe_intex::schema::{CertifiedPayoutRound, IntexContract, SeriesId, SeriesRecord};
+use outbe_intex::schema::{IntexContract, SeriesId, SeriesRecord};
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, types::Storable, StorageHandle},
@@ -285,13 +285,6 @@ fn typed_owner_reads_enumerate_all_nod_sequences_and_intex_words_at_e() {
         let mut owner = HashMapStorageProvider::new(1);
         let days = [DAY, WorldwideDay::new(DAY.value() + 1)];
         let records = [series(days[0], *b"USD"), series(days[1], *b"EUR")];
-        let rounds = days.map(|day| CertifiedPayoutRound {
-            wwd: day.value(),
-            amount: U256::from(100),
-            paid_so_far: U256::from(20),
-            paid_leaf_count: 1,
-            active: 1,
-        });
         let generations = StorageHandle::enter(&mut owner, |storage| {
             let nod = NodContract::new(storage.clone());
             nod.ocomp_materialization_head_sequence.write(7).unwrap();
@@ -303,34 +296,11 @@ fn typed_owner_reads_enumerate_all_nod_sequences_and_intex_words_at_e() {
             let intex = IntexContract::new(storage);
             intex.total_series.write(2).unwrap();
             for (index, record) in records.iter().enumerate() {
-                let day = record.worldwide_day;
                 intex.series.create(record).unwrap();
                 intex
                     .series_id_at_index
                     .write(&(index as u64), record.series_id.to_word())
                     .unwrap();
-                intex
-                    .ocomp_contributor_root
-                    .write(&day, B256::repeat_byte(9))
-                    .unwrap();
-                intex
-                    .ocomp_contributor_metadata
-                    .write(&day, U256::ONE | (U256::from(2) << 64))
-                    .unwrap();
-                intex
-                    .ocomp_eligible_nominal_total
-                    .write(&day, U256::from(50))
-                    .unwrap();
-                intex.ocomp_payout_round.create(&rounds[index]).unwrap();
-                for word in [0_u32, 1] {
-                    intex
-                        .ocomp_paid_leaves
-                        .write(
-                            &IntexContract::paid_bitmap_key(day.value(), word),
-                            U256::from(3 + word),
-                        )
-                        .unwrap();
-                }
             }
             generations
         });
@@ -359,30 +329,6 @@ fn typed_owner_reads_enumerate_all_nod_sequences_and_intex_words_at_e() {
                     state.intex_read_series(records[index].series_id).unwrap(),
                     records[index]
                 );
-                let certified = state
-                    .intex_certified_contributor_generation(day)
-                    .unwrap()
-                    .unwrap();
-                assert_eq!(
-                    (
-                        certified.worldwide_day,
-                        certified.series_version,
-                        certified.contributor_count
-                    ),
-                    (day.value(), 1, 2)
-                );
-                assert_eq!(certified.contributor_root, B256::repeat_byte(9));
-                assert_eq!(certified.eligible_nominal_total, U256::from(50));
-                assert_eq!(
-                    state.intex_certified_payout_round(day.value()).unwrap(),
-                    Some(rounds[index].clone())
-                );
-                for word in [0_u32, 1] {
-                    assert_eq!(
-                        state.intex_paid_leaves_word(day.value(), word).unwrap(),
-                        U256::from(3 + word)
-                    );
-                }
             }
         });
     }
@@ -401,14 +347,6 @@ fn absent_owner_generations_remain_optional() {
         assert!(state.nod_materialization_head().unwrap().is_none());
         assert!(state.nod_certified_generation(DAY).unwrap().is_none());
         assert!(state
-            .intex_certified_contributor_generation(DAY)
-            .unwrap()
-            .is_none());
-        assert!(state
-            .intex_certified_payout_round(DAY.value())
-            .unwrap()
-            .is_none());
-        assert!(state
             .metadosis_active_lysis_generation(DAY)
             .unwrap()
             .is_none());
@@ -416,20 +354,15 @@ fn absent_owner_generations_remain_optional() {
 }
 
 #[test]
-fn residual_intex_generation_and_malformed_nod_head_keep_owner_errors() {
+fn malformed_nod_head_keeps_owner_errors() {
     let mut owner = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut owner, |storage| {
-        IntexContract::new(storage.clone())
-            .ocomp_contributor_root
-            .write(&DAY, B256::repeat_byte(9))
-            .unwrap();
         let nod = NodContract::new(storage);
         nod.ocomp_materialization_head_sequence.write(7).unwrap();
         nod.ocomp_materialization_tail_sequence.write(8).unwrap();
         nod.ocomp_materialization_queue_wwd.write(&7, DAY).unwrap();
     });
     with_owner_storage(2, owner, |state, _| {
-        assert!(state.intex_certified_contributor_generation(DAY).is_err());
         assert!(state.nod_materialization_head().is_err());
     });
 }
@@ -501,9 +434,9 @@ fn storage_context_is_current_e_and_hashes_are_limited_to_audited_history() {
 use outbe_ocomp_protocol::{
     hash::hash_framed,
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        intent_storage_key, ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1,
+        JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
+        NodTargetPreconditionV1, TributeInputBindingV1,
     },
     profile::poc_schema_limits,
     receipts::{ActivationOutcome, AggregateActivationReceiptV1, EffectBindingV1},
@@ -564,12 +497,6 @@ fn canonical_job(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
                 namespace_root_before: B256::ZERO,
                 max_nod_count: 1,
             },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: DAY.value(),
-                expected_series_version: 0,
-                max_contributor_count: 1,
-                max_eligible_nominal_total: U256::from(10),
-            },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: DAY.value(),
                 pending_nonce: 0,
@@ -622,12 +549,11 @@ fn canonical_job(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
             },
             outcome: ActivationOutcome::Applied,
             nod_receipt_hash: Some(hash),
-            contributor_receipt_hash: Some(hash),
             tribute_receipt_hash: Some(hash),
             carry_over_receipt_hash: Some(hash),
             request_limit_split_receipt_hash: hash,
             active_generation_hash: Some(hash),
-            effect_commitment: hash_framed(HashDomain::Effects, &hash.as_slice().repeat(4))
+            effect_commitment: hash_framed(HashDomain::Effects, &hash.as_slice().repeat(3))
                 .unwrap(),
             event_summary_hash: hash,
             activated_at_height: 105,
@@ -904,13 +830,11 @@ fn active_generation_decodes_present_record_and_rejects_malformed_bytes() {
         program_semantics_hash: B256::repeat_byte(2),
         nod_root: B256::repeat_byte(3),
         bucket_root: B256::repeat_byte(4),
-        contributor_root: B256::repeat_byte(5),
         output_manifest_root: B256::repeat_byte(6),
         exact_counts: ExactCountsV1 {
             tribute_count: 2,
             nod_count: 2,
             bucket_count: 1,
-            contributor_count: 1,
             semantic_event_count: 3,
         },
         result_evidence_hash: B256::repeat_byte(7),

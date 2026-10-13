@@ -5,6 +5,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::MAX_ASSET_DECIMALS;
 
 use super::calls::{
     asset_iso_code, erc20_balance_of, erc20_decimals, erc20_transfer, erc20_transfer_from,
@@ -14,10 +15,6 @@ use super::SELF;
 use crate::api::IVaultRouter;
 use crate::errors::VaultRouterError;
 use crate::schema::VaultRouterContract;
-
-/// Ceiling on a registered asset's `decimals()` accepted by `rebalance`. Every scaling
-/// below this bound is an exact power-of-ten multiply or a single ceiling divide.
-const MAX_ASSET_DECIMALS: u8 = 18;
 
 /// `rebalance`: moves `amount` of liquidity from `vault_from` to `vault_to`. The caller
 /// supplies `asset_to` (the destination vault's underlying asset) at the oracle cross rate

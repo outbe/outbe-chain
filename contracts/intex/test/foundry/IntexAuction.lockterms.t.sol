@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
@@ -94,6 +95,11 @@ contract IntexAuctionLockTermsTest is Test {
 
         assertEq(escrow.bidRate(), RATE, "bid rate");
         assertEq(escrow.quantity(), QUANTITY, "quantity");
-        assertEq(escrow.amount(), uint256(QUANTITY) * PROMIS_LOAD_MINOR * RATE / 1e6 * 1e12, "amount");
+        assertEq(
+            escrow.amount(),
+            uint256(QUANTITY) * PROMIS_LOAD_MINOR * RATE / BridgeMsgCodec.SCALE_1E6
+                * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT,
+            "amount"
+        );
     }
 }

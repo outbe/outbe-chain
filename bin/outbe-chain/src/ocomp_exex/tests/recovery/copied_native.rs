@@ -287,7 +287,6 @@ pub(in crate::ocomp_exex::tests) fn runtime_with_endpoint<P>(
     let (compute_tx, compute_rx) = std::sync::mpsc::channel();
     let (vote_tx, vote_rx) = std::sync::mpsc::channel();
     let (materialization_tx, materialization_rx) = std::sync::mpsc::channel();
-    let (payout_tx, payout_rx) = std::sync::mpsc::channel();
     let spool = outbe_ocomp::discovery_spool::DiscoverySpoolV1::open(
         root.join("exporter-v1/discovery")
             .join(hex::encode(bundle.hash())),
@@ -324,9 +323,6 @@ pub(in crate::ocomp_exex::tests) fn runtime_with_endpoint<P>(
         materialization_tx,
         materialization_rx,
         materialization_active: None,
-        payout_tx,
-        payout_rx,
-        payout_active: false,
         materialization_attempt_heights: BTreeMap::new(),
         chain_id: chain().chain().id(),
         genesis_hash: genesis.block_hash,
@@ -427,7 +423,6 @@ fn result_for(job: &OcompJobRecordV1) -> LysisResultV1 {
             roots: ResultRootsV1 {
                 nod_root: B256::repeat_byte(0x31),
                 bucket_root: B256::repeat_byte(0x32),
-                contributor_root: B256::repeat_byte(0x33),
                 output_manifest_root: B256::repeat_byte(0x34),
             },
         },

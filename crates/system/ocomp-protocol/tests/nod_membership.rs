@@ -1,10 +1,10 @@
-use alloy_primitives::{address, B256, U256};
+use alloy_primitives::{B256, U256, address};
 use outbe_ocomp_protocol::{
-    list::{streaming_ordered_list_membership_proof, OrderedListProofTarget},
+    StreamingOrderedListRoot,
+    list::{OrderedListProofTarget, streaming_ordered_list_membership_proof},
     profile::poc_schema_limits,
     registry::ListKind,
     result::{ActiveNodSetV1, NodActionV1, NodMembershipProofV1},
-    StreamingOrderedListRoot,
 };
 
 const WWD: u32 = 20_260_726;
@@ -24,9 +24,7 @@ fn action(ordinal: u32) -> NodActionV1 {
         owner: address!("1000000000000000000000000000000000000001"),
         wwd: WWD,
         league_id: 7,
-        gratis_load_minor: U256::from(100 + ordinal),
         entry_price_minor: U256::from(20 + ordinal),
-        settlement_cost_minor: U256::from(120 + ordinal),
         issuance_currency: 840,
         reference_currency: 978,
     }
@@ -84,7 +82,7 @@ fn finalized_active_nod_accepts_its_canonical_membership_proof() {
 fn altered_nod_body_is_not_a_member_of_the_active_nod_root() {
     let limits = poc_schema_limits();
     let (authority, mut proof) = fixture();
-    proof.action.settlement_cost_minor += U256::from(1);
+    proof.action.entry_price_minor += U256::from(1);
 
     assert!(proof.verify_against(&authority, &limits).is_err());
 }
@@ -113,9 +111,11 @@ fn proof_cannot_be_substituted_across_active_jobs_or_generations() {
 
     let mut different_generation = authority;
     different_generation.generation += 1;
-    assert!(proof
-        .verify_against(&different_generation, &limits)
-        .is_err());
+    assert!(
+        proof
+            .verify_against(&different_generation, &limits)
+            .is_err()
+    );
 
     let mut different_day = authority;
     different_day.worldwide_day += 1;
