@@ -1,16 +1,4 @@
-//! sub-call -> outbe precompile visibility test.
-//!
-//! Verifies that after outbe-precompile propagation, a sub-call driven by
-//! `sub_call::run` can reach an outbe stateful precompile and returns its
-//! output. The target is the stateless Poseidon-BN254 hash precompile at
-//! `ZKPROOF_POSEIDON_ADDRESS` (`0xEE07`). The test uses it because it needs no
-//! state or contract setup: raw bytes in, 32-byte hash out.
-//!
-//! This proves the child frame uses `OutbeSubCallPrecompiles` (which dispatches
-//! outbe addresses) rather than plain `EthPrecompiles`. With the old wiring the
-//! call to `0xEE07` would fall through to an empty-account call and return
-//! `Success` with empty returndata. Here we assert the returndata equals the
-//! Poseidon hash of the input.
+//! Nested Outbe precompile dispatch, calldata forwarding and memory restoration.
 
 use outbe_offchain_data::runtime_body_readers;
 mod sub_call_support;
@@ -29,7 +17,6 @@ use outbe_nod::{precompile::INod, NodBucketState};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::{
     COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, UPDATE_ADDRESS,
-    ZKPROOF_POSEIDON_ADDRESS,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
@@ -47,7 +34,7 @@ use revm::{
 };
 
 const CALLER: Address = Address::new([0xC0; 20]);
-const POSEIDON_CALLER: Address = Address::new([0xA7; 20]);
+const POLICY_CALLER: Address = Address::new([0xA7; 20]);
 
 #[derive(Debug)]
 struct StaticAuthenticatedParent {
@@ -106,21 +93,22 @@ impl AuthenticatedParentTree for StaticAuthenticatedParent {
 }
 
 #[test]
-fn subcall_reaches_outbe_poseidon_precompile() {
+fn subcall_reaches_outbe_policy_precompile() {
     // The test inserts no account for the precompile address. The provider
     // dispatches outbe precompiles. Real accounts/bytecode do not back them.
     let mut ctx = Context::mainnet().with_db(CacheDB::new(EmptyDB::default()));
 
-    // One 32-byte BN254 field element as Poseidon input.
-    let mut input = [0u8; 32];
-    input[31] = 0x2a;
-    let calldata = Bytes::from(input.to_vec());
+    let calldata = IStablecoinPolicyRegistry::policyExistsCall {
+        policyId: U256::from(42),
+    }
+    .abi_encode()
+    .into();
 
     let result = sub_call::run(
         &mut ctx,
         sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
-            target: ZKPROOF_POSEIDON_ADDRESS,
+            target: STABLECOIN_POLICY_REGISTRY_ADDRESS,
             value: U256::ZERO,
             calldata,
             gas_limit: 1_000_000,
@@ -135,16 +123,8 @@ fn subcall_reaches_outbe_poseidon_precompile() {
         result.status,
     );
 
-    // The child frame must have dispatched the outbe Poseidon precompile, so
-    // the returndata is the 32-byte hash of the input (not an empty payload).
-    let expected =
-        outbe_evm::zk::poseidon_hash(&input).expect("poseidon hash over one field element");
-    assert_eq!(
-        result.returndata.as_ref(),
-        expected.as_slice(),
-        "sub-call returndata must equal the outbe Poseidon precompile output",
-    );
-    assert_eq!(result.returndata.len(), 32, "poseidon output is 32 bytes");
+    assert_eq!(result.returndata.as_ref(), &[0u8; 32]);
+    assert_eq!(result.returndata.len(), 32, "ABI bool output is 32 bytes");
 
     assert!(
         result.gas_used > 0 && result.gas_used < 1_000_000,
@@ -185,33 +165,40 @@ fn subcall_reaches_stablecoin_policy_registry_with_canonical_view_output() {
 }
 
 #[test]
-fn contract_originated_poseidon_call_receives_its_calldata() {
+fn contract_originated_policy_call_receives_its_calldata() {
+    let calldata = IStablecoinPolicyRegistry::policyExistsCall {
+        policyId: U256::from(1),
+    }
+    .abi_encode();
     let mut code = vec![
-        0x60, 0x01, // PUSH1 1
-        0x60, 0x00, // PUSH1 0
-        0x52, // MSTORE: one field element at memory[0..32]
+        0x60, 0x24, // input size: selector and one ABI word
+        0x60, 0x00, // calldata offset
+        0x60, 0x00, // memory offset
+        0x37, // CALLDATACOPY
         0x60, 0x20, // return size
-        0x60, 0x20, // return offset
-        0x60, 0x20, // input size
+        0x60, 0x40, // return offset
+        0x60, 0x24, // input size
         0x60, 0x00, // input offset
         0x60, 0x00, // value
-        0x73, // PUSH20 poseidon address
+        0x73, // PUSH20 policy address
     ];
-    code.extend_from_slice(ZKPROOF_POSEIDON_ADDRESS.as_slice());
+    code.extend_from_slice(STABLECOIN_POLICY_REGISTRY_ADDRESS.as_slice());
     code.extend_from_slice(&[
         0x5a, // GAS
         0xf1, // CALL
-        0x60, 0x40, // status output offset
+        0x60, 0x60, // status output offset
         0x52, // MSTORE CALL status
-        0x60, 0x40, // return size: hash at 0x20, status at 0x40
-        0x60, 0x20, // return offset
+        0x60, 0x40, // return size: ABI bool at 0x40, status at 0x60
+        0x60, 0x40, // return offset
         0xf3, // RETURN
     ]);
 
     let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_storage(UPDATE_ADDRESS, U256::ZERO, U256::from(2u64))
+        .unwrap();
     let bytecode = Bytecode::new_raw(Bytes::from(code));
     db.insert_account_info(
-        POSEIDON_CALLER,
+        POLICY_CALLER,
         AccountInfo {
             code_hash: bytecode.hash_slow(),
             code: Some(bytecode),
@@ -229,28 +216,26 @@ fn contract_originated_poseidon_call_receives_its_calldata() {
         &mut ctx,
         sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
-            target: POSEIDON_CALLER,
+            target: POLICY_CALLER,
             value: U256::ZERO,
-            calldata: Bytes::new(),
+            calldata: calldata.into(),
             gas_limit: 100_000,
             is_static: false,
         },
     )
     .expect("outer contract call");
 
-    let mut input = [0u8; 32];
-    input[31] = 1;
-    let expected =
-        outbe_evm::zk::poseidon_hash(&input).expect("poseidon hash over one field element");
+    let mut expected = [0u8; 32];
+    expected[31] = 1;
 
     assert!(matches!(result.status, SubCallStatus::Success));
     assert_eq!(result.returndata.len(), 64);
     assert_eq!(
         &result.returndata[..32],
         expected.as_slice(),
-        "the precompile must hash the caller's memory, not an empty or foreign range",
+        "the precompile must decode the caller's calldata",
     );
-    assert_eq!(result.returndata[63], 1, "inner Poseidon CALL must succeed");
+    assert_eq!(result.returndata[63], 1, "inner policy CALL must succeed");
     assert_eq!(
         &ctx.local().shared_memory_buffer().borrow()[..],
         &[0xAB; 64],

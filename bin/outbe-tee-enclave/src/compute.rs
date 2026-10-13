@@ -10,7 +10,7 @@
 //!   - The exact WorldwideDay VWAP legs and reference S-curve are public inputs. The
 //!     node reads them from committed Oracle state. They are identical on every validator.
 //!
-//! The token id is a Poseidon-BN254 digest of the owner and the WorldwideDay. The host
+//! The token id is a Poseidon2-BN254 digest of the owner and the WorldwideDay. The host
 //! recomputes the same digest and derives the tribute id from it.
 //!
 //! Settlement arithmetic uses checked `U256` operations. The module-level lint
@@ -21,14 +21,8 @@
 #![deny(clippy::float_arithmetic)]
 
 use alloy_primitives::{Address, B256, U256, U512};
-use ark_bn254::Fr;
-use ark_ff::{BigInteger, PrimeField};
-use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_tee::protocol::WorldwideDay;
-
-/// Circom Poseidon permutation max width.
-const MAX_POSEIDON_INPUTS: usize = 12;
 
 /// Canonical Tribute amount parsed once before the ZK/non-ZK paths diverge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,34 +30,6 @@ pub(crate) struct CanonicalAmount {
     pub(crate) base: u64,
     pub(crate) micro: u64,
     pub(crate) amount_minor: U256,
-}
-
-/// Poseidon-BN254 over N BE-encoded field elements packed into `input`.
-/// The raw input format is the chain's `outbe_evm::zk::poseidon_hash` format
-/// (multiple of 32 bytes). The implementation uses the same crate and Circom
-/// parameters, but stays local so the enclave does not pull the EVM and
-/// Barretenberg backend. The function reduces each chunk mod the BN254 scalar order.
-fn poseidon_hash(input: &[u8]) -> Result<[u8; 32], String> {
-    if input.is_empty() {
-        return Err("poseidon: empty input".to_string());
-    }
-    if !input.len().is_multiple_of(32) {
-        return Err(format!("poseidon: unaligned input ({} bytes)", input.len()));
-    }
-    let n = input.len() / 32;
-    if n > MAX_POSEIDON_INPUTS {
-        return Err(format!("poseidon: too many inputs ({n})"));
-    }
-    let inputs: Vec<Fr> = input.chunks(32).map(Fr::from_be_bytes_mod_order).collect();
-    let mut poseidon = Poseidon::<Fr>::new_circom(n).map_err(|e| format!("poseidon setup: {e}"))?;
-    let hash = poseidon
-        .hash(&inputs)
-        .map_err(|e| format!("poseidon hash: {e}"))?;
-    let be = hash.into_bigint().to_bytes_be();
-    let mut out = [0u8; 32];
-    let off = 32 - be.len().min(32);
-    out[off..].copy_from_slice(&be[be.len().saturating_sub(32)..]);
-    Ok(out)
 }
 
 /// Parse the `tribute_draft_id` (a 32-byte value as a hex string, optional `0x`
@@ -83,7 +49,7 @@ fn parse_draft_id(draft_id: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
-/// Returns the token id `Poseidon(owner, worldwide_day)`, BN254/circom.
+/// Returns the token id `Poseidon2(owner, worldwide_day)`, BN254.
 /// The digest depends on `(owner, worldwide_day)` ALONE. This property enforces
 /// the one-tribute-per-owner-per-day invariant. The host recomputes this digest and
 /// derives the tribute id from the day and the digest tail
@@ -93,7 +59,7 @@ fn parse_draft_id(draft_id: &str) -> Result<[u8; 32], String> {
 /// (must be 32-byte hex) but intentionally does NOT mix it into the id. Mixing it in
 /// made the id per-offer-unique and silently allowed duplicate tributes per owner per day.
 ///
-/// Field-element encoding (`poseidon_hash` reduces each one mod the BN254 order):
+/// Both identity inputs fit below the BN254 scalar modulus:
 /// - `owner`: address left-padded to 32 bytes.
 /// - `worldwide_day`: its `YYYYMMDD` word as 32-byte big-endian.
 pub fn compute_token_id(
@@ -103,10 +69,8 @@ pub fn compute_token_id(
 ) -> Result<B256, String> {
     // Validate the draft id (reject malformed input) but keep it out of the hash.
     parse_draft_id(draft_id)?;
-    let mut buf = Vec::with_capacity(64);
-    buf.extend_from_slice(owner.into_word().as_slice());
-    buf.extend_from_slice(&U256::from(worldwide_day.value()).to_be_bytes::<32>());
-    Ok(B256::from(poseidon_hash(&buf)?))
+    outbe_compressed_entities::derive_poseidon_digest(owner, worldwide_day)
+        .map_err(|error| error.to_string())
 }
 
 /// Computes the Tribute-only S-curve pricing contract:
@@ -319,27 +283,12 @@ mod tests {
         assert!(compute_token_id(Address::ZERO, DAY, "0x1234").is_err()); // not 32 bytes
     }
 
-    /// Proves our replicated `poseidon_hash` matches a fresh circom hasher (the
-    /// same self-consistency check as `outbe_evm::zk::poseidon_hash` uses),
-    /// guaranteeing byte-identity with the chain.
     #[test]
-    fn poseidon_matches_fresh_circom_hasher() {
-        fn fr_be(f: &Fr) -> [u8; 32] {
-            let be = f.into_bigint().to_bytes_be();
-            let mut out = [0u8; 32];
-            let off = 32 - be.len().min(32);
-            out[off..].copy_from_slice(&be[be.len().saturating_sub(32)..]);
-            out
-        }
-        let a = Fr::from(7u64);
-        let b = Fr::from(20_250_115u64);
-        let mut input = Vec::new();
-        input.extend_from_slice(&fr_be(&a));
-        input.extend_from_slice(&fr_be(&b));
-
-        let mine = poseidon_hash(&input).unwrap();
-        let mut hasher = Poseidon::<Fr>::new_circom(2).unwrap();
-        let reference = fr_be(&hasher.hash(&[a, b]).unwrap());
-        assert_eq!(mine, reference);
+    fn token_id_matches_chain_digest() {
+        let owner = Address::repeat_byte(0x42);
+        assert_eq!(
+            compute_token_id(owner, DAY, DRAFT_A).unwrap(),
+            outbe_compressed_entities::derive_poseidon_digest(owner, DAY).unwrap()
+        );
     }
 }

@@ -8691,8 +8691,6 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "alloy-sol-types",
- "ark-bn254",
- "ark-ff 0.6.0",
  "blst",
  "commonware-codec",
  "commonware-consensus",
@@ -8732,7 +8730,6 @@ dependencies = [
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-oracle",
- "outbe-poseidon",
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
@@ -9440,7 +9437,6 @@ version = "0.13.0"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.6.0",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9866,7 +9862,6 @@ dependencies = [
  "outbe-consensus",
  "outbe-fidelity-math",
  "outbe-ocomp-protocol",
- "outbe-poseidon",
  "outbe-primitives",
  "outbe-tee",
  "outbe-zk",

@@ -92,15 +92,15 @@ fn exact_overlay_locator_and_record_vectors_are_protocol_pinned() {
     let cases = [
         (
             Collection::Tribute,
-            b256!("efe7430ecc84638c827107a7b8c81e65149beafaaa94bf3ccdd5a7ce047a7e27"),
+            b256!("c44f18792af1349b5e6304a64bfb69121b49483a1f3ad451997244d064eadb1d"),
         ),
         (
             Collection::NodItem,
-            b256!("d6a30f530d7d202867408fcdb9dd825155f914cd830a3b5db6f599e710ef27ba"),
+            b256!("d6c33554e7dd6bea7be614efc0084eb1f733383dc37325eaa28c227e4ebb3d51"),
         ),
         (
             Collection::NodBucket,
-            b256!("c4f00d37b7f206de8ac85d35728a73ecba6856f54bd9ead4fd2a42e80562f32f"),
+            b256!("25406bfe39dec6c82c88f9e65f5924a14c9ff284e1f1f2cd8f4b669af1150d50"),
         ),
     ];
 

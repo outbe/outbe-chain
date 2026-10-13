@@ -7,7 +7,7 @@
   "reference_path": "testing/lysis-v1-reference/src/lib.rs",
   "reference_sha256": "f496d35a7730230e9bccc7aaac2040a00b2ff121c9740cd10b3c7a5dc2d6bc02",
   "case_path": "crates/core/lysis/vectors/lysis-v1/cases.jsonl",
-  "case_file_sha256": "3c919f533fde73ecb2b5b96d0cada1ae0b10bfd2ae66feed4db7c9d356e80e93",
+  "case_file_sha256": "8dfee41df34925a19e9ffb36cbd18ad41462c081a3a5840952a216d7856aebdb",
   "case_count": 16,
   "required_arithmetic_vectors": [
     "u256-wrapping-multiply",

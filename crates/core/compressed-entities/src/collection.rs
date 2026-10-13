@@ -11,9 +11,9 @@ use crate::{
 
 pub const K_PROVISIONAL: u32 = 16;
 
-// Protocol-fixed CES1 sealing of the empty catalog.
+// Protocol-fixed CES2 sealing of the empty catalog.
 pub(crate) const EMPTY_SEALED_ROOT: B256 =
-    alloy_primitives::b256!("086cb3c24884752e6453a9d44e15c1f465c0874e5312d18c05feaafec1587802");
+    alloy_primitives::b256!("247048d4786c64554511d6de5ef953f9b3754d3e7a21234fe94d4dc9981cd1ed");
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(u16)]
@@ -118,7 +118,7 @@ impl TryFrom<B256> for CollectionKey {
 
 #[derive(Debug, Error)]
 pub enum CollectionError {
-    #[error("CES1 collection hashing failed: {0}")]
+    #[error("CES2 collection hashing failed: {0}")]
     Hash(String),
     #[error("present collection root computed to zero")]
     ZeroCollectionRoot,

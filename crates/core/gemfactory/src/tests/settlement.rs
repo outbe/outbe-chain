@@ -440,12 +440,13 @@ fn the_quote_prices_both_rails() {
 #[test]
 fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
-    let mut provider = test_storage(Some(usd_rate));
+    let (mut provider, world) = test_storage(Some(usd_rate));
     let (gem_id, quoted) = StorageHandle::enter(&mut provider, |storage| {
         register_currency(&storage, 978, six_decimal_unit());
         seed_day_vwap(&storage, 840, usd_rate);
         let gem_id = issue_at_live_rate(
             &storage,
+            &world,
             ALICE,
             GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
@@ -453,7 +454,9 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
             840,
         )
         .unwrap();
-        let (_, _, quoted) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        let (_, _, quoted) =
+            runtime::quote_settlement(&storage, &world.scope, &world.parent, gem_id, STABLE_EUR)
+                .unwrap();
         (gem_id, quoted)
     });
     let deadline = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
@@ -461,23 +464,35 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
         .cutoff()
         + 3_600;
     StorageHandle::enter(&mut provider, |storage| {
-        let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
-        let bucket = gem_api::bucket_of(&storage, gem_id).unwrap();
+        let view = gem_view(&storage, &world, gem_id);
+        let bucket = view.item.bucket_key;
         GemContract::new(storage.clone())
             .bucket_called_at
             .write(
                 &bucket,
-                deadline - u64::from(item.call_notice_period_seconds),
+                deadline - u64::from(view.terms.call_notice_period_seconds),
             )
             .unwrap();
     });
 
     provider.set_timestamp(U256::from(deadline));
     StorageHandle::enter(&mut provider, |storage| {
-        let item = gem_api::get_gem(&storage, gem_id).unwrap().unwrap();
-        assert_eq!(item.state, GemState::Called as u8);
-        let (_, _, required) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
-        let stale = runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR, quoted);
+        let view = gem_view(&storage, &world, gem_id);
+        assert_eq!(view.effective_state(deadline), GemState::Called as u8);
+        let (_, _, required) =
+            runtime::quote_settlement(&storage, &world.scope, &world.parent, gem_id, STABLE_EUR)
+                .unwrap();
+        let stale = runtime::settle_gem(
+            &storage,
+            &world.scope,
+            &world.parent,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE_EUR,
+                snapshot_id: quoted,
+            },
+        );
         assert_eq!(
             err_msg(stale),
             format!(
@@ -494,8 +509,20 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
 
     provider.set_timestamp(U256::from(deadline + 1));
     StorageHandle::enter(&mut provider, |storage| {
-        let (_, _, required) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
-        let late = runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR, required);
+        let (_, _, required) =
+            runtime::quote_settlement(&storage, &world.scope, &world.parent, gem_id, STABLE_EUR)
+                .unwrap();
+        let late = runtime::settle_gem(
+            &storage,
+            &world.scope,
+            &world.parent,
+            crate::schema::GemSettlementParams {
+                caller: ALICE,
+                gem_id,
+                asset: STABLE_EUR,
+                snapshot_id: required,
+            },
+        );
         assert_eq!(
             err_msg(late),
             format!(
@@ -506,8 +533,8 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
             )
         );
         assert_eq!(
-            gem_api::get_gem(&storage, gem_id).unwrap().unwrap().state,
-            GemState::Called as u8
+            gem_view(&storage, &world, gem_id).item.state,
+            GemState::Issued as u8
         );
     });
 }

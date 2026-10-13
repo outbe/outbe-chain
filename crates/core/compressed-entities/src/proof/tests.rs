@@ -34,7 +34,7 @@ fn service() -> (tempfile::TempDir, Arc<CompressedTreeService>, B256) {
             genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
             topology: CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".into(),
+            tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".into(),
             vendor_revision: "adr013-test".into(),
         },
         FinalizedMarker {

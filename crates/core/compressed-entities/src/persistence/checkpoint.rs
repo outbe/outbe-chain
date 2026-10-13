@@ -50,6 +50,11 @@ impl FinalizedMarker {
             new_root: decoder.b256()?,
         };
         decoder.finish()?;
+        if marker.commitment_scheme_version != crate::ACTIVE_COMMITMENT_SCHEME {
+            return Err(PersistenceError::UnsupportedCommitmentScheme {
+                actual: marker.commitment_scheme_version,
+            });
+        }
         validate_root(marker.parent_root)?;
         validate_root(marker.new_root)?;
         Ok(marker)
@@ -59,6 +64,11 @@ impl FinalizedMarker {
         self,
         required: ExactParentIdentity,
     ) -> Result<(), PersistenceError> {
+        if self.commitment_scheme_version != crate::ACTIVE_COMMITMENT_SCHEME {
+            return Err(PersistenceError::UnsupportedCommitmentScheme {
+                actual: self.commitment_scheme_version,
+            });
+        }
         if self.commitment_scheme_version != required.commitment_scheme_version
             || self.height != required.block_number
             || self.block_hash != required.block_hash
@@ -106,7 +116,9 @@ pub fn classify_restart(
     marker: FinalizedMarker,
     durable: DurableFinalizedCheckpoint,
 ) -> RestartClassification {
-    if marker.commitment_scheme_version != durable.commitment_scheme_version {
+    if marker.commitment_scheme_version != crate::ACTIVE_COMMITMENT_SCHEME
+        || marker.commitment_scheme_version != durable.commitment_scheme_version
+    {
         return RestartClassification::Conflict;
     }
     if marker.height > durable.height || marker.height > durable.consensus_finalized_height {

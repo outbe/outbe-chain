@@ -127,7 +127,8 @@ pub(super) fn snapshot_forward_ce_mismatch(error: &str, before: u64, after: u64)
         let new_root = marker[5].parse::<alloy_primitives::B256>().ok()?;
         let height_range =
             required_height <= before && before <= marker_height && marker_height == after;
-        let same_scheme = required_scheme == 1 && required_scheme == marker_scheme;
+        let same_scheme = required_scheme == outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME
+            && required_scheme == marker_scheme;
         let next_marker = required_height.checked_add(1) == Some(marker_height);
         let same_parent = parent_hash == required_hash && marker_hash != required_hash;
         let unchanged_root = parent_root == required_root && new_root == required_root;
@@ -320,7 +321,7 @@ mod snapshot_owner_observation_tests {
         time::{Duration, Instant},
     };
 
-    const CE_RACE: &str = "eth_call failed: server returned an error response: error code -32603: Revm error: fatal: compressed-entity tree unavailable: exact parent mismatch: required ExactParentIdentity { commitment_scheme_version: 1, block_number: 521, block_hash: 0x4fd296af75fedd29d86ad983617c3614614f91b8bdb82001d00057e7cc1aacd7, root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0 }, marker FinalizedMarker { commitment_scheme_version: 1, height: 522, block_hash: 0xb0d63f8c96229446dec5685a47eb1bd04a1299e86ca4ff11abc192fc7b445bb9, parent_block_hash: 0x4fd296af75fedd29d86ad983617c3614614f91b8bdb82001d00057e7cc1aacd7, parent_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0, new_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0 }";
+    const CE_RACE: &str = "eth_call failed: server returned an error response: error code -32603: Revm error: fatal: compressed-entity tree unavailable: exact parent mismatch: required ExactParentIdentity { commitment_scheme_version: 2, block_number: 521, block_hash: 0x4fd296af75fedd29d86ad983617c3614614f91b8bdb82001d00057e7cc1aacd7, root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0 }, marker FinalizedMarker { commitment_scheme_version: 2, height: 522, block_hash: 0xb0d63f8c96229446dec5685a47eb1bd04a1299e86ca4ff11abc192fc7b445bb9, parent_block_hash: 0x4fd296af75fedd29d86ad983617c3614614f91b8bdb82001d00057e7cc1aacd7, parent_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0, new_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0 }";
 
     fn sample(
         before: u64,
@@ -442,11 +443,11 @@ mod snapshot_owner_observation_tests {
     fn unrelated_or_malformed_ce_identities_are_not_retried() {
         let bad_hash = format!("0x{}", "11".repeat(32));
         let errors = [
-            CE_RACE.replace("commitment_scheme_version: 1", "commitment_scheme_version: 2"),
+            CE_RACE.replace("commitment_scheme_version: 2", "commitment_scheme_version: 1"),
             CE_RACE.replace("height: 522", "height: 521"),
             CE_RACE.replace("height: 522", "height: 523"),
             CE_RACE.replace("height: 522", "height: 520"),
-            CE_RACE.replace("FinalizedMarker { commitment_scheme_version: 1", "FinalizedMarker { commitment_scheme_version: 2"),
+            CE_RACE.replace("FinalizedMarker { commitment_scheme_version: 2", "FinalizedMarker { commitment_scheme_version: 1"),
             CE_RACE.replace("parent_block_hash: 0x4fd296af75fedd29d86ad983617c3614614f91b8bdb82001d00057e7cc1aacd7", &format!("parent_block_hash: {bad_hash}")),
             CE_RACE.replace("parent_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0", &format!("parent_root: {bad_hash}")),
             CE_RACE.replace("new_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0", &format!("new_root: {bad_hash}")),

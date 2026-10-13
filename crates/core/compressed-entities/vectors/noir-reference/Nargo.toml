@@ -1,0 +1,6 @@
+[package]
+name = "ces2_reference"
+type = "bin"
+authors = ["Outbe"]
+
+[dependencies]

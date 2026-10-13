@@ -1,7 +1,6 @@
 use alloy_primitives::B256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_sparse_merkle_tree_v061::H256;
 use thiserror::Error;
 
@@ -83,10 +82,8 @@ pub(crate) fn aggregate_shard_roots(roots: &[TreeRoot]) -> Result<TreeRoot, Tree
                 Fr::from_be_bytes_mod_order(&pair[0].as_bytes()),
                 Fr::from_be_bytes_mod_order(&pair[1].as_bytes()),
             ];
-            let mut hasher =
-                Poseidon::<Fr>::with_domain_tag_circom(inputs.len(), Fr::from(TAG_TOP_NODE))
-                    .map_err(|_| TreeError::TreeHashError)?;
-            let output = hasher.hash(&inputs).map_err(|_| TreeError::TreeHashError)?;
+            let output = crate::commitment::poseidon(TAG_TOP_NODE, &inputs)
+                .map_err(|_| TreeError::TreeHashError)?;
             let bytes = field_to_be32(output);
             if bytes == [0_u8; 32] {
                 return Err(TreeError::TreeHashError);
@@ -206,7 +203,7 @@ mod tests {
         .map(|(tree_key, k)| shard_index(tree_key, k).unwrap())
         .collect::<Vec<_>>();
 
-        assert_eq!(actual, [5, 116, 98]);
+        assert_eq!(actual, [8, 51, 111]);
     }
 
     #[derive(Deserialize)]
@@ -298,8 +295,8 @@ fn nod_real_shards_at_k256_differ_from_k16() {
             .unwrap();
     let id = crate::WwdEntityId::from(bytes);
     for (kind, narrow, wide) in [
-        (crate::schema::Collection::NodItem, 4, 116),
-        (crate::schema::Collection::NodBucket, 2, 98),
+        (crate::schema::Collection::NodItem, 3, 51),
+        (crate::schema::Collection::NodBucket, 15, 111),
     ] {
         let key = crate::smt::derive_tree_key(kind, id).unwrap();
         assert_eq!(shard_index(key, 16).unwrap(), narrow);

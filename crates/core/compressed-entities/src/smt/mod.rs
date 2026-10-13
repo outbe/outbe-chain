@@ -1,4 +1,4 @@
-//! Private CKB SMT engine and CES1 Poseidon codec.
+//! Private CKB SMT engine and CES2 Poseidon codec.
 
 #[allow(dead_code)]
 mod codec;

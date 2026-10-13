@@ -180,46 +180,46 @@ fn present_golden_packages_cover_every_closed_domain() {
         transport_hashes,
         [
             alloy_primitives::b256!(
-                "122835a3da15ee4370013c6f90edcaa3bbaa636530d341b6d605d5a68ec889c6"
+                "2243c4faf905de6b36a93fc9b8ed9304ed6f8c196b1ff1630627050694ed475f"
             ),
             alloy_primitives::b256!(
-                "157bbc65cbc812a2d6d3c376f666f245721d40f10abb844589c32b4ffe1886da"
+                "e96907502dd57735fa9b4cd2ef96667ef5d003d0be6cb3ac5e8270ff1df6acd6"
             ),
             alloy_primitives::b256!(
                 "a975d4736ef74939d9eca29e329d6ab1aa2aad157cc971d6315e3dc1bdf5fe9b"
             ),
             alloy_primitives::b256!(
-                "e3586b76f5dc9808805bc4a705a0fc97426720f556024c1b7ae45163026561b4"
+                "d093bdb2f07dd1e6dc521d72e023373b1ff7cd3abb56161cece628603db6167d"
             ),
             alloy_primitives::b256!(
-                "89e69ead9380bf582eef3a5eb299e0e7681a18b74fc13f4e802cc715fce3d53c"
+                "52635bacaffd36df9aefffeff2b52fa58919a646f682fa78011999dff8db8b8c"
             ),
             alloy_primitives::b256!(
                 "d4382908cd4da41da05e5df6cbe86c130c0609e7818077c7d38184b87d127748"
             ),
             alloy_primitives::b256!(
-                "f4211b9d73a3f44c2411834b39252a3724f3d30fb723448e50b6e85cc267bfd0"
+                "2c90c1c2a7a101694eefbef18d3bc790a5ad76eb7dcab4667cdf29e8f6f4c72a"
             ),
             alloy_primitives::b256!(
-                "e09c0bfe4e83af3f2329c29f7aaea95b72311880d00fb8f92b33071ff87b9bad"
+                "c6ece55406f799b0747036035d5d80c01ca975a57243a60058b12c217d3dc0f0"
             ),
             alloy_primitives::b256!(
                 "c401b4fc8759510f0def36b6a90258d98bb4317347ecc84395a776fd5968b18f"
             ),
             alloy_primitives::b256!(
-                "8cbe859a66ffeeb803147f12ca0cb4083705223290cc559c5e20aa3cd73340d2"
+                "dc768b511c3d87d5e179e5598da10b7be467ee05add3348ba0624ac12f3bbb08"
             ),
             alloy_primitives::b256!(
-                "412ff24f62dc1a8b04104286e8c51b6e58f3aa368ec3011cc77aee38840476f7"
+                "befae53e0e7193cb25e9e90eefc603d4426af11407413c9448a9135bd36c78b0"
             ),
             alloy_primitives::b256!(
                 "44a889b4fe93736c601b2b608dc3d0c85b11f63706157b6c0460888dedb7595c"
             ),
             alloy_primitives::b256!(
-                "0cc534b919e4a93be44e461a4ab2af6d3ad4f7a459172727164f098cb8f92e74"
+                "a009dae7d6cad0bbc08de61be8b583b5c017e00367869fa22c158e0b674a9efc"
             ),
             alloy_primitives::b256!(
-                "69c5fef763649f698c192ef09c01b310ce68928fcc81972024eb1925cf6cf7e6"
+                "38e10cf7025313fada39f7ee323f222e82d1b60a4bb2c248720a10c6119a4a67"
             ),
             alloy_primitives::b256!(
                 "7f7386edd6b2911dbb64b0619a4ed06ad58786cca082bed0881ebf587e0b57ef"

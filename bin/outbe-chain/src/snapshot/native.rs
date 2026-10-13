@@ -233,7 +233,7 @@ pub(crate) fn ce_identity(layout: &NativeLayout) -> outbe_compressed_entities::E
         genesis_hash: layout.chain.genesis_hash(),
         commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
         topology: outbe_compressed_entities::CeTopologyV1.encode(),
-        tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
+        tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
         vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
     }
 }
