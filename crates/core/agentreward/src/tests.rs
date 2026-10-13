@@ -15,6 +15,8 @@ const T_NOW: u64 = 1_700_000_000;
 /// A COEN price, in the six-decimal protocol scale prices are quoted in.
 const ONE_COEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 const USD: u16 = 840;
+const EUR: u16 = 978;
+const MYR: u16 = 458;
 
 /// Claimable balances are native COEN. Gem loads are protocol amounts.
 fn native(protocol_amount: u64) -> U256 {
@@ -154,6 +156,25 @@ fn seed_day_vwap(storage: &StorageHandle<'_>, vwap: U256) {
         .unwrap();
 }
 
+/// Registers COEN/`iso` with `vwap` as its previous-day VWAP, in the reference set when `reference`.
+fn price_coen_in(storage: &StorageHandle<'_>, iso: u16, vwap: U256, reference: bool) {
+    outbe_oracle::api::register_pair(
+        storage.clone(),
+        outbe_oracle::api::AddressPair::new_coen_to(iso),
+    )
+    .unwrap();
+    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
+        .unwrap()
+        .unwrap();
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    oracle
+        .record_utc_day_vwap(previous_date_key(timestamp_to_date_key(T_NOW)), index, vwap)
+        .unwrap();
+    if reference {
+        oracle.reference_currencies.push(iso).unwrap();
+    }
+}
+
 fn gem_of(storage: &StorageHandle<'_>, owner: Address) -> outbe_gem::schema::GemData {
     let gem_id = outbe_gem::GemContract::new(storage.clone())
         .token_of_owner_by_index(owner, 0)
@@ -231,13 +252,30 @@ fn claim_waa(
     alice: Address,
     backing: U256,
 ) -> outbe_primitives::error::Result<U256> {
+    claim_waa_in(storage, contract, alice, backing, USD, USD)
+}
+
+fn claim_waa_in(
+    storage: &StorageHandle<'_>,
+    contract: &mut AgentRewardContract,
+    alice: Address,
+    backing: U256,
+    issuance_currency: u16,
+    reference_currency: u16,
+) -> outbe_primitives::error::Result<U256> {
     storage
         .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, backing)
         .unwrap();
     contract
         .add_claimable_reward(RewardPool::Waa, alice, backing)
         .unwrap();
-    contract.claim_reward(RewardPool::Waa, alice, U256::ZERO, USD, USD)
+    contract.claim_reward(
+        RewardPool::Waa,
+        alice,
+        U256::ZERO,
+        issuance_currency,
+        reference_currency,
+    )
 }
 
 #[test]
@@ -306,6 +344,71 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
                 .unwrap(),
             backing
         );
+    });
+}
+
+#[test]
+fn a_claim_issues_the_gem_in_the_callers_currencies() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let eur_vwap = U256::from(3u64) * ONE_COEN;
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN);
+        price_coen_in(&storage, EUR, eur_vwap, true);
+        claim_waa_in(&storage, contract, alice, native(500), MYR, EUR).unwrap();
+        let gem = gem_of(&storage, alice);
+        assert_eq!(gem.issuance_currency, MYR);
+        assert_eq!(gem.reference_currency, EUR);
+        assert_eq!(gem.entry_price_minor, eur_vwap);
+    });
+}
+
+#[test]
+fn a_claim_refuses_a_reference_outside_the_reference_set() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let backing = native(500);
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN);
+        price_coen_in(&storage, MYR, ONE_COEN, false);
+        let err = claim_waa_in(&storage, contract, alice, backing, USD, MYR).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("458 is not a registered reference currency"));
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
+    });
+}
+
+#[test]
+fn a_claim_in_an_unpriced_reference_keeps_the_balance() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let backing = native(500);
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN);
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .reference_currencies
+            .push(EUR)
+            .unwrap();
+        let err = claim_waa_in(&storage, contract, alice, backing, USD, EUR).unwrap_err();
+        assert!(err.to_string().contains("no COEN price in 978"));
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
+    });
+}
+
+#[test]
+fn a_claim_refuses_an_issuance_that_is_not_an_iso_code() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let backing = native(500);
+
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN);
+        for issuance in [0, 1000] {
+            let err = claim_waa_in(&storage, contract, alice, backing, issuance, USD).unwrap_err();
+            assert!(err
+                .to_string()
+                .contains(&format!("{issuance} is not an ISO 4217 currency code")));
+        }
     });
 }
 
