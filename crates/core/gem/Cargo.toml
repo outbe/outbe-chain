@@ -8,24 +8,30 @@ publish.workspace = true
 [dependencies]
 outbe-common.workspace = true
 outbe-macros.workspace = true
+outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
 outbe-oracle = { path = "../../system/oracle" }
 outbe-promislimit.workspace = true
+outbe-offchain-storage.workspace = true
 tracing.workspace = true
-alloy-primitives.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 base64.workspace = true
+mongodb.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 
 [features]
 default = []
-test-utils = ["outbe-primitives/test-utils"]
+test-utils = ["outbe-primitives/test-utils", "outbe-compressed-entities/test-utils"]
 # Shorten the DEV profile's wall-clock waits so an e2e run can sit them out.
 # Never enabled in a release build.
 e2e-test = []

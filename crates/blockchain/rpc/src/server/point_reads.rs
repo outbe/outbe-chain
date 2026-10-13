@@ -70,6 +70,16 @@ fn finalized_header<P: HeaderProvider<Header = OutbeHeader> + BlockIdReader>(
 impl PointReadRuntime {
     fn body(&self, domain: CeDomain, raw_id: WwdEntityId) -> Option<Vec<u8>> {
         let encoded = match domain {
+            CeDomain::Gem => {
+                encode_optional_body(self.bodies.gem().get_stored_item(raw_id), |body| {
+                    body.encode()
+                })
+            }
+            CeDomain::GemBucket => {
+                encode_optional_body(self.bodies.gem().get_stored_bucket(raw_id), |body| {
+                    body.encode()
+                })
+            }
             CeDomain::Tribute => {
                 encode_optional_body(self.bodies.tribute().get_stored_body(raw_id), |body| {
                     body.encode()

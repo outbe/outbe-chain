@@ -174,6 +174,8 @@ fn audit_bodies_after_deleting(
                     CeDomain::Tribute => EntityRef::Tribute(*id),
                     CeDomain::NodItem => EntityRef::NodItem(*id),
                     CeDomain::NodBucket => EntityRef::NodBucket(*id),
+                    CeDomain::Gem => EntityRef::Gem(*id),
+                    CeDomain::GemBucket => EntityRef::GemBucket(*id),
                 },
                 final_leaf: Some(
                     body_commitment(
@@ -400,4 +402,62 @@ fn audit_work_rejects_unrepresentable_tree_buffer_before_creating_scratch() {
     )
     .is_err());
     assert!(!path.exists());
+}
+
+#[test]
+fn offline_audit_covers_gem_items_and_buckets() {
+    let mut committed = bodies();
+    let bucket = outbe_compressed_entities::GemBucketBodyV1 {
+        bucket_key: B256::repeat_byte(0x71),
+        worldwide_day: WorldwideDay::new(20_261_012),
+        entry_price_minor: U256::from(13),
+        reference_currency: 840,
+        settled_gems: 1,
+    };
+    let item = outbe_compressed_entities::GemBodyV1 {
+        gem_id: WwdEntityId::from([0xff; 32]),
+        owner: Address::repeat_byte(0x72),
+        gem_type: 0,
+        promis_load_minor: U256::from(1),
+        floor_price_minor: U256::from(2),
+        issuance_currency: 840,
+        reference_currency: 840,
+        issued_at: 123,
+        bucket_key: bucket.bucket_key,
+        state: 3,
+        called_at: 124,
+        settled_at: 125,
+    };
+    for (domain, id, payload) in [
+        (
+            CeDomain::Gem,
+            item.gem_id,
+            outbe_compressed_entities::encode_gem_v1(&item).unwrap(),
+        ),
+        (
+            CeDomain::GemBucket,
+            bucket.entity_id(),
+            outbe_compressed_entities::encode_gem_bucket_v1(&bucket).unwrap(),
+        ),
+    ] {
+        committed.push((domain, id, StoredBody::new(1, payload).unwrap().encode()));
+    }
+    assert_eq!(audit_bodies(&committed, &committed).unwrap(), 5);
+    assert!(audit_bodies(&committed, &committed[..4]).is_err());
+    let mut wrong = committed.clone();
+    wrong[4].1 = WwdEntityId::from([0xee; 32]);
+    assert!(audit_bodies(&committed, &wrong).is_err());
+    let remaining = &committed[..3];
+    assert_eq!(
+        audit_bodies_after_deleting(
+            &committed,
+            remaining,
+            &[
+                EntityRef::Gem(item.gem_id),
+                EntityRef::GemBucket(bucket.entity_id())
+            ]
+        )
+        .unwrap(),
+        3
+    );
 }

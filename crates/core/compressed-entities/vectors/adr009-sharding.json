@@ -37,23 +37,53 @@
       "tree_key_hex": "0f00000000000000000000000000000000000000000000000000000000000000",
       "shard_count": 16,
       "shard_index": 0
+    },
+    {
+      "tree_key_hex": "00000000000000000000000000000000000000000000000000000000000000ff",
+      "shard_count": 64,
+      "shard_index": 63
+    },
+    {
+      "tree_key_hex": "00000000000000000000000000000000000000000000000000000000000000ff",
+      "shard_count": 128,
+      "shard_index": 127
+    },
+    {
+      "tree_key_hex": "00000000000000000000000000000000000000000000000000000000000000ff",
+      "shard_count": 256,
+      "shard_index": 255
     }
   ],
   "real": [
     {
       "collection": "Tribute",
       "tree_key_hex": "209b3ed6df1bc2caabb03536308cebb80ac60b23ebcd1408b3c8676d644f3285",
-      "shard_index": 5
+      "shard_index": 5,
+      "k": 16
     },
     {
       "collection": "NodItem",
       "tree_key_hex": "0c01a62984eb34159be4b1dfcd62304a42186922558ab4790ddefbe59e07e874",
-      "shard_index": 4
+      "shard_index": 116,
+      "k": 256
     },
     {
       "collection": "NodBucket",
       "tree_key_hex": "23f737ff9e1f695f09aa21d8f40f78a4d38938ab5162f26730ac3438ba0be962",
-      "shard_index": 2
+      "shard_index": 98,
+      "k": 256
+    },
+    {
+      "collection": "Gem",
+      "tree_key_hex": "12c3d4d4d70b14d4f7db81c82a6bbb4c902917772c9f502f3efceb403c631bf8",
+      "k": 256,
+      "shard_index": 248
+    },
+    {
+      "collection": "GemBucket",
+      "tree_key_hex": "02930409b66437eb45b9f6f4a4c00e6c7462506bd8c9b9823d54983f2063631c",
+      "k": 256,
+      "shard_index": 28
     }
   ]
 }

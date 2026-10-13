@@ -254,13 +254,12 @@ impl PaidGem {
         );
         let gem = &self.gem;
         for &p in ports {
-            let observed = eth::read_call_at_result(
+            let observed = gem_view_at(
                 &world.rpc.url(p),
-                addresses::GEM_ADDR,
                 &eth::IGem::getGemStatusCall { gemId: gem_id },
                 height,
-            )
-            .expect("finalized settled reward Gem");
+                "finalized settled reward Gem",
+            );
             assert_eq!(observed.state, 3, "reward Gem must be Settled");
             assert_eq!(observed.owner, owner);
             assert_eq!(observed.promisLoadMinor, gem.promisLoadMinor);
@@ -375,28 +374,45 @@ impl PaidGem {
                 promis_before + gem.promisLoadMinor,
                 "exact finalized Promis mint"
             );
-            let count = eth::read_call_at_result(
+            let count = gem_view_at(
                 &peer_url,
-                addresses::GEM_ADDR,
                 &eth::IGem::balanceOfCall { owner },
                 height,
-            )
-            .expect("Gem enumeration count");
+                "Gem enumeration count",
+            );
             for index in 0..u64::try_from(count).expect("Gem enumeration fits u64") {
-                let remaining = eth::read_call_at_result(
+                let remaining = gem_view_at(
                     &peer_url,
-                    addresses::GEM_ADDR,
                     &eth::IGem::tokenOfOwnerByIndexCall {
                         owner,
                         index: U256::from(index),
                     },
                     height,
-                )
-                .expect("read remaining Gem, not RPC failure as absence");
+                    "read remaining Gem, not RPC failure as absence",
+                );
                 assert_ne!(
                     remaining, gem_id,
                     "mined Gem must leave the owner's inventory"
                 );
+            }
+        }
+    }
+}
+
+/// Gem views at a finalized height are served by the body projection, which trails the
+/// block that wrote the body for a moment; retry errors until it catches up.
+fn gem_view_at<C>(url: &str, call: &C, height: u64, what: &str) -> C::Return
+where
+    C: alloy_sol_types::SolCall,
+    C::Return: Send + 'static,
+{
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    loop {
+        match eth::read_call_at_result(url, addresses::GEM_ADDR, call, height) {
+            Ok(value) => return value,
+            Err(error) => {
+                assert!(std::time::Instant::now() < deadline, "{what}: {error}");
+                std::thread::sleep(std::time::Duration::from_millis(250));
             }
         }
     }

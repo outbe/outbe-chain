@@ -2,6 +2,7 @@
 
 use super::super::FinalizedReceipt;
 use super::*;
+use outbe_gem::projection::GemProjectionSession;
 use outbe_nod::projection::NodProjectionSession;
 use outbe_tribute::projection::TributeProjectionSession;
 
@@ -55,6 +56,7 @@ fn decode_receipt(
 pub(super) struct ProjectionSessions {
     pub(super) tributes: TributeProjectionSession,
     pub(super) nods: NodProjectionSession,
+    pub(super) gems: GemProjectionSession,
     pub(super) retained_tribute_reader: RetainedTributeReader,
     pub(super) tribute_ids: Vec<WwdEntityId>,
 }
@@ -83,6 +85,8 @@ impl ProjectionSessions {
         let mut tribute_ids = BTreeSet::new();
         let mut nod_ids = BTreeSet::new();
         let mut bucket_ids = BTreeSet::new();
+        let mut gem_ids = BTreeSet::new();
+        let mut gem_bucket_ids = BTreeSet::new();
 
         for (_, events) in decoded_receipts {
             for event in events {
@@ -93,6 +97,12 @@ impl ProjectionSessions {
                     }
                     Some(EntityIdentity::Nod(id)) => {
                         nod_ids.insert(id);
+                    }
+                    Some(EntityIdentity::Gem(id)) => {
+                        gem_ids.insert(id);
+                    }
+                    Some(EntityIdentity::GemBucket(id)) => {
+                        gem_bucket_ids.insert(id);
                     }
                     Some(EntityIdentity::Bucket(key)) => {
                         bucket_ids.insert(key);
@@ -116,7 +126,18 @@ impl ProjectionSessions {
         for bucket_id in &bucket_ids {
             validate_existing_record("Nod bucket", nods.current_bucket_with_metadata(*bucket_id)?)?;
         }
+        let gem_ids: Vec<_> = gem_ids.into_iter().collect();
+        let gem_bucket_ids: Vec<_> = gem_bucket_ids.into_iter().collect();
+        let gems = outbe_gem::gem_reader(projector.reader.clone())
+            .projection_session(&gem_ids, &gem_bucket_ids)?;
+        for id in gem_ids {
+            validate_existing_record("Gem", gems.current_item_with_metadata(id)?)?;
+        }
+        for id in gem_bucket_ids {
+            validate_existing_record("Gem bucket", gems.current_bucket_with_metadata(id)?)?;
+        }
         Ok(Self {
+            gems,
             tributes,
             nods,
             retained_tribute_reader,

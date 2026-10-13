@@ -5,6 +5,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
+use outbe_gem::projection::GEM_PROJECTION_NAMESPACES;
 use outbe_nod::projection::NOD_PROJECTION_NAMESPACES;
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, Namespace, ScanRequest, StorageMetadata,
@@ -18,6 +19,7 @@ use super::{ProjectionCheckpoint, ProjectionError};
 
 /// Local representation version owned by this projector.
 ///
+/// Version 5 adds Gem item, owner membership and bucket namespaces.
 /// Version 4 stores NOD bodies by ID modulo 256 and owner memberships in shared storage.
 /// Earlier versions require a fresh projection root.
 /// Version 3 requires entity-owned shared/WWD/owner partitions in every datasource.
@@ -25,7 +27,7 @@ use super::{ProjectionCheckpoint, ProjectionError};
 /// Version 2 adds the job-scoped retained Tribute body and day-index
 /// namespaces. Version 1 nodes must fail closed instead of silently ignoring
 /// those records during OCOMP retention and release.
-pub const STORAGE_SCHEMA_VERSION: u32 = 4;
+pub const STORAGE_SCHEMA_VERSION: u32 = 5;
 /// Namespace containing the singleton projector state.
 pub const PROJECTION_STATE_NAMESPACE: &str = "projection_state";
 /// Singleton projector-state key.
@@ -206,6 +208,7 @@ pub(super) fn contains_unmanaged_data(
     for name in TRIBUTE_PROJECTION_NAMESPACES
         .iter()
         .chain(NOD_PROJECTION_NAMESPACES.iter())
+        .chain(GEM_PROJECTION_NAMESPACES.iter())
     {
         let namespace = Namespace::new(*name)?;
         let request = ScanRequest::new(&[], None, 1)?;

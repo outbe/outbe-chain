@@ -538,13 +538,14 @@ fn copied_saved_result_is_restored_before_compute_with_a_connected_real_worker()
         donor.close().unwrap();
         let public = receiver.path().join("ocomp");
         let endpoint = available_endpoint(true);
-        let metrics = available_endpoint(false);
         let mut restored = runtime_with_endpoint(
             provider(&receiver.path().join("chain")),
             &public,
             bundle.clone(),
             endpoint,
         );
+        // Pick metrics only after the supervisor has bound its adjacent port pair.
+        let metrics = available_endpoint(false);
         let mut child = ChildWorker(
             std::process::Command::new(std::env::current_exe().unwrap())
                 .arg("copied_worker_child")

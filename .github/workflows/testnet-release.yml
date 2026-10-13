@@ -46,6 +46,9 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.release_tag }}
 
+      - name: Install pinned Noir build tools
+        run: scripts/release/install-zk-build-tools.sh
+
       - name: Bind workflow, tag and source identity
         id: identity
         env:
@@ -192,6 +195,9 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
 
+      - name: Install pinned Noir build tools
+        run: scripts/release/install-zk-build-tools.sh
+
       - name: Install native dependencies for release tooling
         run: |
           sudo apt-get update
@@ -287,6 +293,9 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
+
+      - name: Install pinned Noir build tools
+        run: scripts/release/install-zk-build-tools.sh
 
       - name: Install native dependencies for release tooling
         run: |
@@ -428,6 +437,9 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
 
+      - name: Install pinned Noir build tools
+        run: scripts/release/install-zk-build-tools.sh
+
       - name: Recheck immutable tag binding before hardware acceptance
         env:
           GH_TOKEN: ${{ github.token }}
@@ -532,6 +544,9 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
+
+      - name: Install pinned Noir build tools
+        run: scripts/release/install-zk-build-tools.sh
 
       - name: Install native dependencies for release tooling
         run: |

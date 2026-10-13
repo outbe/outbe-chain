@@ -34,6 +34,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, LogData, B256};
 use outbe_compressed_entities::WwdEntityId;
+use outbe_gem::GemRepositoryError;
 use outbe_nod::NodRepositoryError;
 use outbe_offchain_storage::{
     AtomicWriteBatch, DayDatabases, StorageError, StorageReaderHandle, StorageWriterHandle,
@@ -321,6 +322,8 @@ pub enum ProjectionError {
     Storage(#[from] StorageError),
     #[error("Tribute repository failure: {0}")]
     Tribute(#[from] TributeRepositoryError),
+    #[error("Gem repository failure: {0}")]
+    Gem(#[from] GemRepositoryError),
     #[error("Nod repository failure: {0}")]
     Nod(#[from] NodRepositoryError),
     #[error("failed to encode projection state")]
@@ -406,6 +409,7 @@ pub fn entity_partition_routing() -> Result<
         outbe_offchain_storage::StorageScope::shared("system")?,
     )));
     outbe_nod::partitioning::register(&mut registry)?;
+    outbe_gem::partitioning::register(&mut registry)?;
     outbe_tribute::partitioning::register(&mut registry)?;
     Ok(std::sync::Arc::new(registry))
 }

@@ -53,7 +53,6 @@ impl AuthenticatedParentTree for TestAuthenticatedTree {
             block_number,
             B256::ZERO,
             B256::ZERO,
-            B256::ZERO,
             Default::default(),
             Default::default(),
         )
@@ -81,6 +80,7 @@ pub(super) struct MemoryParent {
     pub(super) bodies: HashMap<EntityRef, StoredBody>,
     pub(super) tribute_by_owner: HashMap<Address, Vec<WwdEntityId>>,
     pub(super) tribute_by_day: HashMap<WorldwideDay, Vec<WwdEntityId>>,
+    pub(super) gem_by_owner: HashMap<Address, Vec<WwdEntityId>>,
     pub(super) nod_by_owner: HashMap<Address, Vec<WwdEntityId>>,
     pub(super) nod_all: Vec<WwdEntityId>,
     pub(super) get_calls: Cell<u32>,
@@ -145,6 +145,9 @@ impl MemoryParent {
                 self.nod_by_owner.get(&owner).cloned().unwrap_or_default()
             }
             QueryRef::NodAll => self.nod_all.clone(),
+            QueryRef::GemByOwner(owner) => {
+                self.gem_by_owner.get(&owner).cloned().unwrap_or_default()
+            }
         }
     }
 }
@@ -250,6 +253,8 @@ pub(super) enum FixtureBody {
     Tribute(TributeBodyV1),
     NodItem(NodItemBodyV1),
     NodBucket(NodBucketBodyV1),
+    Gem(crate::GemBodyV1),
+    GemBucket(crate::GemBucketBodyV1),
 }
 
 impl FixtureBody {
@@ -258,6 +263,8 @@ impl FixtureBody {
             Self::Tribute(body) => BodyInput::Tribute(body),
             Self::NodItem(body) => BodyInput::NodItem(body),
             Self::NodBucket(body) => BodyInput::NodBucket(body),
+            Self::Gem(body) => BodyInput::Gem(body),
+            Self::GemBucket(body) => BodyInput::GemBucket(body),
         }
     }
 
@@ -266,6 +273,8 @@ impl FixtureBody {
             Self::Tribute(body) => EntityRef::Tribute(body.tribute_id),
             Self::NodItem(body) => EntityRef::NodItem(body.nod_id),
             Self::NodBucket(body) => EntityRef::NodBucket(body.entity_id()),
+            Self::Gem(body) => EntityRef::Gem(body.gem_id),
+            Self::GemBucket(body) => EntityRef::GemBucket(body.entity_id()),
         }
     }
 
@@ -277,6 +286,12 @@ impl FixtureBody {
             Self::NodItem(expected) => {
                 assert_eq!(verified.payload().as_nod_item(), Some(expected));
             }
+            Self::Gem(expected) => {
+                assert_eq!(verified.payload().as_gem(), Some(expected));
+            }
+            Self::GemBucket(expected) => {
+                assert_eq!(verified.payload().as_gem_bucket(), Some(expected));
+            }
             Self::NodBucket(expected) => {
                 assert_eq!(verified.payload().as_nod_bucket(), Some(expected));
             }
@@ -286,12 +301,14 @@ impl FixtureBody {
     pub(super) fn expected_index_touches(&self) -> u32 {
         match self {
             Self::Tribute(_) | Self::NodItem(_) => 2,
-            Self::NodBucket(_) => 0,
+            Self::Gem(_) => 1,
+            Self::NodBucket(_) | Self::GemBucket(_) => 0,
         }
     }
 
     pub(super) fn emitter(&self) -> Address {
         match self {
+            Self::Gem(_) | Self::GemBucket(_) => outbe_primitives::addresses::GEM_ADDRESS,
             Self::Tribute(_) => TRIBUTE_ADDRESS,
             Self::NodItem(_) | Self::NodBucket(_) => NOD_ADDRESS,
         }

@@ -12,6 +12,8 @@ pub(super) struct BlockProjection<'a> {
     seen_tributes: BTreeSet<WwdEntityId>,
     seen_nods: BTreeSet<WwdEntityId>,
     seen_buckets: BTreeSet<WwdEntityId>,
+    seen_gems: BTreeSet<WwdEntityId>,
+    seen_gem_buckets: BTreeSet<WwdEntityId>,
 }
 
 impl<'a> BlockProjection<'a> {
@@ -24,6 +26,8 @@ impl<'a> BlockProjection<'a> {
             seen_tributes: BTreeSet::new(),
             seen_nods: BTreeSet::new(),
             seen_buckets: BTreeSet::new(),
+            seen_gems: BTreeSet::new(),
+            seen_gem_buckets: BTreeSet::new(),
         }
     }
     pub(super) fn plan_event(
@@ -31,6 +35,54 @@ impl<'a> BlockProjection<'a> {
         event: ProjectionEvent,
     ) -> Result<AtomicWriteBatch, ProjectionError> {
         let planned = match event {
+            ProjectionEvent::GemStored(event) => {
+                let old = self.sources.gems.current_item(event.identity)?;
+                validate_gem_item_transition(
+                    event.identity,
+                    old,
+                    event.previous_commitment,
+                    self.seen_gems.insert(event.identity),
+                )?;
+                self.sources.gems.store_item(
+                    event.identity,
+                    event.stored_body,
+                    Some(event.source.to_storage_metadata()?),
+                )?
+            }
+            ProjectionEvent::GemDeleted(event) => {
+                let old = self.sources.gems.current_item(event.identity)?;
+                validate_gem_item_transition(
+                    event.identity,
+                    old,
+                    event.previous_commitment,
+                    self.seen_gems.insert(event.identity),
+                )?;
+                self.sources.gems.delete_item(event.identity)?
+            }
+            ProjectionEvent::GemBucketStored(event) => {
+                let old = self.sources.gems.current_bucket(event.identity)?;
+                validate_gem_bucket_transition(
+                    event.identity,
+                    old,
+                    event.previous_commitment,
+                    self.seen_gem_buckets.insert(event.identity),
+                )?;
+                self.sources.gems.store_bucket(
+                    event.identity,
+                    event.stored_body,
+                    Some(event.source.to_storage_metadata()?),
+                )?
+            }
+            ProjectionEvent::GemBucketDeleted(event) => {
+                let old = self.sources.gems.current_bucket(event.identity)?;
+                validate_gem_bucket_transition(
+                    event.identity,
+                    old,
+                    event.previous_commitment,
+                    self.seen_gem_buckets.insert(event.identity),
+                )?;
+                self.sources.gems.delete_bucket(event.identity)?
+            }
             ProjectionEvent::TributeStored(event) => {
                 self.require_live_tribute(event.identity)?;
                 self.require_tribute_transition(event.identity, event.previous_commitment)?;

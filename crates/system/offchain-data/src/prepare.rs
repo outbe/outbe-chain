@@ -204,3 +204,58 @@ pub(super) fn validate_transition(
         actual: current,
     })
 }
+
+fn validate_gem_item_transition(
+    identity: WwdEntityId,
+    old: Option<&outbe_gem::GemItemState>,
+    previous: B256,
+    first_in_block: bool,
+) -> Result<(), ProjectionError> {
+    validate_gem_transition(
+        identity,
+        old,
+        (previous, first_in_block),
+        "Gem item",
+        |body| outbe_compressed_entities::encode_gem_v1(&outbe_gem::canonical_item(body)),
+    )
+}
+
+fn validate_gem_bucket_transition(
+    identity: WwdEntityId,
+    old: Option<&outbe_gem::GemBucketState>,
+    previous: B256,
+    first_in_block: bool,
+) -> Result<(), ProjectionError> {
+    validate_gem_transition(
+        identity,
+        old,
+        (previous, first_in_block),
+        "Gem bucket",
+        |body| outbe_compressed_entities::encode_gem_bucket_v1(&outbe_gem::canonical_bucket(body)),
+    )
+}
+
+fn validate_gem_transition<T>(
+    identity: WwdEntityId,
+    old: Option<&T>,
+    transition: (B256, bool),
+    entity: &'static str,
+    encode: impl FnOnce(&T) -> Result<Vec<u8>, outbe_compressed_entities::CanonicalBodyError>,
+) -> Result<(), ProjectionError> {
+    let (previous, first_in_block) = transition;
+    if first_in_block {
+        return Ok(());
+    }
+    let current = match old {
+        Some(body) => {
+            let payload = encode(body)
+                .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let commitment =
+                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
+                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            B256::from(*commitment.as_bytes())
+        }
+        None => B256::ZERO,
+    };
+    validate_transition(entity, identity, current, previous)
+}

@@ -18,7 +18,7 @@ outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-credis.workspace = true
 outbe-credisfactory.workspace = true
 outbe-fidelity = { workspace = true, features = ["test-enclave"] }
-outbe-gem.workspace = true
+outbe-gem = { workspace = true, features = ["test-utils"] }
 outbe-gemfactory.workspace = true
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-gratisfactory.workspace = true

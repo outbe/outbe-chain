@@ -238,7 +238,14 @@ fn dispatch_inner(
         }
         SystemTxInputV2::RewardsGemDelivery => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx)?;
+            // Reward Gems are compressed bodies: delivery needs the block's scope and
+            // the finalized parent bodies, exactly like CycleTick.
+            match body_readers {
+                Some((scope, parent)) => {
+                    outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx, scope, parent)?;
+                }
+                None => cycle::run_reward_gem_delivery_without_readers(&ctx)?,
+            }
         }
         SystemTxInputV2::BoundaryOutcome { artifact } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;

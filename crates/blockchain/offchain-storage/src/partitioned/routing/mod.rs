@@ -2,10 +2,12 @@
 
 mod located;
 mod prefix;
+mod sharded;
 use super::{PartitionReadSource, PartitionRouting, ReadLocation, StorageScope};
 use crate::{Key, Namespace, ScanRequest, StorageError};
 pub use located::LocatedRouting;
 pub use prefix::{DayPrefixRouting, OwnerPrefixRouting, SharedRouting};
+pub use sharded::KeyShardRouting;
 use std::{collections::BTreeMap, sync::Arc};
 
 pub struct RoutingRegistry {

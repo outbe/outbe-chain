@@ -1,6 +1,7 @@
 //! A validator reward Gem is priced by the UTC day before its delivery.
 
 use alloy_primitives::{Address, U256};
+use outbe_gem::test_support::GemWorld;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::hashmap::HashMapStorageProvider,
@@ -35,14 +36,26 @@ fn prepare(ctx: &BlockRuntimeContext) {
     prepare_daily_validator_gem_batch(ctx, REWARD_DAY, U256::from(LOAD), &[(VOTER, 1)]).unwrap();
 }
 
-/// The entry price the voter's delivered gem carries.
-fn delivered_entry_price(ctx: &BlockRuntimeContext) -> U256 {
-    let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-    let gem_id = gem.token_of_owner_by_index(VOTER, 0).unwrap();
-    outbe_gem::api::get_gem(&ctx.storage, gem_id)
-        .unwrap()
-        .unwrap()
-        .entry_price_minor
+fn open_gems(ctx: &BlockRuntimeContext) -> GemWorld {
+    GemWorld::open(&ctx.storage)
+}
+
+/// The entry price the voter's delivered gem carries. It lives on the bucket.
+fn delivered_entry_price(ctx: &BlockRuntimeContext, world: &GemWorld) -> U256 {
+    let mut owned =
+        outbe_gem::api::list_by_owner(&ctx.storage, &world.scope, &world.parent, VOTER).unwrap();
+    assert_eq!(owned.len(), 1);
+    let item = owned.pop().unwrap();
+    outbe_gem::api::get_view(
+        &ctx.storage,
+        &world.scope,
+        &world.parent,
+        item.gem_id.to_u256(),
+    )
+    .unwrap()
+    .unwrap()
+    .bucket
+    .entry_price_minor
 }
 
 /// Anchors genesis on the reward day, then runs `f` in a block three days later.
@@ -71,6 +84,7 @@ fn with_ctx<R>(f: impl FnOnce(&BlockRuntimeContext) -> R) -> R {
 #[test]
 fn a_batch_prices_off_the_day_before_its_delivery() {
     with_ctx(|ctx| {
+        let world = open_gems(ctx);
         seed_oracle(ctx, U256::from(9u64) * one_coen840());
         record_coen840_day_vwap(&ctx.storage, REWARD_DAY, U256::from(2u64) * one_coen840());
         record_coen840_day_vwap(
@@ -80,59 +94,60 @@ fn a_batch_prices_off_the_day_before_its_delivery() {
         );
 
         prepare(ctx);
-        deliver_oldest_reward_gem_batch(ctx).unwrap();
+        deliver_oldest_reward_gem_batch(ctx, &world.scope, &world.parent).unwrap();
 
-        assert_eq!(delivered_entry_price(ctx), U256::from(5u64) * one_coen840());
+        assert_eq!(
+            delivered_entry_price(ctx, &world),
+            U256::from(5u64) * one_coen840()
+        );
     });
 }
 
 #[test]
 fn a_batch_whose_cost_floors_below_one_minor_unit_still_delivers() {
     with_ctx(|ctx| {
+        let world = open_gems(ctx);
         seed_oracle(ctx, U256::ONE);
         record_coen840_day_vwap(&ctx.storage, REWARD_DAY, U256::ONE);
         record_coen840_day_vwap(&ctx.storage, DELIVERY_PREVIOUS_DAY, U256::ONE);
 
         prepare(ctx);
         assert!(matches!(
-            deliver_oldest_reward_gem_batch(ctx).unwrap(),
+            deliver_oldest_reward_gem_batch(ctx, &world.scope, &world.parent).unwrap(),
             RewardGemDeliveryOutcome::Delivered {
                 reward_utc_day: REWARD_DAY,
                 recipient_count: 1,
                 delivered_promis_load_amount,
+                delivered_recipients: 1,
+                batch_complete: true,
             } if delivered_promis_load_amount == U256::from(LOAD)
         ));
-        assert_eq!(delivered_entry_price(ctx), U256::ONE);
-        let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-        let gem_id = gem.token_of_owner_by_index(VOTER, 0).unwrap();
-        assert_eq!(
-            outbe_gem::api::get_gem(&ctx.storage, gem_id)
-                .unwrap()
-                .unwrap()
-                .promis_load_minor,
-            U256::from(LOAD)
-        );
+        assert_eq!(delivered_entry_price(ctx, &world), U256::ONE);
+        let owned = outbe_gem::api::list_by_owner(&ctx.storage, &world.scope, &world.parent, VOTER)
+            .unwrap();
+        assert_eq!(owned.len(), 1);
+        assert_eq!(owned[0].promis_load_minor, U256::from(LOAD));
     });
 }
 
 #[test]
 fn a_batch_waits_while_the_day_before_its_delivery_has_no_vwap() {
     with_ctx(|ctx| {
+        let world = open_gems(ctx);
         seed_oracle(ctx, U256::from(9u64) * one_coen840());
         record_coen840_day_vwap(&ctx.storage, REWARD_DAY, U256::from(2u64) * one_coen840());
 
         prepare(ctx);
         assert!(matches!(
-            deliver_oldest_reward_gem_batch(ctx).unwrap(),
+            deliver_oldest_reward_gem_batch(ctx, &world.scope, &world.parent).unwrap(),
             RewardGemDeliveryOutcome::PendingRate {
                 reward_utc_day: REWARD_DAY
             }
         ));
-        assert_eq!(
-            outbe_gem::GemContract::new(ctx.storage.clone())
-                .balance_of(VOTER)
-                .unwrap(),
-            0
+        assert!(
+            outbe_gem::api::list_by_owner(&ctx.storage, &world.scope, &world.parent, VOTER)
+                .unwrap()
+                .is_empty()
         );
     });
 }

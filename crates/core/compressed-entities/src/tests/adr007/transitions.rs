@@ -368,6 +368,22 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
             FixtureBody::NodBucket(bucket_original),
             FixtureBody::NodBucket(bucket_updated),
         ),
+        (
+            FixtureBody::Gem(super::gem_ce::gem()),
+            FixtureBody::Gem(crate::GemBodyV1 {
+                state: 3,
+                called_at: 8,
+                settled_at: 9,
+                ..super::gem_ce::gem()
+            }),
+        ),
+        (
+            FixtureBody::GemBucket(super::gem_ce::bucket()),
+            FixtureBody::GemBucket(crate::GemBucketBodyV1 {
+                settled_gems: 1,
+                ..super::gem_ce::bucket()
+            }),
+        ),
     ];
 
     for (original, updated) in &fixtures {

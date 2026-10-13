@@ -36,6 +36,7 @@ Feature: Gem from a parked Intex to Promis and COEN
     Then the position holds the parked capacity and the units are burned
     When the merchant issues a gem to each of five owners, leaving capacity unissued
     Then every gem reads Issued and carries its terms
+    And every validator serves the same gem and bucket bodies under one sealed root
     And no gem can be paid before it qualifies
     And no gem can be transferred
     When the reference rate stands above the gem floor

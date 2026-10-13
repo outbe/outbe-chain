@@ -1,6 +1,8 @@
 #![allow(dead_code)]
-//! Read-only codegen over frozen L2 tribute artifacts in `circuits/`.
+//! Compile L2 tribute circuits in `OUT_DIR`, check VK pins, and generate Rust types.
 //! Smell findings for this file are ignored in `.qlty/qlty.toml`.
+//! Install pinned tools with `mise install`. NARGO/BB override optional mise
+//! lookup and PATH, so tools installed without mise work as well.
 fn main() {
     let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let circuits_dir = crate_dir.join("../../../circuits");
@@ -1207,8 +1209,8 @@ fn compile_l2_package(
     circuits_dir: &Path,
     out_dir: &Path,
 ) -> Loaded {
-    let nargo = locate("NARGO", ".nargo/bin/nargo", "nargo");
-    let bb = locate("BB", ".bb/bb", "bb");
+    let nargo = locate("NARGO", "nargo");
+    let bb = locate("BB", "bb");
     assert_tool_version(&nargo, "nargo", NARGO_VERSION);
     assert_tool_version(&bb, "bb", BB_VERSION);
 
@@ -1343,28 +1345,21 @@ fn copy_tree(src: &Path, dst: &Path) {
     }
 }
 
-fn locate(env_var: &str, home_rel: &str, bin: &str) -> PathBuf {
-    if let Ok(path) = env::var(env_var) {
-        let path = PathBuf::from(path);
-        if path.exists() {
-            return path;
+/// Explicit overrides win; mise is optional, and PATH is the final fallback.
+fn locate(env_var: &str, default: &str) -> PathBuf {
+    if let Some(path) = env::var_os(env_var) {
+        return PathBuf::from(path);
+    }
+    if let Ok(output) = Command::new("mise").args(["which", default]).output() {
+        if output.status.success() {
+            if let Ok(path) = String::from_utf8(output.stdout) {
+                if !path.trim().is_empty() {
+                    return PathBuf::from(path.trim());
+                }
+            }
         }
     }
-    if let Ok(home) = env::var("HOME") {
-        let path = Path::new(&home).join(home_rel);
-        if path.exists() {
-            return path;
-        }
-    }
-    if Command::new(bin)
-        .arg("--version")
-        .status()
-        .ok()
-        .is_some_and(|status| status.success())
-    {
-        return PathBuf::from(bin);
-    }
-    panic!("{bin} not found (set ${env_var})")
+    PathBuf::from(default)
 }
 
 fn assert_tool_version(bin: &Path, tool: &str, pin: &str) {

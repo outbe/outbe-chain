@@ -148,22 +148,25 @@ fn assert_reward_queues(
         outbe_primitives::storage::direct::DirectStorageProvider::new(state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
-        assert_eq!(rewards.reward_gem_queue_head.read()?, 1);
+        // One compressed Gem body per block: the backlog head stays pending with one
+        // recipient served while Cycle appended the next day behind it.
+        assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
         assert_eq!(rewards.reward_gem_queue_tail.read()?, 2);
-        assert!(rewards.daily_topup_settled.read(&backlog_utc_day)?);
+        assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 2);
+        assert!(!rewards.daily_topup_settled.read(&backlog_utc_day)?);
+        assert_eq!(
+            rewards.reward_gem_delivered_count.read(&backlog_utc_day)?,
+            1
+        );
+        assert_eq!(
+            rewards.reward_gem_recipient_count.read(&backlog_utc_day)?,
+            VALIDATOR_COUNT
+        );
         assert!(rewards.daily_topup_prepared.read(&reward_utc_day)?);
         assert!(!rewards.daily_topup_settled.read(&reward_utc_day)?);
+        // Bodies live off-chain; the compact supply counts the one minted Gem.
         let gem = outbe_gem::GemContract::new(storage);
-        for index in 0..VALIDATOR_COUNT {
-            assert_eq!(
-                gem.balance_of(numbered_test_address(0x13, u64::from(index)))?,
-                1
-            );
-            assert_eq!(
-                gem.balance_of(numbered_test_address(0x14, u64::from(index)))?,
-                0
-            );
-        }
+        assert_eq!(gem.total_supply()?, 1);
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .unwrap();

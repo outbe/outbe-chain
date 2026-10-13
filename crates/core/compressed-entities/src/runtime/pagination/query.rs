@@ -79,6 +79,9 @@ pub(super) fn record_matches_query(record: &IndexRecord, query: QueryRef) -> boo
         QueryRef::NodByOwner(owner) => {
             record.kind == IndexKind::NodByOwner && record.partition == owner.as_slice()
         }
+        QueryRef::GemByOwner(owner) => {
+            record.kind == IndexKind::GemByOwner && record.partition == owner.as_slice()
+        }
         QueryRef::NodAll => record.kind == IndexKind::NodAll && record.partition.is_empty(),
     }
 }
@@ -111,6 +114,10 @@ pub(super) fn verified_matches_query(body: &VerifiedBody, query: QueryRef) -> bo
             .payload()
             .as_nod_item()
             .is_some_and(|item| item.owner == owner),
+        QueryRef::GemByOwner(owner) => body
+            .payload()
+            .as_gem()
+            .is_some_and(|item| item.owner == owner),
         QueryRef::NodAll => body.payload().as_nod_item().is_some(),
     }
 }
@@ -119,5 +126,6 @@ pub(super) fn entity_for_query(query: QueryRef, id: WwdEntityId) -> EntityRef {
     match query {
         QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => EntityRef::Tribute(id),
         QueryRef::NodByOwner(_) | QueryRef::NodAll => EntityRef::NodItem(id),
+        QueryRef::GemByOwner(_) => EntityRef::Gem(id),
     }
 }
