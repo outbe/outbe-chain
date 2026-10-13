@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -32,7 +33,7 @@ contract AuctionTest is Test {
         "RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
 
-    uint32 internal constant SCALE_1E6 = 1_000_000;
+    uint32 internal constant SCALE_1E6 = BridgeMsgCodec.SCALE_1E6;
     // WCOEN escrow: the per-Intex escrow basis is PROMIS_LOAD_MINOR (constant COEN), so the lock is
     // `qty * PROMIS_LOAD_MINOR * rate / 1e6`. ENTRY_PRICE feeds only floor/call now.
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
@@ -175,10 +176,12 @@ contract AuctionTest is Test {
 
         // Protocol-scale lock converted into 18-decimal WCOEN.
         assertEq(
-            uint256(escrow.lockedFunds(worldwideDay, iba1)), uint256(30) * PROMIS_LOAD_MINOR * 80 / SCALE_1E6 * 1e12
+            uint256(escrow.lockedFunds(worldwideDay, iba1)),
+            uint256(30) * PROMIS_LOAD_MINOR * 80 / SCALE_1E6 * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT
         );
         assertEq(
-            uint256(escrow.lockedFunds(worldwideDay, iba2)), uint256(40) * PROMIS_LOAD_MINOR * 70 / SCALE_1E6 * 1e12
+            uint256(escrow.lockedFunds(worldwideDay, iba2)),
+            uint256(40) * PROMIS_LOAD_MINOR * 70 / SCALE_1E6 * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT
         );
 
         (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(worldwideDay);
@@ -383,7 +386,8 @@ contract AuctionTest is Test {
 
         assertTrue(auction.revealedBidsByBidder(worldwideDay, iba1));
         assertEq(
-            uint256(escrow.lockedFunds(worldwideDay, iba1)), uint256(qty) * PROMIS_LOAD_MINOR * rate / SCALE_1E6 * 1e12
+            uint256(escrow.lockedFunds(worldwideDay, iba1)),
+            uint256(qty) * PROMIS_LOAD_MINOR * rate / SCALE_1E6 * BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT
         );
     }
 

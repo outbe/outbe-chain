@@ -13,7 +13,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 ///         lockable range, and Outbe reproduces the exact same value.
 contract LockAmountParityTest is Test {
     uint32 internal constant SCALE_1E6 = BridgeMsgCodec.SCALE_1E6;
-    uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = 1e12;
+    uint256 internal constant NATIVE_UNITS_PER_PROTOCOL_UNIT = BridgeMsgCodec.NATIVE_UNITS_PER_PROTOCOL_UNIT;
     /// @dev Per-Intex escrow basis = promis_load (e.g. 100_000 * 1e6). Fits the existing uint128 wire field.
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
 

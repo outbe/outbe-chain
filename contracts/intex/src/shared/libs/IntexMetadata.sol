@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 import {IIntexNFT1155} from "../interfaces/IIntexNFT1155.sol";
+import {BridgeMsgCodec} from "./BridgeMsgCodec.sol";
 
 /// @title IntexMetadata
 /// @notice JSON + SVG metadata rendering for IntexNFT1155 tokens.
@@ -19,10 +20,9 @@ library IntexMetadata {
     uint256 private constant ROW_STEP = 45;
 
     /// @dev Every COEN/ISO price arrives directly in six-decimal ISO stable-units.
-    uint8 private constant PRICE_DECIMALS = 6;
+    uint8 private constant PRICE_DECIMALS = BridgeMsgCodec.PROTOCOL_DECIMALS;
     uint8 private constant PRICE_PRECISION = 6;
-    /// @dev Shared numeric scale carried by six-decimal monetary fields.
-    uint256 private constant SCALE_1E6 = 1e6;
+    uint256 private constant SCALE_1E6 = 10 ** BridgeMsgCodec.PROTOCOL_DECIMALS;
 
     /// @notice Build the `data:application/json;base64,...` URI for a token.
     /// @param data Series record for the token id, with its effective state. The
