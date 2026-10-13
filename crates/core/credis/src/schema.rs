@@ -10,7 +10,7 @@ use crate::errors::CredisError;
 ///
 /// A Credis is settleable from the moment it is issued. `Issued -> Called` is the
 /// sustained-breach trigger. Both `Settled` (fully repaid) and `Forfeited` (settlement
-/// deadline passed with a remainder) are terminal.
+/// deadline passed with a remainder, or given up by the owner) are terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CredisState {

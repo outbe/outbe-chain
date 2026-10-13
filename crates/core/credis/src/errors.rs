@@ -39,6 +39,8 @@ pub enum CredisError {
     IndexOutOfBounds,
     #[error("Credis is non-transferable")]
     NonTransferable,
+    #[error("only the Credis owner can forfeit it")]
+    NotCredisOwner,
 }
 
 impl From<CredisError> for PrecompileError {

@@ -420,46 +420,72 @@ impl CredisContract<'_> {
     pub fn forfeit(&mut self, credis_id: U256, now: u64) -> Result<Forfeit> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            let mut record = self.load_credis(credis_id)?;
+            let record = self.load_credis(credis_id)?;
             if record.lifecycle_state()? != CredisState::Called {
                 return Err(CredisError::NotCalled.into());
             }
             if now <= settlement_deadline(&record) {
                 return Err(CredisError::SettlementDeadlineNotPassed.into());
             }
-            if record.outstanding_principal_minor.is_zero() {
-                return Err(CredisError::NothingOutstanding.into());
+            self.close_forfeited(record)
+        })
+    }
+
+    /// The owner gives up an Issued or Called Credis at any time, with the same
+    /// write-off and burn as a lapsed call.
+    pub fn forfeit_by_owner(&mut self, credis_id: U256, caller: Address) -> Result<Forfeit> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let record = self.load_credis(credis_id)?;
+            if caller != record.owner {
+                return Err(CredisError::NotCredisOwner.into());
             }
+            match record.lifecycle_state()? {
+                CredisState::Issued | CredisState::Called => {}
+                CredisState::Settled | CredisState::Forfeited => {
+                    return Err(CredisError::CredisClosed.into())
+                }
+            }
+            self.close_forfeited(record)
+        })
+    }
 
-            let gratis_burned_minor = record.outstanding_gratis_minor;
-            let principal_written_off = record.outstanding_principal_minor;
+    fn close_forfeited(&mut self, mut record: Credis) -> Result<Forfeit> {
+        if record.outstanding_principal_minor.is_zero() {
+            return Err(CredisError::NothingOutstanding.into());
+        }
+        let was_called = record.lifecycle_state()? == CredisState::Called;
+        let credis_id = record.credis_id;
+        let gratis_burned_minor = record.outstanding_gratis_minor;
+        let principal_written_off = record.outstanding_principal_minor;
 
-            outbe_ccaregistry::api::credis_forfeited(
-                &self.storage,
-                record.cca,
-                reward_day(&self.storage)?,
-                gratis_burned_minor,
-            )?;
-            // The remainders stay on the record: they are what was written off and burned.
-            record.state = CredisState::Forfeited as u8;
-            self.update_credis_record(&record)?;
-            self.unindex_for_call(&record)?;
+        outbe_ccaregistry::api::credis_forfeited(
+            &self.storage,
+            record.cca,
+            reward_day(&self.storage)?,
+            gratis_burned_minor,
+        )?;
+        // The remainders stay on the record: they are what was written off and burned.
+        record.state = CredisState::Forfeited as u8;
+        self.update_credis_record(&record)?;
+        self.unindex_for_call(&record)?;
+        if was_called {
             self.unqueue_called(credis_id)?;
+        }
 
-            self.emit(ICredis::CredisForfeited {
-                credisId: credis_id,
-                cca: record.cca,
-                gratisBurnedMinor: gratis_burned_minor,
-                principalWrittenOffMinor: principal_written_off,
-            })?;
-            self.emit(ICredis::MetadataUpdate {
-                _tokenId: credis_id,
-            })?;
+        self.emit(ICredis::CredisForfeited {
+            credisId: credis_id,
+            cca: record.cca,
+            gratisBurnedMinor: gratis_burned_minor,
+            principalWrittenOffMinor: principal_written_off,
+        })?;
+        self.emit(ICredis::MetadataUpdate {
+            _tokenId: credis_id,
+        })?;
 
-            Ok(Forfeit {
-                gratis_burned_minor,
-                principal_written_off,
-            })
+        Ok(Forfeit {
+            gratis_burned_minor,
+            principal_written_off,
         })
     }
 
