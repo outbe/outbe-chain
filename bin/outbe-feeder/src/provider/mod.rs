@@ -14,6 +14,7 @@ pub mod okx;
 pub mod onchain_feed;
 pub mod pyth;
 pub mod redstone;
+mod rest;
 #[cfg(test)]
 pub(crate) mod test_server;
 pub(crate) mod websocket;

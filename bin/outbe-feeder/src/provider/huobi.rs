@@ -1,10 +1,11 @@
 //! Huobi (HTX) price provider.
 
 use async_trait::async_trait;
-use eyre::{Context, Result};
+use eyre::Result;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use super::rest::fetch_json;
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::JsonDecimal;
 
@@ -54,76 +55,32 @@ impl Provider for HuobiProvider {
         pairs: &[(String, String)],
     ) -> Result<HashMap<String, TickerPrice>> {
         let mut result = HashMap::new();
-
         for (base, quote) in pairs {
-            let symbol = match map_symbol(base, quote) {
-                Some(s) => s,
-                None => continue,
+            let Some(symbol) = map_symbol(base, quote) else {
+                continue;
             };
-
+            let key = format!("{base}/{quote}");
             let url = format!("https://api.huobi.pro/market/detail/merged?symbol={symbol}");
-
-            let resp = match self
-                .client
-                .get(&url)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        pair = %format!("{base}/{quote}"),
-                        "huobi request failed"
-                    );
-                    continue;
-                }
-            };
-
-            if !resp.status().is_success() {
-                tracing::warn!(
-                    status = %resp.status(),
-                    pair = %format!("{base}/{quote}"),
-                    "huobi API error"
-                );
+            let Some(data) = fetch_json::<HuobiResponse>(&self.client, "huobi", &key, &url).await
+            else {
                 continue;
-            }
-
-            let data: HuobiResponse = match resp
-                .json()
-                .await
-                .with_context(|| format!("failed to parse huobi response for {base}/{quote}"))
-            {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(error = %e, pair = %format!("{base}/{quote}"), "huobi parse error");
-                    continue;
-                }
             };
-
             if data.status != "ok" {
-                tracing::warn!(
-                    status = %data.status,
-                    pair = %format!("{base}/{quote}"),
-                    "huobi returned non-ok status"
-                );
+                tracing::warn!(status = %data.status, pair = %key, "huobi returned non-ok status");
                 continue;
             }
-
-            if let Some(tick) = data.tick {
-                let key = format!("{base}/{quote}");
-                if let Some(ticker) = checked_ticker(
-                    "huobi",
-                    &key,
-                    tick.close.fixed(),
-                    VolumeInput::Present(tick.vol.fixed()),
-                ) {
-                    result.insert(key, ticker);
-                }
+            let Some(tick) = data.tick else {
+                continue;
+            };
+            if let Some(ticker) = checked_ticker(
+                "huobi",
+                &key,
+                tick.close.fixed(),
+                VolumeInput::Present(tick.vol.fixed()),
+            ) {
+                result.insert(key, ticker);
             }
         }
-
         Ok(result)
     }
 }

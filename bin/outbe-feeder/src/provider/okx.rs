@@ -1,10 +1,11 @@
 //! OKX price provider.
 
 use async_trait::async_trait;
-use eyre::{Context, Result};
+use eyre::Result;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use super::rest::fetch_json;
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
 
@@ -54,67 +55,28 @@ impl Provider for OkxProvider {
         pairs: &[(String, String)],
     ) -> Result<HashMap<String, TickerPrice>> {
         let mut result = HashMap::new();
-
         for (base, quote) in pairs {
-            let inst_id = match map_symbol(base, quote) {
-                Some(s) => s,
-                None => continue,
-            };
-
-            let url = format!("https://www.okx.com/api/v5/market/ticker?instId={inst_id}");
-
-            let resp = match self
-                .client
-                .get(&url)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        pair = %format!("{base}/{quote}"),
-                        "okx request failed"
-                    );
-                    continue;
-                }
-            };
-
-            if !resp.status().is_success() {
-                tracing::warn!(
-                    status = %resp.status(),
-                    pair = %format!("{base}/{quote}"),
-                    "okx API error"
-                );
+            let Some(inst_id) = map_symbol(base, quote) else {
                 continue;
-            }
-
-            let data: OkxResponse = match resp
-                .json()
-                .await
-                .with_context(|| format!("failed to parse okx response for {base}/{quote}"))
-            {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(error = %e, pair = %format!("{base}/{quote}"), "okx parse error");
-                    continue;
-                }
             };
-
-            if let Some(ticker) = data.data.first() {
-                let key = format!("{base}/{quote}");
-                if let Some(ticker) = checked_ticker(
-                    "okx",
-                    &key,
-                    FixedValue::parse(&ticker.last),
-                    VolumeInput::Present(FixedValue::parse(&ticker.vol_24h)),
-                ) {
-                    result.insert(key, ticker);
-                }
+            let key = format!("{base}/{quote}");
+            let url = format!("https://www.okx.com/api/v5/market/ticker?instId={inst_id}");
+            let Some(data) = fetch_json::<OkxResponse>(&self.client, "okx", &key, &url).await
+            else {
+                continue;
+            };
+            let Some(ticker) = data.data.first() else {
+                continue;
+            };
+            if let Some(ticker) = checked_ticker(
+                "okx",
+                &key,
+                FixedValue::parse(&ticker.last),
+                VolumeInput::Present(FixedValue::parse(&ticker.vol_24h)),
+            ) {
+                result.insert(key, ticker);
             }
         }
-
         Ok(result)
     }
 }

@@ -1,10 +1,11 @@
 //! Gate.io price provider.
 
 use async_trait::async_trait;
-use eyre::{Context, Result};
+use eyre::Result;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use super::rest::fetch_json;
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
 
@@ -48,68 +49,30 @@ impl Provider for GateProvider {
         pairs: &[(String, String)],
     ) -> Result<HashMap<String, TickerPrice>> {
         let mut result = HashMap::new();
-
         for (base, quote) in pairs {
-            let currency_pair = match map_symbol(base, quote) {
-                Some(s) => s,
-                None => continue,
+            let Some(currency_pair) = map_symbol(base, quote) else {
+                continue;
             };
-
+            let key = format!("{base}/{quote}");
             let url =
                 format!("https://api.gateio.ws/api/v4/spot/tickers?currency_pair={currency_pair}");
-
-            let resp = match self
-                .client
-                .get(&url)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        pair = %format!("{base}/{quote}"),
-                        "gate request failed"
-                    );
-                    continue;
-                }
-            };
-
-            if !resp.status().is_success() {
-                tracing::warn!(
-                    status = %resp.status(),
-                    pair = %format!("{base}/{quote}"),
-                    "gate API error"
-                );
+            let Some(data) =
+                fetch_json::<Vec<GateTickerResponse>>(&self.client, "gate", &key, &url).await
+            else {
                 continue;
-            }
-
-            let data: Vec<GateTickerResponse> = match resp
-                .json()
-                .await
-                .with_context(|| format!("failed to parse gate response for {base}/{quote}"))
-            {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(error = %e, pair = %format!("{base}/{quote}"), "gate parse error");
-                    continue;
-                }
             };
-
-            if let Some(ticker) = data.first() {
-                let key = format!("{base}/{quote}");
-                if let Some(ticker) = checked_ticker(
-                    "gate",
-                    &key,
-                    FixedValue::parse(&ticker.last),
-                    VolumeInput::Present(FixedValue::parse(&ticker.base_volume)),
-                ) {
-                    result.insert(key, ticker);
-                }
+            let Some(ticker) = data.first() else {
+                continue;
+            };
+            if let Some(ticker) = checked_ticker(
+                "gate",
+                &key,
+                FixedValue::parse(&ticker.last),
+                VolumeInput::Present(FixedValue::parse(&ticker.base_volume)),
+            ) {
+                result.insert(key, ticker);
             }
         }
-
         Ok(result)
     }
 }

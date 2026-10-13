@@ -1,10 +1,11 @@
 //! Kraken price provider.
 
 use async_trait::async_trait;
-use eyre::{Context, Result};
+use eyre::Result;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use super::rest::fetch_json;
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
 
@@ -60,82 +61,34 @@ impl Provider for KrakenProvider {
         pairs: &[(String, String)],
     ) -> Result<HashMap<String, TickerPrice>> {
         let mut result = HashMap::new();
-
         for (base, quote) in pairs {
-            let symbol = match map_symbol(base, quote) {
-                Some(s) => s,
-                None => continue,
+            let Some(symbol) = map_symbol(base, quote) else {
+                continue;
             };
-
+            let key = format!("{base}/{quote}");
             let url = format!("https://api.kraken.com/0/public/Ticker?pair={symbol}");
-
-            let resp = match self
-                .client
-                .get(&url)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        pair = %format!("{base}/{quote}"),
-                        "kraken request failed"
-                    );
-                    continue;
-                }
-            };
-
-            if !resp.status().is_success() {
-                tracing::warn!(
-                    status = %resp.status(),
-                    pair = %format!("{base}/{quote}"),
-                    "kraken API error"
-                );
+            let Some(data) = fetch_json::<KrakenResponse>(&self.client, "kraken", &key, &url).await
+            else {
                 continue;
-            }
-
-            let data: KrakenResponse = match resp
-                .json()
-                .await
-                .with_context(|| format!("failed to parse kraken response for {base}/{quote}"))
-            {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(error = %e, pair = %format!("{base}/{quote}"), "kraken parse error");
-                    continue;
-                }
             };
-
             if !data.error.is_empty() {
-                tracing::warn!(
-                    errors = ?data.error,
-                    pair = %format!("{base}/{quote}"),
-                    "kraken returned errors"
-                );
+                tracing::warn!(errors = ?data.error, pair = %key, "kraken returned errors");
                 continue;
             }
-
-            if let Some(result_map) = data.result {
-                // Kraken uses internal pair names (e.g. XETHZUSD, XXBTZUSD)
-                // so we just take the first (and only) entry.
-                if let Some(ticker) = result_map.values().next() {
-                    let key = format!("{base}/{quote}");
-                    if let Some(ticker) = checked_ticker(
-                        "kraken",
-                        &key,
-                        ticker.c.first().and_then(|value| FixedValue::parse(value)),
-                        VolumeInput::Present(
-                            ticker.v.get(1).and_then(|value| FixedValue::parse(value)),
-                        ),
-                    ) {
-                        result.insert(key, ticker);
-                    }
-                }
+            // Kraken answers under its internal pair name (XETHZUSD), the one
+            // entry of the map.
+            let Some(ticker) = data.result.as_ref().and_then(|map| map.values().next()) else {
+                continue;
+            };
+            if let Some(ticker) = checked_ticker(
+                "kraken",
+                &key,
+                ticker.c.first().and_then(|value| FixedValue::parse(value)),
+                VolumeInput::Present(ticker.v.get(1).and_then(|value| FixedValue::parse(value))),
+            ) {
+                result.insert(key, ticker);
             }
         }
-
         Ok(result)
     }
 }

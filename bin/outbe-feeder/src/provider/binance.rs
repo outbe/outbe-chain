@@ -1,11 +1,11 @@
 //! Binance price provider.
 
 use async_trait::async_trait;
-use eyre::{Context, Result};
-use serde::Deserialize;
+use eyre::Result;
 use std::collections::HashMap;
 
-use super::{checked_candle, checked_ticker, CandlePrice, Provider, TickerPrice, VolumeInput};
+use super::rest::{fetch_json, ticker_24h};
+use super::{checked_candle, CandlePrice, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
 
 /// Maps a (base, quote) pair to a Binance symbol.
@@ -32,13 +32,6 @@ impl BinanceProvider {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct BinanceTickerResponse {
-    #[serde(rename = "lastPrice")]
-    last_price: String,
-    volume: String,
-}
-
 #[async_trait]
 impl Provider for BinanceProvider {
     fn name(&self) -> &str {
@@ -49,67 +42,14 @@ impl Provider for BinanceProvider {
         &self,
         pairs: &[(String, String)],
     ) -> Result<HashMap<String, TickerPrice>> {
-        let mut result = HashMap::new();
-
-        for (base, quote) in pairs {
-            let symbol = match map_symbol(base, quote) {
-                Some(s) => s,
-                None => continue,
-            };
-
-            let url = format!("https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}");
-
-            let resp = match self
-                .client
-                .get(&url)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        pair = %format!("{base}/{quote}"),
-                        "binance request failed"
-                    );
-                    continue;
-                }
-            };
-
-            if !resp.status().is_success() {
-                tracing::warn!(
-                    status = %resp.status(),
-                    pair = %format!("{base}/{quote}"),
-                    "binance API error"
-                );
-                continue;
-            }
-
-            let data: BinanceTickerResponse = match resp
-                .json()
-                .await
-                .with_context(|| format!("failed to parse binance response for {base}/{quote}"))
-            {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(error = %e, pair = %format!("{base}/{quote}"), "binance parse error");
-                    continue;
-                }
-            };
-
-            let key = format!("{base}/{quote}");
-            if let Some(ticker) = checked_ticker(
-                "binance",
-                &key,
-                FixedValue::parse(&data.last_price),
-                VolumeInput::Present(FixedValue::parse(&data.volume)),
-            ) {
-                result.insert(key, ticker);
-            }
-        }
-
-        Ok(result)
+        Ok(ticker_24h(
+            &self.client,
+            "binance",
+            "https://api.binance.com/api/v3/ticker/24hr",
+            pairs,
+            map_symbol,
+        )
+        .await)
     }
 
     async fn get_candle_prices(
@@ -117,81 +57,38 @@ impl Provider for BinanceProvider {
         pairs: &[(String, String)],
     ) -> Result<HashMap<String, Vec<CandlePrice>>> {
         let mut result = HashMap::new();
-
         for (base, quote) in pairs {
-            let symbol = match map_symbol(base, quote) {
-                Some(s) => s,
-                None => continue,
+            let Some(symbol) = map_symbol(base, quote) else {
+                continue;
             };
-
+            let key = format!("{base}/{quote}");
             let url = format!(
                 "https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=5"
             );
-
-            let resp = match self
-                .client
-                .get(&url)
-                .timeout(std::time::Duration::from_secs(5))
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        pair = %format!("{base}/{quote}"),
-                        "binance candles request failed"
-                    );
-                    continue;
-                }
-            };
-
-            if !resp.status().is_success() {
-                tracing::warn!(
-                    status = %resp.status(),
-                    pair = %format!("{base}/{quote}"),
-                    "binance candles API error"
-                );
-                continue;
-            }
-
             // Binance klines: [[openTime, open, high, low, close, volume, ...], ...]
-            let data: Vec<Vec<serde_json::Value>> = match resp
-                .json()
-                .await
-                .with_context(|| format!("failed to parse binance candles for {base}/{quote}"))
-            {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(error = %e, pair = %format!("{base}/{quote}"), "binance candles parse error");
-                    continue;
-                }
+            let Some(klines) =
+                fetch_json::<Vec<Vec<serde_json::Value>>>(&self.client, "binance", &key, &url)
+                    .await
+            else {
+                continue;
             };
-
-            let mut candles = Vec::new();
-            for kline in &data {
-                if kline.len() < 6 {
-                    continue;
-                }
-                let timestamp = kline[0].as_u64().unwrap_or(0) / 1000; // ms -> s
-                let key = format!("{base}/{quote}");
-                if let Some(candle) = checked_candle(
-                    "binance",
-                    &key,
-                    kline[4].as_str().and_then(FixedValue::parse),
-                    VolumeInput::Present(kline[5].as_str().and_then(FixedValue::parse)),
-                    timestamp,
-                ) {
-                    candles.push(candle);
-                }
-            }
-
+            let candles: Vec<CandlePrice> = klines
+                .iter()
+                .filter(|kline| kline.len() >= 6)
+                .filter_map(|kline| {
+                    checked_candle(
+                        "binance",
+                        &key,
+                        kline[4].as_str().and_then(FixedValue::parse),
+                        VolumeInput::Present(kline[5].as_str().and_then(FixedValue::parse)),
+                        kline[0].as_u64().unwrap_or(0) / 1000, // ms -> s
+                    )
+                })
+                .collect();
             if !candles.is_empty() {
-                let key = format!("{base}/{quote}");
                 result.insert(key, candles);
             }
         }
-
         Ok(result)
     }
 }
