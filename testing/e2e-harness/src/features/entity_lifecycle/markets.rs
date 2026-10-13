@@ -1,11 +1,9 @@
 //! The accounts, currencies and pricing window a lifecycle scenario settles against.
 
-use std::time::Duration;
-
 use alloy_primitives::U256;
 use cucumber::{given, then, when};
 
-use super::chain::{finalized_checkpoint, poll_until, verify_checkpoint};
+use super::chain::{finalized_checkpoint, verify_checkpoint};
 use crate::env::environment;
 use crate::internal::eth;
 use crate::world::settlement_currency::{self, SettlementCurrency};
@@ -33,7 +31,6 @@ const ISSUANCE_MARKET_TAG: &str = "myr-issuance";
 const DEPLOY_FUNDING_COEN: u64 = 100;
 /// A pricing window closes on a whole hour. The margin lands the committee inside the next one.
 const WINDOW_CLOSE_MARGIN_SECS: u64 = 60;
-const WINDOW_CLOSE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Choose the scenario's markets before its genesis is written: a tagged scenario gets a
 /// COEN/MYR pair in genesis and on every feeder.
@@ -193,36 +190,5 @@ pub(crate) fn assert_currency_routes(world: &World, currency: SettlementCurrency
 
 /// Close a feeder-covered window and verify each currency on all validators.
 pub(crate) fn close_price_window(world: &mut World, currencies: &[u16]) {
-    pricing_window::prepare_fresh_hour(world).expect("fresh feeder pricing hour");
-    for attempt in 0..3 {
-        let cutoff = pricing_window::wait_for_coverage(world, currencies)
-            .expect("pinned public pricing coverage observations");
-        let target = cutoff + WINDOW_CLOSE_MARGIN_SECS;
-        let (_, _, _, pending) =
-            crate::features::ocomp::restart_committee_at_logical_time(world, target);
-        let port = world.validators.primary_port();
-        let mut publication_ready = pending.is_none();
-        poll_until(
-            WINDOW_CLOSE_TIMEOUT,
-            || format!("pricing restart did not publish after cutoff {cutoff}"),
-            || {
-                publication_ready = publication_ready
-                    || pending.as_ref().is_some_and(|pending| {
-                        crate::features::price_oracle::observe_pending_publication(world, pending)
-                    });
-                world
-                    .rpc
-                    .latest_block_timestamp(port)
-                    .is_some_and(|time| time >= target)
-                    && publication_ready
-            },
-        );
-        if pricing_window::closed_window_is_priced(world, currencies)
-            .expect("closed production Oracle prices")
-        {
-            return;
-        }
-        eprintln!("pricing_window evidence=insufficient_closed_coverage cutoff={cutoff} attempt={attempt}");
-    }
-    panic!("three closed pricing windows failed coverage for {currencies:?}");
+    pricing_window::close(world, currencies).expect("a covered closed pricing window");
 }
