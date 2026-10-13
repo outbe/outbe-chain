@@ -38,6 +38,9 @@ pub mod test_enclave {
     pub fn install() {
         INSTALLED.set(true);
     }
+    pub fn uninstall() {
+        INSTALLED.set(false);
+    }
     pub(super) fn enabled() -> bool {
         INSTALLED.get()
     }

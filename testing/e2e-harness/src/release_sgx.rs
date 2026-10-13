@@ -186,6 +186,23 @@ impl Default for ReleaseSgxWorld {
     }
 }
 
+impl ReleaseSgxWorld {
+    fn release_start<'a>(&'a self, image: &'a str, suffix: &'a str) -> ReleaseEnclaveStart<'a> {
+        ReleaseEnclaveStart {
+            image,
+            seal_dir: &self.seal_dir,
+            chain_id: self
+                .cfg
+                .network
+                .network()
+                .chain_id()
+                .expect("assigned network"),
+            suffix,
+            work_dir: &self.cfg.work_dir,
+        }
+    }
+}
+
 impl Drop for ReleaseSgxWorld {
     fn drop(&mut self) {
         let prefix = container_prefix();
@@ -355,35 +372,17 @@ fn report_matches(world: &mut ReleaseSgxWorld) {
 fn restart_same_signer(world: &mut ReleaseSgxWorld) {
     world.first_start = Some(
         run_initializing_start(
-            &world.cfg.image,
-            &world.seal_dir,
+            &world.release_start(&world.cfg.image, "first"),
             &world.node_data_dir,
             &world.network_binding,
             &world.node_signer,
-            world
-                .cfg
-                .network
-                .network()
-                .chain_id()
-                .expect("assigned network"),
-            "first",
-            &world.cfg.work_dir,
         )
         .expect("first release enclave start"),
     );
     world.second_start = Some(
         run_restored_start(
-            &world.cfg.image,
-            &world.seal_dir,
+            &world.release_start(&world.cfg.image, "second"),
             &world.node_data_dir,
-            world
-                .cfg
-                .network
-                .network()
-                .chain_id()
-                .expect("assigned network"),
-            "second",
-            &world.cfg.work_dir,
         )
         .expect("second release enclave start"),
     );
@@ -511,19 +510,8 @@ fn resign_with_different_key(world: &mut ReleaseSgxWorld) {
     )
     .expect("build mismatch image");
     world.mismatch_start = Some(
-        run_mismatched_signer_start(
-            &world.mismatch_image,
-            &world.seal_dir,
-            world
-                .cfg
-                .network
-                .network()
-                .chain_id()
-                .expect("assigned network"),
-            "mismatch",
-            &world.cfg.work_dir,
-        )
-        .expect("mismatch-signer enclave start"),
+        run_mismatched_signer_start(&world.release_start(&world.mismatch_image, "mismatch"))
+            .expect("mismatch-signer enclave start"),
     );
 }
 
@@ -671,14 +659,26 @@ impl Drop for RunningReleaseEnclave {
     }
 }
 
-fn start_release_enclave(
-    image: &str,
-    seal_dir: &Path,
+/// One release-enclave container run against the shared sealed identity directory.
+struct ReleaseEnclaveStart<'a> {
+    image: &'a str,
+    seal_dir: &'a Path,
     chain_id: u64,
-    suffix: &str,
+    suffix: &'a str,
+    work_dir: &'a Path,
+}
+
+fn start_release_enclave(
+    start: &ReleaseEnclaveStart<'_>,
     endpoint: &str,
-    work_dir: &Path,
 ) -> Result<RunningReleaseEnclave> {
+    let ReleaseEnclaveStart {
+        image,
+        seal_dir,
+        chain_id,
+        suffix,
+        work_dir,
+    } = *start;
     let name = format!("{}-{suffix}", container_prefix());
     let log_path = work_dir.join(format!("{suffix}.log"));
     let log = File::create(&log_path).wrap_err("create enclave log")?;
@@ -709,20 +709,14 @@ fn start_release_enclave(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_initializing_start(
-    image: &str,
-    seal_dir: &Path,
+    start: &ReleaseEnclaveStart<'_>,
     node_data_dir: &Path,
     network_binding: &NetworkBindingV1,
     node_signer: &PrivateKeySigner,
-    chain_id: u64,
-    suffix: &str,
-    work_dir: &Path,
 ) -> Result<String> {
     let endpoint = allocate_loopback_endpoint()?;
-    let mut running =
-        start_release_enclave(image, seal_dir, chain_id, suffix, &endpoint, work_dir)?;
+    let mut running = start_release_enclave(start, &endpoint)?;
     let log_path = running.log_path.clone();
     wait_for_marker(
         running.child_mut(),
@@ -736,23 +730,15 @@ fn run_initializing_start(
             node_signature(node_signer, hash)
         })?;
     drop(client);
-    if !seal_dir.join("sealed_identity.bin").is_file() {
+    if !start.seal_dir.join("sealed_identity.bin").is_file() {
         bail!("NodeHost initialization did not persist the network-bound identity seal");
     }
     running.stop_and_collect()
 }
 
-fn run_restored_start(
-    image: &str,
-    seal_dir: &Path,
-    node_data_dir: &Path,
-    chain_id: u64,
-    suffix: &str,
-    work_dir: &Path,
-) -> Result<String> {
+fn run_restored_start(start: &ReleaseEnclaveStart<'_>, node_data_dir: &Path) -> Result<String> {
     let endpoint = allocate_loopback_endpoint()?;
-    let mut running =
-        start_release_enclave(image, seal_dir, chain_id, suffix, &endpoint, work_dir)?;
+    let mut running = start_release_enclave(start, &endpoint)?;
     let log_path = running.log_path.clone();
     wait_for_marker(
         running.child_mut(),
@@ -765,16 +751,9 @@ fn run_restored_start(
     running.stop_and_collect()
 }
 
-fn run_mismatched_signer_start(
-    image: &str,
-    seal_dir: &Path,
-    chain_id: u64,
-    suffix: &str,
-    work_dir: &Path,
-) -> Result<String> {
+fn run_mismatched_signer_start(start: &ReleaseEnclaveStart<'_>) -> Result<String> {
     let endpoint = allocate_loopback_endpoint()?;
-    let mut running =
-        start_release_enclave(image, seal_dir, chain_id, suffix, &endpoint, work_dir)?;
+    let mut running = start_release_enclave(start, &endpoint)?;
     let log_path = running.log_path.clone();
     let (status, output) = wait_for_exit(running.child_mut(), &log_path, Duration::from_secs(120))?;
     if status.success() {
@@ -854,7 +833,7 @@ fn node_host_identity(
         .try_into()
         .map_err(|_| eyre!("NodeHost public key is not SEC1-33"))?;
     Ok(NodeHostIdentityV1 {
-        network_binding: network_binding.clone(),
+        network_binding: *network_binding,
         reth_p2p_public,
     })
 }

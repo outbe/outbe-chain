@@ -72,6 +72,8 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v6
+      - name: Install circuit compilers
+        run: mise install
       - name: Set up persistent local Rust cache
         shell: bash
         run: |
@@ -135,6 +137,8 @@ jobs:
       RAYON_NUM_THREADS: "2"
     steps:
       - uses: actions/checkout@v6
+      - name: Install circuit compilers
+        run: mise install
       - name: Set up persistent local Rust cache
         shell: bash
         run: |
@@ -263,6 +267,8 @@ jobs:
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
+      - name: Install circuit compilers
+        run: mise install
       # miri requires the nightly toolchain, which the pinned mise stable
       # toolchain does not provide.
       - uses: dtolnay/rust-toolchain@nightly

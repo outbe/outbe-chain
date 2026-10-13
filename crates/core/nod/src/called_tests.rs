@@ -1320,6 +1320,28 @@ fn failing_members_over_the_forfeit_budget_do_not_hold_the_queue() {
     });
 }
 
+/// A forfeit burn must not depend on whether this node's enclave was up.
+#[test]
+fn an_unavailable_enclave_fails_the_block_and_keeps_the_bucket_queued() {
+    harness(|storage, scope, parent| {
+        let (bucket_key, _) = arm_lapsed(storage, scope, parent, &[(0x61, 5, false)]);
+        let ctx = block_at(storage, START + 30 * DAY + NOTICE + HOUR);
+
+        crate::test_support::uninstall();
+        assert!(matches!(
+            crate::expired::sweep_expired(&ctx, scope, parent),
+            Err(outbe_primitives::error::PrecompileError::EnclaveUnavailable(_))
+        ));
+        assert!(is_queued(storage, bucket_key));
+
+        crate::test_support::install();
+        assert_eq!(
+            crate::expired::sweep_expired(&ctx, scope, parent).unwrap(),
+            1
+        );
+    });
+}
+
 #[test]
 fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfeits() {
     harness(|storage, scope, parent| {
