@@ -1,44 +1,91 @@
-//! Warm real feeder observations before closing a lifecycle pricing window.
+//! Close a lifecycle pricing window over hours the real feeders covered.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
-use eyre::{ensure, eyre, Result};
+use eyre::{bail, ensure, eyre, Result};
+use outbe_oracle::window::VwapSnapshotId;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 
 use super::super::chain::{finalized_checkpoint, poll_until, verify_checkpoint};
 use super::WINDOW_CLOSE_MARGIN_SECS;
-use crate::internal::{eth, pricing_coverage::pricing_coverage_ready};
+use crate::internal::eth;
+use crate::internal::pricing_coverage::{
+    first_stepped_hour, pricing_step, prospective_end, step_limit, PricingStep, HOUR,
+    RESTART_ROUNDS,
+};
 use crate::world::World;
 
-const HOUR: u64 = 3_600;
 const HISTORY_LIMIT: u32 = 4_096;
-const WARM_TIMEOUT: Duration = Duration::from_secs(900);
-const MIN_HOUR_SNAPSHOTS: u64 = 10;
-/// Conservative stop/import margin; the actual closed Oracle call still decides.
-const RESTART_ROUNDS: u64 = 2;
+const ENTER_TIMEOUT: Duration = Duration::from_secs(300);
+/// Long enough to repay the rounds a slow restart costs, short of the real hour rolling over.
+const HOUR_DWELL_TIMEOUT: Duration = Duration::from_secs(600);
+const DWELL_POLL: Duration = Duration::from_secs(2);
 const NO_VWAP_DATA: &str = "no VWAP data in the requested time range";
 
-/// Start a fresh hour after the window that contains blocks without feeder votes.
-pub(super) fn prepare_fresh_hour(world: &mut World) -> Result<()> {
+/// Step through covered hours until the production Oracle prices the window for every currency.
+pub(super) fn close(world: &mut World, currencies: &[u16]) -> Result<()> {
+    let started = Instant::now();
     let checkpoint = finalized_checkpoint(world);
     let port = world.validators.primary_port();
-    let time = world
+    let head_time = world
         .rpc
         .block_timestamp(port, checkpoint.height)
         .ok_or_else(|| eyre!("pricing checkpoint timestamp unavailable"))?;
-    let (lookback, _) = window_policy(&world.rpc.url(port), checkpoint.height)?;
-    let hour = time - time % HOUR + HOUR + lookback;
+    let (lookback, period) = window_policy(&world.rpc.url(port), checkpoint.height)?;
     verify_checkpoint(world, checkpoint);
+    let mut tail = RESTART_ROUNDS * period;
+    let mut left_at = (checkpoint.height, head_time);
+    let mut hour = first_stepped_hour(head_time, lookback);
+    let mut history = Vec::new();
+    for step in 0..=step_limit(lookback) {
+        let height = enter_hour(world, hour)?;
+        let left_hour_end = left_at.1 - left_at.1 % HOUR + HOUR;
+        let next_first = first_block_at_or_after(world, port, height, left_hour_end)?;
+        tail = tail.max(next_first.saturating_sub(left_at.0));
+        if step > 0 && closed_window_is_priced(world, currencies, hour)? {
+            eprintln!(
+                "pricing_window evidence=closed_window_priced cutoff={hour} steps={step} tail={tail} elapsed_secs={}",
+                started.elapsed().as_secs()
+            );
+            return Ok(());
+        }
+        if step == step_limit(lookback) {
+            break;
+        }
+        let (decision, decided) = dwell(world, currencies, tail)?;
+        if decision == PricingStep::Close {
+            eprintln!(
+                "pricing_window evidence=close_predicted cutoff={} tail={tail}",
+                decided.1 - decided.1 % HOUR + HOUR
+            );
+        }
+        history.push(format!(
+            "hour={hour} decided={decision:?} height={} tail={tail}",
+            decided.0
+        ));
+        left_at = decided;
+        hour = decided.1 - decided.1 % HOUR + HOUR;
+    }
+    bail!(
+        "no covered pricing window for {currencies:?} within {} hours: {}",
+        step_limit(lookback),
+        history.join("; ")
+    )
+}
+
+/// Restart the committee just inside `hour` and return the first finalized height in it.
+fn enter_hour(world: &mut World, hour: u64) -> Result<u64> {
     let (_, _, _, pending) = crate::features::ocomp::restart_committee_at_logical_time(
         world,
         hour + WINDOW_CLOSE_MARGIN_SECS,
     );
+    let port = world.validators.primary_port();
     let mut publication_ready = pending.is_none();
     poll_until(
-        WARM_TIMEOUT,
-        || format!("committee or feeders did not reach the covered hour {hour}"),
+        ENTER_TIMEOUT,
+        || format!("the committee or its feeders did not reach the pricing hour {hour}"),
         || {
             publication_ready = publication_ready
                 || pending.as_ref().is_some_and(|pending| {
@@ -51,39 +98,53 @@ pub(super) fn prepare_fresh_hour(world: &mut World) -> Result<()> {
                     .is_some_and(|now| now >= hour)
         },
     );
-    Ok(())
-}
-
-pub(super) fn wait_for_coverage(world: &mut World, currencies: &[u16]) -> Result<u64> {
-    let deadline = Instant::now() + WARM_TIMEOUT;
+    let deadline = Instant::now() + ENTER_TIMEOUT;
     loop {
-        world.price_oracle.ensure_cohort_feeders_alive()?;
-        if let Some(cutoff) = prospective_coverage(world, currencies)? {
-            return Ok(cutoff);
+        let checkpoint = finalized_checkpoint(world);
+        let time = world
+            .rpc
+            .block_timestamp(port, checkpoint.height)
+            .ok_or_else(|| eyre!("pricing checkpoint timestamp unavailable"))?;
+        verify_checkpoint(world, checkpoint);
+        if time >= hour {
+            return Ok(checkpoint.height);
         }
         ensure!(
             Instant::now() < deadline,
-            "insufficient real feeder coverage for {currencies:?}"
+            "finality did not reach the pricing hour {hour}"
         );
-        sleep(Duration::from_secs(1));
+        sleep(DWELL_POLL);
     }
 }
 
-fn prospective_coverage(world: &World, currencies: &[u16]) -> Result<Option<u64>> {
-    let checkpoint = finalized_checkpoint(world);
-    let window = ProspectiveWindow::at(world, checkpoint.height)?;
+/// Returns the planner's decision with the height and time it was made at.
+fn dwell(world: &mut World, currencies: &[u16], tail: u64) -> Result<(PricingStep, (u64, u64))> {
+    let deadline = Instant::now() + HOUR_DWELL_TIMEOUT;
     let url = world.rpc.url(world.validators.primary_port());
-    let mut ready = true;
-    for &currency in currencies {
-        let counts = window.observations(&url, currency, checkpoint.height)?;
-        ready &= counts
-            .last()
-            .is_some_and(|count| *count >= MIN_HOUR_SNAPSHOTS)
-            && pricing_coverage_ready(&window.bounds, &counts, window.period);
-        eprintln!("pricing_window evidence=public_coverage height={} currency={currency} bounds={:?} observations={counts:?} ready={ready}", checkpoint.height, window.bounds);
+    loop {
+        world.price_oracle.ensure_cohort_feeders_alive()?;
+        let checkpoint = finalized_checkpoint(world);
+        let window = ProspectiveWindow::at(world, checkpoint.height, tail)?;
+        let counts = currencies
+            .iter()
+            .map(|&currency| window.observations(&url, currency, checkpoint.height))
+            .collect::<Result<Vec<_>>>()?;
+        let decision = pricing_step(&window.bounds, &counts, window.period);
+        eprintln!(
+            "pricing_window evidence=dwell height={} bounds={:?} observations={counts:?} tail={tail} decision={decision:?}",
+            checkpoint.height, window.bounds
+        );
+        verify_checkpoint(world, checkpoint);
+        if decision != PricingStep::Dwell {
+            return Ok((decision, (checkpoint.height, window.time)));
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "the pricing hour at height {} stayed uncovered for {currencies:?}",
+            checkpoint.height
+        );
+        sleep(DWELL_POLL);
     }
-    verify_checkpoint(world, checkpoint);
-    Ok(ready.then_some(window.cutoff))
 }
 
 struct ProspectiveWindow {
@@ -95,7 +156,7 @@ struct ProspectiveWindow {
 }
 
 impl ProspectiveWindow {
-    fn at(world: &World, height: u64) -> Result<Self> {
+    fn at(world: &World, height: u64, tail: u64) -> Result<Self> {
         let port = world.validators.primary_port();
         let time = world
             .rpc
@@ -107,7 +168,7 @@ impl ProspectiveWindow {
             .checked_sub(lookback)
             .ok_or_else(|| eyre!("pricing cutoff precedes lookback"))?;
         let mut bounds = hour_bounds(world, port, height, start..cutoff)?;
-        bounds.push(height + RESTART_ROUNDS * period + 1);
+        bounds.push(prospective_end(height, tail));
         Ok(Self {
             time,
             start,
@@ -225,7 +286,7 @@ fn first_block_at_or_after(world: &World, port: u16, height: u64, time: u64) -> 
     Ok(low)
 }
 
-pub(super) fn closed_window_is_priced(world: &World, currencies: &[u16]) -> Result<bool> {
+fn closed_window_is_priced(world: &World, currencies: &[u16], cutoff: u64) -> Result<bool> {
     let checkpoint = finalized_checkpoint(world);
     let mut ready = true;
     for port in world.validators.committee_ports() {
@@ -237,6 +298,12 @@ pub(super) fn closed_window_is_priced(world: &World, currencies: &[u16]) -> Resu
             checkpoint.height,
         )
         .map_err(|error| eyre!(error))?;
+        let pinned = VwapSnapshotId::from_u256(snapshot).map_err(|error| eyre!("{error:?}"))?;
+        ensure!(
+            pinned.cutoff() == cutoff,
+            "port {port} pins the window closing at {} instead of {cutoff}",
+            pinned.cutoff()
+        );
         for &currency in currencies {
             let outcome = eth::read_call_at_with_revert_reason(
                 &url,
