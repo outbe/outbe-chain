@@ -25,7 +25,8 @@ cocogitto = "7"                    # `cog` - conventional-commit check + auto-ve
 duckdb = "latest"
 
 # outbe-zk's build.rs compiles L2 circuits. Versions must match the pins in
-# crates/zk/outbe-zk/build.rs.
+# crates/zk/outbe-zk/build.rs. Install with `mise install`; CI caches these tools
+# and sets global versions so shims also work outside the checkout.
 [tools.nargo]
 version = "1.0.0-beta.22"
 matching_regex = "^nargo-"
