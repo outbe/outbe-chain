@@ -20,7 +20,7 @@ pub(super) struct Decimals {
 }
 
 impl PoolConfig {
-    pub fn pool_id(&self, market: &DexMarketConfig) -> Result<Option<B256>> {
+    pub(super) fn pool_id(&self, market: &DexMarketConfig) -> Result<Option<B256>> {
         let (currency0, currency1) = market.tokens();
         Ok(match *self {
             Self::UniswapV4 {
@@ -64,7 +64,7 @@ impl PoolConfig {
         })
     }
 
-    pub fn swap_topic(&self) -> B256 {
+    pub(super) fn swap_topic(&self) -> B256 {
         match self {
             Self::UniswapV2 { .. } | Self::PancakeswapV2 { .. } => Pair::Swap::SIGNATURE_HASH,
             Self::UniswapV3 { .. } => UniV3::Swap::SIGNATURE_HASH,
@@ -77,7 +77,7 @@ impl PoolConfig {
 }
 
 impl DexMarketConfig {
-    pub async fn read_decimals(&self, rpc: &Rpc, block: &Block) -> Result<Decimals> {
+    pub(super) async fn read_decimals(&self, rpc: &Rpc, block: &Block) -> Result<Decimals> {
         match self.pool {
             PoolConfig::UniswapV4 {
                 manager,
@@ -115,7 +115,7 @@ impl DexMarketConfig {
         Ok(Decimals { base, quote })
     }
 
-    pub async fn read_rate(
+    pub(super) async fn read_rate(
         &self,
         rpc: &Rpc,
         block: &Block,
@@ -169,7 +169,7 @@ impl DexMarketConfig {
         math::rate(n, d, decimals.base, decimals.quote)
     }
 
-    pub fn log_topics(&self) -> Result<Vec<B256>> {
+    pub(super) fn log_topics(&self) -> Result<Vec<B256>> {
         let mut topics = vec![self.pool.swap_topic()];
         if let Some(id) = self.pool.pool_id(self)? {
             topics.push(id);
@@ -179,7 +179,7 @@ impl DexMarketConfig {
 
     /// Absolute base-token balance delta, once for each core Swap event. A V2 flash
     /// swap can have both input and output. Use its net delta, not double turnover.
-    pub fn swap_volume(&self, log: &Log) -> Result<U256> {
+    pub(super) fn swap_volume(&self, log: &Log) -> Result<U256> {
         ensure!(
             !log.removed && log.address == self.pool.address(),
             "invalid DEX log address/removal flag"

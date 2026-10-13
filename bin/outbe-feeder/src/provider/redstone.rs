@@ -15,7 +15,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
-use crate::config::{FeederConfig, RedstoneConfig};
+use crate::config::{ApiProviderConfig, FeederConfig};
 use crate::fixed::{FixedValue, JsonDecimal};
 
 const DEFAULT_GATEWAY_URL: &str = "https://oracle-gateway.a.redstone.finance";
@@ -61,25 +61,25 @@ pub struct RedstoneProvider {
 }
 
 impl RedstoneProvider {
-    pub fn new(config: &RedstoneConfig) -> Result<Self> {
+    pub fn new(endpoint: &ApiProviderConfig) -> Result<Self> {
         ensure!(
-            !config.api_key.trim().is_empty(),
-            "[redstone] api_key must not be empty"
+            !endpoint.api_key.trim().is_empty(),
+            "api provider redstone needs an api_key"
         );
-        let gateway_url = if config.gateway.trim().is_empty() {
+        let gateway_url = if endpoint.rest.trim().is_empty() {
             DEFAULT_GATEWAY_URL.to_owned()
         } else {
-            config.gateway.trim_end_matches('/').to_owned()
+            endpoint.rest.trim_end_matches('/').to_owned()
         };
         Ok(Self {
             client: reqwest::Client::new(),
             gateway_url,
-            api_key: config.api_key.clone(),
+            api_key: endpoint.api_key.clone(),
         })
     }
 }
 
-/// A `redstone` source needs the `[redstone]` section with a key.
+/// A `redstone` source needs a `redstone` api provider with a key.
 pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
     let used = config
         .currency_pairs
@@ -89,13 +89,14 @@ pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
     if !used {
         return Ok(());
     }
-    let section = config
-        .redstone
-        .as_ref()
-        .ok_or_else(|| eyre!("provider redstone requires a [redstone] section"))?;
+    let endpoint = config
+        .api_providers
+        .iter()
+        .find(|endpoint| endpoint.name == "redstone")
+        .ok_or_else(|| eyre!("provider redstone requires a [[api_providers]] entry"))?;
     ensure!(
-        !section.api_key.trim().is_empty(),
-        "[redstone] api_key must not be empty"
+        !endpoint.api_key.trim().is_empty(),
+        "api provider redstone needs an api_key"
     );
     Ok(())
 }
@@ -322,9 +323,12 @@ mod tests {
     #[ignore]
     async fn live_gateway_feeds() {
         let api_key = std::env::var("REDSTONE_API_KEY").expect("REDSTONE_API_KEY");
-        let provider = RedstoneProvider::new(&RedstoneConfig {
+        let provider = RedstoneProvider::new(&ApiProviderConfig {
+            name: "redstone".into(),
+            markets: vec![],
+            rest: String::new(),
+            websocket: String::new(),
             api_key,
-            gateway: String::new(),
         })
         .unwrap();
         let pairs = vec![("USDC".into(), "840".into()), ("USDT".into(), "840".into())];

@@ -258,7 +258,7 @@ impl Fixture {
     async fn new(height: u64) -> Self {
         let validator = Address::repeat_byte(0x11);
         let rpc = FakeRpc::start(height, validator).await;
-        let config: FeederConfig = toml::from_str(&format!(
+        let mut config: FeederConfig = toml::from_str(&format!(
             r#"
 [chain]
 rpc_endpoint = "{}"
@@ -273,14 +273,14 @@ poll_interval_secs = 1
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
-[[currency_pairs.sources]]
-provider = "mock"
-base = "COEN"
-quote = "840"
+[[api_providers]]
+name = "mock"
+markets = [{{ quote = "840" }}]
 "#,
             rpc.endpoint
         ))
         .unwrap();
+        config.resolve_sources().unwrap();
         config.validate().unwrap();
         let providers = provider::create_providers(&config).unwrap();
         let (wallet, signer) = oracle_client::create_wallet(&config.account).unwrap();

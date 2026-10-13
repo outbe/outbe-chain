@@ -38,59 +38,59 @@ poll_interval_secs = 2
 enabled = true
 bind_address = "0.0.0.0:9002"
 
+# The Oracle pairs to vote on. Every market a provider lists below feeds the
+# pair its quote names: USDT and USDC are the dollar pair, an ISO code such
+# as USD, 840 or EUR is that currency's pair. An exchange market is written
+# in the exchange's own symbols; the feeder substitutes nothing. Every market
+# price joins one volume-weighted mean per pair.
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
 
-[[currency_pairs.sources]]
-provider = "mock_http"
-base = "COEN"
-quote = "USDT"
+# Exchanges and gateways: the quotes they trade the pair base in. Omit `rest`
+# or `websocket` for the provider default.
+[[api_providers]]
+name = "binance"
+markets = [{ quote = "USDT" }]
+websocket = "wss://stream.binance.com:9443/ws"
 
-[[currency_pairs.sources]]
-provider = "mock_http"
-base = "COEN"
-quote = "USDC"
+[[api_providers]]
+name = "kraken"
+markets = [{ quote = "USD" }]
 
-# A USD-quoted feed from the RedStone gateway; needs the [redstone] section.
-[[currency_pairs.sources]]
-provider = "redstone"
-base = "COEN"
-quote = "840"
+[[api_providers]]
+name = "coinbase"
+markets = [{ quote = "USDC" }]
 
-# A market read from an on-chain feed contract; see [onchain_feeds] below.
-[[currency_pairs]]
-base = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"   # WETH
-quote = "840"
-
-[[currency_pairs.sources]]
-provider = "chainlink"
-base = "ETH"
-quote = "840"
-
-[[provider_endpoints]]
+[[api_providers]]
 name = "mock_http"
+markets = [{ quote = "USDT" }]
 rest = "https://prc.testnet.outbe.net"
 
-# RedStone gateway access, one key per validator.
-[redstone]
-api_key = "REPLACE_WITH_REDSTONE_API_KEY"
+[[api_providers]]
+name = "redstone"
+markets = [{ quote = "840" }]
+rest = "https://oracle-gateway.a.redstone.finance"
+api_key = "REPLACE_WITH_REDSTONE_API_KEY"   # one per validator
 
-# Another oracle's on-chain feed contracts (Chainlink AggregatorV3 interface).
-# The table name is the provider name for currency_pairs.sources; feeds are
-# keyed by BASE/QUOTE.
-[onchain_feeds.chainlink]
+# DEX: one entry is one pool. See "DEX providers".
+[[dex_providers]]
+name = "uniswap"
+quote = "USDC"
 chain_id = 1
 rpc_endpoint = "https://ethereum-rpc.example.invalid"
+base_token = "0x1111111111111111111111111111111111111111"    # COEN token, replace
+quote_token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"   # USDC
+pool = { protocol = "uniswap_v3", address = "0x2222222222222222222222222222222222222222" }   # replace
 
-[onchain_feeds.chainlink.feeds."ETH/840"]
-contract = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
-description = "ETH / USD"
-
-# Optional exchange WebSocket override. Omit it to use the exchange default.
-[[provider_endpoints]]
-name = "binance"
-websocket = "wss://stream.binance.com:9443/ws"
+# Feed contract (Chainlink AggregatorV3 interface): one entry is one feed.
+# See "On-chain feeds".
+[[onchain_providers]]
+name = "chainlink"
+quote = "840"
+chain_id = 1
+rpc_endpoint = "https://ethereum-rpc.example.invalid"
+contract = "0x3333333333333333333333333333333333333333"   # replace
 
 [[deviation_thresholds]]
 base = "COEN"
@@ -111,19 +111,18 @@ threshold = "2.0"
 | `health.enabled` | no | Enables health/status HTTP server (default: true) |
 | `health.bind_address` | no | Health server bind address (default: `0.0.0.0:9002`) |
 | `currency_pairs[].base` | yes | On-chain base asset: `COEN`, an ISO 4217 numeric code, or a `0x` token address |
-| `currency_pairs[].quote` | yes | On-chain quote asset in the same format |
-| `currency_pairs[].sources` | yes | One or more external source markets aggregated into this on-chain pair |
-| `currency_pairs[].sources[].provider` | yes | Provider name listed below |
-| `currency_pairs[].sources[].base` | yes | Provider-market base symbol |
-| `currency_pairs[].sources[].quote` | yes | Provider-market quote symbol |
-| `provider_endpoints[].name` | only endpoint-backed providers | Provider endpoint name |
-| `provider_endpoints[].rest` | only endpoint-backed providers | Provider REST base URL |
-| `provider_endpoints[].websocket` | no | Exchange market-stream endpoint override (`ws://`, `wss://`, or a host); omitted uses the exchange default |
-| `redstone.api_key` | only `redstone` sources | RedStone authenticated-gateway key, one per validator |
-| `redstone.gateway` | no | RedStone gateway URL override |
-| `dex_providers` | only DEX sources | Explicit RPC, network and pool configuration; see [DEX providers](#dex-providers) |
-| `onchain_feeds.<name>` | only on-chain feed sources | One table per vendor and network; `<name>` is the provider name for `currency_pairs.sources`, see [On-chain feeds](#on-chain-feeds) |
-| `onchain_feeds.<name>.feeds."BASE/QUOTE"` | with the table | `contract` and expected `description` of one feed |
+| `currency_pairs[].quote` | yes | On-chain quote asset in the same format. Every market listed below feeds the pair its quote names: `USDT` and `USDC` feed the `840` pair, an ISO code (`USD`, `840`, `EUR`, `978`) feeds that currency's pair |
+| `api_providers[].name` | one entry per exchange or gateway used | Built-in provider name |
+| `api_providers[].markets[].quote` | yes | Quote symbol the provider trades the pair base in |
+| `api_providers[].markets[].base` | no | The provider's name for the pair base, when it differs (default: the pair's `base`) |
+| `api_providers[].rest` | no | Provider REST base URL; for `redstone` the gateway URL. Omitted uses the provider default |
+| `api_providers[].websocket` | no | Exchange market-stream endpoint override (`ws://`, `wss://`, or a host); omitted uses the exchange default |
+| `api_providers[].api_key` | only `redstone` | RedStone authenticated-gateway key, one per validator |
+| `dex_providers[]` | only DEX markets | One entry is one pool; see [DEX providers](#dex-providers) |
+| `onchain_providers[].name` | only on-chain feeds | Provider name the operator chooses; one entry is one feed, see [On-chain feeds](#on-chain-feeds) |
+| `onchain_providers[].quote`, `base` | with the entry | The quote the feed prices the pair base in, and the vendor's name for the base when it differs |
+| `onchain_providers[].chain_id`, `rpc_endpoint` | with the entry | EVM network and JSON-RPC of the feed contract |
+| `onchain_providers[].contract` | with the entry | Feed contract, the vendor's proxy address |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
 
@@ -133,17 +132,20 @@ At startup, the feeder validates:
 
 - `vote_period > 0`
 - `validator_address` is a valid 20-byte hex address
-- Each on-chain pair has at least 1 external source market
+- Each on-chain pair has at least one market listed by a provider, and every
+  listed market names a pair by its quote
 - ISO markets use `COEN/ISO`; reverse `ISO/COEN` configuration is rejected
-- All provider names are known: `mock`, `mock_http`, `pyth`, `redstone`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`, or a table name under `[onchain_feeds]`
+- All provider names are known: `mock`, `mock_http`, `pyth`, `redstone`, `binance`, `kraken`, `okx`, `gate`, `huobi`, `mexc`, `coinbase`, `uniswap`, `pancakeswap`, or an `onchain_providers` entry name
 - WebSocket endpoints are only accepted for streaming exchange providers
-- Provider endpoint names are unique
+- An exchange market is quoted in the exchange's symbol (`USDT`, `USDC`, `USD`),
+  never an ISO code: the feeder substitutes no market for a currency
+- API provider names are unique
 
 Provider prices and volumes are parsed and aggregated as deterministic FP18
 integers. Votes encode `COEN/ISO` price and volume at protocol scale `10^6`;
 all other configured pairs retain scale `10^18` and their configured direction.
-All source markets nested under one `currency_pairs` entry produce one vote
-tuple: each source uses candle TVWAP when available and the ticker otherwise,
+All markets attached to one `currency_pairs` entry produce one vote tuple:
+each market uses candle TVWAP when available and the ticker otherwise,
 then the feeder deviation-filters the observations and combines them with a
 volume-weighted mean rounded down.
 
@@ -154,7 +156,7 @@ volume-weighted mean rounded down.
 | `mock` | Working | Hardcoded COEN=1.0, ETH=2500.0 |
 | `mock_http` | Working | Configured REST endpoint compatible with the migrated Cosmos test price server |
 | `pyth` | Working | Pyth Hermes REST API for supported BTC/ETH feeds |
-| `<onchain_feeds.name>` | Implemented | Another oracle's on-chain feed contract (Chainlink, RedStone push; Chainlink `AggregatorV3Interface`) read over EVM JSON-RPC at `latest`; name chosen in config |
+| `<onchain_providers.name>` | Implemented | Another oracle's on-chain feed contract (Chainlink, RedStone push; Chainlink `AggregatorV3Interface`) read over EVM JSON-RPC at `latest`; name chosen in config |
 | `redstone` | Implemented | RedStone authenticated gateway: USD-quoted feeds, median of the 3 registered signers closest to the median |
 | `binance` | Working | Binance WebSocket ticker/candle streams with REST bootstrap fallback |
 | `kraken` | Working | Kraken WebSocket ticker/candle streams with REST bootstrap fallback |
@@ -178,10 +180,10 @@ used as bootstrap fallback.
 
 `redstone` reads signed data packages from the RedStone authenticated gateway
 (`/v2/data-packages/latest-by-data-feeds/redstone-primary-prod`). It needs a
-`[redstone]` section with `api_key` (issued by RedStone, one per validator)
-and optionally `gateway` to override the gateway URL. Feeds are USD quoted,
-so a source must use quote `840` or `USD`; the base symbol is the RedStone
-feed id (`USDC`, `USDT`, `ETH`).
+`redstone` entry in `api_providers` with `api_key` (issued by RedStone,
+one per validator) and optionally `rest` to override the gateway URL. Feeds
+are USD quoted, so a market must use quote `840` or `USD`; the base symbol is
+the RedStone feed id (`USDC`, `USDT`, `ETH`).
 
 Selection follows the RedStone SDK defaults. For each feed the provider keeps
 the packages that share the newest timestamp and come from a signer registered
@@ -191,28 +193,29 @@ values closest to the median, and publishes their median. Packages older than
 60 seconds or more than 30 seconds in the future reject the feed. Package
 signatures are not verified; the gateway is trusted like Pyth Hermes.
 RedStone lists no COEN feed. See the configuration example above for the
-`[redstone]` section and a `redstone` source.
+`redstone` entry.
 ### On-chain feeds
 
-`[onchain_feeds.<name>]` tables read price feeds from another oracle's
+`[[onchain_providers]]` entries read price feeds from another oracle's
 on-chain contract: Chainlink Data Feeds, RedStone push feeds, and any vendor
 whose feed contract exposes Chainlink's `AggregatorV3Interface`
-(`latestRoundData()`, `decimals()`, `description()`). Each table is one
-provider instance and `<name>` is the provider name used in
-`currency_pairs.sources`, so a feeder can hold the same market from several
-vendors as separate sources and let the deviation filter and source mean work
-across them. Feeds are keyed by `BASE/QUOTE`; a source whose provider is a
-table name must match a feed key. See the configuration example above.
+(`latestRoundData()`, `decimals()`). One entry is one feed
+contract on one network; `name` is a provider name the operator chooses, and
+`quote` the currency the feed prices the pair base in. `base` names the pair
+base the vendor's way when it differs, for example `ETH` for a WETH pair. The
+same market from a second vendor is a second entry under another name, so the
+deviation filter and source mean work across vendors. See the configuration
+example above.
 
-Table names may not reuse a built-in provider name; contract addresses are
-unique within a table. Take `contract` (the proxy address) and `description`
-from the vendor registry:
+Entry names may not reuse a built-in provider name. Take `contract` (the
+proxy address) from the vendor registry:
 [docs.chain.link](https://docs.chain.link/data-feeds/price-feeds/addresses) or
-[app.redstone.finance](https://app.redstone.finance/). Reads are `eth_call`
-against the `latest` block: rounds are signed by the vendor network, so no
-finality wait applies; freshness comes from the round's `updatedAt`. On first
-use the feeder verifies `eth_chainId`, reads `description()` and rejects a
-feed whose text differs from the configured one, then caches `decimals()`.
+[app.redstone.finance](https://app.redstone.finance/). The feeder does not
+check the contract against the market it is listed under; the operator is
+responsible for the address. Reads are `eth_call` against the `latest` block:
+rounds are signed by the vendor network, so no finality wait applies;
+freshness comes from the round's `updatedAt`. On first use the feeder
+verifies `eth_chainId` and caches `decimals()`.
 Each vote reads `latestRoundData()` per feed. A round is skipped when `answer`
 is not positive, `updatedAt` is in the future, or it is older than 25 hours:
 the longest documented heartbeat at either vendor is 24 hours, so a round
@@ -223,11 +226,10 @@ feed today; a COEN push feed, once deployed, is configured here like any other.
 ### DEX providers
 
 DEX v1 reads the current pool spot rate and independently collects one-hour
-COEN volume, matching the 60 one-minute candles exchange sources aggregate. It returns tickers, with no candles or time averaging of the rate.
-All configured `COEN/USDC` and `COEN/USDT` source markets feed the same
-`COEN/840` Oracle pair through the existing deviation filter and volume-weighted
-source mean. **V1 assumes USDC = USDT = 1 USD.** There is no stablecoin/USD feed
-or depeg correction. The rate is the core AMM price before fees, slippage or
+base volume, matching the 60 one-minute candles exchange sources aggregate. It returns tickers, with no candles or time averaging of the rate.
+A pool feeds the Oracle pair its `quote` names, like any other market, through
+the existing deviation filter and volume-weighted source mean. There is no
+stablecoin/USD feed or depeg correction. The rate is the core AMM price before fees, slippage or
 hook-specific trade adjustments. Nonzero hooks are supported; volume describes
 core `Swap` balance deltas, not additional hook transfers or router turnover.
 
@@ -246,15 +248,16 @@ Each `[[dex_providers]]` contains:
 | `log_chunk_blocks` | Maximum blocks per log request, default 2000, allowed 1–10000; errors reduce the range down to one block |
 | `confirmations` | Blocks behind `latest` to read from, default 3, allowed 0–1000; zero reads the head |
 | `max_block_age_secs` | Maximum wall-clock age of the block read, default 1800 seconds (`max_finalized_age_secs` is accepted as an alias) |
-| `markets` | Explicit `base`, `quote`, `base_token`, `quote_token`, and nested `pool` configuration |
+| `quote` | The quote symbol the pool feeds the pair base under |
+| `base_token`, `quote_token`, `pool` | The two ERC20 contracts and the pool this entry reads |
 
-One pool is selected explicitly per `(provider, base, quote)`; duplicate markets
-and duplicate pool identities are rejected. There is no automatic pool discovery
-or liquidity-based switching. Both tokens must be ERC20 contracts. Their
-`decimals()` are read on-chain (0–77 supported); V2/V3 token addresses are checked
-against `token0()` and `token1()`. Symbols never select a token contract.
+One entry is one pool. V1 reads one pool per DEX. There is no automatic pool
+discovery or liquidity-based switching. Both tokens must be ERC20 contracts.
+Their `decimals()` are read on-chain (0–77 supported); V2/V3 token addresses
+are checked against `token0()` and `token1()`. Symbols never select a token
+contract.
 
-The nested `[dex_providers.markets.pool]` accepts these variants:
+The entry's `pool` accepts these variants:
 
 | `protocol` | Required pool fields | Rate read |
 |---|---|---|

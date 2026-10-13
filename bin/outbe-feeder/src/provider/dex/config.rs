@@ -3,7 +3,7 @@ use eyre::{ensure, Result};
 use serde::Deserialize;
 use std::collections::BTreeSet;
 
-use crate::config::FeederConfig;
+use crate::config::{FeederConfig, MarketConfig};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,6 +23,14 @@ pub(crate) struct DexProviderConfig {
     /// Maximum wall-clock age of the block read, including `confirmations`.
     #[serde(default = "block_age", alias = "max_finalized_age_secs")]
     pub max_block_age_secs: u64,
+    /// The quote symbol the pool feeds the pair base under.
+    pub quote: String,
+    /// The pair base's and the quote's ERC20 contracts on this network.
+    pub(super) base_token: Address,
+    pub(super) quote_token: Address,
+    pub(super) pool: PoolConfig,
+    /// Built from the source that names this entry; see [`collect_markets`].
+    #[serde(skip)]
     pub(super) markets: Vec<DexMarketConfig>,
 }
 
@@ -44,9 +52,9 @@ fn block_age() -> u64 {
 pub(super) struct DexMarketConfig {
     pub base: String,
     pub quote: String,
-    pub base_token: Address,
-    pub quote_token: Address,
-    pub pool: PoolConfig,
+    pub(super) base_token: Address,
+    pub(super) quote_token: Address,
+    pub(super) pool: PoolConfig,
 }
 
 /// Each variant has its own ABI. Manager pool keys include both token addresses
@@ -136,14 +144,14 @@ impl DexProviderConfig {
             self.max_block_age_secs > 0,
             "DEX max_block_age_secs must be positive"
         );
-        ensure!(!self.markets.is_empty(), "DEX provider has no markets");
+        ensure!(
+            self.markets.len() == 1,
+            "DEX provider {} pool is not attached to a pair",
+            self.name
+        );
         let mut markets = BTreeSet::new();
         let mut pools = BTreeSet::new();
         for market in &self.markets {
-            ensure!(
-                market.base == "COEN" && matches!(market.quote.as_str(), "USDC" | "USDT"),
-                "DEX v1 supports COEN/USDC and COEN/USDT"
-            );
             ensure!(
                 !market.base_token.is_zero()
                     && !market.quote_token.is_zero()
@@ -249,6 +257,41 @@ fn validate_fee(fee: u32) -> Result<()> {
     Ok(())
 }
 
+/// The market every DEX entry lists, as `(provider name, market)`.
+pub(crate) fn listed_markets(config: &FeederConfig) -> Vec<(String, MarketConfig)> {
+    config
+        .dex_providers
+        .iter()
+        .map(|dex| {
+            let market = MarketConfig {
+                quote: dex.quote.clone(),
+                base: None,
+                pair: None,
+            };
+            (dex.name.clone(), market)
+        })
+        .collect()
+}
+
+/// Rebuilds every DEX entry's market from the source that names it.
+pub(crate) fn collect_markets(config: &mut FeederConfig) {
+    for dex in &mut config.dex_providers {
+        dex.markets = config
+            .currency_pairs
+            .iter()
+            .flat_map(|pair| &pair.sources)
+            .filter(|source| source.provider == dex.name && source.quote == dex.quote)
+            .map(|source| DexMarketConfig {
+                base: source.base.clone(),
+                quote: source.quote.clone(),
+                base_token: dex.base_token,
+                quote_token: dex.quote_token,
+                pool: dex.pool.clone(),
+            })
+            .collect();
+    }
+}
+
 pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
     let mut names = BTreeSet::new();
     for dex in &config.dex_providers {
@@ -259,8 +302,8 @@ pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
             dex.name
         );
         ensure!(
-            !config.provider_endpoints.iter().any(|e| e.name == dex.name),
-            "configure DEX RPC in dex_providers, not provider_endpoints"
+            !config.api_providers.iter().any(|e| e.name == dex.name),
+            "configure DEX RPC in dex_providers, not api_providers"
         );
     }
     for pair in &config.currency_pairs {
@@ -269,21 +312,12 @@ pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
                 continue;
             }
             ensure!(
-                pair.base == "COEN" && pair.quote == "840",
-                "DEX v1 sources must feed COEN/840 (USD parity assumption)"
-            );
-            let dex = config
-                .dex_providers
-                .iter()
-                .find(|d| d.name == source.provider)
-                .ok_or_else(|| eyre::eyre!("missing DEX configuration for {}", source.provider))?;
-            ensure!(
-                dex.markets
+                config
+                    .dex_providers
                     .iter()
-                    .any(|m| m.base == source.base && m.quote == source.quote),
-                "missing DEX market {}/{}",
-                source.base,
-                source.quote
+                    .any(|d| d.name == source.provider),
+                "missing DEX configuration for {}",
+                source.provider
             );
         }
     }
