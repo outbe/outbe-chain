@@ -8326,7 +8326,7 @@ dependencies = [
  "outbe-tee",
  "outbe-update",
  "outbe-zerofee",
- "outbe-zk-canonical",
+ "outbe-zk",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -8577,15 +8577,13 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-protocol",
- "outbe-protocol-derive",
  "outbe-radicle 0.1.0",
  "outbe-slashindicator",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
+ "outbe-zk",
  "outbe-zk-backend",
- "outbe-zk-canonical",
  "radicle",
  "rand 0.10.2",
  "rand 0.8.6",
@@ -8736,7 +8734,6 @@ dependencies = [
  "outbe-promis",
  "outbe-promisfactory",
  "outbe-promislimit",
- "outbe-protocol",
  "outbe-radicleregistry",
  "outbe-rewards",
  "outbe-slashindicator",
@@ -8755,8 +8752,8 @@ dependencies = [
  "outbe-vaultrouter",
  "outbe-vote",
  "outbe-zerofee",
+ "outbe-zk",
  "outbe-zk-backend",
- "outbe-zk-canonical",
  "parking_lot",
  "proptest",
  "rand 0.10.2",
@@ -9029,7 +9026,7 @@ dependencies = [
  "outbe-macros",
  "outbe-primitives",
  "outbe-vote",
- "outbe-zk-canonical",
+ "outbe-zk",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
@@ -9233,7 +9230,6 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
@@ -9518,24 +9514,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-protocol"
-version = "0.27.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.27.0#5bab266947d8e64ab07520dfcabc1462e45639af"
-dependencies = [
- "alloy-primitives",
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.6.0",
- "ark-grumpkin",
- "ark-serialize 0.6.0",
- "ark-std 0.6.0",
- "blake2 0.10.6",
- "outbe-poseidon",
- "thiserror 2.0.18",
- "zeroize",
-]
-
-[[package]]
 name = "outbe-protocol-benchmarks"
 version = "0.1.0"
 dependencies = [
@@ -9566,7 +9544,6 @@ dependencies = [
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
- "outbe-protocol",
  "outbe-stablecoin",
  "outbe-stablecoinfactory",
  "outbe-tee",
@@ -9575,8 +9552,8 @@ dependencies = [
  "outbe-tributefactory",
  "outbe-validatorset",
  "outbe-vaultrouter",
+ "outbe-zk",
  "outbe-zk-backend",
- "outbe-zk-canonical",
  "rand 0.10.2",
  "rand 0.8.6",
  "revm",
@@ -9585,16 +9562,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "x25519-dalek 2.0.1",
-]
-
-[[package]]
-name = "outbe-protocol-derive"
-version = "0.27.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.27.0#5bab266947d8e64ab07520dfcabc1462e45639af"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -9885,9 +9852,8 @@ dependencies = [
  "outbe-ocomp-protocol",
  "outbe-poseidon",
  "outbe-primitives",
- "outbe-protocol",
- "outbe-protocol-derive",
  "outbe-tee",
+ "outbe-zk",
  "postcard",
  "rand 0.10.2",
  "rand_core 0.10.1",
@@ -9967,12 +9933,11 @@ dependencies = [
  "outbe-metadosis",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
+ "outbe-zk",
  "outbe-zk-backend",
- "outbe-zk-canonical",
  "rand 0.10.2",
  "rand 0.8.6",
  "rand_core 0.10.1",
@@ -10112,39 +10077,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-zk-backend"
-version = "0.27.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.27.0#5bab266947d8e64ab07520dfcabc1462e45639af"
-dependencies = [
- "acir",
- "acvm",
- "ark-bn254",
- "ark-ff 0.6.0",
- "barretenberg-rs",
- "base64 0.22.1",
- "bn254_blackbox_solver",
- "flate2",
- "outbe-protocol",
- "reqwest 0.13.2",
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "outbe-zk-canonical"
-version = "0.27.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.27.0#5bab266947d8e64ab07520dfcabc1462e45639af"
+name = "outbe-zk"
+version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
+ "ark-ec",
  "ark-ff 0.6.0",
+ "ark-grumpkin",
+ "ark-serialize 0.6.0",
  "ark-std 0.6.0",
  "base64 0.22.1",
+ "blake2 0.10.6",
  "hex-literal",
- "outbe-protocol",
+ "outbe-poseidon",
  "serde_json",
  "thiserror 2.0.18",
  "tiny-keccak",
  "toml 0.8.23",
+ "toml_edit 0.22.27",
+ "zeroize",
+]
+
+[[package]]
+name = "outbe-zk-backend"
+version = "0.1.0"
+dependencies = [
+ "acir",
+ "acvm",
+ "ark-ff 0.6.0",
+ "ark-std 0.6.0",
+ "barretenberg-rs",
+ "base64 0.22.1",
+ "bn254_blackbox_solver",
+ "flate2",
+ "outbe-zk",
+ "reqwest 0.13.2",
+ "sha2 0.10.9",
 ]
 
 [[package]]

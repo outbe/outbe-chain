@@ -139,9 +139,9 @@ pub const ZKPROOF_POSEIDON_ADDRESS: Address =
 /// Groth16 / UltraHonkKeccak proof verifier precompile address (stateless).
 ///
 /// Input is `abi.encode(bytes32 circuit_hash, bytes proof)`. The
-/// precompile does a lookup of `circuit_hash` in the canonical-circuit table from
-/// `outbe-zk-canonical`. It then dispatches verification to the
-/// Barretenberg FFI vendored by `outbe-zk-circuit-noir`. Output is 32
+/// precompile does a lookup of `circuit_hash` in the shipped L2 tribute table from
+/// `outbe-zk`. It then dispatches verification to the
+/// Barretenberg FFI in `outbe-zk-backend`. Output is 32
 /// bytes: `0x..01` on a valid proof. It is `0x..00` for an unknown circuit
 /// hash or a proof that the verifier rejects. Malformed ABI input, a nonzero
 /// call value, and a verifier-backend error revert.

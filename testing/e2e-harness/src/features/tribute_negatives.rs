@@ -158,27 +158,18 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
         Rejection::InvalidSignature => {
             assert_eq!(call.zkMerkleRoot.len(), 32);
             assert_eq!(call.signature.len(), 48);
-            assert_eq!(
-                call.zkProof.len(),
-                outbe_zk_canonical::demo_tribute::COMBINED_LEN
-            );
+            assert_eq!(call.zkProof.len(), outbe_zk::demo_tribute::COMBINED_LEN);
         }
         Rejection::InvalidProof => {
             assert_eq!(call.zkMerkleRoot.len(), 32);
             assert_eq!(call.signature.len(), 48);
-            assert_eq!(
-                call.zkProof.len(),
-                outbe_zk_canonical::demo_tribute::COMBINED_LEN
-            );
+            assert_eq!(call.zkProof.len(), outbe_zk::demo_tribute::COMBINED_LEN);
         }
         Rejection::UnregisteredNetwork => {
             assert_ne!(call.chainId, 0);
             assert!(!call.version.is_empty());
             assert_eq!(call.zkMerkleRoot.len(), 32);
-            assert_eq!(
-                call.zkProof.len(),
-                outbe_zk_canonical::demo_tribute::COMBINED_LEN
-            );
+            assert_eq!(call.zkProof.len(), outbe_zk::demo_tribute::COMBINED_LEN);
             assert_eq!(call.signature.len(), 48);
         }
     }

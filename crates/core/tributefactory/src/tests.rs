@@ -55,7 +55,7 @@ mod l2_zk_gate {
     use outbe_primitives::error::PrecompileError;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
-    use outbe_zk_canonical::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
+    use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
 
     use super::NoParentBodies;
     use crate::runtime::OfferTributeInput;
@@ -443,16 +443,16 @@ fn inbox_key_real_zk_offer_records_rewards_once_and_rolls_back_failures() {
 fn niflheim_tribute_chain_9900501_issues_and_rejects_replay() {
     use ark_bn254::Fr;
     use ark_ff::{BigInteger, PrimeField};
-    use outbe_protocol::primitive::curve::coords;
-    use outbe_protocol::primitive::hash::{self, poseidon2};
-    use outbe_protocol::protocol::{
+    use outbe_zk::claim::TributeDraftClaim;
+    use outbe_zk::noir::{niflheim_tribute, EmbeddedCurvePoint};
+    use outbe_zk::primitive::curve::coords;
+    use outbe_zk::primitive::hash::{self, poseidon2};
+    use outbe_zk::protocol::{
         entity::Entity as EntityTrait,
         key::{NftSigner, Signer},
         zk::ProofGenerator,
     };
-    use outbe_tee_enclave::zk_claim::TributeDraftClaim;
     use outbe_zk_backend::barretenberg::{init_crs, Barretenberg};
-    use outbe_zk_canonical::noir::{niflheim_tribute, EmbeddedCurvePoint};
     use rand::{rngs::StdRng, SeedableRng};
 
     const L2_CHAIN_ID: u32 = 9_900_501;
@@ -532,8 +532,8 @@ fn assert_real_zk_offer_with_key_source(
         variant::MinSig,
     };
     use outbe_l2registry::L2RegistryContract;
-    use outbe_protocol::protocol::zkproof::decode_public_words;
     use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
+    use outbe_zk::wire::decode_public_words;
     use x25519_dalek::{PublicKey, StaticSecret};
 
     const CALLER: Address = Address::repeat_byte(0x77);

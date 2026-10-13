@@ -96,12 +96,11 @@ hex.workspace = true
 outbe-fidelity-math.workspace = true
 
 # Poseidon-BN254 (same Circom parameters as `outbe-evm::zk` and the wallet) for
-# in-enclave `tribute_id` derivation. We depend on the lightweight Poseidon
-# stack directly - NOT `outbe-zk-backend`, which pulls a heavy Barretenberg C++
-# FFI inappropriate for the enclave.
+# in-enclave `tribute_id` derivation. Claim hashing comes from `outbe-zk`, not
+# `outbe-zk-backend`: the backend links Barretenberg FFI, which does not belong
+# in the enclave.
 outbe-poseidon.workspace = true
-outbe-protocol.workspace = true
-outbe-protocol-derive.workspace = true
+outbe-zk.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
 
