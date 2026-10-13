@@ -81,3 +81,12 @@ fn public_abi_selectors_do_not_alias_each_other() {
         selectors.len()
     );
 }
+
+#[test]
+fn abi_precompile_addresses_match_the_registry() {
+    use outbe_ocomp_protocol::abi::{METADOSIS_ADDRESS, NOD_FACTORY_ADDRESS};
+    use outbe_primitives::addresses;
+
+    assert_eq!(METADOSIS_ADDRESS, addresses::METADOSIS_ADDRESS);
+    assert_eq!(NOD_FACTORY_ADDRESS, addresses::NOD_FACTORY_ADDRESS);
+}
