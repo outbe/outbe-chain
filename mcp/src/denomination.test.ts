@@ -545,17 +545,17 @@ test("MCP Credis and pledge tools encode their calls against the registered ABIs
     for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
     chain.register(ERC20_ABI);
   });
-  const owner = "0x00000000000000000000000000000000000000aa";
+  const credisOwner = "0x00000000000000000000000000000000000000aa";
   const source = SIGNER;
   const asset = "0x0000000000000000000000000000000000000888";
   const mac = `0x${"22".repeat(32)}`;
   const cases = [
     {
       tool: "credis_reserve",
-      args: { owner, source, asset, amount: "300" },
+      args: { credis_owner: credisOwner, source, asset, amount: "300" },
       contract: "vaultrouter",
       functionName: "reserveStables",
-      expected: [owner, source, asset, 300n],
+      expected: [credisOwner, source, asset, 300n],
       value: 0n,
     },
     {

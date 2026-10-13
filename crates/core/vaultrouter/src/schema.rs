@@ -19,7 +19,7 @@ pub struct LiquidityReservation {
     #[attribute(order = 1)]
     pub amount: U256,
     #[attribute(order = 2)]
-    pub owner: Address,
+    pub credis_owner: Address,
     #[attribute(order = 3)]
     pub cca: Address,
     #[attribute(order = 4)]
@@ -177,7 +177,7 @@ impl From<LiquidityReservation> for crate::api::IVaultRouter::LiquidityReservati
         Self {
             asset: r.asset,
             amount: r.amount,
-            owner: r.owner,
+            credisOwner: r.credis_owner,
             cca: r.cca,
             vault: r.vault,
             expiresAt: r.expires_at,

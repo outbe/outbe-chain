@@ -143,12 +143,12 @@ pub fn pledge(storage: &StorageHandle<'_>, source: Address, reservation_id: U256
     .unwrap();
 }
 
-/// Parks a live vault reservation for `owner`, pledged by `source`, so
+/// Parks a live vault reservation for `credis_owner`, pledged by `source`, so
 /// `issue_credis` can consume it. This helper writes the hold through VaultRouter
 /// storage, not the ABI, because these tests stub EVM sub-calls into the router.
 pub fn seed_reservation(
     storage: &StorageHandle<'_>,
-    owner: Address,
+    credis_owner: Address,
     source: Address,
     amount: U256,
 ) -> U256 {
@@ -167,7 +167,7 @@ pub fn seed_reservation(
             id,
             asset: asset(),
             amount,
-            owner,
+            credis_owner,
             cca: cca(),
             vault: address!("0x0000000000000000000000000000000000000777"),
             expires_at,

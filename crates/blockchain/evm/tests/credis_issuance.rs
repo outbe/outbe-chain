@@ -181,7 +181,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         id: U256::ONE,
         asset: ASSET,
         amount: U256::from(2_000_000),
-        owner: ACCOUNT,
+        credis_owner: ACCOUNT,
         cca: CCA,
         vault: VAULT,
         expires_at: NOW + 900,

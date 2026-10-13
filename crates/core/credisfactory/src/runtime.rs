@@ -105,7 +105,7 @@ pub fn issue_credis(
         }
         let mut credis = CredisContract::new(storage.clone());
         let id = credis.issue(IssueCredisParams {
-            owner: r.owner,
+            owner: r.credis_owner,
             cca: caller,
             source: r.source,
             asset: r.asset,
@@ -120,11 +120,11 @@ pub fn issue_credis(
         })?;
         pledges::send_to_credis(&storage, reservation_id, id, r.source, r.gratis_minor)?;
         let opened = credis.get_credis(id)?;
-        storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.owner, stake)?;
+        storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.credis_owner, stake)?;
         let paid = outbe_vaultrouter::api::release_reservation(
             &storage,
             reservation_id,
-            r.owner,
+            r.credis_owner,
             r.amount,
         )?;
         if paid != r.amount || credis.get_credis(id)? != opened {
@@ -134,7 +134,7 @@ pub fn issue_credis(
             CREDIS_FACTORY_ADDRESS,
             alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisIssued {
                 credisId: id,
-                owner: r.owner,
+                owner: r.credis_owner,
                 cca: caller,
                 asset: r.asset,
                 principalMinor: r.amount,

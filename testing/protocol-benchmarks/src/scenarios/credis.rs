@@ -174,7 +174,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             id: reservation_id,
             asset: ASSET,
             amount: pledge_stables(),
-            owner: ALICE,
+            credis_owner: ALICE,
             cca: CCA,
             vault: Address::repeat_byte(0x77),
             expires_at: CREATED_AT + 15 * 60,

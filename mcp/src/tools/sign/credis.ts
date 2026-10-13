@@ -46,17 +46,17 @@ export function registerCredisTools(server: McpServer, ctx: Ctx): void {
     "credis_reserve",
     "Reserve exact stablecoin principal and fix the pledge valuation for 15 minutes. Returns the reservationId.",
     {
-      owner: address.describe("Address that holds the Credis and receives the CCA's COEN stake"),
+      credis_owner: address.describe("Address that holds the Credis and receives the CCA's COEN stake"),
       source: address.describe("Main account that pledges the Gratis collateral"),
       asset: address,
       amount: rawAmount,
       wait: waitFlag,
     },
-    handler(async ({ owner, source, asset, amount, wait }) =>
+    handler(async ({ credis_owner, source, asset, amount, wait }) =>
       submit(ctx, {
         contract: "vaultrouter",
         method: "reserveStables",
-        args: [owner, source, asset, BigInt(amount)],
+        args: [credis_owner, source, asset, BigInt(amount)],
         wait,
         outcome: (receipt) => ({
           reservationId: (eventArgs(receipt, "vaultrouter", "ReservationCreated")?.id as bigint | undefined)?.toString() ?? null,

@@ -249,7 +249,7 @@ fn reserve(world: &mut World) {
         VAULT_ROUTER_ADDRESS,
         &f.cca_key,
         &eth::IVaultRouter::reserveStablesCall {
-            owner: f.owner,
+            credisOwner: f.owner,
             source: f.user,
             asset: f.currency.asset,
             amount: PRINCIPAL,
@@ -257,7 +257,7 @@ fn reserve(world: &mut World) {
         None,
     );
     let reserved = event::<eth::IVaultRouter::ReservationCreated>(&receipt, VAULT_ROUTER_ADDRESS);
-    assert_eq!(reserved.owner, f.owner);
+    assert_eq!(reserved.credisOwner, f.owner);
     assert_eq!(reserved.cca, f.cca);
     assert_eq!(reserved.asset, f.currency.asset);
     assert_eq!(reserved.vault, f.currency.vault);

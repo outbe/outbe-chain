@@ -19,7 +19,7 @@ const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const ADMIN: Address = Address::repeat_byte(0xa1);
 const ASSET: Address = Address::repeat_byte(0x88);
 const VAULT: Address = Address::repeat_byte(0x77);
-const OWNER: Address = Address::repeat_byte(0xaa);
+const RECEIVER: Address = Address::repeat_byte(0xaa);
 const AMOUNT: u64 = 2_000_000;
 
 sol! {
@@ -136,7 +136,7 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
         let calldata = IVaultRouter::withdrawCall {
             asset: ASSET,
             amount: U256::from(AMOUNT),
-            receiver: OWNER,
+            receiver: RECEIVER,
         }
         .abi_encode();
         Ok(PreparedCredisVaultBoundary { provider, calldata })
