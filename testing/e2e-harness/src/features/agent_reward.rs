@@ -307,15 +307,13 @@ fn beneficiaries_claim_agent_rewards(
     sra_issuance: u16,
     sra_reference: u16,
 ) {
-    let (waa_beneficiary, sra_beneficiary, waa_claimable, sra_claimable, escrow_before) = {
+    let (waa_claimable, sra_claimable, escrow_before) = {
         let observation = world
             .state
             .ocomp_agent_reward
             .as_ref()
             .expect("settled AgentReward observation");
         (
-            observation.waa_beneficiary,
-            observation.sra_beneficiary,
             observation.waa_claimable_coen_units.expect("WAA claimable"),
             observation.sra_claimable_coen_units.expect("SRA claimable"),
             native_balance(
@@ -329,7 +327,6 @@ fn beneficiaries_claim_agent_rewards(
     let waa_block_number = claim_gem_and_assert_gas_only_cost(
         world,
         WAA_BENEFICIARY_KEY,
-        waa_beneficiary,
         WAA_POOL,
         waa_claimable,
         (waa_issuance, waa_reference),
@@ -349,7 +346,6 @@ fn beneficiaries_claim_agent_rewards(
     let sra_block_number = claim_gem_and_assert_gas_only_cost(
         world,
         SRA_BENEFICIARY_KEY,
-        sra_beneficiary,
         SRA_POOL,
         sra_claimable,
         (sra_issuance, sra_reference),
@@ -423,12 +419,12 @@ fn claims_clear_agent_reward_state(world: &mut World) {
 fn claim_gem_and_assert_gas_only_cost(
     world: &World,
     key: &str,
-    beneficiary: Address,
     pool: u8,
     claimable: U256,
     currencies: (u16, u16),
 ) -> u64 {
     let (issuance_currency, reference_currency) = currencies;
+    let beneficiary = beneficiary_address(world, key);
     let primary = world.validators.primary_port();
     let before = native_balance(world, primary, beneficiary);
     let inventory_before = gem_inventory_at(
@@ -505,16 +501,30 @@ fn claim_gem_and_assert_gas_only_cost(
         );
         let expected_load = claimable / U256::from(1_000_000_000_000u64);
         assert!(!expected_load.is_zero());
-        assert_claimed_gem(
-            &gem,
-            beneficiary,
-            pool,
-            expected_load,
-            terms.0,
-            terms.1,
-            currencies,
-            timestamp,
+        // Window, threshold and bucket are not on the gem view.
+        let issued = eth::receipt_event::<eth::IGemFactory::GemIssued>(
+            &receipt,
+            addresses::GEM_FACTORY_ADDR,
         );
+        assert!(!issued.bucketKey.is_zero());
+        let expected = eth::IGemFactory::GemIssued {
+            gemId: added[0],
+            gemType: gem.gemType,
+            owner: beneficiary,
+            promisLoadMinor: expected_load,
+            entryPriceMinor: terms.0,
+            floorPriceMinor: terms.1,
+            issuanceCurrency: issuance_currency,
+            referenceCurrency: reference_currency,
+            issuedAt: timestamp,
+            callPriceMinor: gem.callPriceMinor,
+            callWindow: issued.callWindow,
+            callThreshold: issued.callThreshold,
+            callNoticePeriod: gem.callNoticePeriod,
+            positionId: U256::ZERO,
+            bucketKey: issued.bucketKey,
+        };
+        assert_claimed_gem(&gem, pool, &expected);
         assert_eq!(gem.gemId, added[0]);
         let encoded = gem.abi_encode();
         assert_eq!(
@@ -522,33 +532,7 @@ fn claim_gem_and_assert_gas_only_cost(
             encoded,
             "Gem body parity"
         );
-        // Window, threshold and bucket are not on the gem view.
-        let issued = eth::receipt_event::<eth::IGemFactory::GemIssued>(
-            &receipt,
-            addresses::GEM_FACTORY_ADDR,
-        );
-        assert!(!issued.bucketKey.is_zero());
-        super::settlement::assert_receipt_event(
-            &receipt,
-            addresses::GEM_FACTORY_ADDR,
-            &eth::IGemFactory::GemIssued {
-                gemId: added[0],
-                gemType: gem.gemType,
-                owner: beneficiary,
-                promisLoadMinor: expected_load,
-                entryPriceMinor: terms.0,
-                floorPriceMinor: terms.1,
-                issuanceCurrency: issuance_currency,
-                referenceCurrency: reference_currency,
-                issuedAt: timestamp,
-                callPriceMinor: gem.callPriceMinor,
-                callWindow: issued.callWindow,
-                callThreshold: issued.callThreshold,
-                callNoticePeriod: gem.callNoticePeriod,
-                positionId: U256::ZERO,
-                bucketKey: issued.bucketKey,
-            },
-        );
+        super::settlement::assert_receipt_event(&receipt, addresses::GEM_FACTORY_ADDR, &expected);
         assert_eq!(
             eth::receipt_json(
                 &url,
@@ -659,29 +643,21 @@ fn claim_gem_terms_at(url: &str, height: u64, reference_currency: u16) -> (U256,
     (price, floor)
 }
 
-fn assert_claimed_gem(
-    gem: &eth::IGem::GemData,
-    owner: Address,
-    pool: u8,
-    load: U256,
-    price: U256,
-    floor: U256,
-    currencies: (u16, u16),
-    timestamp: u64,
-) {
+fn assert_claimed_gem(gem: &eth::IGem::GemData, pool: u8, expected: &eth::IGemFactory::GemIssued) {
     let kind = match pool {
         WAA_POOL => 3,
         SRA_POOL => 2,
         _ => panic!("unknown reward pool"),
     };
-    assert_eq!(gem.owner, owner);
+    assert_eq!(gem.owner, expected.owner);
     assert_eq!(gem.gemType, kind);
     assert_eq!(gem.state, 0, "agent reward Gem must be born Issued");
-    assert_eq!(gem.promisLoadMinor, load);
-    assert_eq!(gem.entryPriceMinor, price);
-    assert_eq!(gem.floorPriceMinor, floor);
-    assert_eq!((gem.issuanceCurrency, gem.referenceCurrency), currencies);
-    assert_eq!(gem.issuedAt, timestamp);
+    assert_eq!(gem.promisLoadMinor, expected.promisLoadMinor);
+    assert_eq!(gem.entryPriceMinor, expected.entryPriceMinor);
+    assert_eq!(gem.floorPriceMinor, expected.floorPriceMinor);
+    assert_eq!(gem.issuanceCurrency, expected.issuanceCurrency);
+    assert_eq!(gem.referenceCurrency, expected.referenceCurrency);
+    assert_eq!(gem.issuedAt, expected.issuedAt);
 }
 
 fn wait_for_offering(world: &World, wwd: &str) {

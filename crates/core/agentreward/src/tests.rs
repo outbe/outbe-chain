@@ -974,8 +974,7 @@ fn reward_timestamp_narrowing_rejects_overflow() {
             Address::repeat_byte(1),
             GemTypes::Cca,
             U256::from(100),
-            USD,
-            USD,
+            (USD, USD),
         )
         .unwrap_err();
         assert!(error.to_string().contains("timestamp overflow"));

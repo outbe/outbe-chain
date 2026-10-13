@@ -154,8 +154,7 @@ impl AgentRewardContract<'_> {
                 address,
                 gem_type,
                 gem_load,
-                issuance_currency,
-                reference_currency,
+                (issuance_currency, reference_currency),
             )?;
             self.storage
                 .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
@@ -255,8 +254,7 @@ pub(crate) fn issue_reward_gem(
     owner: Address,
     gem_type: GemTypes,
     load: U256,
-    issuance_currency: u16,
-    reference_currency: u16,
+    (issuance_currency, reference_currency): (u16, u16),
 ) -> Result<U256> {
     let entry_price = resolve_gem_entry_price(storage, reference_currency)?.ok_or_else(|| {
         PrecompileError::Revert(format!(
