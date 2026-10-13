@@ -10,7 +10,9 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 PIN = "1.0.0-beta.22+c57152f91260ecdb9faad4efc20abb14b6d2ece7"
-assert PIN in subprocess.check_output(["nargo", "--version"], text=True)
+nargo_version = subprocess.check_output(["nargo", "--version"], text=True)
+if PIN not in nargo_version:
+    raise RuntimeError(f"Expected nargo version containing {PIN}, got: {nargo_version.strip()}")
 BASE = 0x4345533200000000
 NAMES = ["BYTES_INIT", "BYTES_ABSORB", "BYTES_FINAL", "ID", "KEY", "BODY", "LEAF",
          "SMT_BASE", "SMT_NORMAL", "SMT_ZERO", "TOP_NODE", "SEALED_ROOT",
