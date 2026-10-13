@@ -875,10 +875,12 @@ def enclave_command_lines(
         "  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \\",
     ]
     if tee_mode == "dcap-required":
+        common.insert(1, "test -S /var/run/aesmd/aesm.socket")
         common.extend(
             [
                 "  --device /dev/sgx_enclave:/dev/sgx_enclave \\",
                 "  --device /dev/sgx_provision:/dev/sgx_provision \\",
+                "  -v /var/run/aesmd/aesm.socket:/var/run/aesmd/aesm.socket \\",
                 f"  -v {shell_quote(runtime_validator_dir + '/tee')}:/var/lib/outbe/tee \\",
                 f"  {shell_quote(enclave_image)} \\",
                 f"  --socket {shell_quote(endpoint)} \\",

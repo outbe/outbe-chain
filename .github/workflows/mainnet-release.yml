@@ -192,6 +192,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
 
+      - name: Install native dependencies for release tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake libc++-dev libc++abi-dev \
+            libssl-dev pkg-config
+
       - name: Recheck immutable tag binding before SGX authorization
         env:
           GH_TOKEN: ${{ github.token }}
@@ -279,6 +286,13 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
+
+      - name: Install native dependencies for release tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake libc++-dev libc++abi-dev \
+            libssl-dev pkg-config
 
       - name: Recheck immutable tag binding before OCI publication
         env:
@@ -522,6 +536,13 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
+
+      - name: Install native dependencies for release tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake libc++-dev libc++abi-dev \
+            libssl-dev pkg-config
 
       - name: Recheck immutable tag binding before final publication
         env:

@@ -45,14 +45,30 @@ impl OracleContract<'_> {
     ///
     /// VWAP = sum(price_i * volume_i) / sum(volume_i)
     /// Values remain in the pair's registered scale.
+    ///
+    /// The range may not be wider than `lookback_duration`: a wider one reads
+    /// raw snapshots for every partial day, which is the one unbounded scan a
+    /// caller could ask for. Whole days are served by the finalized day VWAPs.
     pub fn calculate_vwap(
         &self,
         pair: AddressPair,
         start_time: u64,
         end_time: u64,
     ) -> Result<U256> {
+        self.require_vwap_range(start_time, end_time)?;
         self.try_calculate_vwap(pair, start_time, end_time)?
             .ok_or_else(|| OracleError::NoVwapData.into())
+    }
+
+    /// Rejects a range wider than `lookback_duration` (see [`Self::calculate_vwap`]).
+    fn require_vwap_range(&self, start_time: u64, end_time: u64) -> Result<()> {
+        if start_time >= end_time {
+            return Err(OracleError::InvalidVwapRange.into());
+        }
+        if end_time - start_time > self.config_lookback_duration.read()? {
+            return Err(OracleError::VwapRangeTooWide.into());
+        }
+        Ok(())
     }
 
     /// [`Self::calculate_vwap`] with "the window held no samples" as `Ok(None)`.
@@ -146,6 +162,7 @@ impl OracleContract<'_> {
 
     /// Calculates VWAPs for all active vote-target pairs over an explicit range.
     pub fn calculate_vwaps(&self, start_time: u64, end_time: u64) -> Result<PairSeries> {
+        self.require_vwap_range(start_time, end_time)?;
         self.try_calculate_vwaps(start_time, end_time)?
             .ok_or_else(|| OracleError::NoVwapData.into())
     }

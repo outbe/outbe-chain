@@ -70,6 +70,8 @@ interface IOracle {
     function getVwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 vwap);
 
     /// @notice Returns VWAP in the pair's registered scale for an explicit range.
+    /// @dev Reverts when the range is wider than the `lookbackDuration` parameter.
+    ///      Use `getUtcDayVwap` for whole past days.
     function getVwapForTimeRange(address base, address quote, uint64 startTime, uint64 endTime)
         external
         view
@@ -230,6 +232,7 @@ interface IOracle {
 
     /// @notice Returns VWAPs for all active vote-target pairs over an explicit
     ///         WorldwideDay-style window.
+    /// @dev Reverts when the range is wider than the `lookbackDuration` parameter.
     function getWorldwideDayVwap(uint64 startTime, uint64 endTime)
         external
         view

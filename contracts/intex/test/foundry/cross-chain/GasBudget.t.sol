@@ -10,6 +10,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
@@ -744,5 +745,87 @@ contract DesisSink {
 
     function getBidsCount(uint32) external pure returns (uint256) {
         return 0;
+    }
+}
+
+/// @dev A chunk re-delivered after the registry has two months of history for the series' currency:
+///      every `readData` on the inbound path then scans the registry from cold storage.
+contract GasBudgetLateIssuanceTest is CrossChainTest {
+    uint32 internal constant OUTBE_CHAIN_ID = 2;
+    uint32 internal constant WORLDWIDE_DAY = 20260430;
+    uint32 internal constant ISSUED_AT = 1_777_550_400;
+    bytes14 internal constant SERIES_PREFIX = "20260430-USD-U";
+
+    TargetRouter internal router;
+    IntexNFT1155 internal intex;
+    address internal originPeer = address(0x0B1);
+
+    function setUp() public {
+        _setUpBridge();
+        intex = DeployProxy.intexNFT1155(address(this), address(this));
+        router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
+        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
+        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+
+        VwapRegistry registry = DeployProxy.vwapRegistry(address(this), address(this));
+        IOriginRouter.DailyVwap[] memory row = new IOriginRouter.DailyVwap[](1);
+        for (uint32 month = 202605; month < 202607; ++month) {
+            for (uint32 dd = 1; dd < 32; ++dd) {
+                row[0] = IOriginRouter.DailyVwap({isoCode: 840, vwapMinor: uint64(30e6 + dd)});
+                registry.record(month * 100 + dd, row);
+            }
+        }
+        intex.setVwapSource(address(registry));
+
+        vm.warp(ISSUED_AT);
+        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), _chunk(0, 0x3000));
+        vm.warp(ISSUED_AT + 62 days);
+    }
+
+    function _chunk(uint16 index, uint256 recipientBase) internal view returns (bytes memory) {
+        uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
+        uint256 perSeries = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE / seriesCount;
+        BridgeMsgCodec.IssuanceInstructionsPayload[] memory batch =
+            new BridgeMsgCodec.IssuanceInstructionsPayload[](seriesCount);
+        for (uint256 s = 0; s < seriesCount; ++s) {
+            address[] memory to = new address[](perSeries);
+            uint256[] memory qty = new uint256[](perSeries);
+            for (uint256 i = 0; i < perSeries; ++i) {
+                to[i] = address(uint160(recipientBase + s * 0x100 + i));
+                qty[i] = 1;
+            }
+            batch[s] = BridgeMsgCodec.IssuanceInstructionsPayload({
+                seriesId: bytes14(uint112(uint112(SERIES_PREFIX) + s + 1)),
+                worldwideDay: WORLDWIDE_DAY,
+                issuedAt: ISSUED_AT,
+                issuedUnits: 10_000,
+                promisLoadMinor: 1e6,
+                entryPriceMinor: 100e6,
+                floorPriceMinor: 40e6,
+                callNoticePeriod: 0,
+                issuanceCurrency: 840,
+                referenceCurrency: 840,
+                callWindow: 0,
+                callThreshold: 0,
+                callPriceMinor: 200e6,
+                recipients: to,
+                units: qty
+            });
+        }
+        return BridgeMsgCodec.encodeIssuanceInstructions(WORLDWIDE_DAY, index, 2, batch);
+    }
+
+    function test_TheQuoteCoversALateChunkOfKnownSeries() public {
+        uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
+        uint256 recipients = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE;
+        bytes memory packet = _chunk(1, 0x9000);
+        uint256 before = gasleft();
+        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+        uint256 spent = before - gasleft();
+
+        emit log_named_uint("issuance_late_known_series_full_recipients", spent);
+        assertEq(intex.balanceOf(address(uint160(0x9000)), intex.issuedTokenId(bytes14(uint112(SERIES_PREFIX) + 1))), 1);
+        assertLt(spent, IntexGas.issuance(seriesCount, recipients), "a late chunk must fit the quote");
     }
 }
