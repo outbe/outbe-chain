@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::Read as _;
 use std::net::TcpListener;
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -184,6 +184,8 @@ fn run(cli: Cli) -> Result<()> {
                 "--bundle",
             ])
             .arg(&bundle)
+            .arg("--genesis")
+            .arg(&genesis)
             .current_dir(&repo),
         "verify exact signed SGX bundle",
     )?;
@@ -639,6 +641,22 @@ fn sgx_devices() -> Result<(String, String)> {
     bail!("required SGX enclave and provision devices are absent");
 }
 
+pub(crate) fn add_sgx_runtime_mounts(command: &mut Command) -> Result<()> {
+    let (enclave, provision) = sgx_devices()?;
+    command
+        .args(["--device", &format!("{enclave}:/dev/sgx_enclave")])
+        .args(["--device", &format!("{provision}:/dev/sgx_provision")]);
+
+    const AESM_SOCKET: &str = "/var/run/aesmd/aesm.socket";
+    let metadata = fs::symlink_metadata(AESM_SOCKET)
+        .wrap_err_with(|| format!("required AESM socket is absent: {AESM_SOCKET}"))?;
+    if !metadata.file_type().is_socket() {
+        bail!("required AESM path is not a Unix socket: {AESM_SOCKET}");
+    }
+    command.args(["-v", &format!("{AESM_SOCKET}:{AESM_SOCKET}")]);
+    Ok(())
+}
+
 fn start_enclave(
     image: &str,
     endpoint: &str,
@@ -648,12 +666,10 @@ fn start_enclave(
 ) -> Result<RunningEnclave> {
     let name = format!("outbe-release-dcap-{}", std::process::id());
     let log = File::create(log_path)?;
-    let (enclave, provision) = sgx_devices()?;
     let mut command = Command::new("docker");
+    command.args(["run", "--rm", "--name", &name, "--network", "host"]);
+    add_sgx_runtime_mounts(&mut command)?;
     command
-        .args(["run", "--rm", "--name", &name, "--network", "host"])
-        .args(["--device", &format!("{enclave}:/dev/sgx_enclave")])
-        .args(["--device", &format!("{provision}:/dev/sgx_provision")])
         .args(["-v", &format!("{}:/var/lib/outbe/tee", seal_dir.display())])
         .arg(image)
         .args([
