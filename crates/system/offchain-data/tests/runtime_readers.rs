@@ -590,3 +590,101 @@ fn backend_failure_diagnostic_identifies_operation_without_record_or_error_conte
     assert!(!diagnostic.contains("namespace="));
     assert!(!diagnostic.contains("record="));
 }
+
+#[path = "gem_support/mod.rs"]
+#[allow(dead_code)]
+mod gem_support;
+
+#[test]
+fn runtime_readers_serve_gem_item_bucket_and_owner_pages_in_both_factory_modes() {
+    for with_days in [false, true] {
+        let storage = Arc::new(MemoryStorage::new());
+        let writer = outbe_gem::gem_writer(storage.clone(), storage.clone());
+        let ids: Vec<_> = [1, 2, 3]
+            .into_iter()
+            .map(|seed| {
+                let body = gem_support::item(seed);
+                writer
+                    .put_item(&outbe_gem::from_canonical_item(body.clone()).unwrap())
+                    .unwrap();
+                body.gem_id
+            })
+            .collect();
+        let bucket = gem_support::bucket();
+        writer
+            .put_bucket(&outbe_gem::from_canonical_bucket(bucket.clone()).unwrap())
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let readers = if with_days {
+            outbe_offchain_data::supervised_day_runtime_body_readers(
+                storage.clone(),
+                outbe_offchain_data::DayDatabaseRoute {
+                    databases: Arc::new(
+                        outbe_offchain_storage::DayDatabases::open(directory.path()).unwrap(),
+                    ),
+                    durable_reader: storage.clone(),
+                    durable_writer: storage.clone(),
+                },
+                tokio::sync::watch::channel(None).0,
+            )
+        } else {
+            runtime_body_readers(storage)
+        };
+        let fork = readers.fork_execution();
+        let cancelled = outbe_primitives::projection::ExecutionReadBudget::new();
+        cancelled.cancel();
+        let _guard = readers.enter_execution_budget(cancelled);
+        assert!(matches!(
+            ParentBodySource::get(&readers, EntityRef::Gem(ids[0])),
+            Err(ParentBodySourceError::RequestDeadline(_))
+        ));
+        assert!(matches!(
+            ParentBodySource::get(&readers, EntityRef::GemBucket(bucket.entity_id())),
+            Err(ParentBodySourceError::RequestDeadline(_))
+        ));
+        assert!(matches!(
+            ParentBodySource::list(
+                &readers,
+                QueryRef::GemByOwner(gem_support::item(1).owner),
+                IdPageRequest {
+                    after: None,
+                    limit: 1
+                }
+            ),
+            Err(ParentBodySourceError::RequestDeadline(_))
+        ));
+        let item = fork.gem().get_stored_item(ids[0]).unwrap().unwrap();
+        assert_eq!(
+            outbe_compressed_entities::decode_stored_gem_v1(&item.encode()).unwrap(),
+            gem_support::item(1)
+        );
+        assert_eq!(
+            ParentBodySource::get(&fork, EntityRef::Gem(ids[0])).unwrap(),
+            Some(item)
+        );
+        let stored_bucket = fork
+            .gem()
+            .get_stored_bucket(bucket.entity_id())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            outbe_compressed_entities::decode_stored_gem_bucket_v1(&stored_bucket.encode())
+                .unwrap(),
+            bucket
+        );
+        assert_eq!(
+            ParentBodySource::get(&fork, EntityRef::GemBucket(bucket.entity_id())).unwrap(),
+            Some(stored_bucket)
+        );
+        assert_strict_id_pages(
+            &fork,
+            QueryRef::GemByOwner(gem_support::item(1).owner),
+            &ids,
+        );
+        assert!(
+            ParentBodySource::get(&fork, EntityRef::Gem(gem_support::item(99).gem_id))
+                .unwrap()
+                .is_none()
+        );
+    }
+}

@@ -58,14 +58,14 @@ fn reject_previous_projection_schema(version: u32) {
     assert!(matches!(
         read_projection_state(config(7), storage.clone()),
         Err(ProjectionError::ProjectionSchemaMismatch {
-            expected: 4,
+            expected: STORAGE_SCHEMA_VERSION,
             actual
         }) if actual == version
     ));
     assert!(matches!(
         outbe_offchain_data::open_projection(config(7), storage.clone(), storage),
         Err(ProjectionError::ProjectionSchemaMismatch {
-            expected: 4,
+            expected: STORAGE_SCHEMA_VERSION,
             actual
         }) if actual == version
     ));
@@ -538,4 +538,11 @@ fn failed_recognized_receipt_and_noncanonical_metadata_stall_without_checkpoint(
         ProjectionSource::from_storage_metadata(&metadata),
         Err(ProjectionError::MalformedProjectionMetadata(_))
     ));
+}
+
+#[test]
+fn schema_version_4_cannot_open_after_gem_namespaces() {
+    reject_previous_projection_schema(4);
+    let storage = Arc::new(RecordingStorage::default());
+    assert_eq!(open(&storage, 7).state().storage_schema_version, 5);
 }

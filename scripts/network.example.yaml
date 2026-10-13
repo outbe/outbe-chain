@@ -185,11 +185,6 @@ tee:
 # balance:                            # extra native-token balances
 #   "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000"
 
-# gems:
-#   - owner: "0x64CCA861d30714593cB690e0a550C8a9b8b3b058"
-#     promis_load: "1000000000"
-#     issuance_currency: "840"
-
 # tributes: []
 
 # contracts:                          # pre-deployed external contracts;

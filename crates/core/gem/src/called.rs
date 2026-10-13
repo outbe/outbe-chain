@@ -18,9 +18,6 @@ use crate::precompile::IGem::{BatchMetadataUpdate, CallScanSkipped, SweepDaySkip
 use crate::schema::GemContract;
 use crate::state::CallBins;
 
-#[cfg(test)]
-pub(crate) use outbe_primitives::daily_sweep::currency_position;
-
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut GemCallSweep::new(ctx))

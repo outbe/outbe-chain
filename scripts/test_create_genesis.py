@@ -90,7 +90,7 @@ class YamlParserTests(unittest.TestCase):
             "  - 10.0.0.1\n"
             "  - 10.0.0.2\n"
             "items:\n"
-            '  - base: COEN\n'
+            "  - base: COEN\n"
             '    quote: "840"\n'
             "  - base: XYZ\n"
             '    quote: "978"\n'
@@ -182,9 +182,7 @@ class ConfigValidationTests(unittest.TestCase):
                     "tee": {"mode": tee_mode},
                 }
                 if tee_mode == "dcap-required":
-                    config["enclave_image"] = (
-                        "outbe-tee-enclave@sha256:" + "ab" * 32
-                    )
+                    config["enclave_image"] = "outbe-tee-enclave@sha256:" + "ab" * 32
                 CG.validate_config(config)
 
         mainnet = minimal_config("./keys") | {
@@ -322,9 +320,7 @@ class KeyDerivationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "radicle.pub"
             write_ssh_ed25519_pub(path, node_id)
-            self.assertEqual(
-                CG.radicle_node_id_from_public_key(path), node_id.hex()
-            )
+            self.assertEqual(CG.radicle_node_id_from_public_key(path), node_id.hex())
 
     def test_radicle_wrong_algorithm_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -403,14 +399,23 @@ class KeyDerivationTests(unittest.TestCase):
             keys_dir = pathlib.Path(tmp)
             for index in range(4):
                 subprocess.run(
-                    [keygen, "validator", "--output-dir",
-                     str(keys_dir / f"validator-{index}"), "--chain-id", "424242"],
-                    check=True, capture_output=True,
+                    [
+                        keygen,
+                        "validator",
+                        "--output-dir",
+                        str(keys_dir / f"validator-{index}"),
+                        "--chain-id",
+                        "424242",
+                    ],
+                    check=True,
+                    capture_output=True,
                 )
             config = minimal_config(tmp)
             config["validators"][2] = "10.0.0.3:31555"
             validators = CG.discover_validators(
-                config=config, keys_dir=keys_dir, keygen_binary=keygen,
+                config=config,
+                keys_dir=keys_dir,
+                keygen_binary=keygen,
                 keccak256=SEED_GENESIS.keccak256,
             )
             self.assertEqual(validators[2]["p2p_address"], "10.0.0.3:31555")
@@ -473,11 +478,13 @@ class SeedStageTests(unittest.TestCase):
         path = CG.run_seed_stage(
             module=SEED_GENESIS,
             work_dir=work_dir,
-            base_genesis=base_genesis,
-            seed=CG.build_seed(config),
-            validators=validators,
             config=config,
             quiet=True,
+            inputs=CG.SeedInputs(
+                base_genesis=base_genesis,
+                seed=CG.build_seed(config),
+                validators=validators,
+            ),
         )
         return json.loads(path.read_text())
 
@@ -555,7 +562,9 @@ class SeedStageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "COEN base"):
                 self.seed_once(pathlib.Path(tmp), config)
 
-    def test_production_seed_stage_rejects_oracle_pair_with_the_same_resolved_asset(self):
+    def test_production_seed_stage_rejects_oracle_pair_with_the_same_resolved_asset(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             config = minimal_config(tmp) | {
                 "oracle": {
@@ -589,8 +598,14 @@ class SeedStageTests(unittest.TestCase):
     def test_seeded_genesis_is_reproducible_for_a_pinned_timestamp(self):
         """The OCOMP registrations sign the seeded genesis hash, so the same
         yaml must always seed byte-identical state."""
-        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            config = minimal_config(first) | {"timestamp": 1_756_032_000, "allow_stale_timestamp": True}
+        with (
+            tempfile.TemporaryDirectory() as first,
+            tempfile.TemporaryDirectory() as second,
+        ):
+            config = minimal_config(first) | {
+                "timestamp": 1_756_032_000,
+                "allow_stale_timestamp": True,
+            }
             a = self.seed_once(pathlib.Path(first), config)
             b = self.seed_once(pathlib.Path(second), config)
             self.assertEqual(a, b)
@@ -603,14 +618,18 @@ class SeedStageTests(unittest.TestCase):
             CG.build_base_genesis(minimal_config("./keys") | {"timestamp": stale})
         # Reproducing an existing genesis is legitimate, but must be deliberate.
         pinned = CG.build_base_genesis(
-            minimal_config("./keys") | {"timestamp": stale, "allow_stale_timestamp": True}
+            minimal_config("./keys")
+            | {"timestamp": stale, "allow_stale_timestamp": True}
         )
         self.assertEqual(int(pinned["timestamp"], 16), stale)
         # A fresh stamp always passes.
         CG.build_base_genesis(minimal_config("./keys"))
 
     def test_genesis_time_is_pinned_to_the_header_timestamp(self):
-        config = minimal_config("./keys") | {"timestamp": 1_756_032_000, "allow_stale_timestamp": True}
+        config = minimal_config("./keys") | {
+            "timestamp": 1_756_032_000,
+            "allow_stale_timestamp": True,
+        }
         genesis = CG.build_base_genesis(config)
         self.assertEqual(genesis["timestamp"], hex(1_756_032_000))
         self.assertEqual(genesis["config"]["genesisTime"], "2025-08-24T10:40:00Z")
@@ -732,15 +751,19 @@ class LaunchBundleTests(unittest.TestCase):
         # fixture has to carry a well-formed one.
         genesis_hash = "0x" + "ab" * 32
         canonical = ("00" * 33) + "ab" * 32 + "01" * 32 + "cd" * 32 + "0c" * 32
-        genesis.write_text(json.dumps({
-            "config": {
-                "chainId": 424242,
-                "ocompForkInstallV1": {
-                    "canonicalBytes": "0x" + canonical,
-                    "installHash": "0x" + "ee" * 32,
-                },
-            },
-        }))
+        genesis.write_text(
+            json.dumps(
+                {
+                    "config": {
+                        "chainId": 424242,
+                        "ocompForkInstallV1": {
+                            "canonicalBytes": "0x" + canonical,
+                            "installHash": "0x" + "ee" * 32,
+                        },
+                    },
+                }
+            )
+        )
         marker = keys_dir / "validator-0" / "ocomp-registration-v1.genesis-hash"
         marker.write_text(genesis_hash + "\n")
         (output_dir / "protocol-bundle-v1.ocb1").write_bytes(b"canonical-ocomp-v1")
@@ -769,9 +792,7 @@ class LaunchBundleTests(unittest.TestCase):
                 repo_root=str(REPO_ROOT),
             )
 
-        self.assertIn(
-            f"--max-validators {LB.DEFAULT_MAX_VALIDATORS}", rendered({})
-        )
+        self.assertIn(f"--max-validators {LB.DEFAULT_MAX_VALIDATORS}", rendered({}))
         self.assertIn(
             "--max-validators 64",
             rendered({"validator_set": {"max_validators": 64}}),
@@ -816,7 +837,9 @@ class LaunchBundleTests(unittest.TestCase):
                 ):
                     script = directory / name
                     self.assertTrue(script.is_file(), f"{name} missing")
-                    self.assertTrue(script.stat().st_mode & 0o111, f"{name} not executable")
+                    self.assertTrue(
+                        script.stat().st_mode & 0o111, f"{name} not executable"
+                    )
                     subprocess.run(["bash", "-n", str(script)], check=True)
                 self.assertEqual(
                     {path.name for path in directory.glob("run-ocomp-*.sh")},
@@ -833,7 +856,9 @@ class LaunchBundleTests(unittest.TestCase):
             _, _, output_dir = self.render(tmp)
             script = (output_dir / "validator-2" / "run-ocomp-worker.sh").read_text()
             # The bundle hash sits after the genesis hash and the fork id.
-            self.assertIn("--protocol-bundle-hash \"$OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH\"", script)
+            self.assertIn(
+                '--protocol-bundle-hash "$OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH"', script
+            )
             self.assertIn("ocomp-active.env", script)
             self.assertIn("--chain-id 424242", script)
             self.assertIn("--genesis-hash 0x" + "ab" * 32, script)
@@ -844,14 +869,23 @@ class LaunchBundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
             for role in ("exporter", "worker", "successor-worker"):
-                script = (output_dir / "validator-0" / f"run-ocomp-{role}.sh").read_text()
-                for var in ("OUTBE_OCOMP_BASE_PATH", "OCOMP_VALIDATOR_INDEX",
-                            "OCOMP_CHAIN_ID", "OCOMP_GENESIS_HASH", "OCOMP_BOOT_NONCE",
-                            "OCOMP_PROTOCOL_BUNDLE_HASH", "OCOMP_REGISTRY_GENERATION"):
+                script = (
+                    output_dir / "validator-0" / f"run-ocomp-{role}.sh"
+                ).read_text()
+                for var in (
+                    "OUTBE_OCOMP_BASE_PATH",
+                    "OCOMP_VALIDATOR_INDEX",
+                    "OCOMP_CHAIN_ID",
+                    "OCOMP_GENESIS_HASH",
+                    "OCOMP_BOOT_NONCE",
+                    "OCOMP_PROTOCOL_BUNDLE_HASH",
+                    "OCOMP_REGISTRY_GENERATION",
+                ):
                     self.assertIn(var, script, f"{role} script is missing {var}")
 
     def test_storage_launcher_obeys_current_toml_and_never_starts_mongo_for_rocks(self):
         import subprocess
+
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
             directory = output_dir / "validator-0"
@@ -860,37 +894,66 @@ class LaunchBundleTests(unittest.TestCase):
             mongo = directory / "run-mongodb.sh"
             mongo.write_text("#!/bin/sh\ntouch mongo-started\n")
             mongo.chmod(0o700)
-            subprocess.run(["bash", str(directory / "run-storage.sh")], check=True, capture_output=True)
+            subprocess.run(
+                ["bash", str(directory / "run-storage.sh")],
+                check=True,
+                capture_output=True,
+            )
             self.assertFalse((directory / "mongo-started").exists())
             config = directory / "offchain-storage.toml"
             source = 'version=1\nbackend="mongodb"\n[mongodb]\nuri="mongodb://remote:27017/?replicaSet=rs0"\ndatabase="operator"\n'
             config.write_text(source)
-            subprocess.run(["bash", str(directory / "run-storage.sh")], check=True, capture_output=True)
+            subprocess.run(
+                ["bash", str(directory / "run-storage.sh")],
+                check=True,
+                capture_output=True,
+            )
             self.assertFalse((directory / "mongo-started").exists())
             config.write_text(source.replace("remote:27017", "127.0.0.1:27017"))
-            subprocess.run(["bash", str(directory / "run-storage.sh")], check=True, capture_output=True)
+            subprocess.run(
+                ["bash", str(directory / "run-storage.sh")],
+                check=True,
+                capture_output=True,
+            )
             self.assertTrue((directory / "mongo-started").exists())
 
     def test_mongo_bundle_selects_distinct_databases_and_packages_storage_helper(self):
         import tarfile
         import tomllib
+
         with tempfile.TemporaryDirectory() as tmp:
-            _, _, output_dir = self.render(tmp, {"offchain_storage": {"backend": "mongodb", "mongodb": {"database": "network"}}})
+            _, _, output_dir = self.render(
+                tmp,
+                {
+                    "offchain_storage": {
+                        "backend": "mongodb",
+                        "mongodb": {"database": "network"},
+                    }
+                },
+            )
             databases = set()
             for index in range(4):
                 directory = output_dir / f"validator-{index}"
-                document = tomllib.loads((directory / "offchain-storage.toml").read_text())
+                document = tomllib.loads(
+                    (directory / "offchain-storage.toml").read_text()
+                )
                 databases.add(document["mongodb"]["database"])
                 self.assertTrue((directory / "run-mongodb.sh").exists())
-                with tarfile.open(output_dir / "dist" / f"validator-{index}.tgz") as archive:
+                with tarfile.open(
+                    output_dir / "dist" / f"validator-{index}.tgz"
+                ) as archive:
                     self.assertIn("offchain_storage.py", archive.getnames())
-                    self.assertIn(f"validator-{index}/offchain-storage.toml", archive.getnames())
+                    self.assertIn(
+                        f"validator-{index}/offchain-storage.toml", archive.getnames()
+                    )
             self.assertEqual(len(databases), 4)
 
     def test_exporter_uses_node_projection(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
-            exporter = (output_dir / "validator-0" / "run-ocomp-exporter.sh").read_text()
+            exporter = (
+                output_dir / "validator-0" / "run-ocomp-exporter.sh"
+            ).read_text()
             self.assertIn(
                 "/validator-0/offchain-storage.toml",
                 exporter,
@@ -917,7 +980,9 @@ class LaunchBundleTests(unittest.TestCase):
                 active.read_text(),
                 "OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH=0x" + bundle_hash + "\n",
             )
-            exporter = (output_dir / "validator-0" / "run-ocomp-exporter.sh").read_text()
+            exporter = (
+                output_dir / "validator-0" / "run-ocomp-exporter.sh"
+            ).read_text()
             self.assertIn("ocomp-bundles.env", exporter)
             successor = (
                 output_dir / "validator-0" / "run-ocomp-successor-worker.sh"
@@ -949,8 +1014,19 @@ class LaunchBundleTests(unittest.TestCase):
     def test_feeder_provider_name_is_one_the_binary_accepts(self):
         """outbe-feeder validates provider names against a fixed list and
         refuses to start on anything else."""
-        known = {"mock", "pyth", "redstone", "binance", "kraken", "okx",
-                 "gate", "huobi", "mexc", "coinbase", "mock_http"}
+        known = {
+            "mock",
+            "pyth",
+            "redstone",
+            "binance",
+            "kraken",
+            "okx",
+            "gate",
+            "huobi",
+            "mexc",
+            "coinbase",
+            "mock_http",
+        }
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
             toml = (output_dir / "validator-0" / "feeder.toml").read_text()
@@ -1001,9 +1077,16 @@ class LaunchBundleTests(unittest.TestCase):
                 with tf.open(archive) as tar:
                     names = tar.getnames()
                 joined = "\n".join(names)
-                for required in ("genesis.json", "reth-bootnodes.txt",
-                                 f"validator-{index}", "systemd", "install-systemd.sh"):
-                    self.assertIn(required, joined, f"{required} missing from archive {index}")
+                for required in (
+                    "genesis.json",
+                    "reth-bootnodes.txt",
+                    f"validator-{index}",
+                    "systemd",
+                    "install-systemd.sh",
+                ):
+                    self.assertIn(
+                        required, joined, f"{required} missing from archive {index}"
+                    )
                 # Only this validator's keys travel in this archive.
                 self.assertIn(f"keys/validator-{index}", joined)
                 for other in range(4):
@@ -1014,7 +1097,10 @@ class LaunchBundleTests(unittest.TestCase):
             for line in (dist / "SHA256SUMS").read_text().splitlines():
                 digest, name = line.split("  ")
                 import hashlib as hl
-                self.assertEqual(hl.sha256((dist / name).read_bytes()).hexdigest(), digest)
+
+                self.assertEqual(
+                    hl.sha256((dist / name).read_bytes()).hexdigest(), digest
+                )
 
     def test_a_private_signing_key_never_reaches_the_bundle(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1175,7 +1261,8 @@ class LaunchBundleTests(unittest.TestCase):
     def test_remote_paths_are_used_in_the_scripts(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(
-                tmp, {"remote_base_dir": "/opt/outbe", "remote_keys_dir": "/opt/outbe/keys"}
+                tmp,
+                {"remote_base_dir": "/opt/outbe", "remote_keys_dir": "/opt/outbe/keys"},
             )
             node_script = (output_dir / "validator-1" / "run-node.sh").read_text()
             self.assertIn("/opt/outbe/genesis.json", node_script)

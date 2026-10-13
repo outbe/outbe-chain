@@ -56,8 +56,9 @@ jobs:
               set -euo pipefail
               git config --global --add safe.directory /workspace
               mise install
+              # Cargo tool defaults already come from the image.
               mise ls --current --json |
-                jq -r "to_entries[] | .key as \$tool | .value[] | select(.installed) | \"\(\$tool)@\(.version)\"" |
+                jq -r "to_entries[] | select(.key == \"nargo\" or .key == \"bb\") | .key as \$tool | .value[] | select(.installed) | \"\(\$tool)@\(.version)\"" |
                 xargs mise use --global
               mise reshim
               unset MISE_GITHUB_TOKEN

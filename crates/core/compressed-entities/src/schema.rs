@@ -18,6 +18,8 @@ pub(crate) enum Collection {
     Tribute,
     NodItem,
     NodBucket,
+    Gem,
+    GemBucket,
 }
 
 impl Collection {
@@ -26,6 +28,8 @@ impl Collection {
             Self::Tribute => 1,
             Self::NodItem => 2,
             Self::NodBucket => 3,
+            Self::Gem => 4,
+            Self::GemBucket => 5,
         }
     }
 
@@ -34,6 +38,8 @@ impl Collection {
             1 => Ok(Self::Tribute),
             2 => Ok(Self::NodItem),
             3 => Ok(Self::NodBucket),
+            4 => Ok(Self::Gem),
+            5 => Ok(Self::GemBucket),
             _ => Err(fatal(format!(
                 "invalid compressed-entity collection id {id}"
             ))),
@@ -107,6 +113,7 @@ pub(crate) enum IndexKind {
     TributeByDay,
     NodByOwner,
     NodAll,
+    GemByOwner,
 }
 
 impl IndexKind {
@@ -116,6 +123,7 @@ impl IndexKind {
             Self::TributeByDay => 2,
             Self::NodByOwner => 3,
             Self::NodAll => 4,
+            Self::GemByOwner => 5,
         }
     }
 
@@ -125,13 +133,14 @@ impl IndexKind {
             2 => Ok(Self::TributeByDay),
             3 => Ok(Self::NodByOwner),
             4 => Ok(Self::NodAll),
+            5 => Ok(Self::GemByOwner),
             _ => Err(fatal(format!("invalid compressed-entity index kind {id}"))),
         }
     }
 
     const fn partition_len(self) -> usize {
         match self {
-            Self::TributeByOwner | Self::NodByOwner => 20,
+            Self::TributeByOwner | Self::NodByOwner | Self::GemByOwner => 20,
             Self::TributeByDay => 4,
             Self::NodAll => 0,
         }
@@ -160,6 +169,10 @@ impl IndexRecord {
             partition: day.value().to_be_bytes().to_vec(),
             entity_id,
         }
+    }
+
+    pub(crate) fn gem_owner(owner: Address, entity_id: WwdEntityId) -> Self {
+        Self::owner(IndexKind::GemByOwner, owner, entity_id)
     }
 
     pub(crate) fn nod_all(entity_id: WwdEntityId) -> Self {

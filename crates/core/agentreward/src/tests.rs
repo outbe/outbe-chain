@@ -1,4 +1,5 @@
 use alloy_primitives::{address, Address, U256};
+use outbe_gem::test_support::GemWorld;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::test_utils::sol_interface::sol_function_canonical;
@@ -29,12 +30,15 @@ fn numbered_address(n: u64) -> Address {
     Address::from(bytes)
 }
 
-fn with_contract_mut<R>(f: impl FnOnce(StorageHandle, &mut AgentRewardContract) -> R) -> R {
+fn with_contract_mut<R>(
+    f: impl FnOnce(StorageHandle, &mut AgentRewardContract, &GemWorld) -> R,
+) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(T_NOW));
     StorageHandle::enter(&mut storage, |storage| {
+        let world = GemWorld::open(&storage);
         let mut contract = AgentRewardContract::new(storage.clone());
-        f(storage, &mut contract)
+        f(storage, &mut contract, &world)
     })
 }
 
@@ -124,7 +128,7 @@ fn test_address_list_deduplication() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let wwd = WorldwideDay::new(5);
 
-    with_contract_mut(|_storage, contract| {
+    with_contract_mut(|_storage, contract, _world| {
         contract.increment_waa_tribute(wwd, alice).unwrap();
         contract.increment_waa_tribute(wwd, alice).unwrap();
         contract.increment_waa_tribute(wwd, alice).unwrap();
@@ -175,11 +179,14 @@ fn price_coen_in(storage: &StorageHandle<'_>, iso: u16, vwap: U256, reference: b
     }
 }
 
-fn gem_of(storage: &StorageHandle<'_>, owner: Address) -> outbe_gem::schema::GemData {
-    let gem_id = outbe_gem::GemContract::new(storage.clone())
-        .token_of_owner_by_index(owner, 0)
-        .unwrap();
-    outbe_gem::api::get_gem(storage, gem_id).unwrap().unwrap()
+fn gem_of(storage: &StorageHandle<'_>, world: &GemWorld, owner: Address) -> outbe_gem::GemView {
+    let mut owned =
+        outbe_gem::api::list_by_owner(storage, &world.scope, &world.parent, owner).unwrap();
+    assert_eq!(owned.len(), 1, "the owner holds one gem");
+    let item = owned.pop().unwrap();
+    outbe_gem::api::get_view(storage, &world.scope, &world.parent, item.gem_id.to_u256())
+        .unwrap()
+        .unwrap()
 }
 
 #[test]
@@ -188,7 +195,7 @@ fn claiming_a_pool_mints_its_gem_and_burns_the_backing() {
     let load = U256::from(500u64);
     let backing = native(500);
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         contract
             .storage
@@ -199,14 +206,22 @@ fn claiming_a_pool_mints_its_gem_and_burns_the_backing() {
             .unwrap();
 
         let gem_id = contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO, USD, USD)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Waa,
+                alice,
+                U256::ZERO,
+                USD,
+                USD,
+            )
             .unwrap();
         assert!(!gem_id.is_zero());
 
-        let gem = gem_of(&storage, alice);
-        assert_eq!(gem.gem_type, GemTypes::Wallet as u8);
-        assert_eq!(gem.promis_load_minor, load);
-        assert_eq!(gem.entry_price_minor, ONE_COEN);
+        let gem = gem_of(&storage, world, alice);
+        assert_eq!(gem.item.gem_type, GemTypes::Wallet as u8);
+        assert_eq!(gem.item.promis_load_minor, load);
+        assert_eq!(gem.bucket.entry_price_minor, ONE_COEN);
 
         // The balance is gone and so is the native COEN that backed it.
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
@@ -225,7 +240,7 @@ fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
     let load = U256::from(1_000_000u64);
     let backing = native(1_000_000);
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         contract
             .storage
@@ -236,27 +251,37 @@ fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
             .unwrap();
 
         contract
-            .claim_reward(RewardPool::Sra, alice, U256::ZERO, USD, USD)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Sra,
+                alice,
+                U256::ZERO,
+                USD,
+                USD,
+            )
             .unwrap();
-        let sra_gem = gem_of(&storage, alice);
+        let sra_gem = gem_of(&storage, world, alice);
         // The SRA share of the cost is derived, not stored. gemfactory pins the 64%
         // coefficient. What this pool owes is the Sra type and the whole load.
-        assert_eq!(sra_gem.gem_type, GemTypes::Sra as u8);
-        assert_eq!(sra_gem.promis_load_minor, load);
+        assert_eq!(sra_gem.item.gem_type, GemTypes::Sra as u8);
+        assert_eq!(sra_gem.item.promis_load_minor, load);
     });
 }
 
 fn claim_waa(
     storage: &StorageHandle<'_>,
+    world: &GemWorld,
     contract: &mut AgentRewardContract,
     alice: Address,
     backing: U256,
 ) -> outbe_primitives::error::Result<U256> {
-    claim_waa_in(storage, contract, alice, backing, USD, USD)
+    claim_waa_in(storage, world, contract, alice, backing, USD, USD)
 }
 
 fn claim_waa_in(
     storage: &StorageHandle<'_>,
+    world: &GemWorld,
     contract: &mut AgentRewardContract,
     alice: Address,
     backing: U256,
@@ -270,6 +295,8 @@ fn claim_waa_in(
         .add_claimable_reward(RewardPool::Waa, alice, backing)
         .unwrap();
     contract.claim_reward(
+        &world.scope,
+        &world.parent,
         RewardPool::Waa,
         alice,
         U256::ZERO,
@@ -283,11 +310,14 @@ fn a_claim_prices_on_the_previous_day_vwap() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let day_vwap = U256::from(2u64) * ONE_COEN;
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         seed_day_vwap(&storage, day_vwap);
-        claim_waa(&storage, contract, alice, native(500)).unwrap();
-        assert_eq!(gem_of(&storage, alice).entry_price_minor, day_vwap);
+        claim_waa(&storage, world, contract, alice, native(500)).unwrap();
+        assert_eq!(
+            gem_of(&storage, world, alice).bucket.entry_price_minor,
+            day_vwap
+        );
     });
 }
 
@@ -296,11 +326,14 @@ fn a_claim_ignores_a_spot_above_the_previous_day_vwap() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let day_vwap = U256::from(2u64) * ONE_COEN;
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, U256::from(3u64) * ONE_COEN);
         seed_day_vwap(&storage, day_vwap);
-        claim_waa(&storage, contract, alice, native(500)).unwrap();
-        assert_eq!(gem_of(&storage, alice).entry_price_minor, day_vwap);
+        claim_waa(&storage, world, contract, alice, native(500)).unwrap();
+        assert_eq!(
+            gem_of(&storage, world, alice).bucket.entry_price_minor,
+            day_vwap
+        );
     });
 }
 
@@ -309,10 +342,10 @@ fn a_claim_without_a_previous_day_vwap_keeps_the_balance() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let backing = native(500);
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         seed_day_vwap(&storage, U256::ZERO);
-        let err = claim_waa(&storage, contract, alice, backing).unwrap_err();
+        let err = claim_waa(&storage, world, contract, alice, backing).unwrap_err();
         assert!(err
             .to_string()
             .contains("no previous-day COEN price in 840"));
@@ -325,7 +358,7 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let backing = native(500);
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         // USD is a reference currency, with no pair, no quote and no closed day.
         outbe_oracle::schema::OracleContract::new(storage.clone())
             .reference_currencies
@@ -340,7 +373,15 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
             .unwrap();
 
         let err = contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO, USD, USD)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Waa,
+                alice,
+                U256::ZERO,
+                USD,
+                USD,
+            )
             .unwrap_err();
         assert!(err
             .to_string()
@@ -360,14 +401,14 @@ fn a_claim_issues_the_gem_in_the_callers_currencies() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let eur_vwap = U256::from(3u64) * ONE_COEN;
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         price_coen_in(&storage, EUR, eur_vwap, true);
-        claim_waa_in(&storage, contract, alice, native(500), MYR, EUR).unwrap();
-        let gem = gem_of(&storage, alice);
-        assert_eq!(gem.issuance_currency, MYR);
-        assert_eq!(gem.reference_currency, EUR);
-        assert_eq!(gem.entry_price_minor, eur_vwap);
+        claim_waa_in(&storage, world, contract, alice, native(500), MYR, EUR).unwrap();
+        let gem = gem_of(&storage, world, alice);
+        assert_eq!(gem.item.issuance_currency, MYR);
+        assert_eq!(gem.item.reference_currency, EUR);
+        assert_eq!(gem.bucket.entry_price_minor, eur_vwap);
     });
 }
 
@@ -377,12 +418,13 @@ fn a_claim_refuses_a_reference_outside_the_reference_set() {
     let backing = native(500);
 
     for priced in [false, true] {
-        with_contract_mut(|storage, contract| {
+        with_contract_mut(|storage, contract, world| {
             seed_oracle(&storage, ONE_COEN);
             if priced {
                 price_coen_in(&storage, MYR, ONE_COEN, false);
             }
-            let err = claim_waa_in(&storage, contract, alice, backing, USD, MYR).unwrap_err();
+            let err =
+                claim_waa_in(&storage, world, contract, alice, backing, USD, MYR).unwrap_err();
             assert!(err
                 .to_string()
                 .contains("458 is not a registered reference currency"));
@@ -396,13 +438,13 @@ fn a_claim_in_an_unpriced_reference_keeps_the_balance() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let backing = native(500);
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         outbe_oracle::schema::OracleContract::new(storage.clone())
             .reference_currencies
             .push(EUR)
             .unwrap();
-        let err = claim_waa_in(&storage, contract, alice, backing, USD, EUR).unwrap_err();
+        let err = claim_waa_in(&storage, world, contract, alice, backing, USD, EUR).unwrap_err();
         assert!(err
             .to_string()
             .contains("no previous-day COEN price in 978"));
@@ -416,9 +458,10 @@ fn a_claim_refuses_an_issuance_that_is_not_an_iso_code() {
     let backing = native(500);
 
     for issuance in [0, 1000] {
-        with_contract_mut(|storage, contract| {
+        with_contract_mut(|storage, contract, world| {
             seed_oracle(&storage, ONE_COEN);
-            let err = claim_waa_in(&storage, contract, alice, backing, issuance, USD).unwrap_err();
+            let err =
+                claim_waa_in(&storage, world, contract, alice, backing, issuance, USD).unwrap_err();
             assert!(err
                 .to_string()
                 .contains(&format!("{issuance} is not an ISO 4217 currency code")));
@@ -432,7 +475,7 @@ fn a_load_whose_cost_rounds_to_zero_still_claims() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let dust = native(1);
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         // Entry 1 minor unit x load 1 minor unit floors below one minor unit.
         seed_oracle(&storage, U256::from(1u64));
         contract
@@ -444,7 +487,15 @@ fn a_load_whose_cost_rounds_to_zero_still_claims() {
             .unwrap();
 
         contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO, USD, USD)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Waa,
+                alice,
+                U256::ZERO,
+                USD,
+                USD,
+            )
             .unwrap();
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
         assert_eq!(
@@ -453,9 +504,9 @@ fn a_load_whose_cost_rounds_to_zero_still_claims() {
                 .unwrap(),
             U256::ZERO
         );
-        let gem = gem_of(&storage, alice);
-        assert_eq!(gem.entry_price_minor, U256::ONE);
-        assert_eq!(gem.promis_load_minor, U256::ONE);
+        let gem = gem_of(&storage, world, alice);
+        assert_eq!(gem.bucket.entry_price_minor, U256::ONE);
+        assert_eq!(gem.item.promis_load_minor, U256::ONE);
     });
 }
 
@@ -465,7 +516,7 @@ fn a_partial_claim_mints_only_what_was_asked_for() {
     let backing = native(500);
     let taken = native(200);
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         contract
             .storage
@@ -476,10 +527,18 @@ fn a_partial_claim_mints_only_what_was_asked_for() {
             .unwrap();
 
         contract
-            .claim_reward(RewardPool::Waa, alice, taken, USD, USD)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Waa,
+                alice,
+                taken,
+                USD,
+                USD,
+            )
             .unwrap();
         assert_eq!(
-            gem_of(&storage, alice).promis_load_minor,
+            gem_of(&storage, world, alice).item.promis_load_minor,
             U256::from(200u64)
         );
         // The rest stays a balance, which cannot be Called and cannot be forfeited.
@@ -501,7 +560,7 @@ fn claiming_more_than_the_pool_holds_is_refused() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let backing = native(500);
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         contract
             .storage
@@ -512,7 +571,15 @@ fn claiming_more_than_the_pool_holds_is_refused() {
             .unwrap();
 
         let err = contract
-            .claim_reward(RewardPool::Waa, alice, backing + U256::from(1u64), USD, USD)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Waa,
+                alice,
+                backing + U256::from(1u64),
+                USD,
+                USD,
+            )
             .unwrap_err();
         assert!(err.to_string().contains("insufficient claimable balance"));
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), backing);
@@ -525,7 +592,7 @@ fn a_sub_unit_remainder_stays_claimable() {
     let remainder = U256::from(7u64);
     let backing = native(500) + remainder;
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         contract
             .storage
@@ -536,12 +603,20 @@ fn a_sub_unit_remainder_stays_claimable() {
             .unwrap();
 
         contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO, USD, USD)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Waa,
+                alice,
+                U256::ZERO,
+                USD,
+                USD,
+            )
             .unwrap();
         // The Gem carries the convertible part. What is below one protocol unit
         // keeps accumulating, and the claim does not burn its backing.
         assert_eq!(
-            gem_of(&storage, alice).promis_load_minor,
+            gem_of(&storage, world, alice).item.promis_load_minor,
             U256::from(500u64)
         );
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), remainder);
@@ -558,14 +633,22 @@ fn a_sub_unit_remainder_stays_claimable() {
 fn claiming_an_empty_pool_is_refused() {
     let alice = address!("0x1111111111111111111111111111111111111111");
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         contract
             .add_claimable_reward(RewardPool::Waa, alice, U256::from(500u64))
             .unwrap();
 
         let err = contract
-            .claim_reward(RewardPool::Sra, alice, U256::ZERO, USD, USD)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Sra,
+                alice,
+                U256::ZERO,
+                USD,
+                USD,
+            )
             .unwrap_err();
         assert!(err.to_string().contains("no claimable balance"));
     });
@@ -577,7 +660,7 @@ fn the_pools_are_claimed_apart() {
     let waa = native(500);
     let sra = native(700);
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, world| {
         seed_oracle(&storage, ONE_COEN);
         contract
             .storage
@@ -592,7 +675,15 @@ fn the_pools_are_claimed_apart() {
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), waa + sra);
 
         contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO, USD, USD)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Waa,
+                alice,
+                U256::ZERO,
+                USD,
+                USD,
+            )
             .unwrap();
         assert_eq!(
             contract
@@ -621,7 +712,7 @@ fn the_pools_are_claimed_apart() {
 
 #[test]
 fn test_add_claimable_reward_rejects_overflow() {
-    with_contract_mut(|_storage, contract| {
+    with_contract_mut(|_storage, contract, _world| {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let near_max = U256::MAX - U256::from(10u64);
 
@@ -935,7 +1026,7 @@ fn iagentreward_sol_matches_contract_public_annotations() {
 
 #[test]
 fn distribution_failure_restores_prior_pools_and_counts() {
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|storage, contract, _world| {
         let alice = Address::repeat_byte(1);
         let day = WorldwideDay::new(20231113);
         contract.increment_waa_tribute(day, alice).unwrap();
@@ -981,14 +1072,15 @@ fn distribution_failure_restores_prior_pools_and_counts() {
 
 #[test]
 fn reward_timestamp_narrowing_rejects_overflow() {
-    with_contract_mut(|storage, _| {
+    with_contract_mut(|storage, _, world| {
         seed_oracle(&storage, ONE_COEN);
         storage.set_block_timestamp(U256::MAX).unwrap();
         let error = crate::runtime::issue_reward_gem(
             &storage,
-            Address::repeat_byte(1),
+            &world.scope,
+            &world.parent,
+            (Address::repeat_byte(1), U256::from(100)),
             GemTypes::Cca,
-            U256::from(100),
             (USD, USD),
         )
         .unwrap_err();

@@ -1,5 +1,6 @@
 //! Backend-neutral, synchronous storage for node-local off-chain data.
 
+pub mod body_projection;
 mod config;
 mod day_databases;
 mod day_directory;
@@ -8,6 +9,7 @@ mod mongo;
 pub mod partitioned;
 mod pending;
 mod provider;
+pub mod repository_pages;
 mod rocks;
 mod rocks_codec;
 mod session;

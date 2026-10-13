@@ -38,7 +38,7 @@ impl CeMdbxReadOnly {
     ) -> Result<super::audit::CeAuditReport, super::audit::CeAuditError> {
         let mut tx = self.tx()?;
         tx.disable_long_read_transaction_safety();
-        super::audit::audit(&tx, &self.path, &self.identity, required, work, visitor)
+        super::audit::audit(&tx, &self.path, (&self.identity, required), work, visitor)
     }
 
     /// Opens the service-manager-configured CE environment without creating a
@@ -87,22 +87,7 @@ impl CeMdbxReadOnly {
     }
 
     fn open_snapshot(&self) -> Result<Box<dyn FinalizedTreeSnapshot>, PersistenceError> {
-        let tx = self.tx()?;
-        let marker = read_marker(&tx, &self.path)?;
-        let catalog_root = read_required_tree_root(&tx, &self.path, TreeNamespace::Catalog)?;
-        let wrapped = crate::sealed_root(catalog_root)
-            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
-        if wrapped != marker.new_root {
-            return Err(PersistenceError::CatalogWrapperMismatch {
-                expected: marker.new_root,
-                actual: wrapped,
-            });
-        }
-        Ok(Box::new(MdbxSnapshot {
-            path: self.path.clone(),
-            tx,
-            marker,
-        }))
+        Ok(Box::new(MdbxSnapshot::open(self.path.clone(), self.tx()?)?))
     }
 
     fn verify_existing(&self) -> Result<(), PersistenceError> {

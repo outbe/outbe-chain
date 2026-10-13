@@ -22,10 +22,12 @@ runs:
       run: |
         set -euo pipefail
         mise install
-        # Like the image build: keep shims usable from scratch directories outside
-        # the checkout. This also covers tools invoked by xtask, such as forge.
+        # Only circuit tools need global defaults outside the checkout. The image
+        # already pins Cargo tools; re-selecting them requires mise-managed Rust,
+        # which is deliberately disabled because rustup owns the toolchain.
         mise ls --current --json | jq -r '
-          to_entries[] | .key as $tool | .value[] |
+          to_entries[] | select(.key == "nargo" or .key == "bb") |
+          .key as $tool | .value[] |
           select(.installed) | "\($tool)@\(.version)"
         ' | xargs mise use --global
         mise reshim
