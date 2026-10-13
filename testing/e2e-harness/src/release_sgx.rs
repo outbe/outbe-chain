@@ -854,7 +854,7 @@ fn node_host_identity(
         .try_into()
         .map_err(|_| eyre!("NodeHost public key is not SEC1-33"))?;
     Ok(NodeHostIdentityV1 {
-        network_binding: network_binding.clone(),
+        network_binding: *network_binding,
         reth_p2p_public,
     })
 }
