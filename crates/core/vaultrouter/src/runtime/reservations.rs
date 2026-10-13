@@ -1,4 +1,4 @@
-//! CCA liquidity reservations held in the router's custody for a smart account.
+//! CCA liquidity reservations held in the router's custody for a Credis owner.
 
 use alloy_primitives::{Address, U256};
 
@@ -13,14 +13,14 @@ use crate::errors::VaultRouterError;
 use crate::schema::{LiquidityReservation, VaultRouterContract};
 
 /// `reserveStables`: redeem `amount` of `asset` from its origin vault into this
-/// router's custody for `smart_account`. Caller must be an active CCA.
+/// router's custody for `credis_owner`. Caller must be an active CCA.
 pub(crate) fn reserve_stables(
     storage: StorageHandle<'_>,
     caller: Address,
     call: IVaultRouter::reserveStablesCall,
 ) -> Result<U256> {
     let IVaultRouter::reserveStablesCall {
-        smartAccount: smart_account,
+        credisOwner: credis_owner,
         source,
         asset,
         amount,
@@ -28,7 +28,7 @@ pub(crate) fn reserve_stables(
     } = call;
     storage.with_checkpoint(|| {
         outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
-        if smart_account.is_zero() || source.is_zero() || asset.is_zero() {
+        if credis_owner.is_zero() || source.is_zero() || asset.is_zero() {
             return Err(VaultRouterError::ZeroAddress.into());
         }
         if amount.is_zero() {
@@ -57,7 +57,7 @@ pub(crate) fn reserve_stables(
 
         vault_withdraw(&storage, vault, amount, SELF, SELF)?;
         terms.id = id;
-        terms.smart_account = smart_account;
+        terms.credis_owner = credis_owner;
         terms.cca = caller;
         terms.source = source;
         terms.vault = vault;
@@ -67,7 +67,7 @@ pub(crate) fn reserve_stables(
         let mut contract = VaultRouterContract::new(storage.clone());
         contract.emit(IVaultRouter::ReservationCreated {
             id,
-            smartAccount: smart_account,
+            credisOwner: credis_owner,
             cca: caller,
             asset,
             vault,
@@ -78,7 +78,7 @@ pub(crate) fn reserve_stables(
     })
 }
 
-/// Validate the reserved account, pay its recorded CCA for COEN delivered to the user,
+/// Validate the receiver as the reservation's Credis owner, pay the recorded CCA for COEN delivered to it,
 /// and return any unused remainder to the origin vault.
 pub(crate) fn release_reservation(
     storage: StorageHandle<'_>,
@@ -138,7 +138,7 @@ fn release_checked(
     })
 }
 
-/// Rejects a release that the reservation's expiry, account or amount does not cover.
+/// Rejects a release that the reservation's expiry, Credis owner or amount does not cover.
 fn ensure_releasable(
     record: &LiquidityReservation,
     id: U256,
@@ -148,8 +148,8 @@ fn ensure_releasable(
 ) -> Result<()> {
     let error = if now > record.expires_at {
         VaultRouterError::ReservationExpired(id)
-    } else if receiver != record.smart_account {
-        VaultRouterError::ReservationAccountMismatch
+    } else if receiver != record.credis_owner {
+        VaultRouterError::CredisOwnerMismatch
     } else if amount > record.amount {
         VaultRouterError::ReservationInsufficient {
             available: record.amount,

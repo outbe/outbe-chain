@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::storage::types::{StorageKey, StorageSet};
@@ -19,7 +19,7 @@ pub struct LiquidityReservation {
     #[attribute(order = 1)]
     pub amount: U256,
     #[attribute(order = 2)]
-    pub smart_account: Address,
+    pub credis_owner: Address,
     #[attribute(order = 3)]
     pub cca: Address,
     #[attribute(order = 4)]
@@ -83,77 +83,20 @@ pub struct VaultRouterContract {
     #[attribute(order = 6)]
     pub liquidity_target_types: outbe_primitives::storage::dsl::Map<Address, u8>,
 
-    /// slot 10: Outbe ERC-7786 bridge used for remote management commands.
+    /// slot 10: base slot of the per-ISO-4217 vault sets.
     #[attribute(order = 7)]
-    pub crosschain_bridge: outbe_primitives::storage::dsl::Value<Address>,
-
-    /// slot 11: `chainId -> remote VaultRouter` executor.
-    #[attribute(order = 8)]
-    pub remote_vault_routers: outbe_primitives::storage::dsl::Map<U256, Address>,
-
-    /// slot 12: monotonic nonce used to derive cross-chain operation ids.
-    /// Kept at its existing slot for upgrade compatibility.
-    #[attribute(order = 9)]
-    pub crosschain_operation_nonce: outbe_primitives::storage::dsl::Value<U256>,
-
-    /// slot 13: reserved legacy pause flag. Kept to preserve storage layout.
-    /// No VaultRouter function reads or writes it.
-    #[attribute(order = 10)]
-    pub reserved_legacy_pause: outbe_primitives::storage::dsl::Value<bool>,
-
-    /// slot 14: Outbe WCOEN used by the cross-chain vault flow.
-    #[attribute(order = 11)]
-    pub crosschain_asset: outbe_primitives::storage::dsl::Value<Address>,
-
-    /// slot 15: local WCOEN ERC-7786 token bridge.
-    #[attribute(order = 12)]
-    pub crosschain_token_bridge: outbe_primitives::storage::dsl::Value<Address>,
-
-    /// slot 16: fixed destination chain hosting the BNB vault adapter.
-    #[attribute(order = 13)]
-    pub crosschain_destination_chain_id: outbe_primitives::storage::dsl::Value<U256>,
-
-    /// slot 17: finalized 1:1 remote vault receipt shares per Outbe user.
-    #[attribute(order = 14)]
-    pub crosschain_shares: outbe_primitives::storage::dsl::Map<Address, U256>,
-
-    /// slot 18: aggregate finalized Outbe receipt shares.
-    #[attribute(order = 15)]
-    pub total_crosschain_shares: outbe_primitives::storage::dsl::Value<U256>,
-
-    /// slots 19-22: flat operation records keyed by operation id.
-    #[attribute(order = 16)]
-    pub operation_users: outbe_primitives::storage::dsl::Map<B256, Address>,
-
-    #[attribute(order = 17)]
-    pub operation_amounts: outbe_primitives::storage::dsl::Map<B256, U256>,
-
-    #[attribute(order = 18)]
-    pub operation_kinds: outbe_primitives::storage::dsl::Map<B256, u8>,
-
-    #[attribute(order = 19)]
-    pub operation_statuses: outbe_primitives::storage::dsl::Map<B256, u8>,
-
-    /// slot 23: number of sent operations whose authenticated completion has
-    /// not arrived yet. Cross-chain configuration is frozen while non-zero.
-    #[attribute(order = 20)]
-    pub pending_crosschain_operations: outbe_primitives::storage::dsl::Value<U256>,
-
-    /// slot 24: base slot of the per-ISO-4217 vault sets. Appended after the
-    /// existing cross-chain layout to preserve every deployed slot.
-    #[attribute(order = 21)]
     pub reference_currency_vaults: outbe_primitives::storage::dsl::Map<u16, U256>,
 
-    /// slot 25: vault -> ISO-4217 code captured at registration time.
-    #[attribute(order = 22)]
+    /// slot 11: vault -> ISO-4217 code captured at registration time.
+    #[attribute(order = 8)]
     pub vault_reference_currencies: outbe_primitives::storage::dsl::Map<Address, u16>,
 
-    /// slot 26: monotonic nonce used directly as the reservation id.
-    #[attribute(order = 23)]
+    /// slot 12: monotonic nonce used directly as the reservation id.
+    #[attribute(order = 9)]
     pub reservation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// slot 27: CCA stables reservations keyed by id.
-    #[attribute(order = 24)]
+    /// slot 13: CCA stables reservations keyed by id.
+    #[attribute(order = 10)]
     pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
 }
 
@@ -183,7 +126,7 @@ impl From<LiquidityReservation> for crate::api::IVaultRouter::LiquidityReservati
         Self {
             asset: r.asset,
             amount: r.amount,
-            smartAccount: r.smart_account,
+            credisOwner: r.credis_owner,
             cca: r.cca,
             vault: r.vault,
             expiresAt: r.expires_at,

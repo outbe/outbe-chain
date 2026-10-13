@@ -7,6 +7,7 @@ use outbe_ccaregistry::{
     precompile::ICcaRegistry,
     runtime,
 };
+use outbe_gem::test_support::GemWorld;
 use outbe_primitives::{
     addresses::{AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
@@ -17,10 +18,10 @@ const ALICE: Address = Address::repeat_byte(1);
 const BOB: Address = Address::repeat_byte(2);
 const NOW: u64 = T_NOW;
 const DAY: u32 = 20231115;
-fn run(f: impl FnOnce(StorageHandle<'_>)) {
-    with_contract_mut(|storage, _| {
+fn run(f: impl FnOnce(StorageHandle<'_>, &GemWorld)) {
+    with_contract_mut(|storage, _, world| {
         seed_oracle(&storage, ONE_COEN);
-        f(storage);
+        f(storage, world);
     });
 }
 fn bond(storage: &StorageHandle<'_>, who: Address, amount: U256) {
@@ -40,7 +41,7 @@ fn claimable(storage: &StorageHandle<'_>, who: Address) -> U256 {
 }
 #[test]
 fn inactive_weights_are_excluded_and_residue_stays_excess() {
-    run(|storage| {
+    run(|storage, world| {
         assert_eq!(reward(&storage, U256::from(11)), U256::from(11));
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
@@ -54,7 +55,15 @@ fn inactive_weights_are_excluded_and_residue_stays_excess() {
         assert_eq!(reward(&storage, U256::from(11)), U256::ZERO);
         assert_eq!(claimable(&storage, ALICE), native(13));
         AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, BOB, U256::ZERO)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Cca,
+                BOB,
+                U256::ZERO,
+                USD,
+                USD,
+            )
             .unwrap();
         assert_eq!(storage.balance(BOB).unwrap(), U256::ZERO);
         assert_eq!(
@@ -67,7 +76,7 @@ fn inactive_weights_are_excluded_and_residue_stays_excess() {
 
 #[test]
 fn wide_reward_products_do_not_overflow_and_conversion_failure_rolls_back() {
-    run(|storage| {
+    run(|storage, _world| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         runtime::credis_issued(&storage, ALICE, DAY, U256::MAX).unwrap();
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
@@ -83,7 +92,7 @@ fn wide_reward_products_do_not_overflow_and_conversion_failure_rolls_back() {
 
 #[test]
 fn reward_map_overflow_rolls_back_earlier_credits_and_minting() {
-    run(|storage| {
+    run(|storage, _world| {
         for cca in [ALICE, BOB] {
             bond(&storage, cca, BOND_REQUIREMENT);
             runtime::credis_issued(&storage, cca, DAY, U256::ONE).unwrap();
@@ -150,7 +159,7 @@ fn daily_distribution_at_the_active_cap_matches_the_proportional_reference() {
 
 #[test]
 fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
-    run(|storage| {
+    run(|storage, _world| {
         let next = 20231116;
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
@@ -199,9 +208,9 @@ fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
 
 #[test]
 fn cca_pool_queries_and_claims_are_isolated() {
-    use crate::precompile::{dispatch, IAgentReward};
+    use crate::precompile::{dispatch, dispatch_with_readers, IAgentReward};
     use alloy_sol_types::SolCall;
-    run(|storage| {
+    run(|storage, world| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
         runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).unwrap();
@@ -236,20 +245,35 @@ fn cca_pool_queries_and_claims_are_isolated() {
         let claim = IAgentReward::claimRewardCall {
             pool: 2,
             amount: U256::ZERO,
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
         }
         .abi_encode();
         // A registered caller cannot spend another account's rewards. Unregistered calls also fail.
         for caller in [BOB, Address::repeat_byte(3)] {
-            assert!(dispatch(storage.clone(), &claim, caller, U256::ZERO).is_err());
+            assert!(dispatch_with_readers(
+                storage.clone(),
+                world.readers(),
+                &claim,
+                caller,
+                U256::ZERO
+            )
+            .is_err());
         }
-        assert!(dispatch(storage.clone(), &claim, ALICE, U256::ONE).is_err());
+        assert!(
+            dispatch_with_readers(storage.clone(), world.readers(), &claim, ALICE, U256::ONE)
+                .is_err()
+        );
         assert_eq!(claimable(&storage, ALICE), native(1000));
         for pool in [3, 255] {
-            assert!(dispatch(
+            assert!(dispatch_with_readers(
                 storage.clone(),
+                world.readers(),
                 &IAgentReward::claimRewardCall {
                     pool,
-                    amount: U256::ZERO
+                    amount: U256::ZERO,
+                    issuanceCurrency: USD,
+                    referenceCurrency: USD,
                 }
                 .abi_encode(),
                 ALICE,
@@ -269,11 +293,15 @@ fn cca_pool_queries_and_claims_are_isolated() {
             .is_err());
         }
         for pool in [0, 1] {
-            let output = dispatch(
+            let output = dispatch_with_readers(
                 storage.clone(),
+                world.readers(),
+                // An empty pool is a no-op whatever currencies the call names.
                 &IAgentReward::claimRewardCall {
                     pool,
                     amount: U256::ZERO,
+                    issuanceCurrency: 0,
+                    referenceCurrency: 0,
                 }
                 .abi_encode(),
                 BOB,
@@ -285,10 +313,12 @@ fn cca_pool_queries_and_claims_are_isolated() {
                 U256::ZERO
             );
         }
-        let output = dispatch(storage.clone(), &claim, ALICE, U256::ZERO).unwrap();
+        let output =
+            dispatch_with_readers(storage.clone(), world.readers(), &claim, ALICE, U256::ZERO)
+                .unwrap();
         let id = IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap();
         assert_eq!(
-            outbe_gem::api::get_gem(&storage, id)
+            outbe_gem::api::get_item(&storage, &world.scope, &world.parent, id)
                 .unwrap()
                 .unwrap()
                 .gem_type,
@@ -322,7 +352,7 @@ fn cca_pool_queries_and_claims_are_isolated() {
 
 #[test]
 fn deregistered_cca_claims_from_agentreward_after_withdrawing_bond() {
-    run(|storage| {
+    run(|storage, world| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).unwrap();
         reward(&storage, U256::from(1000));
@@ -347,12 +377,23 @@ fn deregistered_cca_claims_from_agentreward_after_withdrawing_bond() {
             )
             .unwrap();
         AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Cca,
+                ALICE,
+                U256::ZERO,
+                USD,
+                USD,
+            )
             .unwrap();
         assert_eq!(claimable(&storage, ALICE), U256::ZERO);
         assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(storage.balance(ALICE).unwrap(), BOND_REQUIREMENT);
-        assert_eq!(gem_of(&storage, ALICE).promis_load_minor, U256::from(1000));
+        assert_eq!(
+            gem_of(&storage, world, ALICE).item.promis_load_minor,
+            U256::from(1000)
+        );
     });
 }
 
@@ -365,7 +406,7 @@ fn originate(storage: &StorageHandle<'_>, who: Address, weight: u64) {
 
 #[test]
 fn one_eligible_cca_receives_the_whole_pool() {
-    run(|storage| {
+    run(|storage, _world| {
         originate(&storage, ALICE, 1);
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
         assert_eq!(claimable(&storage, ALICE), native(100));
@@ -379,7 +420,7 @@ fn one_eligible_cca_receives_the_whole_pool() {
 
 #[test]
 fn weights_eighty_and_twenty_split_a_hundred_with_no_excess() {
-    run(|storage| {
+    run(|storage, _world| {
         originate(&storage, ALICE, 80);
         originate(&storage, BOB, 20);
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
@@ -395,7 +436,7 @@ fn weights_eighty_and_twenty_split_a_hundred_with_no_excess() {
 
 #[test]
 fn concentrated_weights_are_not_capped() {
-    run(|storage| {
+    run(|storage, _world| {
         originate(&storage, ALICE, 90);
         originate(&storage, BOB, 10);
         assert_eq!(reward(&storage, U256::from(1000)), U256::ZERO);
@@ -406,7 +447,7 @@ fn concentrated_weights_are_not_capped() {
 
 #[test]
 fn equal_weights_leave_indivisible_residue_as_excess() {
-    run(|storage| {
+    run(|storage, _world| {
         originate(&storage, ALICE, 1);
         originate(&storage, BOB, 1);
         originate(&storage, CAROL, 1);
@@ -420,7 +461,7 @@ fn equal_weights_leave_indivisible_residue_as_excess() {
 
 #[test]
 fn zero_cca_pool_credits_nothing() {
-    run(|storage| {
+    run(|storage, _world| {
         originate(&storage, ALICE, 80);
         assert_eq!(reward(&storage, U256::ZERO), U256::ZERO);
         assert_eq!(claimable(&storage, ALICE), U256::ZERO);
@@ -434,14 +475,30 @@ fn zero_cca_pool_credits_nothing() {
 
 #[test]
 fn a_second_claim_does_not_mint_or_move_the_bond() {
-    run(|storage| {
+    run(|storage, world| {
         originate(&storage, ALICE, 1);
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
         let gem_id = AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Cca,
+                ALICE,
+                U256::ZERO,
+                USD,
+                USD,
+            )
             .unwrap();
         assert!(AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO)
+            .claim_reward(
+                &world.scope,
+                &world.parent,
+                RewardPool::Cca,
+                ALICE,
+                U256::ZERO,
+                USD,
+                USD
+            )
             .is_err());
         assert_eq!(claimable(&storage, ALICE), U256::ZERO);
         assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
@@ -451,13 +508,13 @@ fn a_second_claim_does_not_mint_or_move_the_bond() {
             BOND_REQUIREMENT
         );
         assert_eq!(
-            outbe_gem::GemContract::new(storage.clone())
-                .balance_of(ALICE)
-                .unwrap(),
+            outbe_gem::api::list_by_owner(&storage, &world.scope, &world.parent, ALICE)
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            outbe_gem::api::get_gem(&storage, gem_id)
+            outbe_gem::api::get_item(&storage, &world.scope, &world.parent, gem_id)
                 .unwrap()
                 .unwrap()
                 .promis_load_minor,

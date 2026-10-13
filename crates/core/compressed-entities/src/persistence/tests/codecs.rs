@@ -36,7 +36,7 @@ fn v3_tree_namespaces_are_typed_canonical_and_domain_bounded() {
     let namespaces = [
         TreeNamespace::Catalog,
         TreeNamespace::CollectionShard(collection, 0),
-        TreeNamespace::CollectionShard(collection, K_PROVISIONAL - 1),
+        TreeNamespace::CollectionShard(collection, 255),
     ];
     for namespace in namespaces {
         let encoded = namespace.encode();
@@ -45,10 +45,9 @@ fn v3_tree_namespaces_are_typed_canonical_and_domain_bounded() {
     assert!(TreeNamespace::decode(&[]).is_err());
     assert!(TreeNamespace::decode(&[2]).is_err());
     assert!(TreeNamespace::decode(&[0, 0]).is_err());
-    assert!(TreeNamespace::decode(
-        &TreeNamespace::CollectionShard(collection, K_PROVISIONAL).encode()
-    )
-    .is_err());
+    assert!(
+        TreeNamespace::decode(&TreeNamespace::CollectionShard(collection, 256).encode()).is_err()
+    );
 }
 
 #[test]

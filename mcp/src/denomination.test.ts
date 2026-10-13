@@ -432,14 +432,14 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
     {
       tool: "agentreward_claim",
       contract: "agentreward",
-      args: { pool: 0, amount: "1.5", wait: false },
+      args: { pool: 0, amount: "1.5", issuance_currency: 840, reference_currency: 978, wait: false },
       amountIndex: 1,
       value: 0n,
     },
     {
       tool: "agentreward_claim",
       contract: "agentreward",
-      args: { pool: 2, amount: "1.5", wait: false },
+      args: { pool: 2, amount: "1.5", issuance_currency: 840, reference_currency: 978, wait: false },
       amountIndex: 1,
       value: 0n,
     },
@@ -456,6 +456,9 @@ test("MCP signed COEN inputs convert whole amounts to eighteen-decimal units", a
     assert.equal(decoded.args?.[item.amountIndex], 1_500_000_000_000_000_000n, item.tool);
     assert.equal(transaction.value, item.value, `${item.tool} msg.value`);
     if ("pool" in item.args) assert.equal(decoded.args?.[0], item.args.pool);
+    if ("reference_currency" in item.args) {
+      assert.deepEqual(decoded.args?.slice(2), [item.args.issuance_currency, item.args.reference_currency]);
+    }
   }
 });
 
@@ -545,17 +548,17 @@ test("MCP Credis and pledge tools encode their calls against the registered ABIs
     for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
     chain.register(ERC20_ABI);
   });
-  const smartAccount = "0x00000000000000000000000000000000000000aa";
+  const credisOwner = "0x00000000000000000000000000000000000000aa";
   const source = SIGNER;
   const asset = "0x0000000000000000000000000000000000000888";
   const mac = `0x${"22".repeat(32)}`;
   const cases = [
     {
       tool: "credis_reserve",
-      args: { smart_account: smartAccount, source, asset, amount: "300", reference_currency: 840 },
+      args: { credis_owner: credisOwner, source, asset, amount: "300", reference_currency: 840 },
       contract: "vaultrouter",
       functionName: "reserveStables",
-      expected: [smartAccount, source, asset, 300n, 840],
+      expected: [credisOwner, source, asset, 300n, 840],
       value: 0n,
     },
     {

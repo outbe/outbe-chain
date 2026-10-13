@@ -81,12 +81,14 @@ pub use proof::{
     VerifiedPointReadV1, PROOF_ENCODING_VERSION_V1,
 };
 pub use protobuf::{
-    decode_nod_bucket_v1, decode_nod_item_v1, decode_nod_item_v2, decode_stored_body,
+    decode_gem_bucket_v1, decode_gem_v1, decode_nod_bucket_v1, decode_nod_item_v1,
+    decode_nod_item_v2, decode_stored_body, decode_stored_gem_bucket_v1, decode_stored_gem_v1,
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, decode_stored_nod_item_v2,
     decode_stored_tribute_v1, decode_stored_tribute_v2, decode_tribute_v1, decode_tribute_v2,
-    encode_nod_bucket_v1, encode_nod_item_v1, encode_nod_item_v2, encode_tribute_v1,
-    encode_tribute_v2, CanonicalBodyError, NodBucketBodyV1, NodItemBodyV1, NodItemBodyV2,
-    StoredBody, TributeBodyV1, BODY_SCHEMA_V1, NOD_BODY_SCHEMA_V2, TRIBUTE_BODY_SCHEMA_V2,
+    encode_gem_bucket_v1, encode_gem_v1, encode_nod_bucket_v1, encode_nod_item_v1,
+    encode_nod_item_v2, encode_tribute_v1, encode_tribute_v2, CanonicalBodyError, GemBodyV1,
+    GemBucketBodyV1, NodBucketBodyV1, NodItemBodyV1, NodItemBodyV2, StoredBody, TributeBodyV1,
+    BODY_SCHEMA_V1, NOD_BODY_SCHEMA_V2, TRIBUTE_BODY_SCHEMA_V2,
 };
 pub use readers::ExecutionReaders;
 pub use replay::{

@@ -278,6 +278,8 @@ fn one_block_atomically_creates_three_independent_domain_collections() {
         EntityRef::Tribute(id),
         EntityRef::NodItem(id),
         EntityRef::NodBucket(id),
+        EntityRef::Gem(id),
+        EntityRef::GemBucket(id),
     ]
     .map(|entity| FinalLeafMutation {
         entity,
@@ -289,12 +291,18 @@ fn one_block_atomically_creates_three_independent_domain_collections() {
         .prepare_seal(1, &mutations, &[])
         .unwrap()
         .freeze(B256::repeat_byte(0x31));
-    assert_eq!(staged.changed_collections.len(), 3);
-    assert_eq!(staged.catalog_batch.as_ref().unwrap().leaf_changes.len(), 3);
+    assert_eq!(staged.changed_collections.len(), 5);
+    assert_eq!(staged.catalog_batch.as_ref().unwrap().leaf_changes.len(), 5);
     db.apply_finalized(&staged).unwrap();
 
     let snapshot = db.open_snapshot().unwrap();
-    for domain in [CeDomain::Tribute, CeDomain::NodItem, CeDomain::NodBucket] {
+    for domain in [
+        CeDomain::Tribute,
+        CeDomain::NodItem,
+        CeDomain::NodBucket,
+        CeDomain::Gem,
+        CeDomain::GemBucket,
+    ] {
         let key = collection_key(domain, id).unwrap();
         assert!(snapshot.collection_has_records(key).unwrap());
         assert!(snapshot
@@ -316,6 +324,8 @@ fn entity_kind(entity: EntityRef) -> u8 {
         EntityRef::Tribute(_) => 1,
         EntityRef::NodItem(_) => 2,
         EntityRef::NodBucket(_) => 3,
+        EntityRef::Gem(_) => 4,
+        EntityRef::GemBucket(_) => 5,
     }
 }
 
@@ -337,7 +347,7 @@ fn v3_namespace_codec_is_typed_strict_and_order_preserving() {
     for malformed in [
         vec![2],
         vec![0, 0],
-        TreeNamespace::CollectionShard(key, K_PROVISIONAL).encode(),
+        TreeNamespace::CollectionShard(key, 256).encode(),
     ] {
         assert!(TreeNamespace::decode(&malformed).is_err());
     }

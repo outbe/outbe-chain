@@ -103,7 +103,6 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
         );
         StorageHandle::enter(&mut provider, |storage| {
             bootstrap(&storage, collateral);
-            deploy_smart_account(&storage, bob());
             let reservation_id = seed_reservation(&storage, bob(), alice(), principal);
             let mut reservation =
                 outbe_vaultrouter::api::reservation_of(&storage, reservation_id).unwrap();
@@ -457,7 +456,7 @@ fn issue_credis_requires_the_stake_to_equal_the_collateral() {
 }
 
 #[test]
-fn the_stake_stays_with_the_smart_account_through_settlement_and_forfeit() {
+fn the_stake_stays_with_the_owner_through_settlement_and_forfeit() {
     for forfeit in [false, true] {
         let mut provider = env();
         StorageHandle::enter(&mut provider, |storage| {
@@ -548,7 +547,6 @@ fn a_half_paid_call_forfeits_only_the_unpaid_backing_of_another_accounts_source(
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
-        deploy_smart_account(&storage, bob());
         let id = seed_reservation(&storage, bob(), alice(), pledge_stables());
         pledge(&storage, alice(), id, 1);
         let unused = seed_reservation(&storage, alice(), alice(), pledge_stables());
@@ -737,8 +735,8 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
     assert_eq!(
         [views, called_views],
         [
-            b256!("0xe22a7fe8985294750c5e2aad26bae4ef610cfdf5c25156bfe7dbcc718b73d8a4"),
-            b256!("0xb089f5ec74cdc88da98c0df7db26f3ad9dfedc2218e945022b413da641df52b1"),
+            b256!("0x7e6b406253d988cd27b5cbfb246b1bd7322f9f4911148d6dc6c7ba5fae5f4bc3"),
+            b256!("0x6c25580c8311832a45e33c6d99fd5a9d5e36e5edda93ee221756a1f921ba8b13"),
         ]
     );
     assert_eq!(
@@ -749,42 +747,42 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
                 reads: 94,
                 writes: 41,
                 logs: b256!("0x36c28055f46240955c8ed66a51e4c939e2d7c7b36bdd40387dddc24db87e43cc"),
-                state: b256!("0x35143b2f04c993e35f390ffe6902b890436ad7ea4e3463653023b17704ced77c"),
+                state: b256!("0xb8eec5beb497f05b2c86fa89b411c74b36c43db23c89ac15d65238f565e54007"),
             },
             Footprint {
                 gas: 183700,
                 reads: 137,
                 writes: 34,
                 logs: b256!("0xabf2b6c4044763cab91e5cbc28c63bdf510963c3b85ea94150562846159fe368"),
-                state: b256!("0x60f764942a89af9d1cb3f43d4342dcb851f7385086fb92be7d45dcedf85d8483"),
+                state: b256!("0x8660cf61b4b9eea473d98bbec7ad39ab5200f946c89e7ce5ee9eb241fa895488"),
             },
             Footprint {
                 gas: 10200,
                 reads: 102,
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-                state: b256!("0x60f764942a89af9d1cb3f43d4342dcb851f7385086fb92be7d45dcedf85d8483"),
+                state: b256!("0x8660cf61b4b9eea473d98bbec7ad39ab5200f946c89e7ce5ee9eb241fa895488"),
             },
             Footprint {
                 gas: 214200,
                 reads: 142,
                 writes: 40,
                 logs: b256!("0x9bc938ba84f2da035d825b274f8ac29c997dbec15d3a459172a168b90c46ecc2"),
-                state: b256!("0xb90aca79c472fc49f47cc5102a63df09f6a592c2a12c7e05d17299eec62f8b6c"),
+                state: b256!("0x73ad21bf77603444ec53f7b2ec3532aeef27920ff709f75258cae5e522d5074d"),
             },
             Footprint {
                 gas: 10200,
                 reads: 102,
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-                state: b256!("0x095b3bae0699c848e4980667e80f87acd148c471e71da85268c4c22986b31cfc"),
+                state: b256!("0xab7152f6949622031d1b7837ec0d68566d5422fad25927d2d1718be5a5f29a10"),
             },
             Footprint {
                 gas: 228800,
                 reads: 138,
                 writes: 43,
                 logs: b256!("0x81f01b28f8f9039cd7d463c5f70139bf2384e0e24c333878342348d88f5e8c7c"),
-                state: b256!("0x0f52b25ec3292ecf2a3514618432f1d2234680cc7dad94873734129f21e13a97"),
+                state: b256!("0x2a5d3b50206d7e4a282f9cc92a378f6e7f0015207d72279ce80401909e607b15"),
             },
         ]
     );

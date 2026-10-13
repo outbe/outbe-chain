@@ -1097,7 +1097,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1108,7 +1108,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4384,7 +4384,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6028,7 +6028,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -6418,7 +6418,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7815,7 +7815,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8210,6 +8210,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
+ "outbe-compressed-entities",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-macros",
@@ -8253,6 +8254,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-engine",
  "outbe-evm",
+ "outbe-gem",
  "outbe-intex",
  "outbe-lysis",
  "outbe-metadosis",
@@ -8834,12 +8836,17 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.22.1",
  "hex",
+ "mongodb",
  "outbe-common",
+ "outbe-compressed-entities",
  "outbe-macros",
+ "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
+ "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -8852,6 +8859,7 @@ dependencies = [
  "alloy-sol-types",
  "base64 0.22.1",
  "outbe-common",
+ "outbe-compressed-entities",
  "outbe-gem",
  "outbe-intex",
  "outbe-macros",
@@ -9353,6 +9361,7 @@ dependencies = [
  "alloy-sol-types",
  "mongodb",
  "outbe-compressed-entities",
+ "outbe-gem",
  "outbe-nod",
  "outbe-offchain-storage",
  "outbe-primitives",
@@ -9642,6 +9651,7 @@ dependencies = [
  "commonware-codec",
  "commonware-consensus",
  "commonware-cryptography",
+ "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-emissionlimit",
  "outbe-gem",
@@ -9649,6 +9659,8 @@ dependencies = [
  "outbe-macros",
  "outbe-metadosis",
  "outbe-ocomp-protocol",
+ "outbe-offchain-data",
+ "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
@@ -9656,6 +9668,7 @@ dependencies = [
  "proptest",
  "rand 0.8.6",
  "rand_chacha 0.3.1",
+ "tempfile",
  "tracing",
 ]
 
@@ -9670,7 +9683,9 @@ dependencies = [
  "hex",
  "jsonrpsee",
  "outbe-compressed-entities",
+ "outbe-gem",
  "outbe-offchain-data",
+ "outbe-offchain-storage",
  "outbe-primitives",
  "outbe-radicle 0.1.0",
  "outbe-rewards",
@@ -9685,6 +9700,7 @@ dependencies = [
  "reth-provider",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -10924,9 +10940,9 @@ dependencies = [
 
 [[package]]
 name = "quinn"
-version = "0.11.9"
+version = "0.11.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e20a958963c291dc322d98411f541009df2ced7b5a4f2bd52337638cfccf20"
+checksum = "4051e23e9185c255a7e33ef59cdbca87a22d359052eecd22fc6b901fb37d9d11"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -10935,7 +10951,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -10974,9 +10990,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -14848,7 +14864,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -14928,7 +14944,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs 1.0.7",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -15904,7 +15920,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -16360,7 +16376,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -16379,7 +16395,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -17224,7 +17240,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -17750,7 +17766,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

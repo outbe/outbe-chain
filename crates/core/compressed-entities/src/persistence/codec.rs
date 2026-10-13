@@ -7,7 +7,6 @@ use std::cmp::Ordering as CmpOrdering;
 use super::PersistenceError;
 use crate::staging::ShardIndex;
 use crate::CollectionKey;
-use crate::K_PROVISIONAL;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TreeNamespace {
@@ -37,7 +36,7 @@ impl TreeNamespace {
                 let collection = CollectionKey::try_from(B256::from_slice(collection))
                     .map_err(|_| PersistenceError::NonCanonicalTreeNamespace)?;
                 let shard = u32::from_be_bytes([*a, *b, *c, *d]);
-                if shard >= K_PROVISIONAL {
+                if shard >= 256 {
                     return Err(PersistenceError::InvalidNamespaceShard { shard });
                 }
                 Ok(Self::CollectionShard(collection, shard))

@@ -59,10 +59,17 @@ pub(super) fn prepare(
     crate::ProvisionalTreeBatch::new(
         block_number,
         B256::ZERO,
-        parent_root,
-        crate::sealed_root(new_catalog_root).map_err(|error| fatal_scope(error.to_string()))?,
-        B256::ZERO,
-        new_catalog_root,
+        crate::staging::CatalogRoots {
+            sealed: crate::staging::RootTransition {
+                parent: parent_root,
+                new: crate::sealed_root(new_catalog_root)
+                    .map_err(|error| fatal_scope(error.to_string()))?,
+            },
+            catalog: crate::staging::RootTransition {
+                parent: B256::ZERO,
+                new: new_catalog_root,
+            },
+        },
         changed_collections,
         catalog_batch,
     )
@@ -76,6 +83,8 @@ fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedLeaves> {
             EntityRef::Tribute(id) => (CeDomain::Tribute, Collection::Tribute, id),
             EntityRef::NodItem(id) => (CeDomain::NodItem, Collection::NodItem, id),
             EntityRef::NodBucket(id) => (CeDomain::NodBucket, Collection::NodBucket, id),
+            EntityRef::Gem(id) => (CeDomain::Gem, Collection::Gem, id),
+            EntityRef::GemBucket(id) => (CeDomain::GemBucket, Collection::GemBucket, id),
         };
         let Some(commitment) = mutation.final_leaf else {
             continue;
@@ -122,8 +131,10 @@ fn prepare_collection(
         .map_err(|error| fatal_scope(error.to_string()))?;
     let shard_set = ProvisionalShardSetBatch::new(
         domain.shard_count(),
-        parent_top,
-        new_top,
+        crate::staging::RootTransition {
+            parent: parent_top,
+            new: new_top,
+        },
         parent_roots,
         new_roots,
         changed_shards,

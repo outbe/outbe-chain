@@ -845,7 +845,9 @@ fn noir_sponge_and_collection_vectors_are_pinned() {
             hex::encode(crate::collection::tree_key_bytes(domain, identity).unwrap()),
             vector["tree_key"]
         );
-        let roots = (0..16).map(B256::with_last_byte).collect::<Vec<_>>();
+        let roots = (0..domain.shard_count())
+            .map(|value| B256::with_last_byte(u8::try_from(value).unwrap()))
+            .collect::<Vec<_>>();
         let top = crate::sharding::aggregate_b256_shard_roots(&roots).unwrap();
         assert_eq!(hex::encode(top), vector["shard_top_root"]);
         assert_eq!(

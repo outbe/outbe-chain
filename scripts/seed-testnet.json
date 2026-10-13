@@ -4,14 +4,6 @@
     "0x265846D63407cB61354B6AFd317A509DF4dcc327": "1000000000000000000000"
   },
   "tributes": [],
-  "gems": [
-    {
-      "owner": "0x64CCA861d30714593cB690e0a550C8a9b8b3b058",
-      "promis_load": "1000000000",
-      "issuance_currency": 840,
-      "reference_currency": 840
-    }
-  ],
   "validator_set": {
     "max_validators": 128,
     "reregistration_cooldown_blocks": 151200

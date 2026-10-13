@@ -7,6 +7,8 @@ pub(super) fn prepare_input(input: BodyInput<'_>) -> Result<PreparedBody> {
         BodyInput::NodItem(body) => prepare_nod_item(body.clone()),
         BodyInput::EncryptedNodItem(body) => prepare_encrypted_nod_item(body),
         BodyInput::NodBucket(body) => prepare_nod_bucket(body.clone()),
+        BodyInput::Gem(body) => prepare_gem(body),
+        BodyInput::GemBucket(body) => prepare_gem_bucket(body),
     }
 }
 
@@ -82,6 +84,34 @@ fn prepare_nod_bucket(body: NodBucketBodyV1) -> Result<PreparedBody> {
     let commitment = calculate_commitment(entity_id, &payload)?;
     Ok(PreparedBody {
         collection: Collection::NodBucket,
+        entity_id,
+        stored_body,
+        commitment,
+        memberships: Vec::new(),
+    })
+}
+
+fn prepare_gem(body: &crate::GemBodyV1) -> Result<PreparedBody> {
+    let payload = crate::encode_gem_v1(body).map_err(input_error)?;
+    let stored_body = StoredBody::new(BODY_SCHEMA_V1, payload.clone()).map_err(input_error)?;
+    let entity_id = body.gem_id;
+    let commitment = calculate_commitment(entity_id, &payload)?;
+    Ok(PreparedBody {
+        collection: Collection::Gem,
+        entity_id,
+        stored_body,
+        commitment,
+        memberships: vec![IndexRecord::gem_owner(body.owner, entity_id)],
+    })
+}
+
+fn prepare_gem_bucket(body: &crate::GemBucketBodyV1) -> Result<PreparedBody> {
+    let payload = crate::encode_gem_bucket_v1(body).map_err(input_error)?;
+    let stored_body = StoredBody::new(BODY_SCHEMA_V1, payload.clone()).map_err(input_error)?;
+    let entity_id = body.entity_id();
+    let commitment = calculate_commitment(entity_id, &payload)?;
+    Ok(PreparedBody {
+        collection: Collection::GemBucket,
         entity_id,
         stored_body,
         commitment,
@@ -178,6 +208,16 @@ fn decode_stored_payload(
             let body =
                 decode_nod_bucket_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
             (body.entity_id(), nod_bucket_payload(body))
+        }
+        EntityRef::Gem(_) => {
+            let body =
+                crate::decode_gem_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
+            (body.gem_id, crate::api::gem_payload(body))
+        }
+        EntityRef::GemBucket(_) => {
+            let body = crate::decode_gem_bucket_v1(payload)
+                .map_err(|error| origin.invalid(error.to_string()))?;
+            (body.entity_id(), crate::api::gem_bucket_payload(body))
         }
     };
     Ok(decoded)

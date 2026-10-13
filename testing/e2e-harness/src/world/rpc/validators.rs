@@ -272,9 +272,15 @@ impl Rpc {
         )
     }
 
-    /// Claim the caller's complete AgentReward balance in one pool as a Gem
-    /// through an ordinary paid transaction and return its public receipt.
-    pub fn claim_agent_reward_gem(&self, key: &str, pool: u8) -> Result<serde_json::Value> {
+    /// Claim the caller's complete AgentReward balance in one pool as a Gem in the
+    /// given currencies through an ordinary paid transaction and return its public receipt.
+    pub fn claim_agent_reward_gem(
+        &self,
+        key: &str,
+        pool: u8,
+        issuance_currency: u16,
+        reference_currency: u16,
+    ) -> Result<serde_json::Value> {
         let tx_hash = eth::send_call_with_gas_reserve(
             &self.cfg.rpc0,
             addresses::AGENT_REWARD_ADDR,
@@ -282,6 +288,8 @@ impl Rpc {
             &IAgentReward::claimRewardCall {
                 pool,
                 amount: U256::ZERO,
+                issuanceCurrency: issuance_currency,
+                referenceCurrency: reference_currency,
             },
             None,
         )?;

@@ -1,16 +1,13 @@
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, B256, U256};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::units::{checked_protocol_to_native, native_to_protocol_floor};
-
-/// ISO 4217 code that both currency axes of an agent reward Gem carry. Protocol
-/// policy denominates agent rewards in USD, the same as validator Gems.
-const AGENT_GEM_CURRENCY: u16 = 840;
 
 impl AgentRewardContract<'_> {
     /// Increments WAA (wallet) tribute count for an address on `day`.
@@ -105,13 +102,22 @@ impl AgentRewardContract<'_> {
     /// Gem can be Called and forfeited. Sizing the claim is therefore the agent's
     /// own risk control. The part that the agent does not claim keeps accruing.
     ///
-    /// Any failure reverts the call and leaves the balance for the next day, which
-    /// brings a new VWAP with it.
+    /// The Gem carries the caller's currencies. Its entry price is the previous
+    /// UTC day's COEN VWAP in `reference_currency`, which must be an Oracle
+    /// reference currency.
+    ///
+    /// Any failure reverts the call and leaves the balance intact. A missing VWAP
+    /// waits for the next day, which brings a new VWAP with it.
+    #[allow(clippy::too_many_arguments)] // ABI fields plus explicit CE read context.
     pub fn claim_reward(
         &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
         pool: RewardPool,
         address: Address,
         amount: U256,
+        issuance_currency: u16,
+        reference_currency: u16,
     ) -> Result<U256> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -148,7 +154,14 @@ impl AgentRewardContract<'_> {
                 RewardPool::Sra => GemTypes::Sra,
                 RewardPool::Cca => GemTypes::Cca,
             };
-            let gem_id = issue_reward_gem(&self.storage, address, gem_type, gem_load)?;
+            let gem_id = issue_reward_gem(
+                &self.storage,
+                scope,
+                parent,
+                (address, gem_load),
+                gem_type,
+                (issuance_currency, reference_currency),
+            )?;
             self.storage
                 .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
             self.write_pool_claimable_reward(pool, address, balance - burned)?;
@@ -244,34 +257,45 @@ fn read_tribute_counts(
 /// Shared issuance economics and claim-day pricing for WAA, SRA and CCA rewards.
 pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
-    owner: Address,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    recipient: (Address, U256),
     gem_type: GemTypes,
-    load: U256,
+    (issuance_currency, reference_currency): (u16, u16),
 ) -> Result<U256> {
-    let entry_price = resolve_gem_entry_price(storage)?.ok_or_else(|| {
-        PrecompileError::Revert("agentreward has no usable COEN price yet".into())
+    let (owner, load) = recipient;
+    outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
+    let entry_price = resolve_gem_entry_price(storage, reference_currency)?.ok_or_else(|| {
+        PrecompileError::Revert(format!(
+            "agentreward has no previous-day COEN price in {reference_currency}"
+        ))
     })?;
     outbe_gemfactory::api::issue_gem(
         storage,
+        scope,
+        parent,
         outbe_gemfactory::GemIssueParams {
             owner,
             gem_type,
             promis_load: load,
-            issuance_currency: AGENT_GEM_CURRENCY,
-            reference_currency: AGENT_GEM_CURRENCY,
+            issuance_currency,
+            reference_currency,
             entry_price,
         },
     )
 }
 
-fn resolve_gem_entry_price(storage: &StorageHandle<'_>) -> Result<Option<U256>> {
+fn resolve_gem_entry_price(
+    storage: &StorageHandle<'_>,
+    reference_currency: u16,
+) -> Result<Option<U256>> {
     // Unix seconds must fit u64. Reject malformed timestamps instead of truncating.
     let now: u64 = storage
         .timestamp()?
         .try_into()
         .map_err(|_| PrecompileError::Revert("reward timestamp overflow".into()))?;
     let day = previous_date_key(timestamp_to_date_key(now));
-    outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, AGENT_GEM_CURRENCY)
+    outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)
 }
 
 /// Overflow-checked `U256` addition for reward accounting paths.

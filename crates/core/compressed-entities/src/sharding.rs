@@ -9,11 +9,11 @@ use crate::{
     TAG_TOP_NODE,
 };
 
-pub const K_CANDIDATES: [u32; 6] = [1, 2, 4, 8, 16, 32];
+pub const K_CANDIDATES: [u32; 9] = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 
 #[derive(Debug, Error)]
 pub enum ShardingError {
-    #[error("shard count must be a power of two in 1..=32, got {actual}")]
+    #[error("shard count must be a power of two in 1..=256, got {actual}")]
     InvalidShardCount { actual: u32 },
     #[error("Poseidon shard-top aggregation failed")]
     TreeHash,
@@ -97,7 +97,7 @@ pub(crate) fn aggregate_shard_roots(roots: &[TreeRoot]) -> Result<TreeRoot, Tree
 }
 
 fn validate_shard_count(shard_count: u32) -> Result<(), TreeError> {
-    if shard_count == 0 || shard_count > 32 || !shard_count.is_power_of_two() {
+    if shard_count == 0 || shard_count > 256 || !shard_count.is_power_of_two() {
         return Err(TreeError::InvalidShardCount {
             actual: shard_count,
         });
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn shard_selection_uses_numeric_low_bits_through_ckb_indexing() {
-        assert_eq!(K_CANDIDATES, [1, 2, 4, 8, 16, 32]);
+        assert_eq!(K_CANDIDATES, [1, 2, 4, 8, 16, 32, 64, 128, 256]);
         let vectors = [
             ([0_u8; 32], 1, 0),
             ([0_u8; 32], K_PROVISIONAL, 0),
@@ -180,7 +180,7 @@ mod tests {
         for (tree_key, shard_count, expected) in vectors {
             assert_eq!(shard_index(key(tree_key), shard_count).unwrap(), expected);
         }
-        for invalid in [0, 3, 64] {
+        for invalid in [0, 3, 512] {
             assert!(shard_index(key([0_u8; 32]), invalid).is_err());
         }
     }
@@ -198,9 +198,12 @@ mod tests {
             derive_tree_key(Collection::NodItem, identity).unwrap(),
             derive_tree_key(Collection::NodBucket, identity).unwrap(),
         ]
-        .map(|tree_key| shard_index(tree_key, K_PROVISIONAL).unwrap());
+        .into_iter()
+        .zip([16, 256, 256])
+        .map(|(tree_key, k)| shard_index(tree_key, k).unwrap())
+        .collect::<Vec<_>>();
 
-        assert_eq!(actual, [8, 3, 15]);
+        assert_eq!(actual, [8, 51, 111]);
     }
 
     #[derive(Deserialize)]
@@ -221,6 +224,7 @@ mod tests {
     #[derive(Deserialize)]
     struct RealVector {
         collection: String,
+        k: u32,
         tree_key_hex: String,
         shard_index: u32,
     }
@@ -248,14 +252,13 @@ mod tests {
                 "Tribute" => Collection::Tribute,
                 "NodItem" => Collection::NodItem,
                 "NodBucket" => Collection::NodBucket,
+                "Gem" => Collection::Gem,
+                "GemBucket" => Collection::GemBucket,
                 other => panic!("unknown vector collection {other}"),
             };
             let derived = derive_tree_key(collection, identity).unwrap();
             assert_eq!(hex::encode(derived.as_bytes()), vector.tree_key_hex);
-            assert_eq!(
-                shard_index(derived, K_PROVISIONAL).unwrap(),
-                vector.shard_index
-            );
+            assert_eq!(shard_index(derived, vector.k).unwrap(), vector.shard_index);
         }
     }
 
@@ -279,5 +282,24 @@ mod tests {
 
         assert!(aggregate_shard_roots(&[]).is_err());
         assert!(aggregate_shard_roots(&[TreeRoot::EMPTY; 3]).is_err());
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn nod_real_shards_at_k256_differ_from_k16() {
+    let bytes: [u8; 32] =
+        hex::decode("000000010405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+            .unwrap()
+            .try_into()
+            .unwrap();
+    let id = crate::WwdEntityId::from(bytes);
+    for (kind, narrow, wide) in [
+        (crate::schema::Collection::NodItem, 3, 51),
+        (crate::schema::Collection::NodBucket, 15, 111),
+    ] {
+        let key = crate::smt::derive_tree_key(kind, id).unwrap();
+        assert_eq!(shard_index(key, 16).unwrap(), narrow);
+        assert_eq!(shard_index(key, 256).unwrap(), wide);
     }
 }

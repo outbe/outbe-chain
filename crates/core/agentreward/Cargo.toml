@@ -11,12 +11,13 @@ outbe-ccaregistry.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-gemfactory.workspace = true
+outbe-compressed-entities.workspace = true
 outbe-oracle.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
 [dev-dependencies]
-outbe-gem.workspace = true
+outbe-gem = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 
 [package.metadata.cargo-machete]

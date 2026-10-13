@@ -11,12 +11,18 @@ use crate::{
 
 pub const K_PROVISIONAL: u32 = 16;
 
+// Protocol-fixed CES2 sealing of the empty catalog.
+pub(crate) const EMPTY_SEALED_ROOT: B256 =
+    alloy_primitives::b256!("247048d4786c64554511d6de5ef953f9b3754d3e7a21234fe94d4dc9981cd1ed");
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(u16)]
 pub enum CeDomain {
     Tribute = 1,
     NodItem = 2,
     NodBucket = 3,
+    Gem = 4,
+    GemBucket = 5,
 }
 
 impl CeDomain {
@@ -27,13 +33,18 @@ impl CeDomain {
 
     #[must_use]
     pub const fn shard_count(self) -> u32 {
-        K_PROVISIONAL
+        match self {
+            Self::Tribute => 16,
+            Self::NodItem | Self::NodBucket | Self::Gem | Self::GemBucket => 256,
+        }
     }
 
     const fn policy(self) -> PartitionPolicy {
         match self {
             Self::Tribute => PartitionPolicy::WwdBe4,
-            Self::NodItem | Self::NodBucket => PartitionPolicy::Singleton,
+            Self::NodItem | Self::NodBucket | Self::Gem | Self::GemBucket => {
+                PartitionPolicy::Singleton
+            }
         }
     }
 }
@@ -46,6 +57,8 @@ impl TryFrom<u16> for CeDomain {
             1 => Ok(Self::Tribute),
             2 => Ok(Self::NodItem),
             3 => Ok(Self::NodBucket),
+            4 => Ok(Self::Gem),
+            5 => Ok(Self::GemBucket),
             _ => Err(CollectionError::UnknownDomain(value)),
         }
     }
@@ -57,6 +70,8 @@ impl From<crate::schema::Collection> for CeDomain {
             crate::schema::Collection::Tribute => Self::Tribute,
             crate::schema::Collection::NodItem => Self::NodItem,
             crate::schema::Collection::NodBucket => Self::NodBucket,
+            crate::schema::Collection::Gem => Self::Gem,
+            crate::schema::Collection::GemBucket => Self::GemBucket,
         }
     }
 }
@@ -282,11 +297,17 @@ pub struct CeTopologyV1;
 impl CeTopologyV1 {
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(12 + 3 * 11);
+        let mut bytes = Vec::with_capacity(12 + 5 * 11);
         bytes.extend_from_slice(&1_u32.to_be_bytes());
         bytes.extend_from_slice(&1_u32.to_be_bytes());
         bytes.extend_from_slice(&1_u32.to_be_bytes());
-        for domain in [CeDomain::Tribute, CeDomain::NodItem, CeDomain::NodBucket] {
+        for domain in [
+            CeDomain::Tribute,
+            CeDomain::NodItem,
+            CeDomain::NodBucket,
+            CeDomain::Gem,
+            CeDomain::GemBucket,
+        ] {
             bytes.extend_from_slice(&domain.id().to_be_bytes());
             bytes.push(domain.policy() as u8);
             bytes.extend_from_slice(
@@ -330,6 +351,18 @@ mod tests {
         assert_eq!(CeDomain::NodItem.id(), 2);
         assert_eq!(CeDomain::NodBucket.id(), 3);
         assert_eq!(CeDomain::Tribute.shard_count(), 16);
+        assert_eq!(CeDomain::Gem.id(), 4);
+        assert_eq!(CeDomain::GemBucket.id(), 5);
+        for domain in [
+            CeDomain::NodItem,
+            CeDomain::NodBucket,
+            CeDomain::Gem,
+            CeDomain::GemBucket,
+        ] {
+            assert_eq!(domain.shard_count(), 256);
+            assert_eq!(CeDomain::try_from(domain.id()).unwrap(), domain);
+            assert_eq!(domain.policy(), PartitionPolicy::Singleton);
+        }
         let encoded = CeTopologyV1.encode();
         assert_eq!(CeTopologyV1::decode(&encoded).unwrap(), CeTopologyV1);
         for malformed in [
@@ -372,7 +405,8 @@ mod tests {
             collection_root(CeDomain::Tribute, key, top).unwrap(),
             B256::ZERO
         );
-        assert_ne!(sealed_root(B256::ZERO).unwrap(), B256::ZERO);
+        assert_eq!(sealed_root(B256::ZERO).unwrap(), EMPTY_SEALED_ROOT);
+        assert_ne!(EMPTY_SEALED_ROOT, B256::ZERO);
     }
 
     #[test]
@@ -427,6 +461,37 @@ mod tests {
             ),
             vectors["empty_tribute_collection_root"].as_str().unwrap()
         );
+        let top_256 = crate::empty_shard_top_root(256).unwrap();
+        assert_eq!(
+            format!("{top_256:#x}"),
+            vectors["empty_shard_top_256"].as_str().unwrap()
+        );
+        for (domain, name) in [
+            (CeDomain::NodItem, "nod_item"),
+            (CeDomain::NodBucket, "nod_bucket"),
+            (CeDomain::Gem, "gem"),
+            (CeDomain::GemBucket, "gem_bucket"),
+        ] {
+            let key = collection_key(domain, id).unwrap();
+            assert_eq!(
+                hex::encode(key.as_bytes()),
+                vectors[format!("{name}_collection_key")].as_str().unwrap()
+            );
+            assert_eq!(
+                hex::encode(tree_key_bytes(domain, id).unwrap()),
+                vectors[format!("{name}_tree_key")].as_str().unwrap()
+            );
+            assert_eq!(
+                format!("{:#x}", collection_root(domain, key, top_256).unwrap()),
+                vectors[format!("empty_{name}_collection_root")]
+                    .as_str()
+                    .unwrap()
+            );
+            let next = WwdEntityId::from([0xff; 32]);
+            assert_eq!(key, collection_key(domain, next).unwrap());
+        }
+        assert_eq!(vectors["gem_collection_preimage"], "00040000000000");
+        assert_eq!(vectors["gem_bucket_collection_preimage"], "00050000000000");
         assert_eq!(
             format!("{:#x}", sealed_root(B256::ZERO).unwrap()),
             vectors["empty_sealed_root"].as_str().unwrap()

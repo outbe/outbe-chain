@@ -188,14 +188,7 @@ fn exhaustive_audit_accepts_native_genesis_and_all_three_nonzero_collections() {
         let mut leaves = Leaves::default();
         let report = fixture.audit(&mut leaves).unwrap();
         assert_eq!(report.sealed_root, root);
-        assert_eq!(
-            report.trees,
-            if populated {
-                1 + 3 * u64::from(K_PROVISIONAL)
-            } else {
-                1
-            }
-        );
+        assert_eq!(report.trees, if populated { 1 + 16 + 2 * 256 } else { 1 });
         assert_eq!(report.leaves, if populated { 6 } else { 0 });
         assert_eq!(leaves.0.len() as u64, report.leaves);
         assert!(report.peak_buffered_leaves <= 2);
@@ -210,7 +203,7 @@ fn exhaustive_audit_accepts_materialized_empty_shards_without_retiring_collectio
         final_leaf: None,
     }]);
     let report = fixture.audit(&mut Leaves::default()).unwrap();
-    assert_eq!(report.trees, 1 + 3 * u64::from(K_PROVISIONAL));
+    assert_eq!(report.trees, 1 + 16 + 2 * 256);
     assert_eq!(report.leaves, 5);
 }
 
@@ -230,10 +223,7 @@ fn retired_collection_is_absent_while_other_domains_remain_auditable() {
     fixture.marker = staged.marker(ACTIVE_COMMITMENT_SCHEME);
     drop(parent);
     let report = fixture.audit(&mut Leaves::default()).unwrap();
-    assert_eq!(
-        (report.trees, report.leaves),
-        (1 + 2 * u64::from(K_PROVISIONAL), 4)
-    );
+    assert_eq!((report.trees, report.leaves), (1 + 2 * 256, 4));
 }
 
 #[test]
@@ -372,4 +362,76 @@ fn visitor_failure_aborts_the_audit() {
     }
     let error = Fixture::new(true).audit(&mut Stop).unwrap_err();
     assert!(error.to_string().contains("visitor stopped"));
+}
+
+#[test]
+fn namespace_accepts_shard_255_rejects_256_and_tribute_rejects_16_semantically() {
+    let fixture = Fixture::new(true);
+    let singleton = collection_key(CeDomain::Gem, fixture.id).unwrap();
+    let valid = TreeNamespace::CollectionShard(singleton, 255);
+    assert_eq!(TreeNamespace::decode(&valid.encode()).unwrap(), valid);
+    assert!(
+        TreeNamespace::decode(&TreeNamespace::CollectionShard(singleton, 256).encode()).is_err()
+    );
+    let tribute = collection_key(CeDomain::Tribute, fixture.id).unwrap();
+    let extra = TreeNamespace::CollectionShard(tribute, 16);
+    // Codec permits any bounded shard; native audit enforces the collection's K.
+    assert_eq!(TreeNamespace::decode(&extra.encode()).unwrap(), extra);
+    let tx = fixture.db.db.tx_mut().unwrap();
+    tx.put::<tables::CeTreeRoots>(extra.encode(), B256::ZERO.to_vec())
+        .unwrap();
+    tx.commit().unwrap();
+    assert!(fixture.audit(&mut Leaves::default()).is_err());
+}
+
+#[test]
+fn mixed_k_history_stages_applies_reopens_and_audits() {
+    let mut fixture = Fixture::new(true);
+    fixture.apply(&[
+        FinalLeafMutation {
+            entity: EntityRef::Gem(fixture.id),
+            final_leaf: Some(Commitment::try_from(B256::with_last_byte(4).0).unwrap()),
+        },
+        FinalLeafMutation {
+            entity: EntityRef::GemBucket(fixture.id),
+            final_leaf: Some(Commitment::try_from(B256::with_last_byte(5).0).unwrap()),
+        },
+    ]);
+    let path = fixture.directory.path().to_owned();
+    let identity = fixture.identity.clone();
+    let marker = fixture.marker;
+    // Close every writer before reopening the same native environment.
+    let Fixture {
+        directory, db, id, ..
+    } = fixture;
+    drop(db);
+    let genesis = FinalizedMarker {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        height: 0,
+        block_hash: identity.genesis_hash,
+        parent_block_hash: B256::ZERO,
+        parent_root: B256::ZERO,
+        new_root: sealed_root(B256::ZERO).unwrap(),
+    };
+    let reopened = Arc::new(CeMdbx::open(&path, identity.clone(), genesis).unwrap());
+    let mut fixture = Fixture {
+        directory,
+        db: reopened,
+        identity,
+        marker,
+        id,
+    };
+    fixture.apply(&[
+        FinalLeafMutation {
+            entity: EntityRef::NodItem(id),
+            final_leaf: None,
+        },
+        FinalLeafMutation {
+            entity: EntityRef::Gem(id),
+            final_leaf: Some(Commitment::try_from(B256::with_last_byte(6).0).unwrap()),
+        },
+    ]);
+    let report = fixture.audit(&mut Leaves::default()).unwrap();
+    assert_eq!(report.trees, 1 + 16 + 4 * 256);
+    assert_eq!(report.leaves, 9);
 }

@@ -260,6 +260,16 @@ fn issuance_requires_a_pledge_source() {
     });
 }
 
+#[test]
+fn issuance_requires_an_owner() {
+    with_credis(|storage| {
+        let mut no_owner = params(alice());
+        no_owner.owner = Address::ZERO;
+        let err = CredisContract::new(storage).issue(no_owner).unwrap_err();
+        assert!(err.to_string().contains("Credis owner is zero"), "{err}");
+    });
+}
+
 // ---------------------------------------------------------------------------
 // The worked example, end to end (section 5)
 // ---------------------------------------------------------------------------

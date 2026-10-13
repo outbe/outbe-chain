@@ -39,11 +39,15 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         slot = int(seed_genesis.mapping_key(seed_genesis.u32_bytes(1), 43), 16)
         self.assertEqual(
             storage.entries[seed_genesis.hex32(slot)],
-            seed_genesis.hex32(int.from_bytes(seed_genesis.asset_address(token), "big")),
+            seed_genesis.hex32(
+                int.from_bytes(seed_genesis.asset_address(token), "big")
+            ),
         )
         self.assertEqual(
             storage.entries[seed_genesis.hex32(slot + 1)],
-            seed_genesis.hex32(int.from_bytes(seed_genesis.asset_address("840"), "big")),
+            seed_genesis.hex32(
+                int.from_bytes(seed_genesis.asset_address("840"), "big")
+            ),
         )
 
     def test_oracle_seed_rejects_iso_to_coen_and_inverse_duplicates(self):
@@ -58,8 +62,14 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 seed_genesis.StorageBuilder(),
                 {
                     "pairs": [
-                        {"base": "840", "quote": "0x1111111111111111111111111111111111111111"},
-                        {"base": "0x1111111111111111111111111111111111111111", "quote": "840"},
+                        {
+                            "base": "840",
+                            "quote": "0x1111111111111111111111111111111111111111",
+                        },
+                        {
+                            "base": "0x1111111111111111111111111111111111111111",
+                            "quote": "840",
+                        },
                     ]
                 },
             )
@@ -98,7 +108,12 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         self.assertEqual(balances.count("0x54b40b1f852bda000000"), 1)
         self.assertEqual(
             set(balances),
-            {"0x0", "0x21e19e0c9bab2400000", "0x3635c9adc5dea00000", "0x54b40b1f852bda000000"},
+            {
+                "0x0",
+                "0x21e19e0c9bab2400000",
+                "0x3635c9adc5dea00000",
+                "0x54b40b1f852bda000000",
+            },
         )
 
         release = json.loads((REPO_ROOT / "release/testnet-genesis.json").read_text())
@@ -109,8 +124,14 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
             with self.subTest(filename=filename):
                 seed = json.loads(MODULE_PATH.with_name(filename).read_text())
 
-                self.assertEqual(set(seed["balance"].values()), {"1000000000000000000000"})
-                self.assertEqual(seed["gems"][0]["promis_load"], "1000000000")
+                self.assertEqual(
+                    set(seed["balance"].values()), {"1000000000000000000000"}
+                )
+                self.assertNotIn(
+                    "gems",
+                    seed,
+                    "Gem bodies are compressed entities and cannot be genesis-seeded",
+                )
                 if filename.startswith("seed-testnet"):
                     # A network profile seeds no worldwide day. The runtime
                     # creates the first one at block 1. A seeded day gets no
@@ -121,13 +142,17 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                     day = seed["metadosis"]["worldwide_days"][0]
                     self.assertEqual(day["current_vwap"], "1000000")
                     self.assertEqual(day["day_limit"], "500000000")
-                self.assertEqual(seed["staking"]["min_stake"], staking_expected["min_stake"])
+                self.assertEqual(
+                    seed["staking"]["min_stake"], staking_expected["min_stake"]
+                )
                 self.assertEqual(
                     seed["staking"]["genesis_validator_stake"],
                     staking_expected["validator_stake"],
                 )
                 self.assertEqual(seed["oracle"]["pairs"][0]["initial_rate"], "1000000")
-                self.assertEqual(seed["oracle"]["scurve_seeds"][0]["peak_price"], "1000000")
+                self.assertEqual(
+                    seed["oracle"]["scurve_seeds"][0]["peak_price"], "1000000"
+                )
 
                 for nod in seed.get("nods", []):
                     self.assertEqual(nod["gratis_load"], "100000")
@@ -145,7 +170,9 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 seed_genesis.hex32(iso_code),
             )
 
-        self.assertNotIn(seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60), storage.entries)
+        self.assertNotIn(
+            seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60), storage.entries
+        )
         self.assertEqual(storage.entries[seed_genesis.hex32(74)], seed_genesis.hex32(1))
         self.assertEqual(
             storage.entries[seed_genesis.hex32(seed_genesis.data_slot(74))],
@@ -218,7 +245,9 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
 
         seed_genesis.seed_cycle(storage, seed_genesis.parse_header_timestamp(genesis))
 
-        self.assertEqual(storage.entries[seed_genesis.hex32(2)], seed_genesis.hex32(20240101))
+        self.assertEqual(
+            storage.entries[seed_genesis.hex32(2)], seed_genesis.hex32(20240101)
+        )
 
     def test_founder_radicle_bindings_are_complete_unique_and_bidirectional(self):
         validators = [
@@ -239,10 +268,12 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
             storage,
             validators,
             {},
-            epoch_length_blocks=300,
-            epoch_start_timestamp=1,
-            min_stake=1,
-            validator_stake=1,
+            terms=seed_genesis.ValidatorSeedTerms(
+                epoch_length_blocks=300,
+                epoch_start_timestamp=1,
+                min_stake=1,
+                validator_stake=1,
+            ),
         )
 
         for validator in validators:
@@ -264,10 +295,12 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 seed_genesis.StorageBuilder(),
                 missing,
                 {},
-                epoch_length_blocks=300,
-                epoch_start_timestamp=1,
-                min_stake=1,
-                validator_stake=1,
+                terms=seed_genesis.ValidatorSeedTerms(
+                    epoch_length_blocks=300,
+                    epoch_start_timestamp=1,
+                    min_stake=1,
+                    validator_stake=1,
+                ),
             )
 
         duplicate = [dict(validators[0]), dict(validators[1])]
@@ -277,10 +310,12 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 seed_genesis.StorageBuilder(),
                 duplicate,
                 {},
-                epoch_length_blocks=300,
-                epoch_start_timestamp=1,
-                min_stake=1,
-                validator_stake=1,
+                terms=seed_genesis.ValidatorSeedTerms(
+                    epoch_length_blocks=300,
+                    epoch_start_timestamp=1,
+                    min_stake=1,
+                    validator_stake=1,
+                ),
             )
 
         zero = [dict(validators[0])]
@@ -290,10 +325,12 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 seed_genesis.StorageBuilder(),
                 zero,
                 {},
-                epoch_length_blocks=300,
-                epoch_start_timestamp=1,
-                min_stake=1,
-                validator_stake=1,
+                terms=seed_genesis.ValidatorSeedTerms(
+                    epoch_length_blocks=300,
+                    epoch_start_timestamp=1,
+                    min_stake=1,
+                    validator_stake=1,
+                ),
             )
 
 

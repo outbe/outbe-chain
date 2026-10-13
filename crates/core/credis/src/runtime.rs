@@ -210,6 +210,9 @@ impl CredisContract<'_> {
             if params.source.is_zero() {
                 return Err(CredisError::InvalidSource.into());
             }
+            if params.owner.is_zero() {
+                return Err(CredisError::InvalidOwner.into());
+            }
 
             let credis_id = CredisContract::credis_id(
                 params.cca,
@@ -217,7 +220,7 @@ impl CredisContract<'_> {
                 params.asset,
                 storage.block_number()?,
             );
-            // One Credis per CCA/account/asset tuple per execution block.
+            // One Credis per CCA/owner/asset tuple per execution block.
             if self.credis_exists(credis_id)? {
                 return Err(CredisError::CredisAlreadyExists.into());
             }

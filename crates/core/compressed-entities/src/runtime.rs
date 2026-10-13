@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use alloy_primitives::{Bytes, B256};
 use alloy_sol_types::{sol, SolEvent};
 use outbe_primitives::{
-    addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS},
+    addresses::{GEM_ADDRESS, NOD_ADDRESS, TRIBUTE_ADDRESS},
     error::{PrecompileError, Result},
     storage::StorageHandle,
 };
@@ -41,6 +41,12 @@ sol!(
     "../../../contracts/precompiles/src/INod.sol"
 );
 
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types)]
+    "../../../contracts/precompiles/src/IGem.sol"
+);
+pub(crate) use IGem::{GemBodyDeleted, GemBodyStored, GemBucketBodyDeleted, GemBucketBodyStored};
+
 pub(crate) use INod::{NodBodyDeleted, NodBodyStored, NodBucketBodyDeleted, NodBucketBodyStored};
 pub(crate) use ITribute::{TributeBodyDeleted, TributeBodyStored, TributePartitionRetired};
 
@@ -63,6 +69,8 @@ impl PreparedBody {
             Collection::Tribute => EntityRef::Tribute(self.entity_id),
             Collection::NodItem => EntityRef::NodItem(self.entity_id),
             Collection::NodBucket => EntityRef::NodBucket(self.entity_id),
+            Collection::Gem => EntityRef::Gem(self.entity_id),
+            Collection::GemBucket => EntityRef::GemBucket(self.entity_id),
         }
     }
 }
@@ -252,33 +260,32 @@ fn require_capability_current(
 fn memberships_for_verified(body: &VerifiedBody) -> Result<Vec<IndexRecord>> {
     let id = body.entity_id();
     if let Some(tribute) = body.payload.as_encrypted_tribute() {
-        return Ok(vec![
+        Ok(vec![
             IndexRecord::owner(IndexKind::TributeByOwner, tribute.context.owner, id),
             IndexRecord::day(tribute.context.worldwide_day, id),
-        ]);
-    }
-    if let Some(tribute) = body.payload.as_tribute() {
-        return Ok(vec![
+        ])
+    } else if let Some(tribute) = body.payload.as_tribute() {
+        Ok(vec![
             IndexRecord::owner(IndexKind::TributeByOwner, tribute.owner, id),
             IndexRecord::day(tribute.worldwide_day, id),
-        ]);
-    }
-    if let Some(item) = body.payload.as_encrypted_nod_item() {
-        return Ok(vec![
+        ])
+    } else if let Some(item) = body.payload.as_encrypted_nod_item() {
+        Ok(vec![
             IndexRecord::owner(IndexKind::NodByOwner, item.encrypted.terms.owner, id),
             IndexRecord::nod_all(id),
-        ]);
-    }
-    if let Some(item) = body.payload.as_nod_item() {
-        return Ok(vec![
+        ])
+    } else if let Some(item) = body.payload.as_nod_item() {
+        Ok(vec![
             IndexRecord::owner(IndexKind::NodByOwner, item.owner, id),
             IndexRecord::nod_all(id),
-        ]);
+        ])
+    } else if let Some(item) = body.payload.as_gem() {
+        Ok(vec![IndexRecord::gem_owner(item.owner, id)])
+    } else if body.payload.as_nod_bucket().is_some() || body.payload.as_gem_bucket().is_some() {
+        Ok(Vec::new())
+    } else {
+        Err(fatal("verified payload has no typed variant"))
     }
-    if body.payload.as_nod_bucket().is_some() {
-        return Ok(Vec::new());
-    }
-    Err(fatal("verified payload has no typed variant"))
 }
 
 fn emit_stored(
@@ -318,11 +325,29 @@ fn emit_stored(
             canonicalPayload: canonical_payload,
         }
         .encode_log_data(),
+        Collection::Gem => GemBodyStored {
+            gemId: id,
+            commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+            schemaVersion: body.stored_body.schema_version(),
+            previousCommitment: previous,
+            newCommitment: new_commitment,
+            canonicalPayload: canonical_payload,
+        }
+        .encode_log_data(),
+        Collection::GemBucket => GemBucketBodyStored {
+            bucketId: id,
+            commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
+            schemaVersion: body.stored_body.schema_version(),
+            previousCommitment: previous,
+            newCommitment: new_commitment,
+            canonicalPayload: canonical_payload,
+        }
+        .encode_log_data(),
     };
-    let emitter = if body.collection == Collection::Tribute {
-        TRIBUTE_ADDRESS
-    } else {
-        NOD_ADDRESS
+    let emitter = match body.collection {
+        Collection::Tribute => TRIBUTE_ADDRESS,
+        Collection::NodItem | Collection::NodBucket => NOD_ADDRESS,
+        Collection::Gem | Collection::GemBucket => GEM_ADDRESS,
     };
     storage.emit_event(emitter, event)
 }
@@ -359,6 +384,22 @@ fn emit_deleted(
             }
             .encode_log_data(),
         ),
+        EntityRef::Gem(_) => (
+            GEM_ADDRESS,
+            GemBodyDeleted {
+                gemId: id,
+                previousCommitment: previous,
+            }
+            .encode_log_data(),
+        ),
+        EntityRef::GemBucket(_) => (
+            GEM_ADDRESS,
+            GemBucketBodyDeleted {
+                bucketId: id,
+                previousCommitment: previous,
+            }
+            .encode_log_data(),
+        ),
     };
     storage.emit_event(emitter, event)
 }
@@ -368,6 +409,8 @@ const fn entity_from_parts(collection: Collection, id: WwdEntityId) -> EntityRef
         Collection::Tribute => EntityRef::Tribute(id),
         Collection::NodItem => EntityRef::NodItem(id),
         Collection::NodBucket => EntityRef::NodBucket(id),
+        Collection::Gem => EntityRef::Gem(id),
+        Collection::GemBucket => EntityRef::GemBucket(id),
     }
 }
 
@@ -376,6 +419,8 @@ const fn entity_parts(entity: EntityRef) -> (Collection, WwdEntityId) {
         EntityRef::Tribute(id) => (Collection::Tribute, id),
         EntityRef::NodItem(id) => (Collection::NodItem, id),
         EntityRef::NodBucket(id) => (Collection::NodBucket, id),
+        EntityRef::Gem(id) => (Collection::Gem, id),
+        EntityRef::GemBucket(id) => (Collection::GemBucket, id),
     }
 }
 

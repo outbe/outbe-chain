@@ -91,11 +91,18 @@ pub enum RewardGemDeliveryOutcome {
     PendingRate {
         reward_utc_day: u32,
     },
+    /// One recipient of the FIFO head received its Gem in this block. Gem bodies are
+    /// compressed entities, and a block reserves compressed-entity gas for exactly one
+    /// mint, so a batch of `recipient_count` recipients takes that many blocks.
     Delivered {
         reward_utc_day: u32,
         recipient_count: u32,
         /// Exact COEN-denominated Gem load amount minted by this delivery.
         delivered_promis_load_amount: U256,
+        /// Recipients of the head delivered so far, this one included.
+        delivered_recipients: u32,
+        /// The head retired with this delivery.
+        batch_complete: bool,
     },
 }
 

@@ -63,6 +63,7 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// 43: pending_reward_day - mapping(B256 => uint32)
 /// 44: daily_last_window_close - mapping(uint32 => uint64)
 /// 45: late_residue_dust_native - uint256
+/// 46: reward_gem_delivered_count - mapping(uint32 => uint32)
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized. `RewardsLifecycle::begin_block`
@@ -279,4 +280,9 @@ pub struct Rewards {
 
     /// Native late-settlement residue below one protocol unit, carried to the next settlement.
     pub late_residue_dust_native: Slot<U256>,
+
+    /// UTC reward day -> recipients of the pending FIFO head already delivered. Delivery
+    /// mints one compressed Gem body per block; the head retires when this reaches the
+    /// recipient count. Cleared with the head.
+    pub reward_gem_delivered_count: Mapping<u32, u32>,
 }

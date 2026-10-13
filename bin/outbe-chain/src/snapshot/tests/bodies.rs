@@ -120,6 +120,7 @@ fn populate_bodies(projection: &Arc<RocksDbStorage>) -> (Vec<FinalLeafMutation>,
         )
         .unwrap(),
     ));
+    append_gem_bodies(projection, &mut bodies);
     retain_historical_body(projection, &tribute_writer);
     let mutations: Vec<_> = bodies
         .into_iter()
@@ -340,9 +341,9 @@ fn exact_native_population_matches_all_domains_and_separates_retained_bodies() {
         assert_eq!(bodies.checkpoint.block_hash, fixture.header.hash_slow());
         assert_eq!(
             bodies.equality.unwrap().bodies,
-            if populated { 4 } else { 0 }
+            if populated { 6 } else { 0 }
         );
-        assert_eq!(ce.leaves, if populated { 8 } else { 0 });
+        assert_eq!(ce.leaves, if populated { 12 } else { 0 });
         assert_eq!(retained, u64::from(populated));
         assert_eq!(fingerprint(fixture.source.path()), before);
     }
@@ -359,7 +360,7 @@ fn unequal_height_or_hash_preserves_independent_reports_and_incomplete_equality(
         fixture.mutate(|storage| write_state(&storage, &fixture.layout, Some(checkpoint)));
         let before = fingerprint(fixture.source.path());
         let (ce, bodies, retained) = fixture.verify().unwrap();
-        assert_eq!(ce.leaves, 8);
+        assert_eq!(ce.leaves, 12);
         assert_eq!(bodies.checkpoint, checkpoint);
         assert!(bodies.equality.is_err());
         assert_eq!(retained, 1);
@@ -525,6 +526,107 @@ fn unequal_frontiers_do_not_skip_primary_or_index_corruption() {
         let before = fingerprint(fixture.source.path());
         let error = fixture.verify().unwrap_err();
         assert!(error.downcast_ref::<Incomplete>().is_none(), "{error}");
+        assert_eq!(fingerprint(fixture.source.path()), before);
+    }
+}
+
+fn gem_item() -> outbe_gem::GemItemState {
+    outbe_gem::GemItemState {
+        gem_id: WwdEntityId::from(B256::repeat_byte(0xff)),
+        owner: Address::repeat_byte(5),
+        gem_type: 1,
+        promis_load_minor: U256::from(100),
+        floor_price_minor: U256::from(2),
+        issuance_currency: 840,
+        reference_currency: 978,
+        issued_at: 123,
+        bucket_key: B256::repeat_byte(6),
+        state: 0,
+        called_at: 0,
+        settled_at: 0,
+    }
+}
+fn gem_bucket() -> outbe_gem::GemBucketState {
+    outbe_gem::GemBucketState {
+        bucket_key: B256::repeat_byte(6),
+        worldwide_day: WorldwideDay::new(20260905),
+        entry_price_minor: U256::from(3),
+        reference_currency: 978,
+        settled_gems: 0,
+    }
+}
+fn append_gem_bodies(
+    projection: &Arc<RocksDbStorage>,
+    bodies: &mut Vec<(EntityRef, WwdEntityId, StoredBody)>,
+) {
+    let writer = outbe_gem::gem_writer(projection.clone(), projection.clone());
+    let item = gem_item();
+    let bucket = gem_bucket();
+    writer.put_item(&item).unwrap();
+    writer.put_bucket(&bucket).unwrap();
+    for (entity, id, payload) in [
+        (
+            EntityRef::Gem(item.gem_id),
+            item.gem_id,
+            outbe_compressed_entities::encode_gem_v1(&outbe_gem::canonical_item(&item)).unwrap(),
+        ),
+        (
+            EntityRef::GemBucket(bucket.entity_id()),
+            bucket.entity_id(),
+            outbe_compressed_entities::encode_gem_bucket_v1(&outbe_gem::canonical_bucket(&bucket))
+                .unwrap(),
+        ),
+    ] {
+        bodies.push((entity, id, StoredBody::new(1, payload).unwrap()));
+    }
+}
+
+#[test]
+fn snapshot_audit_rejects_a_gem_body_in_the_wrong_shard_and_an_orphan_bucket() {
+    use outbe_offchain_storage::{
+        AtomicWriteBatch, AtomicWriteOperation, StorageReader, StorageScope,
+    };
+    for mutation in ["wrong_shard", "orphan_bucket", "missing_bucket"] {
+        let fixture = Fixture::new(true);
+        fixture.mutate(|storage| {
+            let writer = outbe_gem::gem_writer(storage.clone(), storage.clone());
+            match mutation {
+                "wrong_shard" => {
+                    let item = gem_item();
+                    let key = Key::new(item.gem_id.to_vec()).unwrap();
+                    let namespace = Namespace::new("gems").unwrap();
+                    let record = storage
+                        .get_record(namespace.clone(), &key)
+                        .unwrap()
+                        .unwrap();
+                    let wrong = StorageScope::numbered("gem", "gem-shards", 0).unwrap();
+                    storage
+                        .apply_atomic(&AtomicWriteBatch::from_operations(vec![
+                            AtomicWriteOperation::delete(
+                                namespace.clone().with_scope(
+                                    outbe_gem::partitioning::item_scope(item.gem_id).unwrap(),
+                                ),
+                                key.clone(),
+                            ),
+                            AtomicWriteOperation::put_record(
+                                namespace.with_scope(wrong),
+                                key,
+                                record,
+                            ),
+                        ]))
+                        .unwrap();
+                }
+                "orphan_bucket" => {
+                    let mut bucket = gem_bucket();
+                    bucket.bucket_key = B256::repeat_byte(7);
+                    writer.put_bucket(&bucket).unwrap();
+                }
+                "missing_bucket" => writer.delete_bucket(gem_bucket().entity_id()).unwrap(),
+                _ => unreachable!(),
+            }
+        });
+        let before = fingerprint(fixture.source.path());
+        assert!(fixture.verify().is_err(), "{mutation}");
         assert_eq!(fingerprint(fixture.source.path()), before);
     }
 }

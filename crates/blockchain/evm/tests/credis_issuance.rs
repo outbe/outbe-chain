@@ -141,15 +141,6 @@ fn issuance_database() -> eyre::Result<(CacheDB<EmptyDB>, U256)> {
             },
         );
     }
-    let account_code = Bytecode::new_raw(Bytes::from_static(&[0x00]));
-    db.insert_account_info(
-        ACCOUNT,
-        AccountInfo {
-            code_hash: account_code.hash_slow(),
-            code: Some(account_code),
-            ..Default::default()
-        },
-    );
     let stake = U256::from(10).pow(U256::from(18));
     db.insert_account_info(
         CCA,
@@ -190,7 +181,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         id: U256::ONE,
         asset: ASSET,
         amount: U256::from(2_000_000),
-        smart_account: ACCOUNT,
+        credis_owner: ACCOUNT,
         cca: CCA,
         vault: VAULT,
         expires_at: NOW + 900,

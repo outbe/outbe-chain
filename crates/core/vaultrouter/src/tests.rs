@@ -5,8 +5,8 @@
 //! a target. `enable_sub_call_stub()` makes every other sub-call succeed with empty
 //! returndata. This matches the convention in `outbe_credisfactory::tests`.
 
-use alloy_primitives::{address, Address, Bytes, B256, U256};
-use alloy_sol_types::{SolCall, SolEvent, SolValue};
+use alloy_primitives::{address, Address, Bytes, U256};
+use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
@@ -14,9 +14,8 @@ use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{Bytecode, StorageHandle};
 
-use crate::api::{IVaultRouter, IVaultRouterCrosschainExtention};
-use crate::crosschain;
-use crate::precompile::{dispatch, dispatch_crosschain};
+use crate::api::IVaultRouter;
+use crate::precompile::dispatch;
 use crate::runtime;
 use crate::schema::{LiquidityReservation, VaultRouterContract};
 use crate::sol_ext::IReferenceCurrency;
@@ -48,15 +47,6 @@ fn receiver() -> Address {
 }
 fn pledger() -> Address {
     address!("0x0000000000000000000000000000000000000501")
-}
-fn bridge() -> Address {
-    address!("0x000000000000000000000000000000000000b111")
-}
-fn token_bridge() -> Address {
-    address!("0x000000000000000000000000000000000000b222")
-}
-fn remote_router() -> Address {
-    address!("0x000000000000000000000000000000000000b517")
 }
 
 fn cca() -> Address {
@@ -116,20 +106,6 @@ fn set_owner(storage: &StorageHandle<'_>, who: Address) {
         .unwrap();
 }
 
-fn configure_crosschain(storage: &StorageHandle<'_>) {
-    runtime::set_crosschain_bridge(storage.clone(), owner(), bridge()).unwrap();
-    runtime::set_remote_vault_router(storage.clone(), owner(), U256::from(56), remote_router())
-        .unwrap();
-    crosschain::set_asset(
-        storage.clone(),
-        owner(),
-        asset(),
-        token_bridge(),
-        U256::from(56),
-    )
-    .unwrap();
-}
-
 // --- ownership ---------------------------------------------------------------
 
 #[test]
@@ -162,449 +138,6 @@ fn management_methods_reject_non_owner() {
         let err = runtime::add_vault(storage.clone(), stranger(), vault()).unwrap_err();
         assert!(err.to_string().contains("unauthorized"), "{err}");
     });
-}
-
-// --- centralized management -------------------------------------------------
-
-#[test]
-fn crosschain_abi_is_not_exposed_by_default() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-
-        let err = dispatch(
-            storage.clone(),
-            &IVaultRouterCrosschainExtention::setCrosschainBridgeCall { bridge: bridge() }
-                .abi_encode(),
-            owner(),
-            U256::ZERO,
-        )
-        .unwrap_err();
-
-        assert!(err.to_string().contains("decode error"), "{err}");
-        assert_eq!(
-            VaultRouterContract::new(storage)
-                .crosschain_bridge
-                .read()
-                .unwrap(),
-            Address::ZERO
-        );
-    });
-}
-
-#[test]
-fn owner_configures_bridge_and_remote_router_through_abi() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        let bsc_chain_id = U256::from(56);
-
-        dispatch_crosschain(
-            storage.clone(),
-            &IVaultRouterCrosschainExtention::setCrosschainBridgeCall { bridge: bridge() }
-                .abi_encode(),
-            owner(),
-            U256::ZERO,
-        )
-        .unwrap();
-        dispatch_crosschain(
-            storage.clone(),
-            &IVaultRouterCrosschainExtention::setRemoteVaultRouterCall {
-                chainId: bsc_chain_id,
-                router: remote_router(),
-            }
-            .abi_encode(),
-            owner(),
-            U256::ZERO,
-        )
-        .unwrap();
-
-        let bridge_out = dispatch_crosschain(
-            storage.clone(),
-            &IVaultRouterCrosschainExtention::crosschainBridgeCall {}.abi_encode(),
-            stranger(),
-            U256::ZERO,
-        )
-        .unwrap();
-        assert_eq!(
-            IVaultRouterCrosschainExtention::crosschainBridgeCall::abi_decode_returns(&bridge_out)
-                .unwrap(),
-            bridge()
-        );
-
-        let router_out = dispatch_crosschain(
-            storage.clone(),
-            &IVaultRouterCrosschainExtention::remoteVaultRouterCall {
-                chainId: bsc_chain_id,
-            }
-            .abi_encode(),
-            stranger(),
-            U256::ZERO,
-        )
-        .unwrap();
-        assert_eq!(
-            IVaultRouterCrosschainExtention::remoteVaultRouterCall::abi_decode_returns(&router_out)
-                .unwrap(),
-            remote_router()
-        );
-
-        let err =
-            runtime::set_crosschain_bridge(storage.clone(), stranger(), Address::ZERO).unwrap_err();
-        assert!(err.to_string().contains("unauthorized"), "{err}");
-    });
-}
-
-#[test]
-fn crosschain_deposit_stays_pending_until_authenticated_ack() {
-    let fee = U256::from(1_000_000);
-    let amount = U256::from(100);
-    let send_id = B256::from(fee.to_be_bytes::<32>());
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.stub_sub_call_at(token_bridge(), word(fee));
-    storage.enable_sub_call_stub();
-
-    StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        configure_crosschain(&storage);
-
-        let quote = IVaultRouterCrosschainExtention::quoteCrosschainDepositCall {
-            assetsAmount: amount,
-            destinationGasLimit: U256::from(600_000),
-            acknowledgementGasLimit: U256::from(250_000),
-        };
-        let quote_out = dispatch_crosschain(
-            storage.clone(),
-            &quote.abi_encode(),
-            source_account(),
-            U256::ZERO,
-        )
-        .unwrap();
-        let quoted =
-            IVaultRouterCrosschainExtention::quoteCrosschainDepositCall::abi_decode_returns(
-                &quote_out,
-            )
-            .unwrap();
-        assert_eq!(quoted.nativeFee, fee);
-
-        let call = IVaultRouterCrosschainExtention::crosschainDepositCall {
-            assetsAmount: amount,
-            destinationGasLimit: quote.destinationGasLimit,
-            acknowledgementGasLimit: quote.acknowledgementGasLimit,
-        };
-        let out = dispatch_crosschain(storage.clone(), &call.abi_encode(), source_account(), fee)
-            .unwrap();
-        let sent = IVaultRouterCrosschainExtention::crosschainDepositCall::abi_decode_returns(&out)
-            .unwrap();
-        assert_eq!(sent.operationId, quoted.operationId);
-        assert_eq!(sent.sendId, send_id);
-
-        let contract = VaultRouterContract::new(storage.clone());
-        assert_eq!(
-            contract.crosschain_shares.read(&source_account()).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(
-            contract.operation_statuses.read(&sent.operationId).unwrap(),
-            crosschain::STATUS_PENDING
-        );
-        assert_eq!(
-            contract.pending_crosschain_operations.read().unwrap(),
-            U256::from(1)
-        );
-
-        let err = runtime::set_crosschain_bridge(storage.clone(), owner(), stranger()).unwrap_err();
-        assert!(err.to_string().contains("operations pending"), "{err}");
-
-        let payload: Bytes = (
-            U256::from(crosschain::DEPOSIT_ACKNOWLEDGEMENT),
-            sent.operationId,
-            source_account(),
-            amount,
-        )
-            .abi_encode()
-            .into();
-        let sender: Bytes = crosschain::format_evm_v1(U256::from(56), remote_router()).into();
-
-        let wrong = IVaultRouterCrosschainExtention::receiveMessageCall {
-            receiveId: B256::ZERO,
-            sender: sender.clone(),
-            payload: payload.clone(),
-        };
-        let err = dispatch_crosschain(storage.clone(), &wrong.abi_encode(), stranger(), U256::ZERO)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("invalid crosschain sender"),
-            "{err}"
-        );
-
-        let ack = IVaultRouterCrosschainExtention::receiveMessageCall {
-            receiveId: B256::ZERO,
-            sender,
-            payload,
-        };
-        dispatch_crosschain(storage.clone(), &ack.abi_encode(), bridge(), U256::ZERO).unwrap();
-
-        let contract = VaultRouterContract::new(storage.clone());
-        assert_eq!(
-            contract.crosschain_shares.read(&source_account()).unwrap(),
-            amount
-        );
-        assert_eq!(contract.total_crosschain_shares.read().unwrap(), amount);
-        assert_eq!(
-            contract.operation_statuses.read(&sent.operationId).unwrap(),
-            crosschain::STATUS_COMPLETED
-        );
-        assert_eq!(
-            contract.pending_crosschain_operations.read().unwrap(),
-            U256::ZERO
-        );
-
-        let err = dispatch_crosschain(storage.clone(), &ack.abi_encode(), bridge(), U256::ZERO)
-            .unwrap_err();
-        assert!(err.to_string().contains("already completed"), "{err}");
-    });
-}
-
-#[test]
-fn crosschain_withdraw_burns_receipt_then_completes_on_token_return() {
-    let fee = U256::from(700_000);
-    let amount = U256::from(40);
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.stub_sub_call_at(bridge(), word(fee));
-    storage.enable_sub_call_stub();
-
-    StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        configure_crosschain(&storage);
-        let contract = VaultRouterContract::new(storage.clone());
-        contract
-            .crosschain_shares
-            .write(&source_account(), U256::from(100))
-            .unwrap();
-        contract
-            .total_crosschain_shares
-            .write(U256::from(100))
-            .unwrap();
-
-        let quote = IVaultRouterCrosschainExtention::quoteCrosschainWithdrawCall {
-            sharesAmount: amount,
-            requestGasLimit: U256::from(300_000),
-            returnGasLimit: U256::from(450_000),
-        };
-        let quote_out = dispatch_crosschain(
-            storage.clone(),
-            &quote.abi_encode(),
-            source_account(),
-            U256::ZERO,
-        )
-        .unwrap();
-        let quoted =
-            IVaultRouterCrosschainExtention::quoteCrosschainWithdrawCall::abi_decode_returns(
-                &quote_out,
-            )
-            .unwrap();
-        assert_eq!(quoted.nativeFee, fee);
-
-        let call = IVaultRouterCrosschainExtention::crosschainWithdrawCall {
-            sharesAmount: amount,
-            requestGasLimit: quote.requestGasLimit,
-            returnGasLimit: quote.returnGasLimit,
-        };
-        let out = dispatch_crosschain(storage.clone(), &call.abi_encode(), source_account(), fee)
-            .unwrap();
-        let sent =
-            IVaultRouterCrosschainExtention::crosschainWithdrawCall::abi_decode_returns(&out)
-                .unwrap();
-        assert_eq!(sent.operationId, quoted.operationId);
-
-        let contract = VaultRouterContract::new(storage.clone());
-        assert_eq!(
-            contract.crosschain_shares.read(&source_account()).unwrap(),
-            U256::from(60)
-        );
-        assert_eq!(
-            contract.total_crosschain_shares.read().unwrap(),
-            U256::from(60)
-        );
-        assert_eq!(
-            contract.operation_statuses.read(&sent.operationId).unwrap(),
-            crosschain::STATUS_PENDING
-        );
-
-        let extra_data: Bytes = (
-            U256::from(crosschain::WITHDRAW_RETURN),
-            sent.operationId,
-            source_account(),
-            amount,
-        )
-            .abi_encode()
-            .into();
-        let returned = IVaultRouterCrosschainExtention::onCrosschainTokensReceivedCall {
-            sourceDomain: 56,
-            from: crosschain::format_evm_v1(U256::from(56), remote_router()).into(),
-            amount,
-            extraData: extra_data,
-        };
-        dispatch_crosschain(
-            storage.clone(),
-            &returned.abi_encode(),
-            token_bridge(),
-            U256::ZERO,
-        )
-        .unwrap();
-
-        assert_eq!(
-            VaultRouterContract::new(storage.clone())
-                .operation_statuses
-                .read(&sent.operationId)
-                .unwrap(),
-            crosschain::STATUS_COMPLETED
-        );
-    });
-}
-
-#[test]
-fn crosschain_withdraw_stays_pending_on_a_false_token_return() {
-    let fee = U256::from(700_000);
-    let amount = U256::from(40);
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.stub_sub_call_at(bridge(), word(fee));
-    storage.stub_sub_call_at_selector(asset(), IERC20::transferCall::SELECTOR, word(U256::ZERO));
-    storage.enable_sub_call_stub();
-
-    StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        configure_crosschain(&storage);
-        let contract = VaultRouterContract::new(storage.clone());
-        contract
-            .crosschain_shares
-            .write(&source_account(), U256::from(100))
-            .unwrap();
-        contract
-            .total_crosschain_shares
-            .write(U256::from(100))
-            .unwrap();
-
-        let call = IVaultRouterCrosschainExtention::crosschainWithdrawCall {
-            sharesAmount: amount,
-            requestGasLimit: U256::from(300_000),
-            returnGasLimit: U256::from(450_000),
-        };
-        let out = dispatch_crosschain(storage.clone(), &call.abi_encode(), source_account(), fee)
-            .unwrap();
-        let sent =
-            IVaultRouterCrosschainExtention::crosschainWithdrawCall::abi_decode_returns(&out)
-                .unwrap();
-
-        let extra_data: Bytes = (
-            U256::from(crosschain::WITHDRAW_RETURN),
-            sent.operationId,
-            source_account(),
-            amount,
-        )
-            .abi_encode()
-            .into();
-        let returned = IVaultRouterCrosschainExtention::onCrosschainTokensReceivedCall {
-            sourceDomain: 56,
-            from: crosschain::format_evm_v1(U256::from(56), remote_router()).into(),
-            amount,
-            extraData: extra_data,
-        };
-        let err = dispatch_crosschain(
-            storage.clone(),
-            &returned.abi_encode(),
-            token_bridge(),
-            U256::ZERO,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
-
-        assert_eq!(
-            VaultRouterContract::new(storage.clone())
-                .operation_statuses
-                .read(&sent.operationId)
-                .unwrap(),
-            crosschain::STATUS_PENDING
-        );
-    });
-}
-
-#[test]
-fn failed_crosschain_deposit_does_not_consume_nonce_or_shares() {
-    let fee = U256::from(50);
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.stub_sub_call_at(token_bridge(), word(fee));
-    storage.enable_sub_call_stub();
-
-    StorageHandle::enter(&mut storage, |storage| {
-        set_owner(&storage, owner());
-        configure_crosschain(&storage);
-        let call = IVaultRouterCrosschainExtention::crosschainDepositCall {
-            assetsAmount: U256::from(100),
-            destinationGasLimit: U256::from(600_000),
-            acknowledgementGasLimit: U256::from(250_000),
-        };
-        let err = dispatch_crosschain(
-            storage.clone(),
-            &call.abi_encode(),
-            source_account(),
-            fee - U256::from(1),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("fee mismatch"), "{err}");
-
-        let contract = VaultRouterContract::new(storage.clone());
-        assert_eq!(
-            contract.crosschain_operation_nonce.read().unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(
-            contract.crosschain_shares.read(&source_account()).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(
-            contract.pending_crosschain_operations.read().unwrap(),
-            U256::ZERO
-        );
-    });
-}
-
-#[test]
-fn crosschain_deposit_rejects_a_false_token_return() {
-    let fee = U256::from(50);
-    for selector in [
-        IERC20::transferFromCall::SELECTOR,
-        IERC20::approveCall::SELECTOR,
-    ] {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.stub_sub_call_at(token_bridge(), word(fee));
-        storage.stub_sub_call_at_selector(asset(), selector, word(U256::ZERO));
-        storage.enable_sub_call_stub();
-
-        StorageHandle::enter(&mut storage, |storage| {
-            set_owner(&storage, owner());
-            configure_crosschain(&storage);
-            let call = IVaultRouterCrosschainExtention::crosschainDepositCall {
-                assetsAmount: U256::from(100),
-                destinationGasLimit: U256::from(600_000),
-                acknowledgementGasLimit: U256::from(250_000),
-            };
-            let err =
-                dispatch_crosschain(storage.clone(), &call.abi_encode(), source_account(), fee)
-                    .unwrap_err();
-            assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
-
-            let contract = VaultRouterContract::new(storage.clone());
-            assert_eq!(
-                contract.crosschain_operation_nonce.read().unwrap(),
-                U256::ZERO
-            );
-            assert_eq!(
-                contract.pending_crosschain_operations.read().unwrap(),
-                U256::ZERO
-            );
-        });
-    }
 }
 
 // --- liquidity sources / targets --------------------------------------------
@@ -1135,6 +668,63 @@ fn withdraw_transfers_to_an_undeployed_receiver() {
         )
         .unwrap();
         assert_eq!(burned, x);
+    });
+}
+
+#[test]
+fn deposit_rejects_a_false_transfer_from() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(vault(), word(U256::from(123u64)));
+    storage.stub_sub_call_at_selector(
+        asset(),
+        IERC20::transferFromCall::SELECTOR,
+        word(U256::ZERO),
+    );
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        VaultRouterContract::new(storage.clone())
+            .asset_vault_set(asset())
+            .insert(vault())
+            .unwrap();
+
+        let err = runtime::deposit(
+            storage.clone(),
+            source_account(),
+            asset(),
+            U256::from(10),
+            IVaultRouter::StablesSource::IntexCostAmount,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
+    });
+}
+
+#[test]
+fn withdraw_rejects_a_false_transfer() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(vault(), word(U256::from(50u64)));
+    storage.stub_sub_call_at_selector(asset(), IERC20::transferCall::SELECTOR, word(U256::ZERO));
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        VaultRouterContract::new(storage.clone())
+            .asset_vault_set(asset())
+            .insert(vault())
+            .unwrap();
+
+        let err = runtime::withdraw(
+            storage.clone(),
+            target_account(),
+            IVaultRouter::withdrawCall {
+                asset: asset(),
+                amount: U256::from(10),
+                receiver: receiver(),
+            },
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("ERC20 operation failed"), "{err}");
     });
 }
 
@@ -2459,7 +2049,7 @@ fn reserve_stables_rejects_an_inactive_caller() {
             storage.clone(),
             stranger(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2482,7 +2072,7 @@ fn reserve_stables_requires_a_pledge_source() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: Address::ZERO,
                 asset: asset(),
                 amount: U256::from(10),
@@ -2502,7 +2092,7 @@ fn reserve_in(
         storage.clone(),
         cca(),
         IVaultRouter::reserveStablesCall {
-            smartAccount: receiver(),
+            credisOwner: receiver(),
             source: pledger(),
             asset: asset(),
             amount: U256::from(10),
@@ -2597,13 +2187,32 @@ fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
 }
 
 #[test]
+fn reserve_stables_requires_a_credis_owner() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let err = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            IVaultRouter::reserveStablesCall {
+                credisOwner: Address::ZERO,
+                source: receiver(),
+                asset: asset(),
+                amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("zero address"), "{err}");
+    });
+}
+
+#[test]
 fn a_reservation_holds_then_releases_once() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let id = runtime::reserve_stables(
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2614,7 +2223,7 @@ fn a_reservation_holds_then_releases_once() {
         let held = runtime::reservation_of(&storage, id).unwrap();
         assert_eq!(held.asset, asset());
         assert_eq!(held.amount, U256::from(10));
-        assert_eq!(held.smart_account, receiver());
+        assert_eq!(held.credis_owner, receiver());
         assert_eq!(held.cca, cca());
         assert_eq!(held.source, pledger());
         assert_eq!(held.vault, vault());
@@ -2660,7 +2269,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(50),
@@ -2677,10 +2286,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap_err();
-        assert!(
-            err.to_string().contains("reservation account mismatch"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("Credis owner mismatch"), "{err}");
         assert_eq!(
             runtime::reservation_of(&storage, id).unwrap().amount,
             U256::from(50),
@@ -2710,7 +2316,7 @@ fn an_unspent_reservation_returns_to_the_origin_vault() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2738,7 +2344,7 @@ fn a_stranger_cannot_return_a_live_reservation() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2763,7 +2369,7 @@ fn seed_expired_reservation(storage: &StorageHandle<'_>) -> U256 {
             id,
             asset: asset(),
             amount: U256::from(10),
-            smart_account: receiver(),
+            credis_owner: receiver(),
             cca: cca(),
             vault: vault(),
             expires_at: 1_700_000_000 - 1,
@@ -2811,7 +2417,7 @@ fn reservations_are_gated_like_a_withdrawal() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let reserve_call = IVaultRouter::reserveStablesCall {
             referenceCurrency: USD_ISO_CODE,
-            smartAccount: receiver(),
+            credisOwner: receiver(),
             source: pledger(),
             asset: asset(),
             amount: U256::from(10),
@@ -2866,7 +2472,7 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2903,7 +2509,7 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),

@@ -488,7 +488,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "smartAccount",
+            "name": "credisOwner",
             "type": "address",
             "internalType": "address"
           },
@@ -567,7 +567,7 @@
     "name": "reserveStables",
     "inputs": [
       {
-        "name": "smartAccount",
+        "name": "credisOwner",
         "type": "address",
         "internalType": "address"
       },
@@ -903,7 +903,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "smartAccount",
+        "name": "credisOwner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1061,6 +1061,11 @@
   },
   {
     "type": "error",
+    "name": "CredisOwnerMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InsufficientSharesForWithdraw",
     "inputs": [
       {
@@ -1131,11 +1136,6 @@
         "internalType": "address"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "ReservationAccountMismatch",
-    "inputs": []
   },
   {
     "type": "error",

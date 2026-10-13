@@ -53,3 +53,6 @@ mod rollback;
 mod transitions;
 
 use rollback::{arm_fault, FaultPosition};
+
+#[path = "../gem_ce.rs"]
+mod gem_ce;

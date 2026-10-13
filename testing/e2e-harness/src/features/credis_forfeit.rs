@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::{sol, SolCall, SolEvent};
+use alloy_sol_types::{sol, SolEvent};
 use cucumber::{then, when};
 use outbe_primitives::addresses::{CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS};
 
@@ -15,8 +15,8 @@ use crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
 use crate::features::settlement::assert_receipt_event;
 use crate::internal::{addresses, eth};
 use crate::world::credis::{
-    execute, receipt_height, send, snapshot, CredisFixture, ICredis, ICredisFactory, IFixtureToken,
-    IMockAccount, DAY, INITIAL_GRATIS, LIQUIDITY, PRINCIPAL, USD,
+    receipt_height, send, snapshot, CredisFixture, ICredis, ICredisFactory, IFixtureToken, DAY,
+    INITIAL_GRATIS, LIQUIDITY, PRINCIPAL, USD,
 };
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::{test_issuance, World};
@@ -94,7 +94,7 @@ fn called(world: &mut World) {
     );
 }
 
-#[when("the user pays part of the called Credis before its deadline")]
+#[when("the owner pays part of the called Credis before its deadline")]
 fn pay_part(world: &mut World) {
     let url = url(world);
     let f = fixture(world);
@@ -110,25 +110,25 @@ fn pay_part(world: &mut World) {
     )
     .expect("accrued interest");
     let amount = PART + interest;
-    execute(
+    send(
         &url,
-        f.account,
-        DEPLOYER_KEY,
         f.currency.asset,
+        &f.owner_key,
         &IFixtureToken::approveCall {
             spender: CREDIS_FACTORY_ADDRESS,
             amount,
         },
+        None,
     );
-    let receipt = execute(
+    let receipt = send(
         &url,
-        f.account,
-        DEPLOYER_KEY,
         CREDIS_FACTORY_ADDRESS,
+        &f.owner_key,
         &ICredisFactory::settleCredisCall {
             credisId: f.credis_id,
             amountMinor: amount,
         },
+        None,
     );
     let returned = (record.gratisMinor * PART)
         .div_ceil(record.principalMinor)
@@ -303,7 +303,7 @@ fn burned(world: &mut World) {
     assert_eq!(settlement_revert(world, f).0, "Credis is closed");
 }
 
-/// Why a settlement through the Credis's smart account reverts, and the block read.
+/// Why a settlement by the Credis owner reverts, and the block read.
 fn settlement_revert(world: &World, f: &CredisFixture) -> (String, u64) {
     let settle = ICredisFactory::settleCredisCall {
         credisId: f.credis_id,
@@ -315,13 +315,9 @@ fn settlement_revert(world: &World, f: &CredisFixture) -> (String, u64) {
         .expect("primary head");
     let reason = eth::read_call_revert_reason_at(
         &url(world),
-        f.account,
-        f.user,
-        &IMockAccount::executeCall {
-            target: CREDIS_FACTORY_ADDRESS,
-            value: U256::ZERO,
-            data: settle.abi_encode().into(),
-        },
+        CREDIS_FACTORY_ADDRESS,
+        f.owner,
+        &settle,
         height,
     )
     .expect("a settlement of a lapsed Credis reverts");

@@ -17,7 +17,7 @@ use crate::features::entity_lifecycle::markets::coen_rate;
 use crate::features::settlement::{assert_receipt_event, chain_id_b256, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
 use crate::world::credis::{
-    self, event, execute, send, snapshot, CredisFixture, ICcaRegistry, ICredis, ICredisFactory,
+    self, event, fee, send, snapshot, CredisFixture, ICcaRegistry, ICredis, ICredisFactory,
     IFixtureToken, IFixtureVault, DAY, INITIAL_GRATIS, INITIAL_STABLES, LIQUIDITY, PRINCIPAL, USD,
 };
 use crate::world::forge::DEPLOYER_KEY;
@@ -25,6 +25,33 @@ use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::{settlement_currency, test_issuance, World};
 
 const CALL_ANCHOR: U256 = U256::from_limbs([800_000, 0, 0, 0]);
+
+alloy_sol_types::sol! {
+    interface IGemFactoryTestArming {
+        function issueSettledGemForTest(address owner, uint256 promisLoadMinor, uint16 currency) external returns (uint256 gemId);
+    }
+}
+
+/// The first Gem of `owner`, once the compressed-body projection serves it.
+fn wait_for_gem_of(url: &str, owner: Address) -> U256 {
+    let mut id = None;
+    crate::features::entity_lifecycle::chain::poll_until(
+        Duration::from_secs(120),
+        || format!("the Gem issued to {owner} never reached its owner's index"),
+        || {
+            id = eth::read_call(
+                url,
+                addresses::GEM_ADDR,
+                &eth::IGem::tokenOfOwnerByIndexCall {
+                    owner,
+                    index: U256::ZERO,
+                },
+            );
+            id.is_some()
+        },
+    );
+    id.expect("owner's Gem id")
+}
 
 #[given("a prepared Credis localnet with funded actors and vault liquidity")]
 fn prepare(world: &mut World) {
@@ -51,13 +78,14 @@ fn prepare(world: &mut World) {
         &owner_key,
     )
     .expect("deploy and register USD vault");
-    let account = credis::deploy_account(&url, user, cca);
+    let (owner_key, owner) = credis::owner();
+    eth::send_value(&url, owner, DEPLOYER_KEY, eth::coen(10)).expect("fund the Credis owner");
     send(
         &url,
         currency.asset,
         DEPLOYER_KEY,
         &IFixtureToken::mintCall {
-            to: account,
+            to: owner,
             amount: INITIAL_STABLES,
         },
         None,
@@ -109,32 +137,25 @@ fn prepare(world: &mut World) {
         ),
         Some(ICcaRegistry::State::Active)
     );
-
-    // Prove the CCA can operate the same account the user will repay through.
-    execute(
-        &url,
-        account,
-        &cca_key,
-        currency.asset,
-        &IFixtureToken::approveCall {
-            spender: CREDIS_FACTORY_ADDRESS,
-            amount: U256::ZERO,
-        },
-    );
     let promis_keys =
         eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Promis).expect("user Promis keys");
     let keys =
         eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Gratis).expect("user Gratis keys");
     let chain = chain_id_b256(world);
-    let gem = eth::read_call(
+    // Genesis carries no Gem bodies: a throwaway build hands the user a paid Gem, and
+    // the owner index answers once the body projection caught up with the block.
+    send(
         &url,
-        addresses::GEM_ADDR,
-        &eth::IGem::tokenOfOwnerByIndexCall {
+        addresses::GEM_FACTORY_ADDR,
+        DEPLOYER_KEY,
+        &IGemFactoryTestArming::issueSettledGemForTestCall {
             owner: user,
-            index: U256::ZERO,
+            promisLoadMinor: INITIAL_GRATIS,
+            currency: USD,
         },
-    )
-    .expect("seeded settled Gem");
+        None,
+    );
+    let gem = wait_for_gem_of(&url, user);
     let promis_nonce = eth::read_call(
         &url,
         addresses::PROMIS_ADDR,
@@ -212,7 +233,8 @@ fn prepare(world: &mut World) {
         user,
         cca,
         cca_key,
-        account,
+        owner,
+        owner_key,
         currency,
         keys,
         reservation: U256::ZERO,
@@ -226,7 +248,7 @@ fn prepare(world: &mut World) {
     let state = snapshot(world);
     assert_eq!(state.liquid, INITIAL_GRATIS);
     assert_eq!(state.pledged, U256::ZERO);
-    assert_eq!(state.account_stables, INITIAL_STABLES);
+    assert_eq!(state.owner_stables, INITIAL_STABLES);
     assert_eq!(state.cca_stables, U256::ZERO);
     assert_eq!(state.vault_stables, LIQUIDITY);
     assert_eq!(state.shares, LIQUIDITY);
@@ -239,7 +261,7 @@ fn pledge_window_closes(world: &mut World) {
     crate::features::entity_lifecycle::markets::close_price_window(world, &[USD]);
 }
 
-#[when("the CCA reserves 300 stablecoins for the user's smart account")]
+#[when("the CCA reserves 300 stablecoins for the Credis owner")]
 fn reserve(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     // The call anchor is the previous closed USD day at the reservation, apart from the
@@ -263,7 +285,7 @@ fn reserve(world: &mut World) {
         VAULT_ROUTER_ADDRESS,
         &f.cca_key,
         &eth::IVaultRouter::reserveStablesCall {
-            smartAccount: f.account,
+            credisOwner: f.owner,
             source: f.user,
             asset: f.currency.asset,
             amount: PRINCIPAL,
@@ -272,7 +294,7 @@ fn reserve(world: &mut World) {
         None,
     );
     let reserved = event::<eth::IVaultRouter::ReservationCreated>(&receipt, VAULT_ROUTER_ADDRESS);
-    assert_eq!(reserved.smartAccount, f.account);
+    assert_eq!(reserved.credisOwner, f.owner);
     assert_eq!(reserved.cca, f.cca);
     assert_eq!(reserved.asset, f.currency.asset);
     assert_eq!(reserved.vault, f.currency.vault);
@@ -311,13 +333,13 @@ fn assert_pledge_valued_on_the_window(url: &str, receipt: &serde_json::Value, id
 fn reserved(world: &mut World) {
     let state = snapshot(world);
     let f = world.state.credis.as_ref().expect("fixture");
-    let (asset, amount, account, cca, vault, expiry) = state.reservation;
+    let (asset, amount, owner, cca, vault, expiry) = state.reservation;
     assert_eq!(
-        (asset, amount, account, cca, vault),
+        (asset, amount, owner, cca, vault),
         (
             f.currency.asset,
             PRINCIPAL,
-            f.account,
+            f.owner,
             f.cca,
             f.currency.vault
         )
@@ -332,7 +354,7 @@ fn reserved(world: &mut World) {
     assert_eq!(state.vault_stables, LIQUIDITY - PRINCIPAL);
     assert_eq!(state.shares, LIQUIDITY - PRINCIPAL);
     assert_eq!(state.router_stables, PRINCIPAL);
-    assert_eq!(state.account_stables, INITIAL_STABLES);
+    assert_eq!(state.owner_stables, INITIAL_STABLES);
     assert_eq!(state.cca_stables, U256::ZERO);
 }
 
@@ -413,7 +435,7 @@ fn issue(world: &mut World) {
     let block = credis::receipt_height(&receipt);
     let mut preimage = Vec::with_capacity(68);
     preimage.extend_from_slice(f.cca.as_slice());
-    preimage.extend_from_slice(f.account.as_slice());
+    preimage.extend_from_slice(f.owner.as_slice());
     preimage.extend_from_slice(f.currency.asset.as_slice());
     preimage.extend_from_slice(&block.to_be_bytes());
     let id = U256::from_be_bytes(keccak256(preimage).0);
@@ -422,7 +444,7 @@ fn issue(world: &mut World) {
         CREDIS_FACTORY_ADDRESS,
         &ICredisFactory::CredisIssued {
             credisId: id,
-            owner: f.account,
+            owner: f.owner,
             cca: f.cca,
             asset: f.currency.asset,
             principalMinor: PRINCIPAL,
@@ -434,7 +456,7 @@ fn issue(world: &mut World) {
         CREDIS_ADDRESS,
         &ICredis::Transfer {
             from: Address::ZERO,
-            to: f.account,
+            to: f.owner,
             tokenId: id,
         },
     );
@@ -449,7 +471,7 @@ fn issue(world: &mut World) {
     world.state.credis.as_mut().expect("fixture").credis_id = id;
 }
 
-#[then("the smart account owns the issued Credis")]
+#[then("the owner holds the issued Credis")]
 fn issued(world: &mut World) {
     let state = snapshot(world);
     let f = world.state.credis.as_ref().expect("fixture");
@@ -457,7 +479,7 @@ fn issued(world: &mut World) {
     assert_eq!(p.credisId, f.credis_id);
     assert_eq!(
         (p.owner, p.cca, p.asset),
-        (f.account, f.cca, f.currency.asset)
+        (f.owner, f.cca, f.currency.asset)
     );
     assert_eq!((p.issuanceCurrency, p.referenceCurrency), (USD, USD));
     assert_eq!(
@@ -488,7 +510,7 @@ fn issued(world: &mut World) {
             0
         )
     );
-    assert_eq!(state.account_stables, INITIAL_STABLES);
+    assert_eq!(state.owner_stables, INITIAL_STABLES);
     assert_eq!(state.cca_stables, PRINCIPAL);
     assert_eq!(
         state.native,
@@ -502,7 +524,7 @@ fn issued(world: &mut World) {
     assert_eq!(state.pledged, f.gratis_minor);
 }
 
-#[when("the user makes three daily payments through the smart account")]
+#[when("the owner makes three daily payments")]
 fn repay(world: &mut World) {
     for payment_index in 0..3 {
         let before = snapshot(world);
@@ -555,25 +577,25 @@ fn repay(world: &mut World) {
             U256::from(100_000_000)
         };
         let amount = principal + interest;
-        execute(
+        let approval = send(
             &url,
-            f.account,
-            DEPLOYER_KEY,
             f.currency.asset,
+            &f.owner_key,
             &IFixtureToken::approveCall {
                 spender: CREDIS_FACTORY_ADDRESS,
                 amount,
             },
+            None,
         );
-        let receipt = execute(
+        let receipt = send(
             &url,
-            f.account,
-            DEPLOYER_KEY,
             CREDIS_FACTORY_ADDRESS,
+            &f.owner_key,
             &ICredisFactory::settleCredisCall {
                 credisId: f.credis_id,
                 amountMinor: amount,
             },
+            None,
         );
         let paid_at = receipt_timestamp(&url, &receipt);
         assert_eq!(
@@ -634,12 +656,12 @@ fn repay(world: &mut World) {
                 p.call.callAnchorPriceMinor
             )
         );
-        assert_eq!(after.account_stables, before.account_stables - amount);
+        assert_eq!(after.owner_stables, before.owner_stables - amount);
         assert_eq!(after.vault_stables, before.vault_stables + amount);
         assert_eq!(after.shares, before.shares + amount);
         assert_eq!(after.router_stables, U256::ZERO);
         assert_eq!(after.cca_stables, before.cca_stables);
-        assert_eq!(after.native, before.native);
+        assert_eq!(after.native, before.native - fee(&approval) - fee(&receipt));
         assert_eq!(after.liquid, before.liquid + released);
         assert_eq!(after.pledged, before.pledged - released);
         assert_eq!(a.interestPaidMinor, f.interest_paid + interest);
@@ -664,7 +686,7 @@ fn fully_repaid(world: &mut World) {
     assert_eq!(state.liquid, INITIAL_GRATIS);
     assert_eq!(state.pledged, U256::ZERO);
     assert_eq!(
-        state.account_stables,
+        state.owner_stables,
         INITIAL_STABLES - PRINCIPAL - f.interest_paid
     );
     assert_eq!(state.vault_stables, LIQUIDITY + f.interest_paid);

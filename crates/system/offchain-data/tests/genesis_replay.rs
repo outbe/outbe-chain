@@ -139,6 +139,7 @@ fn finalized_block(execution: &mut HashMapStorageProvider, number: u64) -> Final
         .collect();
     execution.clear_events(TRIBUTE_ADDRESS);
     execution.clear_events(NOD_ADDRESS);
+    execution.clear_events(outbe_primitives::addresses::GEM_ADDRESS);
     FinalizedBlock {
         number,
         hash: B256::from(U256::from(number)),
@@ -540,5 +541,129 @@ fn seed_execution_root(storage: &StorageHandle<'_>, empty_root: B256) {
                 value,
             )
             .unwrap();
+    }
+}
+
+#[path = "gem_support/mod.rs"]
+#[allow(dead_code)]
+mod gem_support;
+
+#[test]
+fn genesis_replay_converges_with_gem_mint_update_and_delete() {
+    use outbe_compressed_entities::{delete, mint, StoredBody};
+    use outbe_primitives::addresses::GEM_ADDRESS;
+    let projected = Arc::new(MemoryStorage::new());
+    let parent = runtime_body_readers(projected.clone());
+    let config = ProjectionConfig {
+        chain_id: 91,
+        genesis_hash: B256::repeat_byte(0x91),
+        start_block: 1,
+    };
+    let mut projection =
+        outbe_offchain_data::open_projection(config, projected.clone(), projected.clone()).unwrap();
+    let mut execution = HashMapStorageProvider::new(1);
+    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+    StorageHandle::enter(&mut execution, |storage| {
+        seed_execution_root(&storage, empty_root)
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let tree = tree_service(directory.path(), config.genesis_hash);
+    let mut identity = ExactParentIdentity {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        block_number: 0,
+        block_hash: config.genesis_hash,
+        root: empty_root,
+    };
+    let mut item = gem_support::item(0xff);
+    let mut bucket = gem_support::bucket();
+    let entities = [
+        EntityRef::Gem(item.gem_id),
+        EntityRef::GemBucket(bucket.entity_id()),
+    ];
+    let mut blocks = Vec::new();
+    for number in 1..=3 {
+        execution.set_block_number(number);
+        let scope = execution_scope(&tree, identity);
+        if number == 2 {
+            item.promis_load_minor += U256::from(1);
+            bucket.settled_gems = 1;
+        }
+        let seal = StorageHandle::enter(&mut execution, |storage| {
+            begin_block(storage.clone(), &scope).unwrap();
+            for (entity, body) in [
+                (entities[0], BodyInput::Gem(&item)),
+                (entities[1], BodyInput::GemBucket(&bucket)),
+            ] {
+                if number == 1 {
+                    mint(storage.clone(), &scope, body).unwrap();
+                } else {
+                    let current = read(storage.clone(), &scope, &parent, entity)
+                        .unwrap()
+                        .unwrap();
+                    if number == 2 {
+                        update(storage.clone(), &scope, current, body).unwrap();
+                    } else {
+                        delete(storage.clone(), &scope, current).unwrap();
+                    }
+                }
+            }
+            end_block(storage, &scope).unwrap()
+        });
+        let block = finalized_block(&mut execution, number);
+        assert_eq!(block.receipts[0].logs.len(), 2);
+        assert!(block.receipts[0]
+            .logs
+            .iter()
+            .all(|log| log.emitter == GEM_ADDRESS));
+        identity = finalize_tree_block(&tree, &block, seal);
+        projection.project_block(&block).unwrap();
+        blocks.push(block);
+        let cold = Arc::new(MemoryStorage::new());
+        let mut replay =
+            outbe_offchain_data::open_projection(config, cold.clone(), cold.clone()).unwrap();
+        for block in &blocks {
+            replay.project_block(block).unwrap();
+        }
+        let cold_reader = runtime_body_readers(cold);
+        for entity in entities {
+            let projected_body = ParentBodySource::get(&parent, entity).unwrap();
+            assert_eq!(
+                ParentBodySource::get(&cold_reader, entity).unwrap(),
+                projected_body
+            );
+            let expected = match entity {
+                EntityRef::Gem(_) => {
+                    StoredBody::new(1, outbe_compressed_entities::encode_gem_v1(&item).unwrap())
+                        .unwrap()
+                }
+                EntityRef::GemBucket(_) => StoredBody::new(
+                    1,
+                    outbe_compressed_entities::encode_gem_bucket_v1(&bucket).unwrap(),
+                )
+                .unwrap(),
+                _ => unreachable!(),
+            };
+            assert_eq!(projected_body, (number != 3).then_some(expected.clone()));
+            let leaf = (number != 3).then(|| {
+                body_commitment(
+                    ACTIVE_COMMITMENT_SCHEME,
+                    1,
+                    match entity {
+                        EntityRef::Gem(id) | EntityRef::GemBucket(id) => id,
+                        _ => unreachable!(),
+                    },
+                    expected.payload(),
+                )
+                .unwrap()
+            });
+            assert_eq!(
+                tree.open_parent(identity)
+                    .unwrap()
+                    .read_leaf_verified(entity, identity.root)
+                    .unwrap(),
+                leaf
+            );
+        }
+        assert_eq!(projection.state(), replay.state());
     }
 }

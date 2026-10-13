@@ -6,6 +6,10 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
 use cucumber::{then, when};
+use outbe_compressed_entities::{
+    decode_stored_gem_bucket_v1, decode_stored_gem_v1, CeDomain, GemBodyV1, GemBucketBodyV1,
+    WwdEntityId,
+};
 
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
@@ -15,13 +19,15 @@ use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAI
 use crate::features::entity_lifecycle::markets::MYR_ISO;
 use crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
-use crate::features::settlement::{assert_mined_success, find_mining_pow_nonce};
+use crate::features::settlement::{assert_mined_success, compressed_body, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::settlement_currency::USD_ISO;
 use crate::world::test_issuance::{self, SeriesSpec};
 use crate::world::{venue_probes, World};
 
+/// How long a view may trail the block that wrote the body it reads.
+const PROJECTION_READ_TIMEOUT: Duration = Duration::from_secs(90);
 /// The source series' entry price; the gems derive their own from it. Low enough that
 /// the controlled COEN/USD quote clears the call price.
 const ENTRY_PRICE_MINOR: u64 = 800_000;
@@ -279,6 +285,24 @@ fn issue_five_gems(world: &mut World) {
     world.state.entity_lifecycle.pool_before_forfeit = Some((height, pool));
 }
 
+#[then("every validator serves the same gem and bucket bodies under one sealed root")]
+fn gem_bodies_match_on_every_committee_port(world: &mut World) {
+    let minimum = issuance_baseline_height(world);
+    for index in 0..HOLDERS {
+        let id = gem(world, index);
+        let view = read_gem(world, id);
+        let (item, bucket) = gem_bodies(world, id, minimum);
+        assert_eq!(item.gem_id, WwdEntityId::from(id));
+        assert_eq!(item.owner, owner_address(index));
+        assert_eq!(item.promis_load_minor, view.promisLoadMinor);
+        assert_eq!(item.floor_price_minor, view.floorPriceMinor);
+        assert_eq!(item.issued_at, view.issuedAt);
+        assert_eq!(bucket.bucket_key, item.bucket_key);
+        assert_eq!(bucket.entry_price_minor, view.entryPriceMinor);
+        assert_eq!(bucket.reference_currency, item.reference_currency);
+    }
+}
+
 impl Lifecycle for GemLifecycle {
     fn floor(&self, world: &World) -> U256 {
         read_gem(world, gem(world, 0)).floorPriceMinor
@@ -454,7 +478,21 @@ impl Lifecycle for GemLifecycle {
             .is_none(),
             "a forfeited gem must not be readable"
         );
-        assert_expiry_returns(world, finalized_checkpoint(world).height, false);
+        let height = finalized_checkpoint(world).height;
+        for port in world.validators.committee_ports() {
+            assert!(
+                compressed_body(
+                    world,
+                    port,
+                    CeDomain::Gem.id(),
+                    WwdEntityId::from(id),
+                    height
+                )
+                .is_none(),
+                "validator {port} still serves the forfeited gem body"
+            );
+        }
+        assert_expiry_returns(world, height, false);
     }
 
     fn mine_paid(&self, world: &World) -> Vec<Mined> {
@@ -485,9 +523,11 @@ impl Lifecycle for GemLifecycle {
                 )
                 .expect("submit Promis mining");
                 assert_mined_success(&outcome, "mine Promis from the paid gem");
-                assert!(
-                    gem_count(&url, owner).is_zero(),
-                    "mining did not burn gem {id}"
+                // The balance view trails the mining block by the projection's lag.
+                poll_until(
+                    PROJECTION_READ_TIMEOUT,
+                    || format!("mining did not burn gem {id}"),
+                    || gem_count(&url, owner).is_zero(),
                 );
                 Mined {
                     owner,
@@ -616,6 +656,54 @@ alloy_sol_types::sol! {
     }
 }
 
+/// The finalized height recorded right after the five issuances; every body proof must
+/// select a header at or past it.
+fn issuance_baseline_height(world: &World) -> u64 {
+    world
+        .state
+        .entity_lifecycle
+        .pool_before_forfeit
+        .expect("the gems were issued")
+        .0
+}
+
+/// The gem and its bucket bodies, proven identical on every committee port. The shared
+/// proof helper also pins every port to one finalized header, so one sealed root.
+fn gem_bodies(world: &World, id: U256, minimum: u64) -> (GemBodyV1, GemBucketBodyV1) {
+    let mut expected = None;
+    for port in world.validators.committee_ports() {
+        let item = decode_stored_gem_v1(
+            &compressed_body(
+                world,
+                port,
+                CeDomain::Gem.id(),
+                WwdEntityId::from(id),
+                minimum,
+            )
+            .expect("gem body present"),
+        )
+        .expect("canonical gem body");
+        let bucket_id = WwdEntityId::from_day_and_digest(
+            outbe_primitives::time::WorldwideDay::new(
+                outbe_primitives::time::timestamp_to_date_key(item.issued_at),
+            ),
+            item.bucket_key,
+        );
+        let bucket = decode_stored_gem_bucket_v1(
+            &compressed_body(world, port, CeDomain::GemBucket.id(), bucket_id, minimum)
+                .expect("gem bucket body present"),
+        )
+        .expect("canonical gem bucket body");
+        let bodies = (item, bucket);
+        assert_eq!(
+            *expected.get_or_insert(bodies.clone()),
+            bodies,
+            "all-validator gem body parity"
+        );
+    }
+    expected.expect("nonempty validator cohort")
+}
+
 fn world_url(world: &World) -> String {
     world.rpc.url(world.validators.primary_port())
 }
@@ -668,22 +756,39 @@ fn read_position(world: &World) -> eth::IGemFactory::PositionData {
     .expect("the parked position reads back")
 }
 
+/// Gem views read through the compressed-body projection. The projection trails the
+/// block that wrote the body, so a fresh write can answer an error for a moment.
+fn read_gem_view<C>(url: &str, call: &C, what: &str) -> C::Return
+where
+    C: alloy_sol_types::SolCall,
+    C::Return: Send + 'static,
+{
+    let deadline = Instant::now() + PROJECTION_READ_TIMEOUT;
+    loop {
+        match eth::read_call_result(url, addresses::GEM_ADDR, call) {
+            Ok(value) => return value,
+            Err(error) => {
+                assert!(Instant::now() < deadline, "{what}: {error}");
+                sleep(Duration::from_secs(1));
+            }
+        }
+    }
+}
+
 fn gem_count(url: &str, owner: Address) -> U256 {
-    eth::read_call(
+    read_gem_view(
         url,
-        addresses::GEM_ADDR,
         &eth::IGem::balanceOfCall { owner },
+        "the gem collection answers a balance read",
     )
-    .expect("the gem collection answers a balance read")
 }
 
 fn read_gem(world: &World, gem_id: U256) -> eth::IGem::GemData {
-    eth::read_call(
+    read_gem_view(
         &world_url(world),
-        addresses::GEM_ADDR,
         &eth::IGem::getGemStatusCall { gemId: gem_id },
+        &format!("gem {gem_id} does not read back"),
     )
-    .unwrap_or_else(|| panic!("gem {gem_id} does not read back"))
 }
 
 pub(crate) fn gem_is_qualified(url: &str, gem_id: U256) -> bool {

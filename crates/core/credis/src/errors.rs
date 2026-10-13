@@ -19,6 +19,8 @@ pub enum CredisError {
     InvalidAmount,
     #[error("pledge source is zero")]
     InvalidSource,
+    #[error("Credis owner is zero")]
+    InvalidOwner,
     #[error("invalid Credis state value: {0}")]
     InvalidStateValue(u8),
     #[error("payment is below the interest accrued since the last settlement")]

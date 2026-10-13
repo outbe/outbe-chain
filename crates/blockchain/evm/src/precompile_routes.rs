@@ -383,8 +383,8 @@ define_exact_routes! {
     TRIBUTE_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_tribute::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_tribute::precompile::PAYABLE_SELECTORS),
     NOD_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_nod::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_nod::precompile::PAYABLE_SELECTORS),
     NOD_FACTORY_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_nodfactory::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_nodfactory::precompile::PAYABLE_SELECTORS),
-    GEM_ADDRESS => (DispatchAdapter::Basic(outbe_gem::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_gem::precompile::PAYABLE_SELECTORS),
-    GEM_FACTORY_ADDRESS => (DispatchAdapter::Basic(outbe_gemfactory::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_gemfactory::precompile::PAYABLE_SELECTORS),
+    GEM_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_gem::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_gem::precompile::PAYABLE_SELECTORS),
+    GEM_FACTORY_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_gemfactory::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_gemfactory::precompile::PAYABLE_SELECTORS),
     INTEX_ADDRESS => (DispatchAdapter::Basic(outbe_intex::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_intex::precompile::PAYABLE_SELECTORS),
     INTEX_FACTORY_ADDRESS => (DispatchAdapter::Basic(outbe_intexfactory::precompile::dispatch), default_base_gas, ValuePolicy::Payable, outbe_intexfactory::precompile::PAYABLE_SELECTORS),
     DESIS_ADDRESS => (DispatchAdapter::Basic(outbe_desis::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_desis::precompile::PAYABLE_SELECTORS),
@@ -397,7 +397,12 @@ define_exact_routes! {
     SLASH_INDICATOR_ADDRESS => (DispatchAdapter::Basic(outbe_slashindicator::precompile::dispatch), outbe_slashindicator::precompile::base_gas, ValuePolicy::Reject, outbe_slashindicator::precompile::PAYABLE_SELECTORS),
     STAKING_ADDRESS => (DispatchAdapter::Basic(outbe_staking::precompile::dispatch), default_base_gas, ValuePolicy::Payable, outbe_staking::precompile::PAYABLE_SELECTORS),
     REWARDS_ADDRESS => (DispatchAdapter::Basic(outbe_rewards::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_rewards::precompile::PAYABLE_SELECTORS),
-    AGENT_REWARD_ADDRESS => (DispatchAdapter::Basic(outbe_agentreward::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_agentreward::precompile::PAYABLE_SELECTORS),
+    // Queries need no bodies; only `claimReward` mints a Gem, and it fails closed
+    // without the readers route.
+    AGENT_REWARD_ADDRESS => (DispatchAdapter::ReadersOptional {
+        without_readers: outbe_agentreward::precompile::dispatch,
+        with_readers: outbe_agentreward::precompile::dispatch_with_readers,
+    }, default_base_gas, ValuePolicy::Reject, outbe_agentreward::precompile::PAYABLE_SELECTORS),
     METADOSIS_ADDRESS => (DispatchAdapter::Basic(outbe_metadosis::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_metadosis::precompile::PAYABLE_SELECTORS),
     FIDELITY_ADDRESS => (DispatchAdapter::Basic(outbe_fidelity::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_fidelity::precompile::PAYABLE_SELECTORS),
     PROMIS_LIMIT_ADDRESS => (DispatchAdapter::Basic(outbe_promislimit::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_promislimit::precompile::PAYABLE_SELECTORS),

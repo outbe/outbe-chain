@@ -9,3 +9,7 @@ mod retirement;
 mod support;
 
 mod partitions;
+
+mod gem;
+#[path = "../gem_support/mod.rs"]
+mod gem_support;

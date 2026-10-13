@@ -37,7 +37,6 @@ fn mdbx_applies_contiguous_batches_atomically_and_reopens_exact_marker() {
     let batch = crate::staging::ProvisionalTreeBatch::new_fixture_single_collection(
         1,
         genesis.block_hash,
-        genesis.new_root,
         b256(8),
         BTreeMap::from([(branch_key, TreeChange::Set(branch))]),
         BTreeMap::from([(tree_key, TreeChange::Set(leaf))]),
@@ -96,7 +95,6 @@ fn mdbx_rejects_gap_conflict_and_bad_batch_before_persistent_mutation() {
     let gap = crate::staging::ProvisionalTreeBatch::new_fixture_single_collection(
         2,
         genesis.block_hash,
-        genesis.new_root,
         b256(51),
         BTreeMap::new(),
         BTreeMap::from([(
@@ -114,7 +112,6 @@ fn mdbx_rejects_gap_conflict_and_bad_batch_before_persistent_mutation() {
     let mut malformed = crate::staging::ProvisionalTreeBatch::new_fixture_single_collection(
         1,
         genesis.block_hash,
-        genesis.new_root,
         b256(51),
         BTreeMap::new(),
         BTreeMap::from([(
@@ -150,7 +147,6 @@ fn open_snapshot_remains_on_one_mdbx_read_transaction() {
     let batch = crate::staging::ProvisionalTreeBatch::new_fixture_single_collection(
         1,
         genesis.block_hash,
-        genesis.new_root,
         b256(12),
         BTreeMap::new(),
         BTreeMap::from([(tree_key, TreeChange::Set(leaf))]),
@@ -239,8 +235,10 @@ fn v3_applies_two_changed_shards_and_catalog_leaf_under_one_marker() {
     let collection_key = CollectionKey::try_from(B256::ZERO).unwrap();
     let shard_set = ProvisionalShardSetBatch::new(
         K_PROVISIONAL,
-        parent_top,
-        new_top,
+        crate::staging::RootTransition {
+            parent: parent_top,
+            new: new_top,
+        },
         parent_roots,
         new_roots,
         BTreeMap::from([
@@ -282,10 +280,16 @@ fn v3_applies_two_changed_shards_and_catalog_leaf_under_one_marker() {
     let batch = ProvisionalTreeBatch::new(
         1,
         genesis.block_hash,
-        sealed_root(parent_catalog_root).unwrap(),
-        sealed_root(new_catalog_root).unwrap(),
-        parent_catalog_root,
-        new_catalog_root,
+        crate::staging::CatalogRoots {
+            sealed: crate::staging::RootTransition {
+                parent: sealed_root(parent_catalog_root).unwrap(),
+                new: sealed_root(new_catalog_root).unwrap(),
+            },
+            catalog: crate::staging::RootTransition {
+                parent: parent_catalog_root,
+                new: new_catalog_root,
+            },
+        },
         BTreeMap::from([(collection_key, CollectionOperation::Mutate(collection))]),
         Some(ProvisionalCatalogBatch {
             parent_catalog_root,

@@ -169,11 +169,12 @@ def generate():
         key = pbytes('TAG_COLLECTION_KEY',collection_input)
         tree_key = tagged('TAG_KEY',2,key,pbytes('TAG_ID',fixed_id))
         entry['tree_key_hex'] = word(tree_key)
-        entry['shard_index'] = tree_key & 15
-        roots = list(range(16))
-        for level in range(4):
+        k = entry['k']
+        entry['shard_index'] = tree_key & (k - 1)
+        roots = list(range(k))
+        for level in range(k.bit_length() - 1):
             roots = [tagged('TAG_TOP_NODE',level,roots[i],roots[i+1]) for i in range(0,len(roots),2)]
-        root = tagged('TAG_COLLECTION_ROOT',2,key,16,roots[0])
+        root = tagged('TAG_COLLECTION_ROOT',2,key,k,roots[0])
         collection_vectors.append({"domain":domain,"collection_key":word(key),"tree_key":word(tree_key),
                                    "shard_top_root":word(roots[0]),"collection_root":word(root)})
     vectors['collections'] = collection_vectors
@@ -184,14 +185,23 @@ def generate():
     for n in [2,3,5,6]:
         tagged('TAG_TOP_NODE',*range(1,n+1))
     catalog = json.loads((HERE/'adr010-catalog.json').read_text())
-    for entry,name in zip(collection_vectors,['tribute','nod_item','nod_bucket']):
+    for entry,name in zip(collection_vectors,['tribute','nod_item','nod_bucket','gem','gem_bucket']):
         catalog[name+'_collection_key'] = entry['collection_key']
+        catalog[name+'_tree_key'] = entry['tree_key']
     catalog['tribute_tree_key'] = collection_vectors[0]['tree_key']
     empty = [0]*16
     for level in range(4):
         empty = [tagged('TAG_TOP_NODE',level,empty[i],empty[i+1]) for i in range(0,len(empty),2)]
     catalog['empty_shard_top'] = '0x'+word(empty[0])
     catalog['empty_tribute_collection_root'] = '0x'+word(tagged('TAG_COLLECTION_ROOT',2,int(catalog['tribute_collection_key'],16),16,empty[0]))
+    empty_256 = [0]*256
+    for level in range(8):
+        empty_256 = [tagged('TAG_TOP_NODE',level,empty_256[i],empty_256[i+1]) for i in range(0,len(empty_256),2)]
+    catalog['empty_shard_top_256'] = '0x'+word(empty_256[0])
+    for domain,name in enumerate(['tribute','nod_item','nod_bucket','gem','gem_bucket'],1):
+        k = 16 if domain == 1 else 256
+        top = empty[0] if domain == 1 else empty_256[0]
+        catalog['empty_'+name+'_collection_root'] = '0x'+word(tagged('TAG_COLLECTION_ROOT',2,int(catalog[name+'_collection_key'],16),k,top))
     catalog['empty_sealed_root'] = '0x'+vectors['sealed_empty_root']
     (HERE/'adr010-catalog.json').write_text(json.dumps(catalog,indent=2)+'\n')
     # Identity ordering affects the Lysis corpus; keep its independent economic reference.

@@ -8,12 +8,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{Address, LogData, B256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
+use outbe_primitives::addresses::{GEM_ADDRESS, NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 use crate::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
+    runtime::{GemBodyDeleted, GemBodyStored, GemBucketBodyDeleted, GemBucketBodyStored},
     runtime::{NodBodyDeleted, NodBodyStored, NodBucketBodyDeleted, NodBucketBodyStored},
     runtime::{TributeBodyDeleted, TributeBodyStored, TributePartitionRetired},
     Commitment, EntityRef, FinalLeafMutation, PartitionRef, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
@@ -63,6 +64,9 @@ pub fn decode_canonical_body_event(
     }
     if emitter == NOD_ADDRESS {
         return decode_nod_event(signature, data);
+    }
+    if emitter == GEM_ADDRESS {
+        return decode_gem_event(signature, data);
     }
     Ok(None)
 }
@@ -174,6 +178,77 @@ fn decode_nod_bucket_event(
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         return deleted_event(
             EntityRef::NodBucket(WwdEntityId::from(event.bucketId)),
+            event.previousCommitment,
+        )
+        .map(Some);
+    }
+    Ok(None)
+}
+
+fn decode_gem_event(
+    signature: B256,
+    data: &LogData,
+) -> Result<Option<CanonicalBodyEvent>, ReplayEventError> {
+    if signature == GemBodyStored::SIGNATURE_HASH {
+        let event = GemBodyStored::decode_log_data(data)
+            .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
+        validate_versions(event.commitmentSchemeVersion, event.schemaVersion, false)?;
+        let id = WwdEntityId::from(event.gemId);
+        let body_id = crate::decode_gem_v1(&event.canonicalPayload)
+            .map(|body| body.gem_id)
+            .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
+        if body_id != id {
+            return Err(ReplayEventError::PayloadIdentityMismatch);
+        }
+        return stored_event(
+            EntityRef::Gem(id),
+            event.previousCommitment,
+            event.newCommitment,
+            &event.canonicalPayload,
+            event.schemaVersion,
+        )
+        .map(Some);
+    }
+    if signature == GemBodyDeleted::SIGNATURE_HASH {
+        let event = GemBodyDeleted::decode_log_data(data)
+            .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
+        return deleted_event(
+            EntityRef::Gem(WwdEntityId::from(event.gemId)),
+            event.previousCommitment,
+        )
+        .map(Some);
+    }
+    decode_gem_bucket_event(signature, data)
+}
+
+fn decode_gem_bucket_event(
+    signature: B256,
+    data: &LogData,
+) -> Result<Option<CanonicalBodyEvent>, ReplayEventError> {
+    if signature == GemBucketBodyStored::SIGNATURE_HASH {
+        let event = GemBucketBodyStored::decode_log_data(data)
+            .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
+        validate_versions(event.commitmentSchemeVersion, event.schemaVersion, false)?;
+        let id = WwdEntityId::from(event.bucketId);
+        let body = crate::decode_gem_bucket_v1(&event.canonicalPayload)
+            .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
+        if body.entity_id() != id {
+            return Err(ReplayEventError::PayloadIdentityMismatch);
+        }
+        return stored_event(
+            EntityRef::GemBucket(id),
+            event.previousCommitment,
+            event.newCommitment,
+            &event.canonicalPayload,
+            event.schemaVersion,
+        )
+        .map(Some);
+    }
+    if signature == GemBucketBodyDeleted::SIGNATURE_HASH {
+        let event = GemBucketBodyDeleted::decode_log_data(data)
+            .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
+        return deleted_event(
+            EntityRef::GemBucket(WwdEntityId::from(event.bucketId)),
             event.previousCommitment,
         )
         .map(Some);

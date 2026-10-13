@@ -204,7 +204,7 @@ fn overlay_wire_decoders_reject_every_noncanonical_boundary_class() {
         ));
     }
 
-    for invalid in [0_u8, 4, u8::MAX] {
+    for invalid in [0_u8, 6, u8::MAX] {
         assert!(
             matches!(Collection::from_id(invalid), Err(PrecompileError::Fatal(_))),
             "collection id {invalid} must not decode"

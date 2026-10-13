@@ -98,7 +98,7 @@ fn assert_compiled_proof_mutations(
         PointReadResultV1::Present { evidence, .. } => (
             evidence.shard_smt_proof.clone(),
             evidence.root_catalog_proof.clone(),
-            evidence.shard_top_siblings,
+            evidence.shard_top_siblings.clone(),
         ),
         _ => unreachable!(),
     };
@@ -123,7 +123,7 @@ fn assert_result_and_schema_mutations(
         PointReadResultV1::Present { evidence, .. } => (
             evidence.shard_smt_proof.clone(),
             evidence.root_catalog_proof.clone(),
-            evidence.shard_top_siblings,
+            evidence.shard_top_siblings.clone(),
         ),
         _ => unreachable!(),
     };
