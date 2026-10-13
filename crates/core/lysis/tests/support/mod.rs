@@ -2,7 +2,7 @@ use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     hash::hash_framed,
     intent::{
-        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
+        ActivationPreconditionsV1, DayType,
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
@@ -141,12 +141,6 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
                 namespace_root_before: hash(32),
                 max_nod_count: 2,
             },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: 7,
-                expected_series_version: 8,
-                max_contributor_count: 2,
-                max_eligible_nominal_total: U256::from(1_000),
-            },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: 7,
                 pending_nonce: 0,
@@ -167,14 +161,12 @@ fn result(day_type: DayType, job_id: B256, limits: &SchemaLimits) -> LysisResult
     let roots = ResultRootsV1 {
         nod_root: hash(50),
         bucket_root: hash(51),
-        contributor_root: hash(52),
         output_manifest_root: hash(53),
     };
     let counts = ExactCountsV1 {
         tribute_count: 2,
         nod_count: 2,
         bucket_count: 1,
-        contributor_count: 1,
         semantic_event_count: 0,
     };
     let conservation = ConservationTotalsV1 {

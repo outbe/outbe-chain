@@ -3,11 +3,11 @@ pragma solidity ^0.8.30;
 
 /// @title IIntexFactory
 /// @notice User-facing call surface for the IntexFactory runtime precompile:
-///         settlement, Promis mining, auction proceeds intake and the
-///         certified contributor payout. Issuance is a module-to-module call
-///         (Desis -> IntexFactory) exposed through the Rust `api`, not a
-///         precompile selector. Series identity + lifecycle live in Intex. This
-///         precompile owns settlement bookkeeping and the call-price index.
+///         settlement, Promis mining, and auction proceeds intake. Issuance is
+///         a module-to-module call (Desis -> IntexFactory) exposed through the
+///         Rust `api`, not a precompile selector. Series identity + lifecycle
+///         live in Intex. This precompile owns settlement bookkeeping and the
+///         call-price index.
 interface IIntexFactory {
     /// @notice Settle `units` Issued Intexes of `seriesId` held by
     ///         `owner`, paying the cost in `asset`. Any caller may pay. The
@@ -59,53 +59,11 @@ interface IIntexFactory {
 
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
-    ///         The day's payout round opens once every winning chain has routed
-    ///         its proceeds (or the fan-in deadline passes). `payContributorBatch`
-    ///         pays each certified contributor in proportion to its nominal.
-    /// @param worldwideDay Worldwide day (yyyymmdd) whose creators receive the proceeds.
+    ///         A ready pot is burned once every winning chain has routed its
+    ///         proceeds, or once the fan-in deadline passes.
+    /// @param worldwideDay Worldwide day (yyyymmdd) the proceeds belong to.
     /// @param srcChainId Target chain the proceeds arrived from (for fan-in completeness).
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
-
-    /// @notice One certified contributor record, exactly as Lysis committed it.
-    ///         The canonical 84-byte leaf the chain re-hashes is
-    ///         `owner ++ sourceTributeId ++ nominal`.
-    struct ContributorLeaf {
-        address owner;
-        uint256 sourceTributeId;
-        uint256 nominal;
-    }
-
-    /// @notice Pay one chunk-aligned range of certified contributors.
-    /// @dev Permissionless: correctness comes from `proof`, not from the caller.
-    ///      Each leaf receives `roundAmount * nominal / eligibleNominalTotal` and
-    ///      is marked paid, so a replayed batch reverts before any transfer.
-    /// @param worldwideDay Day whose payout round is open.
-    /// @param startIndex Global index of the first leaf. Must be a multiple of 256.
-    /// @param leaves Records of one result chunk: a full 256-leaf chunk, or the
-    ///        final partial chunk of the day.
-    /// @param proof Sibling hashes above the chunk subtree, bottom-up.
-    function payContributorBatch(
-        uint32 worldwideDay,
-        uint32 startIndex,
-        ContributorLeaf[] calldata leaves,
-        bytes32[] calldata proof
-    ) external;
-
-    /// @notice Progress of one day's payout round.
-    struct ContributorRound {
-        uint256 amount;
-        uint32 contributorCount;
-        uint256 paidSoFar;
-        uint32 paidLeafCount;
-    }
-
-    /// @notice Read the open payout round for `worldwideDay`. All fields are
-    ///         zero when no round is open.
-    function contributorPayoutRound(uint32 worldwideDay) external view returns (ContributorRound memory);
-
-    /// @notice Read one 256-leaf word of the paid bitmap. Bit `b` of word `w`
-    ///         is leaf `256 * w + b`.
-    function contributorPaidWord(uint32 worldwideDay, uint32 wordIndex) external view returns (uint256);
 
     /// @notice The classes an issued unit can be in. Disjoint: they sum to
     ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
@@ -178,25 +136,10 @@ interface IIntexFactory {
     ///         routing its proceeds in parts emits once per part.
     event ProceedsCredited(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 amount);
 
-    /// @notice Ownerless proceeds for the day (no contributors recorded) were
-    ///         burned instead of being distributed.
+    /// @notice The day's ready proceeds pot was burned.
     event ProceedsBurned(uint32 indexed worldwideDay, uint256 amount);
 
-    /// @notice Proceeds for `worldwideDay` are collected and its payout round is
-    ///         open: `amount` native COEN is now split across `contributorCount`
-    ///         certified contributors.
-    event ContributorPayoutOpened(uint32 indexed worldwideDay, uint256 amount, uint32 contributorCount);
-
-    /// @notice One verified batch of `leafCount` contributors starting at
-    ///         `startIndex` was paid `paidAmount` native COEN in total.
-    event ContributorBatchPaid(uint32 indexed worldwideDay, uint32 startIndex, uint32 leafCount, uint256 paidAmount);
-
-    /// @notice Every contributor of `worldwideDay` has been paid. `burnedAmount`
-    ///         is what per-leaf floor division left behind and was destroyed.
-    ///         The day accepts no further batches.
-    event ContributorRoundClosed(uint32 indexed worldwideDay, uint256 paidAmount, uint256 burnedAmount);
-
-    /// @notice Proceeds arrived for `worldwideDay` after its payout round had
-    ///         already opened, missing the fan-in window, and were burned.
+    /// @notice Proceeds arrived for `worldwideDay` after the day was finalized
+    ///         and were burned.
     event LateProceedsBurned(uint32 indexed worldwideDay, uint256 amount);
 }

@@ -28,7 +28,6 @@ use crate::{
 pub struct AdoptedLysisResultChunkV1 {
     pub chunk_ordinal: u32,
     pub nod_count: u32,
-    pub contributor_count: u32,
     pub authoritative_ref: CasObjectRefV1,
     pub output_manifest_entry: outbe_ocomp_protocol::result::OutputManifestEntryV1,
 }
@@ -276,11 +275,6 @@ pub fn adopt_lysis_result_chunk(
                 what: "adopted result chunk Nod count",
             }
         })?,
-        contributor_count: u32::try_from(chunk.ordered_eligible_contributors.len()).map_err(
-            |_| ProtocolError::IntegerOverflow {
-                what: "adopted result chunk contributor count",
-            },
-        )?,
         authoritative_ref: entry.result_chunk_ref.clone(),
         output_manifest_entry: entry,
     })

@@ -1,25 +1,25 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
+use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, WwdEntityId, begin_block};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
+    ListKind,
     list::{
-        ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits,
-        OrderedListProofTarget,
+        OrderedListLimits, OrderedListProofTarget, ordered_list_root,
+        streaming_ordered_list_membership_proof,
     },
     nod_materialization::{
         NodMaterializationBatchV1, NodMaterializationHeadV1, ProtectedNodMaterializationV2,
     },
     profile::poc_schema_limits,
     result::NodActionV1,
-    ListKind,
 };
-use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_primitives::storage::{StorageHandle, hashmap::HashMapStorageProvider};
 use outbe_primitives::time::WorldwideDay;
 
 use super::support::{
-    capture_execution, elapsed_ns, seed_compressed_entities_genesis, EmptyParentBodies,
+    EmptyParentBodies, capture_execution, elapsed_ns, seed_compressed_entities_genesis,
 };
 use crate::{BenchmarkScenario, ExecutionClass, GasLedger, Observation, Profile, ScenarioMetadata};
 
@@ -103,9 +103,7 @@ fn certified_action(index: usize) -> NodActionV1 {
         owner,
         wwd: TARGET_WWD.value(),
         league_id: 1,
-        gratis_load_minor: U256::from(1_000),
         entry_price_minor,
-        settlement_cost_minor: U256::ZERO,
         issuance_currency: 840,
         reference_currency: 840,
     }

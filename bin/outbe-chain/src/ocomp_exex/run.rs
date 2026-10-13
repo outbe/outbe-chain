@@ -237,7 +237,6 @@ where
     let (compute_tx, compute_rx) = mpsc::channel();
     let (vote_tx, vote_rx) = mpsc::channel();
     let (materialization_tx, materialization_rx) = mpsc::channel();
-    let (payout_tx, payout_rx) = mpsc::channel();
     let mut runtime = EmbeddedOcompExExV1 {
         provider,
         policy: config.policy,
@@ -264,9 +263,6 @@ where
         materialization_tx,
         materialization_rx,
         materialization_active: None,
-        payout_tx,
-        payout_rx,
-        payout_active: false,
         materialization_attempt_heights: BTreeMap::new(),
         chain_id: config.chain_id,
         genesis_hash: config.genesis_hash,
@@ -364,9 +360,6 @@ where
                 }
                 while let Ok(outcome) = runtime.materialization_rx.try_recv() {
                     runtime.handle_materialization(outcome);
-                }
-                while let Ok(outcome) = runtime.payout_rx.try_recv() {
-                    runtime.handle_payout(outcome);
                 }
 
                 let finalized_target = runtime
@@ -556,7 +549,6 @@ where
                             counter!("outbe_ocomp_finalized_reader_blocks_total").increment(1);
                             if frame.identity() == target {
                                 runtime.reconcile_materialization(frame)?;
-                                runtime.drive_payout(frame.block().header().timestamp());
                             }
                         }
                     }

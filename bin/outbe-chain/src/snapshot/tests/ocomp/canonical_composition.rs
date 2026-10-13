@@ -2,7 +2,7 @@ use super::*;
 use crate::snapshot::validation::ocomp::verify_canonical_obligations;
 
 #[test]
-fn empty_canonical_composition_needs_no_job_cas_or_payout_directories() {
+fn empty_canonical_composition_needs_no_job_or_cas_directories() {
     for version in [1, 2] {
         with_canonical_frontiers(
             version,
@@ -18,14 +18,12 @@ fn empty_canonical_composition_needs_no_job_cas_or_payout_directories() {
                     assert_eq!(audit.closure.replay.blocks, 0);
                     assert_eq!(audit.bounds.active_intents, 0);
                     assert_eq!(audit.bounds.nod_entries, 0);
-                    assert_eq!(audit.bounds.unpaid_days, 0);
                     assert!(audit.active.is_empty());
                     assert!(audit.pins.is_empty());
                     assert_eq!(audit.source_leases, 0);
                     assert_eq!(audit.complete_exports, 0);
                     assert_eq!(audit.input_chunks, 0);
                     assert_eq!(audit.nod.jobs, 0);
-                    assert_eq!(audit.payout_days, 0);
                 }
                 for absent in [
                     "cas-v1",

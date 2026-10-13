@@ -326,35 +326,6 @@ pub struct AgentRewardEconomicCheckV1 {
     pub validator_ports: Vec<u16>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct ExpectedContributorV1 {
-    pub owner: alloy_primitives::Address,
-    pub nominal_minor: alloy_primitives::U256,
-    pub share_coen_units: alloy_primitives::U256,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ContributorPayoutSnapshotV1 {
-    pub height: u64,
-    pub block_hash: alloy_primitives::B256,
-    pub state_root: alloy_primitives::B256,
-    pub factory_balance: alloy_primitives::U256,
-    /// Same order as the fixture-derived expected contributors.
-    pub owner_balances: Vec<alloy_primitives::U256>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ContributorPayoutEvidenceV1 {
-    pub worldwide_day: u32,
-    pub amount: alloy_primitives::U256,
-    pub expected_paid: alloy_primitives::U256,
-    pub expected_burned: alloy_primitives::U256,
-    pub contributors: Vec<ExpectedContributorV1>,
-    pub before: ContributorPayoutSnapshotV1,
-    pub after: Option<ContributorPayoutSnapshotV1>,
-    pub validator_ports: Vec<u16>,
-}
-
 /// Public-path observations retained after behavioral assertions complete.
 ///
 /// This is evidence, not a control surface. Every field comes from finalized
@@ -370,7 +341,6 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub result_vote_transactions: Vec<crate::world::rpc::OcompPublicResultVoteTransactionV1>,
     pub vote_accountability: Option<crate::world::rpc::OcompPublicVoteAccountabilityV1>,
     pub agent_reward: Option<OcompAgentRewardObservationV1>,
-    pub contributor_payout: Option<ContributorPayoutEvidenceV1>,
     pub validator_balances_before: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
     pub validator_balances_after: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
     pub atomic_quorum_apply_verified: bool,
@@ -494,7 +464,6 @@ pub struct FixtureState {
     pub tribute_tx_hash: Option<String>,
     /// WAA/SRA public-path observations for the full OCOMP Tribute.
     pub ocomp_agent_reward: Option<OcompAgentRewardObservationV1>,
-    pub ocomp_contributor_payout: Option<ContributorPayoutEvidenceV1>,
     /// Private keys of deterministic genesis-funded owners used only by the
     /// OCM-26 maximum-shaped public capacity fixture. They are never emitted
     /// into scenario evidence.
@@ -780,7 +749,6 @@ impl Default for FixtureState {
             slash_stake_after: None,
             tribute_tx_hash: None,
             ocomp_agent_reward: None,
-            ocomp_contributor_payout: None,
             ocomp_capacity_tribute_private_keys: Vec::new(),
             ocomp_capacity_tribute_tx_hashes: Vec::new(),
             ocomp_nod_materialization: None,
@@ -902,7 +870,6 @@ impl FixtureState {
             result_vote_transactions: self.ocomp_result_vote_transactions.clone(),
             vote_accountability: self.ocomp_vote_accountability.clone(),
             agent_reward: self.ocomp_agent_reward.clone(),
-            contributor_payout: self.ocomp_contributor_payout.clone(),
             validator_balances_before: self.ocomp_validator_balances_before.clone(),
             validator_balances_after: self.ocomp_validator_balances_after.clone(),
             atomic_quorum_apply_verified: self.ocomp_atomic_quorum_apply_verified,

@@ -5,7 +5,7 @@
 //! authority and does not validate phase payload semantics. Therefore neither
 //! an individual item nor `Complete` is a signing/finalization capability.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::derive_poseidon_entity_id;
@@ -354,6 +354,85 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
     #[must_use]
     pub const fn plan(&self) -> &PlanCommitmentV1 {
         &self.schedule.plan
+    }
+
+    /// Opened Tribute nominals, keyed by tribute id. Row artifacts no longer
+    /// carry the amount.
+    pub fn tribute_nominals(&self) -> Result<BTreeMap<B256, U256>, ExactLysisPlanError> {
+        let mut nominals = BTreeMap::new();
+        for verified in self.schedule.exact_verified_cursor()? {
+            let verified = verified?;
+            if verified.reference.kind != InputChunkKind::Tribute {
+                continue;
+            }
+            for record in &verified.chunk.canonical_records_or_openings {
+                let tribute =
+                    outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
+                let id = *tribute.tribute_id;
+                if nominals.insert(id, tribute.nominal_amount_minor).is_some() {
+                    return Err(ExactLysisPlanError::AuthorityMismatch(
+                        "duplicate Tribute id",
+                    ));
+                }
+            }
+        }
+        Ok(nominals)
+    }
+
+    /// Sum of opened Tribute nominals that still enter Intex issuance.
+    pub fn eligible_nominal_total(&self) -> Result<U256, ExactLysisPlanError> {
+        let mut total = U256::ZERO;
+        for verified in self.schedule.exact_verified_cursor()? {
+            let verified = verified?;
+            if verified.reference.kind != InputChunkKind::Tribute {
+                continue;
+            }
+            for record in &verified.chunk.canonical_records_or_openings {
+                let tribute =
+                    outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
+                if tribute.exclude_from_intex_issuance {
+                    continue;
+                }
+                total = total.checked_add(tribute.nominal_amount_minor).ok_or(
+                    ProtocolError::IntegerOverflow {
+                        what: "eligible nominal total",
+                    },
+                )?;
+            }
+        }
+        Ok(total)
+    }
+
+    /// Public FixedReduce fractions for the enclave Nod load. One pair per league.
+    pub fn league_fractions(&self) -> Result<Vec<(u16, U256)>, ExactLysisPlanError> {
+        let position = PlannedUnitPositionV1::TreeNode {
+            phase: UnitPhase::FixedReduce,
+            level: self.schedule.topology.tree().height(),
+            index: 0,
+        };
+        let plan_ordinal = self.schedule.topology.plan_ordinal_of(position)?;
+        let item = self.verified_artifact_at(plan_ordinal)?;
+        let output = outbe_lysis::program_v1::artifacts::decode_fixed_reduce_output(
+            item.artifact().phase_payload(self.schedule.limits)?,
+            self.schedule.limits,
+        )
+        .map_err(|_| ExactLysisPlanError::AuthorityMismatch("fixed reduce league fractions"))?;
+        if output.ordered_fractions.is_empty()
+            || output
+                .aggregate
+                .as_ref()
+                .map(|aggregate| aggregate.tribute_count)
+                != Some(self.schedule.plan.tribute_count)
+        {
+            return Err(ExactLysisPlanError::AuthorityMismatch(
+                "fixed reduce league fractions",
+            ));
+        }
+        Ok(output
+            .ordered_fractions
+            .into_iter()
+            .map(|fraction| (fraction.league, fraction.fraction))
+            .collect())
     }
 
     #[must_use]

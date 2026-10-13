@@ -704,7 +704,3 @@ fn the_snapshot_and_the_certified_opening_agree_on_one_price() {
         );
     });
 }
-
-// ---------------------------------------------------------------------
-// Creator-reward: lysis records the per-owner contributor map
-// ---------------------------------------------------------------------

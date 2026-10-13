@@ -442,10 +442,9 @@ mod tests {
             },
             currency_pairs: pairs,
             deviation_thresholds: vec![],
-            provider_endpoints: vec![],
+            api_providers: vec![],
             dex_providers: vec![],
-            onchain_feeds: Default::default(),
-            redstone: None,
+            onchain_providers: vec![],
             health: None,
         }
     }

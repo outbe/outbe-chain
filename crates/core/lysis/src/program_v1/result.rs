@@ -188,13 +188,11 @@ pub struct RootReduceSummaryV1 {
     pub covered_primary_count: u32,
     pub nod_actions: LysisListSubtreeCarrierV1,
     pub bucket_records: LysisListSubtreeCarrierV1,
-    pub contributor_actions: LysisListSubtreeCarrierV1,
     pub output_manifest_entries: LysisListSubtreeCarrierV1,
     pub result_chunk_hashes: LysisListSubtreeCarrierV1,
     pub tribute_count: u32,
     pub nod_count: u32,
     pub bucket_count: u32,
-    pub contributor_count: u32,
     pub tribute_nominal_total: U256,
     pub eligible_nominal_total: U256,
     pub lysis_allocation_minor: U256,
@@ -247,9 +245,6 @@ impl RootReduceSummaryV1 {
                 .ok_or(LysisArtifactErrorV1::LengthOverflow)?,
             nod_actions: self.nod_actions.merge_adjacent(right.nod_actions)?,
             bucket_records: self.bucket_records.merge_adjacent(right.bucket_records)?,
-            contributor_actions: self
-                .contributor_actions
-                .merge_adjacent(right.contributor_actions)?,
             output_manifest_entries: self
                 .output_manifest_entries
                 .merge_adjacent(right.output_manifest_entries)?,
@@ -267,10 +262,6 @@ impl RootReduceSummaryV1 {
             bucket_count: self
                 .bucket_count
                 .checked_add(right.bucket_count)
-                .ok_or(LysisArtifactErrorV1::LengthOverflow)?,
-            contributor_count: self
-                .contributor_count
-                .checked_add(right.contributor_count)
                 .ok_or(LysisArtifactErrorV1::LengthOverflow)?,
             tribute_nominal_total: checked_add_summary_total(
                 self.tribute_nominal_total,
@@ -377,7 +368,6 @@ pub fn encode_root_reduce_summary(
     for carrier in [
         &summary.nod_actions,
         &summary.bucket_records,
-        &summary.contributor_actions,
         &summary.output_manifest_entries,
         &summary.result_chunk_hashes,
     ] {
@@ -386,7 +376,6 @@ pub fn encode_root_reduce_summary(
     output.write_u32(summary.tribute_count)?;
     output.write_u32(summary.nod_count)?;
     output.write_u32(summary.bucket_count)?;
-    output.write_u32(summary.contributor_count)?;
     output.write_u256(summary.tribute_nominal_total)?;
     output.write_u256(summary.eligible_nominal_total)?;
     output.write_u256(summary.lysis_allocation_minor)?;
@@ -468,13 +457,11 @@ pub fn decode_root_reduce_summary(
         covered_primary_count: input.read_u32()?,
         nod_actions: decode_list_subtree_carrier(&mut input)?,
         bucket_records: decode_list_subtree_carrier(&mut input)?,
-        contributor_actions: decode_list_subtree_carrier(&mut input)?,
         output_manifest_entries: decode_list_subtree_carrier(&mut input)?,
         result_chunk_hashes: decode_list_subtree_carrier(&mut input)?,
         tribute_count: input.read_u32()?,
         nod_count: input.read_u32()?,
         bucket_count: input.read_u32()?,
-        contributor_count: input.read_u32()?,
         tribute_nominal_total: input.read_u256()?,
         eligible_nominal_total: input.read_u256()?,
         lysis_allocation_minor: input.read_u256()?,
@@ -551,11 +538,6 @@ fn validate_root_summary_carriers(
         summary.bucket_count,
     )?;
     require_carrier(
-        &summary.contributor_actions,
-        ListKind::ContributorActions,
-        summary.contributor_count,
-    )?;
-    require_carrier(
         &summary.output_manifest_entries,
         ListKind::CompleteOutputManifest,
         summary.covered_primary_count,
@@ -573,7 +555,6 @@ fn validate_root_summary_carriers(
     if [
         summary.nod_actions.subtree_height,
         summary.bucket_records.subtree_height,
-        summary.contributor_actions.subtree_height,
     ]
     .into_iter()
     .any(|height| height != action_height)
@@ -595,7 +576,6 @@ fn root_summary_action_start(summary: &RootReduceSummaryV1) -> Result<u32, Lysis
     if [
         summary.nod_actions.start_ordinal,
         summary.bucket_records.start_ordinal,
-        summary.contributor_actions.start_ordinal,
     ]
     .into_iter()
     .any(|start| start != action_start)
@@ -614,7 +594,6 @@ fn validate_empty_root_summary(summary: &RootReduceSummaryV1) -> Result<(), Lysi
         summary.tribute_count,
         summary.nod_count,
         summary.bucket_count,
-        summary.contributor_count,
     ]
     .into_iter()
     .any(|count| count != 0);
@@ -650,7 +629,6 @@ fn validate_root_summary_counts(
     if tribute_count_out_of_range
         || summary.nod_count != summary.tribute_count
         || summary.bucket_count != summary.nod_count
-        || summary.contributor_count > summary.tribute_count
     {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
             "root reducer summary counts or totals",
@@ -713,7 +691,7 @@ fn validate_list_subtree_carrier(
 
 fn primary_subtree_height(list_kind: ListKind) -> Result<u16, LysisArtifactErrorV1> {
     match list_kind {
-        ListKind::NodActions | ListKind::BucketRecords | ListKind::ContributorActions => {
+        ListKind::NodActions | ListKind::BucketRecords => {
             Ok(PRIMARY_WORK_SHARD_SIZE.trailing_zeros() as u16)
         }
         ListKind::CompleteOutputManifest | ListKind::ResultChunkHashes => Ok(0),

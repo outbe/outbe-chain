@@ -39,6 +39,8 @@ use outbe_lysis::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
 use outbe_lysis::program_v1::ObservationValueV1;
 use outbe_lysis::program_v1::ObservedTributeV1;
 
+use super::tribute_nominal::{refill_nominal, shard_tribute_nominals};
+
 use outbe_ocomp_protocol::common::BoundedBytes;
 
 use outbe_ocomp_protocol::input::AuthenticatedOpeningV1;
@@ -185,6 +187,10 @@ pub(in super::super) fn execute_fidelity_map_unit(
         fidelity_encoded_bytes,
     )?;
 
+    let nominals = shard_tribute_nominals(input_chunks, shard_ordinal)?;
+    if nominals.len() != enumerated.ordered_records.len() {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
     let mut observed = Vec::new();
     observed
         .try_reserve_exact(enumerated.ordered_records.len())
@@ -195,8 +201,10 @@ pub(in super::super) fn execute_fidelity_map_unit(
             .get(&record.tribute.owner)
             .copied()
             .ok_or(WorkerError::UnitBindingMismatch)?;
+        let mut tribute = record.tribute.clone();
+        refill_nominal(&mut tribute, &nominals)?;
         observed.push(ObservedTributeV1 {
-            tribute: record.tribute.clone(),
+            tribute,
             first_league: ObservationValueV1::Value(league),
             second_league: ObservationValueV1::Value(league),
             entry_price_minor: ObservationValueV1::Unavailable,

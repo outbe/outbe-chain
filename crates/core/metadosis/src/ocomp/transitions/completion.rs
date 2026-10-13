@@ -267,7 +267,6 @@ fn completed_binding(
         binding: binding.clone(),
         outcome: ActivationOutcome::Applied,
         nod_receipt_hash: Some(permit.nod_receipt_hash()),
-        contributor_receipt_hash: Some(permit.contributor_receipt_hash()),
         tribute_receipt_hash: Some(permit.tribute_receipt_hash()),
         carry_over_receipt_hash: Some(permit.carry_over_receipt_hash()),
         request_limit_split_receipt_hash: permit.request_limit_split_receipt_hash(),

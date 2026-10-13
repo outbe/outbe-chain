@@ -4,7 +4,6 @@ use super::*;
 pub(super) struct RpcEvidence {
     pub(super) calls: usize,
     pub(super) sent: Vec<(Address, Vec<u8>, B256)>,
-    pub(super) round_days: Vec<u32>,
 }
 struct ScriptedResponses {
     own_sender: Address,
@@ -71,10 +70,6 @@ impl ScriptedResponses {
                 .unwrap(),
         )
         .unwrap();
-        if data.starts_with(&contributorPayoutRoundCall::SELECTOR) {
-            let call = contributorPayoutRoundCall::abi_decode(&data).unwrap();
-            state.round_days.push(call.worldwideDay);
-        }
         let bytes = self
             .replies
             .get(&(to, data))

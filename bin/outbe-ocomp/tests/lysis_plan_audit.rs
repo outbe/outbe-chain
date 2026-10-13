@@ -30,7 +30,7 @@ use outbe_ocomp_protocol::{
     list::verify_ordered_list_membership,
     nod_materialization::NodMaterializationHeadV1,
     registry::ObjectKind,
-    result::{ActiveNodSetV1, ContributorActionV1, OutputManifestEntryV1, ResultChunkV1},
+    result::{ActiveNodSetV1, OutputManifestEntryV1, ResultChunkV1},
     unit::{UnitArtifactV1, UnitPhase, UnitSpecV1, WorkOutputHeaderV1},
     CasObjectRefV1, ListKind, StreamingOrderedListRoot,
 };
@@ -122,10 +122,8 @@ impl Fixture {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ResultCatalogFault {
     None,
-    ContributorCarrier,
     EligibleTotal,
     HeaderCoverage,
-    ContributorBoundary,
     NodBoundary,
     AlternateResultChunk,
 }

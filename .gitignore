@@ -40,3 +40,9 @@ target-docker/
 .beads-credential-key
 .beads/proxieddb/
 .beads
+
+# qlty cache symlinks, written per machine on every run
+.qlty/logs
+.qlty/out
+.qlty/plugin_cachedir
+.qlty/results

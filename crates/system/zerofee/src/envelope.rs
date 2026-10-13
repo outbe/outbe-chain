@@ -147,17 +147,6 @@ impl ZeroFeeEnvelope {
     }
 }
 
-/// Returns the validator that `signer` represents for `role`.
-pub(crate) fn validator_for_role(
-    storage: StorageHandle<'_>,
-    signer: Address,
-    role: ValidatorDelegateRole,
-) -> Result<Address, ZeroFeePolicyError> {
-    ValidatorSet::new(storage)
-        .resolve_validator_for_role(signer, role)?
-        .ok_or(ZeroFeePolicyError::UnauthorizedSigner)
-}
-
 /// Returns the validator that `signer` represents for `role`, if that
 /// validator lifecycle is `Active`.
 pub(crate) fn active_validator_for_role(

@@ -663,7 +663,7 @@ contract OriginRouter is
 
     /// @inheritdoc IERC7786TokenReceiver
     /// @dev The token bridge credits WCOEN before this call. We unwrap it and hand the native to
-    ///      the factory precompile, which pays the series' creators. A distribution failure parks
+    ///      the factory precompile, which burns a ready pot. A distribution failure parks
     ///      the native for retry, so the transfer still settles (returning the magic value) instead
     ///      of bricking on redelivery.
     function onCrosschainTokensReceived(
@@ -679,8 +679,7 @@ contract OriginRouter is
         // Source must be in the day's frozen snapshot.
         if (!_isSeriesTarget(worldwideDay, sourceDomain)) revert UnexpectedProceedsSource(sourceDomain);
         // The bridge is permissionless. Pin the source sender to the registered peer (its
-        // TargetRouter). Otherwise anyone could open a distribution for any series and wipe its
-        // contributor provenance.
+        // TargetRouter). Otherwise anyone could open a distribution for any series.
         if (keccak256(from) != keccak256(_remoteMessenger(sourceDomain))) revert UnauthorizedProceedsSender(from);
 
         IWCOEN($.wcoen).withdraw(amount);

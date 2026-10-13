@@ -209,13 +209,42 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
         let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx_fire.storage.clone());
         let wallet_claimable = agent_reward.get_claimable_reward(wallet).unwrap();
         let sra_claimable = agent_reward.get_claimable_reward(sra).unwrap();
-        assert!(
-            !wallet_claimable.is_zero(),
-            "the next UTC day must pay the previous day's WAA activity"
+        let waa_pool = day_zero_allocation(EmissionSinkId::Waa);
+        let sra_pool = day_zero_allocation(EmissionSinkId::Sra);
+        let waa_credit = waa_pool * U256::from(32) / U256::from(100);
+        assert_eq!(
+            wallet_claimable,
+            outbe_primitives::units::checked_protocol_to_native(waa_credit).unwrap()
         );
-        assert!(
-            !sra_claimable.is_zero(),
-            "the next UTC day must pay the previous day's SRA activity"
+        assert_eq!(
+            sra_claimable,
+            outbe_primitives::units::checked_protocol_to_native(sra_pool).unwrap()
+        );
+        let receipt =
+            outbe_metadosis::api::day_limit_formation_receipt(ctx_fire.storage.clone(), reward_day)
+                .unwrap()
+                .unwrap();
+        let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
+        let terminal = day_zero_allocation_sum(&[
+            EmissionSinkId::Metadosis,
+            EmissionSinkId::Validator,
+            EmissionSinkId::Cca,
+        ]) + waa_pool
+            - waa_credit;
+        assert_eq!(formed.base_limit, terminal);
+        assert_eq!(
+            wallet_claimable
+                + sra_claimable
+                + outbe_primitives::units::checked_protocol_to_native(formed.base_limit).unwrap(),
+            outbe_primitives::units::checked_protocol_to_native(day_zero_allocation_sum(&[
+                EmissionSinkId::Waa,
+                EmissionSinkId::Sra,
+                EmissionSinkId::Cca,
+                EmissionSinkId::Validator,
+                EmissionSinkId::Metadosis,
+            ]))
+            .unwrap(),
+            "credited backing plus Metadosis must conserve the allocation",
         );
         assert!(
             agent_reward

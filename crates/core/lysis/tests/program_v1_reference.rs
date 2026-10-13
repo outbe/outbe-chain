@@ -162,21 +162,9 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
                 "owner": lowercase_address(action.owner),
                 "worldwide_day": u32::from(action.worldwide_day),
                 "league": action.league_id,
-                "gratis_load": action.gratis_load_minor.to_string(),
                 "entry_price": action.entry_price_minor.to_string(),
-                "cost": action.settlement_cost_minor.to_string(),
                 "issuance_currency": action.issuance_currency,
                 "reference_currency": action.reference_currency,
-            })
-        })
-        .collect::<Vec<_>>();
-    let contributors = result
-        .contributors
-        .iter()
-        .map(|contributor| {
-            json!({
-                "owner": lowercase_address(contributor.owner),
-                "nominal": contributor.nominal_amount_minor.to_string(),
             })
         })
         .collect::<Vec<_>>();
@@ -218,7 +206,6 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
         "remaining_lysis_limit_minor": result.remaining_lysis_limit_minor.to_string(),
         "group_table": table,
         "nod_actions": nod_actions,
-        "contributors": contributors,
         "observations": observations,
     })
 }
@@ -262,9 +249,6 @@ fn failure_json(error: ProgramErrorV1) -> Value {
             ("GRATIS_LOAD_EXCEEDS_REMAINING", Some(ordinal), None)
         }
         ProgramErrorV1::InvalidNodTarget { ordinal } => ("INVALID_NOD_TARGET", Some(ordinal), None),
-        ProgramErrorV1::ContributorOverflow { ordinal } => {
-            ("CONTRIBUTOR_OVERFLOW", Some(ordinal), None)
-        }
         ProgramErrorV1::OutputCountMismatch => ("OUTPUT_COUNT_MISMATCH", None, None),
     };
     fields.insert("kind".to_owned(), Value::String(kind.to_owned()));
@@ -275,6 +259,13 @@ fn failure_json(error: ProgramErrorV1) -> Value {
         fields.insert("currency".to_owned(), json!(currency));
     }
     json!({"status": "FAILURE", "error": fields})
+}
+
+fn without_contributor_publication(mut expected: Value) -> Value {
+    if let Some(object) = expected.as_object_mut() {
+        object.remove("contributors");
+    }
+    expected
 }
 
 fn execute_json(input: &CorpusInput) -> Value {
@@ -296,7 +287,7 @@ fn independent_reference_corpus_and_native_program_match() {
         );
         assert_eq!(
             execute_json(&case.input),
-            case.expected,
+            without_contributor_publication(case.expected),
             "native/reference mismatch for {}",
             case.case_id
         );

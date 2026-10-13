@@ -49,7 +49,6 @@ pub(crate) fn verify_ocomp_relations(
             ("verified_pending_nod_jobs", canonical.nod.jobs),
             ("verified_pending_nod_batches", canonical.nod.batches),
             ("verified_pending_nod_actions", canonical.nod.actions),
-            ("verified_pending_payout_days", canonical.payout_days),
         ] {
             present_count(report, name, count);
         }

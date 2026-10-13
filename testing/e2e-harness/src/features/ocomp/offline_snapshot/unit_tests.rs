@@ -181,14 +181,12 @@ fn local_result_fixture() -> (
     let roots = ResultRootsV1 {
         nod_root: B256::repeat_byte(0x31),
         bucket_root: B256::repeat_byte(0x32),
-        contributor_root: B256::repeat_byte(0x33),
         output_manifest_root: B256::repeat_byte(0x34),
     };
     let counts = ExactCountsV1 {
         tribute_count: 1,
         nod_count: 1,
         bucket_count: 0,
-        contributor_count: 0,
         semantic_event_count: 0,
     };
     let conservation = ConservationTotalsV1 {

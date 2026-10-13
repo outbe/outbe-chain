@@ -51,7 +51,6 @@ impl ActivationTestProvider {
                     input,
                     &poc_schema_limits(),
                 )?;
-                capability.authorize_contributor_installation()?;
                 capability.authorize_carry_over_credit()?;
                 capability.authorize_tribute_retirement()?;
                 capability.authorize_terminal_receipt()?;
@@ -252,14 +251,12 @@ fn input(wwd: u32, call: u8) -> CertifiedNodGenerationV1 {
         roots: ResultRootsV1 {
             nod_root: B256::repeat_byte(11),
             bucket_root: B256::repeat_byte(12),
-            contributor_root: B256::repeat_byte(13),
             output_manifest_root: B256::repeat_byte(14),
         },
         counts: ExactCountsV1 {
             tribute_count: 3,
             nod_count: 3,
             bucket_count: 2,
-            contributor_count: 2,
             semantic_event_count: 0,
         },
         nod_amount_total: U256::from(700),
@@ -498,7 +495,6 @@ fn caught_owner_failure_cannot_advance_the_activation_cursor() {
 
             let receipt =
                 install_certified_generation(&storage, capability, &value, &poc_schema_limits())?;
-            capability.authorize_contributor_installation()?;
             capability.authorize_carry_over_credit()?;
             capability.authorize_tribute_retirement()?;
             capability.authorize_terminal_receipt()?;

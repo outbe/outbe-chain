@@ -47,14 +47,6 @@ pub enum IntexFactoryError {
     FxRateStale(u16),
     #[error("caller is not the origin router")]
     NotOriginRouter,
-    #[error("distribution payout math overflow for series {0}")]
-    DistributionOverflow(u32),
-    #[error("no open certified payout round for day {0}")]
-    NoCertifiedRound(u32),
-    #[error("contributor batch has an invalid shape")]
-    BadContributorBatch,
-    #[error("contributor payout would exceed the round amount for day {0}")]
-    PayoutExceedsRound(u32),
     #[error(
         "currency {iso} day {worldwide_day} is indexed in bin {expected}, series priced into {got}"
     )]

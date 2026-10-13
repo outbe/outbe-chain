@@ -364,7 +364,7 @@ fn verify_fresh_devnet_process(
     ensure!(
         scenario["feature"] == "Off-chain computation and Metadosis"
             && scenario["scenario"]
-                == "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout"
+                == "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay"
             && scenario["result"] == "passed",
         "fresh-devnet scenario identity or verdict mismatch"
     );
@@ -1621,7 +1621,7 @@ mod tests {
                 "untracked_dirty": false
             },
             "feature": "Off-chain computation and Metadosis",
-            "scenario": "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout",
+            "scenario": "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
             "result": "passed",
             "environment": {
                 "validators": 4,

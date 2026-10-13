@@ -207,12 +207,6 @@ pub(super) fn intent(
                 namespace_root_before: B256::ZERO,
                 max_nod_count: 2,
             },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: TEST_WWD.value(),
-                expected_series_version: 0,
-                max_contributor_count: 2,
-                max_eligible_nominal_total: U256::from(1_000),
-            },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: TEST_WWD.value(),
                 pending_nonce: 0,
@@ -241,14 +235,12 @@ pub(super) fn result(
     let roots = ResultRootsV1 {
         nod_root: hash(50),
         bucket_root: hash(51),
-        contributor_root: hash(52),
         output_manifest_root: hash(53),
     };
     let counts = ExactCountsV1 {
         tribute_count: 2,
         nod_count: 2,
         bucket_count: 1,
-        contributor_count: 1,
         semantic_event_count: 0,
     };
     let conservation = ConservationTotalsV1 {
@@ -336,14 +328,12 @@ pub fn lysis_result_for_intent(
     let roots = ResultRootsV1 {
         nod_root: hash(150),
         bucket_root: hash(151),
-        contributor_root: hash(152),
         output_manifest_root: hash(153),
     };
     let counts = ExactCountsV1 {
         tribute_count: intent.authenticated_day_count,
         nod_count: intent.authenticated_day_count,
         bucket_count: u32::from(intent.authenticated_day_count > 0),
-        contributor_count: 0,
         semantic_event_count: 0,
     };
     let conservation = ConservationTotalsV1 {

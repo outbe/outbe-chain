@@ -8,7 +8,6 @@ use crate::{
     control::CasObjectRefV1,
     error::ProtocolError,
     registry::ObjectKind,
-    result::ContributorActionV1,
     schema::{require, NestedCodec, SchemaLimits},
     unit::CanonicalRunSpan,
 };
@@ -19,18 +18,11 @@ use super::{
     MAX_SHUFFLE_LEAF_RECORDS,
 };
 
-pub(super) fn exact_shuffle_page_count(
-    kind: ShuffleRunKindV1,
-    record_count: u32,
-) -> Result<u32, ProtocolError> {
+pub(super) fn exact_shuffle_page_count(record_count: u32) -> Result<u32, ProtocolError> {
     if record_count == 0 {
-        return if kind == ShuffleRunKindV1::Owner {
-            Ok(1)
-        } else {
-            Err(ProtocolError::InvalidInvariant(
-                "non-empty bucket shuffle run",
-            ))
-        };
+        return Err(ProtocolError::InvalidInvariant(
+            "non-empty bucket shuffle run",
+        ));
     }
     Ok(record_count.div_ceil(MAX_SHUFFLE_LEAF_RECORDS as u32))
 }
@@ -188,13 +180,6 @@ fn validate_artifact_payload(artifact: &ShuffleRunArtifactV1) -> Result<(), Prot
             what: "shuffle page width",
         })?;
     match &artifact.payload {
-        ShuffleRunPayloadV1::OwnerLeaf(records) => {
-            require(
-                artifact.kind == ShuffleRunKindV1::Owner,
-                "shuffle payload kind binding",
-            )?;
-            validate_leaf_shape(artifact, page_width, records.len())
-        }
         ShuffleRunPayloadV1::BucketLeaf(records) => {
             require(
                 artifact.kind == ShuffleRunKindV1::Bucket,
@@ -267,27 +252,6 @@ fn validate_leaf_shape(
         usize::try_from(artifact.record_count).ok() == Some(actual_records),
         "shuffle leaf record count",
     )
-}
-
-pub(super) fn validate_owner_records(
-    records: &[ContributorActionV1],
-    limits: &SchemaLimits,
-) -> Result<(), ProtocolError> {
-    require(
-        records.len() <= limits.max_chunk_items && records.len() <= MAX_SHUFFLE_LEAF_RECORDS,
-        "shuffle leaf record cap",
-    )?;
-    for record in records {
-        record.validate(limits)?;
-    }
-    for pair in records.windows(2) {
-        require(
-            (pair[0].owner, pair[0].source_tribute_id) < (pair[1].owner, pair[1].source_tribute_id)
-                && pair[0].owner != pair[1].owner,
-            "owner shuffle records strictly ordered",
-        )?;
-    }
-    Ok(())
 }
 
 pub(super) fn validate_bucket_records(

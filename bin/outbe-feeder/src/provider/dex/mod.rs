@@ -5,7 +5,7 @@ pub(crate) mod math;
 mod pool;
 mod worker;
 
-pub(crate) use config::{validate_config, DexProviderConfig};
+pub(crate) use config::{collect_markets, listed_markets, validate_config, DexProviderConfig};
 pub(crate) use worker::DexProvider;
 
 #[cfg(test)]

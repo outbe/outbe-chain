@@ -539,7 +539,7 @@ fn shuffle_units_bind_only_the_exact_materialized_producer_runs() {
     let planner = LysisPlannerV1::new(planner_bindings(513)).unwrap();
     let leaf_source = B256::repeat_byte(0x71);
     let leaf = planner
-        .shuffle_unit_at(UnitPhase::OwnerShuffle, 2, &[leaf_source], &limits)
+        .shuffle_unit_at(UnitPhase::BucketShuffle, 2, &[leaf_source], &limits)
         .unwrap();
     assert_eq!(
         leaf.interval,
@@ -557,7 +557,7 @@ fn shuffle_units_bind_only_the_exact_materialized_producer_runs() {
     let left = B256::repeat_byte(0x72);
     let right = B256::repeat_byte(0x73);
     let root = planner
-        .shuffle_unit_at(UnitPhase::OwnerShuffle, 4, &[left, right], &limits)
+        .shuffle_unit_at(UnitPhase::BucketShuffle, 4, &[left, right], &limits)
         .unwrap();
     assert_eq!(
         root.interval,
@@ -573,19 +573,19 @@ fn shuffle_units_bind_only_the_exact_materialized_producer_runs() {
             .collect::<Vec<_>>(),
         [
             (
-                InputPurpose::OwnerOrderedRecords,
+                InputPurpose::BucketOrderedRecords,
                 InputSourceKind::UnitOutput,
                 left,
             ),
             (
-                InputPurpose::OwnerOrderedRecords,
+                InputPurpose::BucketOrderedRecords,
                 InputSourceKind::UnitOutput,
                 right,
             ),
         ]
     );
     assert!(planner
-        .shuffle_unit_at(UnitPhase::OwnerShuffle, 4, &[left], &limits)
+        .shuffle_unit_at(UnitPhase::BucketShuffle, 4, &[left], &limits)
         .is_err());
     assert!(planner
         .shuffle_unit_at(UnitPhase::BucketShuffle, 4, &[left, B256::ZERO], &limits,)
@@ -600,15 +600,10 @@ fn root_reduce_units_bind_exact_leaf_shuffle_roots_and_padded_summaries() {
     let limits = poc_schema_limits();
     let planner = LysisPlannerV1::new(planner_bindings(513)).unwrap();
     let finalized = B256::repeat_byte(0x81);
-    let owner_root = B256::repeat_byte(0x82);
     let bucket_root = B256::repeat_byte(0x83);
 
     let leaf = planner
-        .root_reduce_unit_at(
-            2,
-            &[Some(finalized), Some(owner_root), Some(bucket_root)],
-            &limits,
-        )
+        .root_reduce_unit_at(2, &[Some(finalized), Some(bucket_root)], &limits)
         .unwrap();
     assert_eq!(leaf.phase, UnitPhase::RootReduce);
     assert_eq!(
@@ -628,11 +623,6 @@ fn root_reduce_units_bind_exact_leaf_shuffle_roots_and_padded_summaries() {
                 InputPurpose::FinalizedOutputRecords,
                 InputSourceKind::UnitOutput,
                 finalized,
-            ),
-            (
-                InputPurpose::OwnerOrderedRecords,
-                InputSourceKind::UnitOutput,
-                owner_root,
             ),
             (
                 InputPurpose::BucketOrderedRecords,
@@ -661,7 +651,14 @@ fn root_reduce_units_bind_exact_leaf_shuffle_roots_and_padded_summaries() {
         InputSourceKind::CanonicalEmpty
     );
     assert!(planner
-        .root_reduce_unit_at(2, &[Some(finalized), Some(owner_root)], &limits)
+        .root_reduce_unit_at(2, &[Some(finalized)], &limits)
+        .is_err());
+    assert!(planner
+        .root_reduce_unit_at(
+            2,
+            &[Some(finalized), Some(bucket_root), Some(B256::repeat_byte(0x82))],
+            &limits,
+        )
         .is_err());
     assert!(planner
         .root_reduce_unit_at(3, &[Some(left), Some(B256::ZERO)], &limits)

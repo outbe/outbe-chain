@@ -269,3 +269,77 @@ fn finalized_window_vwap_needs_two_thirds_of_the_hours_with_blocks() {
     assert_eq!(window_vwap_with_halted_hours(&[2, 3]), Some(coen_iso(3)));
     assert_eq!(window_vwap_with_halted_hours(&[2, 3, 4]), None);
 }
+
+/// Bounds of the storage tests' layout; a `halted` hour has no block.
+fn layout_bounds(halted: &[usize]) -> Vec<u64> {
+    let mut block = 1_000;
+    (0..=8)
+        .map(|k| {
+            if halted.contains(&k) {
+                return 0;
+            }
+            let first = block;
+            block += 1_800;
+            first
+        })
+        .collect()
+}
+
+fn covered(bounds: &[u64], snapshots: &[u64], vote_period: u64) -> Option<bool> {
+    crate::coverage::judge_window(bounds, snapshots, vote_period)
+        .map(|coverage| coverage.verdict.covered())
+}
+
+#[test]
+fn judge_window_agrees_with_the_finalized_window_vwap() {
+    let twos = [2; 8];
+    for per_hour in [
+        [225, 225, 225, 149, 225, 225, 225, 225],
+        [225, 225, 225, 150, 225, 225, 225, 225],
+        [225, 225, 0, 225, 225, 0, 225, 225],
+        [225, 225, 0, 225, 0, 0, 225, 225],
+        [160, 160, 0, 160, 160, 0, 160, 160],
+        [172, 172, 172, 0, 172, 172, 172, 172],
+        [171, 171, 171, 0, 171, 171, 171, 171],
+        [149; 8],
+    ] {
+        assert_eq!(
+            covered(&layout_bounds(&[]), &per_hour, 8),
+            Some(window_vwap_for(per_hour, twos).is_some()),
+            "{per_hour:?}"
+        );
+    }
+    for halted in [&[2, 3][..], &[2, 3, 4][..]] {
+        let snapshots: Vec<u64> = (0..8)
+            .map(|k| if halted.contains(&k) { 0 } else { 225 })
+            .collect();
+        let halted_bounds: Vec<usize> = halted.iter().map(|&k| k as usize).collect();
+        assert_eq!(
+            covered(&layout_bounds(&halted_bounds), &snapshots, 8),
+            Some(window_vwap_with_halted_hours(halted).is_some()),
+            "{halted:?}"
+        );
+    }
+}
+
+#[test]
+fn judge_window_needs_two_thirds_of_the_hours() {
+    let coverage = crate::coverage::judge_window(&[0, 1, 0, 25], &[0, 2, 0], 8).unwrap();
+    assert_eq!(coverage.counted, vec![false, true, false]);
+    assert!(!coverage.verdict.hours);
+    assert!(!coverage.verdict.covered());
+    // Hours crossed one block at a time, then two covered hours: two of eight.
+    let bounds = [10, 11, 12, 13, 14, 15, 16, 17, 97];
+    let coverage = crate::coverage::judge_window(&bounds, &[0, 0, 0, 0, 0, 0, 1, 10], 8).unwrap();
+    assert_eq!(
+        coverage.counted.iter().filter(|counted| **counted).count(),
+        2
+    );
+    assert!(!coverage.verdict.hours);
+}
+
+#[test]
+fn judge_window_without_blocks_has_no_verdict() {
+    assert_eq!(covered(&[0, 0, 5], &[0, 0], 8), None);
+    assert_eq!(covered(&[0, 0, 0], &[3, 3], 8), None);
+}

@@ -92,15 +92,6 @@ wire_struct! {
 }
 
 wire_struct! {
-    pub struct ContributorTargetPreconditionV1 {
-        pub worldwide_day: u32,
-        pub expected_series_version: u64,
-        pub max_contributor_count: u32,
-        pub max_eligible_nominal_total: U256,
-    }
-}
-
-wire_struct! {
     pub struct MetadosisAttemptPreconditionV1 {
         pub wwd: u32,
         pub pending_nonce: u64,
@@ -113,7 +104,6 @@ wire_struct! {
     pub struct ActivationPreconditionsV1 {
         pub tribute: TributeInputBindingV1,
         pub nod: NodTargetPreconditionV1,
-        pub contributors: ContributorTargetPreconditionV1,
         pub metadosis: MetadosisAttemptPreconditionV1,
     }
 }
@@ -195,7 +185,6 @@ impl ActivationPreconditionsV1 {
         self.tribute.wwd == intent.wwd
             && self.nod.wwd == intent.wwd
             && self.metadosis.wwd == intent.wwd
-            && self.contributors.worldwide_day == intent.wwd
     }
 
     fn source_counts_match_intent(&self, intent: &JobIntentV1) -> bool {
@@ -210,8 +199,6 @@ impl ActivationPreconditionsV1 {
 
     fn target_bounds_match_tribute(&self) -> bool {
         self.nod.max_nod_count == self.tribute.exact_count
-            && self.contributors.max_contributor_count == self.tribute.exact_count
-            && self.contributors.max_eligible_nominal_total == self.tribute.exact_nominal_total
     }
 
     fn source_bounds_match_intent(&self, intent: &JobIntentV1) -> bool {
