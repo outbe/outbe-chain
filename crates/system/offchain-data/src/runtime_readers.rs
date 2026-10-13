@@ -1,4 +1,4 @@
-//! Tribute and Nod body capabilities used by runtime execution.
+//! Tribute, Nod and Gem body capabilities used by runtime execution.
 //! The path with no day route is read-only.
 //! The day-routed path holds the shared durable writer.
 //! A body read on that path can migrate legacy keys and write.
@@ -273,7 +273,7 @@ impl StorageReader for BudgetedStorageReader {
     }
 }
 
-/// Cloneable runtime authority for typed Tribute and Nod body reads.
+/// Cloneable runtime authority for typed Tribute, Nod and Gem body reads.
 ///
 /// Construction takes the storage capability and does not expose it.
 /// Callers receive typed readers. They cannot take the writer from this bundle.
@@ -296,10 +296,11 @@ struct ExecutionBodyReadSession {
     factory: RuntimeReaderFactory,
     tribute: TributeRepositoryReader,
     nod: NodRepositoryReader,
+    gem: outbe_gem::GemRepositoryReader,
     budgets: Arc<ExecutionReadBudgets>,
 }
 
-/// Builds both domain readers over one shared storage adapter.
+/// Builds domain readers over one shared storage adapter.
 #[must_use]
 pub fn runtime_body_readers(storage: StorageReaderHandle) -> RuntimeBodyReaders {
     RuntimeReaderFactory {
@@ -368,11 +369,13 @@ impl RuntimeReaderFactory {
                 )
             }
         };
+        let gem = outbe_gem::gem_reader(reader_wrap(budgets.clone())(self.storage.clone()));
         RuntimeBodyReaders {
             execution: ExecutionBodyReadSession {
                 factory: self,
                 tribute,
                 nod,
+                gem,
                 budgets,
             },
         }
@@ -414,6 +417,12 @@ impl RuntimeBodyReaders {
     #[must_use]
     pub const fn nod(&self) -> &NodRepositoryReader {
         &self.execution.nod
+    }
+
+    /// Returns the typed Gem item and bucket reader.
+    #[must_use]
+    pub const fn gem(&self) -> &outbe_gem::GemRepositoryReader {
+        &self.execution.gem
     }
 
     /// Reports a technical read failure without exposing readiness write authority to domains.
@@ -477,6 +486,10 @@ impl RuntimeBodyReaders {
 impl ParentBodySource for RuntimeBodyReaders {
     fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
         match entity {
+            EntityRef::Gem(id) => ParentBodySource::get(&self.execution.gem, EntityRef::Gem(id)),
+            EntityRef::GemBucket(id) => {
+                ParentBodySource::get(&self.execution.gem, EntityRef::GemBucket(id))
+            }
             EntityRef::Tribute(tribute_id) => self
                 .execution
                 .tribute
@@ -501,6 +514,9 @@ impl ParentBodySource for RuntimeBodyReaders {
         request: IdPageRequest,
     ) -> Result<IdPage, ParentBodySourceError> {
         match query {
+            QueryRef::GemByOwner(owner) => {
+                ParentBodySource::list(&self.execution.gem, QueryRef::GemByOwner(owner), request)
+            }
             QueryRef::TributeByOwner(owner) => self
                 .execution
                 .tribute

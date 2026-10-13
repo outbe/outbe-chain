@@ -102,7 +102,7 @@ impl TreeProof {
 
 #[derive(Debug, Error, Eq, PartialEq)]
 pub(crate) enum TreeError {
-    #[error("shard count must be a power of two in 1..=32, got {actual}")]
+    #[error("shard count must be a power of two in 1..=256, got {actual}")]
     InvalidShardCount { actual: u32 },
     #[error("{kind} is not a canonical BN254 field encoding")]
     NonCanonicalField { kind: &'static str },

@@ -130,8 +130,10 @@ fn static_gem_factory_command_is_denied_before_domain_validation() {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_static(true);
     let storage = StorageHandle::new(&mut provider);
+    let world = outbe_gem::test_support::GemWorld::unopened();
     let result = outbe_gemfactory::precompile::dispatch(
         storage,
+        world.readers(),
         &IGemFactory::issueGemPositionCall {
             sourceIntexId: alloy_primitives::FixedBytes::repeat_byte(99),
             units: U256::from(1),
@@ -313,7 +315,12 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
                 ..Default::default()
             },
         );
-        let mut evm = OutbeEvmFactory::default().create_evm(
+        // Gem Factory routes through the compressed-body readers; a position needs no
+        // body, so an empty finalized store is enough authority here.
+        let readers = outbe_offchain_data::runtime_body_readers(std::sync::Arc::new(
+            outbe_offchain_storage::MemoryStorage::new(),
+        ));
+        let mut evm = outbe_evm::factory::evm_factory_with_body_readers(readers).create_evm(
             &mut db,
             EvmEnv {
                 cfg_env: CfgEnv::new()

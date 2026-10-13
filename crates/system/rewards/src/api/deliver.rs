@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, U256};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_gemfactory::GemTypes;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
@@ -22,20 +23,25 @@ struct QueuedRewardGemBatch {
     issuance_currency: u16,
     reference_currency: u16,
     recipients: Vec<(Address, U256)>,
-    promis_load_amount: U256,
 }
 
-/// Attempts to deliver exactly one complete FIFO head batch. Missing or stale
-/// price data is a successful no-op. A mint failure leaves atomic rollback to
-/// this checkpoint and to the enclosing system transaction.
+/// Delivers the next recipient of the FIFO head batch: one compressed Gem body per
+/// block, the amount of compressed-entity gas the system envelope reserves. The head
+/// retires once every recipient was served. Missing or stale price data is a
+/// successful no-op. A mint failure leaves atomic rollback to this checkpoint and to
+/// the enclosing system transaction.
 pub fn deliver_oldest_reward_gem_batch(
     ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
 ) -> Result<RewardGemDeliveryOutcome> {
-    ctx.with_checkpoint(|| deliver_oldest_reward_gem_batch_inner(ctx))
+    ctx.with_checkpoint(|| deliver_oldest_reward_gem_batch_inner(ctx, scope, parent))
 }
 
 fn deliver_oldest_reward_gem_batch_inner(
     ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
 ) -> Result<RewardGemDeliveryOutcome> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let Some(head) = read_reward_gem_fifo_head(&rewards)? else {
@@ -55,14 +61,47 @@ fn deliver_oldest_reward_gem_batch_inner(
         return Ok(RewardGemDeliveryOutcome::PendingRate { reward_utc_day });
     };
 
-    let delivered_promis_load_amount = batch.promis_load_amount;
-    issue_reward_gems(ctx, batch, entry_price)?;
-    retire_reward_gem_fifo_head(&rewards, &head, recipient_count)?;
+    let delivered = rewards.reward_gem_delivered_count.read(&reward_utc_day)?;
+    let (owner, load) = batch
+        .recipients
+        .get(delivered as usize)
+        .copied()
+        .ok_or_else(|| {
+            reward_gem_retryable_error(format!(
+                "validator reward Gem UTC day {reward_utc_day} delivered {delivered} of {recipient_count} recipients"
+            ))
+        })?;
+    outbe_gemfactory::api::issue_gem(
+        &ctx.storage,
+        scope,
+        parent,
+        outbe_gemfactory::GemIssueParams {
+            owner,
+            gem_type: batch.gem_type,
+            promis_load: load,
+            issuance_currency: batch.issuance_currency,
+            reference_currency: batch.reference_currency,
+            entry_price,
+        },
+    )?;
+    let delivered_recipients = delivered.checked_add(1).ok_or_else(|| {
+        reward_gem_retryable_error("validator reward Gem delivered count overflow")
+    })?;
+    let batch_complete = delivered_recipients == recipient_count;
+    if batch_complete {
+        retire_reward_gem_fifo_head(&rewards, &head, recipient_count)?;
+    } else {
+        rewards
+            .reward_gem_delivered_count
+            .write(&reward_utc_day, delivered_recipients)?;
+    }
 
     Ok(RewardGemDeliveryOutcome::Delivered {
         reward_utc_day,
         recipient_count,
-        delivered_promis_load_amount,
+        delivered_promis_load_amount: load,
+        delivered_recipients,
+        batch_complete,
     })
 }
 
@@ -174,7 +213,6 @@ fn read_queued_reward_gem_batch(
         issuance_currency,
         reference_currency,
         recipients,
-        promis_load_amount,
     })
 }
 
@@ -236,27 +274,6 @@ fn resolve_reward_entry_price(
     outbe_oracle::api::get_utc_day_vwap_for_iso(ctx.storage.clone(), day, reference_currency)
 }
 
-fn issue_reward_gems(
-    ctx: &BlockRuntimeContext,
-    batch: QueuedRewardGemBatch,
-    entry_price: U256,
-) -> Result<()> {
-    for (owner, load) in batch.recipients {
-        outbe_gemfactory::api::issue_gem(
-            &ctx.storage,
-            outbe_gemfactory::GemIssueParams {
-                owner,
-                gem_type: batch.gem_type,
-                promis_load: load,
-                issuance_currency: batch.issuance_currency,
-                reference_currency: batch.reference_currency,
-                entry_price,
-            },
-        )?;
-    }
-    Ok(())
-}
-
 fn retire_reward_gem_fifo_head(
     rewards: &Rewards<'_>,
     head: &RewardGemFifoHead,
@@ -271,6 +288,9 @@ fn retire_reward_gem_fifo_head(
     }
     rewards
         .reward_gem_recipient_count
+        .write(&reward_utc_day, 0)?;
+    rewards
+        .reward_gem_delivered_count
         .write(&reward_utc_day, 0)?;
     rewards
         .reward_gem_utc_day_by_sequence

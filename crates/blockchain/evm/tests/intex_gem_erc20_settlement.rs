@@ -165,11 +165,17 @@ impl World {
                 },
             );
         }
-        let readers = runtime_body_readers(Arc::new(MemoryStorage::new()));
+        let adapter = Arc::new(MemoryStorage::new());
+        let readers = runtime_body_readers(adapter.clone());
+        let gem_parent = outbe_gem::gem_reader(adapter);
         let scope = Arc::new(ExecutionScope::default());
         let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, OWNER, vec![OWNER]);
         let mut provider = DirectStorageProvider::new(&mut db, block);
         let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
+            // Gems are compressed bodies: open the block's scope before any mint.
+            outbe_compressed_entities::test_support::seed_compressed_entities_genesis(&storage)
+                .unwrap();
+            outbe_compressed_entities::begin_block(storage.clone(), &scope).unwrap();
             let router = VaultRouterContract::new(storage.clone());
             router.assets.insert(ASSET).unwrap();
             router.asset_vault_set(ASSET).insert(VAULT).unwrap();
@@ -232,14 +238,14 @@ impl World {
                 Factory::Gem => {
                     let gem_id = outbe_gem::api::add_gem(
                         &storage,
+                        &scope,
+                        &gem_parent,
                         GemAddParams {
                             owner: OWNER,
                             gem_type: outbe_gemfactory::schema::GemTypes::Wallet as u8,
                             promis_load_minor: U256::from(1_500_000),
                             entry_price_minor: U256::from(2_000_000),
                             floor_price_minor: U256::from(2_160_000),
-                            call_price_minor: U256::from(4_560_000),
-                            call_rate: 128,
                             issuance_currency,
                             reference_currency: 840,
                             issued_at: TIMESTAMP,
@@ -248,14 +254,23 @@ impl World {
                     .unwrap();
                     let mut deadline = 0;
                     if let Some(called_at) = gem_called_at {
-                        let bucket = outbe_gem::api::bucket_of(&storage, gem_id).unwrap();
+                        let bucket =
+                            outbe_gem::api::get_item(&storage, &scope, &gem_parent, gem_id)
+                                .unwrap()
+                                .unwrap()
+                                .bucket_key;
                         outbe_gem::GemContract::new(storage.clone())
                             .bucket_called_at
                             .write(&bucket, called_at)
                             .unwrap();
-                        let item = outbe_gem::api::get_gem(&storage, gem_id).unwrap().unwrap();
-                        assert_eq!(item.state, outbe_gem::GemState::Called as u8);
-                        deadline = item.called_at + u64::from(item.call_notice_period_seconds);
+                        let gem = outbe_gem::api::get_view(&storage, &scope, &gem_parent, gem_id)
+                            .unwrap()
+                            .unwrap();
+                        assert_eq!(
+                            gem.effective_state(TIMESTAMP),
+                            outbe_gem::GemState::Called as u8
+                        );
+                        deadline = gem.settlement_deadline();
                     }
                     (gem_id, deadline)
                 }

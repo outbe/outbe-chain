@@ -58,7 +58,6 @@ impl AuthenticatedParentTree for PresentTree {
             block_number,
             B256::repeat_byte(0x41),
             self.root,
-            self.root,
             Default::default(),
             Default::default(),
         )

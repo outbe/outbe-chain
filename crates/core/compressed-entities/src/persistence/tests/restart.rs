@@ -92,7 +92,6 @@ fn no_change_batch_still_carries_a_complete_next_marker() {
         8,
         b256(7),
         b256(18),
-        b256(18),
         BTreeMap::new(),
         BTreeMap::new(),
     )

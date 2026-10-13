@@ -1,7 +1,16 @@
-//! Included Gem subtypes conserve live load through real call/expiry hooks.
+//! Included Gem subtypes conserve live load through real call/expiry hooks over the
+//! compressed-body store.
+use std::sync::Arc;
+
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use outbe_gem::{api, called, config::PROFILE_PROD, hooks, GemAddParams, GemContract, GemState};
+use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
+use outbe_compressed_entities::{begin_block, ExecutionScope};
+use outbe_gem::{
+    api, called, config::PROFILE_PROD, hooks, GemAddParams, GemContract, GemRepositoryReader,
+    GemState,
+};
+use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     address_pair::AddressPair,
@@ -20,11 +29,22 @@ const DEADLINE: u64 = CALLED + 7 * DAY;
 // Genesis, Validator, SRA, Wallet, Merchant.
 const TYPES: [u8; 5] = [0, 1, 2, 3, 5];
 
-fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
+struct World {
+    scope: ExecutionScope,
+    parent: GemRepositoryReader,
+}
+
+fn world() -> (HashMapStorageProvider, World, Vec<(U256, U256)>) {
     let mut p = HashMapStorageProvider::new(1);
     p.set_block_number(1);
     p.set_timestamp(U256::from(CALLED));
+    let world = World {
+        scope: ExecutionScope::default(),
+        parent: outbe_gem::gem_reader(Arc::new(MemoryStorage::new())),
+    };
     let rights = StorageHandle::enter(&mut p, |s| {
+        seed_compressed_entities_genesis(&s).unwrap();
+        begin_block(s.clone(), &world.scope).unwrap();
         GemContract::new(s.clone())
             .config_profile
             .write(PROFILE_PROD)
@@ -36,6 +56,8 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
                 let load = U256::from(1_000_001 + i as u64);
                 let id = api::add_gem(
                     &s,
+                    &world.scope,
+                    &world.parent,
                     GemAddParams {
                         owner: Address::repeat_byte(i as u8 + 1),
                         gem_type: kind,
@@ -46,8 +68,6 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
                         } else {
                             U256::from(1_100_000)
                         },
-                        call_price_minor: U256::from(2_280_000),
-                        call_rate: 128,
                         issuance_currency: 840,
                         reference_currency: 840,
                         issued_at: ISSUED,
@@ -74,7 +94,10 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         called::scan_and_call(&ctx).unwrap();
         for (id, _) in &rights {
             assert_eq!(
-                api::get_gem(&s, *id).unwrap().unwrap().state,
+                api::get_view(&s, &world.scope, &world.parent, *id)
+                    .unwrap()
+                    .unwrap()
+                    .effective_state(CALLED),
                 GemState::Called as u8
             );
         }
@@ -86,23 +109,23 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         rights
     });
     p.clear_mutation_failure();
-    (p, rights)
+    (p, world, rights)
 }
 
-fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
+fn sweep(p: &mut HashMapStorageProvider, world: &World, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
-        hooks::sweep_forfeits(&ctx)?;
+        hooks::sweep_forfeits(&ctx, &world.scope, &world.parent)?;
         called::run_call_slice(&ctx).map(drop)
     })
 }
 
-fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
+fn conserved(p: &mut HashMapStorageProvider, world: &World, rights: &[(U256, U256)]) {
     let (live, returned, count) = StorageHandle::enter(p, |s| {
         let live = rights
             .iter()
-            .filter_map(|(id, _)| api::get_gem(&s, *id).unwrap())
+            .filter_map(|(id, _)| api::get_item(&s, &world.scope, &world.parent, *id).unwrap())
             .map(|gem| gem.promis_load_minor)
             .sum::<U256>();
         let returned = PromisLimitContract::new(s.clone())
@@ -131,9 +154,9 @@ fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
 
 #[test]
 fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
-    let (mut p, rights) = world();
-    sweep(&mut p, DEADLINE).unwrap();
-    conserved(&mut p, &rights);
+    let (mut p, world, rights) = world();
+    sweep(&mut p, &world, DEADLINE).unwrap();
+    conserved(&mut p, &world, &rights);
     StorageHandle::enter(&mut p, |s| {
         assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 5);
         assert_eq!(
@@ -142,10 +165,10 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
         );
     });
     let due = ((DEADLINE / 3600) + 1) * 3600;
-    sweep(&mut p, due).unwrap();
-    conserved(&mut p, &rights);
-    sweep(&mut p, due + DAY).unwrap();
-    conserved(&mut p, &rights);
+    sweep(&mut p, &world, due).unwrap();
+    conserved(&mut p, &world, &rights);
+    sweep(&mut p, &world, due + DAY).unwrap();
+    conserved(&mut p, &world, &rights);
     StorageHandle::enter(&mut p, |s| {
         assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
         assert_eq!(
@@ -157,21 +180,21 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
 
 #[test]
 fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
-    let (mut p, rights) = world();
+    let (mut p, world, rights) = world();
     let (paid, paid_load) = rights[0];
     // The completed settlement footprint; payment itself is covered by the
     // settlement tests.
     StorageHandle::enter(&mut p, |s| {
-        api::set_state(&s, paid, GemState::Settled).unwrap();
-        api::burn(&s, paid).unwrap();
+        api::settle_gem(&s, &world.scope, &world.parent, paid).unwrap();
+        api::burn_settled(&s, &world.scope, &world.parent, paid).unwrap();
         assert_eq!(
             PromisLimitContract::new(s).get_total_unallocated().unwrap(),
             U256::ZERO
         );
     });
     let due = ((DEADLINE / 3600) + 1) * 3600;
-    sweep(&mut p, due).unwrap();
-    sweep(&mut p, due + DAY).unwrap();
+    sweep(&mut p, &world, due).unwrap();
+    sweep(&mut p, &world, due + DAY).unwrap();
     StorageHandle::enter(&mut p, |s| {
         assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
         let total = rights.iter().map(|(_, load)| *load).sum::<U256>();
@@ -185,25 +208,25 @@ fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
 #[test]
 fn failures_before_and_after_every_expiry_mutation_conserve_load_and_retry_once() {
     let due = ((DEADLINE / 3600) + 1) * 3600;
-    let (mut baseline, _) = world();
-    sweep(&mut baseline, due).unwrap();
+    let (mut baseline, baseline_world, _) = world();
+    sweep(&mut baseline, &baseline_world, due).unwrap();
     let mutations = baseline.clear_mutation_failure();
     assert!(mutations > 0);
     for after in [false, true] {
         for point in 0..mutations {
-            let (mut p, rights) = world();
+            let (mut p, world, rights) = world();
             if after {
                 p.fail_after_mutation_at(point);
             } else {
                 p.fail_mutation_at(point);
             }
-            let result = sweep(&mut p, due);
+            let result = sweep(&mut p, &world, due);
             p.clear_mutation_failure();
             assert!(result.is_err(), "failure point {point}, after={after}");
-            conserved(&mut p, &rights);
-            sweep(&mut p, due + 1).unwrap();
-            sweep(&mut p, due + DAY).unwrap();
-            conserved(&mut p, &rights);
+            conserved(&mut p, &world, &rights);
+            sweep(&mut p, &world, due + 1).unwrap();
+            sweep(&mut p, &world, due + DAY).unwrap();
+            conserved(&mut p, &world, &rights);
             StorageHandle::enter(&mut p, |s| {
                 assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
                 assert_eq!(

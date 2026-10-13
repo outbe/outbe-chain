@@ -86,6 +86,9 @@ impl TestParent {
 impl ParentBodySource for TestParent {
     fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
         match entity {
+            EntityRef::Gem(_) | EntityRef::GemBucket(_) => Err(ParentBodySourceError::Corruption(
+                "Metadosis parent cannot serve a Gem entity".into(),
+            )),
             EntityRef::Tribute(_) => ParentBodySource::get(&self.tribute, entity),
             EntityRef::NodItem(_) | EntityRef::NodBucket(_) => {
                 ParentBodySource::get(&self.nod, entity)
@@ -99,6 +102,9 @@ impl ParentBodySource for TestParent {
         request: IdPageRequest,
     ) -> Result<IdPage, ParentBodySourceError> {
         match query {
+            QueryRef::GemByOwner(_) => Err(ParentBodySourceError::Corruption(
+                "Metadosis parent cannot serve a Gem query".into(),
+            )),
             QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => {
                 ParentBodySource::list(&self.tribute, query, request)
             }

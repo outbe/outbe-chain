@@ -523,14 +523,14 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         assert_dense_agent_settlement(storage.clone(), prev_day, DENSE_ADDRESS_COUNT)?;
         let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
         assert!(rewards.daily_topup_prepared.read(&prev_day)?);
-        assert!(rewards.daily_topup_settled.read(&prev_day)?);
-        assert_eq!(rewards.reward_gem_queue_head.read()?, 1);
+        // One compressed Gem body per block: the dense batch drains over later blocks
+        // and the day settles only when its FIFO head retires.
+        assert!(!rewards.daily_topup_settled.read(&prev_day)?);
+        assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
         assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
+        assert_eq!(rewards.reward_gem_delivered_count.read(&prev_day)?, 1);
         let gem = outbe_gem::GemContract::new(storage);
-        for index in 0..DENSE_VALIDATOR_COUNT {
-            let voter = numbered_test_address(0x12, u64::from(index));
-            assert_eq!(gem.balance_of(voter)?, 1);
-        }
+        assert_eq!(gem.total_supply()?, 1);
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .expect("GAS-05 dense AgentReward state should be readable after CycleTick");

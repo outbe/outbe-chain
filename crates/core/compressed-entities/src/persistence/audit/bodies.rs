@@ -46,6 +46,8 @@ impl<'a> CeBodyAudit<'a> {
             CeDomain::Tribute => Collection::Tribute,
             CeDomain::NodItem => Collection::NodItem,
             CeDomain::NodBucket => Collection::NodBucket,
+            CeDomain::Gem => Collection::Gem,
+            CeDomain::GemBucket => Collection::GemBucket,
         };
         let key = derive_tree_key(kind, id).map_err(invalid)?;
         let shard = shard_index(key, domain.shard_count()).map_err(invalid)?;

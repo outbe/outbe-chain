@@ -6,6 +6,8 @@ mod sponsored_gem;
 #[path = "settlement_nod.rs"]
 mod erc20_nod;
 
+pub(crate) use erc20_nod::compressed_body;
+
 pub(crate) fn exercise_encrypted_nod(world: &mut crate::world::World, day: u32) {
     erc20_nod::run_relayed_mining(world, 0, day, true);
 }
@@ -286,11 +288,21 @@ fn seeded_vwap_delivers_saved_reward_batch(world: &mut World) {
         );
         sleep(Duration::from_millis(500));
     }
-    let snapshot = reward_gem_queue_snapshot(world, port).expect("Rewards FIFO after delivery");
-    assert_eq!(
-        snapshot.head, snapshot.tail,
-        "delivery did not pop FIFO head"
-    );
+    // One compressed Gem body per block: the batch drains one recipient per block,
+    // so the FIFO head retires a few blocks after validator 0 received its Gem.
+    loop {
+        let snapshot = reward_gem_queue_snapshot(world, port).expect("Rewards FIFO after delivery");
+        if snapshot.head == snapshot.tail {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "delivery did not pop FIFO head: {snapshot:?} head={:?} finalized={:?}",
+            world.rpc.head(port),
+            world.rpc.finalized(port),
+        );
+        sleep(Duration::from_millis(500));
+    }
     let gem_id = reward_gem_id_at(world, port, expected - U256::ONE);
     let fresh_tally_block_number = world
         .price_oracle
@@ -887,27 +899,44 @@ fn validator_reward_owner(world: &World) -> Address {
         .expect("canonical validator 0 address")
 }
 
+/// Gem views read through the compressed-body projection, which trails the block
+/// that wrote the body: retry a failed read for a bounded moment.
+fn read_gem_view<C>(url: &str, call: &C, what: &str) -> C::Return
+where
+    C: alloy_sol_types::SolCall,
+    C::Return: Send + 'static,
+{
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        match eth::read_call_result(url, addresses::GEM_ADDR, call) {
+            Ok(value) => return value,
+            Err(error) => {
+                assert!(Instant::now() < deadline, "{what}: {error}");
+                sleep(Duration::from_secs(1));
+            }
+        }
+    }
+}
+
 fn validator_reward_gem_balance(world: &World, port: u16) -> U256 {
-    eth::read_call(
+    read_gem_view(
         &world.rpc.url(port),
-        addresses::GEM_ADDR,
         &eth::IGem::balanceOfCall {
             owner: validator_reward_owner(world),
         },
+        "validator reward Gem balance",
     )
-    .expect("validator reward Gem balance")
 }
 
 fn reward_gem_id_at(world: &World, port: u16, index: U256) -> U256 {
-    eth::read_call(
+    read_gem_view(
         &world.rpc.url(port),
-        addresses::GEM_ADDR,
         &eth::IGem::tokenOfOwnerByIndexCall {
             owner: validator_reward_owner(world),
             index,
         },
+        "validator reward Gem enumeration",
     )
-    .expect("validator reward Gem enumeration")
 }
 
 fn reward_gem_queue_snapshot(world: &World, port: u16) -> Option<RewardGemQueueSnapshot> {
