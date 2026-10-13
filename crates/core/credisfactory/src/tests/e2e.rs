@@ -315,8 +315,8 @@ fn forfeit_burns_only_remaining_credis_backing_and_leaves_fidelity_untouched() {
     teardown();
 }
 
-/// The reservation fixes every Credis term: neither midnight, a missing VWAP of the new
-/// day nor a changed policy rate moves them before issuance.
+/// The reservation fixes every Credis term: neither midnight, an unfinalized day that
+/// just closed nor a changed policy rate moves them before issuance.
 #[test]
 fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
     let mut provider = env();
@@ -325,7 +325,12 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         let midnight = (CREATED_AT / DAY + 1) * DAY;
         advance_to(&storage, midnight - 300);
         let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
-        let reservation = outbe_vaultrouter::api::reservation_of(&storage, id).unwrap();
+        let mut reservation = outbe_vaultrouter::api::reservation_of(&storage, id).unwrap();
+        reservation.call_anchor_price_minor = U256::from(2_500_000u64);
+        VaultRouterContract::new(storage.clone())
+            .reservations
+            .update(&reservation)
+            .unwrap();
         pledge(&storage, alice(), id, 1);
         advance_to(&storage, midnight + 300);
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());

@@ -305,7 +305,7 @@ pub fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u
 
 /// Publishes `price` as the finalized VWAP of the UTC day closed at the
 /// storage clock, which is the day issuance reads.
-pub fn seed_previous_closed_day(storage: &StorageHandle<'_>, iso: u16, price: U256) {
+fn seed_previous_closed_day(storage: &StorageHandle<'_>, iso: u16, price: U256) {
     let day = last_closed_day(storage.timestamp().unwrap().to::<u64>());
     set_vwap_for(storage, iso, day, price);
 }

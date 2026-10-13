@@ -2494,21 +2494,27 @@ fn reserve_stables_requires_a_pledge_source() {
     });
 }
 
+fn reserve_in(
+    storage: &StorageHandle<'_>,
+    reference_currency: u16,
+) -> outbe_primitives::error::Result<U256> {
+    runtime::reserve_stables(
+        storage.clone(),
+        cca(),
+        IVaultRouter::reserveStablesCall {
+            smartAccount: receiver(),
+            source: pledger(),
+            asset: asset(),
+            amount: U256::from(10),
+            referenceCurrency: reference_currency,
+        },
+    )
+}
+
 #[test]
 fn a_reservation_needs_every_call_term() {
     let rejected = |storage: &StorageHandle<'_>, reference_currency: u16, reason: &str| {
-        let err = runtime::reserve_stables(
-            storage.clone(),
-            cca(),
-            IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
-                source: pledger(),
-                asset: asset(),
-                amount: U256::from(10),
-                referenceCurrency: reference_currency,
-            },
-        )
-        .unwrap_err();
+        let err = reserve_in(storage, reference_currency).unwrap_err();
         assert!(err.to_string().contains(reason), "{err}");
         let router = VaultRouterContract::new(storage.clone());
         assert!(router.reservation_nonce.read().unwrap().is_zero());
@@ -2518,7 +2524,6 @@ fn a_reservation_needs_every_call_term() {
             .is_zero());
     };
     with_reservable_vault(U256::from(100u64), |storage| {
-        rejected(&storage, 999, "not a registered reference currency");
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
         );
@@ -2526,10 +2531,68 @@ fn a_reservation_needs_every_call_term() {
         let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
             .unwrap()
             .unwrap();
-        oracle.record_utc_day_vwap(day, index, U256::ZERO).unwrap();
-        rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+
+        rejected(&storage, 999, "not a registered reference currency");
+
+        oracle.policy_rate.write(&USD_ISO_CODE, U256::ZERO).unwrap();
+        rejected(&storage, USD_ISO_CODE, "no policy rate");
+        oracle
+            .policy_rate
+            .write(&USD_ISO_CODE, U256::from(43_000))
+            .unwrap();
+
         oracle.utc_day_vwap_last_finalized.write(day - 1).unwrap();
         rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+
+        oracle.record_utc_day_vwap(day, index, U256::ZERO).unwrap();
+        rejected(&storage, USD_ISO_CODE, "previous day VWAP unavailable");
+        oracle
+            .record_utc_day_vwap(day, index, U256::from(2_000_000))
+            .unwrap();
+
+        OracleContract::new(storage.clone())
+            .reference_currencies
+            .push(EUR_ISO_CODE)
+            .unwrap();
+        rejected(&storage, EUR_ISO_CODE, "reference pair unavailable");
+
+        reserve_in(&storage, USD_ISO_CODE).unwrap();
+    });
+}
+
+/// The anchor is the reference currency's own previous-day VWAP; the policy rate and
+/// the pledge valuation stay with the issuance currency.
+#[test]
+fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let day = outbe_primitives::time::previous_date_key(
+            outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
+        );
+        outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(EUR_ISO_CODE))
+            .unwrap();
+        let oracle = OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(EUR_ISO_CODE).unwrap();
+        oracle
+            .policy_rate
+            .write(&EUR_ISO_CODE, U256::from(99_000))
+            .unwrap();
+        for (iso, vwap) in [(EUR_ISO_CODE, 2_500_000u64), (USD_ISO_CODE, 9_000_000)] {
+            let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
+                .unwrap()
+                .unwrap();
+            oracle
+                .record_utc_day_vwap(day, index, U256::from(vwap))
+                .unwrap();
+        }
+
+        let id = reserve_in(&storage, EUR_ISO_CODE).unwrap();
+        let held = runtime::reservation_of(&storage, id).unwrap();
+        assert_eq!(held.issuance_currency, USD_ISO_CODE);
+        assert_eq!(held.reference_currency, EUR_ISO_CODE);
+        assert_eq!(held.call_anchor_price_minor, U256::from(2_500_000));
+        assert_eq!(held.policy_rate, U256::from(43_000));
+        assert_eq!(held.valuation_price_minor, U256::from(2_000_000));
     });
 }
 
