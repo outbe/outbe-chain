@@ -44,14 +44,20 @@ async function issueStake(ctx: Ctx, reservationId: bigint): Promise<bigint> {
 export function registerCredisTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "credis_reserve",
-    "Reserve exact stablecoin principal and freeze the Credis terms for 15 minutes: the pledge valuation and, in " +
-      "the elected reference currency, the call anchor and the policy rate. Returns the reservationId.",
+    "Reserve exact stablecoin principal and freeze the Credis terms for 15 minutes: the pledge valuation, the call " +
+      "anchor (previous closed UTC-day VWAP in the elected reference currency) and the issuance currency's policy " +
+      "rate. Returns the reservationId.",
     {
       smart_account: address,
       source: address.describe("Main account that pledges the Gratis collateral"),
       asset: address,
       amount: rawAmount,
-      reference_currency: z.number().int().min(1).max(65535),
+      reference_currency: z
+        .number()
+        .int()
+        .min(1)
+        .max(65535)
+        .describe("ISO 4217 numeric code of the reference currency the call anchor is quoted in"),
       wait: waitFlag,
     },
     handler(async ({ smart_account, source, asset, amount, reference_currency, wait }) =>
