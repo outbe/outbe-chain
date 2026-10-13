@@ -178,7 +178,7 @@ fn a_chains_series_travel_together_up_to_the_message_caps() {
 
 #[test]
 fn the_message_caps_match_the_codec() {
-    use crate::constants::{MAX_SERIES_PER_MARK, MAX_VWAP_ROWS};
+    use crate::constants::{MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MARK, MAX_VWAP_ROWS};
     use outbe_primitives::test_utils::sol_interface::sol_constant;
     const CODEC: &str =
         include_str!("../../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
@@ -197,6 +197,10 @@ fn the_message_caps_match_the_codec() {
     assert_eq!(
         sol_constant(CODEC, "MAX_REFERENCE_PRICES"),
         Some(MAX_VWAP_ROWS)
+    );
+    assert_eq!(
+        sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
+        Some(MAX_RECIPIENTS_PER_MESSAGE)
     );
 }
 

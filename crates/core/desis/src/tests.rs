@@ -42,13 +42,31 @@ fn wcoen(protocol_units: u128) -> u128 {
 }
 
 #[test]
-fn the_reference_price_cap_matches_the_codec() {
+fn the_bridge_caps_match_the_contracts() {
+    use crate::constants::{
+        CLEARING_BIDS_PER_CHUNK, MAX_BIDS_PER_BATCH, MAX_BID_BATCHES, MAX_REFUND_CHUNKS,
+    };
     use outbe_primitives::test_utils::sol_interface::sol_constant;
     const CODEC: &str =
         include_str!("../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
+    const TARGET_ROUTER: &str =
+        include_str!("../../../../contracts/intex/src/target/TargetRouter.sol");
     assert_eq!(
         sol_constant(CODEC, "MAX_REFERENCE_PRICES"),
         Some(MAX_REFERENCE_PRICES)
+    );
+    assert_eq!(
+        sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
+        Some(MAX_BIDS_PER_BATCH)
+    );
+    assert_eq!(
+        sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
+        Some(CLEARING_BIDS_PER_CHUNK)
+    );
+    assert_eq!(sol_constant(CODEC, "MAX_CHUNKS"), Some(MAX_REFUND_CHUNKS));
+    assert_eq!(
+        sol_constant(TARGET_ROUTER, "MAX_BIDS_BATCHES"),
+        Some(MAX_BID_BATCHES)
     );
 }
 
