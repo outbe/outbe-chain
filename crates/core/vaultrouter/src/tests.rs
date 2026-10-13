@@ -2459,7 +2459,7 @@ fn reserve_stables_rejects_an_inactive_caller() {
             storage.clone(),
             stranger(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2482,7 +2482,7 @@ fn reserve_stables_requires_a_pledge_source() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: Address::ZERO,
                 asset: asset(),
                 amount: U256::from(10),
@@ -2502,7 +2502,7 @@ fn reserve_in(
         storage.clone(),
         cca(),
         IVaultRouter::reserveStablesCall {
-            smartAccount: receiver(),
+            credisOwner: receiver(),
             source: pledger(),
             asset: asset(),
             amount: U256::from(10),
@@ -2597,13 +2597,32 @@ fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
 }
 
 #[test]
+fn reserve_stables_requires_a_credis_owner() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let err = runtime::reserve_stables(
+            storage.clone(),
+            cca(),
+            IVaultRouter::reserveStablesCall {
+                credisOwner: Address::ZERO,
+                source: receiver(),
+                asset: asset(),
+                amount: U256::from(10),
+                referenceCurrency: USD_ISO_CODE,
+            },
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("zero address"), "{err}");
+    });
+}
+
+#[test]
 fn a_reservation_holds_then_releases_once() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let id = runtime::reserve_stables(
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2614,7 +2633,7 @@ fn a_reservation_holds_then_releases_once() {
         let held = runtime::reservation_of(&storage, id).unwrap();
         assert_eq!(held.asset, asset());
         assert_eq!(held.amount, U256::from(10));
-        assert_eq!(held.smart_account, receiver());
+        assert_eq!(held.credis_owner, receiver());
         assert_eq!(held.cca, cca());
         assert_eq!(held.source, pledger());
         assert_eq!(held.vault, vault());
@@ -2660,7 +2679,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(50),
@@ -2677,10 +2696,7 @@ fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault()
             IVaultRouter::StablesTarget::Credis,
         )
         .unwrap_err();
-        assert!(
-            err.to_string().contains("reservation account mismatch"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("Credis owner mismatch"), "{err}");
         assert_eq!(
             runtime::reservation_of(&storage, id).unwrap().amount,
             U256::from(50),
@@ -2710,7 +2726,7 @@ fn an_unspent_reservation_returns_to_the_origin_vault() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2738,7 +2754,7 @@ fn a_stranger_cannot_return_a_live_reservation() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2763,7 +2779,7 @@ fn seed_expired_reservation(storage: &StorageHandle<'_>) -> U256 {
             id,
             asset: asset(),
             amount: U256::from(10),
-            smart_account: receiver(),
+            credis_owner: receiver(),
             cca: cca(),
             vault: vault(),
             expires_at: 1_700_000_000 - 1,
@@ -2811,7 +2827,7 @@ fn reservations_are_gated_like_a_withdrawal() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let reserve_call = IVaultRouter::reserveStablesCall {
             referenceCurrency: USD_ISO_CODE,
-            smartAccount: receiver(),
+            credisOwner: receiver(),
             source: pledger(),
             asset: asset(),
             amount: U256::from(10),
@@ -2866,7 +2882,7 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),
@@ -2903,7 +2919,7 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
             storage.clone(),
             cca(),
             IVaultRouter::reserveStablesCall {
-                smartAccount: receiver(),
+                credisOwner: receiver(),
                 source: pledger(),
                 asset: asset(),
                 amount: U256::from(10),

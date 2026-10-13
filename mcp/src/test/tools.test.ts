@@ -151,7 +151,7 @@ const TOOLS: Case[] = [
   ["oip_list", { status: "Approved", offset: 1, limit: 2 }],
   ["oip_list", { author: OTHER, status: "Approved" }],
   ["gip_list", { status: "Draft" }],
-  ["credis_reserve", { smart_account: OTHER, source: SIGNER, asset: OTHER, amount: "2000000", reference_currency: 978 }],
+  ["credis_reserve", { credis_owner: OTHER, source: SIGNER, asset: OTHER, amount: "2000000", reference_currency: 978 }],
   ["gratis_pledge", { reservation_id: "1", mac: HASH, op_nonce: "3" }],
   ["gratis_cancel_pledge", { reservation_id: "1" }],
   ["credis_issue", { reservation_id: "1", stake: "1" }],

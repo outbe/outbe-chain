@@ -19,7 +19,7 @@ interface IVaultRouter {
     struct LiquidityReservation {
         address asset;
         uint256 amount;
-        address smartAccount;
+        address credisOwner;
         address cca;
         address vault;
         uint64 expiresAt;
@@ -54,7 +54,7 @@ interface IVaultRouter {
     error ReservationExists(uint256 id);
     error ReservationNotFound(uint256 id);
     error ReservationExpired(uint256 id);
-    error ReservationAccountMismatch();
+    error CredisOwnerMismatch();
     error ReservationInsufficient(uint256 available, uint256 required);
     error InvalidReservationAmount();
 
@@ -94,7 +94,7 @@ interface IVaultRouter {
 
     event ReservationCreated(
         uint256 indexed id,
-        address indexed smartAccount,
+        address indexed credisOwner,
         address indexed cca,
         address asset,
         address vault,
@@ -204,25 +204,25 @@ interface IVaultRouter {
     function hasLiquidity(address asset, uint256 amount) external view returns (bool sufficient);
 
     /// @notice Redeems `amount` of `asset` from its origin vault and holds it in this
-    ///         router's custody for `smartAccount`, guaranteeing it can later be
+    ///         router's custody for `credisOwner`, guaranteeing it can later be
     ///         delivered for 15 minutes. Caller must be an active CCA. Only `source`
     ///         may pledge the Gratis collateral for this reservation. The quote fixes the
     ///         pledge valuation and the Credis call terms: `referenceCurrency`, its previous
     ///         closed UTC-day VWAP as the call anchor, and the issuance currency's policy rate.
     function reserveStables(
-        address smartAccount,
+        address credisOwner,
         address source,
         address asset,
         uint256 amount,
         uint16 referenceCurrency
     ) external returns (uint256 reservationId);
 
-    /// @notice Validates `receiver` as the reserved smart account, pays `amount` to
-    ///         the recorded CCA to cover COEN delivered to that account, and
+    /// @notice Validates `receiver` as the reservation's Credis owner, pays `amount` to
+    ///         the recorded CCA to cover COEN delivered to that owner, and
     ///         returns any unused remainder to the origin vault. Caller must be a
-    ///         registered liquidity target. `receiver` must be the reserved smart
-    ///         account. Reverts if the reservation is missing, expired, or too small.
-    /// @dev Only CredisFactory may call. `receiver` binds the account.
+    ///         registered liquidity target. `receiver` must be the Credis
+    ///         owner. Reverts if the reservation is missing, expired, or too small.
+    /// @dev Only CredisFactory may call. `receiver` binds the Credis owner.
     ///      `receiver` cannot redirect the payout.
     function releaseReservation(uint256 id, address receiver, uint256 amount) external returns (uint256 delivered);
 

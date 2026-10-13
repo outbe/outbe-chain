@@ -20,7 +20,7 @@ fn revert(message: &str) -> PrecompileError {
     PrecompileError::Revert(message.into())
 }
 
-/// The caller's live reservation, with a deployed smart account. Returns it with the block time.
+/// The caller's live reservation. Returns it with the block time.
 fn live_reservation(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -34,10 +34,6 @@ fn live_reservation(
         CredisFactoryError::ReservationCcaMismatch
     } else if now > r.expires_at {
         CredisFactoryError::ReservationExpired
-    } else if r.smart_account.is_zero()
-        || storage.with_account_info(r.smart_account, |info| Ok(info.is_empty_code_hash()))?
-    {
-        CredisFactoryError::SmartAccountNotDeployed
     } else {
         return Ok((r, now));
     };
@@ -80,7 +76,7 @@ pub fn issue_credis(
         }
         let mut credis = CredisContract::new(storage.clone());
         let id = credis.issue(IssueCredisParams {
-            owner: r.smart_account,
+            owner: r.credis_owner,
             cca: caller,
             source: r.source,
             asset: r.asset,
@@ -95,11 +91,11 @@ pub fn issue_credis(
         })?;
         pledges::send_to_credis(&storage, reservation_id, id, r.source, r.gratis_minor)?;
         let opened = credis.get_credis(id)?;
-        storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.smart_account, stake)?;
+        storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.credis_owner, stake)?;
         let paid = outbe_vaultrouter::api::release_reservation(
             &storage,
             reservation_id,
-            r.smart_account,
+            r.credis_owner,
             r.amount,
         )?;
         if paid != r.amount || credis.get_credis(id)? != opened {
@@ -109,7 +105,7 @@ pub fn issue_credis(
             CREDIS_FACTORY_ADDRESS,
             alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisIssued {
                 credisId: id,
-                owner: r.smart_account,
+                owner: r.credis_owner,
                 cca: caller,
                 asset: r.asset,
                 principalMinor: r.amount,

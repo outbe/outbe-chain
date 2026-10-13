@@ -49,7 +49,7 @@ pub struct Credis {
     #[key]
     pub credis_id: U256,
 
-    /// The smart account the Credis was issued to.
+    /// The address the Credis was issued to.
     #[attribute(order = 0)]
     pub owner: Address,
 

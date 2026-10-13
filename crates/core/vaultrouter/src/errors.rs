@@ -88,8 +88,8 @@ pub enum VaultRouterError {
     ReservationNotFound(U256),
     #[error("reservation expired: {0}")]
     ReservationExpired(U256),
-    #[error("reservation account mismatch")]
-    ReservationAccountMismatch,
+    #[error("Credis owner mismatch")]
+    CredisOwnerMismatch,
     #[error("reservation amount exceeds hold: available={available}, required={required}")]
     ReservationInsufficient { available: U256, required: U256 },
     #[error("block timestamp does not fit unix seconds")]

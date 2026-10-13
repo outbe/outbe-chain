@@ -3,7 +3,7 @@
 pub const TOKEN_NAME: &str = "Credis";
 pub const TOKEN_SYMBOL: &str = "CREDIS";
 pub const TOKEN_DESCRIPTION: &str = concat!(
-    "Credis is a soul-bound right on the Outbe network, held by a smart account and backed by ",
+    "Credis is a soul-bound right on the Outbe network, held by its owner and backed by ",
     "pledged Gratis. Its owner settles it in the original asset, interest first, and each settlement ",
     "returns pledged Gratis in proportion to the principal it covers. A called Credis must be ",
     "settled by its settlement deadline, otherwise it is forfeited."

@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolValue};
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
-    storage::{hashmap::HashMapStorageProvider, Bytecode, StorageHandle},
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
 
@@ -19,7 +19,7 @@ const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const ADMIN: Address = Address::repeat_byte(0xa1);
 const ASSET: Address = Address::repeat_byte(0x88);
 const VAULT: Address = Address::repeat_byte(0x77);
-const SMART_ACCOUNT_STUB: Address = Address::repeat_byte(0xaa);
+const RECEIVER: Address = Address::repeat_byte(0xaa);
 const AMOUNT: u64 = 2_000_000;
 
 sol! {
@@ -122,12 +122,6 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
                 .owner
                 .write(ADMIN)
                 .map_err(|error| error.to_string())?;
-            storage
-                .set_code(
-                    SMART_ACCOUNT_STUB,
-                    Bytecode::new_raw(Bytes::from_static(&[0x00])),
-                )
-                .map_err(|error| error.to_string())?;
             outbe_vaultrouter::runtime::add_vault(storage.clone(), ADMIN, VAULT)
                 .map_err(|error| error.to_string())?;
             outbe_vaultrouter::runtime::add_liquidity_target(
@@ -142,7 +136,7 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
         let calldata = IVaultRouter::withdrawCall {
             asset: ASSET,
             amount: U256::from(AMOUNT),
-            receiver: SMART_ACCOUNT_STUB,
+            receiver: RECEIVER,
         }
         .abi_encode();
         Ok(PreparedCredisVaultBoundary { provider, calldata })
@@ -190,7 +184,7 @@ impl BenchmarkScenario for CredisVaultBoundaryScenario {
         .with_latency("chain.vault_router.withdraw_partial", latency_ns)
         .with_postcondition("vault_router.burned_shares", burned_shares.to_string())
         .with_postcondition(
-            "credis.full_smart_account_gas",
+            "credis.full_issuance_gas",
             "unavailable; TODO outbe-chain-6le.5",
         )
         .with_postcondition("credis.partial_result_is_production_total", "false");

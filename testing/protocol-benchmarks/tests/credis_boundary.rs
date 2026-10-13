@@ -4,7 +4,7 @@ use outbe_protocol_benchmarks::{
 };
 
 #[test]
-fn rust_vault_boundary_is_explicitly_partial_and_never_claims_smart_account_gas() {
+fn rust_vault_boundary_is_explicitly_partial_and_never_claims_full_issuance_gas() {
     let report = run_scenario(
         &CredisVaultBoundaryScenario,
         RunConfig {
@@ -25,5 +25,5 @@ fn rust_vault_boundary_is_explicitly_partial_and_never_claims_smart_account_gas(
         report.postconditions["credis.partial_result_is_production_total"],
         "false"
     );
-    assert!(report.postconditions["credis.full_smart_account_gas"].contains("TODO"));
+    assert!(report.postconditions["credis.full_issuance_gas"].contains("TODO"));
 }

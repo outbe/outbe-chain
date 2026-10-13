@@ -26,7 +26,7 @@ test("credis_reserve returns the reservation id its event carries", async () => 
   const topics = encodeEventTopics({
     abi: vaultRouter.abi,
     eventName: "ReservationCreated",
-    args: { id: 41n, smartAccount: SIGNER, cca: SIGNER },
+    args: { id: 41n, credisOwner: SIGNER, cca: SIGNER },
   });
   const data = encodeAbiParameters(
     [{ type: "address" }, { type: "address" }, { type: "uint256" }, { type: "uint64" }],
@@ -34,7 +34,7 @@ test("credis_reserve returns the reservation id its event carries", async () => 
   );
   const { out } = await call(
     "credis_reserve",
-    { smart_account: SIGNER, source: SIGNER, asset: SIGNER, amount: "300", reference_currency: 840 },
+    { credis_owner: SIGNER, source: SIGNER, asset: SIGNER, amount: "300", reference_currency: 840 },
     (chain) => chain.receiptLogs("reserveStables", [{ address: vaultRouter.address, topics: topics as Hex[], data }]),
   );
   assert.equal(out.reservationId, "41");
@@ -79,7 +79,7 @@ function sampleReservation() {
   return {
     asset: SIGNER,
     amount: 300n,
-    smartAccount: SIGNER,
+    credisOwner: SIGNER,
     cca: SIGNER,
     vault: SIGNER,
     expiresAt: 1_760_000_900n,

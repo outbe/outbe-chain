@@ -48,7 +48,7 @@ export function registerCredisTools(server: McpServer, ctx: Ctx): void {
       "anchor (previous closed UTC-day VWAP in the elected reference currency) and the issuance currency's policy " +
       "rate. Returns the reservationId.",
     {
-      smart_account: address,
+      credis_owner: address.describe("Address that holds the Credis and receives the CCA's COEN stake"),
       source: address.describe("Main account that pledges the Gratis collateral"),
       asset: address,
       amount: rawAmount,
@@ -60,11 +60,11 @@ export function registerCredisTools(server: McpServer, ctx: Ctx): void {
         .describe("ISO 4217 numeric code of the reference currency the call anchor is quoted in"),
       wait: waitFlag,
     },
-    handler(async ({ smart_account, source, asset, amount, reference_currency, wait }) =>
+    handler(async ({ credis_owner, source, asset, amount, reference_currency, wait }) =>
       submit(ctx, {
         contract: "vaultrouter",
         method: "reserveStables",
-        args: [smart_account, source, asset, BigInt(amount), reference_currency],
+        args: [credis_owner, source, asset, BigInt(amount), reference_currency],
         wait,
         outcome: (receipt) => ({
           reservationId: (eventArgs(receipt, "vaultrouter", "ReservationCreated")?.id as bigint | undefined)?.toString() ?? null,
