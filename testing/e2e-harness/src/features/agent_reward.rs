@@ -297,8 +297,16 @@ fn observe_agent_rewards(world: &mut World) {
     );
 }
 
-#[when("both beneficiaries claim their complete AgentReward as Gems with paid transactions")]
-fn beneficiaries_claim_agent_rewards(world: &mut World) {
+#[when(
+    expr = "both beneficiaries claim their complete AgentReward as Gems with paid transactions, WAA issued in {int} against {int} and SRA issued in {int} against {int}"
+)]
+fn beneficiaries_claim_agent_rewards(
+    world: &mut World,
+    waa_issuance: u16,
+    waa_reference: u16,
+    sra_issuance: u16,
+    sra_reference: u16,
+) {
     let (waa_beneficiary, sra_beneficiary, waa_claimable, sra_claimable, escrow_before) = {
         let observation = world
             .state
@@ -324,6 +332,7 @@ fn beneficiaries_claim_agent_rewards(world: &mut World) {
         waa_beneficiary,
         WAA_POOL,
         waa_claimable,
+        (waa_issuance, waa_reference),
     );
     let escrow_after_waa = native_balance(
         world,
@@ -343,6 +352,7 @@ fn beneficiaries_claim_agent_rewards(world: &mut World) {
         sra_beneficiary,
         SRA_POOL,
         sra_claimable,
+        (sra_issuance, sra_reference),
     );
     let escrow_after_sra = native_balance(
         world,
@@ -408,15 +418,17 @@ fn claims_clear_agent_reward_state(world: &mut World) {
     }
 }
 
-/// Claims one pool as a Gem. The reward now arrives as a Gem, so the only native
-/// movement on the beneficiary is the gas it paid.
+/// Claims one pool as a Gem in `currencies` (issuance, reference). The reward now arrives
+/// as a Gem, so the only native movement on the beneficiary is the gas it paid.
 fn claim_gem_and_assert_gas_only_cost(
     world: &World,
     key: &str,
     beneficiary: Address,
     pool: u8,
     claimable: U256,
+    currencies: (u16, u16),
 ) -> u64 {
+    let (issuance_currency, reference_currency) = currencies;
     let primary = world.validators.primary_port();
     let before = native_balance(world, primary, beneficiary);
     let inventory_before = gem_inventory_at(
@@ -427,12 +439,7 @@ fn claim_gem_and_assert_gas_only_cost(
     );
     let receipt = world
         .rpc
-        .claim_agent_reward_gem(
-            key,
-            pool,
-            crate::world::settlement_currency::USD_ISO,
-            crate::world::settlement_currency::USD_ISO,
-        )
+        .claim_agent_reward_gem(key, pool, issuance_currency, reference_currency)
         .expect("ordinary paid AgentReward Gem claim");
     let gas_cost_coen_units = crate::world::rpc::Rpc::receipt_gas_cost(&receipt)
         .expect("exact AgentReward claim gas cost");
@@ -490,10 +497,10 @@ fn claim_gem_and_assert_gas_only_cost(
         .expect("finalized claim Gem");
         // The price and profile must be stable across the claim block. This
         // makes the independent pre-state expectation valid at execution time.
-        let terms = claim_gem_terms_at(&url, height - 1);
+        let terms = claim_gem_terms_at(&url, height - 1, reference_currency);
         assert_eq!(
             terms,
-            claim_gem_terms_at(&url, height),
+            claim_gem_terms_at(&url, height, reference_currency),
             "Gem inputs changed within claim block"
         );
         let expected_load = claimable / U256::from(1_000_000_000_000u64);
@@ -505,6 +512,7 @@ fn claim_gem_and_assert_gas_only_cost(
             expected_load,
             terms.0,
             terms.1,
+            currencies,
             timestamp,
         );
         assert_eq!(gem.gemId, added[0]);
@@ -530,8 +538,8 @@ fn claim_gem_and_assert_gas_only_cost(
                 promisLoadMinor: expected_load,
                 entryPriceMinor: terms.0,
                 floorPriceMinor: terms.1,
-                issuanceCurrency: 840,
-                referenceCurrency: 840,
+                issuanceCurrency: issuance_currency,
+                referenceCurrency: reference_currency,
                 issuedAt: timestamp,
                 callPriceMinor: gem.callPriceMinor,
                 callWindow: issued.callWindow,
@@ -590,8 +598,9 @@ fn gem_inventory_at(world: &World, port: u16, owner: Address, height: u64) -> Ve
 }
 
 /// Read inputs, not Gem output: Oracle's closed-day watermark and the genesis
-/// Gem profile. The full reward scenario deliberately requires a closed USD day.
-fn claim_gem_terms_at(url: &str, height: u64) -> (U256, U256) {
+/// Gem profile. The full reward scenario deliberately requires a closed day in
+/// the claimed reference currency.
+fn claim_gem_terms_at(url: &str, height: u64, reference_currency: u16) -> (U256, U256) {
     let word = |address: Address, slot: u64| -> U256 {
         serde_json::from_value(
             eth::raw_json_with_params(
@@ -621,7 +630,7 @@ fn claim_gem_terms_at(url: &str, height: u64) -> (U256, U256) {
         outbe_primitives::addresses::ORACLE_ADDRESS,
         &eth::IOracle::getUtcDayVwapCall {
             base: Address::ZERO,
-            quote: outbe_primitives::asset_type::currency_address(840),
+            quote: outbe_primitives::asset_type::currency_address(reference_currency),
             utcDay: day,
         },
         height,
@@ -657,6 +666,7 @@ fn assert_claimed_gem(
     load: U256,
     price: U256,
     floor: U256,
+    currencies: (u16, u16),
     timestamp: u64,
 ) {
     let kind = match pool {
@@ -670,8 +680,7 @@ fn assert_claimed_gem(
     assert_eq!(gem.promisLoadMinor, load);
     assert_eq!(gem.entryPriceMinor, price);
     assert_eq!(gem.floorPriceMinor, floor);
-    assert_eq!(gem.issuanceCurrency, 840);
-    assert_eq!(gem.referenceCurrency, 840);
+    assert_eq!((gem.issuanceCurrency, gem.referenceCurrency), currencies);
     assert_eq!(gem.issuedAt, timestamp);
 }
 
