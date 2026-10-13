@@ -19,7 +19,7 @@ fn key_in_shard(shard: u32, ordinal: usize) -> TreeKey {
 fn mdbx_applies_contiguous_batches_atomically_and_reopens_exact_marker() {
     let directory = tempfile::tempdir().unwrap();
     let genesis = FinalizedMarker {
-        commitment_scheme_version: 1,
+        commitment_scheme_version: crate::ACTIVE_COMMITMENT_SCHEME,
         height: 0,
         block_hash: identity().genesis_hash,
         parent_block_hash: B256::ZERO,
@@ -46,13 +46,19 @@ fn mdbx_applies_contiguous_batches_atomically_and_reopens_exact_marker() {
     .freeze(b256(41));
 
     let applied = store.apply_finalized(&batch).unwrap();
-    assert_eq!(applied, ApplyOutcome::Applied(batch.marker(1)));
+    assert_eq!(
+        applied,
+        ApplyOutcome::Applied(batch.marker(crate::ACTIVE_COMMITMENT_SCHEME))
+    );
     assert_eq!(
         store.apply_finalized(&batch).unwrap(),
-        ApplyOutcome::AlreadyApplied(batch.marker(1))
+        ApplyOutcome::AlreadyApplied(batch.marker(crate::ACTIVE_COMMITMENT_SCHEME))
     );
     let snapshot = store.open_snapshot().unwrap();
-    assert_eq!(snapshot.marker().unwrap(), batch.marker(1));
+    assert_eq!(
+        snapshot.marker().unwrap(),
+        batch.marker(crate::ACTIVE_COMMITMENT_SCHEME)
+    );
     assert_eq!(
         snapshot
             .read_leaf(legacy_collection_namespace(0), tree_key)
@@ -69,14 +75,17 @@ fn mdbx_applies_contiguous_batches_atomically_and_reopens_exact_marker() {
     drop(snapshot);
     drop(store);
     let reopened = CeMdbx::open(directory.path(), identity(), genesis).unwrap();
-    assert_eq!(reopened.marker().unwrap(), batch.marker(1));
+    assert_eq!(
+        reopened.marker().unwrap(),
+        batch.marker(crate::ACTIVE_COMMITMENT_SCHEME)
+    );
 }
 
 #[test]
 fn mdbx_rejects_gap_conflict_and_bad_batch_before_persistent_mutation() {
     let directory = tempfile::tempdir().unwrap();
     let genesis = FinalizedMarker {
-        commitment_scheme_version: 1,
+        commitment_scheme_version: crate::ACTIVE_COMMITMENT_SCHEME,
         height: 0,
         block_hash: identity().genesis_hash,
         parent_block_hash: B256::ZERO,
@@ -127,7 +136,7 @@ fn mdbx_rejects_gap_conflict_and_bad_batch_before_persistent_mutation() {
 fn open_snapshot_remains_on_one_mdbx_read_transaction() {
     let directory = tempfile::tempdir().unwrap();
     let genesis = FinalizedMarker {
-        commitment_scheme_version: 1,
+        commitment_scheme_version: crate::ACTIVE_COMMITMENT_SCHEME,
         height: 0,
         block_hash: identity().genesis_hash,
         parent_block_hash: B256::ZERO,
@@ -158,7 +167,10 @@ fn open_snapshot_remains_on_one_mdbx_read_transaction() {
         None
     );
     let new_snapshot = store.open_snapshot().unwrap();
-    assert_eq!(new_snapshot.marker().unwrap(), batch.marker(1));
+    assert_eq!(
+        new_snapshot.marker().unwrap(),
+        batch.marker(crate::ACTIVE_COMMITMENT_SCHEME)
+    );
     assert_eq!(
         new_snapshot
             .read_leaf(legacy_collection_namespace(0), tree_key)
@@ -292,10 +304,13 @@ fn v3_applies_two_changed_shards_and_catalog_leaf_under_one_marker() {
     assert_eq!(batch.leaf_change_count(), 3);
     assert_eq!(
         store.apply_finalized(&batch).unwrap(),
-        ApplyOutcome::Applied(batch.marker(1))
+        ApplyOutcome::Applied(batch.marker(crate::ACTIVE_COMMITMENT_SCHEME))
     );
     let snapshot = store.open_snapshot().unwrap();
-    assert_eq!(snapshot.marker().unwrap(), batch.marker(1));
+    assert_eq!(
+        snapshot.marker().unwrap(),
+        batch.marker(crate::ACTIVE_COMMITMENT_SCHEME)
+    );
     assert_eq!(
         snapshot
             .read_leaf(TreeNamespace::CollectionShard(collection_key, 1), key_one)
@@ -343,4 +358,75 @@ fn exporter_environment_is_really_read_only_at_the_mdbx_boundary() {
             root: expected.new_root,
         })
         .is_err());
+}
+
+#[test]
+fn caller_supplied_legacy_environment_is_rejected_before_initialization() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut old = identity();
+    old.commitment_scheme_version = 1;
+    let genesis = FinalizedMarker {
+        commitment_scheme_version: 1,
+        ..sharded_genesis(K_PROVISIONAL)
+    };
+    assert!(matches!(
+        CeMdbx::open(directory.path(), old.clone(), genesis),
+        Err(PersistenceError::UnsupportedCommitmentScheme { actual: 1 })
+    ));
+    assert!(matches!(
+        CeMdbxReadOnly::open(directory.path(), old),
+        Err(PersistenceError::UnsupportedCommitmentScheme { actual: 1 })
+    ));
+    let mut old_format = identity();
+    old_format.tree_format = "ckb-smt-v0.6.1-poseidon-catalog-v3".into();
+    assert!(matches!(
+        CeMdbx::open(directory.path(), old_format, sharded_genesis(K_PROVISIONAL)),
+        Err(PersistenceError::UnsupportedTreeFormat { .. })
+    ));
+    let store = CeMdbx::open(directory.path(), identity(), sharded_genesis(K_PROVISIONAL)).unwrap();
+    assert_eq!(store.marker().unwrap(), sharded_genesis(K_PROVISIONAL));
+}
+
+#[test]
+fn stored_legacy_identity_is_rejected_without_rewriting_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let genesis = sharded_genesis(K_PROVISIONAL);
+    let store = CeMdbx::open(directory.path(), identity(), genesis).unwrap();
+    let mut old = identity();
+    old.commitment_scheme_version = 1;
+    old.tree_format = "ckb-smt-v0.6.1-poseidon-catalog-v3".into();
+    let old_bytes = old.encode().unwrap();
+    let old_marker = FinalizedMarker {
+        commitment_scheme_version: 1,
+        ..genesis
+    }
+    .encode()
+    .to_vec();
+    let tx = store.db.tx_mut().unwrap();
+    tx.put::<tables::CeMetadata>(IDENTITY_KEY.to_vec(), old_bytes.clone())
+        .unwrap();
+    tx.put::<tables::CeMetadata>(LAST_APPLIED_KEY.to_vec(), old_marker.clone())
+        .unwrap();
+    tx.commit().unwrap();
+    drop(store);
+    assert!(matches!(
+        CeMdbx::open(directory.path(), identity(), genesis),
+        Err(PersistenceError::EnvironmentIdentityMismatch { .. })
+    ));
+    assert!(CeMdbxReadOnly::open(directory.path(), identity()).is_err());
+    let db = reth_db::open_db_read_only(
+        directory.path().join(CE_SMT_RELATIVE_PATH),
+        reth_db::mdbx::DatabaseArguments::new(reth_db::ClientVersion::default()),
+    )
+    .unwrap();
+    let tx = db.tx().unwrap();
+    assert_eq!(
+        tx.get::<tables::CeMetadata>(IDENTITY_KEY.to_vec()).unwrap(),
+        Some(old_bytes)
+    );
+    assert_eq!(
+        tx.get::<tables::CeMetadata>(LAST_APPLIED_KEY.to_vec())
+            .unwrap(),
+        Some(old_marker)
+    );
 }

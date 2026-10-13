@@ -105,7 +105,7 @@ fn create_executor_activates_the_factory_scope_against_the_exact_parent_tree() {
             genesis_hash: parent_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
             topology: outbe_compressed_entities::CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".into(),
+            tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".into(),
             vendor_revision: "scope-wiring-regression".into(),
         },
         FinalizedMarker {

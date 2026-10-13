@@ -103,7 +103,7 @@ impl TryFrom<B256> for CollectionKey {
 
 #[derive(Debug, Error)]
 pub enum CollectionError {
-    #[error("CES1 collection hashing failed: {0}")]
+    #[error("CES2 collection hashing failed: {0}")]
     Hash(String),
     #[error("present collection root computed to zero")]
     ZeroCollectionRoot,

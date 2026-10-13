@@ -4,7 +4,7 @@ use super::*;
 fn restart_rows_distinguish_equal_behind_ahead_and_conflict() {
     let current = marker(7);
     let equal = DurableFinalizedCheckpoint {
-        commitment_scheme_version: 1,
+        commitment_scheme_version: crate::ACTIVE_COMMITMENT_SCHEME,
         height: 7,
         block_hash: current.block_hash,
         root: current.new_root,
@@ -98,7 +98,7 @@ fn no_change_batch_still_carries_a_complete_next_marker() {
     )
     .unwrap()
     .freeze(b256(8));
-    let next = batch.marker(1);
+    let next = batch.marker(crate::ACTIVE_COMMITMENT_SCHEME);
     assert_eq!(next.height, 8);
     assert_eq!(next.parent_root, next.new_root);
     assert_eq!(next.block_hash, b256(8));
@@ -108,7 +108,7 @@ fn no_change_batch_still_carries_a_complete_next_marker() {
 fn reopen_rejects_environment_identity_drift() {
     let directory = tempfile::tempdir().unwrap();
     let genesis = FinalizedMarker {
-        commitment_scheme_version: 1,
+        commitment_scheme_version: crate::ACTIVE_COMMITMENT_SCHEME,
         height: 0,
         block_hash: identity().genesis_hash,
         parent_block_hash: B256::ZERO,
@@ -148,4 +148,38 @@ fn v3_initializes_only_catalog_and_rejects_topology_drift() {
         CeMdbx::open(directory.path(), wrong, genesis),
         Err(PersistenceError::InvalidTopologyIdentity)
     ));
+}
+
+#[test]
+fn matching_legacy_marker_and_checkpoint_are_not_an_active_environment() {
+    let legacy = FinalizedMarker {
+        commitment_scheme_version: 1,
+        ..marker(7)
+    };
+    assert!(matches!(
+        FinalizedMarker::decode(&legacy.encode()),
+        Err(PersistenceError::UnsupportedCommitmentScheme { actual: 1 })
+    ));
+    assert!(matches!(
+        legacy.verify_exact_parent(ExactParentIdentity {
+            commitment_scheme_version: 1,
+            block_number: legacy.height,
+            block_hash: legacy.block_hash,
+            root: legacy.new_root,
+        }),
+        Err(PersistenceError::UnsupportedCommitmentScheme { actual: 1 })
+    ));
+    let checkpoint = DurableFinalizedCheckpoint {
+        commitment_scheme_version: 1,
+        height: legacy.height,
+        block_hash: legacy.block_hash,
+        root: legacy.new_root,
+        parent_block_hash: legacy.parent_block_hash,
+        parent_root: legacy.parent_root,
+        consensus_finalized_height: legacy.height,
+    };
+    assert_eq!(
+        classify_restart(legacy, checkpoint),
+        RestartClassification::Conflict
+    );
 }

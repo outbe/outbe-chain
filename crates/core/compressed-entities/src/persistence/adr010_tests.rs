@@ -22,7 +22,7 @@ fn identity(genesis_hash: B256) -> EnvironmentIdentity {
         genesis_hash,
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
         topology: CeTopologyV1.encode(),
-        tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
+        tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
         vendor_revision: VENDOR.to_owned(),
     }
 }
@@ -114,7 +114,7 @@ fn v3_retirement_reclaims_all_prefixes_alongside_other_wwd_and_both_nod_mutation
     let staged = provisional.freeze(B256::repeat_byte(0x11));
     assert_eq!(
         db.apply_finalized(&staged).unwrap(),
-        ApplyOutcome::Applied(staged.marker(1))
+        ApplyOutcome::Applied(staged.marker(crate::ACTIVE_COMMITMENT_SCHEME))
     );
 
     let snapshot = db.open_snapshot().unwrap();

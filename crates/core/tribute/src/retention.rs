@@ -3,7 +3,7 @@
 //! The current repository remains the execution projection. This module owns
 //! the one additional PoC namespace that preserves exact canonical body bytes
 //! across a partition retirement. Every retained key binds the node-derived
-//! `InputLeaseId`, WWD, complete `WwdEntityId`, and CES1 body commitment.
+//! `InputLeaseId`, WWD, complete `WwdEntityId`, and CES2 body commitment.
 
 mod read;
 
@@ -240,7 +240,7 @@ impl RetainedTributeView {
     /// Resolves exact bytes from the current or job-retained location.
     ///
     /// A present value is returned only after its embedded Tribute identity and
-    /// CES1 commitment match the caller's already-authenticated CE leaf.
+    /// CES2 commitment match the caller's already-authenticated CE leaf.
     pub fn get_current_or_retained(
         &self,
         pin: RetainedTributePin,

@@ -85,7 +85,7 @@ fn prepare_stores(directory: &std::path::Path) -> NativeStores {
         genesis_hash: genesis,
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
         topology: outbe_compressed_entities::CeTopologyV1.encode(),
-        tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".into(),
+        tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".into(),
         vendor_revision: "nod-persistence-chain-test".into(),
     };
     let genesis_marker = FinalizedMarker {

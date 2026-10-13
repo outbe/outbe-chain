@@ -117,7 +117,7 @@ pub enum TributeRepositoryError {
     /// Retained keys must carry one exact 32-byte entity identity.
     #[error("invalid retained Tribute entity identity")]
     RetainedIdentity(#[from] core::array::TryFromSliceError),
-    /// CES1 commitment construction failed for a retained body.
+    /// CES2 commitment construction failed for a retained body.
     #[error("failed to derive retained Tribute commitment: {0}")]
     RetainedCommitment(String),
     /// One job/entity identity resolved to different retained bytes or commitments.

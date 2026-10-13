@@ -1,7 +1,6 @@
 use alloy_primitives::B256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_sparse_merkle_tree_v061::H256;
 use thiserror::Error;
 
@@ -83,10 +82,8 @@ pub(crate) fn aggregate_shard_roots(roots: &[TreeRoot]) -> Result<TreeRoot, Tree
                 Fr::from_be_bytes_mod_order(&pair[0].as_bytes()),
                 Fr::from_be_bytes_mod_order(&pair[1].as_bytes()),
             ];
-            let mut hasher =
-                Poseidon::<Fr>::with_domain_tag_circom(inputs.len(), Fr::from(TAG_TOP_NODE))
-                    .map_err(|_| TreeError::TreeHashError)?;
-            let output = hasher.hash(&inputs).map_err(|_| TreeError::TreeHashError)?;
+            let output = crate::commitment::poseidon(TAG_TOP_NODE, &inputs)
+                .map_err(|_| TreeError::TreeHashError)?;
             let bytes = field_to_be32(output);
             if bytes == [0_u8; 32] {
                 return Err(TreeError::TreeHashError);
@@ -203,7 +200,7 @@ mod tests {
         ]
         .map(|tree_key| shard_index(tree_key, K_PROVISIONAL).unwrap());
 
-        assert_eq!(actual, [5, 4, 2]);
+        assert_eq!(actual, [8, 3, 15]);
     }
 
     #[derive(Deserialize)]

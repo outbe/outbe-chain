@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_poseidon::{Poseidon, PoseidonHasher};
+use outbe_poseidon::{Poseidon2, PoseidonHasher};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::time::WorldwideDay;
 
@@ -10,7 +10,7 @@ use crate::{
     decode_tribute_v1, derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1,
     encode_tribute_v1, identity_field, pbytes, CanonicalBodyError, CommitmentError,
     NodBucketBodyV1, NodItemBodyV1, StoredBody, TributeBodyV1, WwdEntityId,
-    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, CES1_TAG_BASE, TAG_BODY, TAG_BYTES_ABSORB,
+    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, CES2_TAG_BASE, TAG_BODY, TAG_BYTES_ABSORB,
     TAG_BYTES_FINAL, TAG_BYTES_INIT, TAG_ID, TAG_KEY, TAG_LEAF, TAG_SMT_BASE, TAG_SMT_NORMAL,
     TAG_SMT_ZERO,
 };
@@ -24,7 +24,7 @@ mod adr008_scope;
 mod adr011;
 
 fn commitment_vectors() -> serde_json::Value {
-    serde_json::from_str(include_str!("../vectors/ces1-noble-poseidon.json")).unwrap()
+    serde_json::from_str(include_str!("../vectors/ces2-noir-poseidon2.json")).unwrap()
 }
 
 fn json_hex(value: &serde_json::Value) -> Vec<u8> {
@@ -43,8 +43,10 @@ fn field_to_be32(value: Fr) -> [u8; 32] {
 }
 
 fn tagged_poseidon(tag: u64, inputs: &[Fr]) -> [u8; 32] {
-    let mut hasher = Poseidon::<Fr>::with_domain_tag_circom(inputs.len(), Fr::from(tag)).unwrap();
-    field_to_be32(hasher.hash(inputs).unwrap())
+    let mut tagged = vec![Fr::from(tag)];
+    tagged.extend_from_slice(inputs);
+    let mut hasher = Poseidon2::<Fr>::new();
+    field_to_be32(hasher.hash(&tagged).unwrap())
 }
 
 fn raw_leaf(scheme: u32, schema: u32, identity: WwdEntityId, payload: &[u8]) -> [u8; 32] {
@@ -74,7 +76,11 @@ fn tag_value(name: &str) -> u64 {
         "TAG_SMT_BASE" => TAG_SMT_BASE,
         "TAG_SMT_NORMAL" => TAG_SMT_NORMAL,
         "TAG_SMT_ZERO" => TAG_SMT_ZERO,
-        other => panic!("unknown CES1 vector tag {other}"),
+        "TAG_TOP_NODE" => crate::TAG_TOP_NODE,
+        "TAG_SEALED_ROOT" => crate::TAG_SEALED_ROOT,
+        "TAG_COLLECTION_KEY" => crate::TAG_COLLECTION_KEY,
+        "TAG_COLLECTION_ROOT" => crate::TAG_COLLECTION_ROOT,
+        other => panic!("unknown CES2 vector tag {other}"),
     }
 }
 
@@ -352,7 +358,7 @@ fn entity_derivation_and_leaf_commitment_bind_every_declared_input() {
         body_commitment(ACTIVE_COMMITMENT_SCHEME, 1, identity, &changed_payload).unwrap(),
         leaf
     );
-    assert!(body_commitment(2, 1, identity, &payload).is_err());
+    assert!(body_commitment(1, 1, identity, &payload).is_err());
     assert!(body_commitment(ACTIVE_COMMITMENT_SCHEME, 3, identity, &payload).is_err());
 }
 
@@ -575,16 +581,19 @@ fn commitment_golden_vectors_are_pinned() {
     let vectors = commitment_vectors();
     assert_eq!(
         vectors["implementation"].as_str().unwrap(),
-        "@noble/curves generic Poseidon permutation"
+        "Noir Poseidon2 permutation reference"
     );
-    assert_eq!(vectors["implementation_version"], "1.6.0");
+    assert_eq!(
+        vectors["implementation_version"],
+        "1.0.0-beta.22+c57152f91260ecdb9faad4efc20abb14b6d2ece7"
+    );
     assert_eq!(
         vectors["bn254_scalar_modulus"].as_str().unwrap(),
         hex::encode(Fr::MODULUS.to_bytes_be())
     );
 
     let tags = vectors["tags"].as_array().unwrap();
-    assert_eq!(tags.len(), 10);
+    assert_eq!(tags.len(), 14);
     for vector in tags {
         let name = vector["name"].as_str().unwrap();
         let tag = tag_value(name);
@@ -601,7 +610,7 @@ fn commitment_golden_vectors_are_pinned() {
             vector["output"].as_str().unwrap()
         );
     }
-    assert_eq!(tag_value("TAG_BYTES_INIT"), CES1_TAG_BASE + 1);
+    assert_eq!(tag_value("TAG_BYTES_INIT"), CES2_TAG_BASE + 1);
 
     for vector in vectors["pbytes"].as_array().unwrap() {
         let bytes = json_hex(&vector["input_hex"]);
@@ -614,16 +623,7 @@ fn commitment_golden_vectors_are_pinned() {
     }
 }
 
-/// The identity-dependent half of the CES1 conformance set.
-///
-/// An independent `@noble/curves` Poseidon produced these vectors. That is the
-/// entire point of the file. Regenerating them from this crate would turn a
-/// cross-implementation check into a tautology. Narrowing identities to 32 bytes
-/// changed every Poseidon input here. Before this can run again, re-run that
-/// reference against the new identities to reproduce the vectors. The tag and
-/// `pbytes` vectors above are identity-independent and still cover the
-/// permutation itself.
-#[ignore = "CES1 identity/body vectors need regeneration from the @noble/curves reference for 32-byte identities"]
+/// Independent pinned Noir identity and body conformance vectors.
 #[test]
 fn commitment_identity_and_body_golden_vectors_are_pinned() {
     let vectors = commitment_vectors();
@@ -644,6 +644,12 @@ fn assert_identity_vectors(vectors: &serde_json::Value) {
                 assert_eq!(
                     derive_poseidon_entity_id(owner, identity.worldwide_day()).unwrap(),
                     identity
+                );
+                assert_eq!(
+                    hex::encode(
+                        crate::derive_poseidon_digest(owner, identity.worldwide_day()).unwrap()
+                    ),
+                    vector["digest_hex"]
                 );
             }
             "nod_bucket" => assert_eq!(
@@ -676,6 +682,14 @@ fn assert_body_vectors(vectors: &serde_json::Value) {
                 encode_nod_bucket_v1(&decode_nod_bucket_v1(&payload).unwrap()).unwrap(),
                 payload
             ),
+            "tribute_v2" => assert_eq!(
+                crate::encode_tribute_v2(&crate::decode_tribute_v2(&payload).unwrap()).unwrap(),
+                payload
+            ),
+            "nod_item_v2" => assert_eq!(
+                crate::encode_nod_item_v2(&crate::decode_nod_item_v2(&payload).unwrap()).unwrap(),
+                payload
+            ),
             other => panic!("unknown body vector {other}"),
         }
         let stored = crate::decode_stored_body(&json_hex(&vector["stored_body_hex"])).unwrap();
@@ -683,9 +697,14 @@ fn assert_body_vectors(vectors: &serde_json::Value) {
         assert_eq!(stored.payload(), payload);
         assert_eq!(
             hex::encode(
-                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
-                    .unwrap()
-                    .as_bytes()
+                body_commitment(
+                    ACTIVE_COMMITMENT_SCHEME,
+                    vector["schema_version"].as_u64().unwrap() as u32,
+                    identity,
+                    &payload
+                )
+                .unwrap()
+                .as_bytes()
             ),
             vector["leaf"].as_str().unwrap()
         );
@@ -701,29 +720,29 @@ fn assert_schema_vectors(vectors: &serde_json::Value) -> (WwdEntityId, Vec<u8>) 
         BODY_SCHEMA_V1
     );
     assert_eq!(
-        hex::encode(raw_leaf(1, 1, identity, &payload)),
-        schema["scheme_1_schema_1_leaf"]
+        hex::encode(raw_leaf(ACTIVE_COMMITMENT_SCHEME, 1, identity, &payload)),
+        schema["scheme_2_schema_1_leaf"]
     );
     assert_eq!(
-        hex::encode(raw_leaf(1, 2, identity, &payload)),
-        schema["scheme_1_schema_2_leaf"]
+        hex::encode(raw_leaf(ACTIVE_COMMITMENT_SCHEME, 2, identity, &payload)),
+        schema["scheme_2_schema_2_leaf"]
     );
     assert_ne!(
-        schema["scheme_1_schema_1_leaf"],
-        schema["scheme_1_schema_2_leaf"]
+        schema["scheme_2_schema_1_leaf"],
+        schema["scheme_2_schema_2_leaf"]
     );
     assert_eq!(
         hex::encode(
             body_commitment(
-                1,
-                schema["rejected_schema_version"].as_u64().unwrap() as u32,
+                ACTIVE_COMMITMENT_SCHEME,
+                schema["alternate_schema_version"].as_u64().unwrap() as u32,
                 identity,
                 &payload
             )
             .unwrap()
             .as_bytes()
         ),
-        schema["scheme_1_schema_2_leaf"]
+        schema["scheme_2_schema_2_leaf"]
     );
     (identity, payload)
 }
@@ -745,11 +764,21 @@ fn assert_bit_flip_vectors(vectors: &serde_json::Value) {
             (original_identity, json_hex(&vector["flipped_hex"]))
         };
         assert_eq!(
-            hex::encode(raw_leaf(1, 1, original_identity, &original_payload)),
+            hex::encode(raw_leaf(
+                ACTIVE_COMMITMENT_SCHEME,
+                1,
+                original_identity,
+                &original_payload
+            )),
             vector["original_leaf"]
         );
         assert_eq!(
-            hex::encode(raw_leaf(1, 1, changed_identity, &changed_payload)),
+            hex::encode(raw_leaf(
+                ACTIVE_COMMITMENT_SCHEME,
+                1,
+                changed_identity,
+                &changed_payload
+            )),
             vector["flipped_leaf"]
         );
         assert_ne!(vector["original_leaf"], vector["flipped_leaf"]);
@@ -780,5 +809,52 @@ fn assert_rejected_vectors(vectors: &serde_json::Value, identity: WwdEntityId, p
         payload
     )
     .is_err());
-    assert!(body_commitment(1, 1, identity, &json_hex(&rejected["empty_payload_hex"])).is_err());
+    assert!(body_commitment(
+        ACTIVE_COMMITMENT_SCHEME,
+        1,
+        identity,
+        &json_hex(&rejected["empty_payload_hex"])
+    )
+    .is_err());
+}
+
+#[test]
+fn noir_sponge_and_collection_vectors_are_pinned() {
+    let vectors = commitment_vectors();
+    for vector in vectors["sponge"].as_array().unwrap() {
+        let inputs = vector["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| Fr::from_be_bytes_mod_order(&json_hex(value)))
+            .collect::<Vec<_>>();
+        let actual = Poseidon2::<Fr>::new().hash(&inputs).unwrap();
+        assert_eq!(hex::encode(field_to_be32(actual)), vector["output"]);
+    }
+    let identity = WwdEntityId::try_from(
+        hex::decode("000000010405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+            .unwrap()
+            .as_slice(),
+    )
+    .unwrap();
+    for vector in vectors["collections"].as_array().unwrap() {
+        let domain = crate::CeDomain::try_from(vector["domain"].as_u64().unwrap() as u16).unwrap();
+        let key = crate::collection_key(domain, identity).unwrap();
+        assert_eq!(hex::encode(key.as_bytes()), vector["collection_key"]);
+        assert_eq!(
+            hex::encode(crate::collection::tree_key_bytes(domain, identity).unwrap()),
+            vector["tree_key"]
+        );
+        let roots = (0..16).map(B256::with_last_byte).collect::<Vec<_>>();
+        let top = crate::sharding::aggregate_b256_shard_roots(&roots).unwrap();
+        assert_eq!(hex::encode(top), vector["shard_top_root"]);
+        assert_eq!(
+            hex::encode(crate::collection_root(domain, key, top).unwrap()),
+            vector["collection_root"]
+        );
+    }
+    assert_eq!(
+        hex::encode(crate::sealed_root(B256::ZERO).unwrap()),
+        vectors["sealed_empty_root"]
+    );
 }

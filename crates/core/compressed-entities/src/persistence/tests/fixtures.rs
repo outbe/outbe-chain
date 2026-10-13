@@ -8,7 +8,7 @@ pub(super) fn b256(last: u8) -> B256 {
 
 pub(super) fn marker(height: u64) -> FinalizedMarker {
     FinalizedMarker {
-        commitment_scheme_version: 1,
+        commitment_scheme_version: crate::ACTIVE_COMMITMENT_SCHEME,
         height,
         block_hash: b256(u8::try_from(height).unwrap()),
         parent_block_hash: b256(u8::try_from(height.saturating_sub(1)).unwrap()),
@@ -22,9 +22,9 @@ pub(super) fn identity() -> EnvironmentIdentity {
         local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
         chain_id: 99,
         genesis_hash: b256(42),
-        commitment_scheme_version: 1,
+        commitment_scheme_version: crate::ACTIVE_COMMITMENT_SCHEME,
         topology: CeTopologyV1.encode(),
-        tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
+        tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
         vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
     }
 }

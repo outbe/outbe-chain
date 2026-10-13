@@ -4,11 +4,11 @@
   "nod_item_collection_preimage": "00020000000000",
   "nod_bucket_collection_preimage": "00030000000000",
   "topology_be": "000000010000000100000001000101000000040000001000020000000000000000100003000000000000000010",
-  "tribute_collection_key": "17552dc32bc7cccbd30054c2d0aacf99c414c8ccfe9246d61c238d858142ad72",
-  "nod_item_collection_key": "19694dc4f3994b4301877fb85e499529112830fd6f918230fb0f3797512b16c7",
-  "nod_bucket_collection_key": "19270d483e9285efabd719448b92aab0e4ccf203392b27865499b926405314cd",
-  "tribute_tree_key": "209b3ed6df1bc2caabb03536308cebb80ac60b23ebcd1408b3c8676d644f3285",
-  "empty_shard_top": "0x1fd758a4ca8aadda625825fd7f9a75f8ba9012e2afa66ad76ee23a5fa3c06e5c",
-  "empty_tribute_collection_root": "0x25bb83128d98ce62853541b05cff22fcc4e46c50b3a64f546552ef028e015899",
-  "empty_sealed_root": "0x086cb3c24884752e6453a9d44e15c1f465c0874e5312d18c05feaafec1587802"
+  "tribute_collection_key": "166320053c49ef24781e8aeec8daeb0c7966870a48d14a5773809f2c017bcf2b",
+  "nod_item_collection_key": "238d7b5c484e3bdaf32779dc4c7ac9996d89d8fe6127074f8f23075d734b007b",
+  "nod_bucket_collection_key": "17067cbe0a3bfb09946e41e8e42dc4a1908a35da1ca92ba807e3be73fc14293a",
+  "tribute_tree_key": "0dd43574a859b391723edadd35e081f97a0fb73b1f91022a946a86d26b2be4c8",
+  "empty_shard_top": "0x30063c7f1212ed9dc15eeffec3cbf3c3324a84105595c09dfebcb15f3956b484",
+  "empty_tribute_collection_root": "0x0028cdabaae43739333c59d7ceab20495b296778b588ed7b8a44fd9c0a618798",
+  "empty_sealed_root": "0x247048d4786c64554511d6de5ef953f9b3754d3e7a21234fe94d4dc9981cd1ed"
 }

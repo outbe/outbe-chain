@@ -1162,3 +1162,22 @@ fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
             .is_err());
     });
 }
+
+#[test]
+fn old_digest_is_rejected_without_issuing_a_tribute() {
+    with_tribute(|tc| {
+        let mut tribute = sample_tribute();
+        open_sample_day(tc);
+        // Pinned legacy digest for owner 0x11…11 and day 20241220.
+        let digest = alloy_primitives::b256!(
+            "0e775956064fb921159d3f5c322eb19d85d4006e4fb52ea3f84a8583c63f4c9a"
+        );
+        tribute.tribute_id = WwdEntityId::from_day_and_digest(tribute.worldwide_day, digest);
+        assert!(tc.issue(&tribute).is_err());
+        assert_eq!(tc.total_supply().unwrap(), 0);
+        tribute.tribute_id =
+            derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day).unwrap();
+        tc.issue(&tribute).unwrap();
+        assert_eq!(tc.total_supply().unwrap(), 1);
+    });
+}

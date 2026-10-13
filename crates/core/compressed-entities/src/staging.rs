@@ -1436,7 +1436,7 @@ mod tests {
 
     fn marker() -> FinalizedMarker {
         FinalizedMarker {
-            commitment_scheme_version: 1,
+            commitment_scheme_version: crate::ACTIVE_COMMITMENT_SCHEME,
             height: 7,
             block_hash: b256(7),
             parent_block_hash: b256(6),
@@ -1447,7 +1447,7 @@ mod tests {
 
     fn exact() -> ExactParentIdentity {
         ExactParentIdentity {
-            commitment_scheme_version: 1,
+            commitment_scheme_version: crate::ACTIVE_COMMITMENT_SCHEME,
             block_number: 7,
             block_hash: b256(7),
             root: sealed_root(b256(17)).unwrap(),
@@ -1718,7 +1718,7 @@ mod tests {
         assert_eq!(
             alloy_primitives::keccak256(&canonical),
             alloy_primitives::b256!(
-                "a8f190e2fd539aa5dad1fe39a615792a0bcde0e658faf5d2849d2df8fb3d52e7"
+                "95559762c47137f88bae3873061e2507baee13b6a463ac044dd9d6bcb984575e"
             )
         );
     }

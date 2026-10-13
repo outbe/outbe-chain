@@ -193,12 +193,12 @@ ORACLE_ADDRESS = "000000000000000000000000000000000000ee05"
 # `outbe-evm/src/precompiles.rs`. The marker bytecode below protects its account
 # and slot 0 from EIP-161 cleanup before the first sponsored transaction.
 ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
-# Compressed-entity EVM schema V3. ADR-011 adds the retirement journal.
+# Compressed-entity EVM schema V4 and CES2 Poseidon2 empty catalog wrapper.
 # Catalog, so slot 1 is non-zero even though no collection exists at genesis.
 COMPRESSED_ENTITIES_ADDRESS = "000000000000000000000000000000000000ee0d"
 COMPRESSED_ENTITIES_SCHEMA_VERSION = 4
 COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT = int(
-    "086cb3c24884752e6453a9d44e15c1f465c0874e5312d18c05feaafec1587802", 16
+    "247048d4786c64554511d6de5ef953f9b3754d3e7a21234fe94d4dc9981cd1ed", 16
 )
 # TEE registry precompile at 0xEE0A. Genesis seeds only slot 2 (`policy_hash`),
 # and only when `tee_policy` is present in the seed config. The block-1

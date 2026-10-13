@@ -534,7 +534,7 @@ fn open_native_stores(roots: &RecipientRoots, fixture: &StoppedFixture) {
             genesis_hash: fixture.genesis_hash,
             commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
             topology: outbe_compressed_entities::CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
+            tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
             vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
         },
     )

@@ -133,7 +133,7 @@ static MANIFEST: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
 fn entity(counter: u64) -> EntityRef {
     let mut bytes = [0_u8; WwdEntityId::len_bytes()];
     bytes[..4].copy_from_slice(&(counter as u32).to_be_bytes());
-    bytes[28..].copy_from_slice(&counter.to_be_bytes());
+    bytes[24..].copy_from_slice(&counter.to_be_bytes());
     let identity = WwdEntityId::try_from(bytes.as_slice()).expect("fixed benchmark identity");
     match counter % 3 {
         0 => EntityRef::Tribute(identity),
@@ -196,7 +196,7 @@ fn environment(_shard_count: u32, genesis_hash: B256) -> EnvironmentIdentity {
         genesis_hash,
         commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
         topology: outbe_compressed_entities::CeTopologyV1.encode(),
-        tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
+        tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
         vendor_revision: VENDOR_REVISION.to_owned(),
     }
 }

@@ -6,7 +6,6 @@ mod frozen;
 use alloy_primitives::{Bytes, B256};
 use ark_bn254::Fr;
 use ark_ff::PrimeField;
-use outbe_poseidon::{Poseidon, PoseidonHasher};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -624,8 +623,7 @@ fn top_hash(
         Fr::from_be_bytes_mod_order(&left),
         Fr::from_be_bytes_mod_order(&right),
     ];
-    Poseidon::<Fr>::with_domain_tag_circom(inputs.len(), Fr::from(TAG_TOP_NODE))
-        .and_then(|mut h| h.hash(&inputs))
+    crate::commitment::poseidon(TAG_TOP_NODE, &inputs)
         .map(field_to_be32)
         .map_err(|_| PointReadServiceError::InvalidPackage("top hash"))
 }
@@ -740,7 +738,7 @@ mod tests {
                 genesis_hash,
                 commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
                 topology: CeTopologyV1.encode(),
-                tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".into(),
+                tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".into(),
                 vendor_revision: "adr013-test".into(),
             },
             FinalizedMarker {
@@ -1311,28 +1309,28 @@ mod tests {
             transport_hashes,
             [
                 alloy_primitives::b256!(
-                    "122835a3da15ee4370013c6f90edcaa3bbaa636530d341b6d605d5a68ec889c6"
+                    "2243c4faf905de6b36a93fc9b8ed9304ed6f8c196b1ff1630627050694ed475f"
                 ),
                 alloy_primitives::b256!(
-                    "157bbc65cbc812a2d6d3c376f666f245721d40f10abb844589c32b4ffe1886da"
+                    "e96907502dd57735fa9b4cd2ef96667ef5d003d0be6cb3ac5e8270ff1df6acd6"
                 ),
                 alloy_primitives::b256!(
                     "a975d4736ef74939d9eca29e329d6ab1aa2aad157cc971d6315e3dc1bdf5fe9b"
                 ),
                 alloy_primitives::b256!(
-                    "8ed2779d38f590a0fd94e7b041f87f926ae652a92cd98d1e0972364ab38d8e85"
+                    "b57b8892cb91e2e87e2e5dee47a3facf62d15e9090e60b6d66344de585840540"
                 ),
                 alloy_primitives::b256!(
-                    "0b54a1b25bbc243d2af8300de61ffaa7ccbe95026e8f6ca8aad5c98349a01c4a"
+                    "45ed3c1479b15aae77ce298844051c527bc19e02065fa3a098ceb8d380b4e997"
                 ),
                 alloy_primitives::b256!(
                     "d4382908cd4da41da05e5df6cbe86c130c0609e7818077c7d38184b87d127748"
                 ),
                 alloy_primitives::b256!(
-                    "8deeb1348b96868ef16855e168750ab5ea5fa0cdc62ff086576b9178e3eb9131"
+                    "0cd616ea2b8d9ca9194b276c21bee60d31b5239a3cb06369888f13b5013ce081"
                 ),
                 alloy_primitives::b256!(
-                    "33675e9d83faf9a605413e64d6054d7e948106c866d5cb7d99a3e0e96eea83af"
+                    "4c8f0bce114d8df8ebf603fa210270fd8f5e1d57abb8695943849ce41942f1af"
                 ),
                 alloy_primitives::b256!(
                     "c401b4fc8759510f0def36b6a90258d98bb4317347ecc84395a776fd5968b18f"

@@ -1,6 +1,5 @@
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_sparse_merkle_tree_v061::{traits::Hasher, H256};
 
 use crate::{TAG_SMT_BASE, TAG_SMT_NORMAL, TAG_SMT_ZERO};
@@ -17,7 +16,7 @@ enum TranscriptItem {
     Word(H256),
 }
 
-/// CKB's infallible hasher seam backed by the CES1 Poseidon transcript codec.
+/// CKB's infallible hasher seam backed by the CES2 Poseidon transcript codec.
 #[derive(Default)]
 pub(crate) struct PoseidonCkbHasher {
     transcript: Vec<TranscriptItem>,
@@ -48,11 +47,7 @@ impl Hasher for PoseidonCkbHasher {
     }
 
     fn finish(self) -> H256 {
-        self.finish_with(|tag, inputs| {
-            let mut hasher = Poseidon::<Fr>::with_domain_tag_circom(inputs.len(), Fr::from(tag))
-                .map_err(|_| ())?;
-            hasher.hash(inputs).map_err(|_| ())
-        })
+        self.finish_with(|tag, inputs| crate::commitment::poseidon(tag, inputs).map_err(|_| ()))
     }
 }
 
