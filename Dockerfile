@@ -15,11 +15,11 @@ RUN apt-get update && apt-get install -y \
     cmake \
     clang \
     curl \
+    jq \
     libc++-dev \
     libc++abi-dev \
     libssl-dev \
     pkg-config \
-    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build

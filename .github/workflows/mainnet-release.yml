@@ -47,10 +47,7 @@ jobs:
           ref: ${{ inputs.release_tag }}
 
       - name: Install pinned Noir build tools
-        run: |
-          scripts/release/install-zk-build-tools.sh \
-            "${RUNNER_TEMP}/outbe-zk-tools/bin"
-          echo "${RUNNER_TEMP}/outbe-zk-tools/bin" >> "${GITHUB_PATH}"
+        run: scripts/release/install-zk-build-tools.sh
 
       - name: Bind workflow, tag and source identity
         id: identity
@@ -199,10 +196,7 @@ jobs:
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
 
       - name: Install pinned Noir build tools
-        run: |
-          scripts/release/install-zk-build-tools.sh \
-            "${RUNNER_TEMP}/outbe-zk-tools/bin"
-          echo "${RUNNER_TEMP}/outbe-zk-tools/bin" >> "${GITHUB_PATH}"
+        run: scripts/release/install-zk-build-tools.sh
 
       - name: Install native dependencies for release tooling
         run: |
@@ -300,10 +294,7 @@ jobs:
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
 
       - name: Install pinned Noir build tools
-        run: |
-          scripts/release/install-zk-build-tools.sh \
-            "${RUNNER_TEMP}/outbe-zk-tools/bin"
-          echo "${RUNNER_TEMP}/outbe-zk-tools/bin" >> "${GITHUB_PATH}"
+        run: scripts/release/install-zk-build-tools.sh
 
       - name: Install native dependencies for release tooling
         run: |
@@ -446,10 +437,7 @@ jobs:
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
 
       - name: Install pinned Noir build tools
-        run: |
-          scripts/release/install-zk-build-tools.sh \
-            "${RUNNER_TEMP}/outbe-zk-tools/bin"
-          echo "${RUNNER_TEMP}/outbe-zk-tools/bin" >> "${GITHUB_PATH}"
+        run: scripts/release/install-zk-build-tools.sh
 
       - name: Recheck immutable tag binding before hardware acceptance
         env:
@@ -562,10 +550,7 @@ jobs:
           ref: ${{ needs.build-and-compare.outputs.verified_commit }}
 
       - name: Install pinned Noir build tools
-        run: |
-          scripts/release/install-zk-build-tools.sh \
-            "${RUNNER_TEMP}/outbe-zk-tools/bin"
-          echo "${RUNNER_TEMP}/outbe-zk-tools/bin" >> "${GITHUB_PATH}"
+        run: scripts/release/install-zk-build-tools.sh
 
       - name: Install native dependencies for release tooling
         run: |

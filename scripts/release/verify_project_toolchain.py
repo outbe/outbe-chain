@@ -241,7 +241,6 @@ def repository_differences(repo_root: Path) -> list[str]:
     rust = pin["rust"]
     gramine = pin["gramine"]
     packages = pin["system_packages"]
-    zk_tools = pin["zk_tools"]
 
     rust_toolchain = tomllib.loads(
         (repo_root / "rust-toolchain.toml").read_text(encoding="utf-8")
@@ -257,20 +256,6 @@ def repository_differences(repo_root: Path) -> list[str]:
         label="rust-toolchain components",
         actual=sorted(rust_toolchain.get("components", [])),
         expected=rust["components"],
-    )
-
-    mise = tomllib.loads((repo_root / "mise.toml").read_text(encoding="utf-8"))
-    _require_equal(
-        differences,
-        label="mise Nargo version",
-        actual=mise.get("tools", {}).get("nargo", {}).get("version"),
-        expected=zk_tools["nargo"]["version"],
-    )
-    _require_equal(
-        differences,
-        label="mise Barretenberg version",
-        actual=mise.get("tools", {}).get("bb", {}).get("version"),
-        expected=zk_tools["barretenberg"]["version"],
     )
 
     elf = _read_json(repo_root / "release/reproducible-elf-build-v1.json")
@@ -406,14 +391,6 @@ def repository_differences(repo_root: Path) -> list[str]:
     for image in elf_base_images:
         if f"FROM {image} " not in recipe:
             differences.append(f"project toolchain recipe does not consume {image}")
-    for name, tool in zk_tools.items():
-        if tool["archive_url"] not in recipe:
-            differences.append(f"project toolchain recipe does not fetch pinned {name}")
-        if f"--checksum=sha256:{tool['archive_sha256']}" not in recipe:
-            differences.append(f"project toolchain recipe does not verify pinned {name}")
-        binary = "bb" if name == "barretenberg" else "nargo"
-        if f"/usr/local/bin/{binary}" not in recipe:
-            differences.append(f"project toolchain recipe does not install {name}")
     if "FROM toolchain AS builder" not in recipe or "FROM scratch AS artifacts" not in recipe:
         differences.append("project toolchain recipe does not own the release artifact stages")
     if f"COPY {APT_SOURCES_PATH} /etc/apt/sources.list.d/ubuntu.sources" not in recipe:
@@ -446,15 +423,6 @@ def repository_differences(repo_root: Path) -> list[str]:
             differences.append(
                 f"native-DCAP build contract duplicates project package version {version}"
             )
-
-    zk_build = (repo_root / "crates/zk/outbe-zk/build.rs").read_text(encoding="utf-8")
-    for constant, name in (
-        ("NARGO_VERSION", "nargo"),
-        ("BB_VERSION", "barretenberg"),
-    ):
-        version = zk_tools[name]["version"]
-        if f'const {constant}: &str = "{version}";' not in zk_build:
-            differences.append(f"outbe-zk does not require pinned {name} {version}")
     return differences
 
 

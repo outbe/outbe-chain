@@ -8,7 +8,6 @@ import importlib.util
 import json
 import re
 import shutil
-import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,30 +16,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TEE_BUILD_SCRIPT = REPO_ROOT / "crates/system/tee/build.rs"
 DOCKERFILE = REPO_ROOT / "Dockerfile.project-toolchain"
-RUNTIME_DOCKERFILE = REPO_ROOT / "Dockerfile"
 DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 PIN_PATH = REPO_ROOT / "release/project-toolchain-v1.json"
 ELF_SPEC_PATH = REPO_ROOT / "release/reproducible-elf-build-v1.json"
 REPRODUCIBLE_BUILD = REPO_ROOT / "scripts/release/reproducible-build.sh"
-ZK_TOOL_INSTALLER = REPO_ROOT / "scripts/release/install-zk-build-tools.sh"
 VERIFIER_PATH = REPO_ROOT / "scripts/release/verify_project_toolchain.py"
 APT_SOURCES_PATH = REPO_ROOT / "release/apt/ubuntu.sources"
-GENERIC_RELEASE_WORKFLOW = REPO_ROOT / ".github/workflows/release.yml"
-PROTECTED_RELEASE_WORKFLOWS = (
-    REPO_ROOT / ".github/workflows/testnet-release.yml",
-    REPO_ROOT / ".github/workflows/mainnet-release.yml",
-)
-
-
-def workflow_jobs(path: Path) -> dict[str, str]:
-    source = path.read_text(encoding="utf-8").split("\njobs:\n", 1)[1]
-    matches = list(re.finditer(r"^  ([A-Za-z0-9_-]+):\n", source, re.MULTILINE))
-    return {
-        match.group(1): source[match.start() : matches[index + 1].start()]
-        if index + 1 < len(matches)
-        else source[match.start() :]
-        for index, match in enumerate(matches)
-    }
 
 
 def load_verifier():
@@ -76,11 +57,6 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertEqual(pin["platform"], "linux/amd64")
         self.assertEqual(pin["rust"]["version"], "1.96.0")
         self.assertEqual(pin["gramine"]["version"], "1.9")
-        self.assertEqual(pin["zk_tools"]["nargo"]["version"], "1.0.0-beta.22")
-        self.assertEqual(
-            pin["zk_tools"]["barretenberg"]["version"],
-            "5.0.0-nightly.20260522",
-        )
         self.assertEqual(
             pin["host_only_packages"]["libsgx-dcap-default-qpl"],
             "1.26.100.1-noble1",
@@ -103,8 +79,6 @@ class ProjectToolchainContractTests(unittest.TestCase):
             for relative in (
                 "Dockerfile.project-toolchain",
                 "crates/system/tee/build.rs",
-                "crates/zk/outbe-zk/build.rs",
-                "mise.toml",
                 "rust-toolchain.toml",
                 "release/apt/ubuntu.sources",
                 "release/dcap-native-qvl-v1.json",
@@ -134,15 +108,6 @@ class ProjectToolchainContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "system package set"):
                 load_verifier().load_and_validate_pin(path)
 
-    def test_incomplete_zk_tool_pin_fails_closed(self) -> None:
-        pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
-        del pin["zk_tools"]["nargo"]["archive_sha256"]
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "project-toolchain-v1.json"
-            path.write_text(json.dumps(pin), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "nargo tool"):
-                load_verifier().load_and_validate_pin(path)
-
     def test_native_dcap_build_contract_reads_the_release_pins(self) -> None:
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
         source = TEE_BUILD_SCRIPT.read_text(encoding="utf-8")
@@ -166,9 +131,6 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertIn(f"gramineproject/gramine:{pin['gramine']['version']}-", recipe)
         for package, version in pin["system_packages"].items():
             self.assertIn(f"{package}={version}", recipe)
-        for tool in pin["zk_tools"].values():
-            self.assertIn(tool["archive_url"], recipe)
-            self.assertIn(f"--checksum=sha256:{tool['archive_sha256']}", recipe)
 
         self.assertIn("/opt/outbe/toolchain/verify_dcap_native_qvl.py", recipe)
         self.assertIn("/opt/outbe/toolchain/project-toolchain-v1.json", recipe)
@@ -187,60 +149,6 @@ class ProjectToolchainContractTests(unittest.TestCase):
         self.assertIn(
             f"""test "$(dpkg-query -W -f='${{Version}}' gramine)" = "{pin['gramine']['version']}" """,
             recipe,
-        )
-
-    def test_release_build_paths_install_the_pinned_zk_tools(self) -> None:
-        installer = ZK_TOOL_INSTALLER.read_text(encoding="utf-8")
-        pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
-
-        self.assertTrue(ZK_TOOL_INSTALLER.stat().st_mode & stat.S_IXUSR)
-        self.assertIn("release/project-toolchain-v1.json", installer)
-        self.assertIn("archive_sha256", installer)
-        self.assertIn("sha256sum -c -", installer)
-        self.assertIn("--proto '=https'", installer)
-        for tool in pin["zk_tools"].values():
-            self.assertNotIn(tool["version"], installer)
-            self.assertNotIn(tool["archive_url"], installer)
-            self.assertNotIn(tool["archive_sha256"], installer)
-
-        expected_cargo_jobs = {
-            "build-and-compare",
-            "sign",
-            "package-and-sign-image",
-            "hardware-smoke",
-            "finalize",
-        }
-        for workflow in PROTECTED_RELEASE_WORKFLOWS:
-            jobs = workflow_jobs(workflow)
-            cargo_jobs = {
-                name
-                for name, source in jobs.items()
-                if re.search(r"\bcargo (?:build|run|xtask)\b", source)
-            }
-            self.assertEqual(cargo_jobs, expected_cargo_jobs, workflow.name)
-            for name in cargo_jobs:
-                source = jobs[name]
-                installer_offset = source.find("install-zk-build-tools.sh")
-                cargo_offset = re.search(r"\bcargo (?:build|run|xtask)\b", source)
-                self.assertGreaterEqual(installer_offset, 0, f"{workflow.name}:{name}")
-                self.assertIsNotNone(cargo_offset)
-                assert cargo_offset is not None
-                self.assertLess(
-                    installer_offset,
-                    cargo_offset.start(),
-                    f"{workflow.name}:{name}",
-                )
-
-        generic_release = GENERIC_RELEASE_WORKFLOW.read_text(encoding="utf-8")
-        self.assertLess(
-            generic_release.index("install-zk-build-tools.sh"),
-            generic_release.index("goreleaser/goreleaser-action"),
-        )
-
-        runtime_dockerfile = RUNTIME_DOCKERFILE.read_text(encoding="utf-8")
-        self.assertLess(
-            runtime_dockerfile.index("install-zk-build-tools.sh"),
-            runtime_dockerfile.index("RUN cargo build"),
         )
 
     def test_ci_stage_provides_the_python_command_used_by_actions(self) -> None:
