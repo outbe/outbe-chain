@@ -712,8 +712,8 @@ pub(crate) fn series_exists(
     .unwrap_or_default()
 }
 
-/// A series' lifecycle state as the collection reads it, without the Qualified
-/// overlay: 0 Issued, 2 Called, 3 Expired.
+/// A series' lifecycle state as the collection reads it: 0 Issued, 1 Qualified,
+/// 2 Called, 3 Expired.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_state(
     url: &str,

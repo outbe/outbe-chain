@@ -593,6 +593,30 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
 }
 
 #[test]
+fn hosted_release_jobs_install_the_declared_native_toolchain() {
+    let root = repo_root();
+    let install_step = concat!(
+        "      - name: Install native dependencies for release tooling\n",
+        "        run: |\n",
+        "          sudo apt-get update\n",
+        "          sudo apt-get install -y --no-install-recommends \\\n",
+        "            build-essential clang cmake libc++-dev libc++abi-dev \\\n",
+        "            libssl-dev pkg-config\n",
+    );
+    for workflow_path in [
+        ".github/workflows/testnet-release.yml",
+        ".github/workflows/mainnet-release.yml",
+    ] {
+        let workflow = fs::read_to_string(root.join(workflow_path)).expect("release workflow");
+        assert_eq!(
+            workflow.matches(install_step).count(),
+            3,
+            "every GitHub-hosted cargo xtask job in {workflow_path} must provision native dependencies"
+        );
+    }
+}
+
+#[test]
 fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
     let root = repo_root();
     let workflow = fs::read_to_string(root.join(".github/workflows/mainnet-release.yml"))

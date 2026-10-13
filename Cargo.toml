@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "xtask",
+    "crates/poseidon",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/constants",
@@ -270,7 +271,7 @@ num-bigint = "0.4"
 num-traits = "0.2"
 
 # ZK / Poseidon
-outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
+outbe-poseidon = { path = "crates/poseidon" }
 outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.27.0", features = ["alloy"] }
 outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.27.0" }
 outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.27.0", features = ["alloy"] }
@@ -355,3 +356,4 @@ debug = 0
 # Preserve the existing context-dispatch hook on the matching upstream release.
 [patch.crates-io]
 alloy-evm = { path = "vendor/alloy-evm" }
+outbe-poseidon = { path = "crates/poseidon" }
