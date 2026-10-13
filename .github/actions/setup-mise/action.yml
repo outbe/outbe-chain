@@ -1,0 +1,31 @@
+name: Setup mise tools
+description: Reuse tools from the CI image and cache circuit compilers across jobs
+
+# The project-toolchain-ci image already provides mise and its shims on PATH.
+# Cache installs and release metadata, never global configuration or credentials.
+runs:
+  using: composite
+  steps:
+    - name: Restore circuit compilers and mise metadata
+      uses: actions/cache@v4
+      with:
+        path: |
+          /opt/mise/data/installs/nargo
+          /opt/mise/data/installs/bb
+          /opt/mise/cache
+        key: mise-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'Dockerfile.project-toolchain') }}
+
+    - name: Install tools and set global defaults
+      shell: bash
+      env:
+        MISE_GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        mise install
+        # Like the image build: keep shims usable from scratch directories outside
+        # the checkout. This also covers tools invoked by xtask, such as forge.
+        mise ls --current --json | jq -r '
+          to_entries[] | .key as $tool | .value[] |
+          select(.installed) | "\($tool)@\(.version)"
+        ' | xargs mise use --global
+        mise reshim

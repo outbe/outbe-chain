@@ -39,6 +39,10 @@ use revm::{
 };
 
 sol! {
+    interface IEurFixture {
+        function configure(uint256 mode) external;
+    }
+
     interface IFixture {
         function mint(address account, uint256 amount) external;
         function approve(address spender, uint256 amount) external returns (bool);
@@ -73,11 +77,50 @@ struct World {
 
 impl World {
     fn new(owner: Address, cost: U256, registered: bool) -> Self {
+        let mut world = Self::build(
+            owner,
+            cost,
+            registered,
+            include_str!("fixtures/NodSettlement.hex"),
+            840,
+        );
+        world.fund_settlement();
+        world
+    }
+
+    /// The issuance rail: the Nod is issued in EUR (978) against a USD entry
+    /// price. The Credis fixture token answers ISO 978 in mode 6, and the
+    /// trailing window prices COEN at 2 USD and 1 EUR, so the Nod costs half as
+    /// many EUR units as USD units.
+    fn issuance_rail(owner: Address, cost: U256) -> Self {
+        let mut world = Self::build(
+            owner,
+            cost,
+            true,
+            include_str!("fixtures/CredisIssuance.hex"),
+            978,
+        );
+        world.ok(
+            owner,
+            ASSET,
+            IEurFixture::configureCall {
+                mode: U256::from(6),
+            },
+        );
+        world
+    }
+
+    fn build(
+        owner: Address,
+        cost: U256,
+        registered: bool,
+        code_hex: &str,
+        issuance_currency: u16,
+    ) -> Self {
         test_enclave::install();
         let mut db = CacheDB::new(EmptyDB::default());
         let code = Bytecode::new_raw(Bytes::from(
-            alloy_primitives::hex::decode(include_str!("fixtures/NodSettlement.hex").trim())
-                .unwrap(),
+            alloy_primitives::hex::decode(code_hex.trim()).unwrap(),
         ));
         for addr in [ASSET, VAULT] {
             db.insert_account_info(
@@ -104,6 +147,7 @@ impl World {
                     owner,
                     cost,
                     registered,
+                    issuance_currency,
                 },
             )
         });
@@ -112,16 +156,14 @@ impl World {
             .with_db(db)
             .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID)
             .modify_block_chained(|block| block.timestamp = U256::from(TIMESTAMP));
-        let mut world = Self {
+        Self {
             ctx,
             scope,
             readers,
             owner,
             nod,
             cost,
-        };
-        world.fund_settlement();
-        world
+        }
     }
 
     fn fund_settlement(&mut self) {
@@ -221,13 +263,17 @@ impl World {
     }
 
     fn settle(&mut self) -> SubCallOutput {
+        self.settle_with(U256::ZERO)
+    }
+
+    fn settle_with(&mut self, snapshot_id: U256) -> SubCallOutput {
         self.call(
             self.owner,
             NOD_FACTORY_ADDRESS,
             INodFactory::settleNodCall {
                 nodId: self.nod.to_u256(),
                 asset: ASSET,
-                snapshotId: U256::ZERO,
+                snapshotId: snapshot_id,
             },
             false,
         )
@@ -332,6 +378,77 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
         outbe_tee::gratis_decrypt::decrypt_gratis_balance(&view_key, OWNER, &minted).unwrap(),
         U256::from(GRATIS_LOAD)
     );
+}
+
+/// A payment in the issuance currency, end to end: the quote names the trailing
+/// snapshot, a payment that names another snapshot moves nothing, and the one
+/// that names it moves exactly the converted cost into the vault.
+#[test]
+fn an_issuance_currency_payment_moves_the_converted_cost_at_the_quoted_snapshot() {
+    let cost = U256::from(100_000_000u64);
+    let mut world = World::issuance_rail(OWNER, cost);
+    let quote = world.view(
+        NOD_FACTORY_ADDRESS,
+        INodFactory::quoteSettlementCall {
+            nodId: world.nod.to_u256(),
+            asset: ASSET,
+        },
+    );
+    assert_eq!(quote.settlementCurrency, 978);
+    assert_eq!(quote.paymentMinor, cost / U256::from(2));
+    assert_ne!(quote.snapshotId, U256::ZERO);
+    let paid = quote.paymentMinor;
+    world.ok(
+        OWNER,
+        ASSET,
+        IFixture::mintCall {
+            account: OWNER,
+            amount: cost,
+        },
+    );
+    world.ok(
+        OWNER,
+        ASSET,
+        IFixture::approveCall {
+            spender: NOD_FACTORY_ADDRESS,
+            amount: paid,
+        },
+    );
+    world.ok(
+        VAULT_ROUTER_ADDRESS,
+        ASSET,
+        IFixture::approveCall {
+            spender: VAULT,
+            amount: U256::MAX,
+        },
+    );
+
+    let stale = world.settle_with(U256::ZERO);
+    assert!(!matches!(stale.status, SubCallStatus::Success));
+    assert_eq!(
+        world.balances(),
+        [cost, U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO]
+    );
+    world.assert_unpaid();
+
+    assert!(matches!(
+        world.settle_with(quote.snapshotId).status,
+        SubCallStatus::Success
+    ));
+    assert_eq!(
+        world.balances(),
+        [cost - paid, U256::ZERO, U256::ZERO, paid, paid]
+    );
+    let events: Vec<_> = world
+        .ctx
+        .journaled_state
+        .logs()
+        .iter()
+        .filter_map(|log| INodFactory::NodPaid::decode_log_data(&log.data).ok())
+        .collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].asset, ASSET);
+    assert_eq!(events[0].paymentMinor, paid);
 }
 
 #[test]
@@ -510,6 +627,7 @@ struct NodSettlementSeed {
     owner: Address,
     cost: U256,
     registered: bool,
+    issuance_currency: u16,
 }
 fn seed_settlement_nod(
     storage: &StorageHandle<'_>,
@@ -521,6 +639,7 @@ fn seed_settlement_nod(
         owner,
         cost,
         registered,
+        issuance_currency,
     } = seed;
     storage
         .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
@@ -537,14 +656,14 @@ fn seed_settlement_nod(
         )
         .unwrap();
     begin_block(storage.clone(), scope).unwrap();
-    seed_settlement_router(storage, registered);
+    seed_settlement_router(storage, registered, issuance_currency);
     let params = NodIssueParams {
         owner,
         gratis_load_minor: U256::from(GRATIS_LOAD),
         worldwide_day: WorldwideDay::new(20_241_220),
         league_id: 1,
         entry_price_minor: cost * U256::from(1_000),
-        issuance_currency: 840,
+        issuance_currency,
         reference_currency: 840,
     };
     let nod = outbe_nodfactory::api::issue_nod(
@@ -559,19 +678,42 @@ fn seed_settlement_nod(
     let bucket =
         outbe_nod::identity::bucket_key(params.worldwide_day, params.entry_price_minor, 840);
     qualify(storage, bucket, floor_price_minor, 840).expect("bucket qualifies");
+    if issuance_currency != 840 {
+        seed_settlement_window(storage, issuance_currency);
+    }
     nod
 }
-fn seed_settlement_router(storage: &StorageHandle<'_>, registered: bool) {
+
+/// One observation in the trailing window settlement converts at: COEN at
+/// 2 USD and at 1 unit of `iso_code`.
+fn seed_settlement_window(storage: &StorageHandle<'_>, iso_code: u16) {
+    let usd = outbe_oracle::api::AddressPair::new_coen_to(840);
+    let other = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
+    outbe_oracle::api::register_pair(storage.clone(), other).unwrap();
+    let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+    let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    oracle
+        .write_snapshot(
+            snapshot.cutoff() - 1,
+            &[
+                (usd, U256::from(2_000_000), U256::from(1_000_000)),
+                (other, U256::from(1_000_000), U256::from(1_000_000)),
+            ],
+        )
+        .unwrap();
+}
+/// Registers `ASSET` with `VAULT` under `iso_code`.
+fn seed_settlement_router(storage: &StorageHandle<'_>, registered: bool, iso_code: u16) {
     let router = VaultRouterContract::new(storage.clone());
     router.assets.insert(ASSET).unwrap();
     router.asset_vault_set(ASSET).insert(VAULT).unwrap();
     router
-        .reference_currency_vault_set(840)
+        .reference_currency_vault_set(iso_code)
         .insert(VAULT)
         .unwrap();
     router
         .vault_reference_currencies
-        .write(&VAULT, 840)
+        .write(&VAULT, iso_code)
         .unwrap();
     if registered {
         router

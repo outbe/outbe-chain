@@ -13,9 +13,14 @@ interface IAgentReward {
     function getClaimableBalance(address account) external view returns (uint256);
     function getPoolClaimableBalance(address account, uint8 pool) external view returns (uint256);
     /// @notice Issues `amount` of the caller's balance in `pool` (0 = WAA, 1 = SRA, 2 = CCA)
-    /// as a Gem. An `amount` of zero claims the whole pool balance. What is left
+    /// as a Gem in the caller's `issuanceCurrency` and `referenceCurrency` (ISO 4217 numeric).
+    /// `referenceCurrency` must be an Oracle reference currency, and the entry price is the
+    /// previous UTC day's COEN VWAP in it. `issuanceCurrency` is any code in 1..=999.
+    /// An `amount` of zero claims the whole pool balance. What is left
     /// keeps accruing and cannot be forfeited. The caller controls its own risk
     /// through the size of the claim.
     /// @return gemId the Gem issued for the caller.
-    function claimReward(uint8 pool, uint256 amount) external returns (uint256 gemId);
+    function claimReward(uint8 pool, uint256 amount, uint16 issuanceCurrency, uint16 referenceCurrency)
+        external
+        returns (uint256 gemId);
 }

@@ -182,7 +182,7 @@ RUN cd /opt/outbe/ci && \
 RUN set -eu; \
     cd /; \
     for tool in forge cast anvil cargo-nextest cargo-deny cargo-audit \
-                cog duckdb uv uvx aderyn sccache jq mold zstd python; do \
+                cog duckdb uv uvx aderyn sccache jq mold zstd python nargo bb; do \
       "${tool}" --version >/dev/null 2>&1 \
         || { echo "ci stage tool does not run: ${tool}" >&2; exit 1; }; \
     done; \

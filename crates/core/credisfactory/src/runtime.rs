@@ -8,15 +8,10 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_credis::{CredisContract, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
-use outbe_oracle::api::{
-    check_reference_currency_with_storage, coen_pair_index_opt, get_policy_rate, get_utc_day_vwap,
-};
-use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
     error::{PrecompileError, Result},
     storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
     units::checked_protocol_to_native,
 };
 use outbe_vaultrouter::LiquidityReservation;
@@ -25,7 +20,7 @@ fn revert(message: &str) -> PrecompileError {
     PrecompileError::Revert(message.into())
 }
 
-/// The caller's live reservation, with a deployed smart account. Returns it with the block time.
+/// The caller's live reservation. Returns it with the block time.
 fn live_reservation(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -39,10 +34,6 @@ fn live_reservation(
         CredisFactoryError::ReservationCcaMismatch
     } else if now > r.expires_at {
         CredisFactoryError::ReservationExpired
-    } else if r.smart_account.is_zero()
-        || storage.with_account_info(r.smart_account, |info| Ok(info.is_empty_code_hash()))?
-    {
-        CredisFactoryError::SmartAccountNotDeployed
     } else {
         return Ok((r, now));
     };
@@ -66,42 +57,18 @@ fn ensure_asset_metadata(storage: &StorageHandle<'_>, r: &LiquidityReservation) 
     Ok(())
 }
 
-/// The previous closed UTC-day VWAP in `reference_currency` at `now`: the call anchor.
-fn call_anchor_at(storage: &StorageHandle<'_>, reference_currency: u16, now: u64) -> Result<U256> {
-    let day = previous_date_key(timestamp_to_date_key(now));
-    let finalized = OracleContract::new(storage.clone())
-        .utc_day_vwap_last_finalized
-        .read()?;
-    if finalized < day {
-        return Err(CredisFactoryError::PreviousDayVwapUnavailable.into());
-    }
-    let Some(index) = coen_pair_index_opt(storage.clone(), reference_currency)? else {
-        return Err(CredisFactoryError::PreviousDayVwapUnavailable.into());
-    };
-    match get_utc_day_vwap(storage.clone(), day, index)? {
-        Some(vwap) if !vwap.is_zero() => Ok(vwap),
-        _ => Err(CredisFactoryError::PreviousDayVwapUnavailable.into()),
-    }
-}
-
-/// Issues a Credis on the reservation's pledge. The pledge terms come from the
-/// reservation; `reference_currency`, the call anchor and the policy rate are
-/// fixed here, at issuance.
+/// Issues a Credis on the reservation's pledge. Every term, the call terms included,
+/// comes from the reservation.
 pub fn issue_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     reservation_id: U256,
-    reference_currency: u16,
     stake: U256,
 ) -> Result<(U256, U256)> {
     storage.with_checkpoint(|| {
         outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
         let (r, now) = live_reservation(&storage, caller, reservation_id)?;
         ensure_asset_metadata(&storage, &r)?;
-        // The call sweep walks only registered currencies.
-        check_reference_currency_with_storage(storage.clone(), reference_currency)?;
-        let policy_rate = get_policy_rate(storage.clone(), r.issuance_currency)?;
-        let call_anchor_price_minor = call_anchor_at(&storage, reference_currency, now)?;
         let required = checked_protocol_to_native(r.gratis_minor)
             .ok_or_else(|| revert("COEN stake overflow"))?;
         if stake != required {
@@ -109,26 +76,26 @@ pub fn issue_credis(
         }
         let mut credis = CredisContract::new(storage.clone());
         let id = credis.issue(IssueCredisParams {
-            owner: r.smart_account,
+            owner: r.credis_owner,
             cca: caller,
             source: r.source,
             asset: r.asset,
             issuance_currency: r.issuance_currency,
-            reference_currency,
-            policy_rate,
+            reference_currency: r.reference_currency,
+            policy_rate: r.policy_rate,
             principal_minor: r.amount,
             entry_price_minor: r.entry_price_minor,
-            call_anchor_price_minor,
+            call_anchor_price_minor: r.call_anchor_price_minor,
             gratis_minor: r.gratis_minor,
             issued_at: now,
         })?;
         pledges::send_to_credis(&storage, reservation_id, id, r.source, r.gratis_minor)?;
         let opened = credis.get_credis(id)?;
-        storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.smart_account, stake)?;
+        storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.credis_owner, stake)?;
         let paid = outbe_vaultrouter::api::release_reservation(
             &storage,
             reservation_id,
-            r.smart_account,
+            r.credis_owner,
             r.amount,
         )?;
         if paid != r.amount || credis.get_credis(id)? != opened {
@@ -138,7 +105,7 @@ pub fn issue_credis(
             CREDIS_FACTORY_ADDRESS,
             alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisIssued {
                 credisId: id,
-                owner: r.smart_account,
+                owner: r.credis_owner,
                 cca: caller,
                 asset: r.asset,
                 principalMinor: r.amount,
