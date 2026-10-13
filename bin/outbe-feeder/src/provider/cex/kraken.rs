@@ -6,8 +6,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::rest::fetch_json;
-use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
+use crate::provider::{checked_ticker, Provider, TickerPrice, VolumeInput};
 
 /// Maps a (base, quote) pair to a Kraken pair string.
 /// Returns `None` for pairs Kraken doesn't support.

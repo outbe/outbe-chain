@@ -5,7 +5,7 @@ use eyre::Result;
 use std::collections::HashMap;
 
 use super::rest::ticker_24h;
-use super::{Provider, TickerPrice};
+use crate::provider::{Provider, TickerPrice};
 
 /// Maps a (base, quote) pair to a MEXC symbol.
 /// Returns `None` for pairs MEXC doesn't support.

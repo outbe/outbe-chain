@@ -6,8 +6,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::rest::fetch_json;
-use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::fixed::JsonDecimal;
+use crate::provider::{checked_ticker, Provider, TickerPrice, VolumeInput};
 
 /// Maps a (base, quote) pair to a Huobi symbol (lowercase).
 /// Returns `None` for pairs Huobi doesn't support.

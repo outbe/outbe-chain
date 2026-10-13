@@ -1,23 +1,15 @@
 //! Price provider trait and implementations.
 
-pub mod binance;
-pub mod coinbase;
+pub(crate) mod cex;
 pub(crate) mod dex;
 pub(crate) mod evm_rpc;
-pub mod gate;
-pub mod huobi;
-pub mod kraken;
-pub mod mexc;
 pub mod mock;
 pub mod mock_http;
-pub mod okx;
 pub mod onchain_feed;
 pub mod pyth;
 pub mod redstone;
-mod rest;
 #[cfg(test)]
 pub(crate) mod test_server;
-pub(crate) mod websocket;
 
 use eyre::{eyre, Result};
 use std::collections::HashMap;
@@ -209,13 +201,13 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                     .ok_or_else(|| eyre!("provider redstone requires a [[api_providers]] entry"))?;
                 Box::new(redstone::RedstoneProvider::new(endpoint)?)
             }
-            "binance" => Box::new(binance::BinanceProvider::new()?),
-            "kraken" => Box::new(kraken::KrakenProvider::new()?),
-            "okx" => Box::new(okx::OkxProvider::new()?),
-            "gate" => Box::new(gate::GateProvider::new()?),
-            "huobi" => Box::new(huobi::HuobiProvider::new()?),
-            "mexc" => Box::new(mexc::MexcProvider::new()?),
-            "coinbase" => Box::new(coinbase::CoinbaseProvider::new()?),
+            "binance" => Box::new(cex::binance::BinanceProvider::new()?),
+            "kraken" => Box::new(cex::kraken::KrakenProvider::new()?),
+            "okx" => Box::new(cex::okx::OkxProvider::new()?),
+            "gate" => Box::new(cex::gate::GateProvider::new()?),
+            "huobi" => Box::new(cex::huobi::HuobiProvider::new()?),
+            "mexc" => Box::new(cex::mexc::MexcProvider::new()?),
+            "coinbase" => Box::new(cex::coinbase::CoinbaseProvider::new()?),
             "uniswap" | "pancakeswap" => Box::new(dex::DexProvider::new(
                 config
                     .dex_providers
@@ -242,10 +234,10 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
             .filter(|source| source.provider == *name)
             .map(|source| (source.base.clone(), source.quote.clone()))
             .collect::<Vec<_>>();
-        let provider = if let Some(kind) = websocket::ExchangeKind::for_name(name)
-            .filter(|kind| kind.supports_any(&configured_pairs))
+        let provider = if let Some(kind) =
+            cex::ExchangeKind::for_name(name).filter(|kind| kind.supports_any(&configured_pairs))
         {
-            let streaming = websocket::StreamingProvider::new(
+            let streaming = cex::StreamingProvider::new(
                 kind,
                 endpoints.get(name.as_str()).copied(),
                 &configured_pairs,

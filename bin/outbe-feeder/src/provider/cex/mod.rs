@@ -1,4 +1,5 @@
-//! Exchange WebSocket transport shared by the streaming price providers.
+//! Centralized exchanges: one REST provider per exchange, plus the WebSocket
+//! transport the streaming providers share.
 //!
 //! The transport owns connection, subscription, heartbeat, reconnect and
 //! in-memory market-data caching. Exchange-specific code is deliberately kept
@@ -487,6 +488,15 @@ where
 }
 
 mod decode;
+pub(crate) mod rest;
+
+pub(crate) mod binance;
+pub(crate) mod coinbase;
+pub(crate) mod gate;
+pub(crate) mod huobi;
+pub(crate) mod kraken;
+pub(crate) mod mexc;
+pub(crate) mod okx;
 
 #[cfg(test)]
 mod tests;

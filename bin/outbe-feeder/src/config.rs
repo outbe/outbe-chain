@@ -396,7 +396,7 @@ impl FeederConfig {
             if !endpoint.websocket.is_empty() {
                 Self::validate_websocket_endpoint(endpoint)?;
             }
-            crate::provider::websocket::validate_exchange_markets(endpoint)?;
+            crate::provider::cex::validate_exchange_markets(endpoint)?;
         }
         Ok(())
     }
@@ -404,7 +404,7 @@ impl FeederConfig {
     /// Only an exchange takes a websocket override, and it must be a `ws://`
     /// or `wss://` URL or a bare host.
     fn validate_websocket_endpoint(endpoint: &ApiProviderConfig) -> Result<()> {
-        if crate::provider::websocket::ExchangeKind::for_name(&endpoint.name).is_none() {
+        if crate::provider::cex::ExchangeKind::for_name(&endpoint.name).is_none() {
             return Err(eyre::eyre!(
                 "provider '{}' does not support websocket market streams",
                 endpoint.name

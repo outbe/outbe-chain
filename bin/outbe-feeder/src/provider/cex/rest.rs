@@ -5,8 +5,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use super::{checked_ticker, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
+use crate::provider::{checked_ticker, TickerPrice, VolumeInput};
 
 /// GET `url` and decode its JSON body. A failed request, a non-2xx status or
 /// an undecodable body is logged for `provider` and `pair` and yields `None`,

@@ -5,8 +5,8 @@ use eyre::Result;
 use std::collections::HashMap;
 
 use super::rest::{fetch_json, ticker_24h};
-use super::{checked_candle, CandlePrice, Provider, TickerPrice, VolumeInput};
 use crate::fixed::FixedValue;
+use crate::provider::{checked_candle, CandlePrice, Provider, TickerPrice, VolumeInput};
 
 /// Maps a (base, quote) pair to a Binance symbol.
 /// Returns `None` for pairs Binance doesn't support (e.g. custom tokens).
