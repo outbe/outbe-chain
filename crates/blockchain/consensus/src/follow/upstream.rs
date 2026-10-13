@@ -61,8 +61,7 @@ pub fn parent_finalization_from_child(
             continue;
         }
         let certificate =
-            decode_public_finalization(&metadata.proof, crate::bls::MAX_VALIDATORS as usize)
-                .ok()?;
+            decode_public_finalization(&metadata.proof, crate::bls::MAX_COMMITTEE_MEMBERS).ok()?;
         if certificate.proposal.payload == parent.digest()
             && certificate.proposal.round.epoch().get() == metadata.finalized_epoch
         {

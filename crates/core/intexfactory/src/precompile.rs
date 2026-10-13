@@ -237,7 +237,7 @@ pub fn dispatch(
                     runtime::is_series_qualified(&storage, SeriesId::from(c.seriesId))
                 }),
                 powDifficulty(_) => metadata::<IIntexFactory::powDifficultyCall>(|| {
-                    Ok(outbe_common::pow::POW_DIFFICULTY as u8)
+                    Ok(outbe_common::pow::POW_DIFFICULTY)
                 }),
                 maxUtcDayVwapSince(c) => view(c, |c| {
                     outbe_oracle::api::max_utc_day_vwap_since(

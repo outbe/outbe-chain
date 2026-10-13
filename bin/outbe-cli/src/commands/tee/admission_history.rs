@@ -99,7 +99,7 @@ pub(super) fn compact_header(
     let certified = outbe_consensus::follow::decode_public_finalized_block(
         &finalization,
         &encoded,
-        outbe_consensus::bls::MAX_VALIDATORS as usize,
+        outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
     )?;
     eyre::ensure!(
         certified.finalization.proposal.payload == certified.block.digest(),

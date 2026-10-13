@@ -43,7 +43,7 @@ fn dispatch_pow_difficulty_serves_the_protocol_difficulty() {
         )
         .unwrap();
         assert_eq!(
-            usize::from(IIntexFactory::powDifficultyCall::abi_decode_returns(&out).unwrap()),
+            IIntexFactory::powDifficultyCall::abi_decode_returns(&out).unwrap(),
             outbe_common::pow::POW_DIFFICULTY
         );
     });

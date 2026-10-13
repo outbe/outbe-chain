@@ -8,7 +8,7 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, Worldwide
 use outbe_primitives::{
     addresses::INTEX_NFT1155_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    units::SCALE_1E6_U64,
+    units::{SCALE_1E6_U128, SCALE_1E6_U64},
 };
 
 use super::support::{capture_execution, elapsed_ns};
@@ -123,7 +123,7 @@ fn seed_series(storage: &StorageHandle<'_>) -> Result<(), String> {
             series_id: source_intex_id(),
             worldwide_day: WorldwideDay::new(0),
             issued_units: PARK_UNITS as u32,
-            promis_load_minor: SCALE_1E6_U64 as u128,
+            promis_load_minor: SCALE_1E6_U128,
             entry_price_minor: six_decimal_unit(),
             floor_price_minor: six_decimal_unit(),
             call_price_minor: U256::ZERO,

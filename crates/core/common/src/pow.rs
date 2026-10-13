@@ -13,7 +13,7 @@ use ring::digest::{digest, SHA256};
 
 /// PoW difficulty: number of leading zero bytes required in the SHA256 hash.
 /// Identical across all entity factories.
-pub const POW_DIFFICULTY: usize = 1;
+pub const POW_DIFFICULTY: u8 = 1;
 
 /// Mining sequence for a right that is exercised once (Nod and Gem).
 pub const SINGLE_EXERCISE_SEQUENCE: u64 = 0;
@@ -91,7 +91,10 @@ pub fn validate_mining_pow(
 /// The protocol's single verdict on a work hash, whatever preimage produced it:
 /// a right whose own scheme differs still weighs its work here.
 pub fn meets_difficulty(hash: &[u8; 32]) -> Result<(), PowError> {
-    if hash[..POW_DIFFICULTY].iter().any(|byte| *byte != 0) {
+    if hash[..usize::from(POW_DIFFICULTY)]
+        .iter()
+        .any(|byte| *byte != 0)
+    {
         return Err(PowError::InsufficientProofOfWork);
     }
     Ok(())

@@ -36,7 +36,7 @@ fn same_block_finalization(
     for record in parent_store.finalizations_for_block(height.get(), block.block_hash()) {
         if let Ok(candidate) = outbe_consensus::follow::decode_public_finalization(
             &record.encoded_proof,
-            outbe_consensus::bls::MAX_VALIDATORS as usize,
+            outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
         ) {
             if candidate.proposal.payload == digest {
                 return Some(candidate);

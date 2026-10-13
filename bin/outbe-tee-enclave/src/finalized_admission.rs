@@ -7,7 +7,7 @@ use commonware_codec::ReadExt as _;
 use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
-use outbe_consensus::bls::MAX_VALIDATORS;
+use outbe_consensus::bls::MAX_COMMITTEE_MEMBERS;
 use outbe_consensus::follow::{decode_public_finalization, CommitteeChain};
 use outbe_primitives::{
     addresses::TEE_REGISTRY_ADDRESS,
@@ -192,7 +192,7 @@ fn decode_certified_header(
     ),
     String,
 > {
-    let finalization = decode_public_finalization(&proof.finalization, MAX_VALIDATORS as usize)
+    let finalization = decode_public_finalization(&proof.finalization, MAX_COMMITTEE_MEMBERS)
         .map_err(|error| error.to_string())?;
     let mut header_bytes = proof.header.as_slice();
     let header = OutbeHeader::decode(&mut header_bytes)
@@ -315,7 +315,7 @@ mod tests {
         let certified = outbe_consensus::follow::decode_public_finalized_block(
             finalization,
             block,
-            MAX_VALIDATORS as usize,
+            MAX_COMMITTEE_MEMBERS,
         )
         .unwrap();
         CertifiedHeaderV1 {
