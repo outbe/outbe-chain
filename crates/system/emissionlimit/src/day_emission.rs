@@ -9,6 +9,7 @@
 //! `Decimal` arithmetic.
 
 use alloy_primitives::{uint, U256};
+use outbe_primitives::units::SCALE_1E6_U256;
 use std::sync::LazyLock;
 
 /// Initial day emission: 2^28 COEN expressed in six-decimal `unit`.
@@ -19,8 +20,6 @@ pub const FLOOR_DAY_EMISSION: U256 = uint!(67_108_864_000_000_U256);
 
 /// The founder curve reaches 2^26 COEN on this day and stays there forever.
 pub const FLOOR_DAY_THRESHOLD: u32 = 3_072;
-
-const UNITS_PER_COEN: U256 = uint!(1_000_000_U256);
 
 // Every reachable exponential has |x| <= 4. With terms 0..=64, the real
 // Taylor remainder is below 9.1e-51. The 1e30 fixed-point scale still leaves
@@ -47,9 +46,9 @@ const PHASE_TWO_MIDPOINT_DAY: u32 = 2_048;
 // D  = (P - 2**26) / math.tanh(1024/(2*K2))
 // o2 = (P + 2**26)/2 + D/2
 static TWO_26: LazyLock<U256> =
-    LazyLock::new(|| U256::from(1u64 << 26) * UNITS_PER_COEN * MATH_SCALE);
+    LazyLock::new(|| U256::from(1u64 << 26) * SCALE_1E6_U256 * MATH_SCALE);
 static TWO_28: LazyLock<U256> =
-    LazyLock::new(|| U256::from(1u64 << 28) * UNITS_PER_COEN * MATH_SCALE);
+    LazyLock::new(|| U256::from(1u64 << 28) * SCALE_1E6_U256 * MATH_SCALE);
 static P: LazyLock<U256> = LazyLock::new(|| U256::from(26) * *TWO_26 / U256::from(3));
 static A: LazyLock<U256> = LazyLock::new(|| {
     fixed_div(
