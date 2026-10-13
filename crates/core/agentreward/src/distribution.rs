@@ -25,7 +25,7 @@ pub enum PoolKind {
     /// WAA (wallet) capped distribution pool. Uses tribute counts kept
     /// in `waa_*` storage fields.
     Waa,
-    /// SRA (signer-of-record-attestation) capped distribution pool. Uses
+    /// SRA (signer-of-record-attestation) proportional distribution pool. Uses
     /// tribute counts kept in `sra_*` storage fields.
     Sra,
     /// CCA rewards weighted by net origination recorded in the CCA registry.
@@ -38,10 +38,9 @@ pub enum PoolKind {
 /// should be added to the Metadosis terminal credit.
 ///
 /// Excess accounting (per pool kind):
-/// * `Waa` / `Sra`: 32 %-cap distribution residue, plus the entire pool
-///   when no tributes were recorded for the day (no-tribute case).
-/// * `Cca`: rounding residue only, or the whole pool when no positive
-///   eligible weight exists. CCA shares are not capped per address.
+/// * `Waa`: 32 %-cap distribution residue, or the whole pool with no tributes.
+/// * `Sra` / `Cca`: rounding residue only, or the whole pool when no positive
+///   eligible weight exists. Shares are not capped per address.
 ///
 /// The function mints backing at AGENT_REWARD_ADDRESS only for credited rewards.
 /// Claimable balances use native units; returned excess uses protocol units.
@@ -64,7 +63,7 @@ pub fn distribute_daily(
     })
 }
 
-/// Allocates one agent pool. WAA and SRA use the per-address cap. CCA is
+/// Allocates one agent pool. WAA uses the per-address cap. SRA and CCA are
 /// proportional. One conversion to native COEN backs each credited share.
 /// The function returns the undistributed protocol units.
 fn distribute_pool(
@@ -100,8 +99,8 @@ fn distribute_pool(
         ),
     };
     let (rewards, excess) = match kind {
-        PoolKind::Waa | PoolKind::Sra => calculate_distribution_with_cap(amount, &weights),
-        PoolKind::Cca => calculate_proportional_distribution(amount, &weights),
+        PoolKind::Waa => calculate_distribution_with_cap(amount, &weights),
+        PoolKind::Sra | PoolKind::Cca => calculate_proportional_distribution(amount, &weights),
     }
     .map_err(|error| PrecompileError::Revert(error.to_string()))?;
     for reward in rewards {

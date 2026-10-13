@@ -42,12 +42,15 @@ pub(crate) fn emission_day(genesis_timestamp: u64, timestamp: u64) -> u64 {
 }
 
 /// Each fixture has exactly one WAA beneficiary and one SRA beneficiary.
-/// Each receives 32% of its 4% daily pool. Both floors precede conversion
-/// from the six-decimal protocol unit to the native eighteen-decimal unit.
-pub(crate) fn single_beneficiary_reward(day: u64) -> U256 {
+/// WAA receives 32% of its 4% daily pool; SRA receives its full 4% pool.
+/// Floors precede conversion to native eighteen-decimal units.
+pub(crate) fn single_beneficiary_rewards(day: u64) -> (U256, U256) {
     let pool = emission_units(day) * U256::from(4) / U256::from(100);
     let capped = pool * U256::from(32) / U256::from(100);
-    capped * U256::from(NATIVE_PER_PROTOCOL_UNIT)
+    (
+        capped * U256::from(NATIVE_PER_PROTOCOL_UNIT),
+        pool * U256::from(NATIVE_PER_PROTOCOL_UNIT),
+    )
 }
 
 /// Certified contributor batches can arrive in any order. Every leaf receives
@@ -89,16 +92,19 @@ mod tests {
     use alloy_primitives::uint;
 
     #[test]
-    fn capped_reward_floors_before_native_conversion() {
+    fn waa_cap_and_full_sra_pool_floor_before_native_conversion() {
         // Independent Decimal day-1 emission = 268480452713195.
         // floor(4% emission) = 10739218108527. floor(32% pool) = 3436549794728.
         assert_eq!(
-            single_beneficiary_reward(1),
-            uint!(3436549794728000000000000_U256)
+            single_beneficiary_rewards(1),
+            (
+                uint!(3436549794728000000000000_U256),
+                uint!(10739218108527000000000000_U256),
+            )
         );
         assert_eq!(
-            single_beneficiary_reward(3_072),
-            single_beneficiary_reward(9_999)
+            single_beneficiary_rewards(3_072),
+            single_beneficiary_rewards(9_999)
         );
     }
 
