@@ -22,7 +22,7 @@ alloy_sol_types::sol! {
     /// block's compressed-entity readers. Same signature as the macro surface below.
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IAgentRewardClaim {
-        function claimReward(uint8 pool, uint256 amount) external returns (uint256);
+        function claimReward(uint8 pool, uint256 amount, uint16 issuanceCurrency, uint16 referenceCurrency) external returns (uint256);
     }
 }
 
@@ -46,6 +46,8 @@ pub fn dispatch_with_readers(
             caller,
             call.pool,
             call.amount,
+            call.issuanceCurrency,
+            call.referenceCurrency,
         )?;
         return Ok(IAgentRewardClaim::claimRewardCall::abi_encode_returns(&claimed).into());
     }
@@ -60,6 +62,8 @@ impl AgentRewardContract<'_> {
         sender: Address,
         pool: u8,
         amount: U256,
+        issuance_currency: u16,
+        reference_currency: u16,
     ) -> Result<U256> {
         let pool = RewardPool::from_abi(pool)?;
         // A zero amount claims the whole pool balance. Empty WAA and SRA pools permit no-op
@@ -71,7 +75,15 @@ impl AgentRewardContract<'_> {
         {
             return Ok(U256::ZERO);
         }
-        self.claim_reward(scope, parent, pool, sender, amount)
+        self.claim_reward(
+            scope,
+            parent,
+            pool,
+            sender,
+            amount,
+            issuance_currency,
+            reference_currency,
+        )
     }
 }
 
@@ -96,8 +108,15 @@ impl AgentRewardContract<'_> {
         self.get_pool_claimable_reward(RewardPool::from_abi(pool)?, account)
     }
 
-    #[contract_public("claimReward(uint8,uint256) returns (uint256)")]
-    fn _abi_claim_reward(&mut self, _sender: Address, _pool: u8, _amount: U256) -> Result<U256> {
+    #[contract_public("claimReward(uint8,uint256,uint16,uint16) returns (uint256)")]
+    fn _abi_claim_reward(
+        &mut self,
+        _sender: Address,
+        _pool: u8,
+        _amount: U256,
+        _issuance_currency: u16,
+        _reference_currency: u16,
+    ) -> Result<U256> {
         Err(outbe_primitives::error::PrecompileError::Fatal(
             "claimReward requires the compressed-entity readers route".into(),
         ))

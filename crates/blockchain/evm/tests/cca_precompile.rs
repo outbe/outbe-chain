@@ -254,7 +254,15 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert!(!api::is_active(&s, CCA).unwrap());
         assert!(api::credis_issued(&s, CCA, 20231115, U256::ONE).is_err());
     });
-    let claim = |amount| IAgentReward::claimRewardCall { pool: 2, amount }.abi_encode();
+    let claim = |amount| {
+        IAgentReward::claimRewardCall {
+            pool: 2,
+            amount,
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+        }
+        .abi_encode()
+    };
     let world = with_storage(&mut db, |storage| {
         outbe_gem::test_support::GemWorld::open(&storage)
     });

@@ -1,0 +1,8 @@
+[package]
+name = "demo_tribute"
+type = "bin"
+authors = ["outbe"]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+outbe_circuit_core = { path = "../../../noir/outbe-circuit-core" }

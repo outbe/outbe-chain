@@ -47,8 +47,7 @@ jobs:
       image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
     steps:
       - uses: actions/checkout@v6
-      # No `rustup component add rustfmt` and no mise install: the image already
-      # carries the pinned toolchain with rustfmt, and the mise tool set.
+      - uses: ./.github/actions/setup-mise
       - name: Verify vendored CKB SMT provenance and panic safety
         run: bash scripts/check-vendored-smt.sh
       - run: mise run fmt-check
@@ -72,6 +71,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-mise
       - name: Set up persistent local Rust cache
         shell: bash
         run: |
@@ -135,6 +135,7 @@ jobs:
       RAYON_NUM_THREADS: "2"
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-mise
       - name: Set up persistent local Rust cache
         shell: bash
         run: |
@@ -229,6 +230,7 @@ jobs:
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-mise
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -245,6 +247,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-mise
       - uses: taiki-e/install-action@cargo-machete
       - run: mise run audit-machete
 
@@ -263,6 +266,7 @@ jobs:
       CARGO_HOME: /github/home/.cargo
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-mise
       # miri requires the nightly toolchain, which the pinned mise stable
       # toolchain does not provide.
       - uses: dtolnay/rust-toolchain@nightly

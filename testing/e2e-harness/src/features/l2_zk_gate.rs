@@ -115,9 +115,9 @@ pub(super) fn offer_proof(
 /// Mix one statement's public inputs with another statement's proof words, so
 /// the result is well formed but cryptographically invalid for its statement.
 fn proof_from_other_statement(original: &TributeOfferZk, donor: &TributeOfferZk) -> Vec<u8> {
+    use outbe_zk::demo_tribute::{decode_public_inputs, PUBLIC_INPUT_COUNT};
+    use outbe_zk::noir::demo_tribute::DemoTribute;
     use outbe_zk_backend::barretenberg::verify_circuit;
-    use outbe_zk_canonical::demo_tribute::{decode_public_inputs, PUBLIC_INPUT_COUNT};
-    use outbe_zk_canonical::noir::demo_tribute::DemoTribute;
 
     let original = original.proof.clone();
     let donor = donor.proof.clone();
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn scenario_uses_the_preexisting_circuit_binding() {
         assert_eq!(L2_CHAIN_ID_SELECTOR, L2_CHAIN_ID as u32);
-        let bound = outbe_zk_canonical::l2_circuits(L2_CHAIN_ID);
+        let bound = outbe_zk::l2_circuits(L2_CHAIN_ID);
         assert!(
             bound
                 .iter()

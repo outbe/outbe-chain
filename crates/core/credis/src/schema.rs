@@ -49,7 +49,7 @@ pub struct Credis {
     #[key]
     pub credis_id: U256,
 
-    /// The smart account the Credis was issued to.
+    /// The address the Credis was issued to.
     #[attribute(order = 0)]
     pub owner: Address,
 
@@ -92,8 +92,8 @@ pub struct Credis {
     #[attribute(order = 8)]
     pub outstanding_gratis_minor: U256,
 
-    /// `r` - the currency's annual official policy rate (scale `1e6`) times the
-    /// policy-rate factor, pinned at issuance for the Credis's life.
+    /// `r` - the currency's annual official policy rate (scale `1e6`), fixed by the
+    /// reservation for the Credis's life.
     #[attribute(order = 9)]
     pub policy_rate: U256,
 
@@ -129,7 +129,7 @@ pub struct Credis {
     #[attribute(order = 15)]
     pub state: u8,
 
-    /// ISO 4217 numeric code of the reference currency elected at issuance
+    /// ISO 4217 numeric code of the reference currency elected at the reservation
     /// and fixed for the Credis's life. `call_anchor_price_minor` and `call_price_minor`
     /// are quoted here, and the daily breach scan reads the
     /// COEN/`reference_currency` series. It does not denominate `entry_price_minor`.
@@ -158,7 +158,7 @@ pub struct Credis {
     #[attribute(order = 20, default = 0)]
     pub call_threshold_seconds: u32,
 
-    /// COEN price in `reference_currency` (scale `1e6`) sealed at issuance:
+    /// COEN price in `reference_currency` (scale `1e6`) fixed by the reservation:
     /// the previous closed UTC-day VWAP, independent of spot.
     /// Immutable. `call_price_minor` is this value times 1.64.
     #[attribute(order = 21)]

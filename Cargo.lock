@@ -1097,7 +1097,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1108,7 +1108,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4384,7 +4384,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6028,7 +6028,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -6418,7 +6418,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7815,7 +7815,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8328,7 +8328,7 @@ dependencies = [
  "outbe-tee",
  "outbe-update",
  "outbe-zerofee",
- "outbe-zk-canonical",
+ "outbe-zk",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -8359,7 +8359,7 @@ dependencies = [
  "hex",
  "outbe-compressed-entities",
  "outbe-macros",
- "outbe-poseidon 0.11.0",
+ "outbe-poseidon",
  "outbe-primitives",
  "outbe-sparse-merkle-tree-v061",
  "outbe-sparse-merkle-tree-v061-pristine",
@@ -8579,15 +8579,13 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-protocol",
- "outbe-protocol-derive",
  "outbe-radicle 0.1.0",
  "outbe-slashindicator",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
+ "outbe-zk",
  "outbe-zk-backend",
- "outbe-zk-canonical",
  "radicle",
  "rand 0.10.2",
  "rand 0.8.6",
@@ -8733,12 +8731,11 @@ dependencies = [
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-oracle",
- "outbe-poseidon 0.11.0",
+ "outbe-poseidon",
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
  "outbe-promislimit",
- "outbe-protocol",
  "outbe-radicleregistry",
  "outbe-rewards",
  "outbe-slashindicator",
@@ -8757,8 +8754,8 @@ dependencies = [
  "outbe-vaultrouter",
  "outbe-vote",
  "outbe-zerofee",
+ "outbe-zk",
  "outbe-zk-backend",
- "outbe-zk-canonical",
  "parking_lot",
  "proptest",
  "rand 0.10.2",
@@ -9037,7 +9034,7 @@ dependencies = [
  "outbe-macros",
  "outbe-primitives",
  "outbe-vote",
- "outbe-zk-canonical",
+ "outbe-zk",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
@@ -9241,7 +9238,6 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
@@ -9440,19 +9436,7 @@ dependencies = [
 
 [[package]]
 name = "outbe-poseidon"
-version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-poseidon/?tag=v0.11.0#a6066cede0bb95672b194dc69c89946131794396"
-dependencies = [
- "ark-bn254",
- "ark-ff 0.6.0",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "outbe-poseidon"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "304c5852d481a6b20a13d761a50ffcd0c698f97653a6af40fd76851790b34a9f"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.6.0",
@@ -9539,24 +9523,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-protocol"
-version = "0.27.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.27.0#5bab266947d8e64ab07520dfcabc1462e45639af"
-dependencies = [
- "alloy-primitives",
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.6.0",
- "ark-grumpkin",
- "ark-serialize 0.6.0",
- "ark-std 0.6.0",
- "blake2 0.10.6",
- "outbe-poseidon 0.13.0",
- "thiserror 2.0.18",
- "zeroize",
-]
-
-[[package]]
 name = "outbe-protocol-benchmarks"
 version = "0.1.0"
 dependencies = [
@@ -9587,7 +9553,6 @@ dependencies = [
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
- "outbe-protocol",
  "outbe-stablecoin",
  "outbe-stablecoinfactory",
  "outbe-tee",
@@ -9596,8 +9561,8 @@ dependencies = [
  "outbe-tributefactory",
  "outbe-validatorset",
  "outbe-vaultrouter",
+ "outbe-zk",
  "outbe-zk-backend",
- "outbe-zk-canonical",
  "rand 0.10.2",
  "rand 0.8.6",
  "revm",
@@ -9606,16 +9571,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "x25519-dalek 2.0.1",
-]
-
-[[package]]
-name = "outbe-protocol-derive"
-version = "0.27.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.27.0#5bab266947d8e64ab07520dfcabc1462e45639af"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -9911,11 +9866,10 @@ dependencies = [
  "outbe-consensus",
  "outbe-fidelity-math",
  "outbe-ocomp-protocol",
- "outbe-poseidon 0.11.0",
+ "outbe-poseidon",
  "outbe-primitives",
- "outbe-protocol",
- "outbe-protocol-derive",
  "outbe-tee",
+ "outbe-zk",
  "postcard",
  "rand 0.10.2",
  "rand_core 0.10.1",
@@ -9995,12 +9949,11 @@ dependencies = [
  "outbe-metadosis",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-protocol",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
+ "outbe-zk",
  "outbe-zk-backend",
- "outbe-zk-canonical",
  "rand 0.10.2",
  "rand 0.8.6",
  "rand_core 0.10.1",
@@ -10140,39 +10093,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-zk-backend"
-version = "0.27.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.27.0#5bab266947d8e64ab07520dfcabc1462e45639af"
-dependencies = [
- "acir",
- "acvm",
- "ark-bn254",
- "ark-ff 0.6.0",
- "barretenberg-rs",
- "base64 0.22.1",
- "bn254_blackbox_solver",
- "flate2",
- "outbe-protocol",
- "reqwest 0.13.2",
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "outbe-zk-canonical"
-version = "0.27.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.27.0#5bab266947d8e64ab07520dfcabc1462e45639af"
+name = "outbe-zk"
+version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
+ "ark-ec",
  "ark-ff 0.6.0",
+ "ark-grumpkin",
+ "ark-serialize 0.6.0",
  "ark-std 0.6.0",
  "base64 0.22.1",
+ "blake2 0.10.6",
  "hex-literal",
- "outbe-protocol",
+ "outbe-poseidon",
  "serde_json",
  "thiserror 2.0.18",
  "tiny-keccak",
  "toml 0.8.23",
+ "toml_edit 0.22.27",
+ "zeroize",
+]
+
+[[package]]
+name = "outbe-zk-backend"
+version = "0.1.0"
+dependencies = [
+ "acir",
+ "acvm",
+ "ark-ff 0.6.0",
+ "ark-std 0.6.0",
+ "barretenberg-rs",
+ "base64 0.22.1",
+ "bn254_blackbox_solver",
+ "flate2",
+ "outbe-zk",
+ "reqwest 0.13.2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -10988,9 +10945,9 @@ dependencies = [
 
 [[package]]
 name = "quinn"
-version = "0.11.9"
+version = "0.11.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e20a958963c291dc322d98411f541009df2ced7b5a4f2bd52337638cfccf20"
+checksum = "4051e23e9185c255a7e33ef59cdbca87a22d359052eecd22fc6b901fb37d9d11"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -10999,7 +10956,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -11008,15 +10965,16 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.15"
+version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fcb935c5bec503c2f0e306bdd3e58bb9029dcb14fa8d9ac76e3a5256ac0763e"
+checksum = "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"
 dependencies = [
  "aws-lc-rs",
  "bytes",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "lru-slab",
- "rand 0.9.4",
+ "rand 0.10.2",
+ "rand_pcg",
  "ring",
  "rustc-hash",
  "rustls",
@@ -11037,9 +10995,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11409,6 +11367,15 @@ checksum = "4d431c2703ccf129de4d45253c03f49ebb22b97d6ad79ee3ecfc7e3f4862c1d8"
 dependencies = [
  "num-traits",
  "rand 0.10.2",
+]
+
+[[package]]
+name = "rand_pcg"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
+dependencies = [
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -14902,7 +14869,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -14982,7 +14949,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs 1.0.7",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -15958,7 +15925,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -16414,7 +16381,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -16433,7 +16400,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -17278,7 +17245,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -17804,7 +17771,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

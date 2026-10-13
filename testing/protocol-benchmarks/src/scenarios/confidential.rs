@@ -6,6 +6,7 @@ use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_promis::enclave_client::test_enclave as promis_enclave;
 use outbe_tee::protocol::{FidelityCohortOp, GratisOp, ModifyAuth, PromisOp};
+use outbe_tee_enclave::confidential::ModifyOperation;
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{
@@ -69,20 +70,21 @@ fn chain_identity() -> B256 {
     B256::from(U256::from(CHAIN_ID))
 }
 
+fn operation<Op>(op: Op) -> ModifyOperation<Op> {
+    ModifyOperation {
+        account: ACCOUNT,
+        op,
+        amount: U256::from(AMOUNT),
+        op_nonce: 0,
+        chain_id: chain_identity(),
+    }
+}
+
 fn gratis_auth() -> ModifyAuth {
     let key = outbe_tee_enclave::gratis::derive_modify_key(&gratis_enclave::state_key(), ACCOUNT)
         .expect("benchmark Gratis key derives");
     ModifyAuth {
-        mac: outbe_tee_enclave::gratis::modify_mac(
-            &key,
-            &outbe_tee_enclave::gratis::ModifyOperation {
-                account: ACCOUNT,
-                op: GratisOp::Mint,
-                amount: U256::from(AMOUNT),
-                op_nonce: 0,
-                chain_id: chain_identity(),
-            },
-        ),
+        mac: outbe_tee_enclave::gratis::modify_mac(&key, &operation(GratisOp::Mint)),
         op_nonce: 0,
     }
 }
@@ -91,14 +93,7 @@ fn promis_auth() -> ModifyAuth {
     let key = outbe_tee_enclave::promis::derive_modify_key(&promis_enclave::state_key(), ACCOUNT)
         .expect("benchmark Promis key derives");
     ModifyAuth {
-        mac: outbe_tee_enclave::promis::modify_mac(
-            &key,
-            ACCOUNT,
-            PromisOp::Mint,
-            U256::from(AMOUNT),
-            0,
-            chain_identity(),
-        ),
+        mac: outbe_tee_enclave::promis::modify_mac(&key, &operation(PromisOp::Mint)),
         op_nonce: 0,
     }
 }

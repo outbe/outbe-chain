@@ -5,7 +5,7 @@ use outbe_poseidon::{Poseidon, PoseidonHasher};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_zk_canonical::demo_tribute::PROOF_WORDS as DEMO_TRIBUTE_PROOF_WORDS;
+use outbe_zk::demo_tribute::PROOF_WORDS as DEMO_TRIBUTE_PROOF_WORDS;
 
 use crate::zk::{
     dispatch_groth16, dispatch_poseidon, groth16_base_gas, poseidon_base_gas, poseidon_hash,
@@ -158,8 +158,8 @@ fn combined_demo_tribute_proof(public_inputs: [[u8; 32]; 4], proof_words: usize)
 
 #[test]
 fn demo_tribute_with_invalid_curve_points_returns_backend_error() {
-    use outbe_zk_canonical::noir::demo_tribute::DemoTribute;
-    use outbe_zk_canonical::CircuitId as _;
+    use outbe_zk::noir::demo_tribute::DemoTribute;
+    use outbe_zk::CircuitId as _;
 
     let proof = combined_demo_tribute_proof([[0u8; 32]; 4], DEMO_TRIBUTE_PROOF_WORDS);
     let input = abi_encode(&DemoTribute::CIRCUIT_HASH, &proof);

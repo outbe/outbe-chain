@@ -4,7 +4,6 @@
 
 pub mod api;
 pub mod constants;
-pub mod crosschain;
 pub mod errors;
 pub mod precompile;
 pub mod runtime;

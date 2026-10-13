@@ -28,6 +28,7 @@ piolium
 
 # Barretenberg CRS downloaded/generated for local proving and verification.
 /.bb-crs/
+circuits/**/target/
 /contracts/account-abstraction/lib/kernel/broadcast
 /.ruler
 

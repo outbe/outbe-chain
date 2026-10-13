@@ -36,7 +36,7 @@ impl BenchmarkScenario for PartialBoundaryScenario {
         )
         .with_total_latency(1)
         .with_postcondition(
-            "credis.full_smart_account_gas",
+            "credis.full_issuance_gas",
             "unavailable; TODO outbe-chain-6le.5",
         );
         observation.child_frames = vec![
@@ -77,7 +77,7 @@ fn partial_boundary_fidelity_and_stub_frames_are_unmissable_in_text_and_json() {
     assert!(text.contains("fidelity:            PARTIAL / STUBBED"));
     assert!(text.contains("token_bundle.top_up"));
     assert!(text.contains("BenchmarkStub"));
-    assert!(text.contains("credis.full_smart_account_gas"));
+    assert!(text.contains("credis.full_issuance_gas"));
     assert!(text.contains("TODO outbe-chain-6le.5"));
 
     let json = serde_json::to_value(&report).unwrap();

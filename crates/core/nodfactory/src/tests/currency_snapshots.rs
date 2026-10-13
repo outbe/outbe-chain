@@ -202,11 +202,6 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
         IERC20::approveCall::SELECTOR,
         Bytes::from(IERC20::approveCall::abi_encode_returns(&true)),
     );
-    world.provider.stub_sub_call_at_selector(
-        EUR_ASSET,
-        IERC20::balanceOfCall::SELECTOR,
-        Bytes::from(IERC20::balanceOfCall::abi_encode_returns(&U256::ZERO)),
-    );
 
     let quoted = world
         .enter(|storage, scope, parent| {
@@ -216,8 +211,15 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     assert_eq!(quoted.0, 978);
     assert_eq!(quoted.1, U256::from(cost_of(&input) / 2));
 
-    // Admission and conversion ran; the fixed balance stub cannot show a delta.
-    let error = world
+    // The factory's balance as settlement reads it: before the transfer, after
+    // it, and after the vault deposit. The token moves exactly the quote.
+    world.provider.stub_sub_call_sequence_at_selector(
+        EUR_ASSET,
+        IERC20::balanceOfCall::SELECTOR,
+        [U256::ZERO, quoted.1, U256::ZERO]
+            .map(|balance| Bytes::from(IERC20::balanceOfCall::abi_encode_returns(&balance))),
+    );
+    world
         .enter(|storage, scope, parent| {
             api::settle_nod(
                 &storage,
@@ -231,12 +233,11 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
                 },
             )
         })
-        .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        PrecompileError::from(NodFactoryError::SettlementAmountMismatch).to_string()
-    );
-    assert!(!is_settled(&mut world, nod_id));
+        .unwrap();
+    assert!(is_settled(&mut world, nod_id));
+    let paid = paid_event(&world);
+    assert_eq!(paid.asset, EUR_ASSET);
+    assert_eq!(paid.paymentMinor, quoted.1);
 }
 
 #[test]
@@ -354,4 +355,84 @@ fn quote_settlement_dispatch() {
     let ret = INodFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
     assert_eq!(ret.settlementCurrency, 978);
     assert_eq!(ret.paymentMinor, U256::from(cost_of(&input) / 2));
+}
+
+/// The window holds both prices, but the chain's own block record says every
+/// hour ran 225 tally rounds. One observation is below two thirds of them, so
+/// the finalized window prices nothing and the issuance rail refuses the
+/// payment without a write. Once every hour holds two thirds, the same quote
+/// prices.
+#[test]
+fn issuance_rail_rejects_a_window_whose_prices_fail_coverage() {
+    let mut world = World::new();
+    let input = dual_currency_params(Address::repeat_byte(0xac));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_settlement_asset(EUR_ASSET, 978);
+    world.publish_coen_spot(840, U256::from(2 * SIX_DECIMALS));
+    world.publish_coen_spot(978, U256::from(SIX_DECIMALS));
+    let observation = [
+        (
+            outbe_oracle::api::AddressPair::new_coen_to(840),
+            U256::from(2 * SIX_DECIMALS),
+            U256::from(SIX_DECIMALS),
+        ),
+        (
+            outbe_oracle::api::AddressPair::new_coen_to(978),
+            U256::from(SIX_DECIMALS),
+            U256::from(SIX_DECIMALS),
+        ),
+    ];
+
+    // Eight hours of 1,800 blocks at a vote period of eight: 225 rounds each.
+    // One observation in the first hour.
+    let hour = 3_600;
+    let snapshot = world.enter(|storage, _, _| {
+        let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+        let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        oracle.config_vote_period.write(8).unwrap();
+        for k in 0..=8 {
+            oracle
+                .record_hour_block(snapshot.start() + k * hour, 1_000 + k * 1_800)
+                .unwrap();
+        }
+        oracle
+            .write_snapshot(snapshot.start(), &observation)
+            .unwrap();
+        snapshot
+    });
+    let slots = world.provider.storage.clone();
+    let events = world.provider.get_ordered_events().to_vec();
+
+    let error = settle_erc20(
+        &mut world,
+        nod_id,
+        input.owner,
+        EUR_ASSET,
+        snapshot.to_u256(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(NodFactoryError::OracleUnavailable).to_string()
+    );
+    assert_eq!(world.provider.storage, slots);
+    assert_eq!(world.provider.get_ordered_events(), events);
+    assert!(!is_settled(&mut world, nod_id));
+
+    // 180 of 225 rounds in every hour: above two thirds, the window prices.
+    world.enter(|storage, _, _| {
+        let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        let mut timestamp = snapshot.start() + 20;
+        while timestamp < snapshot.cutoff() {
+            oracle.write_snapshot(timestamp, &observation).unwrap();
+            timestamp += 20;
+        }
+    });
+    let quoted = world
+        .enter(|storage, scope, parent| {
+            api::quote_settlement(&storage, scope, parent, nod_id, EUR_ASSET)
+        })
+        .unwrap();
+    assert_eq!(quoted.1, U256::from(cost_of(&input) / 2));
 }

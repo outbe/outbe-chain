@@ -17,7 +17,7 @@ use crate::features::entity_lifecycle::markets::coen_rate;
 use crate::features::settlement::{assert_receipt_event, chain_id_b256, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
 use crate::world::credis::{
-    self, event, execute, send, snapshot, CredisFixture, ICcaRegistry, ICredis, ICredisFactory,
+    self, event, fee, send, snapshot, CredisFixture, ICcaRegistry, ICredis, ICredisFactory,
     IFixtureToken, IFixtureVault, DAY, INITIAL_GRATIS, INITIAL_STABLES, LIQUIDITY, PRINCIPAL, USD,
 };
 use crate::world::forge::DEPLOYER_KEY;
@@ -78,13 +78,14 @@ fn prepare(world: &mut World) {
         &owner_key,
     )
     .expect("deploy and register USD vault");
-    let account = credis::deploy_account(&url, user, cca);
+    let (owner_key, owner) = credis::owner();
+    eth::send_value(&url, owner, DEPLOYER_KEY, eth::coen(10)).expect("fund the Credis owner");
     send(
         &url,
         currency.asset,
         DEPLOYER_KEY,
         &IFixtureToken::mintCall {
-            to: account,
+            to: owner,
             amount: INITIAL_STABLES,
         },
         None,
@@ -136,18 +137,6 @@ fn prepare(world: &mut World) {
         ),
         Some(ICcaRegistry::State::Active)
     );
-
-    // Prove the CCA can operate the same account the user will repay through.
-    execute(
-        &url,
-        account,
-        &cca_key,
-        currency.asset,
-        &IFixtureToken::approveCall {
-            spender: CREDIS_FACTORY_ADDRESS,
-            amount: U256::ZERO,
-        },
-    );
     let promis_keys =
         eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Promis).expect("user Promis keys");
     let keys =
@@ -182,11 +171,13 @@ fn prepare(world: &mut World) {
             nonce: find_mining_pow_nonce(outbe_common::pow::MiningDomain::Gem, gem, user),
             mac: outbe_tee_enclave::promis::modify_mac(
                 &promis_keys.modify,
-                user,
-                PromisOp::Mint,
-                INITIAL_GRATIS,
-                promis_nonce,
-                chain,
+                &outbe_tee_enclave::promis::ModifyOperation {
+                    account: user,
+                    op: PromisOp::Mint,
+                    amount: INITIAL_GRATIS,
+                    op_nonce: promis_nonce,
+                    chain_id: chain,
+                },
             )
             .into(),
             opNonce: promis_nonce,
@@ -213,11 +204,13 @@ fn prepare(world: &mut World) {
             promisMinor: INITIAL_GRATIS,
             promisMac: outbe_tee_enclave::promis::modify_mac(
                 &promis_keys.modify,
-                user,
-                PromisOp::Burn,
-                INITIAL_GRATIS,
-                promis_nonce,
-                chain,
+                &outbe_tee_enclave::promis::ModifyOperation {
+                    account: user,
+                    op: PromisOp::Burn,
+                    amount: INITIAL_GRATIS,
+                    op_nonce: promis_nonce,
+                    chain_id: chain,
+                },
             )
             .into(),
             promisOpNonce: promis_nonce,
@@ -240,7 +233,8 @@ fn prepare(world: &mut World) {
         user,
         cca,
         cca_key,
-        account,
+        owner,
+        owner_key,
         currency,
         keys,
         reservation: U256::ZERO,
@@ -254,7 +248,7 @@ fn prepare(world: &mut World) {
     let state = snapshot(world);
     assert_eq!(state.liquid, INITIAL_GRATIS);
     assert_eq!(state.pledged, U256::ZERO);
-    assert_eq!(state.account_stables, INITIAL_STABLES);
+    assert_eq!(state.owner_stables, INITIAL_STABLES);
     assert_eq!(state.cca_stables, U256::ZERO);
     assert_eq!(state.vault_stables, LIQUIDITY);
     assert_eq!(state.shares, LIQUIDITY);
@@ -267,9 +261,13 @@ fn pledge_window_closes(world: &mut World) {
     crate::features::entity_lifecycle::markets::close_price_window(world, &[USD]);
 }
 
-#[when("the CCA reserves 300 stablecoins for the user's smart account")]
+#[when("the CCA reserves 300 stablecoins for the Credis owner")]
 fn reserve(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
+    // The call anchor is the previous closed USD day at the reservation, apart from the
+    // window the pledge is valued on: reuse Intex's E2E-only history fixture.
+    test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, 1, CALL_ANCHOR)
+        .expect("previous closed USD VWAP");
     let f = world.state.credis.as_ref().expect("fixture");
     assert_eq!(
         eth::read_call(
@@ -287,15 +285,16 @@ fn reserve(world: &mut World) {
         VAULT_ROUTER_ADDRESS,
         &f.cca_key,
         &eth::IVaultRouter::reserveStablesCall {
-            smartAccount: f.account,
+            credisOwner: f.owner,
             source: f.user,
             asset: f.currency.asset,
             amount: PRINCIPAL,
+            referenceCurrency: USD,
         },
         None,
     );
     let reserved = event::<eth::IVaultRouter::ReservationCreated>(&receipt, VAULT_ROUTER_ADDRESS);
-    assert_eq!(reserved.smartAccount, f.account);
+    assert_eq!(reserved.credisOwner, f.owner);
     assert_eq!(reserved.cca, f.cca);
     assert_eq!(reserved.asset, f.currency.asset);
     assert_eq!(reserved.vault, f.currency.vault);
@@ -334,13 +333,13 @@ fn assert_pledge_valued_on_the_window(url: &str, receipt: &serde_json::Value, id
 fn reserved(world: &mut World) {
     let state = snapshot(world);
     let f = world.state.credis.as_ref().expect("fixture");
-    let (asset, amount, account, cca, vault, expiry) = state.reservation;
+    let (asset, amount, owner, cca, vault, expiry) = state.reservation;
     assert_eq!(
-        (asset, amount, account, cca, vault),
+        (asset, amount, owner, cca, vault),
         (
             f.currency.asset,
             PRINCIPAL,
-            f.account,
+            f.owner,
             f.cca,
             f.currency.vault
         )
@@ -355,7 +354,7 @@ fn reserved(world: &mut World) {
     assert_eq!(state.vault_stables, LIQUIDITY - PRINCIPAL);
     assert_eq!(state.shares, LIQUIDITY - PRINCIPAL);
     assert_eq!(state.router_stables, PRINCIPAL);
-    assert_eq!(state.account_stables, INITIAL_STABLES);
+    assert_eq!(state.owner_stables, INITIAL_STABLES);
     assert_eq!(state.cca_stables, U256::ZERO);
 }
 
@@ -370,6 +369,13 @@ fn pledge(world: &mut World) {
     )
     .expect("reservation");
     assert_eq!(reservation.source, f.user);
+    assert_eq!(
+        (
+            reservation.referenceCurrency,
+            reservation.callAnchorPriceMinor
+        ),
+        (USD, CALL_ANCHOR)
+    );
     let nonce = eth::read_call(
         &url,
         addresses::GRATIS_ADDR,
@@ -414,10 +420,6 @@ fn pledge(world: &mut World) {
 #[when("the CCA issues Credis against the pledge and reservation")]
 fn issue(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
-    // The call anchor is the previous closed USD day at issuance, apart from the
-    // window the pledge was valued on: reuse Intex's E2E-only history fixture.
-    test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, 1, CALL_ANCHOR)
-        .expect("previous closed USD VWAP");
     let f = world.state.credis.as_ref().expect("fixture");
     let stake = outbe_primitives::units::checked_protocol_to_native(f.gratis_minor)
         .expect("fixture stake fits native units");
@@ -427,14 +429,13 @@ fn issue(world: &mut World) {
         &f.cca_key,
         &ICredisFactory::issueCredisCall {
             reservationId: f.reservation,
-            referenceCurrency: USD,
         },
         Some(stake),
     );
     let block = credis::receipt_height(&receipt);
     let mut preimage = Vec::with_capacity(68);
     preimage.extend_from_slice(f.cca.as_slice());
-    preimage.extend_from_slice(f.account.as_slice());
+    preimage.extend_from_slice(f.owner.as_slice());
     preimage.extend_from_slice(f.currency.asset.as_slice());
     preimage.extend_from_slice(&block.to_be_bytes());
     let id = U256::from_be_bytes(keccak256(preimage).0);
@@ -443,7 +444,7 @@ fn issue(world: &mut World) {
         CREDIS_FACTORY_ADDRESS,
         &ICredisFactory::CredisIssued {
             credisId: id,
-            owner: f.account,
+            owner: f.owner,
             cca: f.cca,
             asset: f.currency.asset,
             principalMinor: PRINCIPAL,
@@ -455,7 +456,7 @@ fn issue(world: &mut World) {
         CREDIS_ADDRESS,
         &ICredis::Transfer {
             from: Address::ZERO,
-            to: f.account,
+            to: f.owner,
             tokenId: id,
         },
     );
@@ -470,7 +471,7 @@ fn issue(world: &mut World) {
     world.state.credis.as_mut().expect("fixture").credis_id = id;
 }
 
-#[then("the smart account owns the issued Credis")]
+#[then("the owner holds the issued Credis")]
 fn issued(world: &mut World) {
     let state = snapshot(world);
     let f = world.state.credis.as_ref().expect("fixture");
@@ -478,7 +479,7 @@ fn issued(world: &mut World) {
     assert_eq!(p.credisId, f.credis_id);
     assert_eq!(
         (p.owner, p.cca, p.asset),
-        (f.account, f.cca, f.currency.asset)
+        (f.owner, f.cca, f.currency.asset)
     );
     assert_eq!((p.issuanceCurrency, p.referenceCurrency), (USD, USD));
     assert_eq!(
@@ -509,7 +510,7 @@ fn issued(world: &mut World) {
             0
         )
     );
-    assert_eq!(state.account_stables, INITIAL_STABLES);
+    assert_eq!(state.owner_stables, INITIAL_STABLES);
     assert_eq!(state.cca_stables, PRINCIPAL);
     assert_eq!(
         state.native,
@@ -523,7 +524,7 @@ fn issued(world: &mut World) {
     assert_eq!(state.pledged, f.gratis_minor);
 }
 
-#[when("the user makes three daily payments through the smart account")]
+#[when("the owner makes three daily payments")]
 fn repay(world: &mut World) {
     for payment_index in 0..3 {
         let before = snapshot(world);
@@ -576,25 +577,25 @@ fn repay(world: &mut World) {
             U256::from(100_000_000)
         };
         let amount = principal + interest;
-        execute(
+        let approval = send(
             &url,
-            f.account,
-            DEPLOYER_KEY,
             f.currency.asset,
+            &f.owner_key,
             &IFixtureToken::approveCall {
                 spender: CREDIS_FACTORY_ADDRESS,
                 amount,
             },
+            None,
         );
-        let receipt = execute(
+        let receipt = send(
             &url,
-            f.account,
-            DEPLOYER_KEY,
             CREDIS_FACTORY_ADDRESS,
+            &f.owner_key,
             &ICredisFactory::settleCredisCall {
                 credisId: f.credis_id,
                 amountMinor: amount,
             },
+            None,
         );
         let paid_at = receipt_timestamp(&url, &receipt);
         assert_eq!(
@@ -655,12 +656,12 @@ fn repay(world: &mut World) {
                 p.call.callAnchorPriceMinor
             )
         );
-        assert_eq!(after.account_stables, before.account_stables - amount);
+        assert_eq!(after.owner_stables, before.owner_stables - amount);
         assert_eq!(after.vault_stables, before.vault_stables + amount);
         assert_eq!(after.shares, before.shares + amount);
         assert_eq!(after.router_stables, U256::ZERO);
         assert_eq!(after.cca_stables, before.cca_stables);
-        assert_eq!(after.native, before.native);
+        assert_eq!(after.native, before.native - fee(&approval) - fee(&receipt));
         assert_eq!(after.liquid, before.liquid + released);
         assert_eq!(after.pledged, before.pledged - released);
         assert_eq!(a.interestPaidMinor, f.interest_paid + interest);
@@ -685,7 +686,7 @@ fn fully_repaid(world: &mut World) {
     assert_eq!(state.liquid, INITIAL_GRATIS);
     assert_eq!(state.pledged, U256::ZERO);
     assert_eq!(
-        state.account_stables,
+        state.owner_stables,
         INITIAL_STABLES - PRINCIPAL - f.interest_paid
     );
     assert_eq!(state.vault_stables, LIQUIDITY + f.interest_paid);

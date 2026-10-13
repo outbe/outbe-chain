@@ -53,6 +53,23 @@ RUN apt-get update && \
 RUN rustup component add rustfmt clippy rust-src \
       --toolchain 1.96.0-x86_64-unknown-linux-gnu
 
+# outbe-zk compiles the in-tree Noir circuits from build.rs, so these tools are
+# part of the production ELF compiler surface rather than CI-only helpers. Keep
+# both archives content-addressed and install them before the release builder
+# forks from this stage.
+ADD --checksum=sha256:384c4fc800905b213e26aabd738a96a4a85b1a76ffc27fb19aeb6d33494a787b \
+    https://github.com/noir-lang/noir/releases/download/v1.0.0-beta.22/nargo-x86_64-unknown-linux-gnu.tar.gz \
+    /tmp/nargo.tar.gz
+ADD --checksum=sha256:d207ec90fbfa2fba24d7a47b7a75892ee052b7984252b866a4a0c1b5296e1571 \
+    https://github.com/AztecProtocol/barretenberg/releases/download/v5.0.0-nightly.20260522/barretenberg-amd64-linux.tar.gz \
+    /tmp/barretenberg.tar.gz
+RUN tar -xzf /tmp/nargo.tar.gz -C /usr/local/bin && \
+    tar -xzf /tmp/barretenberg.tar.gz -C /usr/local/bin && \
+    chmod 0755 /usr/local/bin/nargo /usr/local/bin/bb && \
+    rm /tmp/nargo.tar.gz /tmp/barretenberg.tar.gz && \
+    test "$(nargo --version | sed -n 's/^nargo version = //p')" = "1.0.0-beta.22" && \
+    test "$(bb --version | head -n 1)" = "5.0.0-nightly.20260522"
+
 COPY release/dcap-native-qvl-v1.json /opt/outbe/toolchain/dcap-native-qvl-v1.json
 COPY scripts/release/verify_dcap_native_qvl.py /opt/outbe/toolchain/verify_dcap_native_qvl.py
 
@@ -165,7 +182,7 @@ RUN cd /opt/outbe/ci && \
 RUN set -eu; \
     cd /; \
     for tool in forge cast anvil cargo-nextest cargo-deny cargo-audit \
-                cog duckdb uv uvx aderyn sccache jq mold zstd python; do \
+                cog duckdb uv uvx aderyn sccache jq mold zstd python nargo bb; do \
       "${tool}" --version >/dev/null 2>&1 \
         || { echo "ci stage tool does not run: ${tool}" >&2; exit 1; }; \
     done; \

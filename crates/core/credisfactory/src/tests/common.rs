@@ -18,7 +18,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::{Bytecode, StorageHandle};
+use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
@@ -121,15 +121,9 @@ pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
     let reservation_id = seed_reservation(storage, who, who, pledge_stables());
     pledge(storage, who, reservation_id, nonce);
     fund_stake(storage, pledge_stake());
-    runtime::issue_credis(
-        storage.clone(),
-        cca(),
-        reservation_id,
-        REFERENCE_ISO,
-        pledge_stake(),
-    )
-    .unwrap()
-    .0
+    runtime::issue_credis(storage.clone(), cca(), reservation_id, pledge_stake())
+        .unwrap()
+        .0
 }
 
 /// Pledges the reservation's Gratis from `source` through the factory.
@@ -143,12 +137,12 @@ pub fn pledge(storage: &StorageHandle<'_>, source: Address, reservation_id: U256
     .unwrap();
 }
 
-/// Parks a live vault reservation for `smart_account`, pledged by `source`, so
+/// Parks a live vault reservation for `credis_owner`, pledged by `source`, so
 /// `issue_credis` can consume it. This helper writes the hold through VaultRouter
 /// storage, not the ABI, because these tests stub EVM sub-calls into the router.
 pub fn seed_reservation(
     storage: &StorageHandle<'_>,
-    smart_account: Address,
+    credis_owner: Address,
     source: Address,
     amount: U256,
 ) -> U256 {
@@ -167,7 +161,7 @@ pub fn seed_reservation(
             id,
             asset: asset(),
             amount,
-            smart_account,
+            credis_owner,
             cca: cca(),
             vault: address!("0x0000000000000000000000000000000000000777"),
             expires_at,
@@ -175,8 +169,11 @@ pub fn seed_reservation(
             snapshot_id: U256::from(17),
             entry_price_minor: oracle_rate(),
             valuation_price_minor: oracle_rate(),
+            policy_rate: policy_rate(),
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
+            reference_currency: REFERENCE_ISO,
+            call_anchor_price_minor: oracle_rate(),
             source,
         })
         .unwrap();
@@ -308,7 +305,7 @@ pub fn fill_days_for(storage: &StorageHandle<'_>, iso: u16, latest: u32, days: u
 
 /// Publishes `price` as the finalized VWAP of the UTC day closed at the
 /// storage clock, which is the day issuance reads.
-pub fn seed_previous_closed_day(storage: &StorageHandle<'_>, iso: u16, price: U256) {
+fn seed_previous_closed_day(storage: &StorageHandle<'_>, iso: u16, price: U256) {
     let day = last_closed_day(storage.timestamp().unwrap().to::<u64>());
     set_vwap_for(storage, iso, day, price);
 }
@@ -511,16 +508,6 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     .unwrap();
     seed_fidelity(storage.clone(), who);
     seed_oracle(storage.clone(), oracle_rate());
-    deploy_smart_account(storage, who);
-}
-
-/// Gives `who` non-empty code so `issue_credis`'s deployed-account guard passes.
-/// Nothing executes the bytes (`HashMapStorageProvider` runs no EVM). The guard
-/// reads only the code hash.
-pub fn deploy_smart_account(storage: &StorageHandle<'_>, who: Address) {
-    storage
-        .set_code(who, Bytecode::new_raw(Bytes::from_static(&[0xef])))
-        .unwrap();
 }
 
 /// Credits the factory with the stake the payable boundary would have credited.

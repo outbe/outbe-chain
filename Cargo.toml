@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "xtask",
+    "crates/poseidon",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/constants",
@@ -79,6 +80,8 @@ members = [
     "testing/e2e-harness",
     "testing/lysis-v1-reference",
     "testing/protocol-benchmarks",
+    "crates/zk/outbe-zk",
+    "crates/zk/outbe-zk-backend",
 ]
 exclude = [
     "vendor/alloy-evm",
@@ -270,11 +273,9 @@ num-bigint = "0.4"
 num-traits = "0.2"
 
 # ZK / Poseidon
-outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }
-outbe-zk-canonical = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.27.0", features = ["alloy"] }
-outbe-zk-backend = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.27.0" }
-outbe-protocol = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.27.0", features = ["alloy"] }
-outbe-protocol-derive = { git = "https://github.com/outbe/outbe-circuits.git", tag = "v0.27.0" }
+outbe-poseidon = { path = "crates/poseidon" }
+outbe-zk = { path = "crates/zk/outbe-zk", features = ["alloy"] }
+outbe-zk-backend = { path = "crates/zk/outbe-zk-backend" }
 ark-bn254 = "0.6"
 ark-ff = { version = "0.6", features = ["std"] }
 
@@ -352,6 +353,8 @@ split-debuginfo = "unpacked"
 [profile.test]
 debug = 0
 
-# Preserve the existing context-dispatch hook on the matching upstream release.
+[profile.dev.package.outbe-zk-backend]
+opt-level = 3
 [patch.crates-io]
 alloy-evm = { path = "vendor/alloy-evm" }
+outbe-poseidon = { path = "crates/poseidon" }

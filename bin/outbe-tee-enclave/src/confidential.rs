@@ -2,7 +2,7 @@
 use crate::crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha256};
 use crate::errors::{Result, TeeError};
 use alloy_primitives::{Address, B256, U256};
-use outbe_tee::protocol::Ledger;
+use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 use ring::hmac;
 
 /// Every ledger uses field zero for its primary balance.
@@ -36,6 +36,44 @@ pub struct ModifyAuthorization {
     pub amount: U256,
     pub op_nonce: u64,
     pub chain_id: B256,
+}
+
+/// A ledger operation whose discriminant a modify authorization binds.
+pub trait OperationTag: Copy {
+    fn tag(self) -> u8;
+}
+
+impl OperationTag for GratisOp {
+    fn tag(self) -> u8 {
+        self as u8
+    }
+}
+
+impl OperationTag for PromisOp {
+    fn tag(self) -> u8 {
+        self as u8
+    }
+}
+
+/// The account operation covered by a modify authorization.
+pub struct ModifyOperation<Op> {
+    pub account: Address,
+    pub op: Op,
+    pub amount: U256,
+    pub op_nonce: u64,
+    pub chain_id: B256,
+}
+
+impl<Op: OperationTag> ModifyOperation<Op> {
+    pub(crate) fn authorization(&self) -> ModifyAuthorization {
+        ModifyAuthorization {
+            account: self.account,
+            op_tag: self.op.tag(),
+            amount: self.amount,
+            op_nonce: self.op_nonce,
+            chain_id: self.chain_id,
+        }
+    }
 }
 
 /// A borrowed slot context keeps the key outside persistent enclave state.

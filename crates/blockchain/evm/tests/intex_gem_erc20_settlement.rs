@@ -34,6 +34,10 @@ use revm::{
 mod intex_sub_call;
 
 sol! {
+    interface IEurFixture {
+        function configure(uint256 mode) external;
+    }
+
     interface IFixture {
         function mint(address account, uint256 amount) external;
         function mint1155(address account, uint256 id, uint256 amount) external;
@@ -79,20 +83,20 @@ impl Factory {
         }
     }
 
-    fn settle_call(self, gem_id: U256) -> Bytes {
+    fn settle_call(self, gem_id: U256, snapshot_id: U256) -> Bytes {
         match self {
             Factory::Intex => IIntexFactory::settleIntexCall {
                 seriesId: FixedBytes(SERIES),
                 owner: OWNER,
                 units: U256::from(UNITS),
                 asset: ASSET,
-                snapshotId: U256::ZERO,
+                snapshotId: snapshot_id,
             }
             .abi_encode(),
             Factory::Gem => IGemFactory::settleGemCall {
                 gemId: gem_id,
                 asset: ASSET,
-                snapshotId: U256::ZERO,
+                snapshotId: snapshot_id,
             }
             .abi_encode(),
         }
@@ -108,11 +112,22 @@ struct World {
     payer: Address,
     cost: U256,
     gem_id: U256,
+    /// The snapshot every settlement names: zero on the reference rail.
+    snapshot_id: U256,
 }
 
 impl World {
     fn new(factory: Factory, payer: Address, registered: bool) -> Self {
-        Self::build(factory, payer, registered, None).0
+        Self::build(factory, payer, registered, None, 840).0
+    }
+
+    /// The issuance rail: the series or gem is issued in EUR (978) against a
+    /// USD entry price. The Credis fixture token answers ISO 978 in mode 6, and
+    /// the trailing window prices COEN at 2 USD and 1 EUR, so the cost is half
+    /// as many EUR units as USD units. The quote's snapshot is the one every
+    /// settlement then names.
+    fn issuance_rail(factory: Factory, payer: Address) -> Self {
+        Self::build(factory, payer, true, None, 978).0
     }
 
     /// Like [`World::new`]. `gem_called_at` stamps the bucket's `called_at`, and the function
@@ -122,18 +137,30 @@ impl World {
         payer: Address,
         registered: bool,
         gem_called_at: Option<u64>,
+        issuance_currency: u16,
     ) -> (Self, u64) {
         let mut db = CacheDB::new(EmptyDB::default());
         let code = Bytecode::new_raw(Bytes::from(
             alloy_primitives::hex::decode(include_str!("fixtures/FactorySettlement.hex").trim())
                 .unwrap(),
         ));
+        let eur_code = Bytecode::new_raw(Bytes::from(
+            alloy_primitives::hex::decode(include_str!("fixtures/CredisIssuance.hex").trim())
+                .unwrap(),
+        ));
         for addr in [ASSET, VAULT, INTEX_NFT1155_ADDRESS] {
+            // The 1155 stays the factory fixture; the token and vault switch
+            // to the one that can answer ISO 978.
+            let code = if issuance_currency != 840 && addr != INTEX_NFT1155_ADDRESS {
+                eur_code.clone()
+            } else {
+                code.clone()
+            };
             db.insert_account_info(
                 addr,
                 AccountInfo {
                     code_hash: code.hash_slow(),
-                    code: Some(code.clone()),
+                    code: Some(code),
                     ..Default::default()
                 },
             );
@@ -153,12 +180,12 @@ impl World {
             router.assets.insert(ASSET).unwrap();
             router.asset_vault_set(ASSET).insert(VAULT).unwrap();
             router
-                .reference_currency_vault_set(840)
+                .reference_currency_vault_set(issuance_currency)
                 .insert(VAULT)
                 .unwrap();
             router
                 .vault_reference_currencies
-                .write(&VAULT, 840)
+                .write(&VAULT, issuance_currency)
                 .unwrap();
             if registered {
                 router.liquidity_sources.insert(factory.address()).unwrap();
@@ -179,6 +206,9 @@ impl World {
                 .record_utc_day_vwap(day, pair, U256::from(2_160_001))
                 .unwrap();
             oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+            if issuance_currency != 840 {
+                seed_settlement_window(&storage, issuance_currency);
+            }
             match factory {
                 Factory::Intex => {
                     let series_id = SeriesId::from(FixedBytes(SERIES));
@@ -198,7 +228,7 @@ impl World {
                                 call_notice_period_seconds: 1,
                             },
                             issued_at: TIMESTAMP as u32,
-                            issuance_currency: 840,
+                            issuance_currency,
                             reference_currency: 840,
                         },
                     )
@@ -216,7 +246,7 @@ impl World {
                             promis_load_minor: U256::from(1_500_000),
                             entry_price_minor: U256::from(2_000_000),
                             floor_price_minor: U256::from(2_160_000),
-                            issuance_currency: 840,
+                            issuance_currency,
                             reference_currency: 840,
                             issued_at: TIMESTAMP,
                         },
@@ -259,9 +289,22 @@ impl World {
             payer,
             cost: U256::ZERO,
             gem_id,
+            snapshot_id: U256::ZERO,
         };
-        world.cost = world.quote();
-        assert!(!world.cost.is_zero());
+        if issuance_currency != 840 {
+            world.ok(
+                OWNER,
+                ASSET,
+                IEurFixture::configureCall {
+                    mode: U256::from(6),
+                },
+            );
+        }
+        let (currency, cost, snapshot_id) = world.quote();
+        assert_eq!(currency, issuance_currency);
+        assert!(!cost.is_zero());
+        world.cost = cost;
+        world.snapshot_id = snapshot_id;
         world.ok(
             OWNER,
             INTEX_NFT1155_ADDRESS,
@@ -342,37 +385,50 @@ impl World {
         C::abi_decode_returns(&out.returndata).unwrap()
     }
 
-    fn quote(&mut self) -> U256 {
+    /// `(settlementCurrency, paymentMinor, snapshotId)` of the quote.
+    fn quote(&mut self) -> (u16, U256, U256) {
         match self.factory {
             Factory::Intex => {
-                self.view(
+                let quote = self.view(
                     INTEX_FACTORY_ADDRESS,
                     IIntexFactory::quoteSettlementCall {
                         seriesId: FixedBytes(SERIES),
                         asset: ASSET,
                         units: U256::from(UNITS),
                     },
+                );
+                (
+                    quote.settlementCurrency,
+                    quote.paymentMinor,
+                    quote.snapshotId,
                 )
-                .paymentMinor
             }
             Factory::Gem => {
-                self.view(
+                let quote = self.view(
                     GEM_FACTORY_ADDRESS,
                     IGemFactory::quoteSettlementCall {
                         gemId: self.gem_id,
                         asset: ASSET,
                     },
+                );
+                (
+                    quote.settlementCurrency,
+                    quote.paymentMinor,
+                    quote.snapshotId,
                 )
-                .paymentMinor
             }
         }
     }
 
     fn settle(&mut self) -> SubCallOutput {
+        self.settle_with(self.snapshot_id)
+    }
+
+    fn settle_with(&mut self, snapshot_id: U256) -> SubCallOutput {
         let (payer, target, calldata) = (
             self.payer,
             self.factory.address(),
-            self.factory.settle_call(self.gem_id),
+            self.factory.settle_call(self.gem_id, snapshot_id),
         );
         self.call(payer, target, calldata, false)
     }
@@ -380,7 +436,7 @@ impl World {
     fn configure(&mut self, target: Address, mode: u64) {
         let (factory, reentry) = (
             self.factory.address(),
-            self.factory.settle_call(self.gem_id),
+            self.factory.settle_call(self.gem_id, self.snapshot_id),
         );
         self.ok(
             OWNER,
@@ -461,6 +517,52 @@ impl World {
 }
 
 const FACTORIES: [Factory; 2] = [Factory::Intex, Factory::Gem];
+
+/// One observation in the trailing window settlement converts at: COEN at
+/// 2 USD and at 1 unit of `iso_code`.
+fn seed_settlement_window(storage: &StorageHandle<'_>, iso_code: u16) {
+    let usd = outbe_oracle::api::AddressPair::new_coen_to(840);
+    let other = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
+    outbe_oracle::api::register_pair(storage.clone(), other).unwrap();
+    let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+    let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    oracle
+        .write_snapshot(
+            snapshot.cutoff() - 1,
+            &[
+                (usd, U256::from(2_000_000), U256::from(1_000_000)),
+                (other, U256::from(1_000_000), U256::from(1_000_000)),
+            ],
+        )
+        .unwrap();
+}
+
+/// A payment in the issuance currency, end to end: the quote names the trailing
+/// snapshot, a payment that names another snapshot moves nothing, and the one
+/// that names it moves exactly the converted cost into the reserve.
+#[test]
+fn an_issuance_currency_payment_moves_the_converted_cost_at_the_quoted_snapshot() {
+    for factory in FACTORIES {
+        let usd_cost = World::new(factory, OWNER, true).cost;
+        let mut world = World::issuance_rail(factory, OWNER);
+        assert_eq!(world.cost * U256::from(2), usd_cost, "{factory:?}");
+        assert_ne!(world.snapshot_id, U256::ZERO, "{factory:?}");
+
+        let unpaid = world.balances();
+        assert!(
+            !matches!(world.settle_with(U256::ZERO).status, SubCallStatus::Success),
+            "{factory:?}"
+        );
+        assert_eq!(world.balances(), unpaid, "{factory:?}");
+
+        assert!(
+            matches!(world.settle().status, SubCallStatus::Success),
+            "{factory:?}"
+        );
+        assert_eq!(world.balances(), world.paid_balances(), "{factory:?}");
+        world.assert_settled();
+    }
+}
 
 #[test]
 fn erc20_settlement_moves_exactly_the_quoted_cost_into_the_reserve() {

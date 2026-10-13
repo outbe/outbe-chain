@@ -33,16 +33,35 @@ jobs:
         run: |
           sudo rm -rf /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
+      - name: Restore circuit compilers and mise metadata
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/mise-tools
+          key: mise-tools-docker-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'Dockerfile.project-toolchain') }}
       - name: Execute real Linux donor export and projection regressions
+        env:
+          MISE_GITHUB_TOKEN: ${{ github.token }}
         run: |
+          mkdir -p "$RUNNER_TEMP/mise-tools"/{nargo,bb,cache}
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            -v "$RUNNER_TEMP/mise-tools/nargo:/opt/mise/data/installs/nargo" \
+            -v "$RUNNER_TEMP/mise-tools/bb:/opt/mise/data/installs/bb" \
+            -v "$RUNNER_TEMP/mise-tools/cache:/opt/mise/cache" \
+            -e MISE_GITHUB_TOKEN \
             -e SOURCE_DATE_EPOCH=0 -e CARGO_INCREMENTAL=0 \
             -e CARGO_BUILD_JOBS=2 -e CARGO_PROFILE_TEST_DEBUG=0 \
             ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268 \
             bash -lc '
               set -euo pipefail
               git config --global --add safe.directory /workspace
+              mise install
+              # Cargo tool defaults already come from the image.
+              mise ls --current --json |
+                jq -r "to_entries[] | select(.key == \"nargo\" or .key == \"bb\") | .key as \$tool | .value[] | select(.installed) | \"\(\$tool)@\(.version)\"" |
+                xargs mise use --global
+              mise reshim
+              unset MISE_GITHUB_TOKEN
               cargo nextest run --locked --package outbe-chain \
                 --features snapshot-integration --test-threads 2 \
                 -E "binary(snapshot_create) | binary(snapshot_files) | binary(snapshot_validate) | test(copied_projection_uses_native_checkpoint_and_recipient_configuration_on_each_restart)"

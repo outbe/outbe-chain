@@ -74,6 +74,8 @@ pub enum OracleError {
     InvalidLookbackSeconds,
     #[error("start_time must be less than end_time")]
     InvalidVwapRange,
+    #[error("end_time - start_time must be <= lookback_duration")]
+    VwapRangeTooWide,
     #[error("worldwide day VWAP snapshot not found")]
     WorldwideDayVwapSnapshotNotFound,
     #[error("no finalized VWAP for that UTC day")]
@@ -187,6 +189,7 @@ impl From<OracleError> for PrecompileError {
             | StaleCoenRate { .. }
             | InvalidLookbackSeconds
             | InvalidVwapRange
+            | VwapRangeTooWide
             | WorldwideDayVwapSnapshotNotFound
             | NoFinalizedUtcDayVwap
             | InvalidVwapPolicy

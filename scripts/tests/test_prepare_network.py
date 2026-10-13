@@ -463,8 +463,13 @@ class PrepareNetworkTests(unittest.TestCase):
                 ):
                     self.assertNotIn(removed, node)
                 self.assertIn(image, enclave)
+                self.assertIn("test -S /var/run/aesmd/aesm.socket", enclave)
                 self.assertIn("--device /dev/sgx_enclave:/dev/sgx_enclave", enclave)
                 self.assertIn("--device /dev/sgx_provision:/dev/sgx_provision", enclave)
+                self.assertIn(
+                    "-v /var/run/aesmd/aesm.socket:/var/run/aesmd/aesm.socket",
+                    enclave,
+                )
                 self.assertNotIn("--dkg-seed", enclave)
                 subprocess.run(
                     ["bash", "-n", str(output / "commands" / f"enclave-{index}.sh")],

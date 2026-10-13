@@ -1,5 +1,5 @@
 //! Encrypted fixtures using the production cryptographic implementation.
-pub use crate::enclave_client::test_enclave::{install, scope, Guard, NETWORK_SECRET};
+pub use crate::enclave_client::test_enclave::{install, scope, uninstall, Guard, NETWORK_SECRET};
 use crate::{NodIssueParams, NodItemState};
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::WwdEntityId;

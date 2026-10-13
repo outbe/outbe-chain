@@ -46,28 +46,28 @@ use outbe_primitives::{
     },
     time::date_key_to_utc_timestamp,
 };
-use outbe_protocol::primitive::hash::{self, derive_owner};
-use outbe_protocol::primitive::signature;
-use outbe_protocol::protocol::imt::Imt;
-use outbe_protocol::protocol::key::{NftSecret, Signer};
-use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
-use outbe_protocol::protocol::zkproof::decode_public_words;
 use outbe_tee::protocol::TributePublicInputs as DemoTributePublicInputs;
 use outbe_tee::OFFER_HKDF_SALT;
-use outbe_tee_enclave::zk_claim::TributeDraftClaim;
 use outbe_tee_enclave::{
     crypto::ecdhe_tribute_offer_decrypt,
     process::{process_tribute_offer_batch, TributeOfferKeyMaterial},
 };
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOfferInput};
-use outbe_zk_backend::barretenberg::{init_crs, verify_circuit, Barretenberg};
-use outbe_zk_canonical::demo_tribute::{
+use outbe_zk::claim::TributeDraftClaim;
+use outbe_zk::demo_tribute::{
     decode_public_inputs as decode_demo_tribute_public_inputs, demo_tribute_domain,
     DemoTributeProvable, COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN,
 };
-use outbe_zk_canonical::noir::demo_tribute::DemoTribute;
-use outbe_zk_canonical::INCLUSION_DEPTH;
+use outbe_zk::noir::demo_tribute::DemoTribute;
+use outbe_zk::primitive::hash::{self, derive_owner};
+use outbe_zk::primitive::signature;
+use outbe_zk::protocol::imt::Imt;
+use outbe_zk::protocol::key::{NftSecret, Signer};
+use outbe_zk::protocol::zk::{Circuit, ProofGenerator};
+use outbe_zk::wire::decode_public_words;
+use outbe_zk::INCLUSION_DEPTH;
+use outbe_zk_backend::barretenberg::{init_crs, verify_circuit, Barretenberg};
 use rand::{rngs::StdRng, SeedableRng};
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::precompile::bn254::{
@@ -163,7 +163,7 @@ struct GateMeasurement {
 }
 
 fn field_bytes(field: &Fr) -> [u8; 32] {
-    outbe_protocol::codec::field_to_be_bytes(field)
+    outbe_zk::codec::field_to_be_bytes(field)
         .try_into()
         .expect("BN254 field encoding is 32 bytes")
 }

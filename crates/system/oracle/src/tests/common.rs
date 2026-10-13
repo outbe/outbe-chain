@@ -59,6 +59,10 @@ pub(super) fn usd() -> Address {
     AssetType::IsoCurrency(840).into()
 }
 
+pub(super) fn eur() -> Address {
+    AssetType::IsoCurrency(978).into()
+}
+
 /// A pair in the given quoting direction. Storage lookup sorts, so this doubles
 /// as the key for either direction.
 pub(super) fn pair_key(base: Address, quote: Address) -> AddressPair {
@@ -290,6 +294,8 @@ pub(super) fn init_oracle(oracle: &mut OracleContract) {
 pub(super) fn with_bare_oracle(f: impl FnOnce(StorageHandle<'_>, &mut OracleContract<'_>)) {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
+        // The one setting a range VWAP read needs: the widest window it serves.
+        oracle.config_lookback_duration.write(86_400).unwrap();
         f(storage, &mut oracle);
     });
 }

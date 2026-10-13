@@ -1,10 +1,12 @@
 //! Repayment, forfeiture and stake behaviour of Credis backed by a direct pledge.
 use crate::{precompile::ICredisFactory, runtime, tests::common::*};
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{b256, keccak256, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
+use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, CredisState};
 use outbe_gratisfactory::runtime::cancel_pledge;
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
 use outbe_tee::protocol::GratisOp;
@@ -101,7 +103,6 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
         );
         StorageHandle::enter(&mut provider, |storage| {
             bootstrap(&storage, collateral);
-            deploy_smart_account(&storage, bob());
             let reservation_id = seed_reservation(&storage, bob(), alice(), principal);
             let mut reservation =
                 outbe_vaultrouter::api::reservation_of(&storage, reservation_id).unwrap();
@@ -120,8 +121,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             let stake = outbe_primitives::units::checked_protocol_to_native(collateral).unwrap();
             fund_stake(&storage, stake);
             let (id, disbursed) =
-                runtime::issue_credis(storage.clone(), cca(), reservation_id, REFERENCE_ISO, stake)
-                    .unwrap();
+                runtime::issue_credis(storage.clone(), cca(), reservation_id, stake).unwrap();
             assert_eq!(disbursed, principal);
             assert_eq!(view_pledged(&storage, alice()), collateral);
 
@@ -447,8 +447,7 @@ fn issue_credis_requires_the_stake_to_equal_the_collateral() {
             pledge_stake() - U256::ONE,
             pledge_stake() + U256::ONE,
         ] {
-            let err = runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, wrong)
-                .unwrap_err();
+            let err = runtime::issue_credis(storage.clone(), cca(), id, wrong).unwrap_err();
             assert!(err.to_string().contains("attached COEN"), "{wrong}: {err}");
         }
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
@@ -457,7 +456,7 @@ fn issue_credis_requires_the_stake_to_equal_the_collateral() {
 }
 
 #[test]
-fn the_stake_stays_with_the_smart_account_through_settlement_and_forfeit() {
+fn the_stake_stays_with_the_owner_through_settlement_and_forfeit() {
     for forfeit in [false, true] {
         let mut provider = env();
         StorageHandle::enter(&mut provider, |storage| {
@@ -494,10 +493,7 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
         pledge(&storage, alice(), id, 1);
         let day = outbe_primitives::time::timestamp_to_date_key(CREATED_AT);
         // The unfunded stake transfer fails after the pledge was handed to Credis.
-        assert!(
-            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
-                .is_err()
-        );
+        assert!(runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).is_err());
         assert_eq!(
             outbe_gratisfactory::runtime::pledge_of(&storage, id)
                 .unwrap()
@@ -517,8 +513,7 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
         );
         fund_stake(&storage, pledge_stake());
         let (credis_id, _) =
-            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
-                .unwrap();
+            runtime::issue_credis(storage.clone(), cca(), id, pledge_stake()).unwrap();
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
             pledge_cost()
@@ -531,9 +526,7 @@ fn failed_origination_keeps_the_pledge_and_cca_weight_and_exit_freezes_new_credi
     });
     provider.set_block_number(BLOCK_NUMBER + 1);
     StorageHandle::enter(&mut provider, |storage| {
-        let err =
-            runtime::issue_credis(storage.clone(), cca(), next, REFERENCE_ISO, pledge_stake())
-                .unwrap_err();
+        let err = runtime::issue_credis(storage.clone(), cca(), next, pledge_stake()).unwrap_err();
         assert!(err.to_string().contains("CCA is not active"), "{err}");
         assert_eq!(
             record(&storage, credis_id).outstanding_principal_minor,
@@ -554,16 +547,14 @@ fn a_half_paid_call_forfeits_only_the_unpaid_backing_of_another_accounts_source(
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
-        deploy_smart_account(&storage, bob());
         let id = seed_reservation(&storage, bob(), alice(), pledge_stables());
         pledge(&storage, alice(), id, 1);
         let unused = seed_reservation(&storage, alice(), alice(), pledge_stables());
         pledge(&storage, alice(), unused, 2);
         fund_stake(&storage, pledge_stake());
-        let credis_id =
-            runtime::issue_credis(storage.clone(), cca(), id, REFERENCE_ISO, pledge_stake())
-                .unwrap()
-                .0;
+        let credis_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
+            .unwrap()
+            .0;
         let half = pledge_cost() / U256::from(2u64);
         settle_principal(
             &storage,
@@ -618,4 +609,181 @@ fn a_half_paid_call_forfeits_only_the_unpaid_backing_of_another_accounts_source(
         );
     });
     teardown();
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Footprint {
+    gas: u64,
+    reads: u64,
+    writes: u64,
+    logs: B256,
+    state: B256,
+}
+
+/// Runs one step under production metering and digests its ordered logs and the storage it leaves.
+fn measure<T>(
+    provider: &mut HashMapStorageProvider,
+    step: impl FnOnce(&StorageHandle<'_>) -> T,
+) -> (T, Footprint) {
+    let logged = provider.get_ordered_events().len();
+    provider.set_gas_limit(1_000_000_000_000);
+    provider.enable_production_storage_gas_metering();
+    let (out, gas) = StorageHandle::enter(provider, |storage| {
+        let out = step(&storage);
+        (out, storage.gas_used().unwrap())
+    });
+    let (reads, writes) = provider.metered_storage_operations();
+    let mut digest = Vec::new();
+    for log in &provider.get_ordered_events()[logged..] {
+        digest.extend_from_slice(log.address.as_slice());
+        for topic in log.data.topics() {
+            digest.extend_from_slice(topic.as_slice());
+        }
+        digest.extend_from_slice(&log.data.data);
+    }
+    let mut slots: Vec<_> = provider.storage.iter().collect();
+    slots.sort();
+    let mut state = Vec::new();
+    for ((address, slot), value) in slots {
+        state.extend_from_slice(address.as_slice());
+        state.extend_from_slice(&slot.to_be_bytes::<32>());
+        state.extend_from_slice(&value.to_be_bytes::<32>());
+    }
+    let footprint = Footprint {
+        gas,
+        reads,
+        writes,
+        logs: keccak256(digest),
+        state: keccak256(state),
+    };
+    (out, footprint)
+}
+
+fn credis_views(storage: &StorageHandle<'_>, id: U256) -> B256 {
+    let calls = [
+        ICredis::tokenURICall { credisId: id }.abi_encode(),
+        ICredis::getCredisCall { credisId: id }.abi_encode(),
+        ICredis::credisExistsCall { credisId: id }.abi_encode(),
+        ICredis::tokenByIndexCall { index: U256::ZERO }.abi_encode(),
+        ICredis::balanceOfCall { owner: alice() }.abi_encode(),
+        ICredis::tokenOfOwnerByIndexCall {
+            owner: alice(),
+            index: U256::ZERO,
+        }
+        .abi_encode(),
+        ICredis::interestAccruedMinorCall { credisId: id }.abi_encode(),
+        ICredis::interestPaidMinorCall { credisId: id }.abi_encode(),
+    ];
+    let mut out = Vec::new();
+    for call in calls {
+        let ret = outbe_credis::precompile::dispatch(storage.clone(), &call, alice(), U256::ZERO)
+            .unwrap();
+        out.extend_from_slice(&ret);
+    }
+    keccak256(out)
+}
+
+#[test]
+fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
+    let mut provider = env();
+    let reservation = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
+        pledge(&storage, alice(), id, 1);
+        fund_stake(&storage, pledge_stake());
+        id
+    });
+    let (id, issue) = measure(&mut provider, |storage| {
+        runtime::issue_credis(storage.clone(), cca(), reservation, pledge_stake())
+            .unwrap()
+            .0
+    });
+    let half = pledge_stables() / U256::from(2u64);
+    StorageHandle::enter(&mut provider, |storage| {
+        advance_to(&storage, CREATED_AT + 30 * DAY)
+    });
+    let (_, partial) = measure(&mut provider, |storage| {
+        settle_principal(storage, alice(), id, half)
+    });
+    let (views, read) = measure(&mut provider, |storage| credis_views(storage, id));
+    StorageHandle::enter(&mut provider, |storage| {
+        advance_to(&storage, CREATED_AT + 60 * DAY)
+    });
+    let (_, close) = measure(&mut provider, |storage| {
+        settle_principal(storage, alice(), id, half)
+    });
+    teardown();
+
+    let mut provider = env();
+    let (called_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let id = open(&storage, 1);
+        CredisContract::new(storage.clone())
+            .mark_called(id, CREATED_AT)
+            .unwrap();
+        let deadline = CREATED_AT + NOTICE + HOUR;
+        advance_to(&storage, deadline);
+        finalize_through(&storage, deadline);
+        (id, deadline)
+    });
+    let (called_views, called_read) =
+        measure(&mut provider, |storage| credis_views(storage, called_id));
+    let (voided, void) = measure(&mut provider, |storage| expire(storage, deadline));
+    teardown();
+
+    assert_eq!(voided, 1);
+    assert_eq!(
+        [views, called_views],
+        [
+            b256!("0x7e6b406253d988cd27b5cbfb246b1bd7322f9f4911148d6dc6c7ba5fae5f4bc3"),
+            b256!("0x6c25580c8311832a45e33c6d99fd5a9d5e36e5edda93ee221756a1f921ba8b13"),
+        ]
+    );
+    assert_eq!(
+        [issue, partial, read, close, called_read, void],
+        [
+            Footprint {
+                gas: 214400,
+                reads: 94,
+                writes: 41,
+                logs: b256!("0x36c28055f46240955c8ed66a51e4c939e2d7c7b36bdd40387dddc24db87e43cc"),
+                state: b256!("0xb8eec5beb497f05b2c86fa89b411c74b36c43db23c89ac15d65238f565e54007"),
+            },
+            Footprint {
+                gas: 183700,
+                reads: 137,
+                writes: 34,
+                logs: b256!("0xabf2b6c4044763cab91e5cbc28c63bdf510963c3b85ea94150562846159fe368"),
+                state: b256!("0x8660cf61b4b9eea473d98bbec7ad39ab5200f946c89e7ce5ee9eb241fa895488"),
+            },
+            Footprint {
+                gas: 10200,
+                reads: 102,
+                writes: 0,
+                logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
+                state: b256!("0x8660cf61b4b9eea473d98bbec7ad39ab5200f946c89e7ce5ee9eb241fa895488"),
+            },
+            Footprint {
+                gas: 214200,
+                reads: 142,
+                writes: 40,
+                logs: b256!("0x9bc938ba84f2da035d825b274f8ac29c997dbec15d3a459172a168b90c46ecc2"),
+                state: b256!("0x73ad21bf77603444ec53f7b2ec3532aeef27920ff709f75258cae5e522d5074d"),
+            },
+            Footprint {
+                gas: 10200,
+                reads: 102,
+                writes: 0,
+                logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
+                state: b256!("0xab7152f6949622031d1b7837ec0d68566d5422fad25927d2d1718be5a5f29a10"),
+            },
+            Footprint {
+                gas: 228800,
+                reads: 138,
+                writes: 43,
+                logs: b256!("0x81f01b28f8f9039cd7d463c5f70139bf2384e0e24c333878342348d88f5e8c7c"),
+                state: b256!("0x2a5d3b50206d7e4a282f9cc92a378f6e7f0015207d72279ce80401909e607b15"),
+            },
+        ]
+    );
 }
