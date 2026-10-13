@@ -41,7 +41,7 @@ pub(super) fn native_coen(whole_coen: u64) -> U256 {
 }
 
 /// Canonical COEN/ISO price and COEN volume scale after the denomination cutover.
-pub(super) const COEN_ISO_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+pub(super) use outbe_primitives::units::SCALE_1E6_U256 as COEN_ISO_SCALE;
 
 /// Builds a whole COEN/ISO price or COEN volume in its canonical six-decimal scale.
 pub(super) fn coen_iso(whole: u64) -> U256 {

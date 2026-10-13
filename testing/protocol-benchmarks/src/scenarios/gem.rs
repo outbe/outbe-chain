@@ -8,6 +8,7 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, Worldwide
 use outbe_primitives::{
     addresses::INTEX_NFT1155_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    units::SCALE_1E6_U64,
 };
 
 use super::support::{capture_execution, elapsed_ns};
@@ -19,7 +20,6 @@ const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = Address::repeat_byte(0x11);
 const BOB: Address = Address::repeat_byte(0x22);
 const PARK_UNITS: u64 = 100;
-const SIX_DECIMAL_UNIT: u64 = 1_000_000;
 
 #[derive(Clone, Copy)]
 enum GemPath {
@@ -81,7 +81,7 @@ fn branch_name(gem_type: GemTypes) -> &'static str {
 }
 
 fn six_decimal_unit() -> U256 {
-    U256::from(SIX_DECIMAL_UNIT)
+    U256::from(SCALE_1E6_U64)
 }
 
 fn source_intex_id() -> SeriesId {
@@ -121,7 +121,7 @@ fn seed_series(storage: &StorageHandle<'_>) -> Result<(), String> {
             series_id: source_intex_id(),
             worldwide_day: WorldwideDay::new(0),
             issued_units: PARK_UNITS as u32,
-            promis_load_minor: SIX_DECIMAL_UNIT as u128,
+            promis_load_minor: SCALE_1E6_U64 as u128,
             entry_price_minor: six_decimal_unit(),
             floor_price_minor: six_decimal_unit(),
             call_price_minor: U256::ZERO,
@@ -204,7 +204,7 @@ impl BenchmarkScenario for GemScenario {
                     provider,
                     path: PreparedGemPath::Merchant {
                         position_id,
-                        initial_capacity: U256::from(SIX_DECIMAL_UNIT) * U256::from(PARK_UNITS),
+                        initial_capacity: U256::from(SCALE_1E6_U64) * U256::from(PARK_UNITS),
                     },
                 })
             }

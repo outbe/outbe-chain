@@ -46,9 +46,8 @@ use outbe_ocomp_protocol::{
     ListKind, ObjectKind, OrderedListLimits,
 };
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::units::SCALE_1E6_U256;
 use std::collections::BTreeMap;
-
-const SIX_DECIMAL_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 fn tribute(seed: u32, day: WorldwideDay, nominal: u64, excluded: bool) -> TributeInputV1 {
     let mut owner_bytes = [0_u8; 20];

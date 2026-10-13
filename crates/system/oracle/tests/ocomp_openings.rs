@@ -11,7 +11,7 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 
-const COEN_ISO_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+use outbe_primitives::units::SCALE_1E6_U256 as COEN_ISO_SCALE;
 
 fn scaled(whole: u64, scale: U256) -> U256 {
     U256::from(whole) * scale

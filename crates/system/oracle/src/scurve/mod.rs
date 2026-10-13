@@ -202,7 +202,7 @@ mod tests {
     use super::*;
     use crate::schema::OracleContract;
 
-    const COEN840_SCALE: u64 = 1_000_000;
+    use outbe_primitives::units::SCALE_1E6_U64 as COEN840_SCALE;
 
     fn price6(whole: u64) -> U256 {
         U256::from(whole) * U256::from(COEN840_SCALE)
