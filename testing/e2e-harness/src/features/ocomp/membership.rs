@@ -471,7 +471,7 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
 }
 
 fn advance_dynamic_membership_to_next_daily_cycle(world: &mut World) {
-    const SECONDS_PER_DAY: u64 = 86_400;
+    use outbe_primitives::time::SECONDS_PER_DAY;
 
     let primary = world.validators.primary_port();
     let before_restart = world

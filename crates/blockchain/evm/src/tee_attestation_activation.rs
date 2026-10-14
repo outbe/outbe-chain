@@ -536,7 +536,7 @@ mod tests {
             accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
             accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
             minimum_lease: 3_600,
-            maximum_lease: 604_800,
+            maximum_lease: 7 * outbe_primitives::time::SECONDS_PER_DAY,
             collateral_margin: 3_600,
             resource_schedule_hash,
             measurement_rules: vec![TeeMeasurementRuleV1 {

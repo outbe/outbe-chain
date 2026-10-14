@@ -200,7 +200,7 @@ pub fn t_dec(age_sec: u64) -> U256 {
 mod tests {
     use super::*;
 
-    const DAY: u64 = 86_400;
+    use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 
     fn days(fp: U256) -> f64 {
         // fixed-point decayed-days -> f64 for tolerance checks only.

@@ -15,6 +15,7 @@ use outbe_ccaregistry::{
     schema::CcaContract,
 };
 use outbe_evm::OutbeEvmFactory;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     addresses::{AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
@@ -282,7 +283,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     }
     // Retry tomorrow against today's finalized VWAP, with a price distinct from spot.
     let price = U256::from(2_000_000);
-    let claim_time = NOW + 86400;
+    let claim_time = NOW + SECONDS_PER_DAY;
     with_storage(&mut db, |storage| {
         seed_vwap(&storage, timestamp_to_date_key(NOW), price)
     });

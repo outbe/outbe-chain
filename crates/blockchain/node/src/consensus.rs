@@ -797,7 +797,7 @@ mod tests {
         // mature its own unbonding entry and escape the slashing window. The drift
         // bound must reject it on every validator (chain-state only, no clock).
         let parent = header(10, 1_000_000, 0, B256::ZERO);
-        let twenty_one_days_s = 21 * 24 * 3600;
+        let twenty_one_days_s = 21 * outbe_primitives::time::SECONDS_PER_DAY;
         let child = header(11, 1_000_000 + twenty_one_days_s, 0, parent.hash());
         let err = OutbeBeaconConsensus::new(test_chain_spec())
             .validate_header_against_parent(&child, &parent)

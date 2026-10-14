@@ -14,7 +14,7 @@ use crate::runtime;
 pub(crate) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
 pub(crate) const GENESIS_TS: u64 = 1_704_067_200;
-pub(crate) const SECONDS_PER_DAY: u64 = 86_400;
+pub(crate) use outbe_primitives::time::SECONDS_PER_DAY;
 
 pub(crate) const FB_HASH_A: B256 =
     b256!("0x1111111111111111111111111111111111111111111111111111111111111111");

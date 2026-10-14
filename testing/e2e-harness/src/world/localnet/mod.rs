@@ -102,7 +102,7 @@ impl StartOpts {
         now_secs: u64,
         boundary_lead_secs: u64,
     ) -> Self {
-        const SECONDS_PER_DAY: u64 = 86_400;
+        use outbe_primitives::time::SECONDS_PER_DAY;
         let next_day = now_secs - (now_secs % SECONDS_PER_DAY) + SECONDS_PER_DAY;
         let target = next_day.saturating_sub(boundary_lead_secs);
         Self {
@@ -1536,7 +1536,7 @@ mod tests {
     fn custom_day_boundary_lead_is_reflected_exactly_in_the_node_clock_offset() {
         const NOW: u64 = 1_700_000_000;
         const LEAD: u64 = 240;
-        const SECONDS_PER_DAY: u64 = 86_400;
+        use outbe_primitives::time::SECONDS_PER_DAY;
 
         let opts = StartOpts::near_next_utc_day_with_lead(6, NOW, LEAD);
         let next_day = NOW - (NOW % SECONDS_PER_DAY) + SECONDS_PER_DAY;

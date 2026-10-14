@@ -306,7 +306,7 @@ mod tests {
         );
         assert_eq!(policy.accepted_qe_tcb_status, QvlTcbStatusV1::UpToDate);
         assert_eq!(policy.minimum_lease, 3_600);
-        assert_eq!(policy.maximum_lease, 14 * 24 * 60 * 60);
+        assert_eq!(policy.maximum_lease, 14 * SECONDS_PER_DAY);
     }
 
     #[test]
