@@ -41,8 +41,9 @@ exclude_patterns = [
   "**/testdata/**",
   "**/vendor/**",
   "crates/poseidon/src/poseidon/constants.rs",
-  # One codegen script. Inline qlty-ignore and [[triage]] do not hide its smells.
+  # Codegen scripts. Inline qlty-ignore and [[triage]] do not hide their smells.
   "crates/zk/outbe-zk/build.rs",
+  "crates/core/compressed-entities/vectors/generate_poseidon2.py",
 ]
 
 test_patterns = [
@@ -63,6 +64,10 @@ test_patterns = [
 
 [smells]
 mode = "comment"
+
+# Attributes such as `#[error(...)]` make declarations look alike; compare the code alone.
+[language.rust.smells.duplication]
+filter_patterns = ["(use_declaration _)", "(attribute_item _)"]
 
 
 [[source]]

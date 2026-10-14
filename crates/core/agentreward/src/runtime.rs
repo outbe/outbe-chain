@@ -2,7 +2,7 @@ use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_compressed_entities::{ExecutionReaders, ParentBodySource};
 use outbe_gemfactory::schema::GemTypes;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
@@ -103,23 +103,19 @@ impl AgentRewardContract<'_> {
     /// Gem can be Called and forfeited. Sizing the claim is therefore the agent's
     /// own risk control. The part that the agent does not claim keeps accruing.
     ///
-    /// The Gem carries the caller's currencies. Its entry price is the previous
-    /// UTC day's COEN VWAP in `reference_currency`, which must be an Oracle
-    /// reference currency.
+    /// The Gem carries the caller's `(issuance, reference)` currencies. Its entry
+    /// price is the previous UTC day's COEN VWAP in the reference currency, which
+    /// must be an Oracle reference currency.
     ///
     /// Any failure reverts the call and leaves the balance intact. A missing VWAP
     /// waits for the next day, which brings a new VWAP with it.
-    // Preserve the public claim API, including its block-scoped readers.
-    #[allow(clippy::too_many_arguments)]
     pub fn claim_reward(
         &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
+        readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
         pool: RewardPool,
         address: Address,
         amount: U256,
-        issuance_currency: u16,
-        reference_currency: u16,
+        currencies: (u16, u16),
     ) -> Result<U256> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -151,11 +147,10 @@ impl AgentRewardContract<'_> {
             };
             let gem_id = issue_reward_gem(
                 &self.storage,
-                scope,
-                parent,
+                readers,
                 (address, gem_load),
                 gem_type,
-                (issuance_currency, reference_currency),
+                currencies,
             )?;
             self.storage
                 .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, burned)?;
@@ -252,12 +247,12 @@ fn read_tribute_counts(
 /// Shared issuance economics and claim-day pricing for WAA, SRA and CCA rewards.
 pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     recipient: (Address, U256),
     gem_type: GemTypes,
     (issuance_currency, reference_currency): (u16, u16),
 ) -> Result<U256> {
+    let ExecutionReaders { scope, parent } = readers;
     let (owner, load) = recipient;
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
     let entry_price = resolve_gem_entry_price(storage, reference_currency)?.ok_or(
