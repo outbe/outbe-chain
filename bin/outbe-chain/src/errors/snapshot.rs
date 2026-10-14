@@ -220,6 +220,9 @@ pub(crate) enum SnapshotError {
     /// Canonical Metadosis job identifier binding differs.
     #[error("canonical Metadosis JobId binding differs")]
     MetadosisJobIdMismatch,
+    /// Canonical Lysis terminal receipt intent or job binding differs.
+    #[error("canonical Lysis terminal receipt intent/job binding differs")]
+    LysisTerminalReceiptMismatch,
     /// Canonical Metadosis request binding differs from the retained header.
     #[error("canonical Metadosis request binding differs from retained header B={number}")]
     MetadosisRequestBindingMismatch {
