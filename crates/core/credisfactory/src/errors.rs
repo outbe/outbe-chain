@@ -14,8 +14,6 @@ pub enum CredisFactoryError {
     ReservationExpired,
     #[error("reservation cca mismatch")]
     ReservationCcaMismatch,
-    #[error("previous closed UTC-day VWAP is unavailable")]
-    PreviousDayVwapUnavailable,
     #[error("amount must be positive")]
     ZeroIssueTerm,
     #[error("pledge source is zero")]
