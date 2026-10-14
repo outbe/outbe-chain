@@ -253,6 +253,11 @@ impl FixtureResults {
                     level: 0,
                     index,
                 } => self.root_leaf(execution, &spec, index),
+                PlannedUnitPositionV1::TreeNode {
+                    phase: UnitPhase::FixedReduce,
+                    level,
+                    index: 0,
+                } if level == topology.tree().height() => self.fixed_root(execution, &spec),
                 _ => (
                     UnitArtifactV1::from_canonical_output(
                         &spec,
@@ -285,6 +290,81 @@ impl FixtureResults {
         drop(admissions);
         drop(input_refs);
         drop(reader);
+    }
+    fn fixed_root(
+        &self,
+        execution: &FixtureExecution<'_>,
+        spec: &UnitSpecV1,
+    ) -> (UnitArtifactV1, Option<OutputManifestEntryV1>) {
+        use outbe_lysis::program_v1::{
+            artifacts::{encode_fixed_reduce_output, FixedReduceOutputV1, RawCoverageCarrierV1},
+            phases::{FidelityAggregateV1, FidelityLeaguePartialV1},
+            planner::PRIMARY_WORK_SHARD_SIZE,
+            LeagueFractionV1,
+        };
+
+        let tributes = &execution.population.tributes;
+        let total_count = execution.setup.tribute_count;
+        let records = tributes
+            .iter()
+            .enumerate()
+            .map(|(ordinal, tribute)| (u32::try_from(ordinal).unwrap(), tribute.tribute_id))
+            .collect::<Vec<_>>();
+        let mut carriers = records
+            .chunks(PRIMARY_WORK_SHARD_SIZE as usize)
+            .map(|records| RawCoverageCarrierV1::from_records(total_count, records).unwrap())
+            .collect::<Vec<_>>();
+        let padded_count = carriers.len().next_power_of_two();
+        for ordinal in carriers.len()..padded_count {
+            carriers.push(
+                RawCoverageCarrierV1::canonical_empty(total_count, u32::try_from(ordinal).unwrap())
+                    .unwrap(),
+            );
+        }
+        while carriers.len() > 1 {
+            carriers = carriers
+                .chunks_exact(2)
+                .map(|pair| RawCoverageCarrierV1::merge(&pair[0], &pair[1]).unwrap())
+                .collect();
+        }
+        let coverage = carriers[0];
+        let total_nominal = tributes.iter().fold(U256::ZERO, |total, tribute| {
+            total.checked_add(tribute.nominal_amount_minor).unwrap()
+        });
+        let output = FixedReduceOutputV1 {
+            aggregate: Some(FidelityAggregateV1 {
+                start_ordinal: 0,
+                end_ordinal: total_count,
+                tribute_count: total_count,
+                checked_total_nominal: total_nominal,
+                ordered_league_partials: vec![FidelityLeaguePartialV1 {
+                    league_id: 1,
+                    count: total_count,
+                    nominal_amount_minor: total_nominal,
+                }],
+            }),
+            coverage,
+            ordered_fractions: vec![LeagueFractionV1 {
+                league: 1,
+                fraction: U256::from(1_000_000),
+            }],
+        };
+        let coverage_root = coverage.final_root(total_count).unwrap();
+        (
+            UnitArtifactV1::from_canonical_output(
+                spec,
+                WorkOutputHeaderV1 {
+                    source_coverage_root: coverage_root,
+                    output_coverage_root: coverage_root,
+                    source_coverage_count: total_count,
+                    output_coverage_count: total_count,
+                },
+                BoundedBytes(encode_fixed_reduce_output(&output, &execution.setup.limits).unwrap()),
+                &execution.setup.limits,
+            )
+            .unwrap(),
+            None,
+        )
     }
     fn root_leaf(
         &mut self,
