@@ -26,6 +26,8 @@ serde_json.workspace = true
 outbe-tee-enclave.workspace = true
 # Sign EIP-191 owner authorizations for the query-path tests.
 k256.workspace = true
+# Sign enclave attestation tags for the response-validation tests.
+ed25519-dalek.workspace = true
 
 [features]
 default = []
