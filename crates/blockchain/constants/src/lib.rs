@@ -1,12 +1,12 @@
 //! Immutable protocol parameters shared by every runtime module.
 
+use outbe_primitives::time::SECONDS_PER_DAY;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "test-protocol-overrides")]
 use std::sync::OnceLock;
 use thiserror::Error;
 
 pub const GENESIS_CONFIG_KEY: &str = "outbeProtocol";
-const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 pub const PROTOCOL_CONSTANTS_SCHEMA_VERSION: u16 = 1;
 
 pub const DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS: u64 = 50 * 60 * 60;

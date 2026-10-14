@@ -8,6 +8,7 @@ use eyre::Result;
 use crate::abi::{IOracle, ORACLE_ADDR};
 use crate::rpc::Rpc;
 use outbe_primitives::asset_type::AssetType;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 /// Parses an oracle asset from the operator-facing shorthand.
 ///
@@ -74,7 +75,7 @@ pub enum OracleCmd {
         #[arg(value_parser = parse_asset)]
         quote: Address,
         /// Lookback period in seconds (default: 86400)
-        #[arg(default_value = "86400")]
+        #[arg(default_value_t = SECONDS_PER_DAY)]
         seconds: u64,
     },
     /// Show VWAP for a pair over an explicit time range
@@ -99,13 +100,13 @@ pub enum OracleCmd {
         #[arg(value_parser = parse_asset)]
         quote: Address,
         /// Lookback period in seconds (default: 86400)
-        #[arg(default_value = "86400")]
+        #[arg(default_value_t = SECONDS_PER_DAY)]
         seconds: u64,
     },
     /// Show TWAPs for all active vote-target pairs
     Twaps {
         /// Lookback period in seconds (default: 86400)
-        #[arg(default_value = "86400")]
+        #[arg(default_value_t = SECONDS_PER_DAY)]
         seconds: u64,
     },
     /// Show day VWAP for a pair
