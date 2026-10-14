@@ -10,6 +10,7 @@ use outbe_primitives::tee_attestation_v1::{
     AttestationMode, AttestationOperationV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
     RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1, INTEL_QE_VENDOR_ID,
 };
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 #[path = "outbe-dcap-fixture/assemble.rs"]
 mod assemble;
@@ -106,7 +107,7 @@ fn policy(
         accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
-        maximum_lease: 604_800,
+        maximum_lease: 7 * SECONDS_PER_DAY,
         collateral_margin: 3_600,
         resource_schedule_hash: B256::repeat_byte(0x44),
         measurement_rules: vec![TeeMeasurementRuleV1 {
@@ -144,7 +145,7 @@ fn intent(policy: &TeePolicyV1, timestamp: u64) -> Result<RegistrationIntentV1, 
         renewal_nonce: 0,
         transition_nonce: 0,
         requested_valid_until: timestamp
-            .checked_add(86_400)
+            .checked_add(SECONDS_PER_DAY)
             .ok_or_else(|| "requested_valid_until overflows u64".to_owned())?,
         recipient_x25519: [0xbb; 32],
         attestation_ed25519: [0xcc; 32],

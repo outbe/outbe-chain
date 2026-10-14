@@ -11,6 +11,7 @@
 //! Validated against the PDF reference `decay.py` (errors ~1e-15 vs float64).
 
 use alloy_primitives::U256;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::SCALE_1E18;
 
 /// Fixed-point denominator (10^18).
@@ -23,7 +24,7 @@ pub const DECIMALS: u8 = 18;
 
 /// Half-life in seconds (365 days). The crate computes the decay ratio `T/H` in
 /// seconds to keep sub-day precision.
-pub(crate) const H_SEC: u64 = 365 * 86_400;
+pub(crate) const H_SEC: u64 = 365 * SECONDS_PER_DAY;
 
 /// Saturation limit `L = H / ln2` in fixed-point decayed-days
 /// (~= 526.583690 days). `526583689924471619584 = round(365/ln2 * 10^18)`.

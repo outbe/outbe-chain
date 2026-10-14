@@ -27,11 +27,11 @@ pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 12 * 3600;
 
 /// Midnight-anchored schedule: the commit, reveal and settlement windows each span one day.
 #[cfg(not(feature = "e2e-test"))]
-pub const COMMIT_WINDOW_SECONDS: u64 = 24 * 3600;
+pub const COMMIT_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
 #[cfg(not(feature = "e2e-test"))]
-pub const REVEAL_WINDOW_SECONDS: u32 = 24 * 3600;
+pub const REVEAL_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
 #[cfg(not(feature = "e2e-test"))]
-pub const SETTLEMENT_WINDOW_SECONDS: u64 = 24 * 3600;
+pub const SETTLEMENT_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
 
 /// An e2e run walks the same stages inside one day, so its windows have to fit
 /// there: a day-long window would carry the auction over a midnight the run
@@ -39,7 +39,7 @@ pub const SETTLEMENT_WINDOW_SECONDS: u64 = 24 * 3600;
 #[cfg(feature = "e2e-test")]
 pub const COMMIT_WINDOW_SECONDS: u64 = 900;
 #[cfg(feature = "e2e-test")]
-pub const REVEAL_WINDOW_SECONDS: u32 = 1800;
+pub const REVEAL_WINDOW_SECONDS: u64 = 1800;
 #[cfg(feature = "e2e-test")]
 pub const SETTLEMENT_WINDOW_SECONDS: u64 = 1800;
 

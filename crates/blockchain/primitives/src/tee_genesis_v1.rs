@@ -9,6 +9,8 @@
 use alloy_primitives::{keccak256, B256, U256};
 use serde_json::{json, Value};
 
+use crate::time::SECONDS_PER_DAY;
+
 use crate::{
     chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID},
     tee_attestation_v1::{
@@ -53,7 +55,7 @@ pub const INTEL_SGX_ROOT_CA_DER_SHA256: [u8; 32] = [
 ];
 
 /// Canonical production enclave lease period: fourteen consensus days.
-pub const PRODUCTION_TEE_LEASE_SECONDS_V1: u64 = 14 * 24 * 60 * 60;
+pub const PRODUCTION_TEE_LEASE_SECONDS_V1: u64 = 14 * SECONDS_PER_DAY;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProductionSgxMeasurementV1 {

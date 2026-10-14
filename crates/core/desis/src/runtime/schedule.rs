@@ -50,7 +50,7 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
         #[cfg(not(feature = "e2e-test"))]
         let anchor = stored_anchor;
         let commit_end = anchor.saturating_add(COMMIT_WINDOW_SECONDS);
-        let reveal_end = commit_end.saturating_add(u64::from(REVEAL_WINDOW_SECONDS));
+        let reveal_end = commit_end.saturating_add(REVEAL_WINDOW_SECONDS);
         let issuance_end = reveal_end.saturating_add(SETTLEMENT_WINDOW_SECONDS);
         let windows = Windows {
             commit_end,
