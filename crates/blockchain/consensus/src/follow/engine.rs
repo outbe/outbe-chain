@@ -340,6 +340,76 @@ pub(super) fn authenticate_live_finalized(
 
 /// Authenticate a target without a direct certificate through a certified
 /// descendant and its consecutive parent-hash chain.
+/// The latest finalized block in `earliest..=scan_end` whose header carries `epoch`'s
+/// boundary outcome, certified by `epoch` itself.
+async fn find_boundary_outcome<F: FinalizedSource>(
+    source: &F,
+    epoch: Epoch,
+    earliest: u64,
+    scan_end: u64,
+) -> Result<Option<(Height, crate::follow::upstream::AncestorFinalityProof)>> {
+    use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact as CHA;
+
+    for height in (earliest..=scan_end).rev() {
+        let Some(candidate) = source.get_finality_proof(Height::new(height)).await else {
+            continue;
+        };
+        candidate.validate_envelope(Height::new(height))?;
+        let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
+            candidate.target().header().extra_data().as_ref(),
+        )
+        .map_err(|error| FollowError::decode_boundary_candidate(height, error))?;
+        if !matches!(
+            artifacts.consensus_header_artifact,
+            Some(CHA::BoundaryOutcome(ref value)) if value.epoch == epoch.get()
+        ) {
+            continue;
+        }
+        let cert_epoch = candidate.certified.finalization.proposal.round.epoch();
+        if cert_epoch != epoch {
+            return Err(FollowError::BoundaryCandidateWrongEpoch {
+                epoch: epoch.get(),
+                height,
+                cert_epoch: cert_epoch.get(),
+            }
+            .into());
+        }
+        return Ok(Some((Height::new(height), candidate)));
+    }
+    Ok(None)
+}
+
+/// The latest block of the previous epoch in `heights` whose header registers `epoch`'s
+/// committee as its successor.
+async fn find_committee_carrier<F: FinalizedSource>(
+    chain: &SharedCommitteeChain,
+    source: &F,
+    epoch: Epoch,
+    heights: std::ops::Range<u64>,
+) -> Result<Option<u64>> {
+    let previous_epoch = Epoch::new(epoch.get().saturating_sub(1));
+    for height in heights.rev() {
+        let Some(candidate) = source.get_finality_proof(Height::new(height)).await else {
+            continue;
+        };
+        candidate.validate_envelope(Height::new(height))?;
+        if candidate.certified.finalization.proposal.round.epoch() != previous_epoch {
+            continue;
+        }
+        let mut guard = chain.lock();
+        guard.verify_finalization(previous_epoch, &candidate.certified.finalization)?;
+        let admission = guard.admit_authenticated_header(
+            previous_epoch,
+            candidate.target().header().extra_data().as_ref(),
+            AdmissionPolicy::CarrierFor { epoch },
+        )?;
+        if admission == Admission::SuccessorRegistered(epoch) {
+            return Ok(Some(height));
+        }
+    }
+    Ok(None)
+}
+
 pub(super) fn authenticate_ancestor_proof(
     chain: &SharedCommitteeChain,
     epocher: &FollowerEpocher,
@@ -391,8 +461,6 @@ async fn rebuild_epoch_boundary<F>(
 where
     F: FinalizedSource,
 {
-    use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact as CHA;
-
     let previous_epoch = Epoch::new(epoch.get().saturating_sub(1));
     let (earliest, latest) = epocher
         .next_boundary_window(previous_epoch)
@@ -410,70 +478,30 @@ where
         .into());
     }
 
-    let mut boundary = None;
-    for height in (earliest.get()..=scan_end).rev() {
-        let Some(candidate) = source.get_finality_proof(Height::new(height)).await else {
-            continue;
-        };
-        candidate.validate_envelope(Height::new(height))?;
-        let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
-            candidate.target().header().extra_data().as_ref(),
-        )
-        .map_err(|error| FollowError::decode_boundary_candidate(height, error))?;
-        if matches!(
-            artifacts.consensus_header_artifact,
-            Some(CHA::BoundaryOutcome(ref value)) if value.epoch == epoch.get()
-        ) {
-            let cert_epoch = candidate.certified.finalization.proposal.round.epoch();
-            if cert_epoch != epoch {
-                return Err(FollowError::BoundaryCandidateWrongEpoch {
-                    epoch: epoch.get(),
-                    height,
-                    cert_epoch: cert_epoch.get(),
-                }
-                .into());
-            }
-            boundary = Some((Height::new(height), candidate));
-            break;
-        }
-    }
     let (boundary_height, boundary) =
-        boundary.ok_or_else(|| FollowError::MissingBoundaryOutcomeInWindow {
-            epoch: epoch.get(),
-            earliest: earliest.get(),
-            scan_end,
-        })?;
+        find_boundary_outcome(source, epoch, earliest.get(), scan_end)
+            .await?
+            .ok_or_else(|| FollowError::MissingBoundaryOutcomeInWindow {
+                epoch: epoch.get(),
+                earliest: earliest.get(),
+                scan_end,
+            })?;
 
     let previous_activation = epocher
         .activation_height(previous_epoch)
         .ok_or(FollowError::MissingPriorActivationHeight)?
         .get();
-    let mut carrier_height = None;
-    for height in (previous_activation..boundary_height.get()).rev() {
-        let Some(candidate) = source.get_finality_proof(Height::new(height)).await else {
-            continue;
-        };
-        candidate.validate_envelope(Height::new(height))?;
-        if candidate.certified.finalization.proposal.round.epoch() != previous_epoch {
-            continue;
-        }
-        let mut guard = chain.lock();
-        guard.verify_finalization(previous_epoch, &candidate.certified.finalization)?;
-        let admission = guard.admit_authenticated_header(
-            previous_epoch,
-            candidate.target().header().extra_data().as_ref(),
-            AdmissionPolicy::CarrierFor { epoch },
-        )?;
-        if admission == Admission::SuccessorRegistered(epoch) {
-            carrier_height = Some(height);
-            break;
-        }
-    }
-    let carrier_height =
-        carrier_height.ok_or_else(|| FollowError::MissingCommitteePreAnnounce {
-            epoch: epoch.get(),
-            boundary_height: boundary_height.get(),
-        })?;
+    let carrier_height = find_committee_carrier(
+        chain,
+        source,
+        epoch,
+        previous_activation..boundary_height.get(),
+    )
+    .await?
+    .ok_or_else(|| FollowError::MissingCommitteePreAnnounce {
+        epoch: epoch.get(),
+        boundary_height: boundary_height.get(),
+    })?;
 
     // The boundary block, finalized by the new committee itself, must carry
     // the outcome its carrier pre-announced. Live delivery does exactly this check.
