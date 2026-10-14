@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::keys::address_u32_key;
+use outbe_primitives::storage::types::StorageSet;
 
 use crate::errors::GovernanceError;
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
@@ -188,14 +189,7 @@ impl GovernanceContract<'_> {
             return Err(GovernanceError::InvalidStatus.into());
         }
         let set = self.oip_by_status.get_set(&status);
-        let (start, end) = page_bounds(set.len()?, offset, limit);
-        let mut out = Vec::with_capacity((end - start) as usize);
-        for i in start..end {
-            if let Some(id) = set.at(i)? {
-                out.push(self.oip_meta(id)?);
-            }
-        }
-        Ok(out)
+        self.status_page(&set, offset, limit, Self::oip_meta)
     }
 
     /// GIPs currently in `status` (paginated).
@@ -209,11 +203,21 @@ impl GovernanceContract<'_> {
             return Err(GovernanceError::InvalidStatus.into());
         }
         let set = self.gip_by_status.get_set(&status);
+        self.status_page(&set, offset, limit, Self::gip_meta)
+    }
+
+    fn status_page(
+        &self,
+        set: &StorageSet<'_, U256>,
+        offset: U256,
+        limit: U256,
+        meta: fn(&Self, U256) -> Result<ProposalMeta>,
+    ) -> Result<Vec<ProposalMeta>> {
         let (start, end) = page_bounds(set.len()?, offset, limit);
         let mut out = Vec::with_capacity((end - start) as usize);
         for i in start..end {
             if let Some(id) = set.at(i)? {
-                out.push(self.gip_meta(id)?);
+                out.push(meta(self, id)?);
             }
         }
         Ok(out)
