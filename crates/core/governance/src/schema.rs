@@ -83,23 +83,25 @@ pub struct GovernanceContract {
     #[attribute(order = 7)]
     pub canon_revisions: outbe_primitives::storage::dsl::Map<u64, B256>,
 
-    // --- proposal id counters + authorities: all one slot each ---
+    // --- proposal id counters + reserved slot: all one slot each ---
     //
     // These fixed-width fields come BEFORE the record maps on purpose. A
     // `Map<K, Record>` reserves `Record::SLOTS` contiguous base slots (one per
     // record field, for keccak namespacing). Because `oips`/`gips` come last,
-    // every seeded slot (texts, versions, hashes, revisions, counters,
-    // authorities) stays at a fixed index, regardless of how the record types
-    // grow. `scripts/seed_genesis.py` depends on this stability. The
+    // every seeded slot (texts, versions, hashes, revisions, counters) stays at
+    // a fixed index, regardless of how the record types grow.
+    // `scripts/seed_genesis.py` depends on this stability. The
     // `storage_layout_matches_seeder` test pins it.
     #[attribute(order = 8)]
     pub next_oip_id: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 9)]
     pub next_gip_id: outbe_primitives::storage::dsl::Value<u64>,
 
-    // --- authorities: PoC write-gate (validator addresses, seeded at genesis) ---
-    #[attribute(order = 10)]
-    pub authorities: outbe_primitives::storage::dsl::Map<Address, bool>,
+    /// Reserved. Held the genesis copy of the validator addresses that gated
+    /// writes. The gate now reads the live `ValidatorSet`, so nothing reads or
+    /// writes this map. Kept so `oips`, `gips` and the indexes stay where they are.
+    #[attribute(order = 10, deprecated = true)]
+    pub reserved_authorities: outbe_primitives::storage::dsl::Map<Address, bool>,
 
     // --- proposals: OIP and GIP, separate maps and id sequences (each reserves
     //     Oip::SLOTS / Gip::SLOTS base slots) ---
