@@ -528,7 +528,7 @@ fn seed_called_nod(
     outbe_nod::api::add_nod(
         &storage,
         outbe_compressed_entities::ExecutionReaders {
-            scope: scope,
+            scope,
             parent: &empty_reader,
         },
         &fixture.item,
