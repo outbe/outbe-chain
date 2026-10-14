@@ -312,7 +312,7 @@ fn try_forfeit(
             });
             match burn {
                 Ok(()) => burned += 1,
-                Err(error) if crate::called::sweep_failure(&error) == SweepFailure::Stop => break,
+                Err(error) if error.body_sweep_failure() == SweepFailure::Stop => break,
                 Err(error) => return Err(error),
             }
         }
@@ -2170,24 +2170,6 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
         expected
     });
     assert_eq!(forfeited_event_loads(&provider), expected);
-}
-
-#[test]
-fn a_body_corruption_in_a_nod_sweep_fails_the_block() {
-    use crate::called::sweep_failure;
-    use outbe_primitives::error::{PrecompileError, SweepFailure};
-    assert_eq!(
-        sweep_failure(&PrecompileError::BodyReadCorruption("x".into())),
-        SweepFailure::Propagate
-    );
-    assert_eq!(
-        sweep_failure(&PrecompileError::Revert("x".into())),
-        SweepFailure::Skip
-    );
-    assert_eq!(
-        sweep_failure(&PrecompileError::OutOfGas),
-        SweepFailure::Stop
-    );
 }
 
 #[test]

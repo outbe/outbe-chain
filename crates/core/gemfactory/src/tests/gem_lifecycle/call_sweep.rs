@@ -647,3 +647,16 @@ fn idle_daily_scans_do_not_write_bodies() {
     });
     assert_eq!(provider.get_events(GEM_ADDRESS).len(), before);
 }
+
+/// A corrupt gem body is this node's store: the call sweep fails the block.
+#[test]
+fn a_corrupt_body_fails_the_call_sweep() {
+    use outbe_oracle::call_sweep::CallSweep;
+    use outbe_primitives::error::{PrecompileError, SweepFailure};
+    assert_eq!(
+        <crate::called::GemCallSweep as CallSweep>::classify(&PrecompileError::BodyReadCorruption(
+            "x".into()
+        )),
+        SweepFailure::Propagate
+    );
+}

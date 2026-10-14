@@ -98,7 +98,7 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     }
 
     fn classify(error: &PrecompileError) -> SweepFailure {
-        sweep_failure(error)
+        error.body_sweep_failure()
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
@@ -114,15 +114,6 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
         let (called, finished) = call_slice(ctx, &self.nod, pinned_day, &mut called_days)?;
         self.nod.emit_days_metadata_update(&called_days)?;
         Ok((called, finished))
-    }
-}
-
-/// Nod's own index checks revert, so a body corruption reaching a sweep is this
-/// node's body store.
-pub(crate) fn sweep_failure(error: &PrecompileError) -> SweepFailure {
-    match error {
-        PrecompileError::BodyReadCorruption(_) => SweepFailure::Propagate,
-        other => other.sweep_failure(),
     }
 }
 

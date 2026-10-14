@@ -16,7 +16,7 @@ use outbe_primitives::{
     call_bins,
     call_breach::{BreachTerms, ScanTerms},
     daily_sweep::PinnedDay,
-    error::Result,
+    error::{PrecompileError, Result, SweepFailure},
     storage::dsl::Value,
     sweep_budget::SweepBudget,
     time::first_full_day,
@@ -40,7 +40,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_sweep::continue_day(ctx, &mut GemCallSweep::new(ctx))
 }
 
-struct GemCallSweep<'storage> {
+pub(crate) struct GemCallSweep<'storage> {
     gem: GemContract<'storage>,
 }
 
@@ -73,6 +73,10 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
 
     fn currency_cursor(&self) -> &Value<'storage, u32> {
         &self.gem.call_currency_cursor
+    }
+
+    fn classify(error: &PrecompileError) -> SweepFailure {
+        error.body_sweep_failure()
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {

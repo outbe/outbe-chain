@@ -2,7 +2,7 @@ use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::Result,
+    error::{Result, SweepFailure},
     expiry_queue::{self, Due, ExpiryHandler},
     sweep_budget::SweepBudget,
 };
@@ -66,6 +66,10 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for GemExpiry<'_, '_, P> {
     /// A forfeit loads a body and deletes it, which costs more than a slot write.
     fn charge(&self, budget: &mut SweepBudget) -> bool {
         budget.body_write()
+    }
+
+    fn classify(&self, error: &PrecompileError) -> SweepFailure {
+        error.body_sweep_failure()
     }
 
     fn expire_member(&mut self, bucket: B256, gem_id: U256) -> Result<()> {

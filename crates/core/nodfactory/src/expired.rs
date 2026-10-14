@@ -11,7 +11,7 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
-use crate::called::{materializing, sweep_failure};
+use crate::called::materializing;
 use outbe_nod::state::ExpiryHours;
 use outbe_nod::{api, precompile::INod, schema::NodContract};
 
@@ -93,7 +93,7 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for NodExpiry<'_, '_, P> {
     }
 
     fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        sweep_failure(error)
+        error.body_sweep_failure()
     }
 
     fn deferred(&mut self, bucket_key: B256, retry_at: u64) -> Result<()> {
