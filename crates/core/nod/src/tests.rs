@@ -287,11 +287,8 @@ fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
         .unwrap();
 
         let nod = NodContract::new(storage.clone());
-        let call_price = nod
-            .callable_bucket_call_price_minor
-            .read(&usd.bucket_key)
-            .unwrap();
-        let bin = crate::pricing::price_to_bin(call_price).unwrap();
+        let call_price = nod.bucket_call_price_minor.read(&usd.bucket_key).unwrap();
+        let bin = outbe_primitives::call_bins::price_to_bin(call_price).unwrap();
 
         // Identical call prices land in the same bin id under different namespaces.
         for iso in [USD, EUR] {
@@ -362,9 +359,7 @@ fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
             assert_eq!(bucket.floor_price_minor().unwrap(), U256::from(floor));
             assert_eq!(nod.bucket_nod_count.read(&body.bucket_key).unwrap(), 1);
             assert_eq!(
-                nod.callable_bucket_call_price_minor
-                    .read(&body.bucket_key)
-                    .unwrap(),
+                nod.bucket_call_price_minor.read(&body.bucket_key).unwrap(),
                 U256::from(call_price)
             );
         }

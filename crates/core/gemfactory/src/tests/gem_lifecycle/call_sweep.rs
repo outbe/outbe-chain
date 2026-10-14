@@ -135,7 +135,10 @@ fn a_bin_wider_than_the_budget_resumes_inside_it() {
             callable_gem_of(storage, world, USD, 1, issued_at, U256::from(100_000u64)),
         ];
         let bin = |id: U256| {
-            GemContract::price_to_bin(view(storage, world, id).terms.call_price_minor).unwrap()
+            outbe_primitives::call_bins::price_to_bin(
+                view(storage, world, id).terms.call_price_minor,
+            )
+            .unwrap()
         };
         assert_eq!(bin(ids[0]), bin(ids[1]), "one bin, two buckets");
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));

@@ -82,7 +82,7 @@ fn issue(
         let bucket_key =
             outbe_nod::identity::bucket_key(day, call.entryPriceMinor, call.referenceCurrency);
         NodContract::new(storage.clone())
-            .callable_bucket_issued_at
+            .bucket_issued_at
             .write(&bucket_key, call.issuedAt)?;
     }
     Ok(())
@@ -100,6 +100,6 @@ fn requeue_called_bucket(
             "closeCallNoticeForTest: bucket not queued".into(),
         ));
     }
-    nod.remove_called_bucket(bucket_key)?;
-    nod.push_called_bucket(bucket_key, deadline)
+    nod.remove_called(bucket_key)?;
+    nod.push_called(bucket_key, deadline)
 }

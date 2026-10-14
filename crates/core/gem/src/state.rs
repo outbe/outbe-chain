@@ -419,7 +419,7 @@ impl GemContract<'_> {
             return Ok(());
         }
         let iso = self.bucket_currency.read(&bucket)?;
-        let bin = Self::price_to_bin(price)?;
+        let bin = call_bins::price_to_bin(price)?;
         call_bins::insert(&CallBins(self, iso), bucket, bin)
     }
 
@@ -428,12 +428,6 @@ impl GemContract<'_> {
         let iso = self.bucket_currency.read(&bucket)?;
         call_bins::remove(&CallBins(self, iso), bucket)?;
         Ok(())
-    }
-
-    // --- Bin keys (PancakeSwap LB-style) ----------------------------------------
-
-    pub fn price_to_bin(price: U256) -> Result<u32> {
-        call_bins::price_to_bin(price)
     }
 }
 

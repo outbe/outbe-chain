@@ -227,7 +227,7 @@ fn call_bucket(
     {
         return Ok(false);
     }
-    let issued_at = nod.callable_bucket_issued_at.read(&bucket_key)?;
+    let issued_at = nod.bucket_issued_at.read(&bucket_key)?;
     let terms = nod.read_call_terms(bucket_key)?;
     let breached = window.breached(&BreachTerms {
         call_price: terms.call_price_minor,
@@ -251,7 +251,7 @@ fn mark_called(
 ) -> Result<()> {
     let deadline = api::settlement_deadline_of(now, notice_period);
     nod.remove_call_bin(bucket_key)?;
-    nod.push_called_bucket(bucket_key, deadline)?;
+    nod.push_called(bucket_key, deadline)?;
     nod.bucket_called_at.write(&bucket_key, now)?;
     nod.emit(INod::NodBucketCalled {
         bucketKey: bucket_key,

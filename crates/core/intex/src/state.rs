@@ -114,11 +114,6 @@ impl IntexContract<'_> {
 impl IntexContract<'_> {
     // --- bin keys ---
 
-    /// Map a six-decimal COEN/ISO price to its LB-style bin id (bounded by the codec).
-    pub fn price_to_bin(price: U256) -> Result<u32> {
-        call_bins::price_to_bin(price)
-    }
-
     pub fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
         call_bins::bin_index_key(reference_currency, bin_id, index)
     }
@@ -140,7 +135,7 @@ impl IntexContract<'_> {
         reference_currency: u16,
         call_price: U256,
     ) -> Result<()> {
-        let bin_id = Self::price_to_bin(call_price)?;
+        let bin_id = call_bins::price_to_bin(call_price)?;
         self.call_bin_index(reference_currency).insert(
             &CallBins(&*self, reference_currency),
             series_id,
@@ -182,7 +177,7 @@ impl IntexContract<'_> {
 
     // --- call-price bin index the Called scan walks ---
 
-    pub fn remove_call_bin_group(
+    pub fn remove_call_bin(
         &mut self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
@@ -231,7 +226,7 @@ impl IntexContract<'_> {
 
     /// Queues a called group on its deadline. It has left the bins, and its members stay
     /// in the group until each one expires.
-    pub fn push_called_group(
+    pub fn push_called(
         &mut self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,
@@ -275,7 +270,7 @@ impl IntexContract<'_> {
 
     /// Takes a called group off the queue. Its members stay.
     #[cfg(feature = "e2e-test")]
-    pub fn remove_called_group(
+    pub fn remove_called(
         &mut self,
         reference_currency: u16,
         worldwide_day: WorldwideDay,

@@ -48,7 +48,7 @@ fn requeue(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -> Resul
     if credis.called_deadline.read(&credis_id)? == 0 {
         return Err(CredisFactoryError::NotCalled.into());
     }
-    credis.unqueue_called(credis_id)?;
-    credis.queue_called(credis_id, deadline)?;
+    credis.remove_called(credis_id)?;
+    credis.push_called(credis_id, deadline)?;
     Ok(Bytes::new())
 }

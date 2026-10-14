@@ -53,8 +53,8 @@ pub(crate) fn try_call_group(
         mark_called(storage, series_id, called_at)?;
     }
     let settlement_deadline = u64::from(called_at) + u64::from(series.call_notice_period_seconds);
-    intex.remove_call_bin_group(group.iso_code, group.worldwide_day)?;
-    intex.push_called_group(group.iso_code, group.worldwide_day, settlement_deadline)?;
+    intex.remove_call_bin(group.iso_code, group.worldwide_day)?;
+    intex.push_called(group.iso_code, group.worldwide_day, settlement_deadline)?;
 
     // The notices leave after the slice, once every group of the block is decided. Each
     // notice carries its own series: members may have expired by the time it is sent.

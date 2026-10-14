@@ -45,7 +45,7 @@ fn gated_spec(period_seconds: u64) -> TriggerSpec {
         start_offset_seconds: 0,
         requires_accounting_window: true,
         coalesces_backlog: false,
-        handler: TriggerHandler::IntexDaily,
+        handler: TriggerHandler::IntexCallDaily,
     }
 }
 
@@ -57,7 +57,7 @@ fn ungated_spec(period_seconds: u64) -> TriggerSpec {
         start_offset_seconds: 0,
         requires_accounting_window: false,
         coalesces_backlog: false,
-        handler: TriggerHandler::IntexDaily,
+        handler: TriggerHandler::IntexCallDaily,
     }
 }
 
@@ -262,7 +262,7 @@ proptest! {
             start_offset_seconds: offset,
             requires_accounting_window: true,
             coalesces_backlog: false,
-            handler: TriggerHandler::IntexDaily,
+            handler: TriggerHandler::IntexCallDaily,
         };
         let block = block_ctx(block_number, block_ts);
 

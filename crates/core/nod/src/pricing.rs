@@ -14,18 +14,7 @@ pub fn is_issuable_entry(entry_price_minor: U256) -> bool {
     marked_up(entry_price_minor, u16::MAX).is_some()
 }
 
-/// Maps a six-decimal call price (or oracle rate) to a 24-bit
-/// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]`.
-/// See [`outbe_primitives::math::price_helper::get_id_from_price`] for the saturation
-/// rationale.
-pub fn price_to_bin(price_minor: U256) -> Result<u32> {
-    if price_minor.is_zero() {
-        return Ok(0);
-    }
-    reference_price::coen_iso_price_to_bin_id(price_minor, BIN_STEP_BP)
-}
-
-/// Inverse of `price_to_bin`: returns the lower edge of bin `bin_id` in
+/// Inverse of `call_bins::price_to_bin`: returns the lower edge of bin `bin_id` in
 /// six-decimal minor units. Diagnostic-only. `bin_to_price_floor` may
 /// fail at extreme bin ids whose LB-pow exponent exceeds `2^20`.
 pub fn bin_to_price_floor(bin_id: u32) -> Result<U256> {

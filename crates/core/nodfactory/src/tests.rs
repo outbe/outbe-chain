@@ -308,7 +308,7 @@ impl World {
             let nod = NodContract::new(storage);
             nod.bucket_called_at.write(&item.bucket_key, at).unwrap();
             // A free Nod's bucket seals no call terms; give it the notice a priced one seals.
-            let notice = &nod.callable_bucket_call_notice_period_seconds;
+            let notice = &nod.bucket_call_notice_period_seconds;
             if notice.read(&item.bucket_key).unwrap() == 0 {
                 notice.write(&item.bucket_key, CALL_NOTICE_PERIOD).unwrap();
             }
@@ -336,7 +336,7 @@ impl World {
             .floor_price_minor()
             .unwrap();
             let issued_at = NodContract::new(storage.clone())
-                .callable_bucket_issued_at
+                .bucket_issued_at
                 .read(&item.bucket_key)
                 .unwrap();
             let pair = outbe_oracle::api::AddressPair::new_coen_to(item.reference_currency);

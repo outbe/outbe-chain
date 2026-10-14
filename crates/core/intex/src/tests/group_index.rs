@@ -30,7 +30,7 @@ fn bin_count(f: &IntexContract<'_>, bin: u32) -> u32 {
 }
 
 fn call_bin() -> u32 {
-    IntexContract::price_to_bin(U256::from(CALL_PRICE)).unwrap()
+    outbe_primitives::call_bins::price_to_bin(U256::from(CALL_PRICE)).unwrap()
 }
 
 #[test]
@@ -111,8 +111,7 @@ fn removing_the_group_frees_its_bin_and_keeps_its_members() {
         f.insert_call_bin(sid(20260213, b"USD"), ISO, price)
             .unwrap();
 
-        f.remove_call_bin_group(ISO, WorldwideDay::new(20260212))
-            .unwrap();
+        f.remove_call_bin(ISO, WorldwideDay::new(20260212)).unwrap();
 
         // Swap-and-pop keeps the untouched day reachable.
         assert_eq!(bin_count(&f, call_bin()), 1);
@@ -127,8 +126,7 @@ fn removing_the_group_frees_its_bin_and_keeps_its_members() {
             "the members wait for the expiry sweep"
         );
 
-        f.remove_call_bin_group(ISO, WorldwideDay::new(20260213))
-            .unwrap();
+        f.remove_call_bin(ISO, WorldwideDay::new(20260213)).unwrap();
         assert_eq!(bin_count(&f, call_bin()), 0);
         assert!(f.call_bin_groups(ISO, call_bin()).unwrap().is_empty());
     });
@@ -141,8 +139,7 @@ fn removing_an_unindexed_group_is_a_no_op() {
         f.insert_call_bin(sid(20260212, b"USD"), ISO, U256::from(CALL_PRICE))
             .unwrap();
 
-        f.remove_call_bin_group(ISO, WorldwideDay::new(20260213))
-            .unwrap();
+        f.remove_call_bin(ISO, WorldwideDay::new(20260213)).unwrap();
 
         assert_eq!(bin_count(&f, call_bin()), 1);
         assert_eq!(
@@ -162,8 +159,7 @@ fn the_currencies_stay_apart() {
         f.insert_call_bin(series, ISO, price).unwrap();
         f.insert_call_bin(series, 978, price).unwrap();
 
-        f.remove_call_bin_group(ISO, WorldwideDay::new(20260212))
-            .unwrap();
+        f.remove_call_bin(ISO, WorldwideDay::new(20260212)).unwrap();
 
         assert_eq!(bin_count(&f, call_bin()), 0);
         assert_eq!(

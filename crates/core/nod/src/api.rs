@@ -36,7 +36,7 @@ pub fn effective_state(
 
 pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Result<bool> {
     let issued_at = NodContract::new(storage.clone())
-        .callable_bucket_issued_at
+        .bucket_issued_at
         .read(&bucket.bucket_key)?;
     outbe_oracle::api::closed_above_floor(
         storage.clone(),
@@ -97,9 +97,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     if called_at == 0 {
         return Ok(0);
     }
-    let notice = nod
-        .callable_bucket_call_notice_period_seconds
-        .read(&bucket_key)?;
+    let notice = nod.bucket_call_notice_period_seconds.read(&bucket_key)?;
     Ok(settlement_deadline_of(called_at, notice))
 }
 

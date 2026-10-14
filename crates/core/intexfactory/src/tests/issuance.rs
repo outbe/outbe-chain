@@ -104,7 +104,7 @@ fn floor_and_call_derivation() {
 #[test]
 fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
     assert_eq!(
-        IntexContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        outbe_primitives::call_bins::price_to_bin(U256::from(1_000_000u64)).unwrap(),
         REAL_ID_SHIFT as u32
     );
 }

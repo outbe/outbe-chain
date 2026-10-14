@@ -5,7 +5,7 @@ fn issue_enrolls_in_call_bin() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let f = IntexContract::new(s.clone());
-        let bin = IntexContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+        let bin = outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
             f.call_bin_count
                 .read(&IntexContract::scoped(REFERENCE_ISO, bin))
@@ -71,7 +71,7 @@ fn insert_remove_call_bin_roundtrip() {
     with_factory(|s| {
         let mut f = IntexContract::new(s.clone());
         let trigger = U256::from(EXPECTED_TRIGGER);
-        let bin = IntexContract::price_to_bin(trigger).unwrap();
+        let bin = outbe_primitives::call_bins::price_to_bin(trigger).unwrap();
         f.insert_call_bin(sid(11), REFERENCE_ISO, trigger).unwrap();
         f.insert_call_bin(sid(22), REFERENCE_ISO, trigger).unwrap();
         assert_eq!(
@@ -80,7 +80,7 @@ fn insert_remove_call_bin_roundtrip() {
                 .unwrap(),
             2
         );
-        f.remove_call_bin_group(REFERENCE_ISO, WorldwideDay::new(11))
+        f.remove_call_bin(REFERENCE_ISO, WorldwideDay::new(11))
             .unwrap();
         assert_eq!(
             f.call_bin_count
@@ -88,7 +88,7 @@ fn insert_remove_call_bin_roundtrip() {
                 .unwrap(),
             1
         );
-        f.remove_call_bin_group(REFERENCE_ISO, WorldwideDay::new(22))
+        f.remove_call_bin(REFERENCE_ISO, WorldwideDay::new(22))
             .unwrap();
         assert_eq!(
             f.call_bin_count
@@ -123,7 +123,7 @@ fn try_call_marks_called_when_threshold_met() {
                 .unwrap(),
             outbe_intex::IntexState::Called
         );
-        let bin = IntexContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+        let bin = outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
             f.call_bin_count
                 .read(&IntexContract::scoped(REFERENCE_ISO, bin))

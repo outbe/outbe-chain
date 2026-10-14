@@ -415,13 +415,13 @@ struct SealedCallTerms {
 fn reterm(storage: &StorageHandle<'_>, bucket_key: B256, iso: u16, terms: SealedCallTerms) {
     let nod = NodContract::new(storage.clone());
     let window = terms.window_days * SECS_PER_DAY;
-    nod.callable_bucket_call_window_seconds
+    nod.bucket_call_window_seconds
         .write(&bucket_key, window)
         .unwrap();
-    nod.callable_bucket_call_threshold_seconds
+    nod.bucket_call_threshold_seconds
         .write(&bucket_key, terms.threshold_days * SECS_PER_DAY)
         .unwrap();
-    nod.callable_bucket_call_notice_period_seconds
+    nod.bucket_call_notice_period_seconds
         .write(&bucket_key, terms.notice_days * SECS_PER_DAY)
         .unwrap();
     outbe_primitives::call_breach::widen_scan_terms(
@@ -451,36 +451,29 @@ fn issuance_seals_the_call_terms_on_the_bucket() {
         .unwrap();
         let nod = NodContract::new(storage.clone());
         assert_eq!(
-            nod.callable_bucket_call_rate
-                .read(&item.bucket_key)
-                .unwrap(),
+            nod.bucket_call_rate.read(&item.bucket_key).unwrap(),
             CALL_RATE_PCT
         );
         assert_eq!(
-            nod.callable_bucket_call_window_seconds
+            nod.bucket_call_window_seconds
                 .read(&item.bucket_key)
                 .unwrap(),
             CALL_WINDOW
         );
         assert_eq!(
-            nod.callable_bucket_call_threshold_seconds
+            nod.bucket_call_threshold_seconds
                 .read(&item.bucket_key)
                 .unwrap(),
             CALL_THRESHOLD
         );
         assert_eq!(
-            nod.callable_bucket_call_notice_period_seconds
+            nod.bucket_call_notice_period_seconds
                 .read(&item.bucket_key)
                 .unwrap(),
             CALL_NOTICE_PERIOD
         );
         assert_eq!(nod.max_call_window_seconds.read(&ISO).unwrap(), CALL_WINDOW);
-        assert_eq!(
-            nod.callable_bucket_issued_at
-                .read(&item.bucket_key)
-                .unwrap(),
-            START
-        );
+        assert_eq!(nod.bucket_issued_at.read(&item.bucket_key).unwrap(), START);
         assert_ne!(
             nod.call_bucket_slot.read(&item.bucket_key).unwrap(),
             0,
@@ -510,16 +503,14 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
         let dev = outbe_nod::config::NodParams::DEV;
         assert_eq!(
             (
-                nod.callable_bucket_call_rate
+                nod.bucket_call_rate.read(&item.bucket_key).unwrap(),
+                nod.bucket_call_window_seconds
                     .read(&item.bucket_key)
                     .unwrap(),
-                nod.callable_bucket_call_window_seconds
+                nod.bucket_call_threshold_seconds
                     .read(&item.bucket_key)
                     .unwrap(),
-                nod.callable_bucket_call_threshold_seconds
-                    .read(&item.bucket_key)
-                    .unwrap(),
-                nod.callable_bucket_call_notice_period_seconds
+                nod.bucket_call_notice_period_seconds
                     .read(&item.bucket_key)
                     .unwrap(),
             ),
@@ -562,7 +553,7 @@ fn a_later_member_does_not_reissue_the_bucket_stamp() {
         assert_eq!(first.bucket_key, second.bucket_key);
         assert_eq!(
             NodContract::new(storage.clone())
-                .callable_bucket_issued_at
+                .bucket_issued_at
                 .read(&first.bucket_key)
                 .unwrap(),
             START
@@ -654,7 +645,7 @@ fn the_call_price_is_the_entry_price_times_the_call_rate() {
     harness(|storage, scope, parent| {
         let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x11), ISO);
         let stored = NodContract::new(storage.clone())
-            .callable_bucket_call_price_minor
+            .bucket_call_price_minor
             .read(&item.bucket_key)
             .unwrap();
         assert_eq!(
@@ -1199,8 +1190,8 @@ fn a_bucket_inside_its_notice_waits_while_its_neighbours_burn() {
         let mut nod = NodContract::new(storage.clone());
         let kept = items[1].bucket_key;
         let past = at + NOTICE + HOUR;
-        nod.remove_called_bucket(kept).unwrap();
-        nod.push_called_bucket(kept, past + NOTICE).unwrap();
+        nod.remove_called(kept).unwrap();
+        nod.push_called(kept, past + NOTICE).unwrap();
         finalize_through(storage, past);
         assert_eq!(scan(storage, scope, parent, past), 2);
 
@@ -1305,7 +1296,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
         assert_eq!(called_at(storage, items[0].bucket_key), at);
         assert_eq!(called_at(storage, items[1].bucket_key), at);
         assert_eq!(called_at(storage, items[2].bucket_key), 0);
-        let bin = outbe_nod::pricing::price_to_bin(at_call()).unwrap();
+        let bin = outbe_primitives::call_bins::price_to_bin(at_call()).unwrap();
         assert_eq!(
             nod.call_bin_count
                 .read(&outbe_primitives::call_bins::scoped(ISO, bin))
@@ -1473,10 +1464,8 @@ fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfe
         let mut nod = NodContract::new(storage.clone());
         for index in 1..=SWEEP_VISITS_PER_BLOCK {
             let key = B256::left_padding_from(&index.to_be_bytes());
-            nod.callable_bucket_currency.write(&key, ISO).unwrap();
-            nod.callable_bucket_call_price_minor
-                .write(&key, at_call())
-                .unwrap();
+            nod.bucket_currency.write(&key, ISO).unwrap();
+            nod.bucket_call_price_minor.write(&key, at_call()).unwrap();
             nod.insert_call_bin(key).unwrap();
         }
         let fresh = nod_item(Address::repeat_byte(0x22), OTHER_ISO);

@@ -50,7 +50,7 @@ fn item(owner: Address) -> NodItemState {
 #[test]
 fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
     assert_eq!(
-        crate::pricing::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        outbe_primitives::call_bins::price_to_bin(U256::from(1_000_000u64)).unwrap(),
         REAL_ID_SHIFT as u32
     );
 }
@@ -324,27 +324,21 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.bucket_nod_count.base_slot(), U256::from(18));
         assert_eq!(nod.bucket_nods.base_slot(), U256::from(19));
         assert_eq!(nod.bucket_nod_index.base_slot(), U256::from(20));
-        assert_eq!(
-            nod.callable_bucket_call_price_minor.base_slot(),
-            U256::from(21)
-        );
-        assert_eq!(nod.callable_bucket_currency.base_slot(), U256::from(22));
+        assert_eq!(nod.bucket_call_price_minor.base_slot(), U256::from(21));
+        assert_eq!(nod.bucket_currency.base_slot(), U256::from(22));
         assert_eq!(nod.bucket_called_at.base_slot(), U256::from(23));
         assert_eq!(
             nod.ocomp_materialization_protocol_bundle_hash.base_slot(),
             U256::from(24)
         );
-        assert_eq!(nod.callable_bucket_call_rate.base_slot(), U256::from(25));
+        assert_eq!(nod.bucket_call_rate.base_slot(), U256::from(25));
+        assert_eq!(nod.bucket_call_window_seconds.base_slot(), U256::from(26));
         assert_eq!(
-            nod.callable_bucket_call_window_seconds.base_slot(),
-            U256::from(26)
-        );
-        assert_eq!(
-            nod.callable_bucket_call_threshold_seconds.base_slot(),
+            nod.bucket_call_threshold_seconds.base_slot(),
             U256::from(27)
         );
         assert_eq!(
-            nod.callable_bucket_call_notice_period_seconds.base_slot(),
+            nod.bucket_call_notice_period_seconds.base_slot(),
             U256::from(28)
         );
         assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(29));
@@ -352,7 +346,7 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(31));
         assert_eq!(nod.entry_price_currency.base_slot(), U256::from(32));
         assert_eq!(nod.entry_price_minor.base_slot(), U256::from(33));
-        assert_eq!(nod.callable_bucket_issued_at.base_slot(), U256::from(34));
+        assert_eq!(nod.bucket_issued_at.base_slot(), U256::from(34));
         assert_eq!(nod.call_sweep_day.slot(), U256::from(35));
         assert_eq!(nod.call_pending_day.slot(), U256::from(36));
         assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(37));

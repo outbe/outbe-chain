@@ -78,7 +78,8 @@ mod group_scans {
             let f = IntexContract::new(s.clone());
             let members = f.call_bin_group_members(REFERENCE_ISO, day()).unwrap();
             assert_eq!(members.len(), ISSUANCES.len());
-            let bin = IntexContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+            let bin =
+                outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
             assert_eq!(f.call_bin_groups(REFERENCE_ISO, bin).unwrap(), vec![day()]);
         });
     }

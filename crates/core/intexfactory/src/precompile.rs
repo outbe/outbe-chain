@@ -75,8 +75,8 @@ fn requeue_called_group(
             "closeCallNoticeForTest: no called group".into(),
         ));
     }
-    intex.remove_called_group(iso_code, worldwide_day)?;
-    intex.push_called_group(iso_code, worldwide_day, deadline)
+    intex.remove_called(iso_code, worldwide_day)?;
+    intex.push_called(iso_code, worldwide_day, deadline)
 }
 
 /// The e2e-only arming selectors. `None` leaves `data` to the published interface.

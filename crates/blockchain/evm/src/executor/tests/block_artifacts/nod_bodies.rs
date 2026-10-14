@@ -533,7 +533,7 @@ fn seed_called_nod(
     let nod = NodContract::new(storage.clone());
     nod.bucket_called_at.write(&bucket_key, 1)?;
     let notice = nod
-        .callable_bucket_call_notice_period_seconds
+        .bucket_call_notice_period_seconds
         .read(&bucket_key)?;
     outbe_primitives::expiry_queue::push(
         &outbe_nod::state::ExpiryHours(&nod),

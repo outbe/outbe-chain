@@ -15,7 +15,7 @@ use outbe_gem::schema::{GemContract, GemState};
 #[test]
 fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
     assert_eq!(
-        GemContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        outbe_primitives::call_bins::price_to_bin(U256::from(1_000_000u64)).unwrap(),
         REAL_ID_SHIFT as u32
     );
 }
@@ -264,8 +264,10 @@ fn bucket_body_and_terms_survive_until_unpaid_and_settled_are_zero() {
         let bucket = bucket_of(storage, world, gem_id);
         let bucket_id = item(storage, world, gem_id).unwrap().bucket_id();
         let gem = GemContract::new(storage.clone());
-        let bin =
-            GemContract::price_to_bin(view(storage, world, gem_id).terms.call_price_minor).unwrap();
+        let bin = outbe_primitives::call_bins::price_to_bin(
+            view(storage, world, gem_id).terms.call_price_minor,
+        )
+        .unwrap();
         assert!(tree_math::contains(&outbe_gem::CallBins(&gem, USD), bin).unwrap());
 
         qualify_and_settle(storage, world, gem_id);

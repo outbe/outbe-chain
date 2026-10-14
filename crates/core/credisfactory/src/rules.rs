@@ -168,7 +168,7 @@ impl CredisRules for CredisContract<'_> {
             self.widen_scan_terms(&record)?;
             self.append_to_owner_index(params.owner, credis_id)?;
             self.append_to_global_index(credis_id)?;
-            self.index_for_call(&record)?;
+            self.insert_call_bin(&record)?;
 
             self.emit(outbe_credis::precompile::ICredis::Transfer {
                 from: Address::ZERO,
@@ -192,8 +192,8 @@ impl CredisRules for CredisContract<'_> {
         record.state = CredisState::Called as u8;
         record.called_at = now;
         self.update_credis_record(&record)?;
-        self.unindex_for_call(&record)?;
-        self.queue_called(credis_id, settlement_deadline(&record))?;
+        self.remove_call_bin(&record)?;
+        self.push_called(credis_id, settlement_deadline(&record))?;
         self.emit(outbe_credis::precompile::ICredis::CredisCalled {
             credisId: credis_id,
             calledAt: now,
@@ -280,9 +280,9 @@ impl CredisRules for CredisContract<'_> {
         self.update_credis_record(&record)?;
         if closed {
             // Terminal: leave the call index and the settlement-deadline queue.
-            self.unindex_for_call(&record)?;
+            self.remove_call_bin(&record)?;
             if state_before == CredisState::Called {
-                self.unqueue_called(credis_id)?;
+                self.remove_called(credis_id)?;
             }
         }
 
@@ -349,8 +349,8 @@ impl CredisRules for CredisContract<'_> {
             // The remainders stay on the record: they are what was written off and burned.
             record.state = CredisState::Forfeited as u8;
             self.update_credis_record(&record)?;
-            self.unindex_for_call(&record)?;
-            self.unqueue_called(credis_id)?;
+            self.remove_call_bin(&record)?;
+            self.remove_called(credis_id)?;
 
             self.emit(outbe_credis::precompile::ICredis::CredisForfeited {
                 credisId: credis_id,

@@ -92,7 +92,7 @@ impl CredisContract<'_> {
     // ---------------------------------------------------------------------
 
     /// Puts an Issued Credis in the bin of its sealed call price.
-    pub fn index_for_call(&mut self, record: &Credis) -> Result<()> {
+    pub fn insert_call_bin(&mut self, record: &Credis) -> Result<()> {
         let bin = call_bins::price_to_bin(record.call_price_minor)?;
         call_bins::insert(
             &CallBins(self, record.reference_currency),
@@ -102,7 +102,7 @@ impl CredisContract<'_> {
     }
 
     /// No-op for a Credis the call index no longer holds.
-    pub fn unindex_for_call(&mut self, record: &Credis) -> Result<()> {
+    pub fn remove_call_bin(&mut self, record: &Credis) -> Result<()> {
         call_bins::remove(&CallBins(self, record.reference_currency), record.credis_id)?;
         Ok(())
     }
@@ -111,11 +111,11 @@ impl CredisContract<'_> {
     // Settlement-deadline queue
     // ---------------------------------------------------------------------
 
-    pub fn queue_called(&mut self, credis_id: U256, deadline: u64) -> Result<()> {
+    pub fn push_called(&mut self, credis_id: U256, deadline: u64) -> Result<()> {
         expiry_queue::push(&ExpiryHours(self), credis_id, deadline)
     }
 
-    pub fn unqueue_called(&mut self, credis_id: U256) -> Result<()> {
+    pub fn remove_called(&mut self, credis_id: U256) -> Result<()> {
         expiry_queue::remove(&ExpiryHours(self), credis_id)
     }
 }

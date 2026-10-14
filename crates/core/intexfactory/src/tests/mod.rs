@@ -155,7 +155,7 @@ impl SeedCalledGroup for IntexContract<'_> {
             )?;
         }
         self.call_group_count.write(&key, members.len() as u32)?;
-        self.push_called_group(iso, day, deadline)
+        self.push_called(iso, day, deadline)
     }
 }
 

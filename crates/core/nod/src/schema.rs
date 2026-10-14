@@ -271,11 +271,11 @@ pub struct NodContract {
     /// `entry_price_minor * (100 + call_rate) / 100`, using the genesis-selected profile.
     /// Issuance pins this price so the daily scan need not read a bucket body to decide.
     #[attribute(order = 40)]
-    pub callable_bucket_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub bucket_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     /// Snapshotted with the call price. Selects the `COEN/<iso>` VWAP series.
     #[attribute(order = 41)]
-    pub callable_bucket_currency: Mapping<B256, u16>,
+    pub bucket_currency: Mapping<B256, u16>,
 
     /// Block timestamp the bucket was force-called; `0` until called.
     #[attribute(order = 42)]
@@ -291,21 +291,21 @@ pub struct NodContract {
     // --- Call terms sealed at issuance. The daily scan and the settlement-time
     // deadline check read a bucket's own copy. Thus a retuned constant leaves
     // every already-issued bucket on the terms it was issued with.
-    /// Markup percent [`Self::callable_bucket_call_price_minor`] was derived at.
+    /// Markup percent [`Self::bucket_call_price_minor`] was derived at.
     #[attribute(order = 45)]
-    pub callable_bucket_call_rate: Mapping<B256, u16>,
+    pub bucket_call_rate: Mapping<B256, u16>,
 
     /// Trailing span the daily scan reads for breaches, in seconds.
     #[attribute(order = 46)]
-    pub callable_bucket_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Breach seconds within that span which arm the call.
     #[attribute(order = 47)]
-    pub callable_bucket_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Seconds after `bucket_called_at` in which the owner must settle.
     #[attribute(order = 48)]
-    pub callable_bucket_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Widest `call_window_seconds` ever issued in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
@@ -327,7 +327,7 @@ pub struct NodContract {
     /// First member's `issued_at`, sealed at bucket creation. VWAP history counts from its
     /// `first_full_day`. Later members inherit it, like the call terms.
     #[attribute(order = 54)]
-    pub callable_bucket_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub bucket_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // Frozen-day call sweep: 0 = idle. At most one day waits behind the in-flight one.
     /// UTC day an unfinished call sweep is pinned to.

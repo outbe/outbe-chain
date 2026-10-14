@@ -219,7 +219,7 @@ impl NodContract<'_> {
                 };
                 self.bucket_worldwide_day
                     .write(&item.bucket_key, item.worldwide_day)?;
-                self.callable_bucket_issued_at
+                self.bucket_issued_at
                     .write(&item.bucket_key, item.issued_at)?;
                 if let Some(terms) = call_terms {
                     self.seal_bucket_call_terms(item.bucket_key, terms)?;
@@ -287,7 +287,7 @@ impl NodContract<'_> {
         delete(self.storage.clone(), scope, current_item)?;
         if remaining == 0 && bucket.settled_nods == 0 {
             self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
-            self.callable_bucket_issued_at.clear(&item.bucket_key)?;
+            self.bucket_issued_at.clear(&item.bucket_key)?;
             self.bucket_nod_count.clear(&item.bucket_key)?;
             self.remove_callable_bucket(item.bucket_key)?;
             delete(self.storage.clone(), scope, current_bucket)?;
@@ -358,15 +358,16 @@ impl NodContract<'_> {
 
     /// Parks a new bucket in the bin of its sealed call price.
     pub fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
-        let iso = self.callable_bucket_currency.read(&bucket_key)?;
-        let bin =
-            crate::pricing::price_to_bin(self.callable_bucket_call_price_minor.read(&bucket_key)?)?;
+        let iso = self.bucket_currency.read(&bucket_key)?;
+        let bin = outbe_primitives::call_bins::price_to_bin(
+            self.bucket_call_price_minor.read(&bucket_key)?,
+        )?;
         call_bins::insert(&CallBins(self, iso), bucket_key, bin)
     }
 
     /// No-op for a bucket the trie does not hold.
     pub fn remove_call_bin(&mut self, bucket_key: B256) -> Result<()> {
-        let iso = self.callable_bucket_currency.read(&bucket_key)?;
+        let iso = self.bucket_currency.read(&bucket_key)?;
         call_bins::remove(&CallBins(self, iso), bucket_key)?;
         Ok(())
     }
@@ -452,17 +453,16 @@ impl NodContract<'_> {
         bucket_key: B256,
         terms: CallTerms,
     ) -> Result<()> {
-        self.callable_bucket_call_price_minor
+        self.bucket_call_price_minor
             .write(&bucket_key, terms.call_price_minor)?;
-        self.callable_bucket_currency
+        self.bucket_currency
             .write(&bucket_key, terms.reference_currency)?;
-        self.callable_bucket_call_rate
-            .write(&bucket_key, terms.call_rate)?;
-        self.callable_bucket_call_window_seconds
+        self.bucket_call_rate.write(&bucket_key, terms.call_rate)?;
+        self.bucket_call_window_seconds
             .write(&bucket_key, terms.call_window_seconds)?;
-        self.callable_bucket_call_threshold_seconds
+        self.bucket_call_threshold_seconds
             .write(&bucket_key, terms.call_threshold_seconds)?;
-        self.callable_bucket_call_notice_period_seconds
+        self.bucket_call_notice_period_seconds
             .write(&bucket_key, terms.call_notice_period_seconds)?;
         outbe_primitives::call_breach::widen_scan_terms(
             &self.max_call_window_seconds,
@@ -474,28 +474,24 @@ impl NodContract<'_> {
     }
 
     /// Queues a called bucket on the deadline its notice period closes at.
-    pub fn push_called_bucket(&mut self, bucket_key: B256, deadline: u64) -> Result<()> {
+    pub fn push_called(&mut self, bucket_key: B256, deadline: u64) -> Result<()> {
         expiry_queue::push(&ExpiryHours(self), bucket_key, deadline)
     }
 
     /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.
     pub fn read_call_terms(&self, bucket_key: B256) -> Result<CallTerms> {
         Ok(CallTerms {
-            call_price_minor: self.callable_bucket_call_price_minor.read(&bucket_key)?,
-            reference_currency: self.callable_bucket_currency.read(&bucket_key)?,
-            call_rate: self.callable_bucket_call_rate.read(&bucket_key)?,
-            call_window_seconds: self.callable_bucket_call_window_seconds.read(&bucket_key)?,
-            call_threshold_seconds: self
-                .callable_bucket_call_threshold_seconds
-                .read(&bucket_key)?,
-            call_notice_period_seconds: self
-                .callable_bucket_call_notice_period_seconds
-                .read(&bucket_key)?,
+            call_price_minor: self.bucket_call_price_minor.read(&bucket_key)?,
+            reference_currency: self.bucket_currency.read(&bucket_key)?,
+            call_rate: self.bucket_call_rate.read(&bucket_key)?,
+            call_window_seconds: self.bucket_call_window_seconds.read(&bucket_key)?,
+            call_threshold_seconds: self.bucket_call_threshold_seconds.read(&bucket_key)?,
+            call_notice_period_seconds: self.bucket_call_notice_period_seconds.read(&bucket_key)?,
         })
     }
 
     /// No-op for a bucket the queue does not hold.
-    pub fn remove_called_bucket(&mut self, bucket_key: B256) -> Result<()> {
+    pub fn remove_called(&mut self, bucket_key: B256) -> Result<()> {
         expiry_queue::remove(&ExpiryHours(self), bucket_key)
     }
 
@@ -503,17 +499,14 @@ impl NodContract<'_> {
     /// unconditionally.
     pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
         self.remove_call_bin(bucket_key)?;
-        self.remove_called_bucket(bucket_key)?;
-        self.callable_bucket_call_price_minor.clear(&bucket_key)?;
-        self.callable_bucket_currency.get(&bucket_key).delete()?;
-        self.callable_bucket_call_rate.get(&bucket_key).delete()?;
-        self.callable_bucket_call_window_seconds
-            .clear(&bucket_key)?;
-        self.callable_bucket_call_threshold_seconds
-            .clear(&bucket_key)?;
-        self.callable_bucket_call_notice_period_seconds
-            .clear(&bucket_key)?;
-        self.callable_bucket_issued_at.clear(&bucket_key)?;
+        self.remove_called(bucket_key)?;
+        self.bucket_call_price_minor.clear(&bucket_key)?;
+        self.bucket_currency.get(&bucket_key).delete()?;
+        self.bucket_call_rate.get(&bucket_key).delete()?;
+        self.bucket_call_window_seconds.clear(&bucket_key)?;
+        self.bucket_call_threshold_seconds.clear(&bucket_key)?;
+        self.bucket_call_notice_period_seconds.clear(&bucket_key)?;
+        self.bucket_issued_at.clear(&bucket_key)?;
         self.bucket_called_at.clear(&bucket_key)?;
         Ok(())
     }
