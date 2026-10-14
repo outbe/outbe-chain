@@ -174,8 +174,7 @@ fn compute_gratis_prefix_branch(
     ),
     WorkerError,
 > {
-    let (values, child_coverage) =
-        decode_gratis_summary_children(&resolved, 0, limits, cancelled)?;
+    let (values, child_coverage) = decode_gratis_summary_children(&resolved, 0, limits, cancelled)?;
     let summary = match gratis_summary_reduce_pair(values[0].clone(), values[1].clone())
         .map_err(LysisArtifactErrorV1::from)?
     {
@@ -189,18 +188,17 @@ fn compute_gratis_prefix_branch(
     Ok((summary, coverage.root, coverage.count))
 }
 
+type GratisSummaryChildren = (
+    [GratisSummaryValueV1; 2],
+    [Option<(alloy_primitives::B256, u32)>; 2],
+);
+
 fn decode_gratis_summary_children(
     resolved: &[Option<&UnitArtifactV1>],
     child_start: usize,
     limits: &outbe_ocomp_protocol::SchemaLimits,
     cancelled: Option<&std::sync::atomic::AtomicBool>,
-) -> Result<
-    (
-        [GratisSummaryValueV1; 2],
-        [Option<(alloy_primitives::B256, u32)>; 2],
-    ),
-    WorkerError,
-> {
+) -> Result<GratisSummaryChildren, WorkerError> {
     let mut values = [GratisSummaryValueV1::Empty, GratisSummaryValueV1::Empty];
     let mut child_coverage = [None, None];
     for child_index in 0..2 {

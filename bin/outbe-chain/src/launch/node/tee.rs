@@ -232,18 +232,17 @@ pub(super) fn start_runtime_workers(
         shutdown_token.clone(),
     );
     let lease_outcome = shutdown.clone();
-    let tee_lease_guard_handle =
-        tokio::spawn(shutdown.track_task("TEE lease guard", async move {
-            let verdict = match lease_check.await {
-                Ok(None) => return,
-                Ok(Some(reason)) => Ok(reason),
-                Err(error) => Err(error),
-            };
-            // Publish an actual failure before notifying a launcher that may
-            // concurrently choose a different exit branch or be cancelled.
-            let reason = tee_lease_exit_reason(Some(verdict), &lease_outcome);
-            let _ = tee_lease_exit_tx.send(Ok(reason));
-        }));
+    let tee_lease_guard_handle = tokio::spawn(shutdown.track_task("TEE lease guard", async move {
+        let verdict = match lease_check.await {
+            Ok(None) => return,
+            Ok(Some(reason)) => Ok(reason),
+            Err(error) => Err(error),
+        };
+        // Publish an actual failure before notifying a launcher that may
+        // concurrently choose a different exit branch or be cancelled.
+        let reason = tee_lease_exit_reason(Some(verdict), &lease_outcome);
+        let _ = tee_lease_exit_tx.send(Ok(reason));
+    }));
 
     // Periodic enclave canary (signal only): known-plaintext decrypt +
     // Health telemetry through the process-global session. `0` disables.
@@ -295,4 +294,3 @@ pub(super) fn start_runtime_workers(
         upgrade_handle,
     })
 }
-

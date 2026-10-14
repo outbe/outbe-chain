@@ -1,7 +1,7 @@
 //! Build synthetic input catalogs and faulted result artifacts.
 
 use super::*;
-use outbe_ocomp_protocol::{SchemaLimits, profile::ProtocolBundleV1, unit::PlanCommitmentV1};
+use outbe_ocomp_protocol::{profile::ProtocolBundleV1, unit::PlanCommitmentV1, SchemaLimits};
 use std::path::PathBuf;
 
 struct FixtureOptions {

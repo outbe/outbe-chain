@@ -276,9 +276,7 @@ fn cleanup_completed_committed_join(
             ..
         } if recipient_x25519_pub == ctx.expected_offer_pub => {}
         other => {
-            eyre::bail!(
-                "cleanup recovery did not reopen the exact permanent offer key: {other:?}"
-            );
+            eyre::bail!("cleanup recovery did not reopen the exact permanent offer key: {other:?}");
         }
     }
     super::persist_authorized_join_admission_anchor_v1(

@@ -32,13 +32,8 @@ fn full_canonical_composition_cannot_skip_an_entire_later_nod_job() {
                     canonical_owner(&[(first, 0), (second, 0)], None)
                 },
                 |state, source, layout, scratch| {
-                    let result = verify_canonical_obligations(
-                        state,
-                        source,
-                        (layout, scratch),
-                        None,
-                        None,
-                    );
+                    let result =
+                        verify_canonical_obligations(state, source, (layout, scratch), None, None);
                     if deleted {
                         let error = result
                             .err()

@@ -60,13 +60,8 @@ pub(in super::super::super) fn execute_fixed_reduce_unit(
     let (phase_ordinal, position, level, index) =
         resolve_fixed_reduce_position(&authority, &topology)?;
     let reducer_inputs = validate_fixed_reduce_spec(spec, &planner, phase_ordinal, limits)?;
-    let [left, right] = decode_fixed_reduce_inputs(
-        spec,
-        &authority,
-        &topology,
-        position,
-        reducer_inputs,
-    )?;
+    let [left, right] =
+        decode_fixed_reduce_inputs(spec, &authority, &topology, position, reducer_inputs)?;
     let (value, coverage) =
         reduce_fixed_pair(plan.primary_work_unit_count, (level, index), left, right)?;
     let is_root = level == topology.tree().height() && index == 0;

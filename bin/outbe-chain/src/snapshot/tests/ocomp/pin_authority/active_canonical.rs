@@ -452,15 +452,10 @@ fn canonical_active_budget_is_incomplete_before_missing_local_inputs() {
         |_| {},
         |request| fixture(request, Phase::VotingOpen, |_| {}).owner,
         |state, source, layout, scratch| {
-            let error = verify_canonical_obligations(
-                state,
-                source,
-                (layout, scratch),
-                Some(0),
-                None,
-            )
-            .err()
-            .expect("active inventory cannot truncate to zero success");
+            let error =
+                verify_canonical_obligations(state, source, (layout, scratch), Some(0), None)
+                    .err()
+                    .expect("active inventory cannot truncate to zero success");
             assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
             assert!(
                 error.to_string().contains("active intent scan requires 1"),

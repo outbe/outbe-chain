@@ -97,10 +97,11 @@ use launch::identity::load_reth_p2p_node_host_signer;
 
 use launch::node::run_node;
 
+#[cfg(test)]
+use launch::shutdown::handle_consensus_thread_join;
 use launch::shutdown::{
     await_consensus_stack_shutdown, await_radicle_drain, consensus_shutdown_result,
-    handle_consensus_thread_join, run_with_lifetime_pin, ConsensusThreadGuard,
-    RADICLE_DRAIN_DEADLINE,
+    run_with_lifetime_pin, ConsensusThreadGuard, RADICLE_DRAIN_DEADLINE,
 };
 
 use launch::upgrade::{

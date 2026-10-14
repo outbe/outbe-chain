@@ -357,7 +357,9 @@ impl WorkerInbox {
 
     fn check_existing_regular_file(&self, path: &Path) -> Result<bool, WorkerInboxError> {
         match fs::symlink_metadata(path) {
-            Ok(metadata) if metadata.file_type().is_file() && !metadata.file_type().is_symlink() => {
+            Ok(metadata)
+                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
+            {
                 Ok(true)
             }
             Ok(_) => Err(WorkerInboxError::UnsafeArtifact {

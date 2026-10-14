@@ -124,7 +124,8 @@ async fn print_watch_validator_row(
     index: usize,
     addr: alloy_primitives::Address,
 ) {
-    let Ok(detail) = call_validator_set(client, IValidatorSet::validatorByAddressCall { addr }).await
+    let Ok(detail) =
+        call_validator_set(client, IValidatorSet::validatorByAddressCall { addr }).await
     else {
         return;
     };
@@ -149,7 +150,10 @@ fn watch_status_label(status: u8) -> &'static str {
         "Inactive",
         "Jailed",
     ];
-    LABELS.get(usize::from(status)).copied().unwrap_or("Unknown")
+    LABELS
+        .get(usize::from(status))
+        .copied()
+        .unwrap_or("Unknown")
 }
 
 /// Health check - exit code 0 if healthy, non-zero otherwise.

@@ -1,6 +1,6 @@
 //! Slash information and evidence submission commands.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, B256};
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
@@ -186,9 +186,7 @@ impl SlashTopics {
             proposer_felony: slash_event_topic(b"ProposerFelony(address,uint64,uint64)"),
             proposer_misd: slash_event_topic(b"ProposerMisdemeanor(address,uint64)"),
             voter_misd: slash_event_topic(b"VoterMisdemeanor(address,uint64)"),
-            evidence: slash_event_topic(
-                b"EvidenceFelonyApplied(address,address,uint256,uint256)",
-            ),
+            evidence: slash_event_topic(b"EvidenceFelonyApplied(address,address,uint256,uint256)"),
         }
     }
 
@@ -270,6 +268,7 @@ use super::format_topic_addr;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::U256;
 
     #[test]
     fn test_format_topic_addr_standard_padded() {

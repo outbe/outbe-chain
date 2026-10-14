@@ -6,7 +6,7 @@
 //! A root calculated from observed actions verifies the commitment, not the
 //! correctness of their economic fields. Those require fixture-derived values.
 
-use alloy_primitives::{B256, U256, keccak256};
+use alloy_primitives::{keccak256, B256, U256};
 use outbe_compressed_entities::TributeBodyV1;
 use outbe_ocomp_protocol::result::NodActionV1;
 
@@ -171,7 +171,7 @@ mod tests {
     use super::*;
     use alloy_primitives::{Address, U256};
     use outbe_ocomp_protocol::{
-        list::{OrderedListLimits, ordered_list_root},
+        list::{ordered_list_root, OrderedListLimits},
         profile::poc_schema_limits,
         registry::ListKind,
     };

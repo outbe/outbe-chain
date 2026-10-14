@@ -149,8 +149,8 @@ pub fn admit_reported_lysis_unit_v1(
             (&plan, &manifest, bundle.bundle()),
             (worker_inbox, cas, catalog, limits),
         )?,
-        UnitPhase::BucketShuffle | UnitPhase::RootReduce => admit_producer_tree_phase(
-            ProducerPhaseAdmissionContext {
+        UnitPhase::BucketShuffle | UnitPhase::RootReduce => {
+            admit_producer_tree_phase(ProducerPhaseAdmissionContext {
                 admission_position,
                 spec: &spec,
                 reported_artifact: &reported_artifact,
@@ -165,8 +165,8 @@ pub fn admit_reported_lysis_unit_v1(
                 cas,
                 catalog,
                 limits,
-            },
-        )?,
+            })?
+        }
     };
     Ok(admitted)
 }
@@ -237,7 +237,11 @@ fn admit_producer_tree_phase(
     }
     if ctx.spec.phase == UnitPhase::BucketShuffle {
         verify_lysis_shuffle_phase_replay(
-            (ctx.admission_position.plan_ordinal, ctx.spec, ctx.reported_artifact),
+            (
+                ctx.admission_position.plan_ordinal,
+                ctx.spec,
+                ctx.reported_artifact,
+            ),
             (ctx.plan, ctx.manifest),
             (&ctx.loaded.producer_artifacts, ctx.bundle),
             (ctx.reader, ctx.replay_inbox, ctx.limits),
@@ -258,7 +262,11 @@ fn admit_producer_tree_phase(
         });
     }
     verify_lysis_root_reduce_phase_replay(
-        (ctx.admission_position.plan_ordinal, ctx.spec, ctx.reported_artifact),
+        (
+            ctx.admission_position.plan_ordinal,
+            ctx.spec,
+            ctx.reported_artifact,
+        ),
         (ctx.plan, ctx.manifest),
         (&ctx.loaded.producer_artifacts, ctx.bundle),
         (ctx.reader, ctx.replay_inbox, ctx.limits),
