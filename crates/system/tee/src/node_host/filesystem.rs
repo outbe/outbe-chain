@@ -80,7 +80,7 @@ pub(super) fn read_owned_bounded_file(
         )));
     }
     let capacity = usize::try_from(metadata.len())
-        .map_err(|_| TransportError::Codec(format!("NodeHost {label} length overflow")))?;
+        .map_err(TransportError::node_host_length_overflow(label))?;
     let read_limit = maximum_len
         .checked_add(1)
         .ok_or_else(|| TransportError::Codec(format!("NodeHost {label} read limit overflow")))?;
@@ -130,9 +130,7 @@ pub(super) fn write_manifest_once(
     manifest: &EnclaveInitializationManifestV1,
     directory: &Path,
 ) -> Result<(), TransportError> {
-    let bytes = manifest
-        .encode_canonical()
-        .map_err(|error| TransportError::Codec(error.to_string()))?;
+    let bytes = manifest.encode_canonical().map_err(TransportError::codec)?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)

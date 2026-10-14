@@ -1,3 +1,4 @@
+use crate::errors::ValidatorSetError;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{
     HistoryCounters, P2pInfo, StakeProjection, StoredValidatorFields, ValidatorHistory,
@@ -5,7 +6,7 @@ use crate::state_machine::{
 };
 use alloy_primitives::{keccak256, Address, B256};
 use outbe_ocomp_protocol::{committee::OcompKeyRegistrationV1, profile::poc_schema_limits};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::{Mapping, Storable};
 use std::num::NonZeroU64;
 
@@ -19,11 +20,7 @@ impl ValidatorSet<'_> {
         }
         OcompKeyRegistrationV1::decode_canonical(&bytes, &poc_schema_limits())
             .map(Some)
-            .map_err(|error| {
-                PrecompileError::Fatal(format!(
-                    "stored OCOMP registration for {addr} is invalid: {error}"
-                ))
-            })
+            .map_err(|error| ValidatorSetError::stored_ocomp_registration_invalid(addr, error))
     }
 }
 
@@ -122,26 +119,34 @@ impl ValidatorSet<'_> {
     ) -> Result<()> {
         let count = u64::from(self.validator_count.read()?);
         if index > count {
-            return Err(PrecompileError::Fatal(format!(
-                "validator {addr} registry index {index} exceeds validator_count {count}"
-            )));
+            return Err(ValidatorSetError::ValidatorRegistryIndexExceedsCount {
+                addr,
+                index,
+                count,
+            }
+            .into());
         }
         let indexed_address = self.index_to_address.read(&index)?;
         if indexed_address != addr {
-            return Err(PrecompileError::Fatal(format!(
-                "validator registry forward index mismatch at {index}: expected {addr}, got {indexed_address}"
-            )));
+            return Err(ValidatorSetError::ValidatorRegistryForwardIndexMismatch {
+                index,
+                expected: addr,
+                actual: indexed_address,
+            }
+            .into());
         }
-        let pubkey = state.consensus_pubkey().ok_or_else(|| {
-            PrecompileError::Fatal("registered validator is missing consensus pubkey".into())
-        })?;
+        let pubkey = state
+            .consensus_pubkey()
+            .ok_or(ValidatorSetError::RegisteredValidatorMissingConsensusPubkey)?;
         let pubkey_owner = self
             .consensus_pubkey_hash_to_address
             .read(&Self::consensus_pubkey_hash(pubkey))?;
         if pubkey_owner != addr {
-            return Err(PrecompileError::Fatal(format!(
-                "validator consensus pubkey reverse mapping mismatch for {addr}: got {pubkey_owner}"
-            )));
+            return Err(ValidatorSetError::ValidatorConsensusPubkeyReverseMismatch {
+                addr,
+                owner: pubkey_owner,
+            }
+            .into());
         }
         Ok(())
     }
@@ -188,9 +193,7 @@ impl ValidatorSet<'_> {
             registry_identity(before) != registry_identity(after)
         };
         if identity_changed {
-            return Err(PrecompileError::Fatal(
-                "validator lifecycle transition attempted to change registry identity".into(),
-            ));
+            return Err(ValidatorSetError::LifecycleTransitionChangedRegistryIdentity.into());
         }
 
         if allow_registry_identity_change {
@@ -204,11 +207,9 @@ impl ValidatorSet<'_> {
             after.bonded_stake(),
         )?;
         if before.stored_status() != after.stored_status() {
-            let status = after.stored_status().ok_or_else(|| {
-                PrecompileError::Fatal(
-                    "generic validator persistence cannot write an absent lifecycle".into(),
-                )
-            })?;
+            let status = after
+                .stored_status()
+                .ok_or(ValidatorSetError::CannotPersistAbsentLifecycle)?;
             self.val_status.write(&addr, status)?;
         }
         self.persist_history_delta(&addr, before.history(), after.history())?;
@@ -223,13 +224,11 @@ impl ValidatorSet<'_> {
         before: &ValidatorState,
         after: &ValidatorState,
     ) -> Result<()> {
-        let pubkey = after.consensus_pubkey().ok_or_else(|| {
-            PrecompileError::Fatal("registered validator is missing consensus pubkey".into())
-        })?;
+        let pubkey = after
+            .consensus_pubkey()
+            .ok_or(ValidatorSetError::RegisteredValidatorMissingConsensusPubkey)?;
         if after.registry_index().is_none() {
-            return Err(PrecompileError::Fatal(
-                "registered validator is missing registry index".into(),
-            ));
+            return Err(ValidatorSetError::RegisteredValidatorMissingRegistryIndex.into());
         }
         if before.consensus_pubkey() != Some(pubkey) {
             self.write_consensus_pubkey(&after.address(), pubkey)?;

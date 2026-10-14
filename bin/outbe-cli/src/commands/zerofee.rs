@@ -21,6 +21,7 @@ use k256::ecdsa::signature::hazmat::PrehashSigner;
 use serde::Serialize;
 
 use crate::commands::require_signer;
+use crate::errors::ZeroFeeError;
 use crate::rpc::Rpc;
 use crate::tx::TxSigner;
 
@@ -92,10 +93,9 @@ impl ZeroFeeCmd {
 
 async fn submit_bootstrap(client: &(impl Rpc + Sync), signer: &TxSigner) -> Result<String> {
     let balance = client.eth_get_balance(signer.address()).await?;
-    eyre::ensure!(
-        !balance.is_zero(),
-        "ZeroFee bootstrap requires a positive balance (at least 0.000001 COEN)"
-    );
+    if balance.is_zero() {
+        return Err(ZeroFeeError::ZeroBootstrapBalance.into());
+    }
     let chain_id = client.eth_chain_id().await?;
     let nonce = client.eth_get_transaction_count(signer.address()).await?;
     let raw_transaction = build_bootstrap_raw_transaction(signer, chain_id, nonce)?;
@@ -109,7 +109,7 @@ fn build_bootstrap_raw_transaction(
 ) -> Result<Vec<u8>> {
     let authorization_nonce = nonce
         .checked_add(1)
-        .ok_or_else(|| eyre::eyre!("bootstrap authorization nonce overflow"))?;
+        .ok_or(ZeroFeeError::BootstrapNonceOverflow)?;
     let authorization = sign_authorization(
         signer,
         outbe_zerofee::ZEROFEE_ADDRESS,
@@ -199,7 +199,7 @@ fn sign_authorization(
     let (sig, recid): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signer
         .key()
         .sign_prehash(hash.as_slice())
-        .map_err(|e| eyre::eyre!("EIP-7702 authorization signing failed: {e}"))?;
+        .map_err(ZeroFeeError::AuthorizationSigningFailed)?;
 
     let sig_bytes = sig.to_bytes();
     let signature =

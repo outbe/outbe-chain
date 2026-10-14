@@ -490,7 +490,8 @@ pub(super) fn verify_pending_marker_at(
     path: &Path,
     observation: B256,
 ) -> Result<(), DiscoverySpoolError> {
-    let bytes = read_bounded_private_file(path, PENDING_RECORD_MAGIC.len() + 2 + B256::len_bytes())?;
+    let bytes =
+        read_bounded_private_file(path, PENDING_RECORD_MAGIC.len() + 2 + B256::len_bytes())?;
     if bytes != encode_pending_marker(observation) {
         return Err(DiscoverySpoolError::CorruptRecord {
             path: path.to_path_buf(),

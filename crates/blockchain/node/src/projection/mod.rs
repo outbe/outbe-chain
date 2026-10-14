@@ -3,8 +3,9 @@
 //! This adapter deliberately only drains canonical-chain notifications. The provider's finalized
 //! block signal is the sole authority that permits projection writes.
 
+use crate::errors::NodeProjectionError;
 use alloy_primitives::B256;
-use eyre::{bail, Context};
+use eyre::Context;
 use outbe_offchain_data::OffchainDataProjection;
 use outbe_offchain_data::ProjectionConfig;
 use outbe_offchain_data::ProjectionFailure;
@@ -162,17 +163,14 @@ fn prepare_offchain_data_projection_inner(
 ) -> eyre::Result<PreparedOffchainDataProjection> {
     validate_projection_network(config.chain_id)?;
     if config.storage.start_block != 1 {
-        bail!(
-            "ADR-005 requires projection start_block 1, found {}",
-            config.storage.start_block
-        );
+        return Err(NodeProjectionError::InvalidStartBlock(config.storage.start_block).into());
     }
 
     let started = std::time::Instant::now();
     loop {
         let remaining = PROJECTION_RECOVERY_DEADLINE.saturating_sub(started.elapsed());
         if remaining.is_zero() {
-            bail!("offchain storage startup recovery exceeded the eight-second total deadline");
+            return Err(NodeProjectionError::StartupRecoveryDeadlineExceeded.into());
         }
         let (attempt_tx, attempt_rx) = std::sync::mpsc::sync_channel(1);
         let attempt_config = config.clone();
@@ -191,10 +189,10 @@ fn prepare_offchain_data_projection_inner(
         let attempt = match attempt_rx.recv_timeout(remaining) {
             Ok(attempt) => attempt,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                bail!("offchain storage startup recovery exceeded the eight-second total deadline");
+                return Err(NodeProjectionError::StartupRecoveryDeadlineExceeded.into());
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                bail!("offchain storage startup validation worker exited unexpectedly");
+                return Err(NodeProjectionError::StartupValidationWorkerExited.into());
             }
         };
         match attempt {
@@ -238,7 +236,7 @@ fn prepare_offchain_data_projection_inner(
 
 fn validate_projection_network(chain_id: u64) -> eyre::Result<()> {
     if network_for_chain_id(chain_id).is_none() {
-        bail!("offchain projection rejects unknown Outbe chain ID {chain_id}");
+        return Err(NodeProjectionError::UnknownChainId(chain_id).into());
     }
     Ok(())
 }

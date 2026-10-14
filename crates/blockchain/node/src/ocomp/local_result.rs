@@ -323,10 +323,7 @@ impl LocalLysisResultStore {
         pending_path: &Path,
         job_hex: &str,
     ) -> Result<(), LocalLysisResultError> {
-        require_lower_hex_32(job_hex).map_err(|reason| LocalLysisResultError::UnsafeStore {
-            path: pending_path.to_path_buf(),
-            reason,
-        })?;
+        require_lower_hex_32(pending_path, job_hex)?;
         let final_path = self.root.join(format!("{job_hex}{RECORD_SUFFIX}"));
         if path_exists(&final_path)? {
             let pending = validated_linked_record_metadata(pending_path, self.owner_uid)?;
@@ -542,16 +539,22 @@ fn pending_job_hex(name: &str) -> Option<&str> {
         .and_then(|name| name.strip_suffix(PENDING_SUFFIX))
 }
 
-fn require_lower_hex_32(value: &str) -> Result<(), &'static str> {
+fn require_lower_hex_32(path: &Path, value: &str) -> Result<(), LocalLysisResultError> {
     if value.len() != 64 {
-        return Err("result filename is not 32-byte lowercase hex");
+        return Err(LocalLysisResultError::UnsafeStore {
+            path: path.to_path_buf(),
+            reason: "result filename is not 32-byte lowercase hex",
+        });
     }
     if !value
         .as_bytes()
         .iter()
         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
     {
-        return Err("result filename is not lowercase hex");
+        return Err(LocalLysisResultError::UnsafeStore {
+            path: path.to_path_buf(),
+            reason: "result filename is not lowercase hex",
+        });
     }
     Ok(())
 }

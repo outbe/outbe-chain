@@ -42,7 +42,7 @@ impl MetadosisContract<'_> {
                     at_height,
                     deadline_height: finalized.deadline_height,
                 })
-                .map_err(|error| storage_corruption_message(error.to_string()))?;
+                .map_err(storage_corruption_message)?;
             let accountability = OcompVoteAccountabilityV1::empty(VoteAccountabilitySeed {
                 job_id: finalized.job_id,
                 result_validator_set_epoch: record.intent.result_validator_set_epoch,
@@ -52,7 +52,7 @@ impl MetadosisContract<'_> {
                 quorum_threshold: record.intent.result_quorum_threshold,
             })
             .map_err(|error| {
-                storage_corruption_message(format!("create OCOMP vote slots: {error}"))
+                crate::errors::storage_corruption_context("create OCOMP vote slots", error)
             })?;
             let slot = self.ocomp_vote_accountability.get_bytes(&finalized.job_id);
             if !slot.is_empty()? {
@@ -64,7 +64,7 @@ impl MetadosisContract<'_> {
                 &accountability
                     .encode_canonical(schema_limits)
                     .map_err(|error| {
-                        storage_corruption_message(format!("encode OCOMP vote slots: {error}"))
+                        crate::errors::storage_corruption_context("encode OCOMP vote slots", error)
                     })?,
             )?;
             let mut response_index = self.read_response_deadline_index()?;

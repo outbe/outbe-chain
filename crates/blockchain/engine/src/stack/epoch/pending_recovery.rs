@@ -23,9 +23,10 @@ where
     ) -> Result<()> {
         if let Some(snapshot) = recovered_pending_boundary {
             let pending_epoch = Epoch::new(snapshot.artifact.epoch);
-            let keys_dir = self.args.keys_dir.as_ref().ok_or_else(|| {
-                eyre::eyre!("recovered pending DKG boundary without configured keys directory")
-            })?;
+            let keys_dir =
+                self.args.keys_dir.as_ref().ok_or(
+                    crate::errors::StackEpochError::RecoveredPendingBoundaryWithoutKeysDir,
+                )?;
             self.dkg_manager
                 .note_recovered_pending_boundary(snapshot.artifact.clone());
             let restored = restore_pending_dkg_activation(
@@ -37,11 +38,10 @@ where
             )?;
             let pending_artifact = match &restored {
                 RestoredPendingDkgActivation::Participant(pending) => &pending.boundary_artifact,
-                RestoredPendingDkgActivation::DealerOnly(pending) => {
-                    pending.boundary_artifact.as_ref().ok_or_else(|| {
-                        eyre::eyre!("recovered dealer-only DKG handoff has no boundary artifact")
-                    })?
-                }
+                RestoredPendingDkgActivation::DealerOnly(pending) => pending
+                    .boundary_artifact
+                    .as_ref()
+                    .ok_or(crate::errors::StackEpochError::RecoveredDealerOnlyHandoffMissingBoundaryArtifact)?,
             };
             let restored_target_dkg_cycle = match &restored {
                 RestoredPendingDkgActivation::Participant(pending) => pending.target.dkg_cycle,
@@ -69,10 +69,12 @@ where
                     active_epoch,
                     preregister_after_current,
                 } => {
-                    ensure!(
-                        active_epoch == self.state.current_epoch,
-                        "deferred startup DKG plan changed active epoch"
-                    );
+                    if active_epoch != self.state.current_epoch {
+                        return Err(
+                            crate::errors::StackEpochError::DeferredStartupPlanChangedActiveEpoch
+                                .into(),
+                        );
+                    }
                     self.state.dkg_cycle = next_dkg_cycle_after_restored_target(
                         self.state.dkg_cycle,
                         restored_target_dkg_cycle,
@@ -109,34 +111,37 @@ where
                                 pending.boundary_artifact,
                             ),
                             RestoredPendingDkgActivation::DealerOnly(pending) => {
-                                let boundary_artifact =
-                                    pending.boundary_artifact.ok_or_else(|| {
-                                        eyre::eyre!(
-                                    "recovered dealer-only DKG activation has no boundary artifact"
-                                )
-                                    })?;
+                                let boundary_artifact = pending.boundary_artifact.ok_or(
+                                    crate::errors::StackEpochError::RecoveredDealerOnlyActivationMissingBoundaryArtifact,
+                                )?;
                                 let output = decode_boundary_output(&boundary_artifact).wrap_err(
                                     "failed to decode recovered dealer-only DKG activation output",
                                 )?;
                                 (pending.target, output, None, boundary_artifact)
                             }
                         };
-                    ensure!(
-                        boundary_artifact.epoch == active_epoch.get(),
-                        "recovered DKG boundary epoch {} does not match activated startup epoch {}",
-                        boundary_artifact.epoch,
-                        active_epoch
-                    );
+                    if boundary_artifact.epoch != active_epoch.get() {
+                        return Err(
+                            crate::errors::StackEpochError::RecoveredBoundaryEpochMismatchWithStartup {
+                                boundary_epoch: boundary_artifact.epoch,
+                                active_epoch,
+                            }
+                            .into(),
+                        );
+                    }
                     let activated_vrf_material_version =
                         outbe_validatorset::next_vrf_material_version(
                             self.state.vrf_material_version,
                         )?;
-                    ensure!(
-                        boundary_artifact.vrf_material_version == activated_vrf_material_version,
-                        "recovered DKG VRF material version {} does not follow active version {}",
-                        boundary_artifact.vrf_material_version,
-                        self.state.vrf_material_version
-                    );
+                    if boundary_artifact.vrf_material_version != activated_vrf_material_version {
+                        return Err(
+                            crate::errors::StackEpochError::RecoveredVrfVersionMismatch {
+                                boundary_version: boundary_artifact.vrf_material_version,
+                                active_version: self.state.vrf_material_version,
+                            }
+                            .into(),
+                        );
+                    }
                     let activated_validator_set = validator_set_for_dkg_output_players(
                         &canonical_output,
                         &target.validator_set,
@@ -170,11 +175,14 @@ where
                     )?;
                     let recovered_peer_map =
                         build_peer_map(&activated_validator_set, &self.bootnode_map);
-                    eyre::ensure!(
-                        self.peer_manager_mailbox.overwrite(recovered_peer_map)
-                            == commonware_actor::Feedback::Ok,
-                        "peer_manager closed during recovery admission"
-                    );
+                    if self.peer_manager_mailbox.overwrite(recovered_peer_map)
+                        != commonware_actor::Feedback::Ok
+                    {
+                        return Err(
+                            crate::errors::StackEpochError::PeerManagerClosedDuringRecoveryAdmission
+                                .into(),
+                        );
+                    }
                     self.state.validator_set = activated_validator_set;
                     self.state.participants = activated_participants;
                     self.state.dkg_cycle = target.dkg_cycle.saturating_add(1);

@@ -25,6 +25,7 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 eyre.workspace = true
 k256.workspace = true
+thiserror.workspace = true
 zeroize.workspace = true
 radicle-crypto = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e", features = ["ssh"] }
 

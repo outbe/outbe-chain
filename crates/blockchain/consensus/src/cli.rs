@@ -17,6 +17,7 @@ use std::{
 use crate::{
     bls::{self, KeyBackend},
     dkg,
+    errors::ConsensusCliError,
 };
 
 const LOCALNET_RETH_BOOTNODES_FILE: &str = "reth-bootnodes.txt";
@@ -27,7 +28,7 @@ const LOCALNET_RETH_P2P_BASE_PORT: u16 = 30303;
 fn write_secret_hex_file(path: &Path, contents: &str) -> Result<()> {
     let file_name = path
         .file_name()
-        .ok_or_else(|| eyre::eyre!("secret key path has no file name: {}", path.display()))?
+        .ok_or_else(|| ConsensusCliError::SecretKeyPathNoFileName(path.display().to_string()))?
         .to_string_lossy();
     let tmp_path = path.with_file_name(format!(".{file_name}.tmp.{}", std::process::id()));
 
@@ -83,10 +84,9 @@ struct ValidatorEntry {
 fn reth_node_id_hex(verifying_key: &VerifyingKey) -> Result<String> {
     let point = verifying_key.to_encoded_point(false);
     let bytes = point.as_bytes();
-    eyre::ensure!(
-        bytes.len() == 65 && bytes[0] == 0x04,
-        "unexpected secp256k1 public key encoding for Reth enode"
-    );
+    if bytes.len() != 65 || bytes[0] != 0x04 {
+        return Err(ConsensusCliError::UnexpectedSecp256k1Encoding.into());
+    }
     Ok(hex::encode(&bytes[1..]))
 }
 
@@ -132,7 +132,9 @@ pub fn execute_validator_identities(
     num_validators: u32,
     backend: &KeyBackend,
 ) -> Result<()> {
-    eyre::ensure!(num_validators > 0, "validator count must be > 0");
+    if num_validators == 0 {
+        return Err(ConsensusCliError::ZeroValidatorCount.into());
+    }
     std::fs::create_dir_all(&output_dir)
         .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
 
@@ -178,7 +180,9 @@ pub fn execute_validator_identity_verification(
             .wrap_err_with(|| format!("failed to read: {}", validators_path.display()))?,
     )
     .wrap_err_with(|| format!("failed to parse: {}", validators_path.display()))?;
-    eyre::ensure!(!validators.is_empty(), "validators.json must not be empty");
+    if validators.is_empty() {
+        return Err(ConsensusCliError::EmptyValidatorsJson.into());
+    }
 
     for (index, validator) in validators.iter().enumerate() {
         let expected_public_key = hex::decode(
@@ -188,20 +192,18 @@ pub fn execute_validator_identity_verification(
                 .unwrap_or(&validator.public_key),
         )
         .wrap_err_with(|| format!("validator-{index} public_key is not valid hex"))?;
-        eyre::ensure!(
-            expected_public_key.len() == 48,
-            "validator-{index} public_key must be 48 bytes"
-        );
+        if expected_public_key.len() != 48 {
+            return Err(ConsensusCliError::InvalidPublicKeyLength(index).into());
+        }
 
         let signing_key_path = material_dir
             .join(format!("validator-{index}"))
             .join("signing-key.hex");
         let signing_key = bls::load_individual_key(&signing_key_path, backend)
             .wrap_err_with(|| format!("failed to load validator-{index} BLS signing key"))?;
-        eyre::ensure!(
-            signing_key.public_key().encode() == expected_public_key,
-            "validator-{index} BLS signing key does not match validators.json"
-        );
+        if signing_key.public_key().encode() != expected_public_key {
+            return Err(ConsensusCliError::BlsSigningKeyMismatch(index).into());
+        }
 
         let expected_address: Address = validator
             .address
@@ -224,10 +226,9 @@ pub fn execute_validator_identity_verification(
         let evm_public_key = evm_key.verifying_key().to_encoded_point(false);
         let evm_address_hash = keccak256(&evm_public_key.as_bytes()[1..]);
         let actual_address = Address::from_slice(&evm_address_hash[12..]);
-        eyre::ensure!(
-            actual_address == expected_address,
-            "validator-{index} EVM signing key does not match validators.json"
-        );
+        if actual_address != expected_address {
+            return Err(ConsensusCliError::EvmSigningKeyMismatch(index).into());
+        }
     }
 
     println!(
@@ -278,7 +279,7 @@ fn write_validator_identity_bundle(
         let reth_node_id = reth_node_id_hex(reth_p2p_key.verifying_key())?;
         let reth_p2p_port = LOCALNET_RETH_P2P_BASE_PORT
             .checked_add(i as u16)
-            .ok_or_else(|| eyre::eyre!("too many validators for localnet Reth p2p port range"))?;
+            .ok_or(ConsensusCliError::TooManyLocalnetValidators)?;
         reth_bootnodes.push(format!(
             "enode://{reth_node_id}@{LOCALNET_RETH_BOOTNODE_HOST}:{reth_p2p_port}"
         ));
@@ -413,13 +414,15 @@ pub fn execute_dkg_export_share(
     let output_path = storage_dir.join(DKG_OUTPUT_FILE);
 
     if !share_path.exists() {
-        eyre::bail!("signing share not found at {}", share_path.display());
+        return Err(
+            ConsensusCliError::SigningShareNotFound(share_path.display().to_string()).into(),
+        );
     }
     if !poly_path.exists() {
-        eyre::bail!("polynomial not found at {}", poly_path.display());
+        return Err(ConsensusCliError::PolynomialNotFound(poly_path.display().to_string()).into());
     }
     if !output_path.exists() {
-        eyre::bail!("DKG output not found at {}", output_path.display());
+        return Err(ConsensusCliError::DkgOutputNotFound(output_path.display().to_string()).into());
     }
 
     // Validate before exporting.

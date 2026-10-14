@@ -38,9 +38,7 @@ impl TeeRegistry<'_> {
             return Ok(None);
         };
         if binding.node_id_hash != expected_hash {
-            return Err(PrecompileError::Fatal(
-                "stored V1 binding identity mismatch".into(),
-            ));
+            return Err(TeeRegistryError::StoredV1BindingIdentityMismatch.into());
         }
         Ok(Some(binding))
     }

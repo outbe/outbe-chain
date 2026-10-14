@@ -9,7 +9,7 @@ pub mod vote {
     use outbe_l2registry::L2RegistryVoteTarget;
     use outbe_primitives::addresses::STABLECOIN_FACTORY_ADDRESS;
     use outbe_primitives::block::BlockRuntimeContext;
-    use outbe_primitives::error::{PrecompileError, Result};
+    use outbe_primitives::error::Result;
     use outbe_primitives::stablecoin::decode_canonical_stablecoin_create;
     use outbe_primitives::stablecoin_fork::STABLECOIN_CREATE_BOND;
     use outbe_primitives::storage::StorageHandle;
@@ -43,11 +43,11 @@ pub mod vote {
             context: VoteTargetContext,
         ) -> Result<ValidatedStablecoinCreate> {
             let decoded = decode_canonical_stablecoin_create(payload)
-                .map_err(|_| PrecompileError::Revert("non-canonical stablecoin payload".into()))?;
+                .map_err(|_| crate::errors::StablecoinVoteTargetError::NonCanonicalPayload)?;
             if decoded.issuer != context.proposer {
-                return Err(PrecompileError::Revert(
-                    "stablecoin proposer must equal issuer".into(),
-                ));
+                return Err(
+                    crate::errors::StablecoinVoteTargetError::ProposerMustEqualIssuer.into(),
+                );
             }
             let (token_id, token) = outbe_primitives::stablecoin::predict_stablecoin(
                 context.chain_id,
@@ -56,7 +56,7 @@ pub mod vote {
                 &decoded.ticker,
                 outbe_primitives::addresses::STABLECOIN_ADDRESS_PREFIX,
             )
-            .map_err(|_| PrecompileError::Revert("invalid stablecoin identity".into()))?;
+            .map_err(|_| crate::errors::StablecoinVoteTargetError::InvalidIdentity)?;
             Ok(ValidatedStablecoinCreate {
                 payload: decoded,
                 token_id,
@@ -115,7 +115,7 @@ pub mod vote {
                 0,
             ) {
                 Ok(_) => Ok(TargetExecutionOutcome::Applied),
-                Err(error @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
+                Err(error) if crate::errors::is_revert_error(&error) => {
                     Ok(TargetExecutionOutcome::Error {
                         reason: error.to_string(),
                     })

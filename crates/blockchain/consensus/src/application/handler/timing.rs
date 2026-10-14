@@ -1,6 +1,7 @@
 use crate::block::ConsensusBlock;
 
 use crate::digest::Digest;
+use crate::errors::ApplicationError;
 
 use commonware_utils::channel::oneshot;
 
@@ -45,10 +46,10 @@ impl UnixTimeSource for SystemUnixTimeSource {
     fn now_millis(&self) -> eyre::Result<u64> {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| eyre::eyre!("system clock before UNIX_EPOCH: {e}"))?
+            .map_err(ApplicationError::ClockBeforeUnixEpoch)?
             .as_millis()
             .try_into()
-            .map_err(|_| eyre::eyre!("system clock millis does not fit in u64"))
+            .map_err(|_| ApplicationError::ClockMillisOverflow.into())
     }
 }
 
@@ -76,8 +77,7 @@ impl UnixTimeSource for OffsetUnixTimeSource {
 
 pub(super) fn apply_unix_time_offset_millis(now: u64, offset_secs: i64) -> eyre::Result<u64> {
     let shifted = i128::from(now) + i128::from(offset_secs) * 1_000;
-    u64::try_from(shifted)
-        .map_err(|_| eyre::eyre!("Unix time offset {offset_secs} moves timestamp outside u64"))
+    u64::try_from(shifted).map_err(|_| ApplicationError::UnixTimeOffsetOverflow(offset_secs).into())
 }
 
 /// Clamp a proposer's block timestamp (ms) into the deterministic drift band
@@ -153,11 +153,11 @@ where
         WaitOutcome::BudgetExpired | WaitOutcome::ProjectionAhead => {
             Ok(ParentProjectionGate::Withhold)
         }
-        WaitOutcome::Fatal(failure) => Err(eyre::eyre!(
-            "projection readiness failed ({:?}): {}",
-            failure.class,
-            failure.message
-        )),
+        WaitOutcome::Fatal(failure) => Err(ApplicationError::ProjectionReadiness {
+            class: failure.class,
+            message: failure.message,
+        }
+        .into()),
     }
 }
 

@@ -1,4 +1,5 @@
 use super::{status, MAX_SELF_REGISTERED_UNSTAKED};
+use crate::errors::ValidatorSetError;
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{self, P2pInfo, ValidatorLifecycle, ValidatorState};
@@ -6,7 +7,7 @@ use alloy_primitives::{Address, B256};
 use outbe_primitives::consensus_p2p::{
     decode_versioned, MAX_P2P_ADDRESS_ENCODED_LEN, P2P_ADDRESS_VERSION_V1,
 };
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
 use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
 use std::num::NonZeroU64;
@@ -32,17 +33,15 @@ fn verify_bls_registration_sig(
     use blst::min_pk::{PublicKey, Signature};
     use blst::BLST_ERROR;
 
-    let pk = PublicKey::from_bytes(pubkey_bytes)
-        .map_err(|_| PrecompileError::Revert("invalid BLS public key".into()))?;
-    let sig = Signature::from_bytes(sig_bytes)
-        .map_err(|_| PrecompileError::Revert("invalid BLS signature".into()))?;
+    let pk =
+        PublicKey::from_bytes(pubkey_bytes).map_err(|_| ValidatorSetError::InvalidBlsPublicKey)?;
+    let sig =
+        Signature::from_bytes(sig_bytes).map_err(|_| ValidatorSetError::InvalidBlsSignature)?;
 
     let message = validator_registration_message(chain_id, validator_addr, radicle_node_id);
     let result = sig.verify(true, &message, VALIDATOR_REGISTRATION_DST, &[], &pk, true);
     if result != BLST_ERROR::BLST_SUCCESS {
-        return Err(PrecompileError::Revert(
-            "invalid BLS registration signature".into(),
-        ));
+        return Err(ValidatorSetError::InvalidBlsRegistrationSignature.into());
     }
     Ok(())
 }
@@ -61,26 +60,22 @@ impl ValidatorSet<'_> {
     ) -> Result<()> {
         let owner = self.config_owner.read()?;
         if caller != owner && caller != validator_addr {
-            return Err(PrecompileError::Revert(
-                "unauthorized: caller must be owner or validator itself".into(),
-            ));
+            return Err(ValidatorSetError::UnauthorizedOwnerOrValidator.into());
         }
         if self.address_to_index.read(&validator_addr)? == 0 {
-            return Err(PrecompileError::Revert("validator not registered".into()));
+            return Err(ValidatorSetError::ValidatorNotRegistered.into());
         }
         if version != P2P_ADDRESS_VERSION_V1 {
-            return Err(PrecompileError::Revert(format!(
-                "unsupported p2p address version {version}"
-            )));
+            return Err(ValidatorSetError::UnsupportedP2pAddressVersion { version }.into());
         }
         if encoded.len() > MAX_P2P_ADDRESS_ENCODED_LEN {
-            return Err(PrecompileError::Revert(format!(
-                "p2p address payload exceeds max length {}",
-                MAX_P2P_ADDRESS_ENCODED_LEN
-            )));
+            return Err(ValidatorSetError::P2pAddressPayloadTooLong {
+                max_len: MAX_P2P_ADDRESS_ENCODED_LEN,
+            }
+            .into());
         }
-        let decoded = decode_versioned(version, encoded)
-            .map_err(|err| PrecompileError::Revert(format!("invalid p2p address: {err}")))?;
+        let decoded =
+            decode_versioned(version, encoded).map_err(ValidatorSetError::invalid_p2p_address)?;
 
         let before = self.validator_state(validator_addr)?;
         let lifecycle = state_machine::with_p2p(before.lifecycle().clone(), P2pInfo::V1(decoded))?;
@@ -95,7 +90,7 @@ impl ValidatorSet<'_> {
     pub fn get_p2p_address(&self, validator_addr: Address) -> Result<Option<(u8, Vec<u8>)>> {
         let state = self.validator_state(validator_addr)?;
         let Some(p2p) = state.p2p() else {
-            return Err(PrecompileError::Revert("validator not registered".into()));
+            return Err(ValidatorSetError::ValidatorNotRegistered.into());
         };
         if matches!(p2p, P2pInfo::Unset) {
             return Ok(None);
@@ -153,16 +148,12 @@ impl ValidatorSet<'_> {
     fn authorize_registration(&self, request: &RegistrationRequest<'_>) -> Result<Address> {
         let owner = self.config_owner.read()?;
         if *request.consensus_pubkey == [0; 48] {
-            return Err(PrecompileError::Revert(
-                "consensus public key must not be zero".into(),
-            ));
+            return Err(ValidatorSetError::ZeroConsensusPublicKey.into());
         }
 
         // Authorization: owner or self-registration
         if request.caller != owner && request.caller != request.validator {
-            return Err(PrecompileError::Revert(
-                "unauthorized: caller must be owner or validator itself".into(),
-            ));
+            return Err(ValidatorSetError::UnauthorizedOwnerOrValidator.into());
         }
         self.ensure_not_operational_delegate(request.validator)?;
         let radicle_owner = self.available_radicle_owner(request)?;
@@ -176,17 +167,13 @@ impl ValidatorSet<'_> {
     /// be non-zero and free or already owned by the validator.
     fn available_radicle_owner(&self, request: &RegistrationRequest<'_>) -> Result<Address> {
         if request.radicle_node_id.is_zero() {
-            return Err(PrecompileError::Revert(
-                "Radicle NodeId must not be zero".into(),
-            ));
+            return Err(ValidatorSetError::ZeroRadicleNodeId.into());
         }
         let radicle_owner = self
             .radicle_node_id_to_validator
             .read(&request.radicle_node_id)?;
         if !radicle_owner.is_zero() && radicle_owner != request.validator {
-            return Err(PrecompileError::Revert(
-                "Radicle NodeId already registered by another validator".into(),
-            ));
+            return Err(ValidatorSetError::RadicleNodeIdAlreadyRegistered.into());
         }
         Ok(radicle_owner)
     }
@@ -204,9 +191,7 @@ impl ValidatorSet<'_> {
                 request.radicle_node_id,
             )
         } else if !request.allow_bootstrap_without_pop {
-            Err(PrecompileError::Revert(
-                "validator registration requires BLS proof-of-possession signature".into(),
-            ))
+            Err(ValidatorSetError::RegistrationRequiresBlsPop.into())
         } else {
             Ok(())
         }
@@ -226,11 +211,7 @@ impl ValidatorSet<'_> {
         if request.caller == request.validator
             && self.registered_count()? >= MAX_SELF_REGISTERED_UNSTAKED
         {
-            return Err(PrecompileError::Revert(
-                "self-registration limit reached: too many unstaked REGISTERED validators \
-                 (owner may register directly)"
-                    .into(),
-            ));
+            return Err(ValidatorSetError::SelfRegistrationLimitReached.into());
         }
         Ok(())
     }
@@ -242,9 +223,7 @@ impl ValidatorSet<'_> {
         let pk_hash = Self::consensus_pubkey_hash(request.consensus_pubkey);
         let existing_owner = self.consensus_pubkey_hash_to_address.read(&pk_hash)?;
         if !existing_owner.is_zero() && existing_owner != request.validator {
-            return Err(PrecompileError::Revert(
-                "BLS consensus pubkey already registered by another validator".into(),
-            ));
+            return Err(ValidatorSetError::ConsensusPubkeyAlreadyRegistered.into());
         }
         Ok(())
     }
@@ -296,25 +275,19 @@ impl ValidatorSet<'_> {
         let validator_addr = request.validator;
         let existing_state = &target.existing_state;
         let ValidatorLifecycle::Inactive(inactive) = existing_state.lifecycle().clone() else {
-            return Err(PrecompileError::Revert(
-                "validator already registered".into(),
-            ));
+            return Err(ValidatorSetError::ValidatorAlreadyRegistered.into());
         };
         let stored_node_id = self.val_radicle_node_id.read(&validator_addr)?;
         if stored_node_id != request.radicle_node_id {
-            return Err(PrecompileError::Revert(
-                "inactive validator must keep its Radicle NodeId until final cleanup".into(),
-            ));
+            return Err(ValidatorSetError::InactiveValidatorMustKeepRadicleNodeId.into());
         }
         if target.radicle_owner != validator_addr {
-            return Err(PrecompileError::Fatal(
-                "registered validator has inconsistent Radicle NodeId reverse binding".into(),
-            ));
+            return Err(ValidatorSetError::InconsistentRadicleNodeIdReverseBinding.into());
         }
         self.ensure_reregistration_cooldown(existing_state, target.block_number)?;
-        let old_pubkey = existing_state.consensus_pubkey().ok_or_else(|| {
-            PrecompileError::Fatal("registered validator is missing consensus pubkey".into())
-        })?;
+        let old_pubkey = existing_state
+            .consensus_pubkey()
+            .ok_or(ValidatorSetError::RegisteredValidatorMissingConsensusPubkey)?;
         let old_pk_hash = Self::consensus_pubkey_hash(old_pubkey);
         let lifecycle = ValidatorLifecycle::WaitingForStake(state_machine::reregister(
             inactive,
@@ -323,9 +296,7 @@ impl ValidatorSet<'_> {
         )?);
         let after = existing_state.clone().with_lifecycle(lifecycle)?;
         if self.val_ocomp_recovery_deadline.read(&validator_addr)? != 0 {
-            return Err(PrecompileError::Revert(
-                "cannot re-register while an OCOMP recovery window is open".into(),
-            ));
+            return Err(ValidatorSetError::CannotReregisterDuringOpenOcompWindow.into());
         }
         Ok((after, old_pk_hash))
     }
@@ -343,21 +314,17 @@ impl ValidatorSet<'_> {
         }
         let deactivated_at = existing_state
             .history()
-            .ok_or_else(|| {
-                PrecompileError::Fatal("registered validator is missing history".into())
-            })?
+            .ok_or(ValidatorSetError::RegisteredValidatorMissingHistory)?
             .last_deactivated_at_height();
         let ready_at = deactivated_at
             .map(|height| {
-                height.checked_add(u64::from(cooldown)).ok_or_else(|| {
-                    PrecompileError::Fatal("re-registration cooldown height overflow".into())
-                })
+                height
+                    .checked_add(u64::from(cooldown))
+                    .ok_or(ValidatorSetError::ReregistrationCooldownHeightOverflow)
             })
             .transpose()?;
         if ready_at.is_some_and(|height| block_number < height) {
-            return Err(PrecompileError::Revert(
-                "re-registration cooldown not expired".into(),
-            ));
+            return Err(ValidatorSetError::ReregistrationCooldownNotExpired.into());
         }
         Ok(())
     }
@@ -383,9 +350,7 @@ impl ValidatorSet<'_> {
 
         let guard = self.storage.checkpoint_guard();
         if target.radicle_owner == validator_addr {
-            return Err(PrecompileError::Fatal(
-                "unregistered validator retains a Radicle NodeId reservation".into(),
-            ));
+            return Err(ValidatorSetError::UnregisteredValidatorRetainsRadicleReservation.into());
         }
         self.address_to_index
             .write(&validator_addr, new_index_u64)?;
@@ -428,14 +393,13 @@ impl ValidatorSet<'_> {
         let count = self.validator_count.read()?;
         let max = self.config_max_validators.read()?;
         if max > 0 && count >= max {
-            return Err(PrecompileError::Revert("max validators reached".into()));
+            return Err(ValidatorSetError::MaxValidatorsReached.into());
         }
         let new_index = count
             .checked_add(1)
-            .ok_or_else(|| PrecompileError::Fatal("validator count overflow".into()))?;
-        let registry_index = NonZeroU64::new(new_index as u64).ok_or_else(|| {
-            PrecompileError::Fatal("validator registry index must be non-zero".into())
-        })?;
+            .ok_or(ValidatorSetError::ValidatorCountOverflow)?;
+        let registry_index = NonZeroU64::new(new_index as u64)
+            .ok_or(ValidatorSetError::ValidatorRegistryIndexZero)?;
         Ok((new_index, registry_index))
     }
 }

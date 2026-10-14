@@ -66,7 +66,7 @@ pub fn verify_result_vote_carrier(
     let decision = (|| {
         let vote_bytes = preflight_result_vote_calldata(calldata, limits).map_err(invalid)?;
         let vote = ResultVoteV1::decode_canonical(vote_bytes, limits)
-            .map_err(|error| invalid_reason(format!("malformed canonical result vote: {error}")))?;
+            .map_err(|error| invalid_reason(crate::errors::malformed_result_vote_reason(error)))?;
         let carrier = CarrierVote {
             vote: &vote,
             outer_signer,
@@ -168,29 +168,32 @@ fn live_job_for_finalized_job_id(
     let max_scheduler_bytes = LIVE_INDEX_KEY_LEN
         .checked_mul(MAX_ACTIVE_WWDS)
         .and_then(|bytes| LIVE_INDEX_HEADER_LEN.checked_add(bytes))
-        .ok_or_else(|| PrecompileError::Fatal("OCOMP live scheduler byte cap overflow".into()))?;
+        .ok_or_else(|| {
+            crate::errors::storage_corruption_message("OCOMP live scheduler byte cap overflow")
+        })?;
     if contract.ocomp_scheduler.len()? > max_scheduler_bytes {
-        return Err(PrecompileError::Fatal(
-            "OCOMP live scheduler exceeds the active-job capacity".into(),
+        return Err(crate::errors::storage_corruption_message(
+            "OCOMP live scheduler exceeds the active-job capacity",
         ));
     }
     let mut matched = None;
     for state in contract.live_ocomp_fsm_states(limits)? {
-        let intent_id = state
-            .projection()
-            .live_intent_id
-            .ok_or_else(|| PrecompileError::Fatal("OCOMP live scheduler has no IntentId".into()))?;
+        let intent_id = state.projection().live_intent_id.ok_or_else(|| {
+            crate::errors::storage_corruption_message("OCOMP live scheduler has no IntentId")
+        })?;
         let record = contract
             .ocomp_job_record(intent_id, limits)?
-            .ok_or_else(|| PrecompileError::Fatal("OCOMP live scheduler job is missing".into()))?;
+            .ok_or_else(|| {
+                crate::errors::storage_corruption_message("OCOMP live scheduler job is missing")
+            })?;
         let matches_job = record
             .finalized
             .as_ref()
             .is_some_and(|finalized| finalized.job_id == job_id);
         if matches_job {
             if matched.is_some() {
-                return Err(PrecompileError::Fatal(
-                    "OCOMP live scheduler contains duplicate JobId bindings".into(),
+                return Err(crate::errors::storage_corruption_message(
+                    "OCOMP live scheduler contains duplicate JobId bindings",
                 ));
             }
             matched = Some(record);
@@ -368,21 +371,17 @@ fn invalid_reason(reason: impl Into<String>) -> ResultVoteCarrierAdmission {
     }
 }
 
-fn corrupt(reason: impl Into<String>) -> ResultVoteCarrierAdmission {
+fn corrupt(reason: impl std::fmt::Display) -> ResultVoteCarrierAdmission {
     ResultVoteCarrierAdmission::CorruptCommittedState {
-        source: PrecompileError::Fatal(reason.into()),
+        source: crate::errors::storage_corruption_message(reason),
     }
 }
 
 fn classify_state_error(error: PrecompileError) -> ResultVoteCarrierAdmission {
-    match error {
-        source @ (PrecompileError::Storage(_)
-        | PrecompileError::BodyReadUnavailable(_)
-        | PrecompileError::BodyReadRequestDeadline
-        | PrecompileError::TreeUnavailable(_)) => {
-            ResultVoteCarrierAdmission::StateUnavailable { source }
-        }
-        source => ResultVoteCarrierAdmission::CorruptCommittedState { source },
+    if crate::errors::is_state_unavailable(&error) {
+        ResultVoteCarrierAdmission::StateUnavailable { source: error }
+    } else {
+        ResultVoteCarrierAdmission::CorruptCommittedState { source: error }
     }
 }
 

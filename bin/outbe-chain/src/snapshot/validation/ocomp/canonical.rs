@@ -138,12 +138,12 @@ fn open_verified_projection_checkpoint(
                 projection.block_number
             ))
         })?;
-    ensure!(
-        p_header.inner.number == projection.block_number
-            && p_header.hash_slow() == p_hash
-            && p_hash == projection.block_hash,
-        "OCOMP projection checkpoint differs from retained canonical header"
-    );
+    if p_header.inner.number != projection.block_number
+        || p_header.hash_slow() != p_hash
+        || p_hash != projection.block_hash
+    {
+        return Err(SnapshotOcompError::ProjectionCheckpointHeaderMismatch.into());
+    }
     if let Some(report) = report {
         report.observed.p = Some(outbe_snapshot::manifest::BlockIdentity {
             number: projection.block_number,
@@ -200,7 +200,10 @@ fn load_and_verify_pins(
     view: &crate::snapshot::native::RethReadOnlyView,
     layout: &crate::snapshot::config::RequestedLayout,
     maximum_records: Option<u64>,
-) -> eyre::Result<(Vec<CanonicalPinAudit>, std::collections::BTreeMap<B256, usize>)> {
+) -> eyre::Result<(
+    Vec<CanonicalPinAudit>,
+    std::collections::BTreeMap<B256, usize>,
+)> {
     use outbe_node::ocomp::retention::{inspect_retention_journal, RetentionError};
     use std::collections::BTreeMap;
 
@@ -222,12 +225,12 @@ fn load_and_verify_pins(
             maximum_records,
         )?;
         let authority = verify_pin_authority(state, view, key, &record)?;
-        ensure!(
-            pin_by_intent
-                .insert(authority.candidate.intent_id, index)
-                .is_none(),
-            "multiple retained pins bind the same canonical intent"
-        );
+        if pin_by_intent
+            .insert(authority.candidate.intent_id, index)
+            .is_some()
+        {
+            return Err(SnapshotOcompError::MultipleRetainedPinsForIntent.into());
+        }
         pins.push(CanonicalPinAudit { record, authority });
     }
     Ok((pins, pin_by_intent))
@@ -263,13 +266,13 @@ impl CanonicalObligationVerifier<'_> {
             .view
             .canonical_hash(b)?
             .ok_or_else(|| Incomplete(format!("missing active request canonical hash B={b}")))?;
-        ensure!(
-            header.inner.number == b
-                && header.hash_slow() == hash
-                && job.intent.logical_evaluation_height == b
-                && job.intent.logical_evaluation_time == header.inner.timestamp,
-            "required OCOMP source has a conflicting frozen request identity"
-        );
+        if header.inner.number != b
+            || header.hash_slow() != hash
+            || job.intent.logical_evaluation_height != b
+            || job.intent.logical_evaluation_time != header.inner.timestamp
+        {
+            return Err(SnapshotOcompError::SourceConflictingRequestIdentity.into());
+        }
         if request_frame_required && !self.checked_requests.contains(&b) {
             verify_retained_frames(
                 self.view,
@@ -303,16 +306,12 @@ impl CanonicalObligationVerifier<'_> {
     ) -> eyre::Result<()> {
         let intent = job.intent.intent_id(&poc_schema_limits())?;
         if !self.checked_exports.contains(&intent) {
-            let export = verify_export_inputs(
-                &self.layout.ocomp_root,
-                job,
-                authority,
-                self.cas_limits,
-            )?;
+            let export =
+                verify_export_inputs(&self.layout.ocomp_root, job, authority, self.cas_limits)?;
             self.input_chunks = self
                 .input_chunks
                 .checked_add(export.input_chunks)
-                .ok_or_else(|| eyre::eyre!("OCOMP input chunk count overflow"))?;
+                .ok_or(SnapshotOcompError::InputChunkCountOverflow)?;
             self.checked_exports.insert(intent);
         }
         Ok(())
@@ -422,12 +421,8 @@ pub(crate) fn verify_canonical_obligations(
         report.as_deref_mut(),
     )?;
 
-    let (_secondary, reader, projection) = open_verified_projection_checkpoint(
-        view,
-        layout,
-        scratch_parent,
-        report.as_deref_mut(),
-    )?;
+    let (_secondary, reader, projection) =
+        open_verified_projection_checkpoint(view, layout, scratch_parent, report.as_deref_mut())?;
     let closure = verify_and_record_closure(
         view,
         layout,

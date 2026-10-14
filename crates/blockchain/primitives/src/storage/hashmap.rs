@@ -478,8 +478,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
                 .metadosis_mutation_entitlements
                 .consume(purpose, binding)
         {
-            return Err(PrecompileError::Fatal(
-                "test provider has no matching Metadosis mutation lease".into(),
+            return Err(PrecompileError::fatal(
+                "test provider has no matching Metadosis mutation lease",
             ));
         }
         self.metadosis_mutation_active = Some((purpose, binding, chain_id, block_number));
@@ -495,13 +495,13 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         let Some((active_purpose, active_binding, _, _)) =
             self.metadosis_mutation_active.as_ref().copied()
         else {
-            return Err(PrecompileError::Fatal(
-                "test provider has no active Metadosis mutation lease".into(),
+            return Err(PrecompileError::fatal(
+                "test provider has no active Metadosis mutation lease",
             ));
         };
         if active_purpose != purpose || active_binding != binding {
-            return Err(PrecompileError::Fatal(
-                "test provider Metadosis mutation lease identity mismatch".into(),
+            return Err(PrecompileError::fatal(
+                "test provider Metadosis mutation lease identity mismatch",
             ));
         }
         self.metadosis_mutation_active = None;
@@ -513,8 +513,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             || self.lysis_activation_attempted
             || self.lysis_activation_call_id.is_some()
         {
-            return Err(PrecompileError::Fatal(
-                "test provider has no certified Lysis activation lease".into(),
+            return Err(PrecompileError::fatal(
+                "test provider has no certified Lysis activation lease",
             ));
         }
         self.lysis_activation_attempted = true;
@@ -528,8 +528,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         _completed: bool,
     ) -> Result<()> {
         if self.lysis_activation_call_id.take() != Some(activation_call_id) {
-            return Err(PrecompileError::Fatal(
-                "test provider Lysis activation lease identity mismatch".into(),
+            return Err(PrecompileError::fatal(
+                "test provider Lysis activation lease identity mismatch",
             ));
         }
         self.lysis_activation_entitled = false;
@@ -701,7 +701,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
         let from_balance = self.accounts.entry(from).or_default().balance;
         if from_balance < amount {
-            return Err(crate::error::PrecompileError::Fatal(format!(
+            return Err(crate::error::PrecompileError::fatal(format!(
                 "insufficient balance: {from} has {from_balance} but needs {amount}"
             )));
         }
@@ -766,7 +766,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
         let entry = self.accounts.entry(address).or_default();
         if entry.balance < amount {
-            return Err(PrecompileError::Fatal(format!(
+            return Err(PrecompileError::fatal(format!(
                 "insufficient balance for burn: {address} has {} but needs {amount}",
                 entry.balance
             )));

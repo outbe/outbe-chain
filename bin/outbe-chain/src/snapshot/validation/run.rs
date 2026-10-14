@@ -31,7 +31,12 @@ impl CheckSelection {
                     "ce" => Ce,
                     "bodies" => Bodies,
                     "ocomp" => Ocomp,
-                    _ => eyre::bail!("unknown snapshot check {name:?}"),
+                    _ => {
+                        return Err(crate::errors::SnapshotError::UnknownSnapshotCheck {
+                            name: name.to_owned(),
+                        }
+                        .into())
+                    }
                 });
             }
         }
@@ -78,8 +83,8 @@ impl Default for ValidationInputs {
     }
 }
 
-pub(crate) use super::artifact::{audit_artifact, verify_native_files};
 use super::artifact::{artifact_error, missing_artifact};
+pub(crate) use super::artifact::{audit_artifact, verify_native_files};
 
 fn run_artifact_phase(
     inputs: &ValidationInputs,
@@ -122,14 +127,14 @@ fn resolve_validation_layout(
     use super::report::CheckName::*;
     use crate::snapshot::config::{resolve_requested_layout, NativeReadSelection};
     // A bad/missing unneeded projection config cannot poison execution-only work.
-    let mut layout =
-        match resolve_requested_layout(node, NativeReadSelection { projection: false }) {
-            Ok(layout) => layout,
-            Err(error) => {
-                fail_selected(report, &[Files, Headers, Evm, Ce, Bodies, Ocomp], &error);
-                return None;
-            }
-        };
+    let mut layout = match resolve_requested_layout(node, NativeReadSelection { projection: false })
+    {
+        Ok(layout) => layout,
+        Err(error) => {
+            fail_selected(report, &[Files, Headers, Evm, Ce, Bodies, Ocomp], &error);
+            return None;
+        }
+    };
     report
         .protected_paths
         .0
@@ -252,8 +257,9 @@ pub(crate) fn validate_snapshot_with_node(
     let needs_work = [Evm, Ce, Bodies, Ocomp]
         .iter()
         .any(|name| selection.checks.contains(name));
-    let scratch =
-        needs_work.then(|| create_validation_scratch(inputs, &layout, scratch_parent, &mut report)).flatten();
+    let scratch = needs_work
+        .then(|| create_validation_scratch(inputs, &layout, scratch_parent, &mut report))
+        .flatten();
     // This call owns every native view and drops them before outer scratch.close().
     run_native_checks(
         &layout,
@@ -263,8 +269,8 @@ pub(crate) fn validate_snapshot_with_node(
         &mut report,
     );
     if let Some(scratch) = scratch {
-        if let Err(error) = scratch.close() {
-            let error = eyre::eyre!("remove validation scratch: {error}");
+        if let Err(source) = scratch.close() {
+            let error = crate::errors::SnapshotError::RemoveValidationScratch { source }.into();
             fail_selected(&mut report, &[Evm, Ce, Bodies, Ocomp], &error);
         }
     }

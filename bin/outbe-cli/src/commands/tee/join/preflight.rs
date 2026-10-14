@@ -4,6 +4,7 @@ use super::{
     ensure_joinable_binding, finalized_binding_matches_intent,
     persist_authorized_join_admission_anchor_v1, DurableJoinSubmissionV1,
 };
+use crate::errors::TeeJoinError;
 use crate::rpc::Rpc;
 use alloy_primitives::{Address, B256, U256};
 use eyre::{Result, WrapErr};
@@ -30,16 +31,16 @@ pub(super) async fn resolve_join_policy(
     let policy = if successor_policy {
         let staged = read_finalized_staged_successor_policy_v1(&CliFinalityRpc(client))
             .await?
-            .ok_or_else(|| eyre::eyre!("no approved successor TEE policy"))?;
+            .ok_or(TeeJoinError::NoApprovedSuccessorPolicy)?;
         if staged.finalized_hash != finalized.view.block_hash {
-            eyre::bail!("join and successor policy use different finalized heads");
+            return Err(TeeJoinError::SuccessorPolicyHeadMismatch.into());
         }
         staged.policy
     } else {
         finalized.policy.clone()
     };
     if policy.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
-        eyre::bail!("finalized V1 policy chain id does not match eth_chainId");
+        return Err(TeeJoinError::PolicyChainIdMismatch.into());
     }
     Ok(policy)
 }
@@ -55,7 +56,7 @@ pub(super) async fn verify_finalized_node_ownership(
         .as_ref()
         .is_some_and(|binding| binding.node_id_hash != node_id_hash)
     {
-        eyre::bail!("finalized Registry selector returned another node identity");
+        return Err(TeeJoinError::SelectorNodeIdentityMismatch.into());
     }
     if let Some(node_binding) = finalized.binding.as_ref() {
         let signer_view = read_finalized_registry_view_v1(
@@ -65,7 +66,7 @@ pub(super) async fn verify_finalized_node_ownership(
         .await
         .wrap_err("authenticate global EVM signer against finalized TeeRegistry association")?;
         if signer_view.binding.as_ref() != Some(node_binding) {
-            eyre::bail!("global --private-key does not own this finalized NodeHost association");
+            return Err(TeeJoinError::SignerDoesNotOwnAssociation.into());
         }
     }
     Ok(())
@@ -74,7 +75,10 @@ pub(super) async fn verify_finalized_node_ownership(
 pub(super) fn load_durable_checkpoint(
     node_data_dir: Option<&Path>,
     signer_address: Address,
-) -> Result<(Option<DurableJoinSubmissionV1>, Option<RegistrationIntentV1>)> {
+) -> Result<(
+    Option<DurableJoinSubmissionV1>,
+    Option<RegistrationIntentV1>,
+)> {
     let durable_submission = match node_data_dir {
         Some(dir) => load_node_dir_submission(dir)?,
         None => None,
@@ -100,11 +104,11 @@ fn load_node_dir_submission(node_data_dir: &Path) -> Result<Option<DurableJoinSu
         return Ok(None);
     }
     let candidate = load_replacement_candidate_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("inspect candidate join checkpoint: {error}"))?;
+        .map_err(TeeJoinError::InspectCandidateCheckpoint)?;
     let committed = load_committed_join_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("inspect committed join checkpoint: {error}"))?;
+        .map_err(TeeJoinError::InspectCommittedCheckpoint)?;
     match (candidate, committed) {
-        (Some(_), Some(_)) => eyre::bail!("candidate and committed tee join checkpoints coexist"),
+        (Some(_), Some(_)) => Err(TeeJoinError::CoexistingCheckpoints.into()),
         (Some(value), None) => Ok(Some(DurableJoinSubmissionV1::Candidate(value))),
         (None, Some(value)) => Ok(Some(DurableJoinSubmissionV1::Committed(value))),
         (None, None) => Ok(None),
@@ -113,7 +117,7 @@ fn load_node_dir_submission(node_data_dir: &Path) -> Result<Option<DurableJoinSu
 
 fn decode_submission_intent(submission: &DurableJoinSubmissionV1) -> Result<RegistrationIntentV1> {
     let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence())
-        .map_err(|error| eyre::eyre!("decode durable join checkpoint: {error}"))?;
+        .map_err(TeeJoinError::DecodeDurableCheckpoint)?;
     Ok(match evidence {
         AttestationEvidenceV1::Dcap(value) => value.intent,
         AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
@@ -159,13 +163,14 @@ pub(super) fn evaluate_replay_and_lease(input: ReplayCheckInput<'_>) -> Result<P
     let lease = input
         .valid_until
         .checked_sub(input.finalized.schedule.finalized_timestamp)
-        .ok_or_else(|| eyre::eyre!("--valid-until is not after finalized consensus time"))?;
+        .ok_or(TeeJoinError::ValidUntilBeforeFinalizedTime)?;
     if lease < input.policy.minimum_lease || lease > input.policy.maximum_lease {
-        eyre::bail!(
-            "--valid-until lease {lease}s is outside finalized policy range {}..={}s",
-            input.policy.minimum_lease,
-            input.policy.maximum_lease
-        );
+        return Err(TeeJoinError::LeaseOutsidePolicyRange {
+            lease,
+            min: input.policy.minimum_lease,
+            max: input.policy.maximum_lease,
+        }
+        .into());
     }
     Ok(PreflightOutcome::Proceed {
         resumes_finalized_target: false,
@@ -183,12 +188,12 @@ fn try_complete_exact_replay(
         return Ok(false);
     };
     let manifest = load_committed_enclave_manifest_v1(node_data_dir)
-        .map_err(|error| eyre::eyre!("load committed replay manifest: {error}"))?;
+        .map_err(TeeJoinError::LoadReplayManifest)?;
     if !committed_manifest_matches_binding(&manifest, binding)? {
         return Ok(false);
     }
     let mut committed = connect_committed_node_host_enclave(input.enclave_socket, node_data_dir)
-        .map_err(|error| eyre::eyre!("reopen completed tee join: {error}"))?;
+        .map_err(TeeJoinError::ReopenCompletedJoin)?;
     match committed.request(&EnclaveRequest::GetPublicKeys)? {
         EnclaveResponse::PublicKeys {
             offer_key_ready: true,
@@ -207,8 +212,6 @@ fn try_complete_exact_replay(
             println!("[ok] exact tee join is already finalized and locally committed");
             Ok(true)
         }
-        other => eyre::bail!(
-            "finalized tee join is not durably ready in the committed enclave: {other:?}"
-        ),
+        other => Err(TeeJoinError::ReplayEnclaveNotReady(format!("{other:?}")).into()),
     }
 }

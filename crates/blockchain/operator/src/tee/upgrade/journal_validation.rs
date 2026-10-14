@@ -3,17 +3,17 @@ use super::*;
 impl PreparedUpgradeSubmissionV1 {
     pub(super) fn validate(&self) -> Result<()> {
         if !self.has_commitments() || !self.has_bounded_variants() {
-            eyre::bail!("upgrade submission is incomplete or exceeds its variant cap");
+            return Err(UpgradeError::InvalidUpgradeSubmissionBounds.into());
         }
         let first = &self.relay_variants[0];
         if first.relay != self.relay || first.calldata_hash != self.calldata_hash {
-            eyre::bail!("upgrade submission relay binding mismatch");
+            return Err(UpgradeError::SubmissionRelayBindingMismatch.into());
         }
         for variant in &self.relay_variants {
             if !variant_identity_matches(variant, first, self.relay)
                 || !variant_commitments_match(variant, self.calldata_hash)
             {
-                eyre::bail!("upgrade submission contains a competing relay variant");
+                return Err(UpgradeError::CompetingSubmissionRelayVariant.into());
             }
         }
         Ok(())
@@ -68,7 +68,7 @@ impl UpgradeJournalStateV1 {
                 ..
             } => {
                 if *activation_height == 0 || finalized_height < activation_height {
-                    eyre::bail!("terminal cutoff checkpoint precedes policy activation");
+                    return Err(UpgradeError::CutoffPrecedesActivation.into());
                 }
                 Ok(())
             }
@@ -77,11 +77,10 @@ impl UpgradeJournalStateV1 {
 }
 
 fn validate_submission_checkpoint(state: &UpgradeJournalStateV1) -> Result<()> {
-    let (root, offer, proof, submission) = security_material(state)
-        .ok_or_else(|| eyre::eyre!("submission checkpoint has no security material"))?;
+    let (root, offer, proof, submission) =
+        security_material(state).ok_or(UpgradeError::MissingCheckpointSecurityMaterial)?;
     validate_key_ready(root, offer, proof)?;
-    let submission =
-        submission.ok_or_else(|| eyre::eyre!("submission checkpoint has no submission"))?;
+    let submission = submission.ok_or(UpgradeError::MissingCheckpointSubmission)?;
     submission.validate()?;
     match state {
         UpgradeJournalStateV1::Submitted {
@@ -94,14 +93,14 @@ fn validate_submission_checkpoint(state: &UpgradeJournalStateV1) -> Result<()> {
                     .enumerate()
                     .any(|(index, hash)| submission.relay_variants[index].transaction_hash != *hash)
             {
-                eyre::bail!("submitted upgrade transaction list is non-canonical");
+                return Err(UpgradeError::NonCanonicalSubmittedTransactionList.into());
             }
         }
         UpgradeJournalStateV1::Finalized { finalized_hash, .. }
         | UpgradeJournalStateV1::Promoted { finalized_hash, .. }
             if finalized_hash.is_zero() =>
         {
-            eyre::bail!("finalized upgrade checkpoint has a zero block hash");
+            return Err(UpgradeError::ZeroFinalizedCheckpointHash.into());
         }
         _ => {}
     }
@@ -137,15 +136,15 @@ pub(super) fn validate_checkpoint_transition(
             | (Submitted { .. }, TerminalMissedCutoff { .. })
     );
     if !allowed {
-        eyre::bail!(
-            "invalid upgrade checkpoint transition {} -> {}",
-            current.label(),
-            next.label()
-        );
+        return Err(UpgradeError::InvalidCheckpointTransition {
+            from: current.label(),
+            to: next.label(),
+        }
+        .into());
     }
     if let (Some(current), Some(next)) = (security_material(current), security_material(next)) {
         if !security_material_preserved(current, next) {
-            eyre::bail!("upgrade security material changed across checkpoints");
+            return Err(UpgradeError::SecurityMaterialChanged.into());
         }
     }
     Ok(())
@@ -175,7 +174,7 @@ fn validate_expired_recovery(
         if before.sealed_root_hash == *after {
             return Ok(true);
         }
-        eyre::bail!("expired submission recovery changed the sealed root");
+        return Err(UpgradeError::ExpiredRecoveryChangedSealedRoot.into());
     }
     Ok(false)
 }
@@ -235,7 +234,7 @@ pub(super) fn security_material(state: &UpgradeJournalStateV1) -> Option<Securit
 
 fn validate_root(sealed_root_hash: B256) -> Result<()> {
     if sealed_root_hash.is_zero() {
-        eyre::bail!("upgrade checkpoint has a zero sealed-root hash");
+        return Err(UpgradeError::ZeroSealedRootHash.into());
     }
     Ok(())
 }
@@ -247,7 +246,7 @@ pub(super) fn validate_key_ready(
 ) -> Result<()> {
     validate_root(sealed_root_hash)?;
     if resident_offer_public.is_zero() || proof_hash.is_zero() {
-        eyre::bail!("key-ready checkpoint has a zero offer key or proof hash");
+        return Err(UpgradeError::ZeroKeyReadyMaterial.into());
     }
     Ok(())
 }

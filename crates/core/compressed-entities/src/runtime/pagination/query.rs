@@ -21,21 +21,21 @@ pub(super) fn validate_parent_page(
     page: &crate::IdPage,
 ) -> Result<()> {
     if page.ids.len() > limit as usize {
-        return Err(PrecompileError::BodyReadCorruption(
-            "parent page exceeds requested limit".into(),
+        return Err(crate::errors::body_read_corruption(
+            "parent page exceeds requested limit",
         ));
     }
     let mut previous = after;
     for id in &page.ids {
         if previous.is_some_and(|value| *id <= value) {
-            return Err(PrecompileError::BodyReadCorruption(
-                "parent IDs are not strictly ascending after the cursor".into(),
+            return Err(crate::errors::body_read_corruption(
+                "parent IDs are not strictly ascending after the cursor",
             ));
         }
         if let QueryRef::TributeByDay(day) = query {
             if id.worldwide_day() != day {
-                return Err(PrecompileError::BodyReadCorruption(
-                    "parent TributeByDay ID has the wrong day prefix".into(),
+                return Err(crate::errors::body_read_corruption(
+                    "parent TributeByDay ID has the wrong day prefix",
                 ));
             }
         }
@@ -43,12 +43,12 @@ pub(super) fn validate_parent_page(
     }
     match page.next_after {
         Some(next) if page.ids.last().copied() != Some(next) => {
-            Err(PrecompileError::BodyReadCorruption(
-                "parent next_after must equal its last returned ID".into(),
+            Err(crate::errors::body_read_corruption(
+                "parent next_after must equal its last returned ID",
             ))
         }
-        Some(_) if page.ids.is_empty() => Err(PrecompileError::BodyReadCorruption(
-            "empty parent page cannot advertise a continuation".into(),
+        Some(_) if page.ids.is_empty() => Err(crate::errors::body_read_corruption(
+            "empty parent page cannot advertise a continuation",
         )),
         _ => Ok(()),
     }

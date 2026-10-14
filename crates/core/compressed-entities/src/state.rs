@@ -71,8 +71,7 @@ impl<'storage> State<'storage> {
                 }
                 #[cfg(test)]
                 {
-                    let root =
-                        crate::sealed_root(B256::ZERO).map_err(|error| fatal(error.to_string()))?;
+                    let root = crate::sealed_root(B256::ZERO).map_err(fatal)?;
                     schema
                         .last_smt_root
                         .write(U256::from_be_slice(root.as_slice()))?;
@@ -147,8 +146,7 @@ impl<'storage> State<'storage> {
         partition: PartitionRef,
     ) -> Result<RetirementOutcome> {
         self.ensure_schema()?;
-        let (_, key) =
-            partition_collection_key(partition).map_err(|error| fatal(error.to_string()))?;
+        let (_, key) = partition_collection_key(partition).map_err(fatal)?;
         let storage_key = B256::from(*key.as_bytes());
         if !self
             .schema()
@@ -166,7 +164,7 @@ impl<'storage> State<'storage> {
                 Collection::Gem => CeDomain::Gem,
                 Collection::GemBucket => CeDomain::GemBucket,
             };
-            if collection_key(domain, entity_id).map_err(|error| fatal(error.to_string()))? == key {
+            if collection_key(domain, entity_id).map_err(fatal)? == key {
                 return Err(fatal(
                     "collection retirement conflicts with an earlier entity mutation",
                 ));
@@ -200,8 +198,7 @@ impl<'storage> State<'storage> {
         for day in days {
             let partition =
                 PartitionRef::TributeWwd(outbe_primitives::time::WorldwideDay::new(day));
-            let (_, key) =
-                partition_collection_key(partition).map_err(|error| fatal(error.to_string()))?;
+            let (_, key) = partition_collection_key(partition).map_err(fatal)?;
             let storage_key = B256::from(*key.as_bytes());
             if !unique.insert(storage_key)
                 || self.schema().pending_retirement.read(&storage_key)? != U256::from(1)
@@ -233,6 +230,6 @@ impl<'storage> State<'storage> {
     }
 }
 
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
+fn fatal(message: impl core::fmt::Display) -> PrecompileError {
+    crate::errors::fatal_error(message)
 }

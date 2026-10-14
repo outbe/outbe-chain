@@ -136,9 +136,7 @@ pub(crate) fn reduce_outer_wwd(
         });
     }
     let current = current.ok_or_else(|| {
-        crate::errors::storage_corruption(
-            "Metadosis outer WWD event requires a persisted day".into(),
-        )
+        crate::errors::storage_corruption("Metadosis outer WWD event requires a persisted day")
     })?;
     match event {
         OuterWwdEvent::AdvanceDue {

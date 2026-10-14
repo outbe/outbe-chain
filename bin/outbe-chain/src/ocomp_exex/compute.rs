@@ -5,6 +5,7 @@ use super::AsyncOutcomeProjectionV1;
 use super::EmbeddedOcompExExV1;
 use super::LocalVoteEligibilityV1;
 use super::RequestLocatorV1;
+use crate::errors::OcompExExError;
 
 use alloy_consensus::Transaction as _;
 use alloy_consensus::TxReceipt as _;
@@ -12,7 +13,6 @@ use alloy_consensus::TxReceipt as _;
 use alloy_primitives::B256;
 
 use alloy_sol_types::SolEvent as _;
-use eyre::bail;
 use eyre::Context as _;
 
 use metrics::counter;
@@ -69,8 +69,11 @@ fn receipt_activates_lysis(
             log.address == METADOSIS_ADDRESS
                 && log.data.topics().first() == Some(&IMetadosis::LysisActivated::SIGNATURE_HASH)
                 && IMetadosis::LysisActivated::decode_log(log).is_ok_and(|event| {
-                    (event.data.intentId, event.data.jobId, event.data.resultDigest)
-                        == (intent_id, job_id, expected_digest)
+                    (
+                        event.data.intentId,
+                        event.data.jobId,
+                        event.data.resultDigest,
+                    ) == (intent_id, job_id, expected_digest)
                 })
         })
 }
@@ -109,14 +112,14 @@ fn canonical_vote_from_frame(
     expected_digest: B256,
 ) -> eyre::Result<ResultVoteV1> {
     if frame.identity().number != quorum_height {
-        bail!("q-forming OCOMP vote is not in the current finalized frame");
+        return Err(OcompExExError::QuorumVoteNotInCurrentFrame.into());
     }
     let limits = poc_schema_limits();
     let intent_id = record.intent.intent_id(&limits)?;
     let finalized = record
         .finalized
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("completed OCOMP job is not finalized"))?;
+        .ok_or(OcompExExError::CompletedJobNotFinalized)?;
     let mut matched = None;
     for (transaction, receipt) in frame.block().body().transactions().zip(frame.receipts()) {
         if transaction.to() != Some(METADOSIS_ADDRESS)
@@ -129,13 +132,13 @@ fn canonical_vote_from_frame(
         let digest = vote.result_digest(&limits)?;
         vote.result.validate_finalized_intent(&record.intent)?;
         if !vote_matches_authority(&vote, record, finalized.job_id, digest, expected_digest) {
-            bail!("q-forming ResultVoteV1 disagrees with finalized OCOMP authority");
+            return Err(OcompExExError::QuorumVoteDisagreesWithAuthority.into());
         }
         if matched.replace(vote).is_some() {
-            bail!("more than one q-forming OCOMP vote matched one completed job");
+            return Err(OcompExExError::MultipleQuorumVotesMatched.into());
         }
     }
-    matched.ok_or_else(|| eyre::eyre!("q-forming OCOMP ResultVoteV1 is missing"))
+    matched.ok_or_else(|| OcompExExError::QuorumVoteMissing.into())
 }
 
 impl<P> EmbeddedOcompExExV1<P>
@@ -154,7 +157,7 @@ where
         let job = self
             .jobs
             .get_mut(&job_id)
-            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?;
+            .ok_or(OcompExExError::EmbeddedJobDisappeared)?;
         if job.compute_started {
             return Ok(());
         }
@@ -175,12 +178,12 @@ where
         };
         self.jobs
             .get_mut(&job_id)
-            .ok_or_else(|| eyre::eyre!("restored OCOMP job is unknown"))?
+            .ok_or(OcompExExError::RestoredJobUnknown)?
             .compute_started = true;
         let generation = self
             .jobs
             .get(&job_id)
-            .ok_or_else(|| eyre::eyre!("restored OCOMP job is unknown"))?
+            .ok_or(OcompExExError::RestoredJobUnknown)?
             .generation;
         self.accept_local_result(
             job_id,
@@ -213,13 +216,13 @@ where
         let terminal = record
             .terminal
             .as_ref()
-            .ok_or_else(|| eyre::eyre!("completed OCOMP job lacks terminal record"))?;
+            .ok_or(OcompExExError::CompletedJobLacksTerminalRecord)?;
         let binding = terminal
             .completed_binding
             .as_ref()
-            .ok_or_else(|| eyre::eyre!("completed OCOMP job lacks completed binding"))?;
+            .ok_or(OcompExExError::CompletedJobLacksCompletedBinding)?;
         if binding.quorum_height > finalized_height {
-            bail!("OCOMP quorum is ahead of the reconciled finalized target");
+            return Err(OcompExExError::QuorumAheadOfFinalizedTarget.into());
         }
         let provider = self.provider.clone();
         let record = record.clone();
@@ -228,18 +231,18 @@ where
         let vote = tokio::task::spawn_blocking(move || {
             let quorum_hash = provider
                 .block_hash(quorum_height)?
-                .ok_or_else(|| eyre::eyre!("OCOMP quorum block is unavailable"))?;
+                .ok_or(OcompExExError::QuorumBlockUnavailable)?;
             let source = RethFinalizedFrameSource::new(provider);
             let batch = read_bounded_finalized_frames(
                 &source,
                 quorum_height,
                 (quorum_height, quorum_hash).into(),
             )?
-            .ok_or_else(|| eyre::eyre!("OCOMP quorum frame is unavailable"))?;
+            .ok_or(OcompExExError::QuorumFrameUnavailable)?;
             let frame = batch
                 .frames()
                 .first()
-                .ok_or_else(|| eyre::eyre!("OCOMP quorum frame is missing"))?;
+                .ok_or(OcompExExError::QuorumFrameMissing)?;
             canonical_vote_from_frame(frame, quorum_height, &record, result_digest)
         })
         .await
@@ -248,7 +251,7 @@ where
         let digest = canonical.result_digest(&poc_schema_limits())?;
         self.jobs
             .get_mut(&job_id)
-            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
+            .ok_or(OcompExExError::EmbeddedJobDisappeared)?
             .canonical_result = Some(canonical.clone());
         let action = self
             .state
@@ -320,26 +323,25 @@ where
                     .reduce(job_id, EmbeddedJobEventV1::LocalFailed { generation })
                     .wrap_err("reduce embedded OCOMP local failure")?
                     .action;
-                match action {
+                return match action {
                     EmbeddedJobActionV1::FatalLocalFailure => {
                         persist_local_failure_evidence(
                             self.domain.fatal_evidence_root(),
                             job_id,
                             &detail,
                         )?;
-                        self.latch_fatal(job_id, detail)?;
+                        self.latch_fatal(job_id, detail)
                     }
                     EmbeddedJobActionV1::Abstain => {
                         error!(%job_id, %detail, "Validator OCOMP computation failed; abstaining from vote");
+                        Ok(())
                     }
                     EmbeddedJobActionV1::ProtocolOwned => {
                         info!(%job_id, %detail, "ignored late embedded OCOMP computation failure");
+                        Ok(())
                     }
-                    _ => {
-                        bail!("unexpected embedded OCOMP local-failure action");
-                    }
-                }
-                return Ok(());
+                    _ => Err(OcompExExError::UnexpectedLocalFailureAction.into()),
+                };
             }
         };
         let job_id = completed.job_id;
@@ -386,7 +388,7 @@ where
                 let job = self
                     .jobs
                     .get_mut(&job_id)
-                    .ok_or_else(|| eyre::eyre!("computed OCOMP job is unknown"))?;
+                    .ok_or(OcompExExError::ComputedJobUnknown)?;
                 match job.vote_eligibility {
                     LocalVoteEligibilityV1::Pending => {
                         info!(%job_id, "pinned OCOMP vote membership is temporarily unavailable; retaining local result");
@@ -418,7 +420,7 @@ where
                     .jobs
                     .get(&job_id)
                     .and_then(|job| job.canonical_result.clone())
-                    .ok_or_else(|| eyre::eyre!("canonical OCOMP result disappeared"))?;
+                    .ok_or(OcompExExError::CanonicalResultDisappeared)?;
                 self.verify_full_node_exact(job_id, &canonical)?;
             }
             EmbeddedJobActionV1::FatalMismatch {
@@ -447,7 +449,7 @@ where
             | EmbeddedJobActionV1::FatalLocalFailure
             | EmbeddedJobActionV1::VoteFinalized { .. }
             | EmbeddedJobActionV1::FatalVoteFailure => {
-                bail!("unexpected embedded OCOMP local-result action");
+                return Err(OcompExExError::UnexpectedLocalResultAction.into());
             }
         }
         Ok(())
@@ -465,13 +467,13 @@ where
         let current = self
             .jobs
             .get(&job_id)
-            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
+            .ok_or(OcompExExError::EmbeddedJobDisappeared)?
             .vote_eligibility;
         if current != LocalVoteEligibilityV1::Pending {
             return Ok(false);
         }
         let Some(ocomp_key_hash) = self.domain.validator_ocomp_key_hash() else {
-            bail!("Validator OCOMP key hash is unavailable");
+            return Err(OcompExExError::ValidatorOcompKeyHashUnavailable.into());
         };
         let observed = outbe_node::ocomp::retention::ocomp_snapshot_contains_key_at(
             &self.provider,
@@ -490,7 +492,7 @@ where
         }
         self.jobs
             .get_mut(&job_id)
-            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
+            .ok_or(OcompExExError::EmbeddedJobDisappeared)?
             .vote_eligibility = resolved;
         Ok(resolved == LocalVoteEligibilityV1::Eligible)
     }

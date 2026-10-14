@@ -1,6 +1,7 @@
 use alloy_primitives::{aliases::U1024, U256, U512};
-use eyre::{ensure, eyre, Result};
+use eyre::Result;
 
+use crate::errors::DexError;
 use crate::fixed::FixedValue;
 
 /// Convert an oriented raw-token ratio into human quote/base FP18. At most 77
@@ -12,37 +13,35 @@ pub(super) fn rate(
     base_decimals: u8,
     quote_decimals: u8,
 ) -> Result<FixedValue> {
-    ensure!(
-        !numerator.is_zero() && !denominator.is_zero(),
-        "uninitialized or zero pool price"
-    );
-    ensure!(
-        base_decimals <= 77 && quote_decimals <= 77,
-        "unsupported token decimals (>77)"
-    );
+    if numerator.is_zero() || denominator.is_zero() {
+        return Err(DexError::ZeroPoolPrice.into());
+    }
+    if base_decimals > 77 || quote_decimals > 77 {
+        return Err(DexError::UnsupportedTokenDecimals.into());
+    }
     let n = U1024::from(numerator)
         .checked_mul(ten_pow(u32::from(base_decimals) + 18))
-        .ok_or_else(|| eyre!("DEX rate numerator overflow"))?;
+        .ok_or(DexError::RateNumeratorOverflow)?;
     let d = U1024::from(denominator)
         .checked_mul(ten_pow(u32::from(quote_decimals)))
-        .ok_or_else(|| eyre!("DEX rate denominator overflow"))?;
+        .ok_or(DexError::RateDenominatorOverflow)?;
     let result = n / d;
-    ensure!(
-        result > U1024::ZERO && result <= U1024::from(U256::MAX),
-        "DEX rate outside FP18 range"
-    );
+    if result == U1024::ZERO || result > U1024::from(U256::MAX) {
+        return Err(DexError::RateOutOfRange.into());
+    }
     // Explicit range check above proves the narrowing preserves the value.
     Ok(FixedValue::from_raw(result.wrapping_to::<U256>()))
 }
 
 /// Raw token units at `decimals` to FP18.
 pub(crate) fn scale_fp18(raw: U256, decimals: u8) -> Result<FixedValue> {
-    ensure!(decimals <= 77, "unsupported token decimals (>77)");
+    if decimals > 77 {
+        return Err(DexError::UnsupportedTokenDecimals.into());
+    }
     let result = U1024::from(raw) * ten_pow(18) / ten_pow(u32::from(decimals));
-    ensure!(
-        result <= U1024::from(U256::MAX),
-        "DEX volume outside FP18 range"
-    );
+    if result > U1024::from(U256::MAX) {
+        return Err(DexError::VolumeOutOfRange.into());
+    }
     Ok(FixedValue::from_raw(result.wrapping_to::<U256>()))
 }
 
@@ -55,10 +54,14 @@ fn ten_pow(exponent: u32) -> U1024 {
 /// rounding convention. Normalize below 1 before exponentiation so each
 /// multiplication fits in 256 bits. Accepted exponents match upstream pow().
 pub(super) fn bin_price(active_id: u32, bin_step: u16) -> Result<U256> {
-    ensure!(bin_step > 0, "zero bin step");
+    if bin_step == 0 {
+        return Err(DexError::ZeroBinStep.into());
+    }
     let exponent = i64::from(active_id) - (1i64 << 23);
     let mut power = exponent.unsigned_abs();
-    ensure!(power < 0x10_0000, "Infinity bin exponent out of range");
+    if power >= 0x10_0000 {
+        return Err(DexError::BinExponentOutOfRange.into());
+    }
     let scale = U256::ONE << 128;
     if power == 0 {
         return Ok(scale);
@@ -75,7 +78,9 @@ pub(super) fn bin_price(active_id: u32, bin_step: u16) -> Result<U256> {
             factor = (factor * factor) >> 128;
         }
     }
-    ensure!(!result.is_zero(), "Infinity bin price underflow");
+    if result.is_zero() {
+        return Err(DexError::BinPriceUnderflow.into());
+    }
     Ok(if exponent > 0 {
         U256::MAX / result
     } else {

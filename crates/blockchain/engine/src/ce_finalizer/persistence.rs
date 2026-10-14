@@ -21,12 +21,12 @@ impl DurableCePersistence {
             DurableCeProbe::Absent => Ok(None),
             DurableCeProbe::Exact(root) => Ok(Some(root)),
             DurableCeProbe::DifferentHash(actual) => {
-                eyre::bail!(
-                    "durable canonical conflict at height {}: finalized={}, Reth={}",
-                    block.height,
-                    block.block_hash,
-                    actual
-                );
+                Err(crate::errors::CeFinalizerError::DurableCanonicalConflict {
+                    height: block.height,
+                    finalized: block.block_hash,
+                    actual,
+                }
+                .into())
             }
         }
     }
@@ -65,12 +65,11 @@ impl DurableCePersistence {
                     if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
                         return Ok(());
                     }
-                    eyre::bail!(
-                        "finalized CE persistence deadline exceeded for {}/{} after {:?}",
-                        block.height,
-                        block.block_hash,
-                        self.wait_policy.deadline
-                    );
+                    return Err(crate::errors::CeFinalizerError::PersistenceDeadlineExceeded {
+                        height: block.height,
+                        block_hash: block.block_hash,
+                        deadline: self.wait_policy.deadline,
+                    }.into());
                 }
                 _ = rechecks.tick() => {
                     if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
@@ -79,11 +78,10 @@ impl DurableCePersistence {
                 }
                 notification = persisted.next() => {
                     let Some(notification) = notification else {
-                        return Err(eyre::eyre!(
-                            "Reth persistence stream ended before finalized CE block {}/{}",
-                            block.height,
-                            block.block_hash
-                        ));
+                        return Err(crate::errors::CeFinalizerError::PersistenceStreamEnded {
+                            height: block.height,
+                            block_hash: block.block_hash,
+                        }.into());
                     };
                     if notification.number < block.height {
                         continue;
@@ -113,13 +111,12 @@ impl DurableCePersistence {
                         // fresh DB-only transaction proves its exact canonical identity.
                         return Ok(());
                     }
-                    eyre::bail!(
-                        "Reth persistence passed finalized CE block {}/{} with {}/{}",
-                        block.height,
-                        block.block_hash,
-                        notification.number,
-                        notification.hash
-                    );
+                    return Err(crate::errors::CeFinalizerError::PersistencePassedBlock {
+                        height: block.height,
+                        block_hash: block.block_hash,
+                        notification_number: notification.number,
+                        notification_hash: notification.hash,
+                    }.into());
                 }
             }
         }

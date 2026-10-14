@@ -17,6 +17,7 @@
 //! opportunistically when next touched, then drop the re-exports.
 pub mod api;
 pub mod constants;
+pub mod errors;
 pub mod finalized_metadata_hook;
 pub mod late_settlement;
 pub mod lifecycle;

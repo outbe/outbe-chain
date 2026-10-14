@@ -192,11 +192,10 @@ impl SupervisorWorkerServerV1 {
                     (ready_tx, shutdown_rx),
                 );
             })
-            .map_err(|error| WorkerApiErrorV1::Start(error.to_string()))?;
+            .map_err(WorkerApiErrorV1::start)?;
         let (state, address, message_address) = ready_rx
             .recv_timeout(Duration::from_secs(10))
-            .map_err(|error| WorkerApiErrorV1::Start(error.to_string()))?
-            .map_err(WorkerApiErrorV1::Start)?;
+            .map_err(WorkerApiErrorV1::start)??;
         Ok(Self {
             state,
             address,
@@ -274,7 +273,7 @@ fn serve_worker_transport(
     registry_generation: u64,
     limits: SchemaLimits,
     (ready_tx, shutdown_rx): (
-        mpsc::SyncSender<Result<ReadyServerV1, String>>,
+        mpsc::SyncSender<Result<ReadyServerV1, WorkerApiErrorV1>>,
         tokio::sync::watch::Receiver<bool>,
     ),
 ) {
@@ -285,7 +284,7 @@ fn serve_worker_transport(
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            let _ = ready_tx.send(Err(error.to_string()));
+            let _ = ready_tx.send(Err(WorkerApiErrorV1::start(error)));
             return;
         }
     };
@@ -340,21 +339,23 @@ async fn bind_worker_transport(
         SocketAddr,
         SocketAddr,
     ),
-    String,
+    WorkerApiErrorV1,
 > {
     let listener = tokio::net::TcpListener::bind(address)
         .await
-        .map_err(|error| error.to_string())?;
-    let bound_address = listener.local_addr().map_err(|error| error.to_string())?;
+        .map_err(WorkerApiErrorV1::start)?;
+    let bound_address = listener.local_addr().map_err(WorkerApiErrorV1::start)?;
     let mut router = RouterSocket::new();
     let requested_message_address =
-        derive_message_address(address).map_err(|error| error.to_string())?;
+        derive_message_address(address).map_err(WorkerApiErrorV1::start)?;
     let bound_message_endpoint = router
         .bind(&format!("tcp://{requested_message_address}"))
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(WorkerApiErrorV1::start)?;
     let Endpoint::Tcp(_, port) = bound_message_endpoint else {
-        return Err("ZeroMQ did not bind a TCP endpoint".into());
+        return Err(WorkerApiErrorV1::start(
+            "ZeroMQ did not bind a TCP endpoint",
+        ));
     };
     let message_address = SocketAddr::new(address.ip(), port);
     let state_for_server = Arc::new(WorkerApiState::new(
@@ -424,7 +425,7 @@ async fn run_message_router(
             }
             message = receiver.recv() => {
                 match message
-                    .map_err(|error| WorkerApiErrorV1::MessageTransport(error.to_string()))
+                    .map_err(WorkerApiErrorV1::message_transport)
                     .and_then(|message| decode_worker_event(message, state.limits.max_control_body_bytes))
                     .and_then(|(route, event)| state.handle_event(route, event))
                 {

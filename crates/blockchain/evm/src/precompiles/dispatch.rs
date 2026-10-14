@@ -102,7 +102,11 @@ where
         base_gas,
     };
     let outcome = call.execute(ctx, &runtime);
-    translate_outcome(outcome, &runtime, inputs.gas_limit).map(Some)
+    Ok(Some(translate_outcome(
+        outcome,
+        &runtime,
+        inputs.gas_limit,
+    )?))
 }
 
 impl DispatchCall<'_> {
@@ -117,9 +121,7 @@ impl DispatchCall<'_> {
             self.inputs.scheme,
             CallScheme::DelegateCall | CallScheme::CallCode
         ) {
-            return Err(PrecompileError::Revert(
-                "outbe precompile: delegated call frame cannot execute a precompile".to_string(),
-            ));
+            return Err(crate::errors::OutbePrecompileDispatchError::DelegatedCallFrame.into());
         }
         Ok(())
     }
@@ -140,7 +142,10 @@ impl DispatchCall<'_> {
         let value = match classify_boundary_value(self.route.value_policy(), &self.inputs.value) {
             BoundaryValue::Credited(v) => v,
             BoundaryValue::Rejected(reason) => {
-                return Err(PrecompileError::Revert(reason.to_string()));
+                return Err(
+                    crate::errors::OutbePrecompileDispatchError::RejectedBoundaryValue(reason)
+                        .into(),
+                );
             }
         };
         let result_vote = ResultVoteCall::classify(
@@ -226,9 +231,7 @@ impl DispatchCall<'_> {
             self.check_frame()?;
             let address = self.inputs.bytecode_address;
             let Some(_reentrancy) = ReentrancyStack::try_enter(address) else {
-                return Err(PrecompileError::Revert(
-                    "outbe precompile reentrancy denied".to_string(),
-                ));
+                return Err(crate::errors::OutbePrecompileDispatchError::ReentrancyDenied.into());
             };
             let admission = self.admit_value(runtime.ocomp_lifecycle_active)?;
             let gas_budget = self.inputs.gas_limit - self.base_gas;
@@ -251,15 +254,10 @@ impl DispatchCall<'_> {
                 // Preserve any subsequent infrastructure failure: it must still
                 // abort execution instead of becoming a user receipt.
                 result = match result {
-                    Ok(_)
-                    | Err(
-                        PrecompileError::OutOfGas
-                        | PrecompileError::Revert(_)
-                        | PrecompileError::RevertBytes(_)
-                        | PrecompileError::Halt(_)
-                        | PrecompileError::WriteProtection
-                        | PrecompileError::BodyReadCorruption(_),
-                    ) => Err(PrecompileError::OutOfGas),
+                    Ok(_) => Err(PrecompileError::OutOfGas),
+                    Err(error) if crate::errors::is_overridden_by_subcall_out_of_gas(&error) => {
+                        Err(PrecompileError::OutOfGas)
+                    }
                     other => other,
                 };
             }
@@ -368,7 +366,7 @@ fn translate_outcome(
     outcome: DispatchOutcome,
     runtime: &OutbeDispatchRuntime<'_>,
     gas_limit: u64,
-) -> Result<InterpreterResult, String> {
+) -> Result<InterpreterResult, crate::errors::OutbePrecompileFatalError> {
     if let Err(error) = &outcome.result {
         runtime
             .abort_bridge
@@ -386,6 +384,6 @@ fn translate_outcome(
         // `map_outbe_precompile_result` returns `Err` only as a revm `Fatal`.
         // Provider `SubCall`, `Unsupported`, and every outbe variant without an explicit
         // arm reach this fatal string channel.
-        Err(other) => Err(other.to_string()),
+        Err(other) => Err(crate::errors::OutbePrecompileFatalError::from_revm(other)),
     }
 }

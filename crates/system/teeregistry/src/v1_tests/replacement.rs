@@ -105,8 +105,13 @@ fn initialize_node_host(
     endpoint: &str,
     node_data_dir: &Path,
     identity: NodeHostIdentityV1,
-    sign: impl Fn(B256) -> std::result::Result<[u8; 65], String>,
+    node_signer: &OutbeEvmSigner,
 ) -> EnclaveInitializationManifestV1 {
+    let sign = |hash: B256| {
+        node_signer
+            .sign_hash(&hash)
+            .map_err(crate::errors::format_test_error)
+    };
     drop(connect_or_initialize_node_host_enclave(endpoint, node_data_dir, identity, sign).unwrap());
     let manifest_bytes = std::fs::read(
         node_data_dir
@@ -210,7 +215,7 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
     let sign = |hash: B256| {
         node_signer
             .sign_hash(&hash)
-            .map_err(|error| error.to_string())
+            .map_err(crate::errors::format_test_error)
     };
 
     let root = tempfile::tempdir().unwrap();
@@ -218,7 +223,8 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
         start_active_and_candidate_enclaves(root.path(), active_policy.chain_id);
     let node_data_dir = root.path().join("node-data");
     std::fs::create_dir(&node_data_dir).unwrap();
-    let active_manifest = initialize_node_host(&active.endpoint, &node_data_dir, identity, sign);
+    let active_manifest =
+        initialize_node_host(&active.endpoint, &node_data_dir, identity, &node_signer);
     let initial = initial_intent_for_manifest(&active_policy, &active_manifest, 0x66);
     active_manifest.validate_intent_binding(&initial).unwrap();
     let initial_hash = initial.intent_hash().unwrap();

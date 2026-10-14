@@ -118,14 +118,7 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     }
 }
 
-/// Nod's own index checks revert, so a body corruption reaching a sweep is this
-/// node's body store.
-pub(crate) fn sweep_failure(error: &PrecompileError) -> SweepFailure {
-    match error {
-        PrecompileError::BodyReadCorruption(_) => SweepFailure::Propagate,
-        other => other.sweep_failure(),
-    }
-}
+pub(crate) use crate::errors::sweep_failure;
 
 /// Whether the certified generation of the bucket's Worldwide Day still has Nods to land.
 pub(crate) fn materializing(nod: &NodContract<'_>, bucket_key: B256) -> Result<bool> {

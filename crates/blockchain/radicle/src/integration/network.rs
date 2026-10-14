@@ -347,7 +347,7 @@ impl EndpointNetworkState {
             .handle
             .resolve(anchor.clone(), snapshot.block.number, now)
             .await
-            .map_err(|error| ManagerError::Endpoint(error.to_string()))?
+            .map_err(ManagerError::endpoint)?
         {
             let raw = queued.remove(&resolved.peer).map(|(response, _)| response);
             if let (Ok(verified), Some(response)) = (resolved.result, raw) {
@@ -427,7 +427,7 @@ async fn stop_actor(handle: &EndpointHandle, actor: &mut JoinSet<()>) -> Result<
                 crate::endpoint::HandleError::Deadline => {
                     ManagerError::ShutdownDeadline("endpoint actor")
                 }
-                error => ManagerError::Endpoint(error.to_string()),
+                error => ManagerError::endpoint(error),
             })
         });
     if stopped.is_err() {
@@ -462,9 +462,7 @@ async fn cancel_and_join(
 }
 
 fn anchor(snapshot: &FinalizedSnapshot) -> Result<AnchorSnapshot, ManagerError> {
-    snapshot
-        .endpoint_anchor()
-        .map_err(|error| ManagerError::Snapshot(error.to_string()))
+    snapshot.endpoint_anchor().map_err(ManagerError::snapshot)
 }
 
 fn verified_from_response(peer: PeerId, response: &SignedEndpointResponse) -> VerifiedEndpoint {

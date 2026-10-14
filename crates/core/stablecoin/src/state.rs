@@ -41,9 +41,7 @@ impl StablecoinContract<'_> {
                 if stored_schema == u64::from(STABLECOIN_V1_SCHEMA_VERSION) {
                     StablecoinStateError::AlreadyInitialized.into()
                 } else {
-                    PrecompileError::Fatal(format!(
-                    "stablecoin Factory initialization reached incompatible schema {stored_schema}"
-                ))
+                    StablecoinStateError::IncompatibleInitializationSchema { stored_schema }.into()
                 },
             );
         }
@@ -92,9 +90,9 @@ impl StablecoinContract<'_> {
     pub(crate) fn identity(&self) -> Result<TokenIdentity> {
         self.validated_schema_version()?;
         let name = String::from_utf8(self.name.read()?)
-            .map_err(|_| PrecompileError::Fatal("stablecoin name storage is not UTF-8".into()))?;
+            .map_err(|_| StablecoinStateError::InvalidNameUtf8)?;
         let symbol = String::from_utf8(self.symbol.read()?)
-            .map_err(|_| PrecompileError::Fatal("stablecoin symbol storage is not UTF-8".into()))?;
+            .map_err(|_| StablecoinStateError::InvalidSymbolUtf8)?;
         Ok(TokenIdentity {
             token_id: self.token_id.read()?,
             name,
@@ -109,13 +107,13 @@ impl StablecoinContract<'_> {
     pub fn name_value(&self) -> Result<String> {
         self.validated_schema_version()?;
         String::from_utf8(self.name.read()?)
-            .map_err(|_| PrecompileError::Fatal("stablecoin name storage is not UTF-8".into()))
+            .map_err(|_| StablecoinStateError::InvalidNameUtf8.into())
     }
 
     pub fn symbol_value(&self) -> Result<String> {
         self.validated_schema_version()?;
         String::from_utf8(self.symbol.read()?)
-            .map_err(|_| PrecompileError::Fatal("stablecoin symbol storage is not UTF-8".into()))
+            .map_err(|_| StablecoinStateError::InvalidSymbolUtf8.into())
     }
 
     pub fn decimals_value(&self) -> Result<u8> {
@@ -163,9 +161,7 @@ impl StablecoinContract<'_> {
         if role == ADMIN_ROLE {
             let admin = self.admin.read()?;
             if member != (account == admin) {
-                return Err(PrecompileError::Fatal(
-                    "stablecoin ADMIN slot/role membership mismatch".into(),
-                ));
+                return Err(StablecoinStateError::AdminRoleMismatch.into());
             }
         }
         Ok(member)
@@ -254,9 +250,7 @@ impl StablecoinContract<'_> {
             || !self.roles.read(&role_key(ADMIN_ROLE, previous))?
             || self.roles.read(&role_key(ADMIN_ROLE, actor))?
         {
-            return Err(PrecompileError::Fatal(
-                "stablecoin admin transfer reached inconsistent role state".into(),
-            ));
+            return Err(StablecoinStateError::InconsistentAdminTransferRoleState.into());
         }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -438,7 +432,7 @@ impl StablecoinContract<'_> {
         self.validate_allowance_update(owner, spender, value)?;
         let next_nonce = nonce
             .checked_add(U256::from(1))
-            .ok_or_else(|| PrecompileError::Fatal("stablecoin permit nonce overflow".into()))?;
+            .ok_or(StablecoinStateError::PermitNonceOverflow)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.nonces.write(&owner, next_nonce)?;
@@ -467,9 +461,10 @@ impl StablecoinContract<'_> {
         let next_to = if from == to {
             from_balance
         } else {
-            self.balances.read(&to)?.checked_add(value).ok_or_else(|| {
-                PrecompileError::Fatal("stablecoin recipient balance overflow".into())
-            })?
+            self.balances
+                .read(&to)?
+                .checked_add(value)
+                .ok_or(StablecoinStateError::RecipientBalanceOverflow)?
         };
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -520,9 +515,10 @@ impl StablecoinContract<'_> {
         let next_to = if from == to {
             from_balance
         } else {
-            self.balances.read(&to)?.checked_add(value).ok_or_else(|| {
-                PrecompileError::Fatal("stablecoin recipient balance overflow".into())
-            })?
+            self.balances
+                .read(&to)?
+                .checked_add(value)
+                .ok_or(StablecoinStateError::RecipientBalanceOverflow)?
         };
 
         let storage = self.storage.clone();
@@ -632,9 +628,9 @@ impl StablecoinContract<'_> {
             .into());
         }
         let to_balance = self.balances.read(&to)?;
-        let next_to = to_balance.checked_add(amount).ok_or_else(|| {
-            PrecompileError::Fatal("stablecoin forced-transfer recipient overflow".into())
-        })?;
+        let next_to = to_balance
+            .checked_add(amount)
+            .ok_or(StablecoinStateError::ForcedTransferRecipientOverflow)?;
         let frozen = self.frozen.read(&from)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -727,9 +723,7 @@ impl StablecoinContract<'_> {
         let supply = self.total_supply.read()?;
         let supply_cap = self.supply_cap.read()?;
         if supply > supply_cap {
-            return Err(PrecompileError::Fatal(
-                "stablecoin total supply exceeds its stored cap".into(),
-            ));
+            return Err(StablecoinStateError::TotalSupplyExceedsCap.into());
         }
         let requested_supply = supply.checked_add(amount).ok_or_else(|| {
             PrecompileError::from(StablecoinStateError::SupplyCapExceeded {
@@ -747,7 +741,7 @@ impl StablecoinContract<'_> {
         let balance = self.balances.read(&to)?;
         let next_balance = balance
             .checked_add(amount)
-            .ok_or_else(|| PrecompileError::Fatal("stablecoin balance overflow".into()))?;
+            .ok_or(StablecoinStateError::BalanceOverflow)?;
 
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -775,9 +769,9 @@ impl StablecoinContract<'_> {
             .into());
         }
         let supply = self.total_supply.read()?;
-        let next_supply = supply.checked_sub(amount).ok_or_else(|| {
-            PrecompileError::Fatal("stablecoin supply/balance invariant is corrupted".into())
-        })?;
+        let next_supply = supply
+            .checked_sub(amount)
+            .ok_or(StablecoinStateError::SupplyBalanceInvariantCorrupted)?;
 
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -920,9 +914,9 @@ impl StablecoinContract<'_> {
         if consumed.is_zero() {
             return Ok(());
         }
-        let next_frozen = frozen.checked_sub(consumed).ok_or_else(|| {
-            PrecompileError::Fatal("stablecoin frozen-balance invariant is corrupted".into())
-        })?;
+        let next_frozen = frozen
+            .checked_sub(consumed)
+            .ok_or(StablecoinStateError::FrozenBalanceInvariantCorrupted)?;
         self.frozen.write(&account, next_frozen)?;
         self.emit(IStablecoin::Frozen {
             account,

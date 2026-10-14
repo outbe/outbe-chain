@@ -13,6 +13,7 @@ outbe-promis.workspace = true
 outbe-gratisfactory.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 # Drive the confidential Promis + Gratis paths in tests via the in-process enclave

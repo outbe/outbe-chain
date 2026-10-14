@@ -102,9 +102,7 @@ pub fn dispatch(
 /// reference(16) | issuance(16) | timestamp(32) | rate(32) | quantity(16).
 fn bids_from_sol_arrays(bidders: &[Address], packed: &[U256]) -> Result<Vec<BidData>> {
     if bidders.len() != packed.len() {
-        return Err(outbe_primitives::error::PrecompileError::Revert(
-            "processBidsBatch: array length mismatch".into(),
-        ));
+        return Err(crate::errors::DesisError::BatchArrayLengthMismatch.into());
     }
     Ok(bidders
         .iter()

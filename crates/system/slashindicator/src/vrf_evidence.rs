@@ -35,7 +35,9 @@
 //! off-chain tooling pre-filter without re-running the verifier.
 
 use alloy_primitives::B256;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
+
+use crate::errors::SlashIndicatorError;
 
 /// Wire-format magic. The trailing `2` is the version family. A breaking
 /// wire change bumps both the magic and the `VERSION` byte.
@@ -114,27 +116,27 @@ impl InvalidVrfProofEvidence {
     ///  * trailing bytes after the final `phase1_tx_bytes` payload
     pub fn decode(input: &[u8]) -> Result<Self> {
         if input.len() < FIXED_PREFIX_LEN {
-            return Err(PrecompileError::Revert(format!(
-                "InvalidVrfProofEvidence: input too short ({} < {} bytes)",
-                input.len(),
-                FIXED_PREFIX_LEN,
-            )));
+            return Err(SlashIndicatorError::InvalidVrfEvidenceInputTooShort {
+                actual: input.len(),
+                min_len: FIXED_PREFIX_LEN,
+            }
+            .into());
         }
         let mut cur = 0usize;
 
         if input[cur..cur + 4] != MAGIC {
-            return Err(PrecompileError::Revert(
-                "InvalidVrfProofEvidence: bad magic".into(),
-            ));
+            return Err(SlashIndicatorError::InvalidVrfEvidenceBadMagic.into());
         }
         cur += 4;
 
         let version = input[cur];
         cur += 1;
         if version != VERSION {
-            return Err(PrecompileError::Revert(format!(
-                "InvalidVrfProofEvidence: unsupported version {version} (expected {VERSION})",
-            )));
+            return Err(SlashIndicatorError::InvalidVrfEvidenceUnsupportedVersion {
+                version,
+                expected: VERSION,
+            }
+            .into());
         }
 
         let child_block_number = read_u64_be(input, &mut cur);
@@ -147,10 +149,10 @@ impl InvalidVrfProofEvidence {
         let phase1_tx_bytes = read_length_prefixed(input, &mut cur, "phase1_tx")?;
 
         if cur != input.len() {
-            return Err(PrecompileError::Revert(format!(
-                "InvalidVrfProofEvidence: {} trailing bytes after phase1_tx",
-                input.len() - cur,
-            )));
+            return Err(SlashIndicatorError::InvalidVrfEvidenceTrailingBytes {
+                trailing: input.len() - cur,
+            }
+            .into());
         }
 
         Ok(Self {
@@ -189,7 +191,7 @@ fn read_b256(input: &[u8], cur: &mut usize) -> B256 {
     B256::from(buf)
 }
 
-fn read_length_prefixed(input: &[u8], cur: &mut usize, field: &str) -> Result<Vec<u8>> {
+fn read_length_prefixed(input: &[u8], cur: &mut usize, field: &'static str) -> Result<Vec<u8>> {
     // The fixed-prefix check guaranteed 4 bytes for the length itself.
     let mut len_buf = [0u8; 4];
     len_buf.copy_from_slice(&input[*cur..*cur + 4]);
@@ -197,11 +199,12 @@ fn read_length_prefixed(input: &[u8], cur: &mut usize, field: &str) -> Result<Ve
     let len = u32::from_be_bytes(len_buf) as usize;
 
     if input.len() < cur.saturating_add(len) {
-        return Err(PrecompileError::Revert(format!(
-            "InvalidVrfProofEvidence: {field}_bytes length {len} exceeds remaining input \
-             ({} bytes left)",
-            input.len().saturating_sub(*cur),
-        )));
+        return Err(SlashIndicatorError::InvalidVrfEvidenceFieldExceedsInput {
+            field,
+            len,
+            remaining: input.len().saturating_sub(*cur),
+        }
+        .into());
     }
     let payload = input[*cur..*cur + len].to_vec();
     *cur += len;

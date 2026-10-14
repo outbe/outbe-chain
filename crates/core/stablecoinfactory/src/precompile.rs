@@ -5,7 +5,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 pub use crate::abi::IStablecoinFactory;
-use crate::errors::StablecoinFactoryError;
+use crate::errors::{AbiDecodeError, StablecoinFactoryError};
 use crate::schema::StablecoinFactoryContract;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -24,11 +24,10 @@ pub fn dispatch(
     }
     dispatch_call(
         data,
-        |input| {
-            let call = IStablecoinFactory::IStablecoinFactoryCalls::abi_decode(input)
-                .map_err(|error| error.to_string())?;
+        |input| -> std::result::Result<_, AbiDecodeError> {
+            let call = IStablecoinFactory::IStablecoinFactoryCalls::abi_decode(input)?;
             if call.abi_encode().as_slice() != input {
-                return Err("non-canonical ABI calldata or trailing bytes".to_owned());
+                return Err(AbiDecodeError::NonCanonicalCalldata);
             }
             Ok(call)
         },

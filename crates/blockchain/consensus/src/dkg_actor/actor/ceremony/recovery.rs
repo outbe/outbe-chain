@@ -1,4 +1,5 @@
 use super::*;
+use crate::errors::DkgError;
 
 impl CeremonyState {
     pub(in crate::dkg_actor::actor) async fn start(
@@ -61,7 +62,7 @@ impl CeremonyState {
             dealers,
             participants.clone(),
         )
-        .map_err(|e| eyre::eyre!("failed to create DKG info: {e:?}"))?;
+        .map_err(DkgError::create_info)?;
 
         let dealer_retry_snapshot = if is_local_dealer {
             Some(load_or_create_dealer_snapshot(
@@ -79,7 +80,7 @@ impl CeremonyState {
         let (dealer, my_pub_msg, priv_msgs) = if is_local_dealer {
             let dealer_seed = dealer_retry_snapshot
                 .as_ref()
-                .ok_or_else(|| eyre::eyre!("local dealer retry snapshot was not initialized"))?
+                .ok_or(DkgError::LocalDealerRetrySnapshotNotInitialized)?
                 .seed;
             let (dealer, my_pub_msg, priv_msgs) =
                 Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
@@ -88,7 +89,7 @@ impl CeremonyState {
                     signing_key.clone(),
                     previous_share,
                 )
-                .map_err(|e| eyre::eyre!("failed to start dealer: {e:?}"))?;
+                .map_err(DkgError::start_dealer)?;
             (Some(dealer), Some(my_pub_msg), priv_msgs)
         } else {
             if previous_share.is_some() {
@@ -100,8 +101,7 @@ impl CeremonyState {
             (None, None, Vec::new())
         };
 
-        let max_players = NonZeroU32::new(n)
-            .ok_or_else(|| eyre::eyre!("DKG ceremony requires at least one participant"))?;
+        let max_players = NonZeroU32::new(n).ok_or(DkgError::NoParticipants)?;
         // Reconstruct every previously acknowledged dealing before processing new
         // traffic. The snapshot is ceremony-scoped. This step replays it in dealer-key
         // order.
@@ -205,7 +205,7 @@ impl RecoveredRoles {
                     let is_recovered = recovered_ack.is_some();
                     let ack = recovered_ack.unwrap_or_else(|| generated_ack.clone());
                     d.receive_player_ack(my_pk.clone(), ack)
-                        .map_err(|e| eyre::eyre!("failed to process self-ack: {e:?}"))?;
+                        .map_err(DkgError::process_self_ack)?;
                     self.acked_players.insert(my_pk.clone());
                     if !is_recovered {
                         persist_dealer_ack(
@@ -240,7 +240,7 @@ impl RecoveredRoles {
                     continue;
                 }
                 d.receive_player_ack(player_pk.clone(), ack.clone())
-                    .map_err(|error| eyre::eyre!("failed to replay durable DKG ACK: {error:?}"))?;
+                    .map_err(DkgError::replay_durable_ack)?;
                 self.acked_players.insert(player_pk.clone());
             }
         }

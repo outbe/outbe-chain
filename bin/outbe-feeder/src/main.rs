@@ -6,6 +6,7 @@
 mod abi;
 mod aggregator;
 mod config;
+mod errors;
 mod fixed;
 mod health;
 mod journal;
@@ -24,6 +25,7 @@ use eyre::Result;
 use tracing::{info, warn};
 
 use crate::config::FeederConfig;
+use crate::errors::FeederError;
 use crate::health::FeederHealth;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -197,7 +199,9 @@ fn pending_vote_journal_path(config_path: &Path, identity: &str) -> Result<PathB
             .expect("canonical config has a parent")
             .to_path_buf(),
     };
-    eyre::ensure!(directory.is_dir(), "feeder state path is not a directory");
+    if !directory.is_dir() {
+        return Err(FeederError::StatePathNotDirectory.into());
+    }
     Ok(directory.join(format!("pending-{}.json", keccak256(identity.as_bytes()))))
 }
 
@@ -318,7 +322,9 @@ impl FeederTickContext<'_> {
             aggregator::fetch_and_aggregate(self.providers, self.config),
         )
         .await??;
-        eyre::ensure!(!aggregated.is_empty(), "no price data available");
+        if aggregated.is_empty() {
+            return Err(FeederError::NoPriceDataAvailable.into());
+        }
         let fresh = self.client.head().await?;
         if fresh.period(self.config.oracle.vote_period) != period {
             self.health
@@ -369,8 +375,7 @@ async fn feeder_tick(ctx: &mut FeederTickContext<'_>) -> Result<()> {
         ctx.journal.pending().map(|p| p.created_at).unwrap_or(0),
     );
     ctx.observe_oracle_freshness(&head).await;
-    let PendingReconciliation::Continue { replace_pending } =
-        ctx.reconcile_pending(&head).await?
+    let PendingReconciliation::Continue { replace_pending } = ctx.reconcile_pending(&head).await?
     else {
         return Ok(());
     };
@@ -386,7 +391,8 @@ async fn feeder_tick(ctx: &mut FeederTickContext<'_>) -> Result<()> {
         return Ok(());
     }
     let pending = ctx.journal.pending().expect("persisted before broadcast");
-    ctx.health.set_pending(Some(&pending.hash), pending.created_at);
+    ctx.health
+        .set_pending(Some(&pending.hash), pending.created_at);
     ctx.health.set_reason("awaiting canonical receipt");
     // Retain bytes before any send. Retries use the same bytes. A stalled or
     // failed vote can be fee-bumped only at the SAME nonce, never queued behind it.

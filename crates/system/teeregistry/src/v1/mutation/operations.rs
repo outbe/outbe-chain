@@ -85,9 +85,7 @@ impl TeeRegistry<'_> {
                 .is_some_and(|binding| binding.policy_hash != policy_hash)
             && !expected_operation.is_measurement_upgrade()
         {
-            return Err(PrecompileError::Revert(
-                "changing an existing binding's policy requires transitionEnclaveMeasurement and its resident-key proof".into(),
-            ));
+            return Err(TeeRegistryError::PolicyChangeRequiresMeasurementTransition.into());
         }
         Ok(())
     }
@@ -103,26 +101,18 @@ impl TeeRegistry<'_> {
 
         if let Some(current) = current.as_ref() {
             if now < current.valid_until {
-                return Err(PrecompileError::Revert(
-                    "live enclave binding must renew instead of rejoin".into(),
-                ));
+                return Err(TeeRegistryError::LiveBindingMustRenew.into());
             }
             if B256::from(intent.node_host_authorization_hash)
                 != current.node_host_authorization_hash
             {
-                return Err(PrecompileError::Revert(
-                    "expired rejoin changes the persistent NodeHost authorization".into(),
-                ));
+                return Err(TeeRegistryError::ExpiredRejoinChangesAuthorization.into());
             }
             if !rejoin_counters_match_v1(intent, current)? {
-                return Err(PrecompileError::Revert(
-                    "expired rejoin does not carry the exact next registration versions".into(),
-                ));
+                return Err(TeeRegistryError::ExpiredRejoinVersionMismatch.into());
             }
         } else if !initial_registration_counters_match_v1(intent) {
-            return Err(PrecompileError::Revert(
-                "initial registration versions and nonces are not canonical".into(),
-            ));
+            return Err(TeeRegistryError::InitialRegistrationCountersNonCanonical.into());
         }
         Ok(())
     }
@@ -141,14 +131,12 @@ impl TeeRegistry<'_> {
         } = *mutation;
         let MutationContextV1 { now, .. } = *context;
 
-        let current = current.as_ref().ok_or_else(|| {
-            PrecompileError::Revert("cannot renew a missing enclave binding".into())
-        })?;
+        let current = current
+            .as_ref()
+            .ok_or(TeeRegistryError::CannotRenewMissingBinding)?;
         ensure_continuous_binding(current, intent, claims)?;
         if !renewal_counters_match_v1(intent, current)? {
-            return Err(PrecompileError::Revert(
-                "renewal does not carry the exact next renewal version and nonce".into(),
-            ));
+            return Err(TeeRegistryError::RenewalVersionOrNonceMismatch.into());
         }
         ensure_renewal_window(current, policy, now)?;
         Ok(())
@@ -163,24 +151,18 @@ impl TeeRegistry<'_> {
         let VerifiedClaimsMutationV1 { intent, .. } = *mutation;
         let MutationContextV1 { now, .. } = *context;
 
-        let current = current.as_ref().ok_or_else(|| {
-            PrecompileError::Revert("cannot replace a missing enclave binding".into())
-        })?;
+        let current = current
+            .as_ref()
+            .ok_or(TeeRegistryError::CannotReplaceMissingBinding)?;
         ensure_live_binding(current, now)?;
         if B256::from(intent.node_host_authorization_hash) != current.node_host_authorization_hash {
-            return Err(PrecompileError::Revert(
-                "replacement changes the persistent NodeHost authorization".into(),
-            ));
+            return Err(TeeRegistryError::ReplacementChangesAuthorization.into());
         }
         if !successor_ids_are_fresh_v1(intent, current) {
-            return Err(PrecompileError::Revert(
-                "replacement must use a fresh enclave and binding id".into(),
-            ));
+            return Err(TeeRegistryError::ReplacementRequiresFreshIds.into());
         }
         if !replacement_counters_match_v1(intent, current)? {
-            return Err(PrecompileError::Revert(
-                "replacement does not carry the exact next binding version".into(),
-            ));
+            return Err(TeeRegistryError::ReplacementVersionMismatch.into());
         }
         Ok(())
     }
@@ -196,29 +178,23 @@ impl TeeRegistry<'_> {
             now, policy_hash, ..
         } = *context;
 
-        let current = current.as_ref().ok_or_else(|| {
-            PrecompileError::Revert("cannot transition a missing enclave binding".into())
-        })?;
+        let current = current
+            .as_ref()
+            .ok_or(TeeRegistryError::CannotTransitionMissingBinding)?;
         let late_recovery = self.is_late_measurement_recovery_v1(policy_hash, current)?;
         if !late_recovery {
             ensure_live_binding(current, now)?;
         }
         if B256::from(intent.node_host_authorization_hash) != current.node_host_authorization_hash {
-            return Err(PrecompileError::Revert(
-                "measurement transition changes the persistent NodeHost authorization".into(),
-            ));
+            return Err(TeeRegistryError::TransitionChangesAuthorization.into());
         }
         if !successor_ids_are_fresh_v1(intent, current) {
-            return Err(PrecompileError::Revert(
-                "measurement transition must use a fresh enclave and binding id".into(),
-            ));
+            return Err(TeeRegistryError::TransitionRequiresFreshIds.into());
         }
         if intent.binding_version != next_counter(current.binding_version, "binding version")?
             || self.transition_counters_mismatch_v1(mutation, context, current)?
         {
-            return Err(PrecompileError::Revert(
-                "measurement transition does not carry the exact next versions and nonce".into(),
-            ));
+            return Err(TeeRegistryError::TransitionCountersMismatch.into());
         }
         Ok(())
     }
@@ -290,44 +266,32 @@ impl TeeRegistry<'_> {
         } = *mutation;
         let MutationContextV1 { now, .. } = *context;
         if expected_operation == AttestationOperationV1::RenewEnclave {
-            let current = current.as_ref().ok_or_else(|| {
-                PrecompileError::Fatal("renewal binding disappeared during validation".into())
-            })?;
+            let current = current
+                .as_ref()
+                .ok_or(TeeRegistryError::RenewalBindingDisappeared)?;
             let expected_deadline = current
                 .valid_until
                 .checked_add(policy.maximum_lease)
-                .ok_or_else(|| PrecompileError::Revert("renewal deadline overflows u64".into()))?;
+                .ok_or(TeeRegistryError::RenewalDeadlineOverflow)?;
             if intent.requested_valid_until != expected_deadline {
-                return Err(PrecompileError::Revert(
-                    "renewal must extend exactly one lease period from the current deadline".into(),
-                ));
+                return Err(TeeRegistryError::RenewalMustExtendOneLeasePeriod.into());
             }
         } else {
             let lease = intent
                 .requested_valid_until
                 .checked_sub(now)
-                .ok_or_else(|| {
-                    PrecompileError::Revert("requested lease is already expired".into())
-                })?;
+                .ok_or(TeeRegistryError::RequestedLeaseExpired)?;
             if lease < policy.minimum_lease || lease > policy.maximum_lease {
-                return Err(PrecompileError::Revert(
-                    "requested lease is outside active policy bounds".into(),
-                ));
+                return Err(TeeRegistryError::RequestedLeaseOutsideBounds.into());
             }
         }
         if policy.attestation_mode == AttestationMode::DcapRequired {
             let collateral_limit = claims
                 .collateral_valid_until
                 .checked_sub(policy.collateral_margin)
-                .ok_or_else(|| {
-                    PrecompileError::Revert(
-                        "verified collateral leaves no mandatory safety margin".into(),
-                    )
-                })?;
+                .ok_or(TeeRegistryError::CollateralMarginExhausted)?;
             if intent.requested_valid_until > collateral_limit {
-                return Err(PrecompileError::Revert(
-                    "requested lease exceeds verified collateral validity".into(),
-                ));
+                return Err(TeeRegistryError::RequestedLeaseExceedsCollateralValidity.into());
             }
         }
         Ok(())

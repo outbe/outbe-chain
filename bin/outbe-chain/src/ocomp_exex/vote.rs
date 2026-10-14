@@ -1,7 +1,7 @@
 use super::AsyncOutcomeProjectionV1;
 use super::EmbeddedOcompExExV1;
+use crate::errors::OcompExExError;
 
-use eyre::bail;
 use eyre::Context as _;
 
 use outbe_ocomp::embedded::EmbeddedJobActionV1;
@@ -83,7 +83,7 @@ where
                 info!(%job_id, "ignored late embedded OCOMP vote outcome");
             }
             _ => {
-                bail!("unexpected embedded OCOMP vote action");
+                return Err(OcompExExError::UnexpectedVoteAction.into());
             }
         }
         Ok(())

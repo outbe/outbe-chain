@@ -16,7 +16,7 @@ pub(super) fn verify(
     // Recompute the binding instead of trusting the caller's already-derived
     // value at the fixed Metadosis path.
     let recomputed = outbe_ocomp_protocol::intent::intent_storage_key(binding.intent_id)
-        .map_err(|error| FinalizedIntentVerifierError::JobRecordEncoding(error.to_string()))?;
+        .map_err(FinalizedIntentVerifierError::job_record_encoding)?;
     if recomputed != binding.storage_key {
         return Err(FinalizedIntentVerifierError::WitnessMalformed {
             kind: "storage",
@@ -62,7 +62,7 @@ fn decode_storage_opening(
     };
     let encoded_record = record
         .encode_canonical(limits)
-        .map_err(|error| FinalizedIntentVerifierError::JobRecordEncoding(error.to_string()))?;
+        .map_err(FinalizedIntentVerifierError::job_record_encoding)?;
     let expected_slots = storage_bytes_slots(storage_key, &encoded_record);
     let storage =
         StorageWitness::decode(&proof.intent_storage_proof.0, limits, expected_slots.len())?;
@@ -98,12 +98,9 @@ fn verify_storage_nodes(
             ..StorageProof::new(B256::new(slot.to_be_bytes::<32>()))
         }
         .with_proof(nodes.clone());
-        storage_proof.verify(account_root).map_err(|error| {
-            FinalizedIntentVerifierError::StorageProof {
-                index,
-                reason: error.to_string(),
-            }
-        })?;
+        storage_proof
+            .verify(account_root)
+            .map_err(|error| FinalizedIntentVerifierError::storage_proof(index, error))?;
     }
     Ok(())
 }

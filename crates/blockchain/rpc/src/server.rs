@@ -94,20 +94,22 @@ pub struct OutbeApiHandler<P> {
 }
 
 type OcompLysisOpeningsBuilderV1 =
-    dyn Fn(B256, Bytes) -> Result<Bytes, String> + Send + Sync + 'static;
+    dyn Fn(B256, Bytes) -> Result<Bytes, crate::errors::RpcError> + Send + Sync + 'static;
 
 #[derive(Clone)]
 pub struct OcompLysisOpeningsRuntimeV1(Arc<OcompLysisOpeningsBuilderV1>);
 
 impl OcompLysisOpeningsRuntimeV1 {
     #[must_use]
-    pub fn new(
-        builder: impl Fn(B256, Bytes) -> Result<Bytes, String> + Send + Sync + 'static,
+    pub fn new<E: std::fmt::Display>(
+        builder: impl Fn(B256, Bytes) -> Result<Bytes, E> + Send + Sync + 'static,
     ) -> Self {
-        Self(Arc::new(builder))
+        Self(Arc::new(move |intent_id, subjects| {
+            builder(intent_id, subjects).map_err(crate::errors::RpcError::lysis_openings)
+        }))
     }
 
-    fn build(&self, intent_id: B256, subjects: Bytes) -> Result<Bytes, String> {
+    fn build(&self, intent_id: B256, subjects: Bytes) -> Result<Bytes, crate::errors::RpcError> {
         (self.0)(intent_id, subjects)
     }
 }
@@ -266,7 +268,7 @@ pub(crate) fn enclave_health_info(
 
 pub(crate) fn radicle_status_info(
     snapshot: &RadicleStatusSnapshot,
-) -> Result<RadicleStatusInfo, String> {
+) -> Result<RadicleStatusInfo, crate::errors::RpcError> {
     let manager = &snapshot.manager;
     let phase = match manager.phase {
         outbe_radicle::manager::ManagerPhase::Disabled => RadiclePhaseInfo::Disabled,
@@ -298,7 +300,7 @@ pub(crate) fn radicle_status_info(
         }),
     };
     let count = |value: usize| {
-        u64::try_from(value).map_err(|_| "Radicle status counter exceeds u64".to_owned())
+        u64::try_from(value).map_err(|_| crate::errors::RpcError::RadicleCounterOverflow)
     };
     Ok(RadicleStatusInfo {
         phase,
@@ -538,24 +540,19 @@ where
             if !state.is_registered() {
                 return Ok(None);
             }
-            let consensus_pubkey = state.consensus_pubkey().ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "registered validator is missing consensus pubkey".into(),
-                )
-            })?;
-            let history = state.history().ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "registered validator is missing history".into(),
-                )
-            })?;
+            let consensus_pubkey = state
+                .consensus_pubkey()
+                .ok_or(crate::errors::RpcValidatorStateError::MissingConsensusPubkey)?;
+            let history = state
+                .history()
+                .ok_or(crate::errors::RpcValidatorStateError::MissingHistory)?;
             Ok(Some(ValidatorDetailInfo {
                 address,
                 consensus_pubkey: hex::encode(consensus_pubkey),
-                status: state.lifecycle().stored_status().ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::Fatal(
-                        "registered validator has no persisted status".into(),
-                    )
-                })?,
+                status: state
+                    .lifecycle()
+                    .stored_status()
+                    .ok_or(crate::errors::RpcValidatorStateError::MissingPersistedStatus)?,
                 stake: state.bonded_stake(),
                 slash_count: history.slash_count(),
                 missed_blocks: history.missed_blocks(),
@@ -902,23 +899,23 @@ fn projection_status_info(
 }
 
 /// Create an internal JSON-RPC error.
-fn internal_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
+fn internal_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'static> {
     jsonrpsee::types::ErrorObject::owned(
         jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-        msg,
+        msg.to_string(),
         None::<()>,
     )
 }
 
-fn invalid_params(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
+fn invalid_params(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'static> {
     jsonrpsee::types::ErrorObject::owned(
         jsonrpsee::types::error::INVALID_PARAMS_CODE,
-        msg,
+        msg.to_string(),
         None::<()>,
     )
 }
 
-fn invalid_params_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
+fn invalid_params_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'static> {
     invalid_params(msg)
 }
 
@@ -1107,7 +1104,7 @@ mod tests {
             move |intent_id, request| {
                 assert_eq!(intent_id, expected_intent);
                 assert_eq!(request, expected_request);
-                Ok(Bytes::from_static(b"canonical-openings"))
+                Ok::<_, crate::errors::RpcError>(Bytes::from_static(b"canonical-openings"))
             }
         });
 

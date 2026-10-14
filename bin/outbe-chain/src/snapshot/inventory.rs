@@ -195,8 +195,8 @@ pub(crate) fn enumerate_native_files(layout: &NativeLayout) -> eyre::Result<Nati
                 .into_iter()
                 .flat_map(|job| {
                     ["admissions"]
-                    .into_iter()
-                    .map(move |name| PathBuf::from("supervisor-v1/jobs").join(&job).join(name))
+                        .into_iter()
+                        .map(move |name| PathBuf::from("supervisor-v1/jobs").join(&job).join(name))
                 })
                 .collect(),
             _ => vec![PathBuf::from(path)],
@@ -213,14 +213,15 @@ pub(crate) fn enumerate_native_files(layout: &NativeLayout) -> eyre::Result<Nati
                     walk(root, &path, &mut members)?;
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    eyre::ensure!(
-                        !matches!(
-                            kind,
-                            ExecutionDb | Ce | OffchainProjection | ClosureCheckpoint
-                        ),
-                        "missing required native domain: {}",
-                        source.display()
-                    );
+                    if matches!(
+                        kind,
+                        ExecutionDb | Ce | OffchainProjection | ClosureCheckpoint
+                    ) {
+                        return Err(crate::errors::SnapshotError::MissingRequiredDomain {
+                            path: source.display().to_string(),
+                        }
+                        .into());
+                    }
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -249,11 +250,12 @@ fn children(root: &Path) -> eyre::Result<Vec<PathBuf>> {
 fn walk(root: &Path, relative: &Path, members: &mut Vec<PathBuf>) -> eyre::Result<()> {
     let path = root.join(relative);
     let metadata = fs::symlink_metadata(&path)?;
-    eyre::ensure!(
-        metadata.is_file() || metadata.is_dir(),
-        "unsupported native file: {}",
-        path.display()
-    );
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(crate::errors::SnapshotError::UnsupportedNativeFile {
+            path: path.display().to_string(),
+        }
+        .into());
+    }
     members.push(relative.to_path_buf());
     if metadata.is_dir() {
         for child in children(&path)? {

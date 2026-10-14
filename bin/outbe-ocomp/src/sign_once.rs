@@ -158,7 +158,7 @@ impl SignOnceStore {
     pub fn record_or_replay(
         &self,
         subject: SignOnceSubjectV1,
-        sign: impl FnOnce(B256) -> Result<[u8; 64], String>,
+        sign: impl FnOnce(B256) -> Result<[u8; 64], crate::result_signer::OcompKeyError>,
     ) -> Result<SignOnceRecordV1, SignOnceError> {
         let mut state = self.lock()?;
         if let Some(reason) = &state.disabled_reason {
@@ -177,7 +177,7 @@ impl SignOnceStore {
     fn record_or_replay_locked(
         &self,
         subject: SignOnceSubjectV1,
-        sign: impl FnOnce(B256) -> Result<[u8; 64], String>,
+        sign: impl FnOnce(B256) -> Result<[u8; 64], crate::result_signer::OcompKeyError>,
     ) -> Result<SignOnceRecordV1, SignOnceError> {
         let slot_id = subject.record([0; 64]).slot_id()?;
         let final_path = self.record_path(slot_id);
@@ -193,7 +193,7 @@ impl SignOnceStore {
         }
 
         let signing_digest = subject.signing_digest()?;
-        let record = subject.record(sign(signing_digest).map_err(SignOnceError::SigningFailed)?);
+        let record = subject.record(sign(signing_digest).map_err(SignOnceError::signing_failed)?);
         let encoded = record.encode_canonical(&self.limits)?;
         if encoded.len() > MAX_RECORD_BYTES as usize {
             return Err(SignOnceError::CorruptRecord {
@@ -312,10 +312,9 @@ impl SignOnceStore {
     }
 
     fn reconcile_startup(&self) -> Result<(), SignOnceError> {
-        for (path, name) in self.read_utf8_entries(
-            "scan sign-once directory",
-            "read sign-once directory entry",
-        )? {
+        for (path, name) in
+            self.read_utf8_entries("scan sign-once directory", "read sign-once directory entry")?
+        {
             if let Some(slot_hex) = pending_slot_hex(&name) {
                 self.reconcile_pending(&path, slot_hex)?;
             } else if reservation_slot_hex(&name).is_none() && !name.ends_with(RECORD_SUFFIX) {
@@ -355,8 +354,8 @@ impl SignOnceStore {
         entry_operation: &'static str,
     ) -> Result<Vec<(PathBuf, String)>, SignOnceError> {
         let mut entries = Vec::new();
-        for entry in
-            fs::read_dir(&self.root).map_err(|source| self.io(scan_operation, &self.root, source))?
+        for entry in fs::read_dir(&self.root)
+            .map_err(|source| self.io(scan_operation, &self.root, source))?
         {
             let entry = entry.map_err(|source| self.io(entry_operation, &self.root, source))?;
             let path = entry.path();
@@ -426,10 +425,7 @@ impl SignOnceStore {
     }
 
     fn validate_reservation_path(&self, path: &Path, slot_hex: &str) -> Result<(), SignOnceError> {
-        require_lower_hex_32(slot_hex).map_err(|reason| SignOnceError::UnsafeStore {
-            path: path.to_path_buf(),
-            reason,
-        })?;
+        require_lower_hex_32(path, slot_hex)?;
         let reservation = self.read_record(path)?;
         let expected_path = self.reservation_path(reservation.slot_id()?);
         if (reservation.signature_rs, expected_path.as_path()) != ([0; 64], path) {
@@ -442,10 +438,7 @@ impl SignOnceStore {
     }
 
     fn reconcile_pending(&self, pending_path: &Path, slot_hex: &str) -> Result<(), SignOnceError> {
-        require_lower_hex_32(slot_hex).map_err(|reason| SignOnceError::UnsafeStore {
-            path: pending_path.to_path_buf(),
-            reason,
-        })?;
+        require_lower_hex_32(pending_path, slot_hex)?;
         let final_path = self.root.join(format!("{slot_hex}{RECORD_SUFFIX}"));
         if !path_exists(&final_path)? {
             return Err(SignOnceError::UncertainState {
@@ -682,18 +675,23 @@ fn records_share_subject(left: &SignOnceRecordV1, right: &SignOnceRecordV1) -> b
     expected == *right
 }
 
-fn require_lower_hex_32(value: &str) -> Result<(), &'static str> {
-    if value.len() != 64 {
-        return Err("slot filename is not 32-byte lowercase hex");
-    }
-    if !value
-        .as_bytes()
-        .iter()
-        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+fn require_lower_hex_32(path: &Path, value: &str) -> Result<(), SignOnceError> {
+    let reason = if value.len() != 64 {
+        Some("slot filename is not 32-byte lowercase hex")
+    } else if !value
+        .bytes()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
     {
-        return Err("slot filename is not lowercase hex");
-    }
-    Ok(())
+        Some("slot filename is not lowercase hex")
+    } else {
+        None
+    };
+    reason.map_or(Ok(()), |reason| {
+        Err(SignOnceError::UnsafeStore {
+            path: path.to_path_buf(),
+            reason,
+        })
+    })
 }
 
 fn lower_hex(bytes: &[u8]) -> String {

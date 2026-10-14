@@ -17,6 +17,7 @@ const VALIDATOR_SET_OWNER: Address = address!("0xfffffffffffffffffffffffffffffff
 
 /// A zero-fee transaction from `signer` to `to` that pays the protocol minimum
 /// fee cap and no priority fee.
+#[allow(dead_code)]
 pub(crate) fn hook_tx(signer: Address, to: Address, input: &[u8]) -> ZeroFeeTransaction<'_> {
     ZeroFeeTransaction {
         signer,

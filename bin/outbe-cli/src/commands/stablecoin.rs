@@ -15,6 +15,7 @@ use outbe_primitives::{
 
 use crate::{
     abi::{IStablecoinPolicyRegistry, IVote},
+    errors::StablecoinError,
     rpc::Rpc,
 };
 
@@ -129,7 +130,7 @@ async fn create_policy(
     let signer = super::require_signer(private_key)?;
     let admin = admin.unwrap_or_else(|| signer.address());
     if admin.is_zero() {
-        eyre::bail!("policy admin must not be the zero address");
+        return Err(StablecoinError::ZeroPolicyAdmin.into());
     }
 
     let call = IStablecoinPolicyRegistry::createPolicyCall {

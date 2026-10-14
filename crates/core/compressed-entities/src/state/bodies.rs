@@ -122,8 +122,7 @@ impl<'storage> State<'storage> {
             Collection::Gem => CeDomain::Gem,
             Collection::GemBucket => CeDomain::GemBucket,
         };
-        let collection_key =
-            collection_key(domain, entity_id).map_err(|error| fatal(error.to_string()))?;
+        let collection_key = collection_key(domain, entity_id).map_err(fatal)?;
         if !self
             .schema()
             .pending_retirement

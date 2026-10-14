@@ -6,6 +6,7 @@ use clap::Subcommand;
 use eyre::Result;
 
 use crate::abi::{self, IStaking, IValidatorSet};
+use crate::errors::MonitorError;
 use crate::rpc::Rpc;
 
 #[cfg(not(test))]
@@ -87,7 +88,7 @@ async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
     let epoch: u64 = call_validator_set(client, IValidatorSet::getEpochNumberCall {})
         .await?
         .try_into()
-        .map_err(|_| eyre::eyre!("epoch number exceeds u64"))?;
+        .map_err(|_| MonitorError::EpochNumberOverflow)?;
     let count: u64 = call_validator_set(client, IValidatorSet::activeValidatorCountCall {})
         .await?
         .into();
@@ -124,7 +125,8 @@ async fn print_watch_validator_row(
     index: usize,
     addr: alloy_primitives::Address,
 ) {
-    let Ok(detail) = call_validator_set(client, IValidatorSet::validatorByAddressCall { addr }).await
+    let Ok(detail) =
+        call_validator_set(client, IValidatorSet::validatorByAddressCall { addr }).await
     else {
         return;
     };
@@ -149,7 +151,10 @@ fn watch_status_label(status: u8) -> &'static str {
         "Inactive",
         "Jailed",
     ];
-    LABELS.get(usize::from(status)).copied().unwrap_or("Unknown")
+    LABELS
+        .get(usize::from(status))
+        .copied()
+        .unwrap_or("Unknown")
 }
 
 /// Health check - exit code 0 if healthy, non-zero otherwise.
@@ -349,20 +354,21 @@ fn should_display_metric_line(line: &str, show_all: bool) -> bool {
 /// Fetch and display Prometheus metrics.
 async fn run_metrics(endpoint: &str, show_all: bool) -> Result<()> {
     let client = reqwest::Client::new();
-    let resp = client
-        .get(endpoint)
-        .send()
-        .await
-        .map_err(|e| eyre::eyre!("failed to fetch metrics from {endpoint}: {e}"))?;
+    let resp =
+        client
+            .get(endpoint)
+            .send()
+            .await
+            .map_err(|source| MonitorError::MetricsFetchFailed {
+                endpoint: endpoint.to_owned(),
+                source,
+            })?;
 
     if !resp.status().is_success() {
-        eyre::bail!("metrics endpoint returned HTTP {}", resp.status().as_u16());
+        return Err(MonitorError::MetricsHttpStatus(resp.status().as_u16()).into());
     }
 
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| eyre::eyre!("failed to read metrics response: {e}"))?;
+    let body = resp.text().await.map_err(MonitorError::MetricsReadFailed)?;
 
     for line in body
         .lines()

@@ -51,21 +51,21 @@ pub fn get_id_from_price(price_128x128: U256, bin_step: u16) -> Result<u32> {
     let log2_price = log2(price_128x128)?;
     let log2_base = log2(base)?;
     if log2_base.is_zero() {
-        return Err(PrecompileError::Revert("lb_math: log2(base) == 0".into()));
+        return Err(PrecompileError::revert("lb_math: log2(base) == 0"));
     }
     // Solidity int256 / int256 truncates toward zero (matches I256 / impl).
     let real_id = log2_price / log2_base;
 
     let shift = I256::try_from(REAL_ID_SHIFT)
-        .map_err(|_| PrecompileError::Revert("lb_math: REAL_ID_SHIFT widen".into()))?;
+        .map_err(|_| PrecompileError::revert("lb_math: REAL_ID_SHIFT widen"))?;
     let id_signed = real_id.saturating_add(shift);
 
     // Saturate to [0, MAX_BIN_ID].
     if id_signed.is_negative() {
         return Ok(0);
     }
-    let id_unsigned = U256::try_from(id_signed)
-        .map_err(|_| PrecompileError::Revert("lb_math: id widen".into()))?;
+    let id_unsigned =
+        U256::try_from(id_signed).map_err(|_| PrecompileError::revert("lb_math: id widen"))?;
     let max = U256::from(MAX_BIN_ID);
     let bounded = if id_unsigned > max { max } else { id_unsigned };
     Ok(bounded.to::<u32>())

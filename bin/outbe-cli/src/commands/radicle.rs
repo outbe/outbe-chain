@@ -6,18 +6,15 @@ use clap::Subcommand;
 use eyre::{Result, WrapErr};
 use outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
 
-use crate::{abi::IRadicleRegistry, rpc::Rpc};
+use crate::{abi::IRadicleRegistry, errors::RadicleError, rpc::Rpc};
 
 type RepoId = FixedBytes<20>;
 
-fn parse_repo_id(value: &str) -> std::result::Result<RepoId, String> {
+fn parse_repo_id(value: &str) -> std::result::Result<RepoId, RadicleError> {
     let value = value.strip_prefix("0x").unwrap_or(value);
-    let bytes = hex::decode(value).map_err(|error| format!("invalid RepoId hex: {error}"))?;
+    let bytes = hex::decode(value).map_err(RadicleError::InvalidRepoIdHex)?;
     if bytes.len() != 20 {
-        return Err(format!(
-            "RepoId must be exactly 20 bytes, got {}",
-            bytes.len()
-        ));
+        return Err(RadicleError::InvalidRepoIdLength(bytes.len()));
     }
     Ok(RepoId::from_slice(&bytes))
 }

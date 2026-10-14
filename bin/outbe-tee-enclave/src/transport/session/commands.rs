@@ -124,7 +124,9 @@ impl CommandSession {
                     offer_key.get(),
                     manifest.as_ref(),
                 ),
-                Err(message) => EnclaveResponse::Error { message },
+                Err(message) => EnclaveResponse::Error {
+                    message: message.to_string(),
+                },
             },
             request @ (EnclaveRequest::BeginDcapVerificationV1 { .. }
             | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
@@ -189,7 +191,9 @@ impl CommandSession {
                             offer_key.get(),
                             manifest.as_ref(),
                         ),
-                        Err(message) => EnclaveResponse::Error { message },
+                        Err(message) => EnclaveResponse::Error {
+                            message: message.to_string(),
+                        },
                     }
                 }
                 Err(message) => EnclaveResponse::Error {

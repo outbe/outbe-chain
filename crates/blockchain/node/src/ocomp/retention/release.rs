@@ -59,11 +59,7 @@ impl OcompRetentionCoordinator {
         let projection_fence = self.projection_fence.clone();
         let _projection_guard = projection_fence
             .as_ref()
-            .map(|fence| {
-                fence
-                    .gc_claim_guard()
-                    .map_err(RetentionError::InvalidTransition)
-            })
+            .map(|fence| fence.gc_claim_guard())
             .transpose()
             .map_err(RetainedGcAttemptFailure::global)?;
         let mut inner = self.lock().map_err(RetainedGcAttemptFailure::global)?;

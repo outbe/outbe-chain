@@ -3,9 +3,7 @@ pub(crate) fn validate_adr005_node_mode(
     has_certified_upstream: bool,
 ) -> eyre::Result<()> {
     if !is_validator && !has_certified_upstream {
-        eyre::bail!(
-            "ADR-005 plain EL full-node mode is disabled: use --upstream so historical execution is gated by exact finalized-parent projection readiness"
-        );
+        return Err(crate::errors::LaunchError::PlainElFullNodeModeDisabled.into());
     }
     Ok(())
 }

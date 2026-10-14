@@ -162,7 +162,7 @@ pub fn get_offchain_job(storage: StorageHandle<'_>, intent_id: B256) -> Result<V
         .ok_or_else(|| missing_record_err("OcompJobRecordV1"))?;
     record
         .encode_canonical(&limits)
-        .map_err(|error| crate::errors::storage_corruption(error.to_string()))
+        .map_err(crate::errors::storage_corruption)
 }
 
 /// Returns the complete bounded vote/accountability record selected
@@ -177,7 +177,7 @@ pub fn get_offchain_vote_accountability(
         .ok_or_else(|| missing_record_err("OcompVoteAccountabilityV1"))?;
     accountability
         .encode_canonical(&limits)
-        .map_err(|error| crate::errors::storage_corruption(error.to_string()))
+        .map_err(crate::errors::storage_corruption)
 }
 
 /// Returns the canonical active generation selected by completed Metadosis
@@ -192,7 +192,7 @@ pub fn get_active_lysis_generation(
         .ok_or_else(|| missing_record_err("ActiveGenerationV1"))?;
     generation
         .encode_canonical(&limits)
-        .map_err(|error| crate::errors::storage_corruption(error.to_string()))
+        .map_err(crate::errors::storage_corruption)
 }
 
 /// Returns the aggregate receipt embedded in a completed or certified-conflict
@@ -209,5 +209,5 @@ pub fn get_lysis_terminal_receipt(storage: StorageHandle<'_>, intent_id: B256) -
         .ok_or_else(|| missing_record_err("AggregateActivationReceiptV1"))?;
     receipt
         .encode_canonical(&limits)
-        .map_err(|error| crate::errors::storage_corruption(error.to_string()))
+        .map_err(crate::errors::storage_corruption)
 }

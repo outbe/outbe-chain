@@ -29,13 +29,13 @@ impl FinalizedDelivery<'_> {
         validate_redelivery_identity(block, current)?;
         let authoritative_root = self.redelivery_root(block).await?;
         if current.new_root != authoritative_root {
-            eyre::bail!(
-                "redelivered finalized CE block root conflicts with the durable marker at {}/{}: Reth={}, marker={}",
-                block.height,
-                block.block_hash,
+            return Err(crate::errors::CeFinalizerError::RedeliveredRootConflict {
+                height: block.height,
+                block_hash: block.block_hash,
                 authoritative_root,
-                current.new_root
-            );
+                marker_root: current.new_root,
+            }
+            .into());
         }
         self.validate_redelivery_parent(block, current)
     }
@@ -45,13 +45,12 @@ impl FinalizedDelivery<'_> {
             Some(root) => root,
             None => {
                 self.persistence.wait_for_exact_persistence(block).await?;
-                self.persistence.verify_durable(block)?.ok_or_else(|| {
-                    eyre::eyre!(
-                        "Reth emitted persistence for redelivered block {}/{}, but DB-only state is absent",
-                        block.height,
-                        block.block_hash
-                    )
-                })?
+                self.persistence.verify_durable(block)?.ok_or(
+                    crate::errors::CeFinalizerError::RedeliveredDbStateAbsent {
+                        height: block.height,
+                        block_hash: block.block_hash,
+                    },
+                )?
             }
         };
         Ok(authoritative_root)
@@ -63,23 +62,23 @@ impl FinalizedDelivery<'_> {
         current: FinalizedMarker,
     ) -> eyre::Result<()> {
         let (durable_parent, durable_parent_root) = self.read_durable_parent(block, || {
-            format!(
-                "durable parent is absent while validating redelivered finalized CE block {}/{}",
-                block.height, block.block_hash
-            )
+            crate::errors::CeFinalizerError::DurableParentAbsentRedelivery {
+                height: block.height,
+                block_hash: block.block_hash,
+            }
         })?;
         if current.parent_block_hash != durable_parent.block_hash
             || current.parent_root != durable_parent_root
         {
-            eyre::bail!(
-                "redelivered finalized CE block parent identity conflicts with the durable marker at {}/{}: Reth=({}, {}), marker=({}, {})",
-                block.height,
-                block.block_hash,
-                durable_parent.block_hash,
-                durable_parent_root,
-                current.parent_block_hash,
-                current.parent_root
-            );
+            return Err(crate::errors::CeFinalizerError::RedeliveredParentConflict {
+                height: block.height,
+                block_hash: block.block_hash,
+                reth_hash: durable_parent.block_hash,
+                reth_root: durable_parent_root,
+                marker_hash: current.parent_block_hash,
+                marker_root: current.parent_root,
+            }
+            .into());
         }
         Ok(())
     }
@@ -89,13 +88,12 @@ impl FinalizedDelivery<'_> {
             DurableCeProbe::Exact(root) => root,
             DurableCeProbe::Absent | DurableCeProbe::DifferentHash(_) => {
                 self.persistence.wait_for_exact_persistence(block).await?;
-                self.persistence.verify_durable(block)?.ok_or_else(|| {
-                    eyre::eyre!(
-                        "Reth emitted persistence for {}/{}, but DB-only state is absent",
-                        block.height,
-                        block.block_hash
-                    )
-                })?
+                self.persistence.verify_durable(block)?.ok_or(
+                    crate::errors::CeFinalizerError::DbStateAbsent {
+                        height: block.height,
+                        block_hash: block.block_hash,
+                    },
+                )?
             }
         };
         Ok(authoritative_root)
@@ -107,23 +105,25 @@ impl FinalizedDelivery<'_> {
         current: FinalizedMarker,
     ) -> eyre::Result<()> {
         let (durable_parent, durable_parent_root) = self.read_durable_parent(block, || {
-            format!(
-                "durable parent is absent for finalized CE block {}/{}",
-                block.height, block.block_hash
-            )
+            crate::errors::CeFinalizerError::DurableParentAbsent {
+                height: block.height,
+                block_hash: block.block_hash,
+            }
         })?;
         if durable_parent.block_hash != block.parent_block_hash
             || durable_parent.block_hash != current.block_hash
             || durable_parent_root != current.new_root
         {
-            eyre::bail!(
-                "durable parent/header conflicts with finalized CE parent at {}/{}: actor=({}, {}), marker=({}, {})",
-                block.height,
-                block.block_hash,
-                block.parent_block_hash,
-                durable_parent_root,
-                current.block_hash,
-                current.new_root
+            return Err(
+                crate::errors::CeFinalizerError::DurableParentHeaderConflict {
+                    height: block.height,
+                    block_hash: block.block_hash,
+                    actor_hash: block.parent_block_hash,
+                    actor_root: durable_parent_root,
+                    marker_hash: current.block_hash,
+                    marker_root: current.new_root,
+                }
+                .into(),
             );
         }
 
@@ -133,14 +133,14 @@ impl FinalizedDelivery<'_> {
     fn read_durable_parent(
         &self,
         block: FinalizedCeBlock,
-        missing_message: impl FnOnce() -> String,
+        missing_error: impl FnOnce() -> crate::errors::CeFinalizerError,
     ) -> eyre::Result<(super::DurableCeEvidence, B256)> {
         let parent_height = block.height.saturating_sub(1);
         let parent = self
             .persistence
             .state
             .block_and_root(parent_height)?
-            .ok_or_else(|| eyre::eyre!(missing_message()))?;
+            .ok_or_else(missing_error)?;
         let root = validate_durable_header_evidence(parent_height, parent)?;
         Ok((parent, root))
     }
@@ -160,17 +160,12 @@ impl FinalizedDelivery<'_> {
             // and state-root checks. Once the block is durable and exact, rebuild
             // the same batch from its canonical receipts instead of trusting a
             // speculative executor artifact.
-            let replay = self
-                .persistence
-                .state
-                .replay_block(block.height)?
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "durable canonical CE replay missing for finalized block {}/{}",
-                        block.height,
-                        block.block_hash
-                    )
-                })?;
+            let replay = self.persistence.state.replay_block(block.height)?.ok_or(
+                crate::errors::CeFinalizerError::DurableCanonicalReplayMissing {
+                    height: block.height,
+                    block_hash: block.block_hash,
+                },
+            )?;
             commit.validate_replay(&replay)?;
             self.tree.apply_replayed(&replay)?
         };
@@ -186,11 +181,12 @@ fn validate_redelivery_identity(
         || current.block_hash != block.block_hash
         || current.parent_block_hash != block.parent_block_hash
     {
-        eyre::bail!(
-                "redelivered finalized CE block conflicts with the durable marker at {}/{}: {current:?}",
-                block.height,
-                block.block_hash
-            );
+        return Err(crate::errors::CeFinalizerError::RedeliveredMarkerConflict {
+            height: block.height,
+            block_hash: block.block_hash,
+            current,
+        }
+        .into());
     }
     Ok(())
 }
@@ -198,34 +194,37 @@ fn validate_redelivery_identity(
 impl FinalizedCommit {
     fn validate_candidate(&self, candidate: &StagedTreeBatch) -> eyre::Result<()> {
         if candidate.parent_block_hash() != self.block.parent_block_hash {
-            eyre::bail!(
-                "finalized CE candidate parent conflict at {}/{}: actor={}, candidate={}",
-                self.block.height,
-                self.block.block_hash,
-                self.block.parent_block_hash,
-                candidate.parent_block_hash()
-            );
+            return Err(crate::errors::CeFinalizerError::CandidateParentConflict {
+                height: self.block.height,
+                block_hash: self.block.block_hash,
+                actor: self.block.parent_block_hash,
+                candidate: candidate.parent_block_hash(),
+            }
+            .into());
         }
         if candidate.new_root() != self.authoritative_root {
-            eyre::bail!(
-                "durable EVM/CE candidate root conflict at {}/{}: evm={}, candidate={}",
-                self.block.height,
-                self.block.block_hash,
-                self.authoritative_root,
-                candidate.new_root()
-            );
+            return Err(crate::errors::CeFinalizerError::CandidateRootConflict {
+                height: self.block.height,
+                block_hash: self.block.block_hash,
+                evm: self.authoritative_root,
+                candidate: candidate.new_root(),
+            }
+            .into());
         }
         Ok(())
     }
 
     fn validate_replay(&self, replay: &CanonicalCeReplayBlock) -> eyre::Result<()> {
         if !self.replay_matches_target(replay) || !self.replay_extends_current(replay) {
-            eyre::bail!(
-                "durable canonical CE replay identity/root conflict for finalized block {}/{}: current={:?}, replay={replay:?}, authoritative_root={}",
-                self.block.height,
-                self.block.block_hash,
-                self.current,
-                self.authoritative_root
+            return Err(
+                crate::errors::CeFinalizerError::ReplayIdentityRootConflict {
+                    height: self.block.height,
+                    block_hash: self.block.block_hash,
+                    current: self.current,
+                    replay: format!("{replay:?}"),
+                    authoritative_root: self.authoritative_root,
+                }
+                .into(),
             );
         }
         Ok(())
@@ -233,11 +232,12 @@ impl FinalizedCommit {
 
     pub(super) fn validate_marker(&self, marker: FinalizedMarker) -> eyre::Result<()> {
         if !self.marker_matches_target(&marker) || !self.marker_matches_roots(&marker) {
-            eyre::bail!(
-                "CE MDBX returned conflicting finalized marker for {}/{}: {marker:?}",
-                self.block.height,
-                self.block.block_hash
-            );
+            return Err(crate::errors::CeFinalizerError::MdbxConflictingMarker {
+                height: self.block.height,
+                block_hash: self.block.block_hash,
+                marker,
+            }
+            .into());
         }
         Ok(())
     }

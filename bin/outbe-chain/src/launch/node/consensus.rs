@@ -202,7 +202,9 @@ pub(super) fn run(
                     },
                     result = &mut stack_handle => {
                         let result = result.map_err(|error| {
-                            eyre::eyre!("consensus stack task failed: {error:?}")
+                            crate::errors::LaunchError::ConsensusStackTaskFailed {
+                                details: format!("{error:?}"),
+                            }
                         })?;
                         if let Err(e) = &result {
                             tracing::error!(%e, "consensus stack failed");

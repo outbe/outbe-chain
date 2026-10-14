@@ -123,20 +123,14 @@ fn stage<T, E: std::fmt::Display>(
     stage: &'static str,
     result: Result<T, E>,
 ) -> Result<T, SupervisorExportAdoptionError> {
-    result.map_err(|error| SupervisorExportAdoptionError::Stage {
-        stage,
-        detail: error.to_string(),
-    })
+    result.map_err(|error| SupervisorExportAdoptionError::stage(stage, error))
 }
 
 fn stage_error(
     stage: &'static str,
     error: impl std::fmt::Display,
 ) -> SupervisorExportAdoptionError {
-    SupervisorExportAdoptionError::Stage {
-        stage,
-        detail: error.to_string(),
-    }
+    SupervisorExportAdoptionError::stage(stage, error)
 }
 
 fn receipt_publication_pending(error: &ExportReceiptError) -> bool {

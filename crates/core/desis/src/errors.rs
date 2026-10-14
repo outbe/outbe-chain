@@ -1,7 +1,10 @@
+//! Error types for the Desis precompile.
+
 use alloy_primitives::{Address, U256};
 use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
+/// Errors that the Desis runtime returns.
 #[derive(Debug, Error)]
 pub enum DesisError {
     #[error("invalid worldwide day: {0}")]
@@ -34,6 +37,43 @@ pub enum DesisError {
         allocation: U256,
         limit: U256,
     },
+
+    #[error("auction brief limit exceeds Desis u128 domain")]
+    AuctionBriefLimitExceedsDomain,
+
+    #[error("invalid OCOMP Desis brief hash: {0}")]
+    InvalidOcompDesisBriefHash(String),
+
+    #[error("processBidsBatch: array length mismatch")]
+    BatchArrayLengthMismatch,
+
+    #[error("brief anchor exceeds u32")]
+    BriefAnchorExceedsU32,
+
+    #[error("min bid quantity scaling overflow")]
+    MinBidQuantityScalingOverflow,
+
+    #[error("targetsOf undecodable")]
+    TargetsOfUndecodable,
+
+    #[error("processBidsBatch: batch total mismatch")]
+    BatchTotalMismatch,
+
+    #[error("processBidsDone: invalid total batches")]
+    InvalidTotalBatches,
+
+    #[error("processBidsBatch: invalid batch index/total")]
+    InvalidBatchIndexOrTotal,
+
+    #[error("schedule timestamp exceeds u32")]
+    ScheduleTimestampExceedsU32,
+}
+
+impl DesisError {
+    /// Creates an error when the OCOMP Desis brief hash is invalid.
+    pub fn invalid_ocomp_brief_hash(err: impl core::fmt::Display) -> Self {
+        Self::InvalidOcompDesisBriefHash(err.to_string())
+    }
 }
 
 impl From<DesisError> for outbe_primitives::error::PrecompileError {

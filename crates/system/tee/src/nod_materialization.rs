@@ -226,7 +226,7 @@ pub fn prepare_encrypted_nods(
                 attestation(b"outbe/nod/prepare-result/v2", expected, &carrier).map_err(codec)?;
             crate::tribute_v2::verify_attestation(&key, &preimage, &attestation_tag)?;
             ProtectedNodMaterializationV2::decode_canonical(&carrier, &poc_schema_limits())
-                .map_err(|e| TransportError::Codec(e.to_string()))
+                .map_err(TransportError::codec)
         }
         response => NodOperation::Prepare.reject_or_unexpected(&key, expected, response),
     }
@@ -241,7 +241,7 @@ pub fn open_encrypted_nods(
     }
     let carrier = carrier
         .encode_canonical(&poc_schema_limits())
-        .map_err(|e| TransportError::Codec(e.to_string()))?;
+        .map_err(TransportError::codec)?;
     let expected = hash(b"outbe/nod/open-inputs/v2", &(authority, &carrier)).map_err(codec)?;
     let (key, response) = crate::nod_transport::request(EnclaveRequest::OpenEncryptedNodsV2 {
         authority: authority.clone(),
@@ -262,7 +262,7 @@ pub fn open_encrypted_nods(
     }
 }
 pub(crate) fn codec(error: serde_json::Error) -> TransportError {
-    TransportError::Codec(error.to_string())
+    TransportError::codec(error)
 }
 
 /// Scoped callbacks for exercising the real enclave engines without a sidecar.

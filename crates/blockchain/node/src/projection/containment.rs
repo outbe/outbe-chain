@@ -1,6 +1,6 @@
 use super::FinalizedTarget;
+use crate::errors::NodeProjectionError;
 use alloy_primitives::B256;
-use eyre::bail;
 use eyre::Context;
 use outbe_primitives::projection::ProjectionCheckpoint;
 use reth_provider::BlockHashReader;
@@ -36,7 +36,7 @@ where
         .finalized_block_num_hash()
         .wrap_err("read local Reth finality for OCOMP projection containment")?
         .map(|block| FinalizedTarget::new(block.number, block.hash))
-        .ok_or_else(|| eyre::eyre!("OCOMP projection containment has no local finalized block"))?;
+        .ok_or(NodeProjectionError::ContainmentNoLocalFinalizedBlock)?;
     let checkpoint_hash = canonical
         .block_hash(checkpoint.block_number)
         .wrap_err("read canonical hash for OCOMP projection checkpoint")?;
@@ -60,57 +60,57 @@ pub(super) fn evaluate_ocomp_projection_containment(
     required_canonical_hash: Option<B256>,
 ) -> eyre::Result<OcompProjectionContainment> {
     if checkpoint.block_number > finalized.number {
-        bail!(
-            "OCOMP Mongo checkpoint {} ({}) is not finalized; local finality is {} ({})",
-            checkpoint.block_number,
-            checkpoint.block_hash,
-            finalized.number,
-            finalized.hash
-        );
+        return Err(NodeProjectionError::MongoCheckpointNotFinalized {
+            checkpoint_number: checkpoint.block_number,
+            checkpoint_hash: checkpoint.block_hash,
+            finalized_number: finalized.number,
+            finalized_hash: finalized.hash,
+        }
+        .into());
     }
     if required.block_number > finalized.number {
-        bail!(
-            "OCOMP job checkpoint {} ({}) is not finalized; local finality is {} ({})",
-            required.block_number,
-            required.block_hash,
-            finalized.number,
-            finalized.hash
-        );
+        return Err(NodeProjectionError::JobCheckpointNotFinalized {
+            required_number: required.block_number,
+            required_hash: required.block_hash,
+            finalized_number: finalized.number,
+            finalized_hash: finalized.hash,
+        }
+        .into());
     }
     match checkpoint_canonical_hash {
         Some(hash) if hash == checkpoint.block_hash => {}
         Some(hash) => {
-            bail!(
-                "OCOMP Mongo checkpoint hash conflict at {}: stored {}, canonical {}",
-                checkpoint.block_number,
-                checkpoint.block_hash,
-                hash
-            );
+            return Err(NodeProjectionError::MongoCheckpointHashConflict {
+                block_number: checkpoint.block_number,
+                stored: checkpoint.block_hash,
+                canonical: hash,
+            }
+            .into());
         }
         None => {
-            bail!(
-                "OCOMP Mongo checkpoint {} ({}) is unavailable in local canonical history",
-                checkpoint.block_number,
-                checkpoint.block_hash
-            );
+            return Err(NodeProjectionError::MongoCheckpointUnavailable {
+                block_number: checkpoint.block_number,
+                block_hash: checkpoint.block_hash,
+            }
+            .into());
         }
     }
     match required_canonical_hash {
         Some(hash) if hash == required.block_hash => {}
         Some(hash) => {
-            bail!(
-                "OCOMP finalized job hash conflict at {}: requested {}, canonical {}",
-                required.block_number,
-                required.block_hash,
-                hash
-            );
+            return Err(NodeProjectionError::JobHashConflict {
+                block_number: required.block_number,
+                requested: required.block_hash,
+                canonical: hash,
+            }
+            .into());
         }
         None => {
-            bail!(
-                "OCOMP finalized job {} ({}) is unavailable in local canonical history",
-                required.block_number,
-                required.block_hash
-            );
+            return Err(NodeProjectionError::JobUnavailable {
+                block_number: required.block_number,
+                block_hash: required.block_hash,
+            }
+            .into());
         }
     }
     if checkpoint.block_number < required.block_number {

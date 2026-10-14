@@ -25,6 +25,8 @@ use outbe_tee::{
 use reth_primitives_traits::Account;
 use reth_trie::{AccountProof, StorageProof};
 
+use crate::errors::{EnclaveResult, FinalizedAdmissionError};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VerifiedAdmissionAnchorV1 {
     pub block_number: u64,
@@ -45,11 +47,11 @@ impl FinalizedAdmissionVerifierV1 {
         descriptor: &TrustedNetworkDescriptorV1,
         context: &DcapOnboardingContextV1,
         anchor_outcome: &[u8],
-    ) -> Result<Self, String> {
+    ) -> EnclaveResult<Self> {
         if context.chain_id != descriptor.network_binding.chain_id
             || context.genesis_hash != descriptor.network_binding.genesis_hash
         {
-            return Err("finalized admission network identity is not release-measured".into());
+            return Err(FinalizedAdmissionError::NetworkIdentityNotReleaseMeasured.into());
         }
 
         let participants = descriptor
@@ -58,24 +60,24 @@ impl FinalizedAdmissionVerifierV1 {
             .map(|encoded| {
                 let mut input = encoded.as_slice();
                 let key = bls12381::PublicKey::read(&mut input)
-                    .map_err(|error| format!("invalid measured genesis consensus key: {error}"))?;
+                    .map_err(FinalizedAdmissionError::genesis_consensus_key)?;
                 if !input.is_empty() {
-                    return Err("measured genesis consensus key has trailing bytes".into());
+                    return Err(FinalizedAdmissionError::GenesisConsensusKeyTrailingBytes.into());
                 }
                 Ok(key)
             })
-            .collect::<Result<Vec<_>, String>>()?;
-        let participants = Set::try_from(participants)
-            .map_err(|error| format!("invalid measured genesis committee: {error:?}"))?;
+            .collect::<EnclaveResult<Vec<_>>>()?;
+        let participants =
+            Set::try_from(participants).map_err(FinalizedAdmissionError::genesis_committee)?;
         let measured_chain_id =
             u64::try_from(U256::from_be_bytes(descriptor.network_binding.chain_id))
-                .map_err(|_| "measured consensus chain id does not fit u64".to_owned())?;
+                .map_err(|_| FinalizedAdmissionError::ConsensusChainIdOverflow)?;
         outbe_consensus::config::init_consensus_chain_id(measured_chain_id)
-            .map_err(|error| format!("consensus verifier chain binding rejected: {error}"))?;
+            .map_err(FinalizedAdmissionError::consensus_chain_binding)?;
         let mut chain = CommitteeChain::new(Epoch::new(0), participants);
         chain
             .register_epoch_from_outcome(Epoch::new(0), anchor_outcome)
-            .map_err(|error| format!("epoch-0 finality anchor rejected: {error}"))?;
+            .map_err(FinalizedAdmissionError::epoch0_anchor)?;
         chain.retain_only_highest();
         Ok(Self {
             chain,
@@ -90,63 +92,63 @@ impl FinalizedAdmissionVerifierV1 {
         self
     }
 
-    pub fn advance_committee(&mut self, encoded: &[u8]) -> Result<(), String> {
+    pub fn advance_committee(&mut self, encoded: &[u8]) -> EnclaveResult<()> {
         let transition = CertifiedHeaderV1::decode_canonical(encoded)
-            .map_err(|error| format!("committee transition codec: {error}"))?;
+            .map_err(FinalizedAdmissionError::transition_codec)?;
         let (finalization, header, _) = decode_certified_header(&transition)
-            .map_err(|error| format!("committee transition decode failed: {error}"))?;
+            .map_err(FinalizedAdmissionError::transition_decode)?;
         if header.number() <= self.previous_height {
-            return Err("committee transition envelope or order is invalid".into());
+            return Err(FinalizedAdmissionError::TransitionEnvelopeOrOrder.into());
         }
         let epoch = finalization.proposal.round.epoch();
         let expected = self
             .chain
             .highest_registered()
-            .ok_or_else(|| "epoch-0 committee was not registered".to_owned())?;
+            .ok_or(FinalizedAdmissionError::Epoch0NotRegistered)?;
         if epoch != expected {
-            return Err("committee transition was not finalized by the current committee".into());
+            return Err(FinalizedAdmissionError::TransitionNotCurrentCommittee.into());
         }
         self.chain
             .verify_finalization(epoch, &finalization)
-            .map_err(|error| format!("committee transition finalization rejected: {error}"))?;
+            .map_err(FinalizedAdmissionError::transition_finalization)?;
         let artifacts = decode_outbe_block_artifacts(header.extra_data().as_ref())
-            .map_err(|error| format!("committee transition artifacts rejected: {error:?}"))?;
+            .map_err(FinalizedAdmissionError::transition_artifacts)?;
         let Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
             epoch: next,
             outcome,
         }) = artifacts.consensus_header_artifact
         else {
-            return Err("committee transition lacks a pre-announce".into());
+            return Err(FinalizedAdmissionError::TransitionLacksPreAnnounce.into());
         };
         if next != epoch.get().saturating_add(1) {
-            return Err("committee transition does not announce the immediate successor".into());
+            return Err(FinalizedAdmissionError::TransitionNotImmediateSuccessor.into());
         }
         self.chain
             .register_epoch_from_outcome(Epoch::new(next), &outcome)
-            .map_err(|error| format!("successor committee rejected: {error}"))?;
+            .map_err(FinalizedAdmissionError::successor_committee)?;
         self.chain.retain_only_highest();
         self.previous_height = header
             .number()
             .checked_add(transition.descendants.len() as u64)
-            .ok_or_else(|| "committee finality height overflow".to_owned())?;
+            .ok_or(FinalizedAdmissionError::CommitteeFinalityHeightOverflow)?;
         Ok(())
     }
 
-    pub fn verify_admission(&self, encoded: &[u8]) -> Result<VerifiedAdmissionAnchorV1, String> {
+    pub fn verify_admission(&self, encoded: &[u8]) -> EnclaveResult<VerifiedAdmissionAnchorV1> {
         let proof = FinalizedAdmissionWitnessV1::decode_canonical(encoded)
-            .map_err(|error| format!("finalized admission witness codec: {error}"))?;
+            .map_err(FinalizedAdmissionError::admission_witness_codec)?;
         let (finalization, header, header_hash) = decode_certified_header(&proof.admission)
-            .map_err(|error| format!("admission finalization decode failed: {error}"))?;
+            .map_err(FinalizedAdmissionError::admission_decode)?;
         if header.number() <= self.previous_height {
-            return Err("admission finalization envelope or order is invalid".into());
+            return Err(FinalizedAdmissionError::AdmissionEnvelopeOrOrder.into());
         }
         let epoch = finalization.proposal.round.epoch();
         if self.chain.highest_registered() != Some(epoch) {
-            return Err("admission certificate skips an unauthenticated committee".into());
+            return Err(FinalizedAdmissionError::AdmissionSkipsCommittee.into());
         }
         self.chain
             .verify_finalization(epoch, &finalization)
-            .map_err(|error| format!("admission finalization rejected: {error}"))?;
+            .map_err(FinalizedAdmissionError::admission_finalization)?;
 
         let state_root = header.state_root();
         verify_registry_account(state_root, &proof.registry_account)?;
@@ -156,20 +158,16 @@ impl FinalizedAdmissionVerifierV1 {
             expected_registry_claims(&self.context, header.timestamp(), &proof.registry_storage)?
         };
         if proof.registry_storage.len() != expected.len() {
-            return Err("finalized admission Registry proof has an unexpected slot count".into());
+            return Err(FinalizedAdmissionError::RegistrySlotCount.into());
         }
         for (slot, value) in expected {
             let opening = proof
                 .registry_storage
                 .iter()
                 .find(|opening| opening.key == slot)
-                .ok_or_else(|| {
-                    "finalized admission Registry proof is missing a required slot".to_owned()
-                })?;
+                .ok_or(FinalizedAdmissionError::RegistryMissingSlot)?;
             if opening.value != value {
-                return Err(
-                    "finalized admission Registry value differs from onboarding context".into(),
-                );
+                return Err(FinalizedAdmissionError::RegistryValueMismatch.into());
             }
             verify_storage(proof.registry_account.storage_root, opening)?;
         }
@@ -184,43 +182,40 @@ impl FinalizedAdmissionVerifierV1 {
 
 fn decode_certified_header(
     proof: &CertifiedHeaderV1,
-) -> Result<
-    (
-        outbe_consensus::marshal_types::Finalization,
-        OutbeHeader,
-        B256,
-    ),
-    String,
-> {
+) -> EnclaveResult<(
+    outbe_consensus::marshal_types::Finalization,
+    OutbeHeader,
+    B256,
+)> {
     let finalization = decode_public_finalization(&proof.finalization, MAX_COMMITTEE_MEMBERS)
-        .map_err(|error| error.to_string())?;
+        .map_err(FinalizedAdmissionError::public_finalization)?;
     let mut header_bytes = proof.header.as_slice();
     let header = OutbeHeader::decode(&mut header_bytes)
-        .map_err(|error| format!("invalid canonical Outbe header RLP: {error}"))?;
+        .map_err(FinalizedAdmissionError::canonical_header_rlp)?;
     if !header_bytes.is_empty() {
-        return Err("trailing bytes after canonical Outbe header".into());
+        return Err(FinalizedAdmissionError::HeaderTrailingBytes.into());
     }
     let hash = header.hash_slow();
     let mut previous = header.clone();
     for encoded in &proof.descendants {
         let mut bytes = encoded.as_slice();
-        let child = OutbeHeader::decode(&mut bytes)
-            .map_err(|error| format!("invalid descendant header: {error}"))?;
+        let child =
+            OutbeHeader::decode(&mut bytes).map_err(FinalizedAdmissionError::descendant_header)?;
         if !bytes.is_empty()
             || previous.number().checked_add(1) != Some(child.number())
             || child.parent_hash() != previous.hash_slow()
         {
-            return Err("finality ancestry is not a consecutive parent-hash chain".into());
+            return Err(FinalizedAdmissionError::FinalityAncestryNotConsecutive.into());
         }
         previous = child;
     }
     if finalization.proposal.payload != outbe_consensus::digest::Digest(previous.hash_slow()) {
-        return Err("finalization payload does not authenticate the header ancestry".into());
+        return Err(FinalizedAdmissionError::FinalizationPayloadMismatch.into());
     }
     Ok((finalization, header, hash))
 }
 
-fn verify_registry_account(state_root: B256, witness: &MptAccountProofV1) -> Result<(), String> {
+fn verify_registry_account(state_root: B256, witness: &MptAccountProofV1) -> EnclaveResult<()> {
     AccountProof {
         address: TEE_REGISTRY_ADDRESS,
         info: Some(Account {
@@ -233,10 +228,11 @@ fn verify_registry_account(state_root: B256, witness: &MptAccountProofV1) -> Res
         storage_proofs: Vec::new(),
     }
     .verify(state_root)
-    .map_err(|error| format!("finalized admission Registry account proof rejected: {error}"))
+    .map_err(FinalizedAdmissionError::registry_account_proof)?;
+    Ok(())
 }
 
-fn verify_storage(root: B256, witness: &MptStorageProofV1) -> Result<(), String> {
+fn verify_storage(root: B256, witness: &MptStorageProofV1) -> EnclaveResult<()> {
     StorageProof {
         key: witness.key,
         value: witness.value,
@@ -244,27 +240,28 @@ fn verify_storage(root: B256, witness: &MptStorageProofV1) -> Result<(), String>
     }
     .with_proof(witness.nodes.iter().cloned().map(Into::into).collect())
     .verify(root)
-    .map_err(|error| format!("finalized admission Registry storage proof rejected: {error}"))
+    .map_err(FinalizedAdmissionError::registry_storage_proof)?;
+    Ok(())
 }
 
 fn expected_upgrade_claims(
     context: &DcapOnboardingContextV1,
     timestamp: u64,
     openings: &[MptStorageProofV1],
-) -> Result<Vec<(B256, U256)>, String> {
+) -> EnclaveResult<Vec<(B256, U256)>> {
     let slots = outbe_tee::finalized_admission::upgrade_registry_slots_v1(context);
-    let value = |i: usize| {
+    let value = |i: usize| -> EnclaveResult<U256> {
         openings
             .iter()
             .find(|o| o.key == slots[i])
             .map(|o| o.value)
-            .ok_or_else(|| "missing upgrade authorization slot".to_string())
+            .ok_or_else(|| FinalizedAdmissionError::MissingUpgradeSlot.into())
     };
     let expiry = value(4)?;
     let source = value(5)?;
     let nonce = value(8)?;
     if expiry <= U256::from(timestamp) || source.is_zero() || nonce.is_zero() {
-        return Err("upgrade authorization is absent or expired at the proved block".into());
+        return Err(FinalizedAdmissionError::UpgradeAuthorizationAbsentOrExpired.into());
     }
     Ok(vec![
         (slots[0], U256::from_be_bytes(context.tribute_offer_public)),
@@ -283,16 +280,16 @@ fn expected_registry_claims(
     context: &DcapOnboardingContextV1,
     block_timestamp: u64,
     openings: &[MptStorageProofV1],
-) -> Result<Vec<(B256, U256)>, String> {
+) -> EnclaveResult<Vec<(B256, U256)>> {
     let slots = onboarding_registry_slots_v1(context);
     let valid_until_slot = slots[7];
     let valid_until = openings
         .iter()
         .find(|opening| opening.key == valid_until_slot)
         .map(|opening| opening.value)
-        .ok_or_else(|| "finalized admission Registry proof lacks lease expiry".to_owned())?;
+        .ok_or(FinalizedAdmissionError::RegistryLacksLeaseExpiry)?;
     if valid_until <= U256::from(block_timestamp) {
-        return Err("finalized admission Registry lease is not live at the proved block".into());
+        return Err(FinalizedAdmissionError::RegistryLeaseNotLive.into());
     }
     Ok(vec![
         (slots[0], U256::from_be_bytes(context.tribute_offer_public)),

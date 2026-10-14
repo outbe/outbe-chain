@@ -1,3 +1,4 @@
+use crate::errors::TeeJoinEnclaveError;
 use alloy_primitives::B256;
 
 use eyre::Result;
@@ -38,7 +39,7 @@ impl JoinEnclave {
             Self::Candidate(client) => client.generate_dcap_quote(intent),
             Self::Development(_) => unreachable!("DCAP join cannot use development transport"),
         }
-        .map_err(|error| eyre::eyre!("generate intent-bound DCAP quote: {error}"))
+        .map_err(|error| TeeJoinEnclaveError::GenerateDcapQuote(error).into())
     }
 
     pub(in super::super) fn sign_registration_intent_dev_v1(
@@ -50,7 +51,7 @@ impl JoinEnclave {
             Self::Candidate(client) => client.sign_registration_intent_dev_v1(intent),
             Self::Development(client) => client.sign_registration_intent_dev_v1(intent),
         }
-        .map_err(|error| eyre::eyre!("sign development V1 intent: {error}"))
+        .map_err(|error| TeeJoinEnclaveError::SignDevIntent(error).into())
     }
 
     pub(in super::super) fn request(
@@ -58,7 +59,7 @@ impl JoinEnclave {
         request: &EnclaveRequest,
     ) -> Result<EnclaveResponse> {
         self.request_transport(request)
-            .map_err(|error| eyre::eyre!(error))
+            .map_err(|error| TeeJoinEnclaveError::Transport(error).into())
     }
 
     pub(in super::super) fn request_transport(
@@ -156,16 +157,13 @@ pub(super) fn connect_join_enclave(
     }
 }
 
-fn connect_authorized_node_host(
-    ctx: EnclaveConnectionContext<'_>,
-) -> Result<ConnectedJoinEnclave> {
+fn connect_authorized_node_host(ctx: EnclaveConnectionContext<'_>) -> Result<ConnectedJoinEnclave> {
     use eyre::WrapErr as _;
     let node_data_dir = ctx
         .node_data_dir
         .expect("transport selection requires node data dir");
-    std::fs::create_dir_all(node_data_dir).wrap_err_with(|| {
-        format!("create NodeHost data directory {}", node_data_dir.display())
-    })?;
+    std::fs::create_dir_all(node_data_dir)
+        .wrap_err_with(|| format!("create NodeHost data directory {}", node_data_dir.display()))?;
     let manifest_path = node_data_dir
         .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
         .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1);
@@ -180,16 +178,14 @@ fn connect_authorized_node_host(
     };
     if manifest.network_binding() != ctx.policy.network_binding() || manifest.node_id != ctx.node_id
     {
-        eyre::bail!(
-            "committed NodeHost manifest does not match the active chain and node identity"
-        );
+        return Err(TeeJoinEnclaveError::ManifestIdentityMismatch.into());
     }
     let enclave_id = manifest
         .enclave_id()
-        .map_err(|error| eyre::eyre!("invalid committed enclave identity: {error}"))?;
+        .map_err(TeeJoinEnclaveError::InvalidCommittedEnclaveIdentity)?;
     let authorization = manifest
         .node_host_authorization_hash()
-        .map_err(|error| eyre::eyre!("invalid committed NodeHost authorization: {error}"))?;
+        .map_err(TeeJoinEnclaveError::InvalidCommittedAuthorization)?;
     Ok(ConnectedJoinEnclave {
         enclave,
         keys: EnclaveIdentityKeys {
@@ -211,7 +207,7 @@ fn open_existing_or_candidate_node_host(
     outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
 )> {
     let committed = outbe_tee::load_committed_enclave_manifest_v1(node_data_dir)
-        .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
+        .map_err(TeeJoinEnclaveError::LoadCommittedManifest)?;
     match outbe_tee::connect_committed_node_host_enclave(ctx.enclave_socket, node_data_dir) {
         Ok(client) => Ok((JoinEnclave::Committed(Box::new(client)), committed)),
         Err(committed_error) if ctx.has_finalized_binding => {
@@ -222,16 +218,15 @@ fn open_existing_or_candidate_node_host(
                 |hash| super::super::sign_node_hash(ctx.node_signing_key, hash),
             )
             .map_err(|candidate_error| {
-                eyre::eyre!(
-                    "endpoint matches neither the committed enclave ({committed_error}) nor a resumable fresh candidate ({candidate_error})"
-                )
+                TeeJoinEnclaveError::EndpointMatchesNeither {
+                    committed: committed_error,
+                    candidate: candidate_error,
+                }
             })?;
             let manifest = candidate.manifest().clone();
             Ok((JoinEnclave::Candidate(Box::new(candidate)), manifest))
         }
-        Err(error) => Err(eyre::eyre!(
-            "reconnect unregistered committed NodeHost enclave: {error}"
-        )),
+        Err(error) => Err(TeeJoinEnclaveError::ReconnectUnregisteredCommitted(error).into()),
     }
 }
 
@@ -249,23 +244,23 @@ fn initialize_fresh_node_host(
         identity,
         |hash| super::super::sign_node_hash(ctx.node_signing_key, hash),
     )
-    .map_err(|error| eyre::eyre!("production NodeHost initialization failed: {error}"))?;
+    .map_err(TeeJoinEnclaveError::InitializeNodeHost)?;
     let manifest = outbe_tee::load_committed_enclave_manifest_v1(node_data_dir)
-        .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
+        .map_err(TeeJoinEnclaveError::LoadCommittedManifest)?;
     Ok((JoinEnclave::Committed(Box::new(client)), manifest))
 }
 
 fn connect_development_join_enclave(
     ctx: EnclaveConnectionContext<'_>,
 ) -> Result<ConnectedJoinEnclave> {
-    let development = EnclaveClient::connect_endpoint(ctx.enclave_socket).map_err(|error| {
-        eyre::eyre!(
-            "connect development enclave at {}: {error}",
-            ctx.enclave_socket
-        )
+    let development = EnclaveClient::connect_endpoint(ctx.enclave_socket).map_err(|source| {
+        TeeJoinEnclaveError::ConnectDevelopmentEnclave {
+            socket: ctx.enclave_socket.to_owned(),
+            source,
+        }
     })?;
     if development.is_hardware_attested() {
-        eyre::bail!("GramineDirectDev policy requires the separate non-SGX development transport");
+        return Err(TeeJoinEnclaveError::GramineDirectDevHardwareAttested.into());
     }
     let (recipient, attestation, noise) = match development.quote() {
         EnclaveResponse::Quote {
@@ -274,7 +269,11 @@ fn connect_development_join_enclave(
             noise_static_pub,
             ..
         } => (*recipient_x25519_pub, *attestation_pub, *noise_static_pub),
-        other => eyre::bail!("expected development Quote, got {other:?}"),
+        other => {
+            return Err(
+                TeeJoinEnclaveError::UnexpectedDevelopmentQuote(format!("{other:?}")).into(),
+            )
+        }
     };
     let (enclave_id, authorization) = super::super::development_identity_v1(
         ctx.policy,

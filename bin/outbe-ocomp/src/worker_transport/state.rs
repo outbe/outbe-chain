@@ -9,8 +9,8 @@ use outbe_ocomp_protocol::{SchemaLimits, UnitFinishedV1};
 use super::{
     duration_ms, parse_b256, SupervisorCommandV1, WorkLeaseV1, WorkerApiErrorV1, WorkerApiStatusV1,
     WorkerCompletionV1, WorkerEventV1, WorkerLeaseRefV1, WorkerRegistrationResponseV1,
-    WorkerRegistrationV1, MAX_REGISTERED_WORKERS, WORKER_IDLE_TIMEOUT,
-    WORKER_REGISTRATION_TIMEOUT, WORK_LEASE_TIMEOUT, WORK_RESULT_TIMEOUT,
+    WorkerRegistrationV1, MAX_REGISTERED_WORKERS, WORKER_IDLE_TIMEOUT, WORKER_REGISTRATION_TIMEOUT,
+    WORK_LEASE_TIMEOUT, WORK_RESULT_TIMEOUT,
 };
 use crate::control::EndpointIdentity;
 

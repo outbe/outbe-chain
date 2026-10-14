@@ -3,7 +3,6 @@ use alloy_primitives::Address;
 use alloy_primitives::B256;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
-use outbe_primitives::error::PrecompileError;
 use outbe_primitives::error::Result;
 
 use super::{current_preloaded_system_tx_context, read_preloaded_finalized_summary};
@@ -18,12 +17,12 @@ pub(crate) fn run_finalization_and_slashing(
 
     validate_finalized_metadata(ctx.storage.clone(), metadata)?;
 
-    let finalized = read_preloaded_finalized_summary(&ctx.storage)?.ok_or_else(|| {
-        PrecompileError::Fatal(format!(
-            "missing preloaded execution summary for finalized block {} ({})",
-            metadata.finalized_block_number, metadata.finalized_block_hash
-        ))
-    })?;
+    let finalized = read_preloaded_finalized_summary(&ctx.storage)?.ok_or(
+        crate::errors::BeginBlockPrecompileError::MissingPreloadedExecutionSummary {
+            block_number: metadata.finalized_block_number,
+            block_hash: metadata.finalized_block_hash,
+        },
+    )?;
 
     // OCOMP finality is derived only from an actual consensus finalization
     // certificate for the exact request parent. Certified notarization remains
@@ -32,11 +31,9 @@ pub(crate) fn run_finalization_and_slashing(
     if metadata.proof_kind
         == outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization
     {
-        let finalized_state_root = finalized.state_root.ok_or_else(|| {
-            PrecompileError::Fatal(
-                "certified Metadosis finality requires the verified parent state root".into(),
-            )
-        })?;
+        let finalized_state_root = finalized
+            .state_root
+            .ok_or(crate::errors::BeginBlockPrecompileError::MissingVerifiedParentStateRoot)?;
         let certified = outbe_primitives::storage::MetadosisCertifiedFinalityBinding::new(
             ctx.block.chain_id,
             ctx.block.block_number,
@@ -67,9 +64,13 @@ pub(crate) fn run_finalization_and_slashing(
     )? {
         outbe_rewards::runtime::MetadataFingerprintOutcome::IdenticalReplay => {
             if last_accounted != expected_parent_number {
-                return Err(PrecompileError::Fatal(format!(
-                    "CertifiedParentAccounting identical replay at unexpected progress: last_accounted={last_accounted}, expected={expected_parent_number}"
-                )));
+                return Err(
+                    crate::errors::BeginBlockPrecompileError::IdenticalReplayUnexpectedProgress {
+                        last_accounted,
+                        expected: expected_parent_number,
+                    }
+                    .into(),
+                );
             }
             tracing::warn!(
                 target: "outbe::system_tx",
@@ -82,9 +83,12 @@ pub(crate) fn run_finalization_and_slashing(
         outbe_rewards::runtime::MetadataFingerprintOutcome::Fresh => {
             let required_previous = expected_parent_number.saturating_sub(1);
             if last_accounted != required_previous {
-                return Err(PrecompileError::Fatal(format!(
-                    "CertifiedParentAccounting progress gap: last_accounted={last_accounted}, expected_previous={required_previous}, accounting_parent={expected_parent_number}"
-                )));
+                return Err(crate::errors::BeginBlockPrecompileError::ProgressGap {
+                    last_accounted,
+                    expected_previous: required_previous,
+                    accounting_parent: expected_parent_number,
+                }
+                .into());
             }
         }
     }
@@ -147,25 +151,24 @@ fn validate_accounting_parent(
     metadata: &CertifiedParentAccountingMetadata,
 ) -> Result<u64> {
     if ctx.block.block_number < 2 {
-        return Err(PrecompileError::Fatal(
-            "CertifiedParentAccounting system tx requires block_number >= 2".into(),
-        ));
+        return Err(crate::errors::BeginBlockPrecompileError::RequiresBlockNumberAtLeastTwo.into());
     }
     let expected_parent_number = ctx
         .block
         .block_number
         .checked_sub(1)
-        .ok_or_else(|| PrecompileError::Fatal("block number underflow".into()))?;
+        .ok_or(crate::errors::BeginBlockPrecompileError::BlockNumberUnderflow)?;
     if metadata.finalized_block_number != expected_parent_number {
-        return Err(PrecompileError::Fatal(format!(
-            "CertifiedParentAccounting metadata must target immediate parent: expected {}, got {}",
-            expected_parent_number, metadata.finalized_block_number
-        )));
+        return Err(
+            crate::errors::BeginBlockPrecompileError::TargetImmediateParentMismatch {
+                expected: expected_parent_number,
+                actual: metadata.finalized_block_number,
+            }
+            .into(),
+        );
     }
     if metadata.finalized_block_hash.is_zero() {
-        return Err(PrecompileError::Fatal(
-            "CertifiedParentAccounting metadata has zero finalized block hash".into(),
-        ));
+        return Err(crate::errors::BeginBlockPrecompileError::ZeroFinalizedBlockHash.into());
     }
 
     Ok(expected_parent_number)

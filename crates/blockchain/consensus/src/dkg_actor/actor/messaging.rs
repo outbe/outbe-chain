@@ -122,9 +122,9 @@ pub(super) fn decode_signed_dealer_log(
     let mut reader = bytes.as_ref();
     let signed_log =
         SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(&mut reader, max_players)
-            .map_err(|e| eyre::eyre!("invalid signed dealer log encoding: {e:?}"))?;
+            .map_err(crate::errors::DkgError::invalid_signed_dealer_log_encoding)?;
     if !reader.is_empty() {
-        return Err(eyre::eyre!("trailing bytes after signed dealer log"));
+        return Err(crate::errors::DkgError::TrailingSignedDealerLogBytes.into());
     }
     Ok(signed_log)
 }

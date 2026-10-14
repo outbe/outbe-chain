@@ -287,16 +287,16 @@ fn verify_durable_lysis_openings(
     let (bundle, limits) = policy;
     fidelity
         .validate_against_bundle(bundle, limits)
-        .map_err(|error| OpeningStageError::Verification(error.to_string()))?;
+        .map_err(OpeningStageError::verification)?;
     oracle
         .validate_against_bundle(bundle, limits)
-        .map_err(|error| OpeningStageError::Verification(error.to_string()))?;
+        .map_err(OpeningStageError::verification)?;
     let fidelity = fidelity
         .decode_and_validate_raw_opening(finalized.request.state_root, limits)
-        .map_err(|error| OpeningStageError::Verification(error.to_string()))?;
+        .map_err(OpeningStageError::verification)?;
     let oracle = oracle
         .decode_and_validate_raw_opening(finalized.request.state_root, limits)
-        .map_err(|error| OpeningStageError::Verification(error.to_string()))?;
+        .map_err(OpeningStageError::verification)?;
     verify_lysis_openings(
         &LysisOpeningsProofV1 {
             protocol_bundle_hash: finalized.intent.protocol_bundle_hash,
@@ -312,7 +312,7 @@ fn verify_durable_lysis_openings(
         subjects,
         limits,
     )
-    .map_err(|error| OpeningStageError::Verification(error.to_string()))
+    .map_err(OpeningStageError::verification)
 }
 
 fn verified_discovery_intent(

@@ -20,7 +20,7 @@ use outbe_ocomp_protocol::{
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::TRIBUTE_ADDRESS,
-    error::{PrecompileError, Result},
+    error::Result,
     storage::{CertifiedLysisActivation, StorageHandle},
 };
 
@@ -65,10 +65,10 @@ pub fn prepare_certified_partition_retirement(
 
     let day = WorldwideDay::new(input.input_binding.wwd);
     let partition = PartitionRef::TributeWwd(day);
-    let (_, collection_key) =
-        partition_collection_key(partition).map_err(|error| protocol_error(error.to_string()))?;
+    let (_, collection_key) = partition_collection_key(partition)
+        .map_err(crate::errors::TributeError::invalid_certified_protocol_value)?;
     if B256::from(*collection_key.as_bytes()) != input.input_binding.collection_key {
-        return Err(revert("certified Tribute collection key mismatch"));
+        return Err(crate::errors::TributeError::CertifiedCollectionKeyMismatch.into());
     }
 
     let tribute = TributeContract::new(storage.clone());
@@ -77,20 +77,16 @@ pub fn prepare_certified_partition_retirement(
         || !current.is_sealed
         || current.source_generation != input.input_binding.source_generation
     {
-        return Err(revert(
-            "certified Tribute input differs from the sealed generation",
-        ));
+        return Err(crate::errors::TributeError::CertifiedInputDiffersFromSealedGeneration.into());
     }
     if current.sealed_collection_root != input.input_binding.sealed_collection_root
         || current.tribute_count != input.input_binding.exact_count
         || current.tribute_nominal_total_minor != input.input_binding.exact_nominal_total
     {
-        return Err(revert(
-            "certified Tribute input differs from the sealed generation",
-        ));
+        return Err(crate::errors::TributeError::CertifiedInputDiffersFromSealedGeneration.into());
     }
     if current.source_generation != 0 {
-        return Err(revert("certified Tribute generation is already retired"));
+        return Err(crate::errors::TributeError::CertifiedGenerationAlreadyRetired.into());
     }
 
     let state_projection = TributeStateEventProjectionV1 {
@@ -102,7 +98,7 @@ pub fn prepare_certified_partition_retirement(
         retired_generation: input.retired_generation,
     };
     let state_event_digest = tribute_state_event_digest(&input.binding, &state_projection, limits)
-        .map_err(|error| protocol_error(error.to_string()))?;
+        .map_err(crate::errors::TributeError::invalid_certified_protocol_value)?;
     let receipt = TributeReceiptV1 {
         binding: input.binding.clone(),
         tribute_input_binding: input.input_binding.clone(),
@@ -114,10 +110,10 @@ pub fn prepare_certified_partition_retirement(
     };
     receipt
         .validate_projection(&state_projection, limits)
-        .map_err(|error| protocol_error(error.to_string()))?;
+        .map_err(crate::errors::TributeError::invalid_certified_protocol_value)?;
     receipt
         .receipt_hash(limits)
-        .map_err(|error| protocol_error(error.to_string()))?;
+        .map_err(crate::errors::TributeError::invalid_certified_protocol_value)?;
 
     Ok(PreparedCertifiedTributeRetirementV1 {
         input: input.clone(),
@@ -164,19 +160,21 @@ pub fn retire_prepared_certified_partition(
             input.consumed_nominal_total,
         )?;
         if tribute.retire_completed_partition_inner(scope, day)? != RetirementOutcome::Requested {
-            return Err(PrecompileError::Fatal(
-                "sealed Tribute projection contradicts the authenticated CE generation".into(),
-            ));
+            return Err(
+                crate::errors::TributeError::SealedProjectionContradictsAuthenticatedCeGeneration
+                    .into(),
+            );
         }
 
         if !tribute.day_pre_admission.exists(day)? {
-            return Err(revert("certified Tribute pre-admission record is absent"));
+            return Err(crate::errors::TributeError::CertifiedPreAdmissionRecordAbsent.into());
         }
         let mut admission = tribute.read_day_pre_admission(day)?;
         if admission.source_generation != input.input_binding.source_generation {
-            return Err(revert(
-                "certified Tribute source generation changed during activation",
-            ));
+            return Err(
+                crate::errors::TributeError::CertifiedSourceGenerationChangedDuringActivation
+                    .into(),
+            );
         }
         admission.source_generation = input.retired_generation;
         tribute.store_day_pre_admission(&admission)?;
@@ -209,31 +207,21 @@ fn validate_input(
     input: &CertifiedTributeRetirementV1,
 ) -> Result<()> {
     if capability.activation_call_id() != input.binding.activation_call_id {
-        return Err(revert("certified Tribute activation binding mismatch"));
+        return Err(crate::errors::TributeError::CertifiedActivationBindingMismatch.into());
     }
     if input.input_binding.sealed_collection_root.is_zero()
         || input.input_binding.exact_count == 0
         || input.input_binding.source_generation != 0
     {
-        return Err(revert("invalid certified Tribute retirement aggregate"));
+        return Err(crate::errors::TributeError::InvalidCertifiedRetirementAggregate.into());
     }
     if input.consumed_count != input.input_binding.exact_count
         || input.consumed_nominal_total != input.input_binding.exact_nominal_total
         || input.retired_generation != 1
     {
-        return Err(revert("invalid certified Tribute retirement aggregate"));
+        return Err(crate::errors::TributeError::InvalidCertifiedRetirementAggregate.into());
     }
     Ok(())
-}
-
-fn protocol_error(message: String) -> PrecompileError {
-    PrecompileError::Fatal(format!(
-        "invalid certified Tribute protocol value: {message}"
-    ))
-}
-
-fn revert(reason: &'static str) -> PrecompileError {
-    PrecompileError::Revert(reason.into())
 }
 
 #[cfg(test)]
@@ -260,6 +248,7 @@ mod tests {
     };
 
     use crate::{DayPreAdmission, DayTotals};
+    use outbe_primitives::error::PrecompileError;
 
     use super::*;
 

@@ -174,8 +174,7 @@ fn compute_gratis_prefix_branch(
     ),
     WorkerError,
 > {
-    let (values, child_coverage) =
-        decode_gratis_summary_children(&resolved, 0, limits, cancelled)?;
+    let (values, child_coverage) = decode_gratis_summary_children(&resolved, 0, limits, cancelled)?;
     let summary = match gratis_summary_reduce_pair(values[0].clone(), values[1].clone())
         .map_err(LysisArtifactErrorV1::from)?
     {

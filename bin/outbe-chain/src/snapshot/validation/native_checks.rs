@@ -17,15 +17,17 @@ fn require_source(path: &std::path::Path, directory: bool) -> eyre::Result<()> {
             eyre::Report::new(error).wrap_err(context)
         }
     })?;
-    eyre::ensure!(
-        if directory {
-            metadata.is_dir()
-        } else {
-            metadata.is_file()
-        },
-        "selected native source has wrong file kind: {}",
-        path.display()
-    );
+    let expected_kind = if directory {
+        metadata.is_dir()
+    } else {
+        metadata.is_file()
+    };
+    if !expected_kind {
+        return Err(crate::errors::SnapshotError::SourceWrongFileKind {
+            path: path.display().to_string(),
+        }
+        .into());
+    }
     Ok(())
 }
 
@@ -236,7 +238,10 @@ pub(super) fn run_native_checks(
         audit_ce_and_bodies(
             (layout, &view, scratch),
             (reader, marker),
-            (selection.checks.contains(&Bodies), projection_error.is_none()),
+            (
+                selection.checks.contains(&Bodies),
+                projection_error.is_none(),
+            ),
             report,
         );
     } else if selection.checks.contains(&Bodies) {

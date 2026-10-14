@@ -4,7 +4,7 @@ use std::{ops::RangeInclusive, path::PathBuf};
 
 use alloy_consensus::Sealable;
 use alloy_primitives::B256;
-use eyre::{ensure, WrapErr};
+use eyre::WrapErr;
 use outbe_compressed_entities::{sealed_root, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
 use outbe_primitives::{
     reshare_artifact::{decode_outbe_block_artifacts, CompressedEntitiesRootArtifact},
@@ -14,6 +14,7 @@ use reth_ethereum::provider::db::{cursor::DbCursorRO, tables, transaction::DbTx}
 use reth_provider::{BlockHashReader, HeaderProvider, StaticFileSegment};
 
 use super::super::native::RethReadOnlyView;
+use crate::errors::{require, SnapshotError};
 
 #[derive(Debug)]
 pub(crate) struct HeaderAudit {
@@ -43,41 +44,46 @@ fn retained_segments(view: &RethReadOnlyView) -> eyre::Result<Vec<HeaderSegment>
         if segment != StaticFileSegment::Headers {
             continue;
         }
-        ensure!(entry.file_type()?.is_file(), "header segment is not a file");
-        ensure!(
+        require(
+            entry.file_type()?.is_file(),
+            SnapshotError::HeaderSegmentNotFile,
+        )?;
+        require(
             name == std::ffi::OsStr::new(&segment.filename(&expected)),
-            "ambiguous header segment filename"
-        );
+            SnapshotError::AmbiguousHeaderSegmentFilename,
+        )?;
         let path = entry.path();
         let jar = view
             .static_files
             .get_segment_provider_for_path(&path)?
-            .ok_or_else(|| eyre::eyre!("missing native header segment {}", path.display()))?;
+            .ok_or_else(|| SnapshotError::MissingNativeHeaderSegment {
+                path: path.display().to_string(),
+            })?;
         let metadata = jar.user_header();
-        ensure!(
+        require(
             metadata.segment() == segment && metadata.expected_block_range() == expected,
-            "header segment range metadata disagrees with filename"
-        );
+            SnapshotError::HeaderSegmentMetadataMismatch,
+        )?;
         let Some(range) = metadata.block_range() else {
-            ensure!(
+            require(
                 jar.rows() == 0,
-                "header segment has rows but no retained range"
-            );
+                SnapshotError::HeaderSegmentRowsWithoutRange,
+            )?;
             continue;
         };
         let (start, end) = (range.start(), range.end());
-        ensure!(
+        require(
             start <= end && start >= expected.start() && end <= expected.end(),
-            "invalid retained header range {start}..={end}"
-        );
+            SnapshotError::InvalidRetainedHeaderRange { start, end },
+        )?;
         let count = end
             .checked_sub(start)
             .and_then(|span| span.checked_add(1))
-            .ok_or_else(|| eyre::eyre!("header range length overflow"))?;
-        ensure!(
+            .ok_or(SnapshotError::HeaderRangeLengthOverflow)?;
+        require(
             u64::try_from(jar.rows())? == count,
-            "header segment rows disagree with retained range {start}..={end}"
-        );
+            SnapshotError::HeaderSegmentRowsDisagreeWithRange { start, end },
+        )?;
         segments.push(HeaderSegment {
             path,
             range: start..=end,
@@ -85,10 +91,10 @@ fn retained_segments(view: &RethReadOnlyView) -> eyre::Result<Vec<HeaderSegment>
     }
     segments.sort_unstable_by_key(|segment| *segment.range.start());
     for pair in segments.windows(2) {
-        ensure!(
+        require(
             pair[0].range.end() < pair[1].range.start(),
-            "overlapping retained header segment ranges"
-        );
+            SnapshotError::OverlappingHeaderSegmentRanges,
+        )?;
     }
     Ok(segments)
 }
@@ -107,13 +113,13 @@ fn read_static_header_row(
     let jar = view
         .static_files
         .get_segment_provider_for_path(&segment.path)?
-        .ok_or_else(|| eyre::eyre!("missing header segment for {number}"))?;
+        .ok_or(SnapshotError::MissingHeaderSegmentForBlock { number })?;
     let header = jar
         .header_by_number(number)?
-        .ok_or_else(|| eyre::eyre!("missing header {number} inside static range"))?;
+        .ok_or(SnapshotError::MissingHeaderInsideStaticRange { number })?;
     let hash = jar
         .block_hash(number)?
-        .ok_or_else(|| eyre::eyre!("missing canonical hash {number} inside static range"))?;
+        .ok_or(SnapshotError::MissingCanonicalHashInsideStaticRange { number })?;
     if number == *segment.range.end() {
         *segment_index += 1;
         *static_number = segments
@@ -135,38 +141,41 @@ fn verify_merged_header_row<'a>(
     let header = static_row
         .map(|(header, _)| header)
         .or(stored_header)
-        .ok_or_else(|| eyre::eyre!("missing retained header {number} for canonical row"))?;
+        .ok_or(SnapshotError::MissingRetainedHeaderForCanonicalRow { number })?;
     let canonical_hash = static_row
         .map(|(_, hash)| *hash)
         .or(stored_hash)
-        .ok_or_else(|| eyre::eyre!("missing canonical hash for retained header {number}"))?;
-    ensure!(
+        .ok_or(SnapshotError::MissingCanonicalHashForRetainedHeader { number })?;
+    require(
         header.inner.number == number,
-        "header number mismatch at {number}"
-    );
+        SnapshotError::HeaderNumberMismatch { number },
+    )?;
     let hash = header.hash_slow();
-    ensure!(
+    require(
         hash == canonical_hash,
-        "canonical header hash mismatch at {number}"
-    );
+        SnapshotError::CanonicalHeaderHashMismatch { number },
+    )?;
     if let Some(stored) = stored_header {
-        ensure!(
+        require(
             stored.inner.number == number,
-            "MDBX header number mismatch at {number}"
-        );
-        ensure!(
+            SnapshotError::MdbxHeaderNumberMismatch { number },
+        )?;
+        require(
             stored.hash_slow() == hash,
-            "conflicting MDBX/static header hash at {number}"
-        );
+            SnapshotError::ConflictingMdbxStaticHeaderHash { number },
+        )?;
     }
     if let Some(stored) = stored_hash {
-        ensure!(stored == hash, "MDBX canonical hash mismatch at {number}");
+        require(
+            stored == hash,
+            SnapshotError::MdbxCanonicalHashMismatch { number },
+        )?;
     }
     if number == 0 {
-        ensure!(
+        require(
             hash == view.chain.genesis_hash(),
-            "retained genesis differs from configured chain"
-        );
+            SnapshotError::RetainedGenesisMismatch,
+        )?;
     }
     Ok((header, hash))
 }
@@ -180,11 +189,14 @@ fn record_header_interval(
 ) -> eyre::Result<()> {
     if let Some((parent_number, expected_parent_hash)) = *previous {
         if parent_number.checked_add(1) == Some(number) {
-            ensure!(
+            require(
                 parent_hash == expected_parent_hash,
-                "retained header parent mismatch at {number}"
-            );
-            let last = audit.intervals.last_mut().expect("previous header interval");
+                SnapshotError::RetainedHeaderParentMismatch { number },
+            )?;
+            let last = audit
+                .intervals
+                .last_mut()
+                .expect("previous header interval");
             *last = *last.start()..=number;
         } else {
             audit.intervals.push(number..=number);
@@ -196,7 +208,7 @@ fn record_header_interval(
     audit.verified_headers = audit
         .verified_headers
         .checked_add(1)
-        .ok_or_else(|| eyre::eyre!("verified header count overflow"))?;
+        .ok_or(SnapshotError::VerifiedHeaderCountOverflow)?;
     Ok(())
 }
 
@@ -292,10 +304,10 @@ pub(crate) fn read_header_ce_commitment(
     let artifacts = decode_outbe_block_artifacts(&header.inner.extra_data)
         .wrap_err("decode header compressed-entity commitment")?;
     if let Some(commitment) = artifacts.compressed_entities_root {
-        ensure!(
+        require(
             commitment.commitment_scheme_version == ACTIVE_COMMITMENT_SCHEME,
-            "unsupported header CE commitment scheme"
-        );
+            SnapshotError::UnsupportedHeaderCeScheme,
+        )?;
     }
     Ok(artifacts.compressed_entities_root)
 }
@@ -306,29 +318,31 @@ pub(crate) fn verify_header_ce_marker(
     header: &OutbeHeader,
     marker: &FinalizedMarker,
 ) -> eyre::Result<()> {
-    ensure!(
+    require(
         marker.commitment_scheme_version == ACTIVE_COMMITMENT_SCHEME,
-        "unsupported CE marker scheme"
-    );
-    ensure!(
+        SnapshotError::UnsupportedCeMarkerScheme,
+    )?;
+    require(
         header.inner.number == marker.height,
-        "CE marker/header height mismatch"
-    );
-    ensure!(
+        SnapshotError::CeMarkerHeightMismatch,
+    )?;
+    require(
         header.hash_slow() == marker.block_hash,
-        "CE marker/header block hash mismatch"
-    );
-    ensure!(
+        SnapshotError::CeMarkerBlockHashMismatch,
+    )?;
+    require(
         header.inner.parent_hash == marker.parent_block_hash,
-        "CE marker/header parent hash mismatch"
-    );
+        SnapshotError::CeMarkerParentHashMismatch,
+    )?;
     let root = if marker.height == 0 {
         sealed_root(B256::ZERO)?
     } else {
         read_header_ce_commitment(header)?
-            .ok_or_else(|| eyre::eyre!("missing header CE commitment at {}", marker.height))?
+            .ok_or(SnapshotError::MissingHeaderCeCommitment {
+                height: marker.height,
+            })?
             .r_sealed
     };
-    ensure!(root == marker.new_root, "CE marker/header root mismatch");
+    require(root == marker.new_root, SnapshotError::CeMarkerRootMismatch)?;
     Ok(())
 }

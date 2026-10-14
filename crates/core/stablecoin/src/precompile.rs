@@ -5,7 +5,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 pub use crate::abi::IStablecoin;
-use crate::errors::StablecoinStateError;
+use crate::errors::{AbiDecodeError, StablecoinStateError};
 use crate::schema::StablecoinContract;
 
 const ERC165_INTERFACE_ID: [u8; 4] = [0x01, 0xff, 0xc9, 0xa7];
@@ -24,11 +24,10 @@ pub fn dispatch(
     }
     dispatch_call(
         data,
-        |input| {
-            let call = IStablecoin::IStablecoinCalls::abi_decode(input)
-                .map_err(|error| error.to_string())?;
+        |input| -> std::result::Result<_, AbiDecodeError> {
+            let call = IStablecoin::IStablecoinCalls::abi_decode(input)?;
             if call.abi_encode().as_slice() != input {
-                return Err("non-canonical ABI calldata or trailing bytes".to_owned());
+                return Err(AbiDecodeError::NonCanonicalCalldata);
             }
             Ok(call)
         },

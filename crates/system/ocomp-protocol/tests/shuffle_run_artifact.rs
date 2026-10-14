@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 
-use alloy_primitives::{B256, keccak256};
+use alloy_primitives::{keccak256, B256};
 use outbe_ocomp_protocol::test_utils::FINALITY_INPUT_TEST_LIMITS as LIMITS;
 use outbe_ocomp_protocol::{
-    ProtocolError,
     control::CasObjectRefV1,
     registry::ObjectKind,
     shuffle::{
-        MAX_SHUFFLE_LEAF_RECORDS, ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1,
+        build_bucket_shuffle_run, ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1,
         ShuffleRunBuildContextV1, ShuffleRunKindV1, ShuffleRunPayloadV1, ShuffleSourceCoverageV1,
-        build_bucket_shuffle_run,
+        MAX_SHUFFLE_LEAF_RECORDS,
     },
     unit::CanonicalRunSpan,
+    ProtocolError,
 };
 
 fn hash(byte: u8) -> B256 {

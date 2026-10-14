@@ -87,10 +87,7 @@ where
         env.extend_from_slice(&local.enc);
         env.extend_from_slice(&(local.signature.len() as u32).to_be_bytes());
         env.extend_from_slice(&local.signature);
-        let delivery_env = self
-            .delivery
-            .envelope(Recipients::All, env.clone())
-            .map_err(|error| eyre::eyre!(error))?;
+        let delivery_env = self.delivery.envelope(Recipients::All, env.clone())?;
         let _ = self.sender.send(Recipients::All, delivery_env, true);
         Ok(IdentityCollection {
             ids,
@@ -129,9 +126,7 @@ where
                             self.handle_identity_frame(IdentityFrame { from, bytes }, &mut collected)?;
                         }
                         Err(_) => {
-                            return Err(eyre::eyre!(
-                                "TEE DKG identity gossip closed before all {n} identities collected"
-                            ));
+                            return Err(crate::errors::TeeBootstrapError::IdentityGossipClosedBeforeAllCollected(n).into());
                         }
                     }
                 },
@@ -140,10 +135,10 @@ where
                     // registered the round late still receive us. Bound the wait.
                     idle_ticks += 1;
                     if idle_ticks > 120 {
-                        return Err(eyre::eyre!(
-                            "TEE DKG identity exchange timed out: collected {}/{n}",
-                            collected.ids.len()
-                        ));
+                        return Err(crate::errors::TeeBootstrapError::IdentityExchangeTimedOut {
+                            collected: collected.ids.len(),
+                            expected: n,
+                        }.into());
                     }
                     delivery::retry_delivery(&mut self.sender, &mut self.delivery);
                 },
@@ -208,9 +203,9 @@ where
         if !self.early_signed_identities.contains_key(&announcement.bls)
             && self.early_signed_identities.len() >= n
         {
-            return Err(eyre::eyre!(
-                "TEE DKG early signed identity budget exceeded: {n}"
-            ));
+            return Err(
+                crate::errors::TeeBootstrapError::EarlySignedIdentityBudgetExceeded(n).into(),
+            );
         }
         self.early_signed_identities.insert(
             announcement.bls.clone(),

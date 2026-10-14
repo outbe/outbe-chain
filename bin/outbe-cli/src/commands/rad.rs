@@ -21,12 +21,13 @@ use std::{
 use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
-use eyre::{bail, eyre, Result, WrapErr};
+use eyre::{Result, WrapErr};
 use outbe_primitives::consensus_p2p::{decode_versioned, P2pAddress, P2pIngress};
 use serde_json::{json, Map, Value};
 
 use crate::{
     abi::{self, IValidatorSet},
+    errors::RadError,
     rpc::Rpc,
 };
 
@@ -163,16 +164,12 @@ async fn init(
     alias: Option<String>,
 ) -> Result<()> {
     if !home.join("keys").join("radicle.pub").is_file() {
-        bail!(
-            "no Radicle identity in {}: run `rad auth` first - it creates the keys, \
-             this command only rewrites the network settings",
-            home.display()
-        );
+        return Err(RadError::MissingIdentity(home).into());
     }
 
     let peers = read_peers(client, radicle_port).await?;
     if peers.is_empty() {
-        bail!("the chain reports no validators with a Radicle NodeId binding");
+        return Err(RadError::NoValidatorNodeIds.into());
     }
 
     let path = config_path(&home);
@@ -181,7 +178,7 @@ async fn init(
         .entry("node".to_string())
         .or_insert_with(|| Value::Object(Map::new()));
     let Some(node) = node.as_object_mut() else {
-        bail!("`node` in {} is not an object", path.display());
+        return Err(RadError::NodeConfigNotObject(path).into());
     };
 
     node.insert(
@@ -271,9 +268,8 @@ async fn read_peers(client: &(impl Rpc + Sync), radicle_port: u16) -> Result<Vec
         if p2p.version == 0 && p2p.encoded.is_empty() {
             continue;
         }
-        let decoded = decode_versioned(p2p.version, &p2p.encoded).map_err(|error| {
-            eyre!("validator {validator} has an undecodable P2P address: {error}")
-        })?;
+        let decoded = decode_versioned(p2p.version, &p2p.encoded)
+            .map_err(|source| RadError::UndecodableP2pAddress { validator, source })?;
 
         peers.push(Peer {
             validator,
@@ -301,7 +297,7 @@ fn host_of(address: &P2pAddress) -> String {
 /// multicodec `ed25519-pub` prefix, base58btc, under multibase prefix `z`.
 fn encode_node_id(raw: &[u8]) -> Result<String> {
     if raw.len() != 32 {
-        bail!("Radicle NodeId must be 32 bytes, got {}", raw.len());
+        return Err(RadError::InvalidNodeIdLength(raw.len()).into());
     }
     let mut payload = Vec::with_capacity(34);
     payload.extend_from_slice(&[0xed, 0x01]);
@@ -346,9 +342,7 @@ fn read_config(path: &Path) -> Result<Map<String, Value>> {
         .wrap_err_with(|| format!("{} is not valid JSON", path.display()))?;
     match value {
         Value::Object(map) => Ok(map),
-        _ => {
-            bail!("{} must contain a JSON object", path.display());
-        }
+        _ => Err(RadError::ConfigNotJsonObject(path.to_path_buf()).into()),
     }
 }
 
@@ -368,10 +362,7 @@ fn start(home: &Path, listen: &str, binary: &str) -> Result<()> {
         .wrap_err_with(|| format!("`--listen {listen}` is not a socket address"))?;
     let path = config_path(home);
     if !path.is_file() {
-        bail!(
-            "no config at {}: run `outbe-cli rad init` first",
-            path.display()
-        );
+        return Err(RadError::MissingConfig(path).into());
     }
     if let Some(pid) = running_pid(home) {
         println!("Already running (pid {pid}).");
@@ -383,11 +374,7 @@ fn start(home: &Path, listen: &str, binary: &str) -> Result<()> {
     // opaque error. Say so here instead.
     let socket = home.join("node").join("control.sock");
     if socket.as_os_str().len() > 100 {
-        bail!(
-            "Radicle home is too deep: the control socket path {} would exceed the \
-             Unix socket limit - use a shorter --home",
-            socket.display()
-        );
+        return Err(RadError::ControlSocketPathTooLong(socket).into());
     }
 
     let node_dir = home.join("node");
@@ -433,7 +420,7 @@ fn stop(home: &Path) -> Result<()> {
         .status()
         .wrap_err("failed to run `kill`")?;
     if !status.success() {
-        bail!("failed to stop pid {pid}");
+        return Err(RadError::StopProcessFailed(pid).into());
     }
     let _ = fs::remove_file(pid_path(home));
     println!("Stopped pid {pid}.");

@@ -58,6 +58,7 @@ use outbe_tee::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    errors::UpgradeError,
     rpc::{RegistryRpc, RelayPreparationRpc, RelayRpc, RenewalRpc},
     tx::{buffered_gas_price, RawRelayTransactionV1, RelaySignerV1},
 };
@@ -217,7 +218,7 @@ pub type UpgradeJournalSnapshotV1 = JournalSnapshotV1<UpgradeJournalStateV1>;
 impl UpgradeJournalSnapshotV1 {
     fn validate(&self) -> Result<()> {
         if self.version != 1 || self.generation == 0 {
-            eyre::bail!("unsupported upgrade journal version or generation");
+            return Err(UpgradeError::UnsupportedVersionOrGeneration.into());
         }
         self.lifecycle.validate()
     }
@@ -268,7 +269,7 @@ pub fn prepare_upgrade_journal_v1(
                 context: context.clone(),
             },
         ) {
-            eyre::bail!("another enclave upgrade is already journaled");
+            return Err(UpgradeError::UpgradeAlreadyJournaled.into());
         }
     }
     if let Some(renewal) = super::renewal_journal::inspect_journal(node_data_dir)? {
@@ -277,9 +278,7 @@ pub fn prepare_upgrade_journal_v1(
             super::renewal_journal::RenewalJournalStateV1::Prepared { .. }
                 | super::renewal_journal::RenewalJournalStateV1::Submitted { .. }
         ) {
-            eyre::bail!(
-                "cannot prepare enclave upgrade while an exact renewal submission is pending"
-            );
+            return Err(UpgradeError::PendingRenewalBlocksPrepare.into());
         }
     }
     let snapshot =
@@ -287,16 +286,14 @@ pub fn prepare_upgrade_journal_v1(
     guard.store(snapshot)?;
     guard
         .load()?
-        .ok_or_else(|| eyre::eyre!("prepared upgrade journal disappeared"))
+        .ok_or_else(|| UpgradeError::CheckpointDisappeared("prepared upgrade journal").into())
 }
 
 pub fn copy_same_platform_sealed_root_and_checkpoint_v1(
     node_data_dir: &Path,
 ) -> Result<UpgradeJournalSnapshotV1> {
     let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
-    let current = guard
-        .load()?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
+    let current = guard.load()?.ok_or(UpgradeError::CandidateNotPrepared)?;
     match current.lifecycle {
         UpgradeJournalStateV1::CandidatePrepared { context } => {
             let sealed_root_hash = copy_same_platform_sealed_root_v1(&context)?;
@@ -306,9 +303,9 @@ pub fn copy_same_platform_sealed_root_and_checkpoint_v1(
                     sealed_root_hash,
                 },
             ))?;
-            guard
-                .load()?
-                .ok_or_else(|| eyre::eyre!("key-provisioned checkpoint disappeared"))
+            guard.load()?.ok_or_else(|| {
+                UpgradeError::CheckpointDisappeared("key-provisioned checkpoint").into()
+            })
         }
         UpgradeJournalStateV1::KeyProvisioned {
             context,
@@ -316,7 +313,7 @@ pub fn copy_same_platform_sealed_root_and_checkpoint_v1(
         } => {
             let actual = copy_same_platform_sealed_root_v1(&context)?;
             if actual != sealed_root_hash {
-                eyre::bail!("candidate sealed root changed after its durable checkpoint");
+                return Err(UpgradeError::CandidateSealedRootChanged.into());
             }
             Ok(UpgradeJournalSnapshotV1 {
                 lifecycle: UpgradeJournalStateV1::KeyProvisioned {
@@ -326,9 +323,7 @@ pub fn copy_same_platform_sealed_root_and_checkpoint_v1(
                 ..current
             })
         }
-        _ => {
-            eyre::bail!("sealed root can be copied only at candidate-prepared checkpoint");
-        }
+        _ => Err(UpgradeError::CopyRequiresCandidatePrepared.into()),
     }
 }
 
@@ -336,16 +331,14 @@ pub fn copy_same_platform_sealed_root_and_checkpoint_v1(
 /// The existing field is the actual new local seal hash, never a source blob hash.
 pub fn record_network_key_provisioned_v1(node_data_dir: &Path) -> Result<UpgradeJournalSnapshotV1> {
     let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
-    let current = guard
-        .load()?
-        .ok_or_else(|| eyre::eyre!("upgrade is not prepared"))?;
+    let current = guard.load()?.ok_or(UpgradeError::UpgradeNotPrepared)?;
     if let Some(renewal) = super::renewal_journal::inspect_journal(node_data_dir)? {
         if matches!(
             renewal.lifecycle,
             super::renewal_journal::RenewalJournalStateV1::Prepared { .. }
                 | super::renewal_journal::RenewalJournalStateV1::Submitted { .. }
         ) {
-            eyre::bail!("key is sealed; finish pending renewal before checkpointing transition readiness, then rerun upgrade-provision");
+            return Err(UpgradeError::PendingRenewalBlocksProvision.into());
         }
     }
     let context = current.lifecycle.context().clone();
@@ -357,7 +350,7 @@ pub fn record_network_key_provisioned_v1(node_data_dir: &Path) -> Result<Upgrade
     #[cfg(feature = "local-e2e")]
     let combined = combined || is_local_e2e_combined_seal(&bytes);
     if !combined {
-        eyre::bail!("network-provisioned candidate must use combined SGX sealing");
+        return Err(UpgradeError::InvalidCombinedSgxSeal.into());
     }
     let sealed_root_hash = keccak256(bytes);
     if let UpgradeJournalStateV1::KeyProvisioned {
@@ -366,7 +359,7 @@ pub fn record_network_key_provisioned_v1(node_data_dir: &Path) -> Result<Upgrade
     } = current.lifecycle
     {
         if expected != sealed_root_hash {
-            eyre::bail!("provisioned seal changed after checkpoint");
+            return Err(UpgradeError::ProvisionedSealChanged.into());
         }
         return Ok(current);
     }
@@ -378,7 +371,7 @@ pub fn record_network_key_provisioned_v1(node_data_dir: &Path) -> Result<Upgrade
     ))?;
     guard
         .load()?
-        .ok_or_else(|| eyre::eyre!("provisioned journal disappeared"))
+        .ok_or_else(|| UpgradeError::CheckpointDisappeared("provisioned journal").into())
 }
 
 // The separate E2E CLI accepts software seals only for the fixed local devnet.
@@ -424,7 +417,7 @@ impl UpgradeJournalGuardV1 {
         value.validate()?;
         let encoded = serde_json::to_vec(value)?;
         if encoded.len() as u64 > MAX_JOURNAL_BYTES {
-            eyre::bail!("network submission exceeds cap");
+            return Err(UpgradeError::NetworkSubmissionExceedsCap.into());
         }
         let next = self.paths.root.join("network-submission.next");
         if next.exists() {
@@ -452,25 +445,23 @@ pub fn record_candidate_key_ready_v1(
 ) -> Result<UpgradeJournalSnapshotV1> {
     proof
         .verify_for_transition(intent, expected_offer_public)
-        .map_err(|error| eyre::eyre!("candidate key-ready proof is invalid: {error}"))?;
+        .map_err(UpgradeError::InvalidKeyReadyProof)?;
     let proof_hash = keccak256(
         proof
             .encode_canonical()
-            .map_err(|error| eyre::eyre!("encode candidate key-ready proof: {error}"))?,
+            .map_err(UpgradeError::EncodeKeyReadyProof)?,
     );
     let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
-    let current = guard
-        .load()?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
+    let current = guard.load()?.ok_or(UpgradeError::CandidateNotPrepared)?;
     let UpgradeJournalStateV1::KeyProvisioned {
         context,
         sealed_root_hash,
     } = current.lifecycle
     else {
-        eyre::bail!("candidate key readiness requires the key-provisioned checkpoint");
+        return Err(UpgradeError::KeyReadyRequiresKeyProvisioned.into());
     };
     if proof.candidate_manifest_hash != context.candidate_manifest_hash {
-        eyre::bail!("candidate key-ready proof does not match the journaled manifest");
+        return Err(UpgradeError::KeyReadyProofManifestMismatch.into());
     }
     guard.store(UpgradeJournalSnapshotV1::new(
         UpgradeJournalStateV1::CandidateKeyReady {
@@ -484,7 +475,7 @@ pub fn record_candidate_key_ready_v1(
     ))?;
     guard
         .load()?
-        .ok_or_else(|| eyre::eyre!("candidate-key-ready checkpoint disappeared"))
+        .ok_or_else(|| UpgradeError::CheckpointDisappeared("candidate-key-ready checkpoint").into())
 }
 
 pub fn record_upgrade_submission_prepared_v1(
@@ -493,11 +484,9 @@ pub fn record_upgrade_submission_prepared_v1(
 ) -> Result<UpgradeJournalSnapshotV1> {
     submission.validate()?;
     let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
-    let current = guard
-        .load()?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
+    let current = guard.load()?.ok_or(UpgradeError::CandidateNotPrepared)?;
     let UpgradeJournalStateV1::CandidateKeyReady { context, security } = current.lifecycle else {
-        eyre::bail!("upgrade submission requires candidate-key-ready checkpoint");
+        return Err(UpgradeError::SubmissionRequiresKeyReady.into());
     };
     guard.store(UpgradeJournalSnapshotV1::new(
         UpgradeJournalStateV1::SubmissionPrepared {
@@ -508,7 +497,7 @@ pub fn record_upgrade_submission_prepared_v1(
     ))?;
     guard
         .load()?
-        .ok_or_else(|| eyre::eyre!("submission-prepared checkpoint disappeared"))
+        .ok_or_else(|| UpgradeError::CheckpointDisappeared("submission-prepared checkpoint").into())
 }
 
 pub fn record_upgrade_submitted_v1(
@@ -516,16 +505,14 @@ pub fn record_upgrade_submitted_v1(
     finalized_height: u64,
 ) -> Result<UpgradeJournalSnapshotV1> {
     let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
-    let current = guard
-        .load()?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
+    let current = guard.load()?.ok_or(UpgradeError::CandidateNotPrepared)?;
     let UpgradeJournalStateV1::SubmissionPrepared {
         context,
         security,
         submission,
     } = current.lifecycle
     else {
-        eyre::bail!("upgrade relay requires submission-prepared checkpoint");
+        return Err(UpgradeError::RelayRequiresSubmissionPrepared.into());
     };
     let transaction_hashes = submission
         .relay_variants
@@ -543,7 +530,7 @@ pub fn record_upgrade_submitted_v1(
     ))?;
     guard
         .load()?
-        .ok_or_else(|| eyre::eyre!("submitted upgrade checkpoint disappeared"))
+        .ok_or_else(|| UpgradeError::CheckpointDisappeared("submitted upgrade checkpoint").into())
 }
 
 pub fn record_upgrade_finalized_v1(
@@ -552,12 +539,10 @@ pub fn record_upgrade_finalized_v1(
     finalized_hash: B256,
 ) -> Result<UpgradeJournalSnapshotV1> {
     if finalized_height == 0 || finalized_hash.is_zero() {
-        eyre::bail!("finalized upgrade authority is incomplete");
+        return Err(UpgradeError::IncompleteFinalizedAuthority.into());
     }
     let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
-    let current = guard
-        .load()?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
+    let current = guard.load()?.ok_or(UpgradeError::CandidateNotPrepared)?;
     let UpgradeJournalStateV1::Submitted {
         context,
         security,
@@ -565,7 +550,7 @@ pub fn record_upgrade_finalized_v1(
         ..
     } = current.lifecycle
     else {
-        eyre::bail!("upgrade finalization requires a submitted checkpoint");
+        return Err(UpgradeError::FinalizationRequiresSubmitted.into());
     };
     guard.store(UpgradeJournalSnapshotV1::new(
         UpgradeJournalStateV1::Finalized {
@@ -578,14 +563,12 @@ pub fn record_upgrade_finalized_v1(
     ))?;
     guard
         .load()?
-        .ok_or_else(|| eyre::eyre!("finalized upgrade checkpoint disappeared"))
+        .ok_or_else(|| UpgradeError::CheckpointDisappeared("finalized upgrade checkpoint").into())
 }
 
 pub fn record_upgrade_promoted_v1(node_data_dir: &Path) -> Result<UpgradeJournalSnapshotV1> {
     let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
-    let current = guard
-        .load()?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
+    let current = guard.load()?.ok_or(UpgradeError::CandidateNotPrepared)?;
     let UpgradeJournalStateV1::Finalized {
         context,
         security,
@@ -594,7 +577,7 @@ pub fn record_upgrade_promoted_v1(node_data_dir: &Path) -> Result<UpgradeJournal
         finalized_hash,
     } = current.lifecycle
     else {
-        eyre::bail!("upgrade promotion requires a finalized checkpoint");
+        return Err(UpgradeError::PromotionRequiresFinalized.into());
     };
     guard.store(UpgradeJournalSnapshotV1::new(
         UpgradeJournalStateV1::Promoted {
@@ -607,7 +590,7 @@ pub fn record_upgrade_promoted_v1(node_data_dir: &Path) -> Result<UpgradeJournal
     ))?;
     guard
         .load()?
-        .ok_or_else(|| eyre::eyre!("promoted upgrade checkpoint disappeared"))
+        .ok_or_else(|| UpgradeError::CheckpointDisappeared("promoted upgrade checkpoint").into())
 }
 
 pub fn record_upgrade_missed_cutoff_v1(
@@ -616,17 +599,15 @@ pub fn record_upgrade_missed_cutoff_v1(
     activation_height: u64,
 ) -> Result<UpgradeJournalSnapshotV1> {
     if activation_height == 0 || finalized_height < activation_height {
-        eyre::bail!("successor activation cutoff has not been reached");
+        return Err(UpgradeError::CutoffNotReached.into());
     }
     let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
-    let current = guard
-        .load()?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
+    let current = guard.load()?.ok_or(UpgradeError::CandidateNotPrepared)?;
     if matches!(
         current.lifecycle,
         UpgradeJournalStateV1::Finalized { .. } | UpgradeJournalStateV1::Promoted { .. }
     ) {
-        eyre::bail!("a finalized upgrade cannot become a missed-cutoff terminal");
+        return Err(UpgradeError::FinalizedCannotMissCutoff.into());
     }
     let context = current.lifecycle.context().clone();
     guard.store(UpgradeJournalSnapshotV1::new(
@@ -638,7 +619,7 @@ pub fn record_upgrade_missed_cutoff_v1(
     ))?;
     guard
         .load()?
-        .ok_or_else(|| eyre::eyre!("missed-cutoff checkpoint disappeared"))
+        .ok_or_else(|| UpgradeError::CheckpointDisappeared("missed-cutoff checkpoint").into())
 }
 
 /// RPC, relay and node signing capabilities for the replacement candidate.
@@ -684,9 +665,9 @@ async fn reset_expired_upgrade_submission_v1(
     snapshot: &UpgradeJournalSnapshotV1,
 ) -> Result<bool> {
     let durable = load_replacement_candidate_submission(node_data_dir)?
-        .ok_or_else(|| eyre::eyre!("upgrade submission checkpoint has no durable evidence"))?;
+        .ok_or(UpgradeError::MissingDurableSubmissionEvidence)?;
     let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .map_err(|e| eyre::eyre!("invalid transition evidence: {e}"))?;
+        .map_err(UpgradeError::InvalidTransitionEvidence)?;
     let view = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
     if view.schedule.finalized_timestamp < evidence.intent().requested_valid_until
         || transition_target_matches_v1(&view.binding, evidence.intent())
@@ -695,13 +676,13 @@ async fn reset_expired_upgrade_submission_v1(
     }
     ensure_transition_source_or_target_v1(&view.binding, evidence.intent())?;
     let sealed_root_hash = security_material(&snapshot.lifecycle)
-        .ok_or_else(|| eyre::eyre!("upgrade has no sealed-root checkpoint"))?
+        .ok_or(UpgradeError::MissingSealedRootCheckpoint)?
         .0;
     // Reset first. KeyProvisioned can reconcile a crash while the old evidence still
     // exists, and cannot relay again until a fresh key-ready proof is persisted.
     let guard = UpgradeJournalGuardV1::acquire(node_data_dir)?;
     if guard.load()?.as_ref() != Some(snapshot) {
-        eyre::bail!("upgrade changed during expiration recovery; retry");
+        return Err(UpgradeError::ConcurrentChangeDuringRecovery.into());
     }
     guard.store(UpgradeJournalSnapshotV1::new(
         UpgradeJournalStateV1::KeyProvisioned {
@@ -717,7 +698,7 @@ fn last_transaction_hash(submission: &PreparedUpgradeSubmissionV1) -> Result<B25
         .relay_variants
         .last()
         .map(|raw| raw.transaction_hash)
-        .ok_or_else(|| eyre::eyre!("upgrade submission has no relay transaction"))
+        .ok_or_else(|| UpgradeError::MissingRelayTransaction.into())
 }
 
 fn transaction_is_already_known(error: &eyre::Report) -> bool {
@@ -752,7 +733,7 @@ pub fn generate_transition_evidence_v1(
         } else {
             candidate
                 .generate_transition_evidence_dev_v1(&intent)
-                .map_err(|e| eyre::eyre!("generate DirectDev transition evidence: {e}"))?
+                .map_err(UpgradeError::GenerateDirectDevEvidence)?
         };
         let AttestationEvidenceV1::GramineDirectDev(dev) = &evidence else {
             unreachable!();
@@ -767,9 +748,9 @@ pub fn generate_transition_evidence_v1(
     }
     let generated = candidate
         .generate_dcap_quote(&intent)
-        .map_err(|error| eyre::eyre!("generate candidate transition quote: {error}"))?;
+        .map_err(UpgradeError::GenerateTransitionQuote)?;
     let components = acquire_dcap_collateral_v1(&generated.quote_body)
-        .map_err(|error| eyre::eyre!("acquire candidate transition collateral: {error}"))?;
+        .map_err(UpgradeError::AcquireTransitionCollateral)?;
     let evidence = DcapEvidenceV1 {
         intent: intent.clone(),
         quote: generated.quote_body,
@@ -777,7 +758,7 @@ pub fn generate_transition_evidence_v1(
         transition_key_ready_proof: generated.transition_key_ready_proof,
     };
     let window = dcap_collateral_validity_window_v1(&evidence, policy)
-        .map_err(|error| eyre::eyre!("validate transition collateral: {error:?}"))?;
+        .map_err(UpgradeError::ValidateTransitionCollateral)?;
     Ok(PreparedTransitionEvidenceV1 {
         intent,
         evidence: AttestationEvidenceV1::Dcap(evidence),
@@ -795,7 +776,7 @@ pub fn transition_intent_v1(
     requested_valid_until: u64,
 ) -> Result<RegistrationIntentV1> {
     if binding_id.is_zero() || binding_id == active.binding.binding_id {
-        eyre::bail!("measurement transition requires a fresh nonzero binding id");
+        return Err(UpgradeError::InvalidTransitionBindingId.into());
     }
     let manifest = candidate.manifest();
     let intent = RegistrationIntentV1 {
@@ -805,37 +786,37 @@ pub fn transition_intent_v1(
         attestation_mode: successor.attestation_mode,
         policy_hash: successor
             .policy_hash()
-            .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?,
+            .map_err(UpgradeError::HashStagedSuccessorPolicy)?,
         node_id: manifest.node_id.clone(),
         enclave_id: manifest
             .enclave_id()
-            .map_err(|error| eyre::eyre!("derive candidate enclave id: {error}"))?,
+            .map_err(UpgradeError::DeriveCandidateEnclaveId)?,
         binding_id,
         binding_version: active
             .binding
             .binding_version
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("binding version exhausted"))?,
+            .ok_or(UpgradeError::BindingVersionExhausted)?,
         registration_version: active
             .binding
             .registration_version
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("registration version exhausted"))?,
+            .ok_or(UpgradeError::RegistrationVersionExhausted)?,
         renewal_nonce: active.binding.renewal_nonce,
         transition_nonce: active
             .binding
             .transition_nonce
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("transition nonce exhausted"))?,
+            .ok_or(UpgradeError::TransitionNonceExhausted)?,
         requested_valid_until,
         recipient_x25519: manifest.recipient_x25519,
         attestation_ed25519: manifest.attestation_ed25519,
         noise_responder_x25519: manifest.noise_responder_x25519,
         node_host_authorization_hash: active.binding.node_host_authorization_hash,
     };
-    manifest.validate_intent_binding(&intent).map_err(|error| {
-        eyre::eyre!("candidate manifest does not bind transition intent: {error}")
-    })?;
+    manifest
+        .validate_intent_binding(&intent)
+        .map_err(UpgradeError::CandidateManifestIntentMismatch)?;
     Ok(intent)
 }
 
@@ -853,14 +834,14 @@ pub fn copy_same_platform_sealed_root_v1(context: &UpgradeContextV1) -> Result<B
     let bytes = read_private_bounded_file(&source, MAX_SEALED_ROOT_BYTES)
         .wrap_err("read active sealed root")?;
     if bytes.is_empty() {
-        eyre::bail!("active sealed root is empty");
+        return Err(UpgradeError::EmptyActiveSealedRoot.into());
     }
     let hash = keccak256(&bytes);
     if destination.exists() {
         let existing = read_private_bounded_file(&destination, MAX_SEALED_ROOT_BYTES)
             .wrap_err("read existing candidate sealed root")?;
         if existing != bytes {
-            eyre::bail!("candidate sealed root already exists with different bytes");
+            return Err(UpgradeError::ConflictingCandidateSealedRoot.into());
         }
         return Ok(hash);
     }

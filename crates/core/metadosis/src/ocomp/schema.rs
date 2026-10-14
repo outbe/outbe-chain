@@ -33,9 +33,7 @@ impl MetadosisContract<'_> {
             }
             if self.ocomp_fsm_states.get_bytes(&wwd).is_empty()? {
                 let state = JobFsmState::initial_ready(wwd, next_check_height);
-                state
-                    .validate()
-                    .map_err(|error| storage_corruption_message(error.to_string()))?;
+                state.validate().map_err(storage_corruption_message)?;
                 let key = ReadyIndexKey::from_projection(state.projection())?;
                 let mut index = self.read_ready_index()?;
                 insert_ready_key(&mut index, key)?;
@@ -81,7 +79,7 @@ impl MetadosisContract<'_> {
                     at_height,
                     next_check_height,
                 })
-                .map_err(|error| storage_corruption_message(error.to_string()))?;
+                .map_err(storage_corruption_message)?;
             let new_key = ReadyIndexKey::from_projection(state.projection())?;
             let mut index = self.read_ready_index()?;
             remove_ready_key(&mut index, old_key)?;

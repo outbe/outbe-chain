@@ -6,12 +6,14 @@ use std::{
 
 use alloy_primitives::B256;
 use clap::{Parser, Subcommand, ValueEnum};
-use eyre::{ensure, WrapErr as _};
+use eyre::WrapErr as _;
 use outbe_primitives::tee_genesis_v1::{
     initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
     ProductionSgxMeasurementV1,
 };
 use reth_ethereum::chainspec::EthChainSpec as _;
+
+use crate::errors::TeeGenesisError;
 
 const TEE_ATTESTATION_FIELD: &str = "teeAttestationV1";
 
@@ -96,24 +98,28 @@ fn write_network_descriptor(genesis: &Path, output: &Path) -> eyre::Result<()> {
         outbe_evm::tee_attestation_activation::DcapSeededChainSpecBindingV1::from_genesis_path(
             genesis,
         )
-        .map_err(|e| eyre::eyre!(e))?;
+        .map_err(|details| TeeGenesisError::ChainSpecBinding {
+            details: crate::errors::display_error(details),
+        })?;
     let json: serde_json::Value = serde_json::from_slice(&fs::read(genesis)?)?;
     let encoded = json
         .pointer("/config/teeAttestationV1/policySchedule")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("genesis is missing its fixed TEE policy schedule"))?;
+        .ok_or(TeeGenesisError::MissingPolicySchedule)?;
     let schedule =
         TeePolicyScheduleV1::decode_canonical(&hex::decode(encoded.trim_start_matches("0x"))?)
-            .map_err(|e| eyre::eyre!("genesis policy: {e}"))?;
-    ensure!(
-        schedule.chain_id == alloy_primitives::U256::from(seeded.chain_id).to_be_bytes::<32>()
-            && schedule.genesis_hash == seeded.genesis_hash,
-        "TEE policy does not match the actual genesis hash"
-    );
+            .map_err(|e| TeeGenesisError::GenesisPolicy {
+                details: crate::errors::display_error(e),
+            })?;
+    if schedule.chain_id != alloy_primitives::U256::from(seeded.chain_id).to_be_bytes::<32>()
+        || schedule.genesis_hash != seeded.genesis_hash
+    {
+        return Err(TeeGenesisError::PolicyGenesisHashMismatch.into());
+    }
     let mode = schedule
         .entries
         .first()
-        .ok_or_else(|| eyre::eyre!("genesis has no initial policy"))?
+        .ok_or(TeeGenesisError::MissingInitialPolicy)?
         .policy
         .attestation_mode;
     let descriptor = TrustedNetworkDescriptorV1 {
@@ -126,7 +132,9 @@ fn write_network_descriptor(genesis: &Path, output: &Path) -> eyre::Result<()> {
     };
     let bytes = descriptor
         .encode_canonical()
-        .map_err(|e| eyre::eyre!("network descriptor: {e}"))?;
+        .map_err(|e| TeeGenesisError::NetworkDescriptor {
+            details: crate::errors::display_error(e),
+        })?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -138,20 +146,22 @@ fn write_network_descriptor(genesis: &Path, output: &Path) -> eyre::Result<()> {
 }
 
 fn generate_genesis(args: &TeeGenesisArgs) -> eyre::Result<()> {
-    ensure!(
+    crate::errors::require(
         args.input != args.output,
-        "--input and --output must differ"
-    );
-    ensure!(
+        TeeGenesisError::IdenticalInputAndOutput,
+    )?;
+    crate::errors::require(
         !args.output.exists(),
-        "refusing to overwrite existing genesis output {}",
-        args.output.display()
-    );
-    ensure!(
+        TeeGenesisError::OverwriteExistingOutput {
+            path: args.output.display().to_string(),
+        },
+    )?;
+    crate::errors::require(
         args.output.parent().is_some_and(Path::exists),
-        "genesis output parent does not exist: {}",
-        args.output.display()
-    );
+        TeeGenesisError::OutputParentNotFound {
+            path: args.output.display().to_string(),
+        },
+    )?;
 
     let input_path = utf8_path(&args.input, "input genesis")?;
     let base = reth_ethereum::cli::chainspec::chain_value_parser(input_path)
@@ -166,26 +176,32 @@ fn generate_genesis(args: &TeeGenesisArgs) -> eyre::Result<()> {
                 mrsigner: parse_hex32(required(&args.mrsigner, "--mrsigner")?)?,
                 isv_prod_id: args
                     .isv_prod_id
-                    .ok_or_else(|| eyre::eyre!("DcapRequired requires --isv-prod-id"))?,
-                minimum_isv_svn: args
-                    .minimum_isv_svn
-                    .ok_or_else(|| eyre::eyre!("DcapRequired requires --minimum-isv-svn"))?,
-                minimum_tcb_evaluation_data_number: args
-                    .minimum_tcb_evaluation_data_number
-                    .ok_or_else(|| {
-                        eyre::eyre!("DcapRequired requires --minimum-tcb-evaluation-data-number")
+                    .ok_or(TeeGenesisError::MissingDcapArgument {
+                        name: "--isv-prod-id".to_owned(),
                     })?,
+                minimum_isv_svn: args.minimum_isv_svn.ok_or(
+                    TeeGenesisError::MissingDcapArgument {
+                        name: "--minimum-isv-svn".to_owned(),
+                    },
+                )?,
+                minimum_tcb_evaluation_data_number: args.minimum_tcb_evaluation_data_number.ok_or(
+                    TeeGenesisError::MissingDcapArgument {
+                        name: "--minimum-tcb-evaluation-data-number".to_owned(),
+                    },
+                )?,
             })
         }
         TeeGenesisMode::GramineDirectDev => {
-            ensure!(
-                args.mrenclave.is_none()
-                    && args.mrsigner.is_none()
-                    && args.isv_prod_id.is_none()
-                    && args.minimum_isv_svn.is_none()
-                    && args.minimum_tcb_evaluation_data_number.is_none(),
-                "GramineDirectDev uses fixed non-hardware projections; DCAP measurement arguments are forbidden"
-            );
+            crate::errors::require(
+                (
+                    args.mrenclave.is_none(),
+                    args.mrsigner.is_none(),
+                    args.isv_prod_id.is_none(),
+                    args.minimum_isv_svn.is_none(),
+                    args.minimum_tcb_evaluation_data_number.is_none(),
+                ) == (true, true, true, true, true),
+                TeeGenesisError::DcapArgsForbiddenInDevMode,
+            )?;
             InitialTeeProfileV1::GramineDirectDev
         }
     };
@@ -201,11 +217,13 @@ fn generate_genesis(args: &TeeGenesisArgs) -> eyre::Result<()> {
     let config = genesis
         .get_mut("config")
         .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre::eyre!("input genesis config must be a JSON object"))?;
-    ensure!(
+        .ok_or(TeeGenesisError::InputGenesisConfigNotObject)?;
+    crate::errors::require(
         !config.contains_key(TEE_ATTESTATION_FIELD),
-        "input genesis already contains {TEE_ATTESTATION_FIELD}; refusing an implicit policy replacement"
-    );
+        TeeGenesisError::InputGenesisAlreadyHasField {
+            field: TEE_ATTESTATION_FIELD,
+        },
+    )?;
     config.insert(TEE_ATTESTATION_FIELD.to_owned(), field);
 
     let mut encoded = serde_json::to_vec_pretty(&genesis).wrap_err("encode output genesis JSON")?;
@@ -248,14 +266,12 @@ fn validate_output(
             .as_ref()
             .clone()
             .map_header(outbe_primitives::OutbeHeader::new);
-    ensure!(
-        parsed.chain().id() == expected_chain_id,
-        "generated genesis changed chain ID"
-    );
-    ensure!(
-        parsed.genesis_hash() == expected_genesis_hash,
-        "teeAttestationV1 unexpectedly changed the genesis header hash"
-    );
+    if parsed.chain().id() != expected_chain_id {
+        return Err(TeeGenesisError::GeneratedGenesisChangedChainId.into());
+    }
+    if parsed.genesis_hash() != expected_genesis_hash {
+        return Err(TeeGenesisError::TeeFieldChangedGenesisHash.into());
+    }
     crate::validate_outbe_chain_spec(&parsed)?;
     let activation =
         outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
@@ -263,39 +279,47 @@ fn validate_output(
         );
     let mode = activation
         .activation()
-        .map_err(|error| eyre::eyre!(error.to_owned()))?
+        .map_err(|error| TeeGenesisError::ChainSpecBinding {
+            details: crate::errors::display_error(error),
+        })?
         .policy_at(1)
         .map_err(eyre::Report::msg)?
         .attestation_mode;
-    ensure!(
-        mode == expected_profile.attestation_mode(),
-        "generated genesis attestation mode mismatch"
-    );
+    if mode != expected_profile.attestation_mode() {
+        return Err(TeeGenesisError::GeneratedGenesisModeMismatch.into());
+    }
     Ok(())
 }
 
 fn required<'a>(value: &'a Option<String>, name: &str) -> eyre::Result<&'a str> {
-    value
-        .as_deref()
-        .ok_or_else(|| eyre::eyre!("DcapRequired requires {name}"))
+    value.as_deref().ok_or_else(|| {
+        TeeGenesisError::MissingDcapArgument {
+            name: name.to_owned(),
+        }
+        .into()
+    })
 }
 
 fn parse_hex32(value: &str) -> eyre::Result<B256> {
     let encoded = value.strip_prefix("0x").unwrap_or(value);
-    ensure!(
-        encoded.len() == 64 && encoded.bytes().all(|byte| byte.is_ascii_hexdigit()),
-        "expected exactly 32 hexadecimal bytes"
-    );
+    if encoded.len() != 64 || !encoded.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(TeeGenesisError::InvalidHex32Bytes.into());
+    }
     let decoded = hex::decode(encoded).wrap_err("decode 32-byte hexadecimal value")?;
     let bytes: [u8; 32] = decoded
         .try_into()
-        .map_err(|_| eyre::eyre!("expected exactly 32 hexadecimal bytes"))?;
+        .map_err(|_| TeeGenesisError::InvalidHex32Bytes)?;
     Ok(B256::from(bytes))
 }
 
 fn utf8_path<'a>(path: &'a Path, label: &str) -> eyre::Result<&'a str> {
-    path.to_str()
-        .ok_or_else(|| eyre::eyre!("{label} path is not valid UTF-8: {}", path.display()))
+    path.to_str().ok_or_else(|| {
+        TeeGenesisError::PathNotUtf8 {
+            label: label.to_owned(),
+            path: path.display().to_string(),
+        }
+        .into()
+    })
 }
 
 #[cfg(test)]

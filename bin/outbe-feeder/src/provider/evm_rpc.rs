@@ -2,7 +2,7 @@
 //! Chainlink aggregators). Credentials in RPC URLs never reach logs.
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_sol_types::SolCall;
-use eyre::{ensure, eyre, Result};
+use eyre::Result;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -12,6 +12,8 @@ use std::{
     },
     time::Duration,
 };
+
+use crate::errors::DexError;
 
 #[derive(Clone)]
 pub(crate) struct Rpc {
@@ -69,28 +71,27 @@ impl Rpc {
             .await
             .map_err(reqwest::Error::without_url)?
         {
-            ensure!(
-                bytes.len().saturating_add(chunk.len()) <= 16 * 1024 * 1024,
-                "DEX RPC response exceeds 16 MiB"
-            );
+            if bytes.len().saturating_add(chunk.len()) > 16 * 1024 * 1024 {
+                return Err(DexError::RpcResponseTooLarge.into());
+            }
             bytes.extend_from_slice(&chunk);
         }
         let value: Value = serde_json::from_slice(&bytes)?;
-        ensure!(
-            value.get("id") == Some(&json!(id)) && value.get("jsonrpc") == Some(&json!("2.0")),
-            "invalid DEX RPC response envelope"
-        );
+        if value.get("id") != Some(&json!(id)) || value.get("jsonrpc") != Some(&json!("2.0")) {
+            return Err(DexError::InvalidRpcEnvelope.into());
+        }
         if let Some(error) = value.get("error") {
-            return Err(eyre!(
-                "DEX RPC {method} error code {:?}",
-                error.get("code").and_then(Value::as_i64)
-            ));
+            return Err(DexError::RpcErrorCode {
+                method: method.to_owned(),
+                code: error.get("code").and_then(Value::as_i64),
+            }
+            .into());
         }
         value
             .get("result")
             .filter(|v| !v.is_null())
             .cloned()
-            .ok_or_else(|| eyre!("DEX RPC {method} returned no result"))
+            .ok_or_else(|| DexError::RpcNoResult(method.to_owned()).into())
     }
 
     pub async fn chain_id(&self) -> Result<u64> {
@@ -110,10 +111,9 @@ impl Rpc {
 
     pub async fn block_at(&self, number: u64) -> Result<Block> {
         let block = self.block(&format!("0x{number:x}")).await?;
-        ensure!(
-            block.number == number,
-            "DEX RPC returned wrong block number"
-        );
+        if block.number != number {
+            return Err(DexError::WrongBlockNumber.into());
+        }
         Ok(block)
     }
 
@@ -188,14 +188,10 @@ impl Rpc {
 pub(crate) fn quantity(text: &str) -> Result<u64> {
     let digits = text
         .strip_prefix("0x")
-        .ok_or_else(|| eyre!("invalid RPC quantity prefix"))?;
+        .ok_or(DexError::InvalidQuantityPrefix)?;
     Ok(u64::from_str_radix(digits, 16)?)
 }
 
 fn quantity_value(value: &Value) -> Result<u64> {
-    quantity(
-        value
-            .as_str()
-            .ok_or_else(|| eyre!("missing RPC quantity"))?,
-    )
+    quantity(value.as_str().ok_or(DexError::MissingQuantity)?)
 }

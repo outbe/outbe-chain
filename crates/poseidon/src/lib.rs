@@ -8,11 +8,10 @@
 
 use ark_ff::PrimeField;
 
+pub mod errors;
 pub mod poseidon2;
+pub use errors::{Error, PoseidonError};
 pub use poseidon2::Poseidon2;
-
-/// The Poseidon2 sponge is infallible. Retained for the shared hasher trait.
-pub type PoseidonError = std::convert::Infallible;
 
 pub trait PoseidonHasher<F: PrimeField> {
     /// Hash field elements using the Poseidon2 sponge.

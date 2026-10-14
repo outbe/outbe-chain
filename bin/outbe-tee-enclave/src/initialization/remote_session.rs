@@ -1,5 +1,6 @@
 //! Validate remote session ticket fields before admission.
 
+use crate::errors::{EnclaveResult, InitError};
 use crate::keys::EnclaveKeys;
 use alloy_primitives::B256;
 
@@ -13,22 +14,22 @@ pub struct RemoteSessionAuthorization {
 }
 
 impl RemoteSessionAuthorization {
-    pub(super) fn validate_responder(&self, keys: &EnclaveKeys) -> Result<(), String> {
+    pub(super) fn validate_responder(&self, keys: &EnclaveKeys) -> EnclaveResult<()> {
         let ticket_is_valid = !self.ticket_id.is_zero() && !self.finalized_block_hash.is_zero();
         let participants_are_valid =
             self.initiator_static_x25519 != [0; 32] && self.responder_static_x25519 != [0; 32];
         if !ticket_is_valid || !participants_are_valid {
-            return Err("remote session authorization is malformed".into());
+            return Err(InitError::RemoteSessionAuthMalformed.into());
         }
         if self.responder_static_x25519 != keys.noise_public() {
-            return Err("remote session targets another Noise responder".into());
+            return Err(InitError::RemoteSessionWrongResponder.into());
         }
         Ok(())
     }
 
-    pub(super) fn ensure_live_at(&self, now: u64) -> Result<(), String> {
+    pub(super) fn ensure_live_at(&self, now: u64) -> EnclaveResult<()> {
         if self.deadline <= now {
-            return Err("remote session authorization is expired".into());
+            return Err(InitError::RemoteSessionAuthExpired.into());
         }
         Ok(())
     }

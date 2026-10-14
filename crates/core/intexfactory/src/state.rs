@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_intex::SeriesId;
 use outbe_primitives::call_bins;
 use outbe_primitives::call_breach::{self, ScanTerms};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::types::Storable;
@@ -230,7 +230,7 @@ impl IntexFactoryContract<'_> {
             .read(&key)?
             .checked_sub(1)
             .filter(|last| index <= *last)
-            .ok_or_else(|| PrecompileError::Revert("called group member out of range".into()))?;
+            .ok_or(IntexFactoryError::CalledGroupMemberOutOfRange)?;
         let last_key = Self::group_member_key(reference_currency, worldwide_day, last);
         if index != last {
             let moved = self.call_group_members.read(&last_key)?;

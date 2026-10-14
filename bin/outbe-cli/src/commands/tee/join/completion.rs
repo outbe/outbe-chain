@@ -4,6 +4,7 @@ use super::{
     run_finalized_admission_recovery_v1, CliFinalizedAdmissionIoV1, DurableJoinSubmissionV1,
     JoinEnclave, JoinTransport,
 };
+use crate::errors::TeeJoinCompletionError;
 use crate::rpc::Rpc;
 use alloy_primitives::B256;
 use eyre::{Result, WrapErr};
@@ -67,7 +68,7 @@ pub(super) async fn ingest_onboarding_offer_key(
     let artifact = finalized
         .artifact
         .encode_canonical()
-        .map_err(|code| eyre::eyre!("encode finalized artifact: {:#06x}", code.code()))?;
+        .map_err(|code| TeeJoinCompletionError::EncodeFinalizedArtifact(code.code()))?;
     println!(
         "exact onboarding finalized at height {} (artifact {} bytes)",
         finalized.finalized_height,
@@ -120,23 +121,23 @@ fn ingest_gramine_direct_dev_artifact(
     ctx: &OnboardingIngestContext<'_>,
 ) -> Result<[u8; 32]> {
     if ctx.authorized_node_data_dir.is_none() {
-        eyre::bail!(
-            "GramineDirectDev post-bootstrap onboarding requires authenticated NodeHost state"
-        );
+        return Err(TeeJoinCompletionError::GramineDirectDevMissingNodeHostState.into());
     }
-    match enclave.request(&EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
-        artifact,
-        expected_intent_hash: ctx.intent_hash,
-        expected_tribute_offer_public: ctx.expected_offer_pub,
-        expected_key_epoch: ctx.key_epoch,
-        expected_tribute_offer_epoch: ctx.tribute_offer_epoch,
-    })? {
+    match enclave.request(
+        &EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
+            artifact,
+            expected_intent_hash: ctx.intent_hash,
+            expected_tribute_offer_public: ctx.expected_offer_pub,
+            expected_key_epoch: ctx.key_epoch,
+            expected_tribute_offer_epoch: ctx.tribute_offer_epoch,
+        },
+    )? {
         EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
             tribute_offer_public,
         } if tribute_offer_public == ctx.expected_offer_pub => Ok(tribute_offer_public),
-        other => {
-            eyre::bail!("GramineDirectDev onboarding returned an unexpected response: {other:?}");
-        }
+        other => Err(
+            TeeJoinCompletionError::UnexpectedGramineDirectDevResponse(format!("{other:?}")).into(),
+        ),
     }
 }
 
@@ -163,30 +164,29 @@ pub(super) async fn finalize_and_reopen_join(
             .authorized_node_data_dir
             .expect("authorized NodeHost data directory was validated before key activation");
         let promotion = if ctx.promote_candidate {
-            Some(
-                load_candidate_promotion_binding(client, ctx.binding_selector, ctx.intent).await?,
-            )
+            Some(load_candidate_promotion_binding(client, ctx.binding_selector, ctx.intent).await?)
         } else {
             None
         };
         drop(enclave);
         if let Some(finalized_binding) = promotion {
-            let authorization = construct_finalized_replacement_authorization_v1(
-                node_data_dir,
-                &finalized_binding,
-            )
-            .map_err(|error| eyre::eyre!("authorize finalized candidate promotion: {error}"))?;
+            let authorization =
+                construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding)
+                    .map_err(TeeJoinCompletionError::AuthorizeCandidatePromotion)?;
             promote_replacement_candidate(node_data_dir, &authorization)
-                .map_err(|error| eyre::eyre!("promote finalized rejoin candidate: {error}"))?;
+                .map_err(TeeJoinCompletionError::PromoteCandidate)?;
         }
-        verify_reopened_committed_enclave(ctx.enclave_socket, node_data_dir, ctx.expected_offer_pub)?;
+        verify_reopened_committed_enclave(
+            ctx.enclave_socket,
+            node_data_dir,
+            ctx.expected_offer_pub,
+        )?;
         if ctx
             .durable_submission
             .is_some_and(DurableJoinSubmissionV1::is_committed)
         {
-            clear_committed_join_checkpoint(node_data_dir, ctx.intent_hash).map_err(|error| {
-                eyre::eyre!("clear completed committed join checkpoint: {error}")
-            })?;
+            clear_committed_join_checkpoint(node_data_dir, ctx.intent_hash)
+                .map_err(TeeJoinCompletionError::ClearCommittedCheckpoint)?;
         }
         println!(
             "[OK] offer key durably installed and the authenticated enclave connection reopened (offer_public 0x{}). \
@@ -214,9 +214,9 @@ async fn load_candidate_promotion_binding(
         .wrap_err("read finalized candidate promotion binding")?;
     let binding = exact
         .binding
-        .ok_or_else(|| eyre::eyre!("finalized Registry lost the candidate binding"))?;
+        .ok_or(TeeJoinCompletionError::MissingCandidateBinding)?;
     if !finalized_binding_matches_intent(&binding, intent)? {
-        eyre::bail!("finalized Registry binding differs from the durable candidate intent");
+        return Err(TeeJoinCompletionError::CandidateBindingIntentMismatch.into());
     }
     Ok(FinalizedReplacementBindingV1 {
         view: exact.view,
@@ -240,15 +240,13 @@ fn verify_reopened_committed_enclave(
     expected_offer_pub: [u8; 32],
 ) -> Result<()> {
     let mut reopened = connect_committed_node_host_enclave(enclave_socket, node_data_dir)
-        .map_err(|error| eyre::eyre!("reopen committed enclave: {error}"))?;
+        .map_err(TeeJoinCompletionError::ReopenCommittedEnclave)?;
     match reopened.request(&EnclaveRequest::GetPublicKeys)? {
         EnclaveResponse::PublicKeys {
             offer_key_ready: true,
             recipient_x25519_pub,
             ..
         } if recipient_x25519_pub == expected_offer_pub => Ok(()),
-        other => Err(eyre::eyre!(
-            "durable onboarding reopen did not expose the exact permanent offer key: {other:?}"
-        )),
+        other => Err(TeeJoinCompletionError::ReopenedOfferKeyNotReady(format!("{other:?}")).into()),
     }
 }

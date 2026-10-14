@@ -6,6 +6,7 @@ use clap::Subcommand;
 use eyre::Result;
 
 use crate::abi::{IOracle, ORACLE_ADDR};
+use crate::errors::OracleError;
 use crate::rpc::Rpc;
 use outbe_primitives::asset_type::AssetType;
 
@@ -27,8 +28,13 @@ fn parse_asset(spec: &str) -> Result<Address> {
             return Ok(AssetType::IsoCurrency(code).into());
         }
     }
-    text.parse::<Address>()
-        .map_err(|e| eyre::eyre!("{spec:?} is not COEN, an ISO 4217 code or a 0x address: {e}"))
+    text.parse::<Address>().map_err(|source| {
+        OracleError::InvalidAsset {
+            spec: spec.to_owned(),
+            source,
+        }
+        .into()
+    })
 }
 
 /// Renders an asset address back into the shorthand `parse_asset` accepts.
@@ -466,13 +472,25 @@ async fn vwap_range(
         },
     )
     .await?;
-    print_pair_metric("VWAP", base, quote, &format!("{start_time}..{end_time}"), ret);
+    print_pair_metric(
+        "VWAP",
+        base,
+        quote,
+        &format!("{start_time}..{end_time}"),
+        ret,
+    );
     Ok(())
 }
 
 async fn twaps(client: &(impl Rpc + Sync), seconds: u64) -> Result<()> {
     let ret = call_oracle(client, IOracle::getTwapsCall { lookback: seconds }).await?;
-    print_lookback_table(&"TWAP", &ret.bases, &ret.quotes, &ret.twaps, &ret.lookbackSeconds);
+    print_lookback_table(
+        &"TWAP",
+        &ret.bases,
+        &ret.quotes,
+        &ret.twaps,
+        &ret.lookbackSeconds,
+    );
     Ok(())
 }
 
@@ -500,7 +518,13 @@ async fn worldwide_day_vwap(
     .await?;
 
     println!("WorldwideDay VWAP window: {start_time}..{end_time}");
-    print_lookback_table(&"VWAP", &ret.bases, &ret.quotes, &ret.vwaps, &ret.lookbackSeconds);
+    print_lookback_table(
+        &"VWAP",
+        &ret.bases,
+        &ret.quotes,
+        &ret.vwaps,
+        &ret.lookbackSeconds,
+    );
     Ok(())
 }
 
@@ -944,13 +968,13 @@ async fn resolve_timestamp(client: &(impl Rpc + Sync), timestamp: Option<u64>) -
     latest
         .get("timestamp")
         .and_then(|value| value.as_str())
-        .ok_or_else(|| eyre::eyre!("latest block response is missing timestamp"))
+        .ok_or_else(|| OracleError::MissingBlockTimestamp.into())
         .and_then(parse_hex_u64)
 }
 
 fn parse_hex_u64(value: &str) -> Result<u64> {
     let value = value.strip_prefix("0x").unwrap_or(value);
-    u64::from_str_radix(value, 16).map_err(|e| eyre::eyre!("failed to parse timestamp: {e}"))
+    u64::from_str_radix(value, 16).map_err(|e| OracleError::InvalidTimestamp(e).into())
 }
 
 fn format_percent(numerator: u64, denominator: u64) -> String {

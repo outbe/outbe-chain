@@ -1,7 +1,9 @@
+use crate::errors::AgentRewardError;
+pub use crate::errors::DistributionError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256, U512};
-use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
+use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::checked_protocol_to_native;
 
@@ -53,11 +55,9 @@ pub fn distribute_daily(
         let mut total_excess = U256::ZERO;
         for (kind, amount) in pools {
             let excess = distribute_pool(ctx, prev_day, *kind, *amount)?;
-            total_excess = total_excess.checked_add(excess).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Revert(
-                    "agentreward distribute_daily overflow".into(),
-                )
-            })?;
+            total_excess = total_excess
+                .checked_add(excess)
+                .ok_or(AgentRewardError::DistributeDailyOverflow)?;
         }
         Ok(total_excess)
     })
@@ -99,16 +99,15 @@ fn distribute_pool(
         ),
     };
     let (rewards, excess) = match kind {
-        PoolKind::Waa => calculate_distribution_with_cap(amount, &weights),
-        PoolKind::Sra | PoolKind::Cca => calculate_proportional_distribution(amount, &weights),
-    }
-    .map_err(|error| PrecompileError::Revert(error.to_string()))?;
+        PoolKind::Waa => calculate_distribution_with_cap(amount, &weights)?,
+        PoolKind::Sra | PoolKind::Cca => calculate_proportional_distribution(amount, &weights)?,
+    };
     for reward in rewards {
         if reward.reward_amount.is_zero() {
             continue;
         }
         let native = checked_protocol_to_native(reward.reward_amount)
-            .ok_or_else(|| PrecompileError::Revert("native AgentReward share overflow".into()))?;
+            .ok_or(AgentRewardError::NativeShareOverflow)?;
         contract.add_claimable_reward(reward_pool, reward.address, native)?;
         ctx.storage
             .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, native)?;
@@ -127,10 +126,6 @@ fn distribute_pool(
     }
     Ok(excess)
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("reward distribution arithmetic overflow")]
-pub struct DistributionError;
 
 fn mul_div(a: U256, b: U256, denominator: U256) -> Result<U256, DistributionError> {
     // A product of two U256 values fits U512 without truncation.
