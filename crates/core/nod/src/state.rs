@@ -478,7 +478,7 @@ impl NodContract<'_> {
         expiry_queue::push(&ExpiryHours(self), bucket_key, deadline)
     }
 
-    /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.
+    /// Reads back the terms `seal_bucket_call_terms` sealed at issuance.
     pub fn read_call_terms(&self, bucket_key: B256) -> Result<CallTerms> {
         Ok(CallTerms {
             call_price_minor: self.bucket_call_price_minor.read(&bucket_key)?,

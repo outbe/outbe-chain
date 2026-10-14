@@ -1,9 +1,6 @@
-//! NodFactory precompile crate.
-//!
-//! Owns encrypted Nod materialization and
-//! the user-triggered `settleNod` and `mineGratis` ABI methods. Persistent Nod entity state
-//! lives in the Nod entity store at [`outbe_primitives::addresses::NOD_ADDRESS`];
-//! NodFactory carries no storage of its own.
+//! NodFactory: encrypted Nod materialization, settlement and mining, and the Nod call
+//! and forfeit sweeps. Nod data lives in the Nod entity store at
+//! [`outbe_primitives::addresses::NOD_ADDRESS`]; NodFactory carries no storage of its own.
 
 pub mod api;
 pub mod called;

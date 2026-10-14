@@ -6,7 +6,7 @@
 //! price exceeded its call price on at least its `call_threshold_seconds` of the
 //! trailing `call_window_seconds`. The call queues it on its deadline, and every
 //! CycleTick forfeit-burns the unpaid Nods of the buckets whose
-//! `call_notice_period_seconds` lapsed ([`crate::expired::sweep_expired`]).
+//! `call_notice_period_seconds` lapsed (`expired::sweep_expired`).
 //!
 //! Issuance seals all four terms onto the bucket, and this scan reads them back
 //! from it. Retuning a constant therefore leaves every issued bucket on the

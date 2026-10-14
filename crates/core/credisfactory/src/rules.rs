@@ -326,7 +326,7 @@ impl CredisRules for CredisContract<'_> {
     /// lapsed. Only the unpaid share is written off: every settlement already
     /// released its proportional share, so whatever the owner settled they have
     /// already reclaimed. The record keeps its remainders: they are what is
-    /// written off and burned, read through [`outcome`]. Rounded-up partial returns
+    /// written off and burned, read through [`outbe_credis::outcome`]. Rounded-up partial returns
     /// may leave zero collateral even while principal remains outstanding.
     ///
     /// Returns what the caller must burn and credit. This function closes the
