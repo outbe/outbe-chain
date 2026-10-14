@@ -250,9 +250,9 @@ where
         let guard = chain.lock();
         guard.verify_finalization(target_epoch, &recovered.certified.finalization)?;
     }
-    if !epocher
+    if epocher
         .containing(recovered_height)
-        .is_some_and(|info| info.epoch() == target_epoch)
+        .is_none_or(|info| info.epoch() != target_epoch)
     {
         return Err(
             FollowError::ReconstructedEpochDoesNotContainRecoveredHeight {
@@ -478,10 +478,10 @@ where
     // The boundary block, finalized by the new committee itself, must carry
     // the outcome its carrier pre-announced. Live delivery does exactly this check.
     authenticate_ancestor_proof(chain, epocher, boundary_height, &boundary)?;
-    if !chain
+    if chain
         .lock()
         .highest_registered()
-        .is_some_and(|registered| registered >= epoch)
+        .is_none_or(|registered| registered < epoch)
     {
         return Err(FollowError::BoundaryDidNotConfirmCommittee { epoch: epoch.get() }.into());
     }
