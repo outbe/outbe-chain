@@ -853,7 +853,7 @@ mod tests {
         let roots = [
             None,
             Some(CompressedEntitiesRootArtifact {
-                commitment_scheme_version: 1,
+                commitment_scheme_version: 2,
                 r_sealed: B256::repeat_byte(0xA8),
             }),
         ];
@@ -1173,7 +1173,7 @@ mod tests {
     #[test]
     fn compressed_entities_root_has_pinned_tag_length_order_and_big_endian_bytes() {
         let artifact = CompressedEntitiesRootArtifact {
-            commitment_scheme_version: 1,
+            commitment_scheme_version: 2,
             r_sealed: B256::repeat_byte(0xAB),
         };
         let encoded = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
@@ -1182,7 +1182,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut expected = b"OART\x0B\x01\x08\x00\x24\x00\x00\x00\x01".to_vec();
+        let mut expected = b"OART\x0B\x01\x08\x00\x24\x00\x00\x00\x02".to_vec();
         expected.extend_from_slice(&[0xAB; 32]);
         assert_eq!(encoded.as_ref(), expected);
         assert_eq!(COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN, 36);
@@ -1204,7 +1204,7 @@ mod tests {
                 validator_fee_sum: U256::ZERO,
             }),
             compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                commitment_scheme_version: 1,
+                commitment_scheme_version: 2,
                 r_sealed: root,
             }),
             ..Default::default()
@@ -1212,7 +1212,7 @@ mod tests {
         .unwrap();
         let mut expected = b"OART\x0B\x02\x01\x00\x20".to_vec();
         expected.extend_from_slice(&[0_u8; 32]);
-        expected.extend_from_slice(b"\x08\x00\x24\x00\x00\x00\x01");
+        expected.extend_from_slice(b"\x08\x00\x24\x00\x00\x00\x02");
         expected.extend_from_slice(root.as_slice());
         assert_eq!(encoded.as_ref(), expected);
     }
@@ -1296,7 +1296,7 @@ mod tests {
 
         let mut final_artifacts = decode_outbe_block_artifacts(&exact_non_root).unwrap();
         final_artifacts.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
-            commitment_scheme_version: 1,
+            commitment_scheme_version: 2,
             r_sealed: B256::repeat_byte(0xA5),
         });
         assert_eq!(

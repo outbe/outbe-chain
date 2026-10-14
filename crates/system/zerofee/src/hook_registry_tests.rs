@@ -8,12 +8,9 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_hyperlanecontroller::precompile::IHyperlaneController;
-use outbe_intexfactory::precompile::IIntexFactory;
 use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 use outbe_oracle::precompile::IOracle;
-use outbe_primitives::addresses::{
-    HYPERLANE_CONTROLLER_ADDRESS, INTEX_FACTORY_ADDRESS, ORACLE_ADDRESS,
-};
+use outbe_primitives::addresses::{HYPERLANE_CONTROLLER_ADDRESS, ORACLE_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_validatorset::delegation::ValidatorDelegateRole;
 
@@ -88,24 +85,6 @@ fn hook_cases() -> Vec<HookCase> {
             max_gas_limit: crate::oracle::MAX_ZERO_FEE_ORACLE_GAS_LIMIT,
             malformed_reason: "submitVote(ExchangeRateTuple[]) decode failed",
             delegate_role: ValidatorDelegateRole::Oracle,
-        },
-        HookCase {
-            hook: ZeroFeeHookId::IntexFactoryPayContributorBatch,
-            target: INTEX_FACTORY_ADDRESS,
-            selector: IIntexFactory::payContributorBatchCall::SELECTOR,
-            valid_input: IIntexFactory::payContributorBatchCall {
-                worldwideDay: 20_260_725,
-                startIndex: 0,
-                leaves: vec![],
-                proof: vec![],
-            }
-            .abi_encode(),
-            min_max_fee_per_gas:
-                crate::intexfactory::MIN_ZERO_FEE_CONTRIBUTOR_BATCH_MAX_FEE_PER_GAS,
-            max_calldata_bytes: crate::intexfactory::MAX_ZERO_FEE_CONTRIBUTOR_BATCH_CALLDATA_BYTES,
-            max_gas_limit: crate::intexfactory::MAX_ZERO_FEE_CONTRIBUTOR_BATCH_GAS_LIMIT,
-            malformed_reason: "payContributorBatch decode failed",
-            delegate_role: ValidatorDelegateRole::Ocomp,
         },
         HookCase {
             hook: ZeroFeeHookId::HyperlaneSubmitCheckpoint,

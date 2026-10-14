@@ -12,13 +12,11 @@ fn active_generation() -> ActiveGenerationV1 {
         program_semantics_hash: B256::with_last_byte(2),
         nod_root: B256::with_last_byte(3),
         bucket_root: B256::with_last_byte(4),
-        contributor_root: B256::with_last_byte(5),
         output_manifest_root: B256::with_last_byte(6),
         exact_counts: ExactCountsV1 {
             tribute_count: 257,
             nod_count: 257,
             bucket_count: 10,
-            contributor_count: 250,
             semantic_event_count: 0,
         },
         result_evidence_hash: B256::with_last_byte(7),

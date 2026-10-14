@@ -212,7 +212,7 @@ pub(crate) fn execute_unit(
         UnitPhase::GratisPrefix => execute_gratis_prefix_unit(spec, authority),
         UnitPhase::GratisPrefixDown => execute_gratis_prefix_down_unit(spec, authority),
         UnitPhase::OutputFinalize => execute_output_finalize_unit(spec, authority),
-        UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle => execute_shuffle_unit(spec, authority),
+        UnitPhase::BucketShuffle => execute_shuffle_unit(spec, authority),
         UnitPhase::RootReduce => execute_root_reduce_unit(spec, authority),
     }
 }

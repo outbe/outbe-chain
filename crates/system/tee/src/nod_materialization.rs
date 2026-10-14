@@ -3,7 +3,7 @@ use crate::{
     protocol::{EnclaveRequest, EnclaveResponse},
     TransportError,
 };
-use alloy_primitives::{keccak256, B256};
+use alloy_primitives::{keccak256, B256, U256};
 use outbe_ocomp_protocol::{
     nod_materialization::ProtectedNodMaterializationV2, profile::poc_schema_limits,
 };
@@ -21,11 +21,20 @@ pub struct NodSourceV2 {
     pub tribute: EncryptedTributeV2,
     pub proof: Vec<u8>,
 }
+/// Public league fraction from FixedReduce. The enclave applies it to the
+/// decrypted Tribute nominal. It is not a per-Nod amount.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LeagueFractionInputV2 {
+    pub league_id: u16,
+    pub fraction_fp: U256,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PrepareEncryptedNodsRequestV2 {
     pub authority: NodMaterializationAuthorityV2,
     pub batch: Vec<u8>,
     pub sources: Vec<NodSourceV2>,
+    pub league_fractions: Vec<LeagueFractionInputV2>,
 }
 pub fn hash<T: Serialize + ?Sized>(domain: &[u8], value: &T) -> Result<B256, serde_json::Error> {
     let mut bytes = domain.to_vec();

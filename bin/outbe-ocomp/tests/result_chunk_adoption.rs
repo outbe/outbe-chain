@@ -2,8 +2,8 @@ mod admission_support;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_lysis::program_v1::result::{
-    decode_root_reduce_output, encode_root_reduce_output, LysisListSubtreeCarrierV1,
-    RootReduceOutputV1, RootReduceSummaryV1,
+    LysisListSubtreeCarrierV1, RootReduceOutputV1, RootReduceSummaryV1, decode_root_reduce_output,
+    encode_root_reduce_output,
 };
 use outbe_ocomp::{
     admission_catalog::{AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog},
@@ -16,13 +16,13 @@ use outbe_ocomp::{
     },
 };
 use outbe_ocomp_protocol::{
+    ListKind, ObjectKind, SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
     common::BoundedBytes,
-    result::{ContributorActionV1, NodActionV1, OutputManifestEntryV1, ResultChunkV1},
+    result::{NodActionV1, OutputManifestEntryV1, ResultChunkV1},
     unit::{
         BinaryReducerNode, CanonicalInputRefV1, InputPurpose, InputSourceKind, UnitArtifactV1,
         UnitInterval, UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
     },
-    ListKind, ObjectKind, SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use tempfile::tempdir;
 
@@ -67,14 +67,6 @@ fn leaf_spec(chunk_ordinal: u32) -> UnitSpecV1 {
                 max_decoded_bytes: 1_048_576,
             },
             CanonicalInputRefV1 {
-                purpose: InputPurpose::OwnerOrderedRecords,
-                source_kind: InputSourceKind::UnitOutput,
-                source_id: B256::repeat_byte(6),
-                record_count_limit: 256,
-                max_encoded_bytes: 1_048_576,
-                max_decoded_bytes: 1_048_576,
-            },
-            CanonicalInputRefV1 {
                 purpose: InputPurpose::BucketOrderedRecords,
                 source_kind: InputSourceKind::UnitOutput,
                 source_id: B256::repeat_byte(7),
@@ -103,16 +95,9 @@ fn chunk(spec: &UnitSpecV1, chunk_ordinal: u32) -> ResultChunkV1 {
             owner: Address::repeat_byte(11),
             wwd: 20_260_725,
             league_id: 1,
-            gratis_load_minor: U256::from(3),
             entry_price_minor: U256::from(4),
-            settlement_cost_minor: U256::from(5),
             issuance_currency: 840,
             reference_currency: 978,
-        }],
-        ordered_eligible_contributors: vec![ContributorActionV1 {
-            owner: Address::repeat_byte(11),
-            source_tribute_id: entity(9),
-            nominal_amount_minor: U256::from(6),
         }],
     }
 }
@@ -157,13 +142,6 @@ fn root_leaf_artifact_with_count(
             4,
         )
         .unwrap(),
-        contributor_actions: LysisListSubtreeCarrierV1::from_primary_page(
-            ListKind::ContributorActions,
-            entry.chunk_ordinal,
-            &action_records,
-            4,
-        )
-        .unwrap(),
         output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
             ListKind::CompleteOutputManifest,
             entry.chunk_ordinal,
@@ -181,7 +159,6 @@ fn root_leaf_artifact_with_count(
         tribute_count,
         nod_count: tribute_count,
         bucket_count: tribute_count,
-        contributor_count: tribute_count,
         tribute_nominal_total: U256::from(tribute_count) * U256::from(6),
         eligible_nominal_total: U256::from(tribute_count) * U256::from(6),
         lysis_allocation_minor: U256::from(tribute_count) * U256::from(3),
@@ -391,7 +368,6 @@ fn supervisor_adopts_only_the_exact_manifest_bound_result_chunk() {
     .unwrap();
     assert_eq!(admitted.chunk.chunk_ordinal, 0);
     assert_eq!(admitted.chunk.nod_count, 1);
-    assert_eq!(admitted.chunk.contributor_count, 1);
     assert_eq!(admitted.chunk.authoritative_ref, entry.result_chunk_ref);
     assert_eq!(admitted.admission, AdmissionOutcome::NewlyAdmitted);
     let durable_admission = catalog.read(9).unwrap();
@@ -459,16 +435,18 @@ fn adoption_rejects_missing_or_semantically_substituted_result_chunk() {
         transport_digest: artifact_reference.transport_digest,
     };
 
-    assert!(admit_reported_lysis_root_reduce_leaf(
-        AdmissionPositionV1 { plan_ordinal: 9 },
-        &spec,
-        &finished,
-        &empty_inbox,
-        &cas,
-        &mut catalog,
-        &limits,
-    )
-    .is_err());
+    assert!(
+        admit_reported_lysis_root_reduce_leaf(
+            AdmissionPositionV1 { plan_ordinal: 9 },
+            &spec,
+            &finished,
+            &empty_inbox,
+            &cas,
+            &mut catalog,
+            &limits,
+        )
+        .is_err()
+    );
     let mut substituted = entry;
     substituted.result_chunk_hash = B256::repeat_byte(99);
     let substituted_artifact = root_leaf_artifact(&spec, substituted, &limits);

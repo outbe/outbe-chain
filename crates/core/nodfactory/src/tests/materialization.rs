@@ -31,9 +31,7 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
         owner,
         wwd: materialization_wwd,
         league_id: 1,
-        gratis_load_minor: U256::from(1_000),
         entry_price_minor,
-        settlement_cost_minor: U256::from(500),
         issuance_currency: 840,
         reference_currency: 840,
     }
@@ -162,9 +160,11 @@ fn seed_projection(
 fn assert_projection_present(world: &mut World, materialization_wwd: u32) {
     world
         .enter(|storage, _, _| {
-            assert!(NodContract::new(storage)
-                .ocomp_certified_generation(WorldwideDay::new(materialization_wwd))?
-                .is_some());
+            assert!(
+                NodContract::new(storage)
+                    .ocomp_certified_generation(WorldwideDay::new(materialization_wwd))?
+                    .is_some()
+            );
             Ok::<_, PrecompileError>(())
         })
         .unwrap();
@@ -225,6 +225,7 @@ fn apply(
             &storage,
             ExecutionReaders { scope, parent },
             batch,
+            &vec![U256::from(1_000); batch.actions.len()],
             profile(),
             &poc_schema_limits(),
         )
@@ -251,6 +252,7 @@ fn the_public_selector_rejects_a_caller_without_the_active_ocomp_role() {
                 ExecutionReaders { scope, parent },
                 Address::repeat_byte(0xee),
                 &batch(&population, 0, 8),
+                &vec![U256::from(1_000); 8],
                 &poc_schema_limits(),
             )
         })
@@ -295,6 +297,7 @@ fn the_public_selector_accepts_only_the_delegate_of_an_active_validator() {
                 ExecutionReaders { scope, parent },
                 delegate,
                 &batch(&population, 0, 8),
+                &vec![U256::from(1_000); 8],
                 &poc_schema_limits(),
             )
         })
@@ -673,7 +676,6 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
         .collect::<Vec<_>>();
     // Free, so settling it by ERC20 moves no tokens.
     actions[0].entry_price_minor = U256::ZERO;
-    actions[0].settlement_cost_minor = U256::ZERO;
     let population = population_of(actions);
     seed_generation(&mut world, &population);
     apply(&mut world, &batch(&population, 0, 8)).unwrap();
@@ -718,17 +720,14 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                     caller: population.actions[0].owner,
                     nod_id,
                     nonce,
-                    auth: mine_auth(
-                        population.actions[0].owner,
-                        population.actions[0].gratis_load_minor,
-                    ),
+                    auth: mine_auth(population.actions[0].owner, U256::from(1_000)),
                 },
             )
         })
         .unwrap();
     assert_eq!(
         decrypt_gratis(population.actions[0].owner, &encrypted),
-        population.actions[0].gratis_load_minor
+        U256::from(1_000)
     );
 }
 
@@ -805,7 +804,7 @@ fn encrypted_materialization_uses_current_frozen_authority_without_source_body_s
             .unwrap();
         assert_eq!(
             nod_api::calculation_amount(&item).unwrap(),
-            population.actions[0].gratis_load_minor
+            U256::from(1_000)
         );
         let body = outbe_compressed_entities::encode_nod_item_v2(&outbe_nod::canonical_item(&item))
             .unwrap();
@@ -851,7 +850,7 @@ fn tampered_encrypted_batch_and_changed_frozen_root_preserve_every_prestate() {
     assert_eq!(world.provider.storage, before);
     assert_eq!(world.provider.get_ordered_events(), events);
     let mut changed = population.actions.clone();
-    changed[0].gratis_load_minor += U256::ONE;
+    changed[0].issuance_currency += 1;
     let different = crate::test_support::MaterializationFixtureBuilder::new(&changed, CHAIN_ID)
         .build()
         .unwrap();
@@ -862,8 +861,10 @@ fn tampered_encrypted_batch_and_changed_frozen_root_preserve_every_prestate() {
     assert!(apply_protected(&mut world, &carrier).is_err());
     assert_eq!(world.provider.storage, before);
     assert_eq!(world.provider.get_ordered_events(), events);
-    assert!(world
-        .enter(|storage, scope, parent| nod_api::list_all(&storage, scope, parent))
-        .unwrap()
-        .is_empty());
+    assert!(
+        world
+            .enter(|storage, scope, parent| nod_api::list_all(&storage, scope, parent))
+            .unwrap()
+            .is_empty()
+    );
 }

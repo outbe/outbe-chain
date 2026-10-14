@@ -9,10 +9,9 @@ use outbe_lysis::program_v1::{
     ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
 };
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::units::SCALE_1E6_U256;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-
-const SIX_DECIMAL_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,7 +123,7 @@ fn group_table(input: &CorpusInput, result: &ProgramResultV1) -> Vec<Value> {
         .map(|(league, (nominal, population))| {
             (
                 *league,
-                *nominal * SIX_DECIMAL_SCALE / result.total_nominal,
+                *nominal * SCALE_1E6_U256 / result.total_nominal,
                 *population,
             )
         })
@@ -133,8 +132,8 @@ fn group_table(input: &CorpusInput, result: &ProgramResultV1) -> Vec<Value> {
         .iter()
         .fold(U256::ZERO, |sum, (_, share, _)| sum + *share);
     if let Some((_, share, _)) = shares.last_mut() {
-        if share_sum < SIX_DECIMAL_SCALE {
-            *share += SIX_DECIMAL_SCALE - share_sum;
+        if share_sum < SCALE_1E6_U256 {
+            *share += SCALE_1E6_U256 - share_sum;
         }
     }
     shares
@@ -163,21 +162,9 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
                 "owner": lowercase_address(action.owner),
                 "worldwide_day": u32::from(action.worldwide_day),
                 "league": action.league_id,
-                "gratis_load": action.gratis_load_minor.to_string(),
                 "entry_price": action.entry_price_minor.to_string(),
-                "cost": action.settlement_cost_minor.to_string(),
                 "issuance_currency": action.issuance_currency,
                 "reference_currency": action.reference_currency,
-            })
-        })
-        .collect::<Vec<_>>();
-    let contributors = result
-        .contributors
-        .iter()
-        .map(|contributor| {
-            json!({
-                "owner": lowercase_address(contributor.owner),
-                "nominal": contributor.nominal_amount_minor.to_string(),
             })
         })
         .collect::<Vec<_>>();
@@ -219,7 +206,6 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
         "remaining_lysis_limit_minor": result.remaining_lysis_limit_minor.to_string(),
         "group_table": table,
         "nod_actions": nod_actions,
-        "contributors": contributors,
         "observations": observations,
     })
 }
@@ -263,9 +249,6 @@ fn failure_json(error: ProgramErrorV1) -> Value {
             ("GRATIS_LOAD_EXCEEDS_REMAINING", Some(ordinal), None)
         }
         ProgramErrorV1::InvalidNodTarget { ordinal } => ("INVALID_NOD_TARGET", Some(ordinal), None),
-        ProgramErrorV1::ContributorOverflow { ordinal } => {
-            ("CONTRIBUTOR_OVERFLOW", Some(ordinal), None)
-        }
         ProgramErrorV1::OutputCountMismatch => ("OUTPUT_COUNT_MISMATCH", None, None),
     };
     fields.insert("kind".to_owned(), Value::String(kind.to_owned()));
@@ -276,6 +259,13 @@ fn failure_json(error: ProgramErrorV1) -> Value {
         fields.insert("currency".to_owned(), json!(currency));
     }
     json!({"status": "FAILURE", "error": fields})
+}
+
+fn without_contributor_publication(mut expected: Value) -> Value {
+    if let Some(object) = expected.as_object_mut() {
+        object.remove("contributors");
+    }
+    expected
 }
 
 fn execute_json(input: &CorpusInput) -> Value {
@@ -297,7 +287,7 @@ fn independent_reference_corpus_and_native_program_match() {
         );
         assert_eq!(
             execute_json(&case.input),
-            case.expected,
+            without_contributor_publication(case.expected),
             "native/reference mismatch for {}",
             case.case_id
         );
@@ -381,20 +371,20 @@ fn boundary_record_counts_keep_raw_id_order() {
                         owner,
                         worldwide_day: day,
                         issuance_currency: 840,
-                        nominal_amount_minor: U256::from(1_000_000_u64) * SIX_DECIMAL_SCALE,
+                        nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E6_U256,
                         reference_currency: 840,
                         tribute_price_minor: U256::ZERO,
                         exclude_from_intex_issuance: false,
                     },
                     first_league: ObservationValueV1::Value((ordinal % 15 + 1) as u16),
                     second_league: ObservationValueV1::Value((ordinal % 15 + 1) as u16),
-                    entry_price_minor: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
+                    entry_price_minor: ObservationValueV1::Value(SCALE_1E6_U256),
                     nod_target_available: true,
                 }
             })
             .collect::<Vec<_>>();
         tributes.reverse();
-        let nominal = U256::from(count) * U256::from(1_000_000_u64) * SIX_DECIMAL_SCALE;
+        let nominal = U256::from(count) * U256::from(1_000_000_u64) * SCALE_1E6_U256;
         let result = execute(ProgramInputV1 {
             worldwide_day: day,
             logical_evaluation_time: 1_784_765_900,

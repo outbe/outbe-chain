@@ -204,10 +204,10 @@ fn observe_agent_rewards(world: &mut World) {
             .offer_execution_timestamp
             .expect("offer execution time"),
     );
-    let expected_reward = economic_reference::single_beneficiary_reward(emission_day);
+    let (expected_waa, expected_sra) = economic_reference::single_beneficiary_rewards(emission_day);
     let expected_escrow = escrow_before
-        .checked_add(expected_reward)
-        .and_then(|amount| amount.checked_add(expected_reward))
+        .checked_add(expected_waa)
+        .and_then(|amount| amount.checked_add(expected_sra))
         .expect("expected AgentReward escrow fits U256");
     let before = observation
         .before_settlement_checkpoint
@@ -249,12 +249,12 @@ fn observe_agent_rewards(world: &mut World) {
         sleep(Duration::from_millis(500));
     };
     assert_eq!(
-        balances.waa, expected_reward,
+        balances.waa, expected_waa,
         "WAA differs from independent capped daily pool"
     );
     assert_eq!(
-        balances.sra, expected_reward,
-        "SRA differs from independent capped daily pool"
+        balances.sra, expected_sra,
+        "SRA differs from independent full daily pool"
     );
     assert_eq!(
         balances.escrow, expected_escrow,
@@ -285,8 +285,8 @@ fn observe_agent_rewards(world: &mut World) {
     observation.economic_check = Some(AgentRewardEconomicCheckV1 {
         genesis_rewards_timestamp,
         emission_day,
-        expected_waa_coen_units: expected_reward,
-        expected_sra_coen_units: expected_reward,
+        expected_waa_coen_units: expected_waa,
+        expected_sra_coen_units: expected_sra,
         expected_cca_delta_coen_units: expected_cca_delta,
         checkpoint,
         validator_ports: ports,

@@ -281,58 +281,6 @@ impl SeriesRecord {
     }
 }
 
-/// Open payout round over a certified contributor root.
-///
-/// `amount` is frozen when the round opens (the proceeds pot at that moment), so
-/// every share derives from the same denominator regardless of when a batch
-/// lands. `active != 0` is the existence sentinel. The record outlives the
-/// payout. Once `paid_leaf_count` reaches the certified contributor count:
-/// - the caller burns what floor rounding left.
-/// - the paid bitmap refuses further batches.
-///
-/// The counters stay readable as the day's final accounting.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[storage_record(exists_field = active)]
-pub struct CertifiedPayoutRound {
-    #[key]
-    pub wwd: u32,
-
-    /// Native COEN this round distributes, frozen at open.
-    #[attribute(order = 0)]
-    pub amount: U256,
-
-    /// sum of the shares paid so far. It feeds the round cap and the close remainder.
-    #[attribute(order = 1)]
-    pub paid_so_far: U256,
-
-    /// Number of leaves paid so far. It is the completion gate for closing the round.
-    #[attribute(order = 2)]
-    pub paid_leaf_count: u32,
-
-    /// Existence sentinel: 1 while the round is open.
-    #[attribute(order = 3)]
-    pub active: u8,
-}
-
-/// Constant-size certified contributor authority for one WorldwideDay.
-///
-/// Contributor bodies remain in authenticated result chunks. Activation stores
-/// only the proof root and exact aggregate scalars.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CertifiedContributorGenerationProjection {
-    pub worldwide_day: u32,
-    pub series_version: u64,
-    pub contributor_root: B256,
-    pub contributor_count: u32,
-    pub eligible_nominal_total: U256,
-}
-
-impl CertifiedContributorGenerationProjection {
-    pub(crate) fn metadata_word(&self) -> U256 {
-        U256::from(self.series_version) | (U256::from(self.contributor_count) << 64)
-    }
-}
-
 /// EVM storage layout for the Intex module.
 #[storage_schema]
 #[contract(addr = INTEX_ADDRESS)]
@@ -346,12 +294,12 @@ pub struct IntexContract {
     #[attribute(order = 2)]
     pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    // --- Creator-reward: multi-chain proceeds fan-in aggregation ---
-    /// worldwide_day -> proceeds accumulated but not yet handed to a payout round.
+    // --- Multi-chain proceeds fan-in. A ready pot is burned. ---
+    /// worldwide_day -> proceeds accumulated but not yet burned.
     #[attribute(order = 11)]
     pub proceeds_pot: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
-    /// worldwide_day -> deadline after which the pot distributes without the missing chains.
+    /// worldwide_day -> fan-in deadline. 0 means never armed. `u64::MAX` means finalized.
     #[attribute(order = 12)]
     pub proceeds_deadline: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
 
@@ -381,30 +329,9 @@ pub struct IntexContract {
     #[attribute(order = 20)]
     pub awaiting_proceeds_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
-    /// Certified contributor proof root for one worldwide day.
-    #[attribute(order = 21)]
-    pub ocomp_contributor_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
-
-    /// Packed active selector: series version (low u64), contributor count
-    /// (next u32), with all remaining bits reserved as zero.
-    #[attribute(order = 22)]
-    pub ocomp_contributor_metadata: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-
-    /// Exact eligible nominal total committed by the certified root.
-    #[attribute(order = 23)]
-    pub ocomp_eligible_nominal_total: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-
     /// worldwide_day -> number of series created for that day.
     #[attribute(order = 24)]
     pub day_series_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
-    /// wwd -> open certified payout round.
-    #[attribute(order = 25)]
-    pub ocomp_payout_round: outbe_primitives::storage::dsl::Map<u32, CertifiedPayoutRound>,
-
-    /// keccak256(wwd_be32 ++ word_index_be32) -> 256 paid flags, one per leaf.
-    #[attribute(order = 26)]
-    pub ocomp_paid_leaves: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // Disjoint classes: a series forfeits `issued_units - settled - exercised -
     // gem_factory` at its deadline. Not on `SeriesRecord` because a record write
@@ -441,15 +368,6 @@ impl IntexContract<'_> {
         keccak256(buf)
     }
 
-    /// Composite key for the paid-leaf bitmap:
-    /// `keccak256(wwd_be32 ++ word_index_be32)`, one word per 256 leaves.
-    pub fn paid_bitmap_key(wwd: u32, word_index: u32) -> B256 {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&wwd.to_be_bytes());
-        buf[4..8].copy_from_slice(&word_index.to_be_bytes());
-        keccak256(buf)
-    }
-
     /// Composite key for per-(day, chain) proceeds flags:
     /// `keccak256(worldwide_day_be32 ++ chain_be32)`.
     pub fn proceeds_chain_key(worldwide_day: WorldwideDay, chain_id: u32) -> B256 {
@@ -457,50 +375,5 @@ impl IntexContract<'_> {
         buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());
         buf[4..8].copy_from_slice(&chain_id.to_be_bytes());
         keccak256(buf)
-    }
-
-    /// Reads the active constant-size contributor proof authority.
-    pub fn ocomp_certified_contributor_generation(
-        &self,
-        worldwide_day: WorldwideDay,
-    ) -> outbe_primitives::error::Result<Option<CertifiedContributorGenerationProjection>> {
-        let contributor_root = self.ocomp_contributor_root.read(&worldwide_day)?;
-        let metadata = self.ocomp_contributor_metadata.read(&worldwide_day)?;
-        let eligible_nominal_total = self.ocomp_eligible_nominal_total.read(&worldwide_day)?;
-
-        if metadata.is_zero() {
-            if !contributor_root.is_zero() || !eligible_nominal_total.is_zero() {
-                return Err(outbe_primitives::error::PrecompileError::Fatal(
-                    "absent Intex certified contributor generation has residual state".into(),
-                ));
-            }
-            return Ok(None);
-        }
-        if !(metadata >> 96usize).is_zero() || contributor_root.is_zero() {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "installed Intex certified contributor generation is malformed".into(),
-            ));
-        }
-
-        let series_version = (metadata & U256::from(u64::MAX)).to::<u64>();
-        let contributor_count = ((metadata >> 64usize) & U256::from(u32::MAX)).to::<u32>();
-        // Version 1 is the valid absent -> certified history and remains valid
-        // if the independent auction creates the series later. Version 2 is
-        // valid only when the series already existed before certification.
-        let valid_series_version =
-            series_version == 1 || (series_version == 2 && self.day_has_series(worldwide_day)?);
-        if !valid_series_version || (contributor_count == 0) != eligible_nominal_total.is_zero() {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "installed Intex certified contributor metadata is malformed".into(),
-            ));
-        }
-
-        Ok(Some(CertifiedContributorGenerationProjection {
-            worldwide_day: worldwide_day.value(),
-            series_version,
-            contributor_root,
-            contributor_count,
-            eligible_nominal_total,
-        }))
     }
 }

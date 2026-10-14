@@ -75,6 +75,16 @@ pub(super) fn validate_expected_environment_identity(
     if expected_identity.tree_format.is_empty() || expected_identity.vendor_revision.is_empty() {
         return Err(PersistenceError::EmptyEnvironmentIdentityField);
     }
+    if expected_identity.commitment_scheme_version != crate::ACTIVE_COMMITMENT_SCHEME {
+        return Err(PersistenceError::UnsupportedCommitmentScheme {
+            actual: expected_identity.commitment_scheme_version,
+        });
+    }
+    if expected_identity.tree_format != "ckb-smt-v0.6.1-poseidon2-catalog-v3" {
+        return Err(PersistenceError::UnsupportedTreeFormat {
+            actual: expected_identity.tree_format.clone(),
+        });
+    }
     crate::CeTopologyV1::decode(&expected_identity.topology)
         .map_err(|_| PersistenceError::InvalidTopologyIdentity)?;
     Ok(())

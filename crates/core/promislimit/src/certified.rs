@@ -312,7 +312,6 @@ mod tests {
         StorageHandle::enter(provider, |storage| {
             storage.with_lysis_activation_frame(activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
-                capability.authorize_contributor_installation()?;
                 let receipt =
                     credit_certified_carry_over(&storage, capability, input, &poc_schema_limits())?;
                 capability.authorize_tribute_retirement()?;
@@ -504,7 +503,6 @@ mod tests {
         let receipt = StorageHandle::enter(&mut late_failure, |storage| {
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
-                capability.authorize_contributor_installation()?;
                 assert!(credit_certified_carry_over(
                     &storage,
                     capability,
@@ -534,7 +532,6 @@ mod tests {
         let receipt = StorageHandle::enter(&mut wrong_phase, |storage| {
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
-                capability.authorize_contributor_installation()?;
                 assert!(capability.authorize_tribute_retirement().is_err());
                 let receipt = credit_certified_carry_over(
                     &storage,

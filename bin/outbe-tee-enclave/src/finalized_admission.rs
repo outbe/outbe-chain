@@ -7,6 +7,7 @@ use commonware_codec::ReadExt as _;
 use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
+use outbe_consensus::bls::MAX_COMMITTEE_MEMBERS;
 use outbe_consensus::follow::{decode_public_finalization, CommitteeChain};
 use outbe_primitives::{
     addresses::TEE_REGISTRY_ADDRESS,
@@ -23,8 +24,6 @@ use outbe_tee::{
 };
 use reth_primitives_traits::Account;
 use reth_trie::{AccountProof, StorageProof};
-
-const MAX_COMMITTEE_MEMBERS: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VerifiedAdmissionAnchorV1 {

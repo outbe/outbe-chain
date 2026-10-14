@@ -249,7 +249,6 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
         covered_primary_count: 2,
         nod_actions: carrier(outbe_ocomp_protocol::ListKind::NodActions, 257, 9, 11),
         bucket_records: carrier(outbe_ocomp_protocol::ListKind::BucketRecords, 257, 9, 12),
-        contributor_actions: carrier(outbe_ocomp_protocol::ListKind::ContributorActions, 1, 9, 13),
         output_manifest_entries: carrier(
             outbe_ocomp_protocol::ListKind::CompleteOutputManifest,
             2,
@@ -260,7 +259,6 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
         tribute_count: 257,
         nod_count: 257,
         bucket_count: 257,
-        contributor_count: 1,
         tribute_nominal_total: U256::from(10_000),
         eligible_nominal_total: U256::from(100),
         lysis_allocation_minor: U256::from(90),
@@ -284,7 +282,7 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
     assert!(encode_root_reduce_summary(&substituted, &limits).is_err());
 
     let mut wrong_span = summary.clone();
-    wrong_span.contributor_actions.subtree_height = 8;
+    wrong_span.bucket_records.subtree_height = 8;
     assert!(encode_root_reduce_summary(&wrong_span, &limits).is_err());
 
     let mut manifest_per_nod = summary.clone();
@@ -293,7 +291,7 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
     assert!(encode_root_reduce_summary(&manifest_per_nod, &limits).is_err());
 
     let mut inconsistent = summary;
-    inconsistent.contributor_count = 2;
+    inconsistent.bucket_count = 1;
     assert!(encode_root_reduce_summary(&inconsistent, &limits).is_err());
 }
 
@@ -321,7 +319,6 @@ fn root_reduce_output_is_a_closed_leaf_or_node_payload() {
         covered_primary_count: 1,
         nod_actions: carrier(ListKind::NodActions, &[1]),
         bucket_records: carrier(ListKind::BucketRecords, &[2]),
-        contributor_actions: carrier(ListKind::ContributorActions, &[3]),
         output_manifest_entries: carrier(
             ListKind::CompleteOutputManifest,
             &entry.encode_canonical_record(&limits).unwrap(),
@@ -333,7 +330,6 @@ fn root_reduce_output_is_a_closed_leaf_or_node_payload() {
         tribute_count: 1,
         nod_count: 1,
         bucket_count: 1,
-        contributor_count: 1,
         tribute_nominal_total: U256::from(100),
         eligible_nominal_total: U256::from(100),
         lysis_allocation_minor: U256::from(10),
@@ -345,7 +341,6 @@ fn root_reduce_output_is_a_closed_leaf_or_node_payload() {
     for carrier in [
         &mut node_summary.nod_actions,
         &mut node_summary.bucket_records,
-        &mut node_summary.contributor_actions,
     ] {
         carrier.subtree_height = 9;
     }
@@ -392,14 +387,14 @@ fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots
         .collect::<Vec<_>>();
     let second_items = vec![b"last".to_vec()];
     let first = LysisListSubtreeCarrierV1::from_primary_page(
-        ListKind::ContributorActions,
+        ListKind::NodActions,
         0,
         &first_items,
         16,
     )
     .unwrap();
     let second = LysisListSubtreeCarrierV1::from_primary_page(
-        ListKind::ContributorActions,
+        ListKind::NodActions,
         1,
         &second_items,
         16,
@@ -416,13 +411,13 @@ fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots
     let mut dense_items = first_items;
     dense_items.extend(second_items);
     let dense_root = ordered_list_root(
-        ListKind::ContributorActions,
+        ListKind::NodActions,
         &dense_items,
         OrderedListLimits::new(512, 16, 512 * 32),
     )
     .unwrap();
     let merged_dense_root = outbe_ocomp_protocol::list::root_hash(
-        ListKind::ContributorActions,
+        ListKind::NodActions,
         257,
         merged.subtree_height,
         merged.tree_root,
@@ -432,32 +427,32 @@ fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots
 
     let sparse_items = vec![b"only".to_vec()];
     let sparse = LysisListSubtreeCarrierV1::from_primary_page(
-        ListKind::ContributorActions,
+        ListKind::NodActions,
         0,
         &sparse_items,
         16,
     )
     .unwrap();
     let empty =
-        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::ContributorActions, 1)
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 1)
             .unwrap();
     assert!(!empty.tree_root.is_zero());
     assert_eq!(
         empty,
-        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::ContributorActions, 1,)
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 1,)
             .unwrap()
     );
 
     let sparse_coverage = sparse.merge_adjacent(empty).unwrap();
     let sparse_wrapped = outbe_ocomp_protocol::list::root_hash(
-        ListKind::ContributorActions,
+        ListKind::NodActions,
         1,
         sparse_coverage.subtree_height,
         sparse_coverage.tree_root,
     )
     .unwrap();
     let canonical_sparse = ordered_list_root(
-        ListKind::ContributorActions,
+        ListKind::NodActions,
         &sparse_items,
         OrderedListLimits::new(1, 16, 32),
     )
@@ -465,11 +460,12 @@ fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots
     assert_ne!(sparse_wrapped, canonical_sparse);
 
     let non_adjacent =
-        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::ContributorActions, 2)
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 2)
             .unwrap();
     assert!(sparse.merge_adjacent(non_adjacent).is_err());
     let wrong_kind =
-        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 1).unwrap();
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::BucketRecords, 1)
+            .unwrap();
     assert!(sparse.merge_adjacent(wrong_kind).is_err());
 }
 
@@ -477,11 +473,9 @@ fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots
 fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
     let summary = |primary_ordinal: u32,
                    tribute_count: u32,
-                   contributor_count: u32,
                    marker: u8,
                    first_error_ordinal: Option<u32>| {
         let actions = vec![vec![marker]; usize::try_from(tribute_count).unwrap()];
-        let contributors = vec![vec![marker]; usize::try_from(contributor_count).unwrap()];
         let manifest_entry = vec![vec![marker]];
         let result_hash = vec![vec![marker; 32]];
         RootReduceSummaryV1 {
@@ -505,13 +499,6 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
                 16,
             )
             .unwrap(),
-            contributor_actions: LysisListSubtreeCarrierV1::from_primary_page(
-                ListKind::ContributorActions,
-                primary_ordinal,
-                &contributors,
-                16,
-            )
-            .unwrap(),
             output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
                 ListKind::CompleteOutputManifest,
                 primary_ordinal,
@@ -529,7 +516,6 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
             tribute_count,
             nod_count: tribute_count,
             bucket_count: tribute_count,
-            contributor_count,
             tribute_nominal_total: U256::from(tribute_count) * U256::from(10),
             eligible_nominal_total: U256::from(tribute_count) * U256::from(8),
             lysis_allocation_minor: U256::from(tribute_count) * U256::from(3),
@@ -538,13 +524,13 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
         }
     };
 
-    let left = summary(0, 256, 1, 11, Some(1));
-    let right = summary(1, 1, 1, 12, Some(256));
+    let left = summary(0, 256, 11, Some(1));
+    let right = summary(1, 1, 12, Some(256));
     let merged = left.clone().merge_adjacent(right.clone()).unwrap();
     assert_eq!(merged.covered_primary_start, 0);
     assert_eq!(merged.covered_primary_count, 2);
     assert_eq!(merged.tribute_count, 257);
-    assert_eq!(merged.contributor_count, 2);
+    assert_eq!(merged.eligible_nominal_total, U256::from(2_056));
     assert_eq!(merged.tribute_nominal_total, U256::from(2_570));
     assert_eq!(merged.first_error_ordinal, Some(1));
     assert_eq!(merged.nod_actions.subtree_height, 9);
@@ -559,22 +545,20 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
     overflowing.tribute_nominal_total = U256::MAX;
     assert!(overflowing.merge_adjacent(right.clone()).is_err());
 
-    // Contributor pages are globally owner-sorted, while Tribute totals are
-    // partitioned by the primary Tribute shard. A valid contributor page can
-    // therefore carry more nominal value than the unrelated Tribute page at
-    // the same ordinal. Conservation only becomes meaningful at the complete
-    // root, after all pages are reduced.
-    let mut owner_paged_left = left.clone();
-    owner_paged_left.tribute_nominal_total = U256::from(1_000);
-    owner_paged_left.eligible_nominal_total = U256::from(2_000);
-    let mut owner_paged_right = right.clone();
-    owner_paged_right.tribute_nominal_total = U256::from(1_570);
-    owner_paged_right.eligible_nominal_total = U256::ZERO;
-    encode_root_reduce_summary(&owner_paged_left, &poc_schema_limits())
-        .expect("globally owner-paged leaf is a valid reducer summary");
-    let globally_conserved = owner_paged_left
-        .merge_adjacent(owner_paged_right)
-        .expect("adjacent owner pages reduce independently of primary Tribute totals");
+    // Eligible nominal is a shard total. A valid page may carry more eligible
+    // nominal than its own tribute nominal. Conservation is meaningful only
+    // at the complete root, after every page reduces.
+    let mut eligible_paged_left = left.clone();
+    eligible_paged_left.tribute_nominal_total = U256::from(1_000);
+    eligible_paged_left.eligible_nominal_total = U256::from(2_000);
+    let mut eligible_paged_right = right.clone();
+    eligible_paged_right.tribute_nominal_total = U256::from(1_570);
+    eligible_paged_right.eligible_nominal_total = U256::ZERO;
+    encode_root_reduce_summary(&eligible_paged_left, &poc_schema_limits())
+        .expect("a page whose eligible total exceeds its tribute nominal encodes");
+    let globally_conserved = eligible_paged_left
+        .merge_adjacent(eligible_paged_right)
+        .expect("adjacent pages reduce eligible and tribute totals independently");
     assert_eq!(globally_conserved.eligible_nominal_total, U256::from(2_000));
     assert_eq!(globally_conserved.tribute_nominal_total, U256::from(2_570));
 
@@ -595,11 +579,6 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
             primary_ordinal,
         )
         .unwrap(),
-        contributor_actions: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
-            ListKind::ContributorActions,
-            primary_ordinal,
-        )
-        .unwrap(),
         output_manifest_entries: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
             ListKind::CompleteOutputManifest,
             primary_ordinal,
@@ -613,7 +592,6 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
         tribute_count: 0,
         nod_count: 0,
         bucket_count: 0,
-        contributor_count: 0,
         tribute_nominal_total: U256::ZERO,
         eligible_nominal_total: U256::ZERO,
         lysis_allocation_minor: U256::ZERO,

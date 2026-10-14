@@ -18,14 +18,9 @@ fn cold_restart_streams_exact_result_chunks_only_from_root_reduce_leaves() {
         })
         .collect::<Vec<_>>();
     assert_eq!(first_chunks.len(), 2);
-    assert_eq!(
-        first_chunks
-            .iter()
-            .map(|item| item.chunk().ordered_eligible_contributors.len())
-            .sum::<usize>(),
-        257
-    );
-    let mut locally_repartitioned = false;
+    let nominals = fixture.with_audit(|audit| audit.tribute_nominals().unwrap());
+    let mut tribute_nominal_total = U256::ZERO;
+    let mut eligible_nominal_total = U256::ZERO;
     for (ordinal, item) in first_chunks.iter().enumerate() {
         let ordinal = u32::try_from(ordinal).unwrap();
         assert_eq!(item.output_manifest_entry().chunk_ordinal, ordinal);
@@ -35,16 +30,25 @@ fn cold_restart_streams_exact_result_chunks_only_from_root_reduce_leaves() {
             ResultChunkV1::decode_canonical(item.canonical_chunk_bytes(), &fixture.limits).unwrap(),
             *item.chunk()
         );
-        let chunk_eligible = item
-            .chunk()
-            .ordered_eligible_contributors
-            .iter()
-            .fold(U256::ZERO, |total, contributor| {
-                total.checked_add(contributor.nominal_amount_minor).unwrap()
-            });
-        locally_repartitioned |= chunk_eligible != item.summary().eligible_nominal_total;
+        assert_eq!(
+            item.summary().eligible_nominal_total,
+            item.summary().tribute_nominal_total
+        );
+        tribute_nominal_total = tribute_nominal_total
+            .checked_add(item.summary().tribute_nominal_total)
+            .unwrap();
+        eligible_nominal_total = eligible_nominal_total
+            .checked_add(item.summary().eligible_nominal_total)
+            .unwrap();
     }
-    assert!(locally_repartitioned);
+    let opened_nominal_total = nominals.values().fold(U256::ZERO, |total, nominal| {
+        total.checked_add(*nominal).unwrap()
+    });
+    assert_eq!(tribute_nominal_total, opened_nominal_total);
+    assert_eq!(
+        eligible_nominal_total,
+        fixture.with_audit(|audit| audit.eligible_nominal_total().unwrap())
+    );
 
     let restarted = fixture.result_catalog_steps();
     assert_eq!(restarted, first);
@@ -96,52 +100,6 @@ fn result_catalog_latches_failure_when_a_chunk_changes_after_admission() {
 }
 
 #[test]
-fn result_catalog_rederives_leaf_carriers_from_exact_chunk_bytes() {
-    let fixture =
-        synthetic_fixture_with_result_fault(false, false, ResultCatalogFault::ContributorCarrier);
-    let reader = FilesystemCasReader::open(&fixture.cas_root, CAS_LIMITS).unwrap();
-    let input_refs = VerifiedInputChunkRefCatalog::reopen(
-        &fixture.input_ref_root,
-        &reader,
-        fixture.limits,
-        poc_input_list_limits(),
-    )
-    .unwrap();
-    let admissions =
-        VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
-    let audit = outbe_ocomp::lysis_plan_audit::open_local_plan_audit(
-        &admissions,
-        &input_refs,
-        &reader,
-        &fixture.bundle,
-        &fixture.limits,
-    )
-    .unwrap();
-    let mut cursor = ExactLysisResultCatalogCursorV1::open(&audit).unwrap();
-    assert!(matches!(
-        cursor.next().unwrap().unwrap(),
-        LysisResultCatalogStepV1::RootReduceLeafChecked { chunk_ordinal: 0 }
-    ));
-    assert!(matches!(
-        cursor.next().unwrap().unwrap(),
-        LysisResultCatalogStepV1::Chunk(_)
-    ));
-    assert!(matches!(
-        cursor.next().unwrap().unwrap(),
-        LysisResultCatalogStepV1::RootReduceLeafChecked { chunk_ordinal: 1 }
-    ));
-    assert!(matches!(
-        cursor.next().unwrap(),
-        Err(LysisResultCatalogError::Protocol(
-            outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-                "result chunk ROOT_REDUCE carrier binding"
-            )
-        ))
-    ));
-    assert!(cursor.next().is_none());
-}
-
-#[test]
 fn result_catalog_compares_repartitioned_eligible_totals_only_after_all_chunks() {
     let error = result_catalog_error_for_fault(ResultCatalogFault::EligibleTotal);
     assert!(matches!(
@@ -159,17 +117,6 @@ fn result_catalog_binds_root_reduce_output_header_to_the_leaf_summary() {
         error,
         LysisResultCatalogError::Protocol(outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
             "ROOT_REDUCE leaf output header"
-        ))
-    ));
-}
-
-#[test]
-fn result_catalog_rejects_contributor_reordering_across_chunk_boundaries() {
-    let error = result_catalog_error_for_fault(ResultCatalogFault::ContributorBoundary);
-    assert!(matches!(
-        error,
-        LysisResultCatalogError::Protocol(outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-            "global result contributor order"
         ))
     ));
 }

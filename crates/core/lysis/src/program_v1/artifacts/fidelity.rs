@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::WwdEntityId;
 use outbe_ocomp_protocol::{CanonicalReader, CanonicalWriter, SchemaLimits};
@@ -137,7 +135,6 @@ pub fn encode_fidelity_map_output(
         encoded.write_b256(*observation.tribute_id)?;
         encoded.write_u16(observation.pre_distribution_league)?;
         encoded.write_u16(observation.issuance_league)?;
-        encoded.write_u256(observation.nominal_amount_minor)?;
     }
     encoded.write_u32(
         u32::try_from(output.aggregate.ordered_league_partials.len())
@@ -179,7 +176,6 @@ pub fn decode_fidelity_map_output(
             tribute_id: WwdEntityId::from(input.read_b256()?),
             pre_distribution_league: input.read_u16()?,
             issuance_league: input.read_u16()?,
-            nominal_amount_minor: input.read_u256()?,
         });
     }
     let partial_count = input.read_u32()?;
@@ -237,9 +233,7 @@ fn validate_fidelity_map_output(output: &FidelityMapOutputV1) -> Result<(), Lysi
         ));
     }
 
-    let mut checked_total_nominal = U256::ZERO;
     let mut previous_id = None;
-    let mut expected_partials = BTreeMap::<u16, (u32, U256)>::new();
     for (offset, observation) in output.observations.iter().enumerate() {
         let offset = u32::try_from(offset).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
         if observation.raw_ordinal
@@ -256,29 +250,6 @@ fn validate_fidelity_map_output(output: &FidelityMapOutputV1) -> Result<(), Lysi
             ));
         }
         previous_id = Some(observation.tribute_id);
-        checked_total_nominal = checked_total_nominal
-            .checked_add(observation.nominal_amount_minor)
-            .ok_or(LysisArtifactErrorV1::InvalidEncoding(
-                "Fidelity map nominal overflow",
-            ))?;
-        let expected = expected_partials
-            .entry(observation.issuance_league)
-            .or_insert((0, U256::ZERO));
-        expected.0 = expected
-            .0
-            .checked_add(1)
-            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
-        expected.1 = expected
-            .1
-            .checked_add(observation.nominal_amount_minor)
-            .ok_or(LysisArtifactErrorV1::InvalidEncoding(
-                "Fidelity map league nominal overflow",
-            ))?;
-    }
-    if checked_total_nominal != output.aggregate.checked_total_nominal {
-        return Err(LysisArtifactErrorV1::InvalidEncoding(
-            "Fidelity map aggregate nominal",
-        ));
     }
 
     let (checked_partial_count, checked_partial_nominal) = checked_league_partials(
@@ -287,20 +258,7 @@ fn validate_fidelity_map_output(output: &FidelityMapOutputV1) -> Result<(), Lysi
         "Fidelity map partial nominal overflow",
     )?;
     if checked_partial_count != observation_count
-        || checked_partial_nominal != checked_total_nominal
-        || output
-            .aggregate
-            .ordered_league_partials
-            .iter()
-            .map(|partial| {
-                (
-                    partial.league_id,
-                    (partial.count, partial.nominal_amount_minor),
-                )
-            })
-            .ne(expected_partials
-                .iter()
-                .map(|(league, values)| (*league, *values)))
+        || checked_partial_nominal != output.aggregate.checked_total_nominal
     {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
             "Fidelity map league partial totals",

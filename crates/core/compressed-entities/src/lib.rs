@@ -55,7 +55,7 @@ pub use collection_reconstruction::{
 };
 pub use commitment::{
     body_commitment, derive_poseidon_digest, derive_poseidon_entity_id, identity_field, pbytes,
-    Commitment, CommitmentError, ACTIVE_COMMITMENT_SCHEME, CES1_TAG_BASE, TAG_BODY,
+    Commitment, CommitmentError, ACTIVE_COMMITMENT_SCHEME, CES2_TAG_BASE, TAG_BODY,
     TAG_BYTES_ABSORB, TAG_BYTES_FINAL, TAG_BYTES_INIT, TAG_COLLECTION_KEY, TAG_COLLECTION_ROOT,
     TAG_ID, TAG_KEY, TAG_LEAF, TAG_SEALED_ROOT, TAG_SMT_BASE, TAG_SMT_NORMAL, TAG_SMT_ZERO,
     TAG_TOP_NODE,

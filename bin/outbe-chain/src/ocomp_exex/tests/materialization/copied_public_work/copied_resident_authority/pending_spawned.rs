@@ -1,25 +1,16 @@
 use super::*;
 use alloy_consensus::{BlockHeader as _, Sealable, Transaction as _};
 use alloy_primitives::{Bytes, TxKind};
-use alloy_sol_types::{sol, SolCall, SolValue};
-use outbe_intex::payout::{
-    build_contributor_range_proof, contributor_list_root, decode_contributor_leaf,
-    CONTRIBUTOR_LEAF_BYTES,
-};
+use alloy_sol_types::{sol, SolCall};
 use outbe_node::finalized_frame::{read_bounded_finalized_frames, RethFinalizedFrameSource};
-use outbe_ocomp::{
-    embedded_runtime::{EmbeddedOcompBundleConfigV1, EmbeddedOcompDomainConfigV1},
-    payout_artifact::{write_contributor_payout_artifact, CONTRIBUTOR_PAYOUT_ARTIFACT_FILE},
-    payout_submitter::PayoutTickOutcomeV1,
-};
+use outbe_ocomp::embedded_runtime::{EmbeddedOcompBundleConfigV1, EmbeddedOcompDomainConfigV1};
 use outbe_ocomp_protocol::{
     abi::{encode_protected_materialize_certified_nods_calldata, NOD_FACTORY_ADDRESS},
     result::ExactCountsV1,
     state::ActiveGenerationV1,
 };
 use outbe_primitives::{
-    addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS, METADOSIS_ADDRESS},
-    storage::{readonly::ReadOnlyStorageProvider, StorageHandle},
+    addresses::METADOSIS_ADDRESS,
     OutbeHeader, OutbePrimitives, OutbeReceipt, OutbeTxEnvelope,
 };
 use reth_ethereum::provider::db::{
@@ -46,14 +37,7 @@ const H: u64 = 100;
 // Local ABI copies only: avoids adding an outbe-intexfactory dev dependency.
 // Signatures match its public Solidity interface exactly.
 sol! {
-    struct Round { uint256 amount; uint32 contributorCount; uint256 paidSoFar; uint32 paidLeafCount; }
-    struct Certified { uint64 seriesVersion; bytes32 contributorRoot; uint32 contributorCount; uint256 eligibleNominalTotal; }
-    struct Leaf { address owner; uint256 sourceTributeId; uint256 nominal; }
-    function contributorPayoutRound(uint32 worldwideDay) external view returns (Round);
-    function certifiedContributorGeneration(uint32 worldwideDay) external view returns (Certified);
-    function contributorPaidWord(uint32 worldwideDay, uint32 wordIndex) external view returns (uint256);
     function getActiveLysisGeneration(uint32 wwd) external view returns (bytes);
-    function payContributorBatch(uint32 worldwideDay, uint32 startIndex, Leaf[] leaves, bytes32[] proof) external;
 }
 
 fn isolated(name: &str) -> bool {
@@ -96,54 +80,19 @@ fn isolated(name: &str) -> bool {
     }
 }
 
-fn artifact(public: &Path, f: &Fixture) -> Vec<[u8; CONTRIBUTOR_LEAF_BYTES]> {
-    let _tribute_enclave = outbe_tribute::enclave_client::test_enclave::scope();
-    let limits = poc_schema_limits();
-    let cas = FilesystemCasReader::open(public.join("cas-v1"), CAS_LIMITS).unwrap();
-    let job = hex::encode(f.job_id);
-    let inputs = VerifiedInputChunkRefCatalog::reopen(
-        public.join("exporter-v1/input-refs").join(&job),
-        &cas,
-        limits,
-        poc_input_list_limits(),
-    )
-    .unwrap();
-    let job_root = public.join("supervisor-v1/jobs").join(&job);
-    let admissions =
-        AdmissionCatalogReader::open_existing(job_root.join("admissions"), &cas, limits).unwrap();
-    let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_audit(
-        &admissions,
-        &inputs,
-        &cas,
-        &f.bundle,
-        &limits,
-    )
-    .unwrap();
-    let count = write_contributor_payout_artifact(&audit, &job_root).unwrap();
-    assert_eq!(count, f.nod_count);
-    let bytes = fs::read(job_root.join(CONTRIBUTOR_PAYOUT_ARTIFACT_FILE)).unwrap();
-    assert_eq!(bytes.len(), count as usize * CONTRIBUTOR_LEAF_BYTES);
-    bytes
-        .chunks_exact(CONTRIBUTOR_LEAF_BYTES)
-        .map(|chunk| chunk.try_into().unwrap())
-        .collect()
-}
-
-// Typed ActiveGeneration is a SCRIPTED response, bound to this job and audit.
+// Typed ActiveGeneration is a SCRIPTED response, bound to this job.
 // It is not written into Metadosis and is not evidence of canonical activation.
-fn scripted_active(f: &Fixture, leaves: &[[u8; CONTRIBUTOR_LEAF_BYTES]]) -> Vec<u8> {
+fn scripted_active(f: &Fixture) -> Vec<u8> {
     ActiveGenerationV1 {
         job_id: f.job_id,
         program_semantics_hash: f.bundle.bundle().lysis_program_semantics_hash,
         nod_root: f.nod_root,
         bucket_root: f.bucket_root,
-        contributor_root: contributor_list_root(leaves.len() as u32, leaves.iter()).unwrap(),
         output_manifest_root: f.output_manifest_root,
         exact_counts: ExactCountsV1 {
             tribute_count: f.nod_count,
             nod_count: f.nod_count,
             bucket_count: f.nod_count,
-            contributor_count: leaves.len() as u32,
             semantic_event_count: 0,
         },
         result_evidence_hash: f.output_manifest_root,
@@ -153,38 +102,8 @@ fn scripted_active(f: &Fixture, leaves: &[[u8; CONTRIBUTOR_LEAF_BYTES]]) -> Vec<
     .unwrap()
 }
 
-fn expected_payout(f: &Fixture, leaves: &[[u8; CONTRIBUTOR_LEAF_BYTES]]) -> Vec<u8> {
-    payContributorBatchCall {
-        worldwideDay: f.day.into(),
-        startIndex: 0,
-        leaves: leaves[..256]
-            .iter()
-            .map(|bytes| {
-                let leaf = decode_contributor_leaf(bytes);
-                Leaf {
-                    owner: leaf.owner,
-                    sourceTributeId: leaf.source_tribute_id,
-                    nominal: leaf.nominal,
-                }
-            })
-            .collect(),
-        proof: build_contributor_range_proof(leaves.len() as u32, 0, leaves.iter()).unwrap(),
-    }
-    .abi_encode()
-}
-
-fn contributor_totals(leaves: &[[u8; CONTRIBUTOR_LEAF_BYTES]]) -> (u32, B256, U256) {
-    let count = leaves.len() as u32;
-    let root = contributor_list_root(count, leaves.iter()).unwrap();
-    let total = leaves.iter().fold(U256::ZERO, |sum, leaf| {
-        sum.checked_add(decode_contributor_leaf(leaf).nominal)
-            .unwrap()
-    });
-    (count, root, total)
-}
-
 // Added below: native fixture owners and signed native-frame writer.
-fn seed_native(root: &Path, f: &Fixture, sender: Address, leaves: &[[u8; CONTRIBUTOR_LEAF_BYTES]]) {
+fn seed_native(root: &Path, f: &Fixture, sender: Address) {
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use reth_ethereum::provider::db::{
         database::Database, init_db, mdbx::DatabaseArguments, transaction::DbTx,
@@ -196,19 +115,6 @@ fn seed_native(root: &Path, f: &Fixture, sender: Address, leaves: &[[u8; CONTRIB
     owner.set_block_number(1);
     StorageHandle::enter(&mut owner, |storage| {
         f.seed_pending_head(&storage);
-        let intex = outbe_intex::schema::IntexContract::new(storage.clone());
-        let (count, root, total) = contributor_totals(leaves);
-        intex.ocomp_contributor_root.write(&f.day, root).unwrap();
-        intex
-            .ocomp_contributor_metadata
-            .write(&f.day, U256::ONE | (U256::from(count) << 64))
-            .unwrap();
-        intex
-            .ocomp_eligible_nominal_total
-            .write(&f.day, total)
-            .unwrap();
-        outbe_intex::api::open_certified_payout_round(&storage, f.day.into(), U256::from(10_000))
-            .unwrap();
         seed_native_validator(storage, sender);
     });
     let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
@@ -357,88 +263,9 @@ fn signed_frames(
     points
 }
 
-fn native_payout_replies(
-    chain_root: &Path,
-    f: &Fixture,
-    active: Vec<u8>,
-) -> BTreeMap<(Address, Vec<u8>), Vec<u8>> {
-    let provider = copied_native::provider(chain_root);
-    let state = provider.latest().unwrap();
-    let reader = OcompExExStateReaderV1 {
-        state: state.as_ref(),
-    };
-    let mut readonly = ReadOnlyStorageProvider::new_with_chain_identity(
-        reader,
-        copied_native::chain().chain().id(),
-        copied_native::chain().genesis_hash(),
-    );
-    let storage = StorageHandle::new(&mut readonly);
-    let mut replies = BTreeMap::new();
-    let mut day: u32 = f.day.into();
-    for _ in 0..=PAYOUT_LOOKBACK_DAYS {
-        let round = outbe_intex::api::certified_payout_round(&storage, day).unwrap();
-        let generation =
-            outbe_intex::api::certified_contributor_generation(&storage, WorldwideDay::from(day))
-                .unwrap();
-        let value = match round {
-            Some(round) => Round {
-                amount: round.amount,
-                contributorCount: generation.as_ref().unwrap().contributor_count,
-                paidSoFar: round.paid_so_far,
-                paidLeafCount: round.paid_leaf_count,
-            },
-            None => Round {
-                amount: U256::ZERO,
-                contributorCount: 0,
-                paidSoFar: U256::ZERO,
-                paidLeafCount: 0,
-            },
-        };
-        replies.insert(
-            (
-                INTEX_FACTORY_ADDRESS,
-                contributorPayoutRoundCall { worldwideDay: day }.abi_encode(),
-            ),
-            value.abi_encode(),
-        );
-        day = outbe_primitives::time::previous_date_key(day);
-    }
+fn scripted_active_replies(f: &Fixture, active: Vec<u8>) -> BTreeMap<(Address, Vec<u8>), Vec<u8>> {
     let day: u32 = f.day.into();
-    let g = outbe_intex::api::certified_contributor_generation(&storage, f.day)
-        .unwrap()
-        .unwrap();
-    assert_eq!(g.contributor_count, 257);
-    let round = outbe_intex::api::certified_payout_round(&storage, day)
-        .unwrap()
-        .unwrap();
-    assert_eq!(round.paid_leaf_count, 0);
-    assert_eq!(round.paid_so_far, U256::ZERO);
-    replies.insert(
-        (
-            INTEX_ADDRESS,
-            certifiedContributorGenerationCall { worldwideDay: day }.abi_encode(),
-        ),
-        Certified {
-            seriesVersion: g.series_version,
-            contributorRoot: g.contributor_root,
-            contributorCount: g.contributor_count,
-            eligibleNominalTotal: g.eligible_nominal_total,
-        }
-        .abi_encode(),
-    );
-    let paid = outbe_intex::api::paid_leaves_word(&storage, day, 0).unwrap();
-    assert_eq!(paid, U256::ZERO);
-    replies.insert(
-        (
-            INTEX_FACTORY_ADDRESS,
-            contributorPaidWordCall {
-                worldwideDay: day,
-                wordIndex: 0,
-            }
-            .abi_encode(),
-        ),
-        paid.abi_encode(),
-    );
+    let mut replies = BTreeMap::new();
     // Sole state-view exception: typed fixture response, not a Metadosis read.
     replies.insert(
         (
@@ -556,14 +383,14 @@ async fn exercise(validator: bool) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn copied_validator_spawns_pending_nod_and_payout_after_eligible_frame() {
-    if isolated("copied_validator_spawns_pending_nod_and_payout_after_eligible_frame") {
+async fn copied_validator_spawns_pending_nod_after_eligible_frame() {
+    if isolated("copied_validator_spawns_pending_nod_after_eligible_frame") {
         exercise(true).await;
     }
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn copied_fullnode_with_resident_keys_never_submits_pending_nod_or_payout() {
-    if isolated("copied_fullnode_with_resident_keys_never_submits_pending_nod_or_payout") {
+async fn copied_fullnode_with_resident_keys_never_submits_pending_nod() {
+    if isolated("copied_fullnode_with_resident_keys_never_submits_pending_nod") {
         exercise(false).await;
     }
 }

@@ -23,6 +23,8 @@ use outbe_lysis::program_v1::planner::LysisPlanTopologyV1;
 use outbe_lysis::program_v1::ObservationValueV1;
 use outbe_lysis::program_v1::ObservedTributeV1;
 
+use super::tribute_nominal::{refill_nominal, shard_tribute_nominals};
+
 use outbe_ocomp_protocol::common::BoundedBytes;
 
 use outbe_ocomp_protocol::input::AuthenticatedOpeningV1;
@@ -208,6 +210,10 @@ pub(in super::super) fn execute_amount_map_unit(
     let entry_prices =
         evaluate_entry_prices(WorldwideDay::new(manifest.wwd), &reference_isos, &raw_slots)
             .map_err(|_| WorkerError::UnitBindingMismatch)?;
+    let nominals = shard_tribute_nominals(input_chunks, shard_ordinal)?;
+    if nominals.len() != enumerated.ordered_records.len() {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
     let mut observed = Vec::new();
     observed
         .try_reserve_exact(enumerated.ordered_records.len())
@@ -223,8 +229,10 @@ pub(in super::super) fn execute_amount_map_unit(
         {
             return Err(WorkerError::UnitBindingMismatch);
         }
+        let mut tribute = record.tribute.clone();
+        refill_nominal(&mut tribute, &nominals)?;
         observed.push(ObservedTributeV1 {
-            tribute: record.tribute.clone(),
+            tribute,
             first_league: ObservationValueV1::Value(fidelity.pre_distribution_league),
             second_league: ObservationValueV1::Value(fidelity.issuance_league),
             entry_price_minor: entry_prices

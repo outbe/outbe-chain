@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use ckb_smt_pristine as pristine;
-use outbe_poseidon::{Poseidon, PoseidonHasher};
+use outbe_poseidon::{Poseidon2, PoseidonHasher};
 use outbe_sparse_merkle_tree_v061::{
     merge::{hash_base_node, merge, merge_with_zero, MergeValue},
     traits::Hasher,
@@ -46,11 +46,13 @@ fn reference_field_word(value: Fr) -> [u8; 32] {
 }
 
 /// Deliberately bypasses `PoseidonCkbHasher` and its transcript classifier.
-/// Each CKB operation below supplies its CES1 domain and field inputs directly,
+/// Each CKB operation below supplies its CES2 domain and field inputs directly,
 /// making this a small independent reference for the adapter boundary.
 fn reference_poseidon(tag: u64, inputs: &[Fr]) -> H256 {
-    let mut hasher = Poseidon::<Fr>::with_domain_tag_circom(inputs.len(), Fr::from(tag)).unwrap();
-    H256::from(reference_field_word(hasher.hash(inputs).unwrap()))
+    let mut tagged = vec![Fr::from(tag)];
+    tagged.extend_from_slice(inputs);
+    let mut hasher = Poseidon2::<Fr>::new();
+    H256::from(reference_field_word(hasher.hash(&tagged).unwrap()))
 }
 
 /// Small test-only SMT model built directly from the normative CKB path and
@@ -320,7 +322,7 @@ fn ckb_poseidon_operations_match_direct_reference_and_fixed_numeric_vectors() {
     assert_eq!(base, base_reference);
     assert_eq!(
         hex::encode(<[u8; 32]>::from(base)),
-        "040823651d7e1b1e06319b642420f12663c76eb676b3e537dc12b69004c15274"
+        "2d1015e5058ae052a2448fefd6b6257b5d792118992a72b9c857a6da4b3abac7"
     );
 
     let normal = merge::<PoseidonCkbHasher>(
@@ -344,7 +346,7 @@ fn ckb_poseidon_operations_match_direct_reference_and_fixed_numeric_vectors() {
     assert_eq!(normal_hash, normal_reference);
     assert_eq!(
         hex::encode(<[u8; 32]>::from(normal_hash)),
-        "11b351f30ad8ef1236b9ebbd92ec10b02ccbc0f803851979f0e8272035cbb6c9"
+        "0e51c09b46d418f2934214acf6f1f96c7c0cea64f7791058ad731e68a1315bc7"
     );
 
     let compact =
@@ -375,7 +377,7 @@ fn ckb_poseidon_operations_match_direct_reference_and_fixed_numeric_vectors() {
     assert_eq!(compact_hash, compact_reference);
     assert_eq!(
         hex::encode(<[u8; 32]>::from(compact_hash)),
-        "24f4b67dad9a4d9534472e1a13b1c7bca78515bf7bab4a8eca6fd7ba8a41d9e4"
+        "2b6c7d6f1a219df7b5cdadac47a3f553c9d9cbd8b09158870daea9a76ae85729"
     );
 
     let wrapped = merge_with_zero::<PoseidonCkbHasher>(
@@ -414,7 +416,7 @@ fn ckb_poseidon_operations_match_direct_reference_and_fixed_numeric_vectors() {
     assert_eq!(wrapped_hash, wrapped_reference);
     assert_eq!(
         hex::encode(<[u8; 32]>::from(wrapped_hash)),
-        "070191cbbfd2b6f37f860a5ce6122fa730582505908181ead344e8c030c08e18"
+        "1688f042ea43c872a0b4b77f9f231ad44d48eec1ac95b8aa9b0890f482adf8e2"
     );
 }
 
@@ -755,5 +757,33 @@ fn production_roots_match_independent_model_across_random_mutation_sequences() {
             reference_root(&reference),
             "independent SMT root mismatch after mutation {step}"
         );
+    }
+}
+
+#[test]
+fn pinned_noir_single_leaf_and_empty_tree_proofs_conform() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../vectors/ces2-noir-poseidon2.json")).unwrap();
+    for vector in vectors["smt_proofs"].as_array().unwrap() {
+        let bytes = |name: &str| {
+            hex::decode(vector[name].as_str().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap()
+        };
+        let key = TreeKey::from_be_bytes(bytes("key")).unwrap();
+        let leaf = TreeLeaf::from_be_bytes(bytes("leaf")).unwrap();
+        let root = TreeRoot::from_be_bytes(bytes("root")).unwrap();
+        let proof =
+            TreeProof::from_bytes(hex::decode(vector["proof_hex"].as_str().unwrap()).unwrap());
+        let mut tree = PoseidonSmt::empty();
+        if leaf != TreeLeaf::ZERO {
+            tree.update_all(vec![(key, leaf)]).unwrap();
+        }
+        assert_eq!(tree.root().unwrap(), root);
+        assert_eq!(tree.prove(vec![key]).unwrap().as_bytes(), proof.as_bytes());
+        tree.verify(root, &proof, vec![(key, leaf)]).unwrap();
+        let wrong_leaf = TreeLeaf::from_be_bytes(field_word(8)).unwrap();
+        assert!(tree.verify(root, &proof, vec![(key, wrong_leaf)]).is_err());
     }
 }

@@ -95,11 +95,7 @@ hex.workspace = true
 # so the enclave->math edge does not cycle with fidelity's `test-enclave` seam.
 outbe-fidelity-math.workspace = true
 
-# Poseidon-BN254 (same Circom parameters as `outbe-evm::zk` and the wallet) for
-# in-enclave `tribute_id` derivation. Claim hashing comes from `outbe-zk`, not
-# `outbe-zk-backend`: the backend links Barretenberg FFI, which does not belong
-# in the enclave.
-outbe-poseidon.workspace = true
+# Claim hashing avoids the Barretenberg FFI backend in the enclave.
 outbe-zk.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true

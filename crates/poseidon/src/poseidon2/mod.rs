@@ -27,7 +27,7 @@ const RATE: usize = 3;
 /// Permutation state width.
 const T: usize = 4;
 
-/// This Poseidon2 hasher supports the generic prime field `F`, as does [`crate::Poseidon`].
+/// This Poseidon2 hasher supports the generic prime field `F`.
 ///
 /// The round constants and matrix diagonal depend on the field.
 /// The hasher borrows a `'static` [`Poseidon2Config<F>`](Poseidon2Config) for these values.
@@ -179,7 +179,7 @@ impl Default for Poseidon2<ark_bn254::Fr> {
 impl<F: PrimeField> PoseidonHasher<F> for Poseidon2<F> {
     /// This method hashes `inputs` with the Poseidon2 sponge.
     /// The sponge cannot fail, so the method always returns `Ok`.
-    /// The `Result` type keeps the trait compatible with [`crate::Poseidon`].
+    /// The `Result` type preserves the shared protocol hasher trait.
     fn hash(&mut self, inputs: &[F]) -> Result<F, PoseidonError> {
         Ok(self.sponge(inputs))
     }

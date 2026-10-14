@@ -56,7 +56,7 @@ use outbe_ocomp_protocol::input::{
     InputManifestV1,
 };
 use outbe_ocomp_protocol::intent::{
-    ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType, FrozenMetadosisValuesV1,
+    ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1,
     JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
     TributeInputBindingV1,
 };
@@ -1379,61 +1379,6 @@ fn real_worker_processes_execute_through_output_finalize() {
         )
         .expect("publish OutputFinalize shuffle producer");
     finalized_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
-    let owner_spec = planner
-        .shuffle_unit_at(
-            UnitPhase::OwnerShuffle,
-            0,
-            &[output_finalize_artifact.unit_id],
-            &limits,
-        )
-        .expect("derive OwnerShuffle leaf");
-    let owner_offset = output_finalize_offset
-        .checked_add(topology.phase_unit_count(UnitPhase::OutputFinalize))
-        .expect("OwnerShuffle offset");
-    let owner_artifact = execute_real_worker_unit(
-        505,
-        0x9A,
-        directory.path(),
-        cas_limits,
-        &inbox_root,
-        inbox_limits,
-        limits,
-        &owner_spec,
-        owner_offset,
-        plan_hash,
-        plan_ref.clone(),
-        published.manifest_ref.clone(),
-        vec![finalized_ref.clone()],
-    );
-    owner_artifact
-        .validate_against(&owner_spec, &limits)
-        .expect("validate OwnerShuffle artifact");
-    let owner_root = ShuffleRunArtifactV1::decode_canonical(
-        owner_artifact.phase_payload(&limits).unwrap(),
-        &limits,
-    )
-    .expect("decode OwnerShuffle root");
-    owner_root
-        .validate_root_semantics(&limits)
-        .expect("validate OwnerShuffle root");
-    assert_eq!(owner_root.kind, ShuffleRunKindV1::Owner);
-    assert_eq!(owner_root.record_count, 1);
-    verify_lysis_shuffle_phase_replay(
-        owner_offset,
-        &owner_spec,
-        &owner_artifact,
-        &plan,
-        &manifest,
-        std::slice::from_ref(&output_finalize_artifact),
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
-        &limits,
-    )
-    .expect("supervisor semantic replay accepts exact OwnerShuffle bytes");
-    adopt_lysis_shuffle_descendants(owner_root.clone(), &inbox, &cas, &limits)
-        .expect("publish exact OwnerShuffle descendants to authoritative CAS");
-
     let bucket_spec = planner
         .shuffle_unit_at(
             UnitPhase::BucketShuffle,
@@ -1442,8 +1387,8 @@ fn real_worker_processes_execute_through_output_finalize() {
             &limits,
         )
         .expect("derive BucketShuffle leaf");
-    let bucket_offset = owner_offset
-        .checked_add(topology.phase_unit_count(UnitPhase::OwnerShuffle))
+    let bucket_offset = output_finalize_offset
+        .checked_add(topology.phase_unit_count(UnitPhase::OutputFinalize))
         .expect("BucketShuffle offset");
     let bucket_artifact = execute_real_worker_unit(
         506,
@@ -1489,14 +1434,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     adopt_lysis_shuffle_descendants(bucket_root.clone(), &inbox, &cas, &limits)
         .expect("publish exact BucketShuffle descendants to authoritative CAS");
 
-    let mut owner_ref = cas
-        .publish_bytes(
-            &owner_artifact
-                .encode_canonical(&limits)
-                .expect("canonical OwnerShuffle root producer"),
-        )
-        .expect("publish OwnerShuffle root producer");
-    owner_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
     let mut bucket_ref = cas
         .publish_bytes(
             &bucket_artifact
@@ -1510,7 +1447,6 @@ fn real_worker_processes_execute_through_output_finalize() {
             0,
             &[
                 Some(output_finalize_artifact.unit_id),
-                Some(owner_artifact.unit_id),
                 Some(bucket_artifact.unit_id),
             ],
             &limits,
@@ -1532,7 +1468,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         plan_hash,
         plan_ref,
         published.manifest_ref,
-        vec![finalized_ref, owner_ref, bucket_ref],
+        vec![finalized_ref, bucket_ref],
     );
     root_reduce_artifact
         .validate_against(&root_reduce_spec, &limits)
@@ -1545,7 +1481,6 @@ fn real_worker_processes_execute_through_output_finalize() {
         &manifest,
         &[
             output_finalize_artifact.clone(),
-            owner_artifact.clone(),
             bucket_artifact.clone(),
         ],
         &bundle,
@@ -1583,7 +1518,6 @@ fn real_worker_processes_execute_through_output_finalize() {
         &manifest,
         &[
             output_finalize_artifact.clone(),
-            owner_artifact.clone(),
             bucket_artifact.clone(),
         ],
         &bundle,
@@ -1602,12 +1536,11 @@ fn real_worker_processes_execute_through_output_finalize() {
     assert_eq!(summary.tribute_count, 1);
     assert_eq!(summary.nod_count, 1);
     assert_eq!(summary.bucket_count, 1);
-    assert_eq!(summary.contributor_count, 1);
     assert_eq!(summary.tribute_nominal_total, tribute.nominal_amount_minor);
     assert_eq!(summary.eligible_nominal_total, tribute.nominal_amount_minor);
     assert_eq!(
         summary.lysis_allocation_minor,
-        finalized.ordered_records[0].nod_action.gratis_load_minor
+        amount.checked_segment_gratis_total
     );
 
     let inbox = WorkerInbox::open(&inbox_root, inbox_limits).expect("reopen worker inbox");
@@ -1619,7 +1552,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     assert_eq!(chunk.chunk_ordinal, 0);
     assert_eq!(chunk.first_nod_ordinal, 0);
     assert_eq!(chunk.ordered_nod_actions.len(), 1);
-    assert_eq!(chunk.ordered_eligible_contributors.len(), 1);
     assert_eq!(
         chunk.result_chunk_hash(&limits).unwrap(),
         output_manifest_entry.result_chunk_hash
@@ -1669,12 +1601,6 @@ fn real_worker_processes_execute_through_output_finalize() {
                 namespace_root_before: B256::repeat_byte(0x46),
                 max_nod_count: manifest.tribute_count,
             },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: day.value(),
-                expected_series_version: 1,
-                max_contributor_count: manifest.tribute_count,
-                max_eligible_nominal_total: manifest.tribute_nominal_total,
-            },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: day.value(),
                 pending_nonce: 0,
@@ -1699,7 +1625,6 @@ fn real_worker_processes_execute_through_output_finalize() {
         prefix_down_root_artifact,
         prefix_down_leaf_artifact,
         output_finalize_artifact,
-        owner_artifact,
         bucket_artifact,
         root_reduce_artifact,
     ];
@@ -1746,6 +1671,7 @@ fn real_worker_processes_execute_through_output_finalize() {
                         canonical_chunk_bytes: chunk_bytes,
                     })),
                     bucket_records: std::iter::once(Ok(bucket_record.clone())),
+                    eligible_nominal_total: tribute.nominal_amount_minor,
                 },
                 &limits,
             )
@@ -1762,7 +1688,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     assert_eq!(result.tribute_count, 1);
     assert_eq!(result.counts.nod_count, 1);
     assert_eq!(result.counts.bucket_count, 1);
-    assert_eq!(result.counts.contributor_count, 1);
     assert_eq!(result.result_chunk_count, 1);
 
     let replay = run_finalizer(
@@ -1982,11 +1907,8 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                     owner: *owner,
                     worldwide_day: day,
                     league_id: 1,
-                    nominal_amount_minor: U256::from(raw_ordinal + 1),
                     gratis_fraction_fp: U256::ZERO,
-                    gratis_load_minor: U256::from(1),
                     entry_price_minor: U256::from(2),
-                    settlement_cost_minor: U256::from(4),
                     issuance_currency: 840,
                     reference_currency: 978,
                     exclude_from_intex_issuance: raw_ordinal == 0,
@@ -1994,6 +1916,14 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             })
             .collect::<Vec<_>>();
         let shard_count = end - start;
+        let nominal_total = (start..end).fold(U256::ZERO, |sum, ordinal| {
+            sum + U256::from(u64::from(ordinal) + 1)
+        });
+        let eligible_total = if start == 0 {
+            nominal_total - U256::ONE
+        } else {
+            nominal_total
+        };
         let incoming_remaining = U256::from(10_000_u64 - u64::from(start));
         let finalized = output_finalize(
             &AmountRunV1 {
@@ -2001,6 +1931,9 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                 end_ordinal: end,
                 ordered_records: amount_records,
                 checked_segment_gratis_total: U256::from(shard_count),
+                checked_segment_nominal_total: nominal_total,
+                checked_segment_eligible_nominal_total: eligible_total,
+                checked_segment_settlement_cost_total: U256::from(shard_count) * U256::from(4),
             },
             &GratisLeafPrefixV1 {
                 segment_ordinal: shard_ordinal,
@@ -2061,118 +1994,10 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         .and_then(|value| value.checked_add(topology.phase_unit_count(UnitPhase::GratisPrefix)))
         .and_then(|value| value.checked_add(topology.phase_unit_count(UnitPhase::GratisPrefixDown)))
         .expect("merge OutputFinalize offset");
-    let owner_offset = output_finalize_offset
+    let bucket_offset = output_finalize_offset
         .checked_add(topology.phase_unit_count(UnitPhase::OutputFinalize))
-        .expect("merge OwnerShuffle offset");
-    let mut owner_artifacts = Vec::new();
-    for (ordinal, finalized_artifact) in finalized_artifacts.iter().enumerate() {
-        let mut producer_ref = cas
-            .publish_bytes(
-                &finalized_artifact
-                    .encode_canonical(&limits)
-                    .expect("canonical merge finalized producer"),
-            )
-            .expect("publish merge finalized producer");
-        producer_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
-        let owner_spec = planner
-            .shuffle_unit_at(
-                UnitPhase::OwnerShuffle,
-                u32::try_from(ordinal).expect("merge owner ordinal"),
-                &[finalized_artifact.unit_id],
-                &limits,
-            )
-            .expect("derive merge owner leaf");
-        let artifact = execute_real_worker_unit(
-            700 + u64::try_from(ordinal).expect("merge generation"),
-            0xa0 + u8::try_from(ordinal).expect("merge boot"),
-            directory.path(),
-            cas_limits,
-            &inbox_root,
-            inbox_limits,
-            limits,
-            &owner_spec,
-            owner_offset + u32::try_from(ordinal).expect("merge phase ordinal"),
-            plan_hash,
-            plan_ref.clone(),
-            manifest_ref.clone(),
-            vec![producer_ref],
-        );
-        artifact
-            .validate_against(&owner_spec, &limits)
-            .expect("validate merge owner leaf artifact");
-        owner_artifacts.push(artifact);
-    }
-
-    let mut owner_refs = Vec::new();
-    for artifact in &owner_artifacts {
-        let mut reference = cas
-            .publish_bytes(
-                &artifact
-                    .encode_canonical(&limits)
-                    .expect("canonical owner merge producer"),
-            )
-            .expect("publish owner merge producer");
-        reference.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
-        owner_refs.push(reference);
-    }
-    let merge_spec = planner
-        .shuffle_unit_at(
-            UnitPhase::OwnerShuffle,
-            2,
-            &[owner_artifacts[0].unit_id, owner_artifacts[1].unit_id],
-            &limits,
-        )
-        .expect("derive owner internal merge");
-    let merged_artifact = execute_real_worker_unit(
-        702,
-        0xa2,
-        directory.path(),
-        cas_limits,
-        &inbox_root,
-        inbox_limits,
-        limits,
-        &merge_spec,
-        owner_offset + 2,
-        plan_hash,
-        plan_ref.clone(),
-        manifest_ref.clone(),
-        owner_refs,
-    );
-    merged_artifact
-        .validate_against(&merge_spec, &limits)
-        .expect("validate owner internal merge artifact");
-    let root = ShuffleRunArtifactV1::decode_canonical(
-        merged_artifact.phase_payload(&limits).unwrap(),
-        &limits,
-    )
-    .expect("decode owner internal merge root");
-    assert_eq!(root.kind, ShuffleRunKindV1::Owner);
-    assert_eq!(root.run_span.start_run, 0);
-    assert_eq!(root.run_span.end_run, 2);
-    assert_eq!(root.source_coverage_count, tribute_count);
-    assert_eq!(root.record_count, tribute_count - 1);
-
-    let inbox = WorkerInbox::open(&inbox_root, inbox_limits).expect("open merge inbox");
-    let adopted = adopt_lysis_shuffle_descendants(root.clone(), &inbox, &cas, &limits)
-        .expect("adopt owner internal merge closure");
-    assert_eq!(adopted.verified_record_count, tribute_count - 1);
-    let records = verified_shuffle_run_records(root, &limits, |reference| {
-        cas.read_verified(reference)
-            .map(|object| object.bytes().to_vec())
-            .map_err(|_| {
-                outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-                    "adopted owner merge descendant",
-                )
-            })
-    })
-    .expect("open adopted owner merge")
-    .collect::<Result<Vec<_>, _>>()
-    .expect("traverse adopted owner merge");
-    assert_eq!(records.len(), (tribute_count - 1) as usize);
-
-    let bucket_offset = owner_offset
-        .checked_add(topology.phase_unit_count(UnitPhase::OwnerShuffle))
         .expect("merge BucketShuffle offset");
+    let inbox = WorkerInbox::open(&inbox_root, inbox_limits).expect("open merge inbox");
     let mut bucket_artifacts = Vec::new();
     for (ordinal, finalized_artifact) in finalized_artifacts.iter().enumerate() {
         let mut producer_ref = cas
@@ -2279,14 +2104,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     .expect("traverse adopted bucket merge");
     assert_eq!(bucket_records.len(), tribute_count as usize);
 
-    let mut owner_root_ref = cas
-        .publish_bytes(
-            &merged_artifact
-                .encode_canonical(&limits)
-                .expect("canonical merged owner root producer"),
-        )
-        .expect("publish merged owner root producer");
-    owner_root_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
     let mut bucket_root_ref = cas
         .publish_bytes(
             &merged_bucket_artifact
@@ -2306,7 +2123,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                 ordinal,
                 &[
                     Some(finalized_artifact.unit_id),
-                    Some(merged_artifact.unit_id),
                     Some(merged_bucket_artifact.unit_id),
                 ],
                 &limits,
@@ -2333,11 +2149,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             plan_hash,
             plan_ref.clone(),
             manifest_ref.clone(),
-            vec![
-                finalized_ref,
-                owner_root_ref.clone(),
-                bucket_root_ref.clone(),
-            ],
+            vec![finalized_ref, bucket_root_ref.clone()],
         );
         artifact
             .validate_against(&leaf_spec, &limits)
@@ -2351,20 +2163,18 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             panic!("root reduce primary unit must emit LEAF");
         };
         let expected_count = if ordinal == 0 { 256 } else { 1 };
-        let expected_contributor_count = if ordinal == 0 { 256 } else { 0 };
         let expected_tribute_nominal = if ordinal == 0 {
             U256::from(256_u32) * U256::from(257_u32) / U256::from(2)
         } else {
             U256::from(257_u32)
         };
         let expected_eligible_nominal = if ordinal == 0 {
-            tribute_nominal_total - U256::from(1)
+            expected_tribute_nominal - U256::from(1)
         } else {
-            U256::ZERO
+            expected_tribute_nominal
         };
         assert_eq!(summary.tribute_count, expected_count);
         assert_eq!(summary.tribute_nominal_total, expected_tribute_nominal);
-        assert_eq!(summary.contributor_count, expected_contributor_count);
         assert_eq!(summary.eligible_nominal_total, expected_eligible_nominal);
         let chunk_object = inbox
             .read_result_chunk(&output_manifest_entry.result_chunk_ref, &limits)
@@ -2373,10 +2183,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             .expect("decode real root reduce ResultChunkV1");
         assert_eq!(chunk.chunk_ordinal, ordinal);
         assert_eq!(chunk.ordered_nod_actions.len(), expected_count as usize);
-        assert_eq!(
-            chunk.ordered_eligible_contributors.len(),
-            expected_contributor_count as usize
-        );
         root_reduce_leaf_artifacts.push(artifact);
     }
 
@@ -2431,7 +2237,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     assert_eq!(reduced.covered_primary_count, 2);
     assert_eq!(reduced.tribute_count, tribute_count);
     assert_eq!(reduced.tribute_nominal_total, tribute_nominal_total);
-    assert_eq!(reduced.contributor_count, tribute_count - 1);
     assert_eq!(
         reduced.eligible_nominal_total,
         tribute_nominal_total - U256::from(1)

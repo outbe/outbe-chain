@@ -2,7 +2,7 @@
 
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
-/// Opens the payout rounds whose proceeds deadline passed.
+/// Burns ready proceeds pots whose fan-in deadline has passed.
 pub fn sweep_proceeds(ctx: &BlockRuntimeContext) -> Result<()> {
     crate::runtime::sweep_proceeds_deadlines(&ctx.storage, ctx.block.timestamp)
 }

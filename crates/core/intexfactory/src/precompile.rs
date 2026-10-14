@@ -28,7 +28,7 @@ sol!(
 );
 
 // Arming the proceeds fan-in is production work of the issuance leg, which a
-// payout e2e never reaches: it runs no auction, so it issues nothing. This
+// proceeds e2e never reaches: it runs no auction, so it issues nothing. This
 // stages that one precondition and exists only in a throwaway build.
 #[cfg(feature = "e2e-test")]
 sol! {
@@ -263,8 +263,11 @@ pub fn dispatch(
                         },
                     )
                 }),
+                powDifficulty(_) => metadata::<IIntexFactory::powDifficultyCall>(|| {
+                    Ok(outbe_common::pow::POW_DIFFICULTY)
+                }),
                 // The only payable selector: credits auction proceeds (msg.value)
-                // from the source chain into the day's pot.
+                // from the source chain into the day's pot. A ready pot is burned.
                 distribute(c) => mutate_void_payable(
                     &storage,
                     c,
@@ -283,23 +286,6 @@ pub fn dispatch(
                         )
                     },
                 ),
-                // Permissionless: the merkle proof is the authorization, so the
-                // sender is irrelevant to the outcome.
-                payContributorBatch(c) => mutate_void(&storage, c, caller, |_sender, c| {
-                    runtime::pay_contributor_batch(
-                        &storage,
-                        c.worldwideDay,
-                        c.startIndex,
-                        &c.leaves,
-                        &c.proof,
-                    )
-                }),
-                contributorPayoutRound(c) => view(c, |c| {
-                    runtime::contributor_payout_round(&storage, c.worldwideDay)
-                }),
-                contributorPaidWord(c) => view(c, |c| {
-                    outbe_intex::api::paid_leaves_word(&storage, c.worldwideDay, c.wordIndex)
-                }),
                 seriesUnitCounts(c) => view(c, |c| {
                     runtime::series_unit_counts(&storage, c.seriesId.into())
                 }),

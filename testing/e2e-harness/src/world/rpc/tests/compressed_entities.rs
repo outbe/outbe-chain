@@ -6,7 +6,7 @@ use outbe_primitives::reshare_artifact::{
 fn package(root: B256) -> CompressedEntityAtHeader {
     let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
         compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-            commitment_scheme_version: 1,
+            commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
             r_sealed: root,
         }),
         ..OutbeBlockArtifacts::default()

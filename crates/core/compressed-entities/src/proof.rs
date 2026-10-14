@@ -6,7 +6,6 @@ mod frozen;
 use alloy_primitives::{Bytes, B256};
 use ark_bn254::Fr;
 use ark_ff::PrimeField;
-use outbe_poseidon::{Poseidon, PoseidonHasher};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -640,8 +639,7 @@ fn top_hash(
         Fr::from_be_bytes_mod_order(&left),
         Fr::from_be_bytes_mod_order(&right),
     ];
-    Poseidon::<Fr>::with_domain_tag_circom(inputs.len(), Fr::from(TAG_TOP_NODE))
-        .and_then(|mut h| h.hash(&inputs))
+    crate::commitment::poseidon(TAG_TOP_NODE, &inputs)
         .map(field_to_be32)
         .map_err(|_| PointReadServiceError::InvalidPackage("top hash"))
 }

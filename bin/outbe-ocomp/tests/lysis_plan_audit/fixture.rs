@@ -1,7 +1,7 @@
 //! Build synthetic input catalogs and faulted result artifacts.
 
 use super::*;
-use outbe_ocomp_protocol::{profile::ProtocolBundleV1, unit::PlanCommitmentV1, SchemaLimits};
+use outbe_ocomp_protocol::{SchemaLimits, profile::ProtocolBundleV1, unit::PlanCommitmentV1};
 use std::path::PathBuf;
 
 struct FixtureOptions {
@@ -18,7 +18,6 @@ struct FixtureSetup {
     job_id: B256,
     day: WorldwideDay,
     tributes: Vec<TributeBodyV1>,
-    contributors_by_owner: Vec<ContributorActionV1>,
     nod_action_tributes: Vec<TributeBodyV1>,
 }
 impl FixtureSetup {
@@ -38,10 +37,6 @@ impl FixtureSetup {
         let day = WorldwideDay::new(20_260_725);
 
         let tributes = fixture_support::tribute_population(day, tribute_count);
-        let mut contributors_by_owner = fixture_support::contributor_population(&tributes);
-        if result_fault == ResultCatalogFault::ContributorBoundary {
-            contributors_by_owner.swap(255, 256);
-        }
         let mut nod_action_tributes = tributes.clone();
         if result_fault == ResultCatalogFault::NodBoundary {
             nod_action_tributes.swap(255, 256);
@@ -54,7 +49,6 @@ impl FixtureSetup {
             job_id,
             day,
             tributes,
-            contributors_by_owner,
             nod_action_tributes,
         }
     }
@@ -312,7 +306,6 @@ impl ResultFixture<'_> {
         let bundle_hash = self.setup.bundle_hash;
         let job_id = self.setup.job_id;
         let tributes = &self.setup.tributes;
-        let contributors_by_owner = &self.setup.contributors_by_owner;
         let nod_action_tributes = &self.setup.nod_action_tributes;
         let result_fault = self.options.result_fault;
         let cas = &self.published.cas;
@@ -323,9 +316,8 @@ impl ResultFixture<'_> {
             u32::try_from(start).unwrap(),
         );
         if result_fault == ResultCatalogFault::AlternateResultChunk && index == 0 {
-            actions[0].settlement_cost_minor = U256::from(3);
+            actions[0].entry_price_minor = U256::from(3);
         }
-        let contributors = contributors_by_owner[start..end].to_vec();
         let chunk = ResultChunkV1 {
             protocol_bundle_hash: bundle_hash,
             job_id,
@@ -333,7 +325,6 @@ impl ResultFixture<'_> {
             chunk_ordinal: index,
             first_nod_ordinal: u32::try_from(start).unwrap(),
             ordered_nod_actions: actions.clone(),
-            ordered_eligible_contributors: contributors.clone(),
         };
         let chunk_hash = chunk.result_chunk_hash(&limits).unwrap();
         let mut chunk_ref = cas
@@ -354,15 +345,11 @@ impl ResultFixture<'_> {
         );
         if index == 1 {
             match result_fault {
-                ResultCatalogFault::ContributorCarrier => {
-                    summary.contributor_actions.tree_root = hash(0xed);
-                }
                 ResultCatalogFault::EligibleTotal => {
                     summary.eligible_nominal_total -= U256::from(1);
                 }
                 ResultCatalogFault::None
                 | ResultCatalogFault::HeaderCoverage
-                | ResultCatalogFault::ContributorBoundary
                 | ResultCatalogFault::NodBoundary
                 | ResultCatalogFault::AlternateResultChunk => {}
             }

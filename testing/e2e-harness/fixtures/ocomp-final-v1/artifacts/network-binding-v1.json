@@ -9,10 +9,10 @@
   "capacity_evidence_sha256": "0x1bbe70942341ba3d2d9809c37e2ded19e93173d25e3e006d7e5166f39e400238",
   "generated_limits_manifest_sha256": "0x5714005fb64ea5714229b552c28445cd7f5e7673af998b0ca172d7ba341a7002",
   "generator_source_sha256": "0x7731daf5a3c228adb8c1813cbda87801824eeab75e4ccfe79558e900f04abe90",
-  "base_genesis_sha256": "0x4fb7e1e04437b320bbfac42a1f396b3330edb97a24caaa9e016223eae85d9238",
+  "base_genesis_sha256": "0x3e2a95ddf5b6af35cd3bf460fd0c0bed4e7920492d6f2c82eb0ed57dd989449f",
   "validators_manifest_sha256": "0xc96a44b8151e5c53823ffa8f4a06e44fa7cd68521c04783a9f36b167f9fb76de",
   "chain_id": 54322345,
-  "genesis_hash": "0xcf75cbeced765d7726f2af5ed539854b8889f1d40fa71b87f537a4b04c6ceb2a",
+  "genesis_hash": "0x61f81593849ef6b0509c0bda1900da160b69575b8ffc4a31fb52d88440d85730",
   "fork_id": "0x1d1378c5bf42070e0326f13d3094f4b7ed3ef42c63edb3179745045f65027eb2",
   "correctness_profile_id": "0x0469002bbc5065d8e9d200daede2a65ec479cad78210d7dadabdd5320d241c8d",
   "correctness_profile_ocb1_sha256": "0x14eb18046535cccf18cb8814230a9c6991952915cd9ea5a80efea901a03d777f",
@@ -21,8 +21,8 @@
   "protocol_bundle_hash": "0x4b9d9fdf2ac5821e210cb1b4f42f9b01dbb10e037ec94b5a8888bf95a4453645",
   "protocol_bundle_ocb1_sha256": "0x5eedab3437780136a9886dfbc052288839f3b7ff8a52b647dc9183e68af85dc3",
   "founder_registration_count": 4,
-  "fork_install_hash": "0x0d264c07da7dfa443b1b97c8cfc0159361be7997dc2e1162bb690e4bc88c0418",
-  "fork_install_ocb1_sha256": "0xff316331d117ea83faa26ec9a4aa915571a2cb51a98eb261516a09cd60439b38",
-  "chain_manifest_sha256": "0x7390cff65fea8653e1059723d831402b933222fd412c30057592896ae7a0d460",
-  "semantic_artifacts_sha256": "0x89fa7bcae97e67e30a22bfdc1e91899f6eaf37b5dd0b2b1728accaaf0903e704"
+  "fork_install_hash": "0x39932713b6c0f94bb704e5e50a65b45b4c47509bdd7d554ea0cb1df98d86cd13",
+  "fork_install_ocb1_sha256": "0x661cda30c3ce2a442729ecf78d29de7f33f2d2c0e66811a2ace79b897dde73c3",
+  "chain_manifest_sha256": "0x71ff9a904cd5213e9ef6b6930eeb466aa071cac864191ca1557cb3aefda98ab1",
+  "semantic_artifacts_sha256": "0x6f4c22e5a69e78da5576021abd869ee57eb31a1d10e7fbe7d85bb717a2c6be84"
 }

@@ -11,7 +11,7 @@ use revm::{
     database_interface::EmptyDB, handler::PrecompileProvider, primitives::hardfork::SpecId,
 };
 
-fn expected_exact_addresses() -> [Address; 40] {
+fn expected_exact_addresses() -> [Address; 39] {
     [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
@@ -41,7 +41,6 @@ fn expected_exact_addresses() -> [Address; 40] {
         ORACLE_ADDRESS,
         ZEROFEE_ADDRESS,
         OUTBE_SYSTEM_TX_ADDRESS,
-        ZKPROOF_POSEIDON_ADDRESS,
         ZKPROOF_GROTH16_ADDRESS,
         TEE_REGISTRY_ADDRESS,
         L2_REGISTRY_ADDRESS,
@@ -182,4 +181,11 @@ fn sponsored_whitelist_excludes_validator_entrypoints() {
             "validator/settlement entrypoint {forbidden:?} must not be sponsored"
         );
     }
+}
+
+#[test]
+fn removed_hash_address_is_unregistered() {
+    let address = alloy_primitives::address!("000000000000000000000000000000000000ee07");
+    assert!(!outbe_precompile_addresses().contains(&address));
+    assert!(build_extended_precompiles().get(&address).is_none());
 }

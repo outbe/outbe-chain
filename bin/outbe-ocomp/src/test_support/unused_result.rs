@@ -95,7 +95,6 @@ fn fixture_result_counts(tribute_count: u32) -> ExactCountsV1 {
         tribute_count,
         nod_count: tribute_count,
         bucket_count: 0,
-        contributor_count: 0,
         semantic_event_count: 0,
     }
 }

@@ -35,9 +35,7 @@ wire_struct! {
         pub owner: Address,
         pub wwd: u32,
         pub league_id: u16,
-        pub gratis_load_minor: U256,
         pub entry_price_minor: U256,
-        pub settlement_cost_minor: U256,
         pub issuance_currency: u16,
         pub reference_currency: u16,
     }
@@ -72,14 +70,6 @@ wire_struct! {
         pub membership_siblings: Vec<B256>,
     }
     validate = validate_nod_membership_proof;
-}
-
-wire_struct! {
-    pub struct ContributorActionV1 {
-        pub owner: Address,
-        pub source_tribute_id: B256,
-        pub nominal_amount_minor: U256,
-    }
 }
 
 wire_struct! {
@@ -121,7 +111,6 @@ wire_struct! {
         pub chunk_ordinal: u32,
         pub first_nod_ordinal: u32,
         pub ordered_nod_actions: Vec<NodActionV1>,
-        pub ordered_eligible_contributors: Vec<ContributorActionV1>,
     }
     validate = validate_result_chunk;
 }
@@ -144,7 +133,6 @@ wire_struct! {
         pub tribute_count: u32,
         pub nod_count: u32,
         pub bucket_count: u32,
-        pub contributor_count: u32,
         pub semantic_event_count: u32,
     }
 }
@@ -176,7 +164,6 @@ wire_struct! {
     pub struct ResultRootsV1 {
         pub nod_root: B256,
         pub bucket_root: B256,
-        pub contributor_root: B256,
         pub output_manifest_root: B256,
     }
 }
@@ -279,8 +266,7 @@ fn validate_lysis_v1_event_commitment(
 impl ResultChunkV1 {
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         require(
-            self.ordered_nod_actions.len() <= limits.max_action_items
-                && self.ordered_eligible_contributors.len() <= limits.max_action_items,
+            self.ordered_nod_actions.len() <= limits.max_action_items,
             "action stream item cap",
         )?;
         let mut tribute_ids = BTreeSet::new();
@@ -314,13 +300,6 @@ impl ResultChunkV1 {
                     "nod actions strictly ordered",
                 )?;
             }
-        }
-        for pair in self.ordered_eligible_contributors.windows(2) {
-            require(
-                (pair[0].owner, pair[0].source_tribute_id)
-                    < (pair[1].owner, pair[1].source_tribute_id),
-                "contributors strictly ordered",
-            )?;
         }
         Ok(())
     }
@@ -426,8 +405,6 @@ impl NodMembershipProofV1 {
     }
 }
 
-impl_nested_record_codec!(ContributorActionV1, encode_only);
-
 fn validate_nod_membership_proof(
     proof: &NodMembershipProofV1,
     limits: &SchemaLimits,
@@ -490,8 +467,7 @@ impl LysisResultV1 {
 
     fn validate_bounded_counts(&self) -> Result<(), ProtocolError> {
         require(
-            self.counts.contributor_count <= self.tribute_count
-                && self.counts.bucket_count <= self.tribute_count,
+            self.counts.bucket_count <= self.tribute_count,
             "result exact counts",
         )
     }

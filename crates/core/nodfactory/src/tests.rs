@@ -16,6 +16,7 @@ use outbe_primitives::{
     addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    units::SCALE_1E6_U64,
 };
 use outbe_tee::protocol::GratisOp;
 use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
@@ -119,7 +120,7 @@ fn seed_window_vwap(storage: &StorageHandle<'_>, iso_code: u16, rate: U256) {
             &[(
                 outbe_oracle::api::AddressPair::new_coen_to(iso_code),
                 rate,
-                U256::from(SIX_DECIMALS),
+                U256::from(SCALE_1E6_U64),
             )],
         )
         .unwrap();
@@ -358,7 +359,6 @@ const CHAIN_ID: u64 = 1;
 
 const PAYMENT_ASSET: Address = Address::new([0x71; 20]);
 const EUR_ASSET: Address = Address::new([0x72; 20]);
-const SIX_DECIMALS: u64 = 1_000_000;
 
 mod materialization;
 

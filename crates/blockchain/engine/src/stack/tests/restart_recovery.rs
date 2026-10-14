@@ -36,7 +36,7 @@ fn ce_recovery_uses_exact_archive_backed_head_when_ack_floor_lags() {
     )
     .unwrap();
     let marker = outbe_compressed_entities::FinalizedMarker {
-        commitment_scheme_version: 1,
+        commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
         height: archive_height,
         block_hash: archive_hash,
         parent_block_hash: B256::repeat_byte(0x41),

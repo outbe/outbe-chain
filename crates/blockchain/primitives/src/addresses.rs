@@ -127,15 +127,6 @@ pub const ORACLE_ADDRESS: Address = address!("0x00000000000000000000000000000000
 pub const ZERO_FEE_POLICY_LOG_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE06");
 
-/// Poseidon-BN254 hash precompile address (stateless).
-///
-/// Raw byte ABI. The input is `Nx32` BE-encoded field elements
-/// (`1 <= N <= 12`, each mod-reduced to BN254 Fr). The output is the 32-byte
-/// BE-encoded Poseidon hash. Matches `outbe-poseidon`'s Circom parameter set, so a
-/// hash computed by a wallet and the precompile agree byte-for-byte.
-pub const ZKPROOF_POSEIDON_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000EE07");
-
 /// Groth16 / UltraHonkKeccak proof verifier precompile address (stateless).
 ///
 /// Input is `abi.encode(bytes32 circuit_hash, bytes proof)`. The

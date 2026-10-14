@@ -21,9 +21,9 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_ocomp_protocol::{
     hash::hash_framed,
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        intent_storage_key, ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1,
+        JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
+        NodTargetPreconditionV1, TributeInputBindingV1,
     },
     profile::poc_schema_limits,
     receipts::{ActivationOutcome, AggregateActivationReceiptV1, EffectBindingV1},
@@ -84,12 +84,6 @@ fn canonical_job(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
                 namespace_root_before: B256::ZERO,
                 max_nod_count: 1,
             },
-            contributors: ContributorTargetPreconditionV1 {
-                worldwide_day: DAY.value(),
-                expected_series_version: 0,
-                max_contributor_count: 1,
-                max_eligible_nominal_total: U256::from(10),
-            },
             metadosis: MetadosisAttemptPreconditionV1 {
                 wwd: DAY.value(),
                 pending_nonce: 0,
@@ -142,12 +136,11 @@ fn canonical_job(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
             },
             outcome: ActivationOutcome::Applied,
             nod_receipt_hash: Some(hash),
-            contributor_receipt_hash: Some(hash),
             tribute_receipt_hash: Some(hash),
             carry_over_receipt_hash: Some(hash),
             request_limit_split_receipt_hash: hash,
             active_generation_hash: Some(hash),
-            effect_commitment: hash_framed(HashDomain::Effects, &hash.as_slice().repeat(4))
+            effect_commitment: hash_framed(HashDomain::Effects, &hash.as_slice().repeat(3))
                 .unwrap(),
             event_summary_hash: hash,
             activated_at_height: request.inner.number + 5,

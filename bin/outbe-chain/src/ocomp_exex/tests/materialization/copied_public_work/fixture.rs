@@ -43,7 +43,6 @@ impl FixtureSetup {
 
 struct SourcePopulation {
     tributes: Vec<TributeBodyV1>,
-    contributors_by_owner: Vec<ContributorActionV1>,
     protected_sources: outbe_nodfactory::test_support::MaterializationFixture,
 }
 impl SourcePopulation {
@@ -52,7 +51,6 @@ impl SourcePopulation {
         let job_id = setup.job_id;
         let tribute_count = setup.tribute_count;
         let tributes = fixture_support::tribute_population(day, tribute_count);
-        let contributors_by_owner = fixture_support::contributor_population(&tributes);
         let source_actions = fixture_support::nod_actions(&tributes, 0);
         let protected_sources = outbe_nodfactory::test_support::MaterializationFixtureBuilder::new(
             &source_actions,
@@ -67,7 +65,6 @@ impl SourcePopulation {
         .unwrap();
         Self {
             tributes,
-            contributors_by_owner,
             protected_sources,
         }
     }
@@ -301,7 +298,6 @@ impl FixtureResults {
         let job_id = setup.job_id;
         let tributes = &execution.population.tributes;
         let nod_action_tributes = tributes;
-        let contributors_by_owner = &execution.population.contributors_by_owner;
         let cas = &execution.published.cas;
         let start = usize::try_from(index * 256).unwrap();
         let end = (start + 256).min(tributes.len());
@@ -317,7 +313,6 @@ impl FixtureResults {
                 )
                 .unwrap();
         }
-        let contributors = contributors_by_owner[start..end].to_vec();
         let chunk = ResultChunkV1 {
             protocol_bundle_hash: bundle_hash,
             job_id,
@@ -325,7 +320,6 @@ impl FixtureResults {
             chunk_ordinal: index,
             first_nod_ordinal: u32::try_from(start).unwrap(),
             ordered_nod_actions: actions.clone(),
-            ordered_eligible_contributors: contributors.clone(),
         };
         let chunk_hash = chunk.result_chunk_hash(&limits).unwrap();
         let mut chunk_ref = cas

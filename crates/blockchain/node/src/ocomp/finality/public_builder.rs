@@ -166,16 +166,10 @@ impl<S: PublicExactBlockProofSourceV1> PublicFinalizedIntentProofBuilderV1<'_, S
             .source
             .finalization(request_height)
             .map_err(public_source_error)?;
-        let max_committee_len =
-            usize::try_from(outbe_consensus::bls::MAX_VALIDATORS).map_err(|_| {
-                PublicFinalizedIntentProofBuildError::Finalization(
-                    "consensus validator bound exceeds usize".to_owned(),
-                )
-            })?;
         let finalized = decode_public_finalized_block(
             &public_bytes.finalization_bytes,
             &public_bytes.block_bytes,
-            max_committee_len,
+            outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
         )
         .map_err(|error| PublicFinalizedIntentProofBuildError::Finalization(error.to_string()))?;
         let block_hash = finalized.block.block_hash();
@@ -201,7 +195,7 @@ impl<S: PublicExactBlockProofSourceV1> PublicFinalizedIntentProofBuilderV1<'_, S
         }
         let finalized_epoch = finalization.proposal.round.epoch().get();
         let committee_len = finalization.certificate.signers.len();
-        validate_public_committee_len(committee_len, max_committee_len)?;
+        validate_public_committee_len(committee_len, outbe_consensus::bls::MAX_COMMITTEE_MEMBERS)?;
         let request_state_root = header.state_root();
 
         Ok(ExactFinalizedRequest {

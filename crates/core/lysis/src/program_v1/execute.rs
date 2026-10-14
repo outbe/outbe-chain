@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::HashMap;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::U256;
 use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::WorldwideDay;
@@ -12,8 +12,8 @@ use outbe_primitives::time::WorldwideDay;
 use crate::algorithm::{calc_fraction_distribution_fp, SCALE};
 
 use super::types::{
-    ContributorActionV1, FidelityPhaseV1, LeagueFractionV1, NodActionV1, ProgramErrorV1,
-    ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
+    FidelityPhaseV1, LeagueFractionV1, NodActionV1, ProgramErrorV1, ProgramInputV1,
+    ProgramResultV1, SemanticObservationV1, TributeInputV1,
 };
 
 /// One load checked before the conditional Oracle/Fidelity reads at its ordinal.
@@ -33,7 +33,6 @@ pub(crate) struct ProgramExecutionV1 {
     next_ordinal: usize,
     remaining: U256,
     nod_actions: Vec<NodActionV1>,
-    contributors: BTreeMap<Address, U256>,
     observations: Vec<SemanticObservationV1>,
 }
 
@@ -156,7 +155,6 @@ pub(crate) fn prepare(
         next_ordinal: 0,
         remaining: lysis_limit_minor,
         nod_actions: Vec::new(),
-        contributors: BTreeMap::new(),
         observations,
     })
 }
@@ -222,8 +220,7 @@ impl ProgramExecutionV1 {
                 second: second_league,
             });
         }
-        let settlement_cost_minor =
-            calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
+        calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
         let nod_id =
             derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day).map_err(|error| {
                 ProgramErrorV1::Arithmetic {
@@ -239,19 +236,11 @@ impl ProgramExecutionV1 {
             owner: tribute.owner,
             worldwide_day: tribute.worldwide_day,
             league_id: second_league,
-            gratis_load_minor: pending.gratis_load_minor,
             entry_price_minor,
-            settlement_cost_minor,
             issuance_currency: tribute.issuance_currency,
             reference_currency: tribute.reference_currency,
         };
 
-        if !tribute.exclude_from_intex_issuance {
-            let contributor = self.contributors.entry(tribute.owner).or_insert(U256::ZERO);
-            *contributor = contributor
-                .checked_add(tribute.nominal_amount_minor)
-                .ok_or(ProgramErrorV1::ContributorOverflow { ordinal })?;
-        }
         self.remaining = pending.remaining_after;
         let action_index = self.nod_actions.len();
         self.nod_actions.push(action);
@@ -283,14 +272,6 @@ impl ProgramExecutionV1 {
                 })
                 .collect(),
             nod_actions: self.nod_actions,
-            contributors: self
-                .contributors
-                .into_iter()
-                .map(|(owner, nominal_amount_minor)| ContributorActionV1 {
-                    owner,
-                    nominal_amount_minor,
-                })
-                .collect(),
             observations: self.observations,
         })
     }

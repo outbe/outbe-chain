@@ -95,10 +95,6 @@ fn complete_lysis_dag_has_frozen_phase_counts_and_both_prefix_directions() {
             primary_count
         );
         assert_eq!(
-            topology.phase_unit_count(UnitPhase::OwnerShuffle),
-            primary_count * 2 - 1
-        );
-        assert_eq!(
             topology.phase_unit_count(UnitPhase::BucketShuffle),
             primary_count * 2 - 1
         );
@@ -175,7 +171,6 @@ fn complete_plan_cursor_uses_protocol_order_not_runtime_completion_order() {
             UnitPhase::GratisPrefix,
             UnitPhase::GratisPrefixDown,
             UnitPhase::OutputFinalize,
-            UnitPhase::OwnerShuffle,
             UnitPhase::BucketShuffle,
             UnitPhase::RootReduce,
         ]
@@ -204,7 +199,7 @@ fn exact_plan_positions_round_trip_to_their_global_ordinals() {
 #[test]
 fn three_shuffle_runs_have_only_real_binary_merges() {
     let topology = LysisPlanTopologyV1::new(3).unwrap();
-    for phase in [UnitPhase::OwnerShuffle, UnitPhase::BucketShuffle] {
+    for phase in [UnitPhase::BucketShuffle] {
         assert_eq!(topology.phase_unit_count(phase), 5);
 
         let root = topology.phase_position_at(phase, 4).unwrap();
@@ -244,7 +239,7 @@ fn three_shuffle_runs_have_only_real_binary_merges() {
 fn shuffle_topology_is_exact_for_small_boundaries_and_a_billion_tributes() {
     for primary_count in [1, 2, 3, 5, 256, 257] {
         let topology = LysisPlanTopologyV1::new(primary_count).unwrap();
-        for phase in [UnitPhase::OwnerShuffle, UnitPhase::BucketShuffle] {
+        for phase in [UnitPhase::BucketShuffle] {
             let unit_count = primary_count * 2 - 1;
             assert_eq!(topology.phase_unit_count(phase), unit_count);
 
@@ -286,11 +281,11 @@ fn shuffle_topology_is_exact_for_small_boundaries_and_a_billion_tributes() {
     let billion_primary = primary_work_unit_count(1_000_000_000).unwrap();
     assert_eq!(billion_primary, 3_906_250);
     let topology = LysisPlanTopologyV1::new(billion_primary).unwrap();
-    let unit_count = topology.phase_unit_count(UnitPhase::OwnerShuffle);
+    let unit_count = topology.phase_unit_count(UnitPhase::BucketShuffle);
     assert_eq!(unit_count, 7_812_499);
     assert!(matches!(
         topology
-            .phase_position_at(UnitPhase::OwnerShuffle, unit_count - 1)
+            .phase_position_at(UnitPhase::BucketShuffle, unit_count - 1)
             .unwrap(),
         PlannedUnitPositionV1::RunSpan {
             start_run: 0,
@@ -298,45 +293,6 @@ fn shuffle_topology_is_exact_for_small_boundaries_and_a_billion_tributes() {
             ..
         }
     ));
-}
-
-#[test]
-fn owner_merge_preserves_source_span_when_every_contributor_is_excluded() {
-    let mut sink_calls = 0_u32;
-    let summary = merge_owner_runs_streaming(
-        CanonicalRunV1 {
-            span: CanonicalRunSpanV1 {
-                start_run: 0,
-                end_run: 1,
-            },
-            records: Vec::new(),
-        },
-        CanonicalRunV1 {
-            span: CanonicalRunSpanV1 {
-                start_run: 1,
-                end_run: 2,
-            },
-            records: Vec::new(),
-        },
-        256,
-        |_, _| {
-            sink_calls += 1;
-            Ok::<_, ()>(())
-        },
-    )
-    .unwrap();
-
-    assert_eq!(
-        summary.span,
-        CanonicalRunSpanV1 {
-            start_run: 0,
-            end_run: 2,
-        }
-    );
-    assert_eq!(summary.record_count, 0);
-    assert_eq!(summary.chunk_count, 0);
-    assert_eq!(summary.checked_eligible_nominal_total, U256::ZERO);
-    assert_eq!(sink_calls, 0);
 }
 
 #[test]

@@ -97,7 +97,7 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
         assert_eq!(
             excess,
             U256::ZERO,
-            "GAS-06: equal dense WAA/SRA distributions should have no cap excess"
+            "GAS-06: equal dense WAA/SRA distributions should have no excess"
         );
         assert_eq!(
             claimable_total,
@@ -798,26 +798,66 @@ mod distribute_daily_tests {
     }
 
     #[test]
-    fn sra_capped_distribution_mirrors_waa() {
+    fn sole_sra_receives_full_pool_with_native_backing() {
+        check_sra_distribution(1_000, &[(0xaa, 1, 1_000)], 0);
+    }
+
+    #[test]
+    fn sra_rewards_follow_tribute_weights_without_a_cap() {
+        check_sra_distribution(1_000, &[(0xaa, 9, 900), (0xbb, 1, 100)], 0);
+    }
+
+    #[test]
+    fn sra_floors_each_share_and_returns_rounding_residue() {
+        check_sra_distribution(10, &[(0xaa, 1, 3), (0xbb, 1, 3), (0xcc, 1, 3)], 1);
+    }
+
+    fn check_sra_distribution(pool: u64, recipients: &[(u8, u64, u64)], expected_excess: u64) {
         run(|ctx| {
-            let signer = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-            let mut c = AgentRewardContract::new(ctx.storage.clone());
-            c.increment_sra_tribute(DAY, signer).unwrap();
-
-            let excess =
-                distribute_daily(ctx, DAY, &[(PoolKind::Sra, U256::from(1000u64))]).unwrap();
-
-            // Single signer with all tributes: capped at 32 % of 1000 = 320,
-            // residue = 680.
-            assert_eq!(excess, U256::from(680u64));
-            let c2 = AgentRewardContract::new(ctx.storage.clone());
-            assert_eq!(c2.get_claimable_reward(signer).unwrap(), native(320));
+            let mut contract = AgentRewardContract::new(ctx.storage.clone());
+            for &(byte, weight, _) in recipients {
+                for _ in 0..weight {
+                    contract
+                        .increment_sra_tribute(DAY, Address::repeat_byte(byte))
+                        .unwrap();
+                }
+            }
+            let excess = distribute_daily(ctx, DAY, &[(PoolKind::Sra, U256::from(pool))]).unwrap();
+            assert_eq!(excess, U256::from(expected_excess));
+            let mut credited = U256::ZERO;
+            for &(byte, _, expected) in recipients {
+                let address = Address::repeat_byte(byte);
+                let reward = contract
+                    .get_pool_claimable_reward(RewardPool::Sra, address)
+                    .unwrap();
+                assert_eq!(reward, native(expected));
+                credited += reward;
+                assert_eq!(
+                    contract
+                        .sra_tribute_counts
+                        .read(&AgentRewardContract::tribute_count_key(DAY, address))
+                        .unwrap(),
+                    0
+                );
+            }
+            assert!(contract.get_all_sra_counts(DAY).unwrap().is_empty());
+            assert_eq!(contract.sra_address_count.read(&DAY).unwrap(), 0);
+            for index in 0..u32::try_from(recipients.len()).unwrap() {
+                assert_eq!(
+                    contract
+                        .sra_addresses
+                        .read(&AgentRewardContract::address_index_key(DAY, index))
+                        .unwrap(),
+                    Address::ZERO
+                );
+            }
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
-                native(320)
+                credited
             );
+            assert_eq!(credited + native(expected_excess), native(pool));
         });
     }
 

@@ -412,7 +412,6 @@ define_exact_routes! {
         without_readers: crate::begin_block_precompile::dispatch,
         with_readers: crate::begin_block_precompile::dispatch_with_readers,
     }, default_base_gas, ValuePolicy::Reject, crate::begin_block_precompile::PAYABLE_SELECTORS),
-    ZKPROOF_POSEIDON_ADDRESS => (DispatchAdapter::Basic(crate::zk::dispatch_poseidon), crate::zk::poseidon_base_gas, ValuePolicy::Reject, crate::zk::POSEIDON_PAYABLE_SELECTORS),
     ZKPROOF_GROTH16_ADDRESS => (DispatchAdapter::Basic(crate::zk::dispatch_groth16), crate::zk::groth16_base_gas, ValuePolicy::Reject, crate::zk::GROTH16_PAYABLE_SELECTORS),
     TEE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_teeregistry::v1_precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_teeregistry::v1_precompile::PAYABLE_SELECTORS),
     L2_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_l2registry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),

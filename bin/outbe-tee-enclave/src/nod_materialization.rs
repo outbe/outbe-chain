@@ -3,7 +3,9 @@ use crate::{
     crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha256},
     errors::{Result, TeeError},
 };
-use alloy_primitives::B256;
+use std::collections::BTreeMap;
+
+use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{
     encode_tribute_v2, verify_body_in_collection, CeDomain, CollectionBodyProofV1, StoredBody,
     TRIBUTE_BODY_SCHEMA_V2,
@@ -17,8 +19,10 @@ use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
 };
 use outbe_primitives::{
+    math::scaled_math::checked_mul_div_floor,
     nod_encryption::{EncryptedNodV2, NodTermsV2},
     time::WorldwideDay,
+    units::SCALE_1E6_U256,
 };
 use outbe_tee::nod_materialization::{
     NodMaterializationAuthorityV2, PrepareEncryptedNodsRequestV2,
@@ -102,6 +106,16 @@ fn verify_and_encrypt(
     if verified.actions().len() != request.sources.len() {
         return Err(rejected("NOD source count mismatch"));
     }
+    let mut fractions = BTreeMap::new();
+    for fraction in &request.league_fractions {
+        if fraction.fraction_fp.is_zero()
+            || fractions
+                .insert(fraction.league_id, fraction.fraction_fp)
+                .is_some()
+        {
+            return Err(rejected("NOD league fraction"));
+        }
+    }
     verified
         .actions()
         .iter()
@@ -140,15 +154,25 @@ fn verify_and_encrypt(
                 issuance_currency: action.issuance_currency,
                 reference_currency: action.reference_currency,
             };
-            crate::nod_encryption::encrypt_nod_for_tribute(
-                secret,
-                tribute,
-                terms,
-                action.gratis_load_minor,
-            )
+            let amounts = crate::tribute_encryption::decrypt_tribute(secret, tribute)?;
+            let fraction = fractions
+                .get(&action.league_id)
+                .copied()
+                .ok_or_else(|| rejected("NOD league fraction"))?;
+            let load = gratis_load(amounts.nominal_amount_minor, fraction)?;
+            crate::nod_encryption::encrypt_nod_for_tribute(secret, tribute, terms, load)
         })
         .collect()
 }
+fn gratis_load(nominal_amount_minor: U256, fraction_fp: U256) -> Result<U256> {
+    let load = checked_mul_div_floor(nominal_amount_minor, fraction_fp, SCALE_1E6_U256)
+        .map_err(|_| rejected("NOD gratis load"))?;
+    if load.is_zero() {
+        return Err(rejected("NOD gratis load"));
+    }
+    Ok(load)
+}
+
 fn rejected(error: impl std::fmt::Display) -> TeeError {
     TeeError::TributeOfferReject(error.to_string())
 }

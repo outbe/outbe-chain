@@ -47,10 +47,6 @@ fn bind_source(intent: &mut JobIntentV1) {
     tribute.sealed_collection_root = root;
     tribute.exact_count = 1;
     tribute.exact_nominal_total = body.nominal_amount_minor;
-    intent
-        .activation_preconditions
-        .contributors
-        .max_eligible_nominal_total = body.nominal_amount_minor;
 }
 
 fn write_source(layout: &crate::snapshot::config::RequestedLayout) {
@@ -141,7 +137,6 @@ fn source_complete_active_before_projection_request_passes_without_local_pin_or_
                 assert_eq!(audit.complete_exports, 0);
                 assert_eq!(audit.input_chunks, 0);
                 assert_eq!(audit.nod.jobs, 0);
-                assert_eq!(audit.payout_days, 0);
                 assert!(!layout.consensus_root.join("ocomp_retention").exists());
                 assert!(!layout.ocomp_root.join("supervisor-v1/jobs").exists());
             },
@@ -150,90 +145,77 @@ fn source_complete_active_before_projection_request_passes_without_local_pin_or_
 }
 
 #[test]
-fn later_series_or_bitmap_budget_preserves_reached_bounds_and_active_identity() {
+fn later_series_budget_preserves_reached_bounds_and_active_identity() {
     use crate::snapshot::validation::{
         ocomp::verify_canonical_obligations,
         report::{CheckName, CheckStatus, ValidationReport},
         Incomplete,
     };
     for version in [1, 2] {
-        for with_round in [false, true] {
-            super::super::with_canonical_frontiers(
-                version,
-                |_| {},
-                |request| {
-                    let mut prepared = fixture(request, Phase::AwaitingFinality, |_| {});
-                    prepared
-                        .owner
-                        .storage
-                        .extend(super::super::payout_owner(true, with_round).storage);
-                    prepared.owner
-                },
-                |state, source, layout, scratch| {
-                    let expected = state.live_ocomp_jobs().unwrap();
-                    assert_eq!(expected.len(), 1);
-                    let mut report = ValidationReport::new([CheckName::Ocomp]);
-                    let error = verify_canonical_obligations(
-                        state,
-                        source,
-                        layout,
-                        scratch,
-                        Some(1),
-                        Some(&mut report),
-                    )
-                    .err()
-                    .expect("later series or bitmap word exceeds the selected cap");
-                    assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
-                    let expected_diagnostic = if with_round {
-                        "payout bitmap scan stopped at 1/2 words"
-                    } else {
-                        "Intex series scan stopped at 1/3"
-                    };
-                    assert!(error.to_string().contains(expected_diagnostic), "{error:#}");
-                    assert_eq!(report.active_ocomp.len(), 1);
-                    let active = &report.active_ocomp[0];
-                    assert_eq!(active.intent_id, hex::encode(expected[0].0));
-                    assert_eq!(active.job_id, None);
-                    assert_eq!(active.pin_stage, "NotInspected");
-                    assert_eq!(active.projection_before_request, None);
-                    assert!(!active.source_verified);
-                    assert!(!active.export_verified);
-                    let series = report
-                        .inventory_bounds
-                        .iter()
-                        .find(|b| b.name == "intex_series")
-                        .expect("reached permanent series interval");
-                    assert_eq!(
-                        (series.start, series.end_exclusive, series.visited),
-                        (0, 3, 1)
-                    );
-                    let fifo = report
-                        .inventory_bounds
-                        .iter()
-                        .find(|b| b.name == "nod_fifo")
-                        .expect("completed empty FIFO interval");
-                    assert_eq!((fifo.start, fifo.end_exclusive, fifo.visited), (1, 1, 0));
-                    if with_round {
-                        let bitmap = report
-                            .inventory_bounds
-                            .iter()
-                            .find(|b| b.name == "payout_bitmap_words")
-                            .expect("reached contributor bitmap interval");
-                        assert_eq!(
-                            (bitmap.start, bitmap.end_exclusive, bitmap.visited),
-                            (0, 2, 1)
-                        );
-                    }
-                    assert!(report.observed.p.is_none());
-                    assert!(report.observed.c_current.is_none());
-                    assert_eq!(
-                        report.check(CheckName::Ocomp).status,
-                        CheckStatus::Incomplete
-                    );
-                    assert!(!report.success());
-                },
-            );
-        }
+        super::super::with_canonical_frontiers(
+            version,
+            |_| {},
+            |request| {
+                let mut prepared = fixture(request, Phase::AwaitingFinality, |_| {});
+                prepared
+                    .owner
+                    .storage
+                    .extend(super::super::series_owner().storage);
+                prepared.owner
+            },
+            |state, source, layout, scratch| {
+                let expected = state.live_ocomp_jobs().unwrap();
+                assert_eq!(expected.len(), 1);
+                let mut report = ValidationReport::new([CheckName::Ocomp]);
+                let error = verify_canonical_obligations(
+                    state,
+                    source,
+                    layout,
+                    scratch,
+                    Some(1),
+                    Some(&mut report),
+                )
+                .err()
+                .expect("later series exceeds the selected cap");
+                assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("Intex series scan stopped at 1/3"),
+                    "{error:#}"
+                );
+                assert_eq!(report.active_ocomp.len(), 1);
+                let active = &report.active_ocomp[0];
+                assert_eq!(active.intent_id, hex::encode(expected[0].0));
+                assert_eq!(active.job_id, None);
+                assert_eq!(active.pin_stage, "NotInspected");
+                assert_eq!(active.projection_before_request, None);
+                assert!(!active.source_verified);
+                assert!(!active.export_verified);
+                let series = report
+                    .inventory_bounds
+                    .iter()
+                    .find(|b| b.name == "intex_series")
+                    .expect("reached permanent series interval");
+                assert_eq!(
+                    (series.start, series.end_exclusive, series.visited),
+                    (0, 3, 1)
+                );
+                let fifo = report
+                    .inventory_bounds
+                    .iter()
+                    .find(|b| b.name == "nod_fifo")
+                    .expect("completed empty FIFO interval");
+                assert_eq!((fifo.start, fifo.end_exclusive, fifo.visited), (1, 1, 0));
+                assert!(report.observed.p.is_none());
+                assert!(report.observed.c_current.is_none());
+                assert_eq!(
+                    report.check(CheckName::Ocomp).status,
+                    CheckStatus::Incomplete
+                );
+                assert!(!report.success());
+            },
+        );
     }
 }
 
@@ -775,7 +757,6 @@ fn genuine_active_owner_is_discovered_without_any_local_job_population() {
                         )]
                     );
                     assert_eq!(inventory.bounds.nod_entries, 0);
-                    assert_eq!(inventory.bounds.unpaid_days, 0);
                 },
             );
         }

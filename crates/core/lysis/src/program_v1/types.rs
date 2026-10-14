@@ -102,18 +102,9 @@ pub struct NodActionV1 {
     pub owner: Address,
     pub worldwide_day: WorldwideDay,
     pub league_id: u16,
-    pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
-    pub settlement_cost_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-}
-
-/// Canonically owner-sorted contributor action.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContributorActionV1 {
-    pub owner: Address,
-    pub nominal_amount_minor: U256,
 }
 
 /// One league's fixed-point Gratis fraction, sorted by ascending league.
@@ -132,7 +123,6 @@ pub struct ProgramResultV1 {
     pub remaining_lysis_limit_minor: U256,
     pub league_fractions: Vec<LeagueFractionV1>,
     pub nod_actions: Vec<NodActionV1>,
-    pub contributors: Vec<ContributorActionV1>,
     pub observations: Vec<SemanticObservationV1>,
 }
 
@@ -185,9 +175,6 @@ pub enum ProgramErrorV1 {
         ordinal: usize,
     },
     InvalidNodTarget {
-        ordinal: usize,
-    },
-    ContributorOverflow {
         ordinal: usize,
     },
     OutputCountMismatch,
@@ -252,9 +239,6 @@ impl fmt::Display for ProgramErrorV1 {
             ),
             Self::InvalidNodTarget { ordinal } => {
                 write!(formatter, "Lysis V1 invalid Nod target at {ordinal}")
-            }
-            Self::ContributorOverflow { ordinal } => {
-                write!(formatter, "Lysis V1 contributor overflow at {ordinal}")
             }
             Self::OutputCountMismatch => formatter.write_str("Lysis V1 output count mismatch"),
         }

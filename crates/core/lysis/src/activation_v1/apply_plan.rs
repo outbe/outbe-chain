@@ -1,9 +1,7 @@
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     activation::ActivationCallCoreV1,
-    intent::{
-        ContributorTargetPreconditionV1, DayType, NodTargetPreconditionV1, TributeInputBindingV1,
-    },
+    intent::{DayType, NodTargetPreconditionV1, TributeInputBindingV1},
     receipts::EffectBindingV1,
     result::ExactCountsV1,
 };
@@ -75,36 +73,6 @@ impl NodGenerationApplyV1 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContributorRootApplyV1 {
-    precondition: ContributorTargetPreconditionV1,
-    contributor_root: B256,
-    contributor_count: u32,
-    eligible_nominal_total: U256,
-}
-
-impl ContributorRootApplyV1 {
-    #[must_use]
-    pub const fn precondition(&self) -> &ContributorTargetPreconditionV1 {
-        &self.precondition
-    }
-
-    #[must_use]
-    pub const fn contributor_root(&self) -> B256 {
-        self.contributor_root
-    }
-
-    #[must_use]
-    pub const fn contributor_count(&self) -> u32 {
-        self.contributor_count
-    }
-
-    #[must_use]
-    pub const fn eligible_nominal_total(&self) -> U256 {
-        self.eligible_nominal_total
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TributeRetirementApplyV1 {
     input_binding: TributeInputBindingV1,
     consumed_count: u32,
@@ -159,7 +127,6 @@ pub struct LysisApplyPlanV1 {
     request_limit_split_receipt_hash: B256,
     request_limit_split: RequestLimitSplitApplyV1,
     nod: NodGenerationApplyV1,
-    contributors: ContributorRootApplyV1,
     tribute: TributeRetirementApplyV1,
     carry_over: CarryOverApplyV1,
 }
@@ -190,11 +157,6 @@ impl LysisApplyPlanV1 {
     }
 
     #[must_use]
-    pub const fn contributors(&self) -> &ContributorRootApplyV1 {
-        &self.contributors
-    }
-
-    #[must_use]
     pub const fn tribute(&self) -> &TributeRetirementApplyV1 {
         &self.tribute
     }
@@ -211,7 +173,6 @@ pub(super) struct LysisApplyPlanPartsV1 {
     pub request_limit_split_receipt_hash: B256,
     pub request_limit_split: RequestLimitSplitApplyV1,
     pub nod: NodGenerationApplyV1,
-    pub contributors: ContributorRootApplyV1,
     pub tribute: TributeRetirementApplyV1,
     pub carry_over: CarryOverApplyV1,
 }
@@ -224,7 +185,6 @@ impl From<LysisApplyPlanPartsV1> for LysisApplyPlanV1 {
             request_limit_split_receipt_hash: parts.request_limit_split_receipt_hash,
             request_limit_split: parts.request_limit_split,
             nod: parts.nod,
-            contributors: parts.contributors,
             tribute: parts.tribute,
             carry_over: parts.carry_over,
         }
@@ -252,20 +212,6 @@ pub(super) fn nod_apply(parts: NodGenerationApplyPartsV1) -> NodGenerationApplyV
         nod_amount_total: parts.nod_amount_total,
         lysis_allocation_minor: parts.lysis_allocation_minor,
         issued_at: parts.issued_at,
-    }
-}
-
-pub(super) fn contributor_apply(
-    precondition: ContributorTargetPreconditionV1,
-    contributor_root: B256,
-    contributor_count: u32,
-    eligible_nominal_total: U256,
-) -> ContributorRootApplyV1 {
-    ContributorRootApplyV1 {
-        precondition,
-        contributor_root,
-        contributor_count,
-        eligible_nominal_total,
     }
 }
 

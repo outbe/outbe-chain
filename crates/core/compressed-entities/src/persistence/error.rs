@@ -19,6 +19,10 @@ pub enum PersistenceError {
     },
     #[error("unsupported CE local storage schema {actual}")]
     UnsupportedLocalSchema { actual: u32 },
+    #[error("unsupported CE commitment scheme {actual}")]
+    UnsupportedCommitmentScheme { actual: u32 },
+    #[error("unsupported CE tree format {actual}")]
+    UnsupportedTreeFormat { actual: String },
     #[error("invalid CE shard count {actual}")]
     InvalidShardCount { actual: u32 },
     #[error("invalid canonical CE topology in environment identity")]

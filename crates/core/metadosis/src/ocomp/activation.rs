@@ -1,6 +1,5 @@
 use alloy_primitives::{Bytes, B256, U256};
 use outbe_compressed_entities::ExecutionScope;
-use outbe_intex::{install_certified_contributor_root, CertifiedContributorRootV1};
 use outbe_lysis::activation_v1::{self, LysisApplyPlanV1, LysisOwnerReceiptsV1};
 use outbe_nod::schema::NodContract;
 use outbe_nodfactory::certified::{install_certified_generation, CertifiedNodGenerationV1};
@@ -322,10 +321,6 @@ fn target_preconditions_changed(
     let wwd = outbe_primitives::time::WorldwideDay::new(record.intent.wwd);
     let tribute = TributeContract::new(storage.clone()).pre_admission_projection(wwd)?;
     let nod = NodContract::new(storage.clone()).ocomp_target_projection(wwd)?;
-    let contributors = outbe_intex::api::ocomp_contributor_target_projection(
-        storage,
-        WorldwideDay::new(expected.contributors.worldwide_day),
-    )?;
     let metadosis_projection = metadosis.ocomp_pre_admission_projection(wwd)?;
     let intent_id = record.intent.intent_id(limits).map_err(|error| {
         storage_corruption_message(format!("hash target OCOMP intent: {error}"))
@@ -357,17 +352,6 @@ fn target_preconditions_changed(
         expected.nod.target_generation,
         expected.nod.namespace_root_before,
     );
-    let contributors_match = (
-        contributors.worldwide_day,
-        contributors.expected_series_version,
-        contributors.contributor_count,
-        contributors.contributor_total,
-    ) == (
-        expected.contributors.worldwide_day,
-        expected.contributors.expected_series_version,
-        0,
-        U256::ZERO,
-    );
     let metadosis_matches = (
         metadosis_projection.initialized,
         metadosis_projection.state_version,
@@ -382,7 +366,6 @@ fn target_preconditions_changed(
         tribute_ready,
         tribute_matches,
         nod_matches,
-        contributors_match,
         metadosis_matches,
         attempt_matches,
     ]
@@ -420,7 +403,6 @@ fn apply_certified_result(
         program_semantics_hash: bundle.lysis_program_semantics_hash,
         nod_root: plan.nod().nod_root(),
         bucket_root: plan.nod().bucket_root(),
-        contributor_root: plan.contributors().contributor_root(),
         output_manifest_root: plan.nod().output_manifest_root(),
         exact_counts: plan.nod().exact_counts().clone(),
         result_evidence_hash,
@@ -435,13 +417,6 @@ fn apply_certified_result(
         nod_amount_total: plan.nod().nod_amount_total(),
         lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
         issued_at: plan.nod().issued_at(),
-    };
-    let contributor_input = CertifiedContributorRootV1 {
-        binding: binding.clone(),
-        precondition: plan.contributors().precondition().clone(),
-        contributor_root: plan.contributors().contributor_root(),
-        contributor_count: plan.contributors().contributor_count(),
-        eligible_nominal_total: plan.contributors().eligible_nominal_total(),
     };
     let tribute_input = CertifiedTributeRetirementV1 {
         binding: binding.clone(),
@@ -485,16 +460,12 @@ fn apply_certified_result(
                 .map_err(owner_apply_error)?;
         let nod = install_certified_generation(storage, capability, &nod_input, limits)
             .map_err(owner_apply_error)?;
-        let contributor =
-            install_certified_contributor_root(storage, capability, &contributor_input, limits)
-                .map_err(owner_apply_error)?;
         let carry_over =
             credit_certified_carry_over(storage, capability, &carry_over_input, limits)
                 .map_err(owner_apply_error)?;
         crate::ocomp_limits::apply_auction_brief(storage.clone(), &request_receipt)?;
         let mut receipts = LysisOwnerReceiptsV1 {
             nod,
-            contributor,
             tribute: prepared_tribute.receipt().clone(),
             carry_over,
         };

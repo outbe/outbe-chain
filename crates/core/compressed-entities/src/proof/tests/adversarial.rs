@@ -189,6 +189,7 @@ fn assert_header_mutations(
         .to_vec();
     bad_headers.push(missing_artifact);
     for (scheme, root) in [
+        (1, marker.new_root),
         (ACTIVE_COMMITMENT_SCHEME + 1, marker.new_root),
         (ACTIVE_COMMITMENT_SCHEME, B256::repeat_byte(0x84)),
     ] {

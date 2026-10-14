@@ -96,7 +96,6 @@ fn intent() -> JobIntentV1 {
         ActivationFixtureTargets {
             nod_target_generation: 1,
             namespace_root_before: hash(10),
-            contributor_series_version: 1,
             metadosis_state_version: 1,
         },
     );

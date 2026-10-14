@@ -244,7 +244,6 @@ fn add_awaiting_job(
         intent.wwd = day.value();
         intent.activation_preconditions.tribute.wwd = day.value();
         intent.activation_preconditions.nod.wwd = day.value();
-        intent.activation_preconditions.contributors.worldwide_day = day.value();
         intent.activation_preconditions.metadosis.wwd = day.value();
         receipt.wwd = day.value();
         receipt.desis_brief_hash = Some(

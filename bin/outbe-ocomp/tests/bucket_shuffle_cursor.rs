@@ -59,7 +59,6 @@ fn final_bucket_shuffle_plan_ordinal(topology: LysisPlanTopologyV1) -> u32 {
         UnitPhase::GratisPrefix,
         UnitPhase::GratisPrefixDown,
         UnitPhase::OutputFinalize,
-        UnitPhase::OwnerShuffle,
     ]
     .into_iter()
     .map(|phase| topology.phase_unit_count(phase))
@@ -122,7 +121,7 @@ fn admitted_bucket_fixture() -> AdmittedBucketFixture {
     .unwrap();
     let descendant_ref = match &root.payload {
         ShuffleRunPayloadV1::Node { left, .. } => left.artifact_ref.clone(),
-        ShuffleRunPayloadV1::OwnerLeaf(_) | ShuffleRunPayloadV1::BucketLeaf(_) => {
+        ShuffleRunPayloadV1::BucketLeaf(_) => {
             panic!("257 records must produce a descendant page")
         }
     };

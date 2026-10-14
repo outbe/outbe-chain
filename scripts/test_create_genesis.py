@@ -1031,14 +1031,11 @@ class LaunchBundleTests(unittest.TestCase):
             _, _, output_dir = self.render(tmp)
             toml = (output_dir / "validator-0" / "feeder.toml").read_text()
             names = re.findall(r'name = "([^"]+)"', toml)
-            providers = re.findall(r'provider = "([^"]+)"', toml)
-            self.assertTrue(names and providers)
-            for value in names + providers:
-                self.assertIn(
-                    value, known, f"{value} is not a provider the feeder knows"
-                )
-            # And the two must agree, or the pair references a missing endpoint.
-            self.assertEqual(set(names), set(providers))
+            self.assertTrue(names)
+            for value in names:
+                self.assertIn(value, known, f"{value} is not a provider the feeder knows")
+            # The endpoint lists the market, or the pair has no source.
+            self.assertIn('markets = [{ quote = "840" }]', toml)
             self.assertNotIn("chain_denom", toml)
             self.assertNotIn("providers =", toml)
             self.assertNotIn("websocket =", toml)
@@ -1059,6 +1056,7 @@ class LaunchBundleTests(unittest.TestCase):
             'websocket = "wss://stream.binance.com:9443/ws"',
             toml,
         )
+        self.assertIn('markets = [{ quote = "USDT" }]', toml)
         self.assertNotIn("chain_denom", toml)
         self.assertNotIn("rest =", toml)
 

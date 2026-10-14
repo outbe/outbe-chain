@@ -26,7 +26,7 @@ pub fn bucket_key(
     keccak256(buf)
 }
 
-/// Deterministic full-width Poseidon NOD identity derived from
+/// Deterministic full-width Poseidon2 NOD identity derived from
 /// `(owner, worldwide_day)`. The typed Nod collection is its namespace.
 pub fn generate_nod_id(
     owner: Address,

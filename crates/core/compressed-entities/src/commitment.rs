@@ -1,28 +1,28 @@
 use alloy_primitives::{Address, B256, U256};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_poseidon::{Poseidon, PoseidonHasher};
+use outbe_poseidon::{Poseidon2, PoseidonHasher};
 use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 use crate::WwdEntityId;
 
-pub const CES1_TAG_BASE: u64 = 0x4345_5331_0000_0000;
-pub const TAG_BYTES_INIT: u64 = CES1_TAG_BASE + 1;
-pub const TAG_BYTES_ABSORB: u64 = CES1_TAG_BASE + 2;
-pub const TAG_BYTES_FINAL: u64 = CES1_TAG_BASE + 3;
-pub const TAG_ID: u64 = CES1_TAG_BASE + 4;
-pub const TAG_KEY: u64 = CES1_TAG_BASE + 5;
-pub const TAG_BODY: u64 = CES1_TAG_BASE + 6;
-pub const TAG_LEAF: u64 = CES1_TAG_BASE + 7;
-pub const TAG_SMT_BASE: u64 = CES1_TAG_BASE + 8;
-pub const TAG_SMT_NORMAL: u64 = CES1_TAG_BASE + 9;
-pub const TAG_SMT_ZERO: u64 = CES1_TAG_BASE + 10;
-pub const TAG_TOP_NODE: u64 = CES1_TAG_BASE + 11;
-pub const TAG_SEALED_ROOT: u64 = CES1_TAG_BASE + 12;
-pub const TAG_COLLECTION_KEY: u64 = CES1_TAG_BASE + 13;
-pub const TAG_COLLECTION_ROOT: u64 = CES1_TAG_BASE + 14;
-pub const ACTIVE_COMMITMENT_SCHEME: u32 = 1;
+pub const CES2_TAG_BASE: u64 = 0x4345_5332_0000_0000;
+pub const TAG_BYTES_INIT: u64 = CES2_TAG_BASE + 1;
+pub const TAG_BYTES_ABSORB: u64 = CES2_TAG_BASE + 2;
+pub const TAG_BYTES_FINAL: u64 = CES2_TAG_BASE + 3;
+pub const TAG_ID: u64 = CES2_TAG_BASE + 4;
+pub const TAG_KEY: u64 = CES2_TAG_BASE + 5;
+pub const TAG_BODY: u64 = CES2_TAG_BASE + 6;
+pub const TAG_LEAF: u64 = CES2_TAG_BASE + 7;
+pub const TAG_SMT_BASE: u64 = CES2_TAG_BASE + 8;
+pub const TAG_SMT_NORMAL: u64 = CES2_TAG_BASE + 9;
+pub const TAG_SMT_ZERO: u64 = CES2_TAG_BASE + 10;
+pub const TAG_TOP_NODE: u64 = CES2_TAG_BASE + 11;
+pub const TAG_SEALED_ROOT: u64 = CES2_TAG_BASE + 12;
+pub const TAG_COLLECTION_KEY: u64 = CES2_TAG_BASE + 13;
+pub const TAG_COLLECTION_ROOT: u64 = CES2_TAG_BASE + 14;
+pub const ACTIVE_COMMITMENT_SCHEME: u32 = 2;
 
 /// Canonical non-zero BN254 body leaf.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -60,7 +60,7 @@ impl TryFrom<[u8; 32]> for Commitment {
     }
 }
 
-/// The full Poseidon digest of `(owner, worldwide_day)`.
+/// The full Poseidon2 digest of `(owner, worldwide_day)`.
 ///
 /// [`derive_poseidon_entity_id`] keeps only its last 28 bytes. A caller that
 /// has to check the whole digest must take it from here and not from the
@@ -69,8 +69,8 @@ pub fn derive_poseidon_digest(
     owner: Address,
     worldwide_day: WorldwideDay,
 ) -> Result<B256, CommitmentError> {
-    let mut hasher = Poseidon::<Fr>::new_circom(2)
-        .map_err(|error| CommitmentError::Poseidon(error.to_string()))?;
+    // A 160-bit address and a u32 day are both below the BN254 scalar modulus.
+    let mut hasher = Poseidon2::<Fr>::new();
     let digest = hasher
         .hash(&[
             Fr::from_be_bytes_mod_order(owner.as_slice()),
@@ -80,7 +80,7 @@ pub fn derive_poseidon_digest(
     Ok(B256::from(field_to_be32(digest)))
 }
 
-/// Derives the Poseidon digest from `(owner, worldwide_day)` and prefixes WWD BE4.
+/// Derives the Poseidon2 digest from `(owner, worldwide_day)` and prefixes WWD BE4.
 pub fn derive_poseidon_entity_id(
     owner: Address,
     worldwide_day: WorldwideDay,
@@ -96,7 +96,7 @@ pub fn identity_field(identity: WwdEntityId) -> Result<[u8; 32], CommitmentError
     pbytes(TAG_ID, identity.as_slice())
 }
 
-/// Computes the active CES1 leaf for a canonical typed payload.
+/// Computes the active CES2 leaf for a canonical typed payload.
 pub fn body_commitment(
     commitment_scheme_version: u32,
     schema_version: u32,
@@ -133,7 +133,7 @@ pub fn body_commitment(
     Commitment::try_from(field_to_be32(leaf))
 }
 
-/// Hashes arbitrary bytes using the only CES1 byte-to-field conversion.
+/// Hashes arbitrary bytes using the only CES2 byte-to-field conversion.
 pub fn pbytes(object_tag: u64, bytes: &[u8]) -> Result<[u8; 32], CommitmentError> {
     let byte_len = u64::try_from(bytes.len()).map_err(|_| CommitmentError::InputTooLong)?;
     let chunk_count =
@@ -180,10 +180,11 @@ fn chunk_to_field(chunk: &[u8]) -> Fr {
 }
 
 pub(crate) fn poseidon(tag: u64, inputs: &[Fr]) -> Result<Fr, CommitmentError> {
-    let mut hasher = Poseidon::<Fr>::with_domain_tag_circom(inputs.len(), Fr::from(tag))
-        .map_err(|error| CommitmentError::Poseidon(error.to_string()))?;
-    hasher
-        .hash(inputs)
+    let mut tagged = Vec::with_capacity(inputs.len() + 1);
+    tagged.push(Fr::from(tag));
+    tagged.extend_from_slice(inputs);
+    Poseidon2::<Fr>::new()
+        .hash(&tagged)
         .map_err(|error| CommitmentError::Poseidon(error.to_string()))
 }
 
@@ -194,12 +195,12 @@ pub(crate) fn field_to_be32(value: Fr) -> [u8; 32] {
     output
 }
 
-/// Deterministic CES1 commitment construction failure.
+/// Deterministic CES2 commitment construction failure.
 #[derive(Debug, Error)]
 pub enum CommitmentError {
     #[error("byte input length is not representable as u64")]
     InputTooLong,
-    #[error("Poseidon-BN254 failure: {0}")]
+    #[error("Poseidon2-BN254 failure: {0}")]
     Poseidon(String),
     #[error("unsupported commitment scheme version {actual}")]
     UnsupportedCommitmentScheme { actual: u32 },
