@@ -141,19 +141,25 @@ pub fn consume_materialization_attempt(
     nod.ocomp_materialization_attempt_count.write(next_count)
 }
 
+/// A certified batch, the load of each of its Nods and the schema limits that validate it.
+#[cfg(any(test, feature = "test-utils"))]
+pub struct CertifiedMaterializationRequest<'a> {
+    pub batch: &'a NodMaterializationBatchV1,
+    pub loads: &'a [U256],
+    pub limits: &'a SchemaLimits,
+}
+
 /// Applies one already-authorized canonical batch atomically.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn materialize_certified_nods_authorized(
     storage: &StorageHandle<'_>,
     readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
-    batch: &NodMaterializationBatchV1,
-    loads: &[U256],
+    request: CertifiedMaterializationRequest<'_>,
     profile: NodMaterializationProfileV1,
-    limits: &SchemaLimits,
 ) -> Result<NodMaterializationOutcomeV1> {
     storage.clone().with_checkpoint(|| {
         consume_materialization_attempt(storage, profile)?;
-        materialize_after_attempt(storage, readers, batch, loads, profile, limits)
+        materialize_after_attempt(storage, readers, request, profile)
     })
 }
 
@@ -161,11 +167,14 @@ pub fn materialize_certified_nods_authorized(
 pub(crate) fn materialize_after_attempt(
     storage: &StorageHandle<'_>,
     readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
-    batch: &NodMaterializationBatchV1,
-    loads: &[U256],
+    request: CertifiedMaterializationRequest<'_>,
     profile: NodMaterializationProfileV1,
-    limits: &SchemaLimits,
 ) -> Result<NodMaterializationOutcomeV1> {
+    let CertifiedMaterializationRequest {
+        batch,
+        loads,
+        limits,
+    } = request;
     let ExecutionReaders { scope, parent } = readers;
     let nod = NodContract::new(storage.clone());
     let head = nod
@@ -194,8 +203,7 @@ pub(crate) fn materialize_after_attempt(
     if loads.len() != verified.actions().len() || loads.iter().any(|load| load.is_zero()) {
         return Err(PrecompileError::Fatal(
             "Nod materialization test load does not match the batch".into(),
-        )
-        .into());
+        ));
     }
     for (action, load) in verified.actions().iter().zip(loads) {
         let params = NodIssueParams {

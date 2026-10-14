@@ -570,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_accepts_mock_http_provider() {
+    fn validate_accepts_mock_http_provider() {
         let mut cfg = minimal_config(2);
         cfg.api_providers.push(ApiProviderConfig {
             name: "mock_http".to_string(),

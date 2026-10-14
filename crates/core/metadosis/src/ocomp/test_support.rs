@@ -35,11 +35,11 @@ use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
     hash::hash_framed,
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, DayType,
-        ExpectedFinalizedIntentBindingV1, FinalizedIntentProofV1, FinalizedIntentVerificationError,
-        FinalizedRequestBindingV1, FrozenMetadosisValuesV1, JobIntentV1,
-        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
-        TributeInputBindingV1, VerifiedFinalizedIntentV1,
+        intent_storage_key, ActivationPreconditionsV1, DayType, ExpectedFinalizedIntentBindingV1,
+        FinalizedIntentProofV1, FinalizedIntentVerificationError, FinalizedRequestBindingV1,
+        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        VerifiedFinalizedIntentV1,
     },
     profile::{CapacityProfileV1, ProtocolBundleV1},
     receipts::{

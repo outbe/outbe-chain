@@ -32,10 +32,9 @@ use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{
         intent_storage_key, job_id_from_intent_id, ActivationPreconditionsV1,
-        CertifiedParentAccountingMetadataV2, DayType,
-        FinalizedIntentProofV1, FrozenMetadosisValuesV1, JobIntentV1,
-        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
-        ParentProofKind, TributeInputBindingV1,
+        CertifiedParentAccountingMetadataV2, DayType, FinalizedIntentProofV1,
+        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+        MetadosisExpectedStatus, NodTargetPreconditionV1, ParentProofKind, TributeInputBindingV1,
     },
     state::{OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus},
 };

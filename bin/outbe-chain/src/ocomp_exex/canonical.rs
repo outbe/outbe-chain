@@ -130,15 +130,7 @@ pub(super) fn classify_canonical_job(
 }
 
 pub(super) fn same_locator(left: RequestLocatorV1, right: RequestLocatorV1) -> bool {
-    left.intent_id == right.intent_id
-        && left.wwd == right.wwd
-        && left.pending_nonce == right.pending_nonce
-        && left.attempt == right.attempt
-        && left.activation_preconditions_hash == right.activation_preconditions_hash
-        && left.block_number == right.block_number
-        && left.block_hash == right.block_hash
-        && left.state_root == right.state_root
-        && left.before_request == right.before_request
+    left == right
 }
 
 pub(super) fn request_projection_is_closed(

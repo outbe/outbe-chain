@@ -316,11 +316,14 @@ fn settlement_and_nod_redemption_keep_all_three_executable_scenarios() {
             }
         }
     }
-    assert_eq!(checked, [
+    assert_eq!(
+        checked,
+        [
             "A zero-balance validator redeems its reward Gem through ZeroFee",
             "A stale Oracle rate defers validator Gem delivery and later recovers",
             "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
-        ]);
+        ]
+    );
 }
 
 #[test]

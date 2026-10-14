@@ -721,7 +721,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_coen_iso_preserves_real_zero_volume() {
+    async fn coen_iso_preserves_real_zero_volume() {
         let prices = aggregate_coen_iso_ticker("840", "1", "0").await;
         assert_eq!(prices.len(), 1);
         assert_eq!(prices[0].price, U256::from(COEN_ISO_SCALE));

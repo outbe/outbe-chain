@@ -126,7 +126,8 @@ pub(crate) struct InventoryBounds {
 /// does not infer that the corresponding local artifacts have been validated.
 pub(crate) struct CanonicalInventory<'a, 'b> {
     pub(super) state: &'a CanonicalState<'b>,
-    pub(super) db: DatabaseEnv,
+    // Keep MDBX alive until before its backing temporary directory is removed.
+    pub(super) _db: DatabaseEnv,
     pub(super) active_jobs: Vec<(B256, OcompJobRecordV1)>,
     pub bounds: InventoryBounds,
     pub(super) _directory: tempfile::TempDir,
@@ -370,7 +371,7 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
         tx.commit()?;
         Ok(Self {
             state,
-            db,
+            _db: db,
             active_jobs,
             bounds,
             _directory: directory,

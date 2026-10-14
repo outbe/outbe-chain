@@ -54,6 +54,16 @@ pub(crate) enum OnboardingArtifactUploadProgressV1 {
     Complete(Box<CompleteOnboardingArtifactIngestV1>),
 }
 
+struct BeginUploadInput {
+    request_hash: B256,
+    artifact: Vec<u8>,
+    anchor_outcome: Vec<u8>,
+    expected_intent_hash: B256,
+    expected_tribute_offer_public: [u8; 32],
+    expected_key_epoch: u64,
+    expected_tribute_offer_epoch: u64,
+}
+
 /// Exactly one stream may exist on one authenticated Noise connection. Any
 /// malformed transition destroys the cursor so retries restart from genesis.
 #[derive(Default)]
@@ -109,13 +119,15 @@ impl OnboardingArtifactUploadSessionV1 {
                     .map_err(|e| e.to_string())?;
                 self.begin(
                     descriptor,
-                    old_hash,
-                    artifact,
-                    anchor_outcome,
-                    context.intent_hash,
-                    context.tribute_offer_public,
-                    context.key_epoch,
-                    context.tribute_offer_epoch,
+                    BeginUploadInput {
+                        request_hash: old_hash,
+                        artifact,
+                        anchor_outcome,
+                        expected_intent_hash: context.intent_hash,
+                        expected_tribute_offer_public: context.tribute_offer_public,
+                        expected_key_epoch: context.key_epoch,
+                        expected_tribute_offer_epoch: context.tribute_offer_epoch,
+                    },
                 )?;
                 let mut upload = self.upload.take().ok_or("upgrade upload missing")?;
                 upload.request_hash = request_hash;
@@ -137,13 +149,15 @@ impl OnboardingArtifactUploadSessionV1 {
                 descriptor.ok_or_else(|| {
                     "onboarding ingest requires a release-measured network descriptor".to_owned()
                 })?,
-                request_hash,
-                artifact,
-                anchor_outcome,
-                expected_intent_hash,
-                expected_tribute_offer_public,
-                expected_key_epoch,
-                expected_tribute_offer_epoch,
+                BeginUploadInput {
+                    request_hash,
+                    artifact,
+                    anchor_outcome,
+                    expected_intent_hash,
+                    expected_tribute_offer_public,
+                    expected_key_epoch,
+                    expected_tribute_offer_epoch,
+                },
             ),
             EnclaveRequest::DcapOnboardingArtifactChunkV1 {
                 request_hash,
@@ -165,18 +179,20 @@ impl OnboardingArtifactUploadSessionV1 {
         result
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn begin(
         &mut self,
         descriptor: &TrustedNetworkDescriptorV1,
-        request_hash: B256,
-        artifact: Vec<u8>,
-        anchor_outcome: Vec<u8>,
-        expected_intent_hash: B256,
-        expected_tribute_offer_public: [u8; 32],
-        expected_key_epoch: u64,
-        expected_tribute_offer_epoch: u64,
+        input: BeginUploadInput,
     ) -> Result<OnboardingArtifactUploadProgressV1, String> {
+        let BeginUploadInput {
+            request_hash,
+            artifact,
+            anchor_outcome,
+            expected_intent_hash,
+            expected_tribute_offer_public,
+            expected_key_epoch,
+            expected_tribute_offer_epoch,
+        } = input;
         if self.upload.is_some() {
             return Err("an onboarding artifact upload is already active".into());
         }

@@ -162,3 +162,171 @@ impl Drop for ConsensusThreadGuard {
         }
     }
 }
+
+pub(crate) fn record_ocomp_exit(
+    exit: Option<crate::ocomp_exex::OcompExExExitV1>,
+    shutdown: &outbe_node::shutdown::NodeShutdown,
+) {
+    if let Some(exit) = exit {
+        tracing::error!(
+            failure_class = ?exit.failure.class,
+            failure = %exit.failure.message,
+            "embedded OCOMP requested node shutdown"
+        );
+        shutdown.record_failure(eyre::eyre!(
+            "embedded OCOMP failure ({:?}): {}",
+            exit.failure.class,
+            exit.failure.message
+        ));
+    } else {
+        shutdown.record_failure(eyre::eyre!(
+            "embedded OCOMP exit channel closed without a verdict"
+        ));
+    }
+}
+
+pub(crate) async fn wait_for_launcher_exit(
+    shutdown: &outbe_node::shutdown::NodeShutdown,
+    consensus_dead_rx: Option<&mut oneshot::Receiver<()>>,
+    ocomp_exit_rx: &mut tokio::sync::mpsc::UnboundedReceiver<crate::ocomp_exex::OcompExExExitV1>,
+    upgrade_promotion: &tokio::sync::Notify,
+    tee_lease_exit_rx: &mut tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>,
+) -> LauncherExitCause {
+    let has_consensus = consensus_dead_rx.is_some();
+    let consensus_dead = async {
+        match consensus_dead_rx {
+            Some(rx) => {
+                let _ = rx.await;
+            }
+            None => std::future::pending().await,
+        }
+    };
+    tokio::select! {
+        () = shutdown.engine_exited() => {
+            info!("execution node exited");
+            LauncherExitCause::NodeExited
+        }
+        () = consensus_dead => {
+            info!("consensus node exited");
+            LauncherExitCause::ConsensusExited
+        }
+        exit = ocomp_exit_rx.recv() => {
+            record_ocomp_exit(exit, shutdown);
+            LauncherExitCause::OcompRequested
+        }
+        () = upgrade_promotion.notified() => {
+            info!("finalized enclave upgrade requested execution restart");
+            LauncherExitCause::UpgradeRequested
+        }
+        rejection = tee_lease_exit_rx.recv() => {
+            let reason = tee_lease_exit_reason(rejection, shutdown);
+            if has_consensus {
+                tracing::error!(reason = %reason, "finalized TEE lease guard requested node shutdown");
+            } else {
+                tracing::error!(reason = %reason, "finalized TEE lease guard requested full-node shutdown");
+            }
+            LauncherExitCause::TeeLeaseRejected
+        }
+        signal = tokio::signal::ctrl_c() => {
+            if let Err(error) = signal {
+                shutdown.record_failure(eyre::eyre!(error).wrap_err("shutdown signal listener failed"));
+            }
+            info!("received shutdown signal");
+            LauncherExitCause::CtrlC
+        }
+    }
+}
+
+pub(crate) fn join_consensus_thread(
+    consensus_lifecycle: ConsensusThreadGuard,
+    shutdown: &outbe_node::shutdown::NodeShutdown,
+) {
+    let consensus_joined = consensus_lifecycle.join();
+    tracing::debug!("consensus thread join completed");
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        handle_consensus_thread_join(consensus_joined)
+    })) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => shutdown.record_failure(error),
+        Err(panic) => shutdown.record_panic(panic),
+    }
+}
+
+pub(crate) struct LauncherDrainTasks {
+    pub(crate) tee_lease_guard_handle: tokio::task::JoinHandle<()>,
+    pub(crate) radicle_observer: Option<tokio::task::JoinHandle<()>>,
+    pub(crate) tee_canary_handle: Option<tokio::task::JoinHandle<()>>,
+    pub(crate) txpool_maintenance_handle: tokio::task::JoinHandle<()>,
+    pub(crate) upgrade_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+async fn abort_and_record(
+    handle: tokio::task::JoinHandle<()>,
+    label: &str,
+    shutdown: &outbe_node::shutdown::NodeShutdown,
+) {
+    handle.abort();
+    match handle.await {
+        Ok(()) => {}
+        Err(error) if error.is_cancelled() => {}
+        Err(error) => {
+            shutdown.record_failure(eyre::eyre!("{label} panicked: {error}"));
+        }
+    }
+}
+
+async fn drain_radicle_observer(
+    mut handle: tokio::task::JoinHandle<()>,
+    shutdown: &outbe_node::shutdown::NodeShutdown,
+) {
+    match tokio::time::timeout(RADICLE_DRAIN_DEADLINE, &mut handle).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            shutdown.record_failure(eyre::eyre!(error).wrap_err("Radicle observer panicked"))
+        }
+        Err(error) => {
+            tracing::warn!("Radicle observer join deadline exceeded");
+            shutdown.record_failure(
+                eyre::eyre!(error).wrap_err("Radicle observer join deadline exceeded"),
+            );
+            handle.abort();
+            if let Err(error) = handle.await {
+                if !error.is_cancelled() {
+                    shutdown.record_failure(
+                        eyre::eyre!(error).wrap_err("Radicle observer failed while reaping"),
+                    );
+                }
+            }
+        }
+    }
+}
+
+pub(crate) async fn drain_launcher_tasks(
+    shutdown_token: &tokio_util::sync::CancellationToken,
+    shutdown: &outbe_node::shutdown::NodeShutdown,
+    tasks: LauncherDrainTasks,
+) {
+    shutdown_token.cancel();
+    if let Err(error) = tasks.tee_lease_guard_handle.await {
+        shutdown.record_failure(eyre::eyre!(error).wrap_err("TEE lease guard panicked"));
+    }
+    if let Some(handle) = tasks.radicle_observer {
+        drain_radicle_observer(handle, shutdown).await;
+    }
+    if let Some(handle) = tasks.tee_canary_handle {
+        tracing::debug!("waiting for TEE canary worker shutdown");
+        if let Err(error) = handle.await {
+            shutdown.record_failure(eyre::eyre!(error).wrap_err("TEE canary worker panicked"));
+        }
+        tracing::debug!("TEE canary worker shutdown completed");
+    }
+    abort_and_record(
+        tasks.txpool_maintenance_handle,
+        "txpool maintenance task",
+        shutdown,
+    )
+    .await;
+    if let Some(handle) = tasks.upgrade_handle {
+        abort_and_record(handle, "enclave-upgrade watcher", shutdown).await;
+    }
+}

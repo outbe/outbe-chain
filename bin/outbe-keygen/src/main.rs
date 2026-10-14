@@ -1123,7 +1123,7 @@ mod tests {
 
     // TC-007: verify signature end-to-end with registration DST
     #[test]
-    fn test_sign_registration_verifies_with_dst() {
+    fn sign_registration_verifies_with_dst() {
         let dir = tempfile::tempdir().unwrap();
         cmd_generate(dir.path().to_path_buf(), &KeyBackend::Plaintext).unwrap();
         let key_path = dir.path().join("signing-key.hex");

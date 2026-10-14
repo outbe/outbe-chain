@@ -126,13 +126,21 @@ pub(super) fn validate_scan_artifact(
     limits: &SchemaLimits,
 ) -> Result<(), WorkerError> {
     artifact.validate_semantics(limits)?;
-    if expected_unit_id.is_zero()
-        || artifact.unit_id != expected_unit_id
-        || artifact.protocol_bundle_hash != consumer.protocol_bundle_hash
-        || artifact.job_id != consumer.job_id
-        || artifact.attempt != consumer.attempt
-        || artifact.phase != position.phase()
-    {
+    let matches_consumer = !expected_unit_id.is_zero()
+        && (
+            artifact.unit_id,
+            artifact.protocol_bundle_hash,
+            artifact.job_id,
+            artifact.attempt,
+            artifact.phase,
+        ) == (
+            expected_unit_id,
+            consumer.protocol_bundle_hash,
+            consumer.job_id,
+            consumer.attempt,
+            position.phase(),
+        );
+    if !matches_consumer {
         return Err(WorkerError::UnitBindingMismatch);
     }
     if let PlannedUnitPositionV1::TreeNode {
@@ -195,6 +203,30 @@ pub(super) fn planner_from_authority(
     .map_err(WorkerError::from)
 }
 
+pub(super) fn primary_unit_spec_from_authority(
+    planner: &LysisPlannerV1,
+    shard_ordinal: u32,
+    authority: &UnitExecutionAuthority<'_>,
+) -> Result<UnitSpecV1, WorkerError> {
+    planner
+        .primary_unit_at(
+            shard_ordinal,
+            |ordinal| {
+                authority
+                    .input_chunks
+                    .iter()
+                    .find(|(reference, chunk)| {
+                        reference.kind == outbe_ocomp_protocol::input::InputChunkKind::Tribute
+                            && chunk.kind == outbe_ocomp_protocol::input::InputChunkKind::Tribute
+                            && reference.ordinal == ordinal
+                    })
+                    .map(|(reference, _)| reference.clone())
+            },
+            authority.limits,
+        )
+        .map_err(WorkerError::from)
+}
+
 pub(super) fn exact_unit_output_source(
     spec: &UnitSpecV1,
     purpose: InputPurpose,
@@ -218,16 +250,18 @@ pub(super) fn require_plan_binding(
     expected: ExpectedPlanBindingsV1,
     limits: &SchemaLimits,
 ) -> Result<(), WorkerError> {
-    let matches = plan.plan_hash(limits)? == expected.plan_hash
-        && plan.protocol_bundle_hash == expected.protocol_bundle_hash
-        && plan.job_id == expected.job_id
-        && plan.attempt == expected.attempt
-        && plan.input_manifest_hash == expected.input_manifest_hash
-        && plan.wwd == expected.wwd
-        && plan.tribute_count == expected.tribute_count
-        && plan.planner_spec_version == expected.planner_spec_version
-        && plan.reducer_spec_version == expected.reducer_spec_version;
-    if matches {
+    let actual = ExpectedPlanBindingsV1 {
+        plan_hash: plan.plan_hash(limits)?,
+        protocol_bundle_hash: plan.protocol_bundle_hash,
+        job_id: plan.job_id,
+        attempt: plan.attempt,
+        input_manifest_hash: plan.input_manifest_hash,
+        wwd: plan.wwd,
+        tribute_count: plan.tribute_count,
+        planner_spec_version: plan.planner_spec_version,
+        reducer_spec_version: plan.reducer_spec_version,
+    };
+    if actual == expected {
         Ok(())
     } else {
         Err(WorkerError::UnitBindingMismatch)
@@ -245,9 +279,8 @@ pub(super) fn require_authenticated_input(
         .canonical_ordered_inputs
         .iter()
         .filter(|input| {
-            input.purpose == purpose
-                && input.source_kind == InputSourceKind::AuthenticatedRoot
-                && input.source_id == source_id
+            (input.purpose, input.source_kind, input.source_id)
+                == (purpose, InputSourceKind::AuthenticatedRoot, source_id)
                 && input.record_count_limit >= record_count
                 && input.max_encoded_bytes >= encoded_bytes
         })

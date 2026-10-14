@@ -74,29 +74,23 @@ async fn run_watch(client: &(impl Rpc + Sync), interval: u64) -> Result<()> {
     }
 }
 
+async fn call_validator_set<C: SolCall>(client: &(impl Rpc + Sync), call: C) -> Result<C::Return> {
+    let result = client
+        .eth_call(abi::VALIDATOR_SET_ADDR, &call.abi_encode())
+        .await?;
+    Ok(C::abi_decode_returns(&result)?)
+}
+
 /// Single dashboard tick - extracted from loop for testability.
 async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
     let block = client.eth_block_number().await?;
-
-    let epoch: u64 = {
-        let call = IValidatorSet::getEpochNumberCall {};
-        let result = client
-            .eth_call(abi::VALIDATOR_SET_ADDR, &call.abi_encode())
-            .await?;
-        let decoded = IValidatorSet::getEpochNumberCall::abi_decode_returns(&result)?;
-        decoded
-            .try_into()
-            .map_err(|_| eyre::eyre!("epoch number exceeds u64"))?
-    };
-
-    let count: u64 = {
-        let call = IValidatorSet::activeValidatorCountCall {};
-        let result = client
-            .eth_call(abi::VALIDATOR_SET_ADDR, &call.abi_encode())
-            .await?;
-        IValidatorSet::activeValidatorCountCall::abi_decode_returns(&result)?.into()
-    };
-
+    let epoch: u64 = call_validator_set(client, IValidatorSet::getEpochNumberCall {})
+        .await?
+        .try_into()
+        .map_err(|_| eyre::eyre!("epoch number exceeds u64"))?;
+    let count: u64 = call_validator_set(client, IValidatorSet::activeValidatorCountCall {})
+        .await?
+        .into();
     let total: U256 = {
         let call = IStaking::getTotalStakedCall {};
         let result = client
@@ -104,14 +98,7 @@ async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
             .await?;
         IStaking::getTotalStakedCall::abi_decode_returns(&result)?
     };
-
-    let validators: Vec<alloy_primitives::Address> = {
-        let call = IValidatorSet::getActiveValidatorsCall {};
-        let result = client
-            .eth_call(abi::VALIDATOR_SET_ADDR, &call.abi_encode())
-            .await?;
-        IValidatorSet::getActiveValidatorsCall::abi_decode_returns(&result)?
-    };
+    let validators = call_validator_set(client, IValidatorSet::getActiveValidatorsCall {}).await?;
 
     println!("=== Outbe Network Monitor ===");
     println!(
@@ -126,35 +113,47 @@ async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("{}", "-".repeat(92));
 
     for (i, addr) in validators.iter().enumerate() {
-        let detail_call = IValidatorSet::validatorByAddressCall { addr: *addr }.abi_encode();
-        if let Ok(detail_result) = client.eth_call(abi::VALIDATOR_SET_ADDR, &detail_call).await {
-            if let Ok(detail) =
-                IValidatorSet::validatorByAddressCall::abi_decode_returns(&detail_result)
-            {
-                let status_str = match detail.status {
-                    0 => "Registered",
-                    1 => "Pending",
-                    2 => "Active",
-                    3 => "Exiting",
-                    4 => "Unbonding",
-                    5 => "Inactive",
-                    6 => "Jailed",
-                    _ => "Unknown",
-                };
-                println!(
-                    "{:<4} {:?} {:>8} {:>12} {:>10} {:>10}",
-                    i + 1,
-                    addr,
-                    status_str,
-                    super::format_coen_amount(detail.stake),
-                    detail.missedBlocks,
-                    detail.missedVotes,
-                );
-            }
-        }
+        print_watch_validator_row(client, i + 1, *addr).await;
     }
 
     Ok(())
+}
+
+async fn print_watch_validator_row(
+    client: &(impl Rpc + Sync),
+    index: usize,
+    addr: alloy_primitives::Address,
+) {
+    let Ok(detail) =
+        call_validator_set(client, IValidatorSet::validatorByAddressCall { addr }).await
+    else {
+        return;
+    };
+    println!(
+        "{:<4} {:?} {:>8} {:>12} {:>10} {:>10}",
+        index,
+        addr,
+        watch_status_label(detail.status),
+        super::format_coen_amount(detail.stake),
+        detail.missedBlocks,
+        detail.missedVotes,
+    );
+}
+
+fn watch_status_label(status: u8) -> &'static str {
+    const LABELS: [&str; 7] = [
+        "Registered",
+        "Pending",
+        "Active",
+        "Exiting",
+        "Unbonding",
+        "Inactive",
+        "Jailed",
+    ];
+    LABELS
+        .get(usize::from(status))
+        .copied()
+        .unwrap_or("Unknown")
 }
 
 /// Health check - exit code 0 if healthy, non-zero otherwise.
@@ -173,26 +172,16 @@ async fn run_health(client: &(impl Rpc + Sync)) -> Result<()> {
     }
 
     // 2. Check consensus status (if available).
-    match client.outbe_consensus_status().await {
-        Ok(status) => {
-            let is_active = status
-                .get("isActive")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let last_finalized = status
-                .get("lastFinalizedBlock")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-
-            if is_active {
-                println!("[OK]  consensus active, last finalized block: {last_finalized}");
-            } else {
-                println!("[WARN] consensus not active");
-            }
+    if let Ok(status) = client.outbe_consensus_status().await {
+        let is_active = json_bool(&status, "isActive");
+        let last_finalized = json_u64(&status, "lastFinalizedBlock");
+        if is_active {
+            println!("[OK]  consensus active, last finalized block: {last_finalized}");
+        } else {
+            println!("[WARN] consensus not active");
         }
-        Err(_) => {
-            println!("[WARN] consensus status unavailable (non-validator node?)");
-        }
+    } else {
+        println!("[WARN] consensus status unavailable (non-validator node?)");
     }
 
     if healthy {
@@ -204,137 +193,142 @@ async fn run_health(client: &(impl Rpc + Sync)) -> Result<()> {
     }
 }
 
+fn json_bool(value: &serde_json::Value, key: &str) -> bool {
+    value.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+fn json_u64(value: &serde_json::Value, key: &str) -> u64 {
+    value.get(key).and_then(|v| v.as_u64()).unwrap_or(0)
+}
+
+fn check_flag(ok: bool, ok_msg: &str, fail_msg: &str) -> bool {
+    if ok {
+        println!("[OK]  {ok_msg}");
+    } else {
+        println!("[FAIL] {fail_msg}");
+    }
+    ok
+}
+
+fn check_sync_lag(block: u64, last_finalized: u64) -> bool {
+    if block == 0 || last_finalized == 0 {
+        return true;
+    }
+    let lag = block.saturating_sub(last_finalized);
+    if lag <= 5 {
+        println!("[OK]  node synced (lag: {lag} blocks)");
+        true
+    } else {
+        println!("[FAIL] node behind (lag: {lag} blocks)");
+        false
+    }
+}
+
+fn check_enclave_canary(enclave: Option<&serde_json::Value>) -> bool {
+    let Some(enclave) = enclave else {
+        println!("[WARN] enclave health not reported by node");
+        return true;
+    };
+    if json_bool(enclave, "ready") {
+        match enclave.get("lastCanaryLatencyMs").and_then(|v| v.as_u64()) {
+            Some(ms) => println!("[OK]  enclave canary ready (latency {ms}ms)"),
+            None => println!("[OK]  enclave canary ready"),
+        }
+        return true;
+    }
+    let state = enclave
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    match state {
+        "degraded" | "unavailable" => {
+            let failure = enclave
+                .get("lastFailureClass")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            println!("[FAIL] enclave canary {state} ({failure})");
+            false
+        }
+        "starting" | "disabled" => {
+            println!("[WARN] enclave canary {state}");
+            true
+        }
+        other => {
+            println!("[WARN] enclave canary state: {other}");
+            true
+        }
+    }
+}
+
+fn check_consensus_readiness(status: &serde_json::Value, block: u64) -> bool {
+    let active_ok = check_flag(
+        json_bool(status, "isActive"),
+        "consensus active",
+        "consensus not active",
+    );
+    let shares_ok = check_flag(
+        json_bool(status, "hasThresholdShares"),
+        "threshold shares present",
+        "threshold shares missing",
+    );
+    let peers = json_u64(status, "connectedPeers");
+    if peers > 0 {
+        println!("[OK]  connected peers: {peers}");
+    } else {
+        println!("[WARN] no connected peers reported");
+    }
+    let sync_ok = check_sync_lag(block, json_u64(status, "lastFinalizedBlock"));
+    let enclave_ok = check_enclave_canary(status.get("enclave"));
+    active_ok && shares_ok && sync_ok && enclave_ok
+}
+
+async fn check_validator_readiness(
+    client: &(impl Rpc + Sync),
+    addr: alloy_primitives::Address,
+) -> bool {
+    let detail_call = IValidatorSet::validatorByAddressCall { addr }.abi_encode();
+    match client.eth_call(abi::VALIDATOR_SET_ADDR, &detail_call).await {
+        Ok(result) => {
+            let Ok(detail) = IValidatorSet::validatorByAddressCall::abi_decode_returns(&result)
+            else {
+                return true;
+            };
+            let (label, is_ready) = interpret_validator_status(detail.status);
+            check_flag(
+                is_ready,
+                &format!("validator {addr:?} is {label}"),
+                &format!("validator {addr:?} is {label}"),
+            )
+        }
+        Err(e) => {
+            println!("[FAIL] cannot query validator status: {e}");
+            false
+        }
+    }
+}
+
 /// Readiness check - validates validator node is ready to participate.
 async fn run_readiness(
     client: &(impl Rpc + Sync),
     address: Option<alloy_primitives::Address>,
 ) -> Result<()> {
-    let mut ready = true;
+    let Ok(block) = client.eth_block_number().await else {
+        let e = client.eth_block_number().await.unwrap_err();
+        println!("[FAIL] RPC unreachable: {e}");
+        exit_process(1);
+    };
+    println!("[OK]  RPC reachable, block: {block}");
 
-    // 1. Check RPC is reachable.
-    let block = match client.eth_block_number().await {
-        Ok(b) => {
-            println!("[OK]  RPC reachable, block: {b}");
-            b
-        }
-        Err(e) => {
-            println!("[FAIL] RPC unreachable: {e}");
-            exit_process(1);
+    let mut ready = match client.outbe_consensus_status().await {
+        Ok(status) => check_consensus_readiness(&status, block),
+        Err(_) => {
+            println!("[FAIL] consensus status unavailable");
+            false
         }
     };
 
-    // 2. Check consensus status.
-    match client.outbe_consensus_status().await {
-        Ok(status) => {
-            let is_active = status
-                .get("isActive")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let has_shares = status
-                .get("hasThresholdShares")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let peers = status
-                .get("connectedPeers")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let last_finalized = status
-                .get("lastFinalizedBlock")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-
-            if is_active {
-                println!("[OK]  consensus active");
-            } else {
-                println!("[FAIL] consensus not active");
-                ready = false;
-            }
-
-            if has_shares {
-                println!("[OK]  threshold shares present");
-            } else {
-                println!("[FAIL] threshold shares missing");
-                ready = false;
-            }
-
-            if peers > 0 {
-                println!("[OK]  connected peers: {peers}");
-            } else {
-                println!("[WARN] no connected peers reported");
-            }
-
-            // Check sync: last finalized should be close to current block.
-            if block > 0 && last_finalized > 0 {
-                let lag = block.saturating_sub(last_finalized);
-                if lag <= 5 {
-                    println!("[OK]  node synced (lag: {lag} blocks)");
-                } else {
-                    println!("[FAIL] node behind (lag: {lag} blocks)");
-                    ready = false;
-                }
-            }
-
-            // Enclave canary health (`enclave` object; absent on older nodes).
-            match status.get("enclave") {
-                Some(enclave) => {
-                    let state = enclave
-                        .get("state")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let enclave_ready = enclave
-                        .get("ready")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let latency = enclave.get("lastCanaryLatencyMs").and_then(|v| v.as_u64());
-                    match state {
-                        _ if enclave_ready => match latency {
-                            Some(ms) => println!("[OK]  enclave canary ready (latency {ms}ms)"),
-                            None => println!("[OK]  enclave canary ready"),
-                        },
-                        "degraded" | "unavailable" => {
-                            let failure = enclave
-                                .get("lastFailureClass")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown");
-                            println!("[FAIL] enclave canary {state} ({failure})");
-                            ready = false;
-                        }
-                        "starting" => println!("[WARN] enclave canary starting"),
-                        "disabled" => println!("[WARN] enclave canary disabled"),
-                        other => println!("[WARN] enclave canary state: {other}"),
-                    }
-                }
-                None => println!("[WARN] enclave health not reported by node"),
-            }
-        }
-        Err(_) => {
-            println!("[FAIL] consensus status unavailable");
-            ready = false;
-        }
-    }
-
-    // 3. Check validator is in active set (if address provided).
     if let Some(addr) = address {
-        let detail_call = IValidatorSet::validatorByAddressCall { addr }.abi_encode();
-        match client.eth_call(abi::VALIDATOR_SET_ADDR, &detail_call).await {
-            Ok(result) => {
-                if let Ok(detail) =
-                    IValidatorSet::validatorByAddressCall::abi_decode_returns(&result)
-                {
-                    let (label, is_ready) = interpret_validator_status(detail.status);
-                    if is_ready {
-                        println!("[OK]  validator {addr:?} is {label}");
-                    } else {
-                        println!("[FAIL] validator {addr:?} is {label}");
-                        ready = false;
-                    }
-                }
-            }
-            Err(e) => {
-                println!("[FAIL] cannot query validator status: {e}");
-                ready = false;
-            }
-        }
+        ready &= check_validator_readiness(client, addr).await;
     }
 
     if ready {
@@ -344,6 +338,16 @@ async fn run_readiness(
         println!("\nreadiness: NOT READY");
         exit_process(1);
     }
+}
+
+fn should_display_metric_line(line: &str, show_all: bool) -> bool {
+    if show_all {
+        return true;
+    }
+    if line.starts_with('#') {
+        return line.contains("outbe_");
+    }
+    line.starts_with("outbe_")
 }
 
 /// Fetch and display Prometheus metrics.
@@ -364,21 +368,11 @@ async fn run_metrics(endpoint: &str, show_all: bool) -> Result<()> {
         .await
         .map_err(|e| eyre::eyre!("failed to read metrics response: {e}"))?;
 
-    for line in body.lines() {
-        if line.is_empty() || line.starts_with('#') {
-            if show_all {
-                println!("{line}");
-            } else if line.starts_with('#') {
-                // Print comment lines for outbe_ metrics
-                if line.contains("outbe_") {
-                    println!("{line}");
-                }
-            }
-            continue;
-        }
-        if show_all || line.starts_with("outbe_") {
-            println!("{line}");
-        }
+    for line in body
+        .lines()
+        .filter(|line| should_display_metric_line(line, show_all))
+    {
+        println!("{line}");
     }
 
     Ok(())

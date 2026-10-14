@@ -144,13 +144,19 @@ pub(crate) fn create(
     ))
 }
 
+fn same_domain_members(
+    a: &super::inventory::NativeDomain,
+    b: &super::inventory::NativeDomain,
+) -> bool {
+    (a.kind, a.native_root, &a.root) == (b.kind, b.native_root, &b.root)
+        && a.members.iter().collect::<BTreeSet<_>>() == b.members.iter().collect::<BTreeSet<_>>()
+}
+
 fn same_members(before: &NativeInventory, after: &NativeInventory) -> bool {
     before.domains.len() == after.domains.len()
-        && before.domains.iter().zip(&after.domains).all(|(a, b)| {
-            a.kind == b.kind
-                && a.native_root == b.native_root
-                && a.root == b.root
-                && a.members.iter().collect::<BTreeSet<_>>()
-                    == b.members.iter().collect::<BTreeSet<_>>()
-        })
+        && before
+            .domains
+            .iter()
+            .zip(&after.domains)
+            .all(|(a, b)| same_domain_members(a, b))
 }

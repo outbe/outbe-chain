@@ -537,20 +537,20 @@ fn validate_output(
 
 fn measurement_capacity_profile(result_deadline_blocks: u64) -> CapacityProfileV1 {
     CapacityProfileV1 {
-        profile_id: B256::repeat_byte(13),
-        max_tributes_per_work_shard: 256,
+        result_deadline_blocks,
+        source_retention_after_terminal_blocks: 64,
+        ready_backoff_blocks: 1,
         max_workers_per_domain: 4,
+        profile_id: B256::repeat_byte(13),
+        generated_limits_manifest_hash: B256::repeat_byte(23),
         max_intents_per_block: 1,
         max_activations_per_block: 1,
         max_ready_inspections_per_block: 1,
         max_expirations_per_block: 1,
-        ready_backoff_blocks: 1,
+        max_tributes_per_work_shard: 256,
         max_reference_currencies: 256,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
-        result_deadline_blocks,
-        source_retention_after_terminal_blocks: 64,
-        generated_limits_manifest_hash: B256::repeat_byte(23),
     }
 }
 
@@ -653,7 +653,7 @@ mod tests {
 
     #[cfg(feature = "test-protocol-overrides")]
     #[test]
-    fn test_ocomp_profile_uses_genesis_override() {
+    fn test_ocomp_profile_genesis_override() {
         let genesis = serde_json::json!({
             "config": {
                 "outbeProtocol": {

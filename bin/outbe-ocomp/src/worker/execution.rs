@@ -101,20 +101,7 @@ pub(super) fn execute_claimed_unit(
         },
         &limits,
     )?;
-    if spec.phase == UnitPhase::Enumerate {
-        verify_ordered_list_membership(
-            OrderedListProofTarget::new(
-                ListKind::UnitSpecificationsArtifacts,
-                plan.primary_work_unit_count,
-                request.unit_index,
-            ),
-            &request.canonical_unit_spec.0,
-            &request.unit_membership_siblings,
-            plan.primary_work_unit_root,
-        )?;
-    } else if !request.unit_membership_siblings.is_empty() {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
+    verify_enumerate_membership(&spec, &plan, request)?;
     require_authenticated_input(
         &spec,
         InputPurpose::InputManifest,
@@ -122,31 +109,8 @@ pub(super) fn execute_claimed_unit(
         1,
         request.input_manifest_ref.encoded_bytes,
     )?;
-    let mut input_chunks = Vec::new();
-    let mut producer_artifacts = Vec::new();
-    for reference in &request.ordered_input_refs {
-        require_lease_active(cancelled)?;
-        let object = reader.read_verified(reference)?;
-        match reference.expected_ocb1_kind {
-            Some(kind) if kind == ObjectKind::AuthenticatedInputChunkV1.tag() => {
-                let derived =
-                    derive_input_chunk_ref(&object, config.protocol_bundle.bundle(), &limits)?
-                        .reference;
-                let chunk =
-                    decode_verified_input_chunk(&object, config.protocol_bundle.bundle(), &limits)?;
-                if chunk.job_id != spec.job_id
-                    || chunk.protocol_bundle_hash != spec.protocol_bundle_hash
-                {
-                    return Err(WorkerError::UnitBindingMismatch);
-                }
-                input_chunks.push((derived, chunk));
-            }
-            Some(kind) if kind == ObjectKind::UnitArtifactV1.tag() => {
-                producer_artifacts.push(UnitArtifactV1::decode_canonical(object.bytes(), &limits)?);
-            }
-            _ => return Err(WorkerError::UnitBindingMismatch),
-        }
-    }
+    let (input_chunks, producer_artifacts) =
+        load_claimed_unit_inputs((config, request), (&spec, &reader, &limits), cancelled)?;
 
     require_lease_active(cancelled)?;
     let finished = match execute_unit(
@@ -215,4 +179,73 @@ pub(crate) fn execute_unit(
         UnitPhase::BucketShuffle => execute_shuffle_unit(spec, authority),
         UnitPhase::RootReduce => execute_root_reduce_unit(spec, authority),
     }
+}
+
+fn verify_enumerate_membership(
+    spec: &UnitSpecV1,
+    plan: &PlanCommitmentV1,
+    request: &RunUnitV1,
+) -> Result<(), WorkerError> {
+    if spec.phase == UnitPhase::Enumerate {
+        verify_ordered_list_membership(
+            OrderedListProofTarget::new(
+                ListKind::UnitSpecificationsArtifacts,
+                plan.primary_work_unit_count,
+                request.unit_index,
+            ),
+            &request.canonical_unit_spec.0,
+            &request.unit_membership_siblings,
+            plan.primary_work_unit_root,
+        )?;
+        Ok(())
+    } else if request.unit_membership_siblings.is_empty() {
+        Ok(())
+    } else {
+        Err(WorkerError::UnitBindingMismatch)
+    }
+}
+
+type ClaimedUnitInputs = (
+    Vec<(
+        outbe_ocomp_protocol::input::InputChunkRefV1,
+        outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
+    )>,
+    Vec<UnitArtifactV1>,
+);
+
+fn load_claimed_unit_inputs(
+    (config, request): (&WorkerConfig, &RunUnitV1),
+    (spec, reader, limits): (
+        &UnitSpecV1,
+        &FilesystemCasReader,
+        &outbe_ocomp_protocol::SchemaLimits,
+    ),
+    cancelled: Option<&AtomicBool>,
+) -> Result<ClaimedUnitInputs, WorkerError> {
+    let mut input_chunks = Vec::new();
+    let mut producer_artifacts = Vec::new();
+    for reference in &request.ordered_input_refs {
+        require_lease_active(cancelled)?;
+        let object = reader.read_verified(reference)?;
+        match reference.expected_ocb1_kind {
+            Some(kind) if kind == ObjectKind::AuthenticatedInputChunkV1.tag() => {
+                let derived =
+                    derive_input_chunk_ref(&object, config.protocol_bundle.bundle(), limits)?
+                        .reference;
+                let chunk =
+                    decode_verified_input_chunk(&object, config.protocol_bundle.bundle(), limits)?;
+                if chunk.job_id != spec.job_id
+                    || chunk.protocol_bundle_hash != spec.protocol_bundle_hash
+                {
+                    return Err(WorkerError::UnitBindingMismatch);
+                }
+                input_chunks.push((derived, chunk));
+            }
+            Some(kind) if kind == ObjectKind::UnitArtifactV1.tag() => {
+                producer_artifacts.push(UnitArtifactV1::decode_canonical(object.bytes(), limits)?);
+            }
+            _ => return Err(WorkerError::UnitBindingMismatch),
+        }
+    }
+    Ok((input_chunks, producer_artifacts))
 }
