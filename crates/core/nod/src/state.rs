@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionScope, IdPageRequest,
-    ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
+    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionReaders, ExecutionScope,
+    IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
@@ -178,12 +178,12 @@ impl NodContract<'_> {
     /// Records compact issuance state and delegates both bodies to the generic lifecycle.
     pub(crate) fn record_nod_issued(
         &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
+        readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
         item: &NodItemState,
         entry_price_minor: U256,
         call_terms: Option<CallTerms>,
     ) -> Result<()> {
+        let ExecutionReaders { scope, parent } = readers;
         crate::issuance::validate_item(item, entry_price_minor)?;
         if self
             .get_item_verified(scope, parent, item.nod_id)?

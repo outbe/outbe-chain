@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId};
+use outbe_compressed_entities::{
+    ExecutionReaders, ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId,
+};
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::units::SCALE_1E6_U256;
@@ -147,16 +149,15 @@ impl LoadedNodBucket {
 /// A new bucket seals `call_terms`; NodFactory derives them from the live profile.
 pub fn add_nod(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     item: &NodItemState,
     entry_price_minor: U256,
     call_terms: Option<CallTerms>,
 ) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
-    storage.clone().with_checkpoint(|| {
-        nod.record_nod_issued(scope, parent, item, entry_price_minor, call_terms)
-    })
+    storage
+        .clone()
+        .with_checkpoint(|| nod.record_nod_issued(readers, item, entry_price_minor, call_terms))
 }
 
 /// Removes a loaded Nod item and decrements membership, deleting the bucket only if empty.

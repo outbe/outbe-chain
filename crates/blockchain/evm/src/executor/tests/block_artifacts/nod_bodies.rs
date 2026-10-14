@@ -341,8 +341,10 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
                 tribute_contract.issue(&scope, &tribute_reader, &tribute)?;
                 outbe_nod::api::add_nod(
                     &hook_ctx.storage,
-                    &scope,
-                    &nod_reader,
+                    outbe_compressed_entities::ExecutionReaders {
+                        scope: &scope,
+                        parent: &nod_reader,
+                    },
                     &nod_fixture(),
                     U256::from(16),
                     outbe_nod::test_support::sealed_terms(
@@ -414,8 +416,10 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         tribute_contract.issue(&scope, &tribute_reader, &tribute)?;
         outbe_nod::api::add_nod(
             &hook_ctx.storage,
-            &scope,
-            &nod_reader,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &nod_reader,
+            },
             &nod_fixture(),
             U256::from(16),
             outbe_nod::test_support::sealed_terms(
@@ -523,8 +527,10 @@ fn seed_called_nod(
     let empty_reader = outbe_nod::nod_reader(Arc::new(MemoryStorage::new()));
     outbe_nod::api::add_nod(
         &storage,
-        scope,
-        &empty_reader,
+        outbe_compressed_entities::ExecutionReaders {
+            scope: scope,
+            parent: &empty_reader,
+        },
         &fixture.item,
         fixture.entry_price_minor,
         outbe_nod::test_support::sealed_terms(&storage, &fixture.item, fixture.entry_price_minor),

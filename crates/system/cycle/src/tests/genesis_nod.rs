@@ -187,8 +187,7 @@ fn issue_nod(
     );
     outbe_nod::api::add_nod(
         storage,
-        scope,
-        parent,
+        outbe_compressed_entities::ExecutionReaders { scope, parent },
         &body,
         U256::from(entry),
         outbe_nod::test_support::sealed_terms(storage, &body, U256::from(entry)),

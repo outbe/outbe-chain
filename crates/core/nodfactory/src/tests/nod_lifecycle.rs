@@ -218,8 +218,7 @@ fn issue_qualified_item(
 ) -> NodItemState {
     api::add_nod(
         storage,
-        scope,
-        parent,
+        outbe_compressed_entities::ExecutionReaders { scope, parent },
         &item,
         entry_price(),
         crate::runtime::call_terms(storage, entry_price(), item.reference_currency).unwrap(),
@@ -335,8 +334,7 @@ fn arm_lapsed(
             outbe_nod::test_support::set_amount(&mut item, U256::from(load));
             api::add_nod(
                 storage,
-                scope,
-                parent,
+                outbe_compressed_entities::ExecutionReaders { scope, parent },
                 &item,
                 entry_price(),
                 crate::runtime::call_terms(storage, entry_price(), item.reference_currency)
@@ -442,8 +440,7 @@ fn issuance_seals_the_call_terms_on_the_bucket() {
         let item = nod_item(Address::repeat_byte(0x11), ISO);
         api::add_nod(
             storage,
-            scope,
-            parent,
+            outbe_compressed_entities::ExecutionReaders { scope, parent },
             &item,
             entry_price(),
             crate::runtime::call_terms(storage, entry_price(), item.reference_currency).unwrap(),
@@ -493,8 +490,7 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
         let item = nod_item(Address::repeat_byte(0x11), ISO);
         api::add_nod(
             storage,
-            scope,
-            parent,
+            outbe_compressed_entities::ExecutionReaders { scope, parent },
             &item,
             entry_price(),
             crate::runtime::call_terms(storage, entry_price(), item.reference_currency).unwrap(),
@@ -532,8 +528,7 @@ fn a_later_member_does_not_reissue_the_bucket_stamp() {
         let first = nod_item(Address::repeat_byte(0x11), ISO);
         api::add_nod(
             storage,
-            scope,
-            parent,
+            outbe_compressed_entities::ExecutionReaders { scope, parent },
             &first,
             entry_price(),
             crate::runtime::call_terms(storage, entry_price(), first.reference_currency).unwrap(),
@@ -543,8 +538,7 @@ fn a_later_member_does_not_reissue_the_bucket_stamp() {
         second.issued_at = START + 3 * DAY;
         api::add_nod(
             storage,
-            scope,
-            parent,
+            outbe_compressed_entities::ExecutionReaders { scope, parent },
             &second,
             entry_price(),
             crate::runtime::call_terms(storage, entry_price(), second.reference_currency).unwrap(),
@@ -970,8 +964,7 @@ fn the_member_index_tracks_issuance_and_removal_in_a_qualified_bucket() {
         let b_item = nod_item(Address::repeat_byte(0x22), ISO);
         api::add_nod(
             storage,
-            scope,
-            parent,
+            outbe_compressed_entities::ExecutionReaders { scope, parent },
             &b_item,
             entry_price(),
             crate::runtime::call_terms(storage, entry_price(), b_item.reference_currency).unwrap(),
@@ -1026,8 +1019,7 @@ fn a_bucket_is_callable_from_issuance_and_settles_once_called() {
         let item = nod_item(Address::repeat_byte(0x11), ISO);
         api::add_nod(
             storage,
-            scope,
-            parent,
+            outbe_compressed_entities::ExecutionReaders { scope, parent },
             &item,
             entry_price(),
             crate::runtime::call_terms(storage, entry_price(), item.reference_currency).unwrap(),
@@ -1071,8 +1063,7 @@ fn every_member_of_a_lapsed_bucket_burns_in_one_pass() {
                 let item = nod_item(*owner, ISO);
                 api::add_nod(
                     storage,
-                    scope,
-                    parent,
+                    outbe_compressed_entities::ExecutionReaders { scope, parent },
                     &item,
                     entry_price(),
                     crate::runtime::call_terms(storage, entry_price(), item.reference_currency)
@@ -1119,8 +1110,7 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
                 let item = nod_item(*owner, ISO);
                 api::add_nod(
                     storage,
-                    scope,
-                    parent,
+                    outbe_compressed_entities::ExecutionReaders { scope, parent },
                     &item,
                     entry_price(),
                     crate::runtime::call_terms(storage, entry_price(), item.reference_currency)
@@ -1167,8 +1157,7 @@ fn a_bucket_inside_its_notice_waits_while_its_neighbours_burn() {
                 let item = nod_item_at(Address::repeat_byte(owner), ISO, entry);
                 api::add_nod(
                     storage,
-                    scope,
-                    parent,
+                    outbe_compressed_entities::ExecutionReaders { scope, parent },
                     &item,
                     entry,
                     crate::runtime::call_terms(storage, entry, item.reference_currency).unwrap(),
@@ -1226,8 +1215,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             let item = nod_item_issued(Address::repeat_byte(owner), ISO, entry, WWD, issued_at);
             api::add_nod(
                 storage,
-                scope,
-                parent,
+                outbe_compressed_entities::ExecutionReaders { scope, parent },
                 &item,
                 entry,
                 crate::runtime::call_terms(storage, entry, item.reference_currency).unwrap(),
@@ -1338,8 +1326,7 @@ fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
                 let item = nod_item(Address::left_padding_from(&owner.to_be_bytes()), ISO);
                 api::add_nod(
                     storage,
-                    scope,
-                    parent,
+                    outbe_compressed_entities::ExecutionReaders { scope, parent },
                     &item,
                     entry_price(),
                     crate::runtime::call_terms(storage, entry_price(), item.reference_currency)
@@ -1451,8 +1438,7 @@ fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfe
         let lapsed = nod_item(Address::repeat_byte(0x11), ISO);
         api::add_nod(
             storage,
-            scope,
-            parent,
+            outbe_compressed_entities::ExecutionReaders { scope, parent },
             &lapsed,
             entry_price(),
             crate::runtime::call_terms(storage, entry_price(), lapsed.reference_currency).unwrap(),
@@ -1471,8 +1457,7 @@ fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfe
         let fresh = nod_item(Address::repeat_byte(0x22), OTHER_ISO);
         api::add_nod(
             storage,
-            scope,
-            parent,
+            outbe_compressed_entities::ExecutionReaders { scope, parent },
             &fresh,
             entry_price(),
             crate::runtime::call_terms(storage, entry_price(), fresh.reference_currency).unwrap(),
@@ -1510,8 +1495,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
                 let item = nod_item(Address::repeat_byte(seed), ISO);
                 api::add_nod(
                     storage,
-                    scope,
-                    parent,
+                    outbe_compressed_entities::ExecutionReaders { scope, parent },
                     &item,
                     entry_price(),
                     crate::runtime::call_terms(storage, entry_price(), item.reference_currency)
@@ -1661,8 +1645,7 @@ fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeite
             .unwrap();
         api::add_nod(
             storage,
-            scope,
-            parent,
+            outbe_compressed_entities::ExecutionReaders { scope, parent },
             &newcomer,
             entry_price(),
             crate::runtime::call_terms(storage, entry_price(), newcomer.reference_currency)
@@ -2119,8 +2102,10 @@ fn a_full_forfeit_budget_burns_in_one_slice_within_the_cycle_tick_gas_window() {
                 outbe_nod::test_support::set_amount(&mut item, U256::from(owner));
                 api::add_nod(
                     &storage,
-                    &scope,
-                    &parent,
+                    outbe_compressed_entities::ExecutionReaders {
+                        scope: &scope,
+                        parent: &parent,
+                    },
                     &item,
                     entry_price(),
                     crate::runtime::call_terms(&storage, entry_price(), item.reference_currency)

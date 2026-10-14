@@ -13,12 +13,6 @@ pub enum GemError {
     #[error("invalid state transition")]
     InvalidState,
 
-    #[error("floor price not met")]
-    FloorPriceNotMet,
-
-    #[error("oracle nominal unavailable")]
-    OracleUnavailable,
-
     #[error("index out of bounds")]
     IndexOutOfBounds,
 

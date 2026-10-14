@@ -100,23 +100,25 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
         let finished = call_sweep::walk_day(
             ctx,
             pinned_day,
-            &index.call_currency_cursor,
-            |iso_code| CallBins(index, iso_code),
-            |iso_code| {
-                index.scan_call_terms(
-                    iso_code,
-                    params.call_window_seconds,
-                    params.call_threshold_seconds,
-                )
-            },
-            |iso_code| {
-                crate::runtime::emit_event(
-                    &ctx.storage,
-                    crate::precompile::IIntexFactory::CallScanSkipped {
-                        referenceCurrency: iso_code,
-                        utcDay: pinned_day,
-                    },
-                )
+            call_sweep::CallIndex {
+                currency_cursor: &index.call_currency_cursor,
+                bins: |iso_code| CallBins(index, iso_code),
+                scan_terms: |iso_code| {
+                    index.scan_call_terms(
+                        iso_code,
+                        params.call_window_seconds,
+                        params.call_threshold_seconds,
+                    )
+                },
+                skipped: |iso_code| {
+                    crate::runtime::emit_event(
+                        &ctx.storage,
+                        crate::precompile::IIntexFactory::CallScanSkipped {
+                            referenceCurrency: iso_code,
+                            utcDay: pinned_day,
+                        },
+                    )
+                },
             },
             |iso_code, window, ceiling, budget| {
                 let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, budget)?;

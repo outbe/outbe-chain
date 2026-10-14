@@ -70,8 +70,10 @@ fn same_block_issue_is_visible_to_point_and_list_reads() {
     StorageHandle::enter(&mut provider, |storage| {
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &body,
             U256::from(5),
             outbe_nod::test_support::sealed_terms(&storage, &body, U256::from(5)),
@@ -117,8 +119,10 @@ fn qualification_reads_the_finalized_day_and_writes_nothing() {
     StorageHandle::enter(&mut provider, |storage| {
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &body,
             U256::from(5),
             outbe_nod::test_support::sealed_terms(&storage, &body, U256::from(5)),
@@ -210,8 +214,10 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
                 body.bucket_key = outbe_nod::identity::bucket_key(day, entry, currency);
                 api::add_nod(
                     &storage,
-                    &scope,
-                    &parent,
+                    outbe_compressed_entities::ExecutionReaders {
+                        scope: &scope,
+                        parent: &parent,
+                    },
                     &body,
                     entry,
                     outbe_nod::test_support::sealed_terms(&storage, &body, entry),
@@ -275,8 +281,10 @@ fn removal_consumes_loaded_capabilities_without_a_second_parent_read() {
     StorageHandle::enter(&mut provider, |storage| {
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &body,
             U256::from(5),
             outbe_nod::test_support::sealed_terms(&storage, &body, U256::from(5)),

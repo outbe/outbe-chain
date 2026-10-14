@@ -151,17 +151,19 @@ fn call_slice(
     let finished = call_sweep::walk_day(
         ctx,
         pinned_day,
-        &nod.call_currency_cursor,
-        |iso_code| CallBins(nod, iso_code),
-        |iso_code| scan_terms(nod, iso_code, &params),
-        |iso_code| {
-            emit_event(
-                &ctx.storage,
-                INodFactory::CallScanSkipped {
-                    referenceCurrency: iso_code,
-                    utcDay: pinned_day,
-                },
-            )
+        call_sweep::CallIndex {
+            currency_cursor: &nod.call_currency_cursor,
+            bins: |iso_code| CallBins(nod, iso_code),
+            scan_terms: |iso_code| scan_terms(nod, iso_code, &params),
+            skipped: |iso_code| {
+                emit_event(
+                    &ctx.storage,
+                    INodFactory::CallScanSkipped {
+                        referenceCurrency: iso_code,
+                        utcDay: pinned_day,
+                    },
+                )
+            },
         },
         |iso_code, window, ceiling, budget| {
             let scan = CurrencyScan {

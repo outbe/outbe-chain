@@ -1,7 +1,7 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_compressed_entities::{
-    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionScope, IdPageRequest,
-    ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
+    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionReaders, ExecutionScope,
+    IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::call_bins;
 use outbe_primitives::error::{PrecompileError, Result};
@@ -99,12 +99,12 @@ impl GemContract<'_> {
     /// Records compact issuance state and delegates both bodies to the generic lifecycle.
     pub(crate) fn record_gem_issued(
         &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
+        readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
         item: &GemItemState,
         entry_price_minor: U256,
         call_terms: Option<CallTerms>,
     ) -> Result<()> {
+        let ExecutionReaders { scope, parent } = readers;
         if self
             .get_item_verified(scope, parent, item.gem_id)?
             .is_some()

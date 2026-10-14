@@ -88,8 +88,7 @@ pub(crate) fn issue_nod_at(
     let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
     nod_api::add_nod(
         storage,
-        scope,
-        parent,
+        outbe_compressed_entities::ExecutionReaders { scope, parent },
         &item,
         terms.entry_price_minor,
         call_terms,
