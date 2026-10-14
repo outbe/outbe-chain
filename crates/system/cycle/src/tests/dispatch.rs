@@ -211,10 +211,9 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
         let sra_claimable = agent_reward.get_claimable_reward(sra).unwrap();
         let waa_pool = day_zero_allocation(EmissionSinkId::Waa);
         let sra_pool = day_zero_allocation(EmissionSinkId::Sra);
-        let waa_credit = waa_pool * U256::from(32) / U256::from(100);
         assert_eq!(
             wallet_claimable,
-            outbe_primitives::units::checked_protocol_to_native(waa_credit).unwrap()
+            outbe_primitives::units::checked_protocol_to_native(waa_pool).unwrap()
         );
         assert_eq!(
             sra_claimable,
@@ -229,8 +228,7 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
             EmissionSinkId::Metadosis,
             EmissionSinkId::Validator,
             EmissionSinkId::Cca,
-        ]) + waa_pool
-            - waa_credit;
+        ]);
         assert_eq!(formed.base_limit, terminal);
         assert_eq!(
             wallet_claimable
