@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_credis::{CredisContract, IssueCredisParams};
+use outbe_credis::{CredisContract, Forfeit, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
@@ -197,15 +197,35 @@ pub fn settle(
     })
 }
 
+/// Forfeit a Credis whose call lapsed.
+pub fn forfeit_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
+    let now = u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
+    burn_forfeited_collateral(storage, credis_id, |credis| credis.forfeit(credis_id, now))?;
+    Ok(())
+}
+
+/// The owner forfeits an Issued or Called Credis.
+pub fn forfeit_by_owner(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    credis_id: U256,
+) -> Result<Forfeit> {
+    burn_forfeited_collateral(storage, credis_id, |credis| {
+        credis.forfeit_by_owner(credis_id, caller)
+    })
+}
+
 /// Burn only this Credis's remaining collateral from the source's pledged
 /// balance. Fidelity cohorts stay untouched.
-pub fn forfeit_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
+fn burn_forfeited_collateral(
+    storage: StorageHandle<'_>,
+    credis_id: U256,
+    forfeit: impl FnOnce(&mut CredisContract<'_>) -> Result<Forfeit>,
+) -> Result<Forfeit> {
     storage.with_checkpoint(|| {
-        let now =
-            u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
-        let forfeit = credis.forfeit(credis_id, now)?;
+        let forfeit = forfeit(&mut credis)?;
         let after = credis.get_credis(credis_id)?;
         let only_state_moved = outbe_credis::Credis {
             state: outbe_credis::CredisState::Forfeited as u8,
@@ -219,6 +239,6 @@ pub fn forfeit_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()>
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .add_to_total_unallocated(forfeit.gratis_burned_minor)?;
         }
-        Ok(())
+        Ok(forfeit)
     })
 }

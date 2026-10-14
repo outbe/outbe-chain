@@ -10,7 +10,7 @@ use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::errors::CredisError;
 use crate::precompile::{dispatch, ICredis};
-use crate::runtime::{calc_call_price, settlement_deadline, IssueCredisParams};
+use crate::runtime::{calc_call_price, effective_state, settlement_deadline, IssueCredisParams};
 use crate::schema::{CredisContract, CredisState};
 use crate::state::CallBins;
 use outbe_primitives::call_bins;
@@ -1120,6 +1120,98 @@ fn forfeit_is_terminal() {
     });
 }
 
+#[test]
+fn only_the_owner_forfeits_an_open_credis() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_pos(&mut credis);
+        for stranger in [bob(), source(), cca()] {
+            let err = credis.forfeit_by_owner(id, stranger).unwrap_err();
+            assert!(err.to_string().contains("only the Credis owner"), "{err}");
+        }
+        assert_eq!(
+            credis.get_credis(id).unwrap().lifecycle_state().unwrap(),
+            CredisState::Issued
+        );
+    });
+}
+
+#[test]
+fn the_owner_forfeits_an_issued_credis_out_of_the_call_index() {
+    with_credis(|storage| {
+        let day = timestamp_to_date_key(ORIGINATED_AT);
+        let mut credis = CredisContract::new(storage.clone());
+        let id = open_pos(&mut credis);
+
+        let forfeit = credis.forfeit_by_owner(id, alice()).unwrap();
+        assert_eq!(forfeit.gratis_burned_minor, collateral());
+        assert_eq!(forfeit.principal_written_off, U256::from(PRINCIPAL));
+        assert_eq!(
+            credis.get_credis(id).unwrap().lifecycle_state().unwrap(),
+            CredisState::Forfeited
+        );
+        assert!(indexed_ids(&credis, id).is_empty());
+        assert!(!credis.mark_called(id, at(1)).unwrap());
+        assert_eq!(
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
+            U256::ZERO
+        );
+
+        let err = credis.forfeit_by_owner(id, alice()).unwrap_err();
+        assert!(err.to_string().contains("closed"), "{err}");
+        assert!(credis.settle(id, U256::from(1u64), at(1)).is_err());
+    });
+}
+
+#[test]
+fn the_owner_forfeits_a_called_credis_before_or_after_its_deadline() {
+    for past_deadline in [false, true] {
+        with_credis(|storage| {
+            let mut credis = CredisContract::new(storage);
+            let id = open_pos(&mut credis);
+            credis.mark_called(id, at(3)).unwrap();
+            assert_ne!(credis.called_credis_slot.read(&id).unwrap(), 0);
+            let deadline = settlement_deadline(&credis.get_credis(id).unwrap());
+            if past_deadline {
+                assert_eq!(
+                    effective_state(&credis.get_credis(id).unwrap(), deadline + 1).unwrap(),
+                    CredisState::Forfeited
+                );
+            }
+
+            credis.forfeit_by_owner(id, alice()).unwrap();
+            assert_eq!(credis.called_credis_slot.read(&id).unwrap(), 0);
+            let err = credis.forfeit(id, deadline + 1).unwrap_err();
+            assert!(err.to_string().contains("not called"), "{err}");
+        });
+    }
+}
+
+#[test]
+fn the_owners_forfeit_after_a_partial_settlement_burns_only_the_remainder() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_pos(&mut credis);
+        credis
+            .settle(id, U256::from(400_000_000u64), at(11))
+            .unwrap();
+        let before = credis.get_credis(id).unwrap();
+
+        let forfeit = credis.forfeit_by_owner(id, alice()).unwrap();
+        assert_eq!(forfeit.gratis_burned_minor, before.outstanding_gratis_minor);
+        assert_eq!(
+            forfeit.principal_written_off,
+            before.outstanding_principal_minor
+        );
+        let after = credis.get_credis(id).unwrap();
+        assert_eq!(after.interest_paid_minor, before.interest_paid_minor);
+        assert_eq!(after.last_settled_at, before.last_settled_at);
+        assert!(CredisContract::accrued_interest(&after, at(40))
+            .unwrap()
+            .is_zero());
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Reads and indexes
 // ---------------------------------------------------------------------------
@@ -1547,6 +1639,22 @@ fn precompile_supports_erc165() {
         .abi_encode();
         let out = dispatch(storage, &data, alice(), U256::ZERO).unwrap();
         assert!(ICredis::supportsInterfaceCall::abi_decode_returns(&out).unwrap());
+    });
+}
+
+#[test]
+fn a_credis_forfeited_before_any_call_shows_no_call_dates() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let id = open_pos(&mut credis);
+        credis.forfeit_by_owner(id, alice()).unwrap();
+
+        let (json, svg) = token_uri_parts(&storage, id);
+        assert_eq!(trait_value(&json, "State").unwrap(), "Forfeited");
+        assert!(trait_value(&json, "Called At").is_none());
+        assert!(trait_value(&json, "Settlement Deadline").is_none());
+        assert!(svg.contains(">FORFEITED</text>"));
+        assert!(!svg.contains("1970"));
     });
 }
 

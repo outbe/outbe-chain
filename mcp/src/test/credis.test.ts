@@ -75,6 +75,22 @@ test("credis_issue refuses a reservation nobody pledged", async () => {
   }
 });
 
+test("credis_forfeit returns what the forfeit burned and wrote off", async () => {
+  const credis = resolveContract("credis");
+  const topics = encodeEventTopics({
+    abi: credis.abi,
+    eventName: "CredisForfeited",
+    args: { credisId: 77n, cca: SIGNER },
+  });
+  const data = encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [500_000n, 300n]);
+  const { out, sent } = await call("credis_forfeit", { credis_id: "77" }, (chain) => {
+    chain.receiptLogs("forfeitCredis", [{ address: credis.address, topics: topics as Hex[], data }]);
+  });
+  assert.equal(out.gratisBurnedMinor, "500000");
+  assert.equal(out.principalWrittenOffMinor, "300");
+  assert.deepEqual(sent.at(-1)?.args, [77n]);
+});
+
 function sampleReservation() {
   return {
     asset: SIGNER,

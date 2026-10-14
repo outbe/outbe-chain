@@ -9454,7 +9454,6 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
- "outbe-ocomp-protocol",
  "proptest",
  "reth-codecs",
  "reth-ethereum",

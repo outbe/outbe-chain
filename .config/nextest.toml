@@ -1,2 +1,10 @@
 [profile.default]
 fail-fast = false
+
+# Each case writes a multi-GiB snapshot archive; two at a time bound runner disk.
+[test-groups]
+snapshot-archives = { max-threads = 2 }
+
+[[profile.default.overrides]]
+filter = 'package(outbe-chain) & test(/::all_native::freshly_signed_all_/)'
+test-group = 'snapshot-archives'
