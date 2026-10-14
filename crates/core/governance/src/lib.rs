@@ -12,9 +12,10 @@
 //! - **diff** - unified diff of a proposal's text against the current canon or
 //!   meta-canon (view-only, via `similar`).
 //!
-//! The `authorities` set (seeded at genesis with the validator addresses) gates
-//! writes to the normative texts and to proposal status. This set is PoC
-//! scaffolding in place of the decision pipeline, which is not built yet.
+//! Writes to the normative texts and to proposal status are gated on the
+//! caller being an ACTIVE validator in the live `ValidatorSet`, checked at call
+//! time. This gate is PoC scaffolding in place of the decision pipeline, which
+//! is not built yet.
 //! The vote path ([`GovernanceVoteTarget`]) may also materialize Approved
 //! OIP/GIP records after validator quorum.
 

@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::keys::address_u32_key;
+use outbe_validatorset::contract::ValidatorSet;
 
 use crate::errors::GovernanceError;
 use crate::schema::{Gip, GipEntryExt, GovernanceContract, Oip, OipEntryExt};
@@ -87,10 +88,14 @@ impl GovernanceContract<'_> {
         self.next_gip_id.read()
     }
 
-    // --- authorities ---
+    // --- authority ---
 
+    /// `true` when `who` is an ACTIVE validator in the current `ValidatorSet`.
+    /// Exited, jailed and pending validators are not authorities.
     pub fn is_authority(&self, who: Address) -> Result<bool> {
-        self.authorities.read(&who)
+        Ok(ValidatorSet::new(self.storage.clone())
+            .validator_lifecycle(who)?
+            .is_active_status())
     }
 
     // --- proposal metadata projections (read only the fixed-width fields via the
