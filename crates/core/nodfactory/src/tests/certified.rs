@@ -18,7 +18,13 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 
-use super::*;
+use crate::certified::*;
+use alloy_primitives::U256;
+use outbe_nod::{NodCertifiedGenerationProjection, NodContract};
+use outbe_ocomp_protocol::{intent::NodTargetPreconditionV1, receipts::NodBatchReceiptV1};
+use outbe_primitives::time::WorldwideDay;
+
+use crate::precompile::INodFactory;
 
 struct ActivationTestProvider {
     inner: HashMapStorageProvider,

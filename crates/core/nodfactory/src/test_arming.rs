@@ -89,11 +89,7 @@ fn issue(
 }
 
 /// Moves a called bucket's queue entry onto `deadline`.
-fn requeue_called(
-    storage: &StorageHandle<'_>,
-    bucket_key: B256,
-    deadline: u64,
-) -> Result<()> {
+fn requeue_called(storage: &StorageHandle<'_>, bucket_key: B256, deadline: u64) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
     if nod.called_deadline.read(&bucket_key)? == 0 {
         return Err(PrecompileError::Revert(

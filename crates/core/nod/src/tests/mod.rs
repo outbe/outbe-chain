@@ -2,6 +2,7 @@
 
 mod adr006;
 mod buckets;
+mod cost;
 mod layout;
 mod nft;
 mod views;

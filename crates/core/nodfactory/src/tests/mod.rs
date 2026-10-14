@@ -448,6 +448,7 @@ fn settle_erc20(
     })
 }
 
+mod certified;
 mod costs;
 mod currency_snapshots;
 mod direct_fx_admission;

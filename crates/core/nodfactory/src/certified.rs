@@ -291,6 +291,3 @@ fn protocol_error(error: outbe_ocomp_protocol::ProtocolError) -> PrecompileError
 fn revert(reason: &'static str) -> PrecompileError {
     PrecompileError::Revert(reason.into())
 }
-
-#[cfg(test)]
-mod tests;
