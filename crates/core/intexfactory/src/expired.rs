@@ -5,7 +5,7 @@ use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::Result,
     expiry_queue::{self, Due, ExpiryHandler},
     storage::StorageHandle,
     sweep_budget::SweepBudget,
@@ -80,7 +80,7 @@ impl ExpiryHandler<u64> for IntexExpiry<'_, '_> {
         let returned = forfeited
             .promis_load_minor
             .checked_mul(U256::from(forfeited.units))
-            .ok_or_else(|| PrecompileError::Revert("forfeited promis load overflow".into()))?;
+            .ok_or(IntexFactoryError::ForfeitedPromisLoadOverflow)?;
         IntexContract::new(self.storage.clone()).emit(IIntex::IntexSeriesExpired {
             seriesId: series_id.into(),
             forfeitedUnits: forfeited.units,

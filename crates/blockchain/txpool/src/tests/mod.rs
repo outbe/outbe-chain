@@ -12,7 +12,7 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::addresses::{ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS};
 use reth_ethereum::TransactionSigned;
 use reth_primitives_traits::SignedTransaction as _;
-use reth_transaction_pool::EthPooledTransaction;
+use reth_transaction_pool::{error::PoolTransactionError, EthPooledTransaction};
 
 const CHAIN_ID: u64 = 1;
 fn pooled_tx(

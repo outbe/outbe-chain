@@ -15,14 +15,10 @@ fn rejoin_enclave_is_available_v1(
 
 fn validate_initial_registration_ownership_v1(owners: ReverseOwnersV1) -> Result<()> {
     if !owners.enclave.is_zero() {
-        return Err(PrecompileError::Revert(
-            "enclave is already bound to another node".into(),
-        ));
+        return Err(TeeRegistryError::EnclaveAlreadyBoundToAnotherNode.into());
     }
     if !owners.binding.is_zero() {
-        return Err(PrecompileError::Revert(
-            "binding id has already been used by another node".into(),
-        ));
+        return Err(TeeRegistryError::BindingIdAlreadyUsedByAnotherNode.into());
     }
     Ok(())
 }
@@ -56,18 +52,14 @@ impl TeeRegistry<'_> {
             }
             AttestationOperationV1::RenewEnclave => {
                 if enclave_owner != node_id_hash || binding_owner != node_id_hash {
-                    return Err(PrecompileError::Fatal(
-                        "stored V1 renewal reverse ownership is inconsistent".into(),
-                    ));
+                    return Err(TeeRegistryError::StoredRenewalReverseOwnershipInconsistent.into());
                 }
             }
             AttestationOperationV1::ReplaceEnclaveBinding
             | AttestationOperationV1::TransitionEnclaveMeasurement
             | AttestationOperationV1::PrepareEnclaveUpgrade => {
                 if !enclave_owner.is_zero() || !binding_owner.is_zero() {
-                    return Err(PrecompileError::Revert(
-                        "successor enclave or binding id has already been used".into(),
-                    ));
+                    return Err(TeeRegistryError::SuccessorIdsAlreadyUsed.into());
                 }
             }
         }
@@ -108,19 +100,13 @@ impl TeeRegistry<'_> {
         if self.v1_enclave_node_hash.read(&current.enclave_id)? != node_id_hash
             || self.v1_binding_node_hash.read(&current.binding_id)? != node_id_hash
         {
-            return Err(PrecompileError::Fatal(
-                "expired rejoin found inconsistent current reverse ownership".into(),
-            ));
+            return Err(TeeRegistryError::ExpiredRejoinReverseOwnershipInconsistent.into());
         }
         if !rejoin_enclave_is_available_v1(intent, current, enclave_owner, node_id_hash) {
-            return Err(PrecompileError::Revert(
-                "expired rejoin enclave is not current or globally fresh".into(),
-            ));
+            return Err(TeeRegistryError::ExpiredRejoinEnclaveNotAvailable.into());
         }
         if !binding_owner.is_zero() {
-            return Err(PrecompileError::Revert(
-                "expired rejoin binding id has already been used".into(),
-            ));
+            return Err(TeeRegistryError::ExpiredRejoinBindingIdAlreadyUsed.into());
         }
         Ok(())
     }

@@ -4,10 +4,7 @@ use outbe_intex::{Group, IntexContract, IntexState, SeriesId};
 use crate::errors::IntexFactoryError;
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
-    call_breach::BreachTerms,
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-    time::first_full_day,
+    call_breach::BreachTerms, error::Result, storage::StorageHandle, time::first_full_day,
 };
 
 use crate::schema::IntexFactoryContract;
@@ -50,8 +47,8 @@ pub(crate) fn call_if_breached(
     }
 
     // u32 timestamp. It is bounded until 2106 (matches issued_at).
-    let called_at = u32::try_from(now_ts)
-        .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
+    let called_at =
+        u32::try_from(now_ts).map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
     for &series_id in &group.members {
         mark_called(storage, series_id, called_at)?;
     }

@@ -32,15 +32,15 @@ pub(crate) fn encode_final_header_artifacts(
     timestamp_millis_part: u64,
     compressed_root: alloy_primitives::B256,
 ) -> Result<alloy_primitives::Bytes, BlockExecutionError> {
-    let mut artifacts = decode_outbe_block_artifacts(prefinal_extra_data)
-        .map_err(|e| BlockExecutionError::msg(e.to_string()))?;
+    let mut artifacts =
+        decode_outbe_block_artifacts(prefinal_extra_data).map_err(BlockExecutionError::msg)?;
     artifacts.execution_summary = Some(execution_summary);
     artifacts.timestamp_millis_part = timestamp_millis_part;
     artifacts.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
         commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
         r_sealed: compressed_root,
     });
-    encode_outbe_block_artifacts(&artifacts).map_err(|e| BlockExecutionError::msg(e.to_string()))
+    encode_outbe_block_artifacts(&artifacts).map_err(BlockExecutionError::msg)
 }
 
 pub struct OutbeBlockBuilder<'a, EVM>
@@ -210,7 +210,7 @@ where
         if let Some(service) = compressed_tree_service {
             service
                 .publish_candidate(block.hash(), compressed_seal_output.staged_tree_batch)
-                .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+                .map_err(BlockExecutionError::msg)?;
         }
         if let Some(bridge) = &self.bridge {
             bridge.record_execution_summary_with_state_root(

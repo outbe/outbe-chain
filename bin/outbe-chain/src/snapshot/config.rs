@@ -84,7 +84,7 @@ pub(crate) fn resolve_layout(inputs: &NodeInputs) -> eyre::Result<NativeLayout> 
     let layout = resolve_requested_layout(inputs, NativeReadSelection { projection: true })?;
     let projection = layout
         .projection
-        .ok_or_else(|| eyre::eyre!("missing required projection configuration"))?;
+        .ok_or(crate::errors::SnapshotError::MissingProjectionConfig)?;
     Ok(NativeLayout {
         chain: layout.chain,
         chain_root: layout.chain_root,
@@ -102,7 +102,7 @@ pub(crate) fn resolve_layout(inputs: &NodeInputs) -> eyre::Result<NativeLayout> 
 /// This is output isolation, independent of which semantic checks were selected.
 pub(crate) fn resolve_report_layout(inputs: &NodeInputs) -> eyre::Result<RequestedLayout> {
     let Commands::Node(node) = &inputs.cli.command else {
-        eyre::bail!("snapshot native inputs must describe a node");
+        return Err(crate::errors::SnapshotError::InputsNotNode.into());
     };
     resolve_requested_layout(
         inputs,
@@ -117,7 +117,7 @@ pub(crate) fn resolve_requested_layout(
     selection: NativeReadSelection,
 ) -> eyre::Result<RequestedLayout> {
     let Commands::Node(node) = &inputs.cli.command else {
-        eyre::bail!("snapshot native inputs must describe a node");
+        return Err(crate::errors::SnapshotError::InputsNotNode.into());
     };
     let datadir = node.datadir.clone().resolve_datadir(node.chain.chain());
     let chain_root = datadir.data_dir().to_path_buf();
@@ -128,12 +128,12 @@ pub(crate) fn resolve_requested_layout(
         .unwrap_or_else(|| chain_root.join("consensus"));
     let ocomp_root = chain_root
         .parent()
-        .ok_or_else(|| eyre::eyre!("node data directory has no OCOMP parent"))?
+        .ok_or(crate::errors::SnapshotError::MissingOcompParent)?
         .join("ocomp/domain-v1");
     let projection = if selection.projection {
         let storage = StorageConfig::load(&args.offchain_data()?.storage_config)?;
         let StorageBackend::RocksDb(rocks) = storage.backend else {
-            eyre::bail!("filesystem snapshots require RocksDB offchain storage");
+            return Err(crate::errors::SnapshotError::RequiresRocksDbStorage.into());
         };
         Some(ProjectionLocation {
             root: rocks.path,

@@ -73,9 +73,7 @@ impl<'storage, T: Storable> StorageCircularBuffer<'storage, T> {
     pub fn push(&self, value: T) -> Result<Option<T>> {
         let cap = self.capacity()?;
         if cap == 0 {
-            return Err(PrecompileError::Revert(
-                "circular buffer not initialized".into(),
-            ));
+            return Err(PrecompileError::revert("circular buffer not initialized"));
         }
         let total = self.read_total()?;
         // total % cap < cap (<= u32::MAX), so the conversion is lossless.

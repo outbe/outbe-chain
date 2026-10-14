@@ -4,7 +4,11 @@
 //! bootstrap views retain their established selectors, while every V1 mutator
 //! authenticates the EVM caller against the canonical NodeHost association.
 
-use crate::v1::{EnclaveEvidenceV1, NodeHostAssociationV1};
+use crate::{
+    errors::TeeRegistryError,
+    v1::{EnclaveEvidenceV1, NodeHostAssociationV1},
+    NodeEnclaveBindingV1, TeeRegistry, V1RegistrationOutcome,
+};
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 use outbe_primitives::{
@@ -17,8 +21,6 @@ use outbe_primitives::{
     },
     tee_registry_abi_v1::{ITeeRegistryV1, NodeEnclaveBindingV1View},
 };
-
-use crate::{NodeEnclaveBindingV1, TeeRegistry, V1RegistrationOutcome};
 
 mod abi;
 use abi::{preflight_evidence_mutator_call, RegisterPreflight};
@@ -202,10 +204,10 @@ fn register_enclave(registry: &mut TeeRegistry<'_>, call: ActivePolicyCall<'_>) 
     let caller = call.caller;
     let policy = call
         .policy
-        .ok_or_else(|| PrecompileError::Fatal("V1 registration preflight was bypassed".into()))?;
+        .ok_or(TeeRegistryError::RegistrationPreflightBypassed)?;
     let preflight = call
         .preflight
-        .ok_or_else(|| PrecompileError::Fatal("V1 registration preflight was bypassed".into()))?;
+        .ok_or(TeeRegistryError::RegistrationPreflightBypassed)?;
     let (node_signature, enclave_signature) = preflight.signatures()?;
     let RegistrationAssociation {
         binding,
@@ -242,9 +244,9 @@ fn transition_enclave_measurement(
     call: ActivePolicyCall<'_>,
 ) -> Result<Bytes> {
     let caller = call.caller;
-    let preflight = call.preflight.ok_or_else(|| {
-        PrecompileError::Fatal("V1 measurement-transition preflight was bypassed".into())
-    })?;
+    let preflight = call
+        .preflight
+        .ok_or(TeeRegistryError::MeasurementTransitionPreflightBypassed)?;
     let (node_signature, enclave_signature) = preflight.signatures()?;
     let outcome = registry.transition_enclave_measurement_with_staged_policy_v1(
         caller,
@@ -267,15 +269,15 @@ fn prepare_enclave_upgrade(
     let caller = call.caller;
     let preflight = call
         .preflight
-        .ok_or_else(|| PrecompileError::Fatal("upgrade preflight missing".into()))?;
+        .ok_or(TeeRegistryError::UpgradePreflightMissing)?;
     let node_signature = preflight
         .node_signature
         .try_into()
-        .map_err(|_| PrecompileError::Fatal("node signature preflight".into()))?;
+        .map_err(|_| TeeRegistryError::NodeSignaturePreflight)?;
     let enclave_signature = preflight
         .enclave_signature
         .try_into()
-        .map_err(|_| PrecompileError::Fatal("enclave signature preflight".into()))?;
+        .map_err(|_| TeeRegistryError::EnclaveSignaturePreflight)?;
     let outcome = registry.prepare_enclave_upgrade_v1(
         caller,
         preflight.evidence,
@@ -299,9 +301,7 @@ fn active_policy_view(
             .active_policy_v1()?
             .encode_canonical()
             .map(Bytes::from)
-            .map_err(|error| {
-                PrecompileError::Fatal(format!("active V1 policy cannot be encoded: {error}"))
-            })
+            .map_err(TeeRegistryError::active_v1_policy_encoding_failed)
     })
 }
 
@@ -336,11 +336,7 @@ fn staged_successor_policy_view(
         let policy = policy
             .encode_canonical()
             .map(Bytes::from)
-            .map_err(|error| {
-                PrecompileError::Fatal(format!(
-                    "staged successor V1 policy cannot be encoded: {error}"
-                ))
-            })?;
+            .map_err(TeeRegistryError::staged_successor_v1_policy_encoding_failed)?;
         Ok(ITeeRegistryV1::stagedSuccessorPolicyV1Return {
             exists: true,
             proposalId: proposal_id,
@@ -372,31 +368,22 @@ struct RegistrationAssociation {
 }
 
 fn registration_association(preflight: RegisterPreflight<'_>) -> Result<RegistrationAssociation> {
-    let binding =
-        ValidatorNodeBindingV1::decode_canonical(preflight.validator_node_binding.ok_or_else(
-            || PrecompileError::Fatal("V1 registration binding preflight was bypassed".into()),
-        )?)
-        .map_err(|error| {
-            PrecompileError::Revert(format!(
-                "validator NodeHost binding is not canonical: {error}"
-            ))
-        })?;
+    let binding = ValidatorNodeBindingV1::decode_canonical(
+        preflight
+            .validator_node_binding
+            .ok_or(TeeRegistryError::RegistrationBindingPreflightBypassed)?,
+    )
+    .map_err(TeeRegistryError::validator_node_host_binding_not_canonical)?;
     let validator_signature: [u8; 65] = preflight
         .validator_signature
-        .ok_or_else(|| {
-            PrecompileError::Fatal("V1 validator signature preflight was bypassed".into())
-        })?
+        .ok_or(TeeRegistryError::ValidatorSignaturePreflightBypassed)?
         .try_into()
-        .map_err(|_| PrecompileError::Fatal("preflight validator signature mismatch".into()))?;
+        .map_err(|_| TeeRegistryError::PreflightValidatorSignatureMismatch)?;
     let node_binding_signature: [u8; 65] = preflight
         .node_binding_signature
-        .ok_or_else(|| {
-            PrecompileError::Fatal("V1 NodeHost binding signature preflight was bypassed".into())
-        })?
+        .ok_or(TeeRegistryError::NodeHostBindingSignaturePreflightBypassed)?
         .try_into()
-        .map_err(|_| {
-            PrecompileError::Fatal("preflight NodeHost binding signature mismatch".into())
-        })?;
+        .map_err(|_| TeeRegistryError::PreflightNodeHostBindingSignatureMismatch)?;
     Ok(RegistrationAssociation {
         binding,
         validator_signature,
@@ -427,10 +414,8 @@ impl ActivePolicyMutator {
             Self::Renew => "renewal",
             Self::Replace => "replacement",
         };
-        let policy = policy
-            .ok_or_else(|| PrecompileError::Fatal(format!("V1 {label} preflight was bypassed")))?;
-        let preflight = preflight
-            .ok_or_else(|| PrecompileError::Fatal(format!("V1 {label} preflight was bypassed")))?;
+        let policy = policy.ok_or(TeeRegistryError::MutatorPreflightBypassed(label))?;
+        let preflight = preflight.ok_or(TeeRegistryError::MutatorPreflightBypassed(label))?;
         let (node_signature, enclave_signature) = preflight.signatures()?;
         let outcome = match self {
             Self::Renew => registry.renew_enclave_with_active_policy_v1(
@@ -464,16 +449,16 @@ impl ActivePolicyMutator {
 }
 
 fn registration_onboarding_target(evidence: &[u8]) -> Result<(B256, [u8; 32])> {
-    let decoded = AttestationEvidenceV1::decode_canonical(evidence).map_err(|error| {
-        PrecompileError::Revert(format!("attestation evidence is not canonical: {error}"))
-    })?;
+    let decoded = AttestationEvidenceV1::decode_canonical(evidence)
+        .map_err(TeeRegistryError::attestation_evidence_not_canonical)?;
     let intent = match decoded {
         AttestationEvidenceV1::Dcap(value) => value.intent,
         AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
     };
-    let node_id_hash = intent.node_id.node_id_hash().map_err(|error| {
-        PrecompileError::Revert(format!("registration node identity is invalid: {error}"))
-    })?;
+    let node_id_hash = intent
+        .node_id
+        .node_id_hash()
+        .map_err(TeeRegistryError::registration_node_identity_invalid)?;
     Ok((node_id_hash, intent.recipient_x25519))
 }
 
@@ -493,26 +478,20 @@ fn deduct_mutator_protocol_gas(
             policy.measurement_rules.len(),
             policy.attestation_mode,
         )
-        .map_err(|error| {
-            PrecompileError::Revert(format!("invalid V1 registry gas dimensions: {error}"))
-        })?;
+        .map_err(TeeRegistryError::invalid_v1_registry_gas_dimensions)?;
     let intrinsic = schedule
         .maximum_calldata_intrinsic_gas(input_len)
-        .map_err(|error| {
-            PrecompileError::Revert(format!("invalid V1 calldata gas dimensions: {error}"))
-        })?;
+        .map_err(TeeRegistryError::invalid_v1_calldata_gas_dimensions)?;
     let protocol = maximum_transaction_gas
         .checked_sub(intrinsic)
-        .ok_or_else(|| PrecompileError::Fatal("V1 protocol gas underflow".into()))?;
+        .ok_or(TeeRegistryError::ProtocolGasUnderflow)?;
     let storage_allowance = schedule.mutator_storage_gas_allowance(kind);
-    let prepaid_protocol = protocol.checked_sub(storage_allowance).ok_or_else(|| {
-        PrecompileError::Fatal("V1 mutator storage allowance exceeds fixed gas".into())
-    })?;
+    let prepaid_protocol = protocol
+        .checked_sub(storage_allowance)
+        .ok_or(TeeRegistryError::MutatorStorageAllowanceExceedsFixedGas)?;
     let dispatch_charge = prepaid_protocol
         .checked_sub(PRECOMPILE_BASE_GAS)
-        .ok_or_else(|| {
-            PrecompileError::Fatal("V1 protocol gas is below the precompile base charge".into())
-        })?;
+        .ok_or(TeeRegistryError::ProtocolGasBelowBaseCharge)?;
     storage.deduct_gas(dispatch_charge)
 }
 

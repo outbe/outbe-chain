@@ -4,13 +4,13 @@ use outbe_compressed_entities::{
     IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::call_bins;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
 
 use crate::{
     api::{LoadedGem, LoadedGemBucket},
     constants::{TOKEN_NAME, TOKEN_SYMBOL},
-    errors::GemError,
+    errors::{GemError, GemFatalError},
     precompile::IGem,
     schema::{CallTerms, GemBucketState, GemContract, GemItemState, GemState},
 };
@@ -121,9 +121,11 @@ impl GemContract<'_> {
             .transpose()?
             .map_or(0, |bucket| bucket.settled_gems);
         if current_bucket.is_some() != (member_count > 0 || settled_count > 0) {
-            return Err(PrecompileError::Revert(format!(
-                "gem bucket {bucket_id} existence disagrees with member count {member_count}"
-            )));
+            return Err(GemError::BucketExistenceMismatch {
+                bucket_id,
+                member_count,
+            }
+            .into());
         }
         let new_bucket = match current_bucket {
             Some(_) => None,
@@ -147,7 +149,7 @@ impl GemContract<'_> {
             .total_supply
             .read()?
             .checked_add(1)
-            .ok_or_else(|| PrecompileError::Revert("gem total supply overflow".into()))?;
+            .ok_or(GemError::TotalSupplyOverflow)?;
         self.total_supply.write(supply)?;
         self.insert_bucket_member(bucket_key, item.gem_id.to_u256())?;
         let canonical_item = crate::repository::canonical_item(item);
@@ -184,7 +186,7 @@ impl GemContract<'_> {
         bucket.settled_gems = bucket
             .settled_gems
             .checked_add(1)
-            .ok_or_else(|| PrecompileError::Revert("gem settled count overflow".into()))?;
+            .ok_or(GemError::SettledCountOverflow)?;
         self.remove_bucket_member(item.bucket_key, item.gem_id.to_u256())?;
         item.called_at = self.bucket_called_at.read(&item.bucket_key)?;
         item.settled_at = self.storage.timestamp()?.to::<u64>();
@@ -222,12 +224,13 @@ impl GemContract<'_> {
             .total_supply
             .read()?
             .checked_sub(1)
-            .ok_or_else(|| PrecompileError::Revert("gem total supply underflow".into()))?;
+            .ok_or(GemError::TotalSupplyUnderflow)?;
         self.total_supply.write(supply)?;
         let remaining = if item.is_settled() {
-            bucket.settled_gems = bucket.settled_gems.checked_sub(1).ok_or_else(|| {
-                PrecompileError::Revert(format!("gem bucket {bucket_id} settled count underflow"))
-            })?;
+            bucket.settled_gems = bucket
+                .settled_gems
+                .checked_sub(1)
+                .ok_or(GemError::SettledCountUnderflow { bucket_id })?;
             self.bucket_gem_count.read(&item.bucket_key)?
         } else {
             self.remove_bucket_member(item.bucket_key, item.gem_id.to_u256())?
@@ -263,9 +266,9 @@ impl GemContract<'_> {
     /// Appends `gem_id` and increments the bucket's unpaid count.
     pub(crate) fn insert_bucket_member(&mut self, bucket: B256, gem_id: U256) -> Result<()> {
         let index = self.bucket_gem_count.read(&bucket)?;
-        let next = index.checked_add(1).ok_or_else(|| {
-            PrecompileError::Fatal(format!("gem bucket {bucket} member index overflow"))
-        })?;
+        let next = index
+            .checked_add(1)
+            .ok_or(GemFatalError::BucketMemberIndexOverflow { bucket })?;
         self.bucket_gems
             .write(&Self::bucket_member_key(bucket, index), gem_id)?;
         self.bucket_gem_index.write(&gem_id, index)?;
@@ -281,22 +284,20 @@ impl GemContract<'_> {
             .bucket_gem_count
             .read(&bucket)?
             .checked_sub(1)
-            .ok_or_else(|| corrupt(format!("gem bucket {bucket} is empty")))?;
+            .ok_or(GemError::EmptyBucket { bucket })?;
         if index > last
             || self
                 .bucket_gems
                 .read(&Self::bucket_member_key(bucket, index))?
                 != gem_id
         {
-            return Err(corrupt(format!("gem {gem_id} is not in bucket {bucket}")));
+            return Err(GemError::GemNotInBucket { gem_id, bucket }.into());
         }
         let last_key = Self::bucket_member_key(bucket, last);
         if index != last {
             let moved = self.bucket_gems.read(&last_key)?;
             if moved.is_zero() {
-                return Err(corrupt(format!(
-                    "gem bucket {bucket} member slot {last} is empty during removal"
-                )));
+                return Err(GemError::EmptyBucketSlotOnRemoval { bucket, slot: last }.into());
             }
             self.bucket_gems
                 .write(&Self::bucket_member_key(bucket, index), moved)?;
@@ -434,28 +435,31 @@ impl GemContract<'_> {
 fn check_loaded_bucket(item: &GemItemState, current: &VerifiedBody) -> Result<()> {
     let expected = item.bucket_id();
     if current.entity_id() != expected {
-        return Err(PrecompileError::Revert(format!(
-            "loaded gem bucket {} does not match item bucket {expected}",
-            current.entity_id()
-        )));
+        return Err(GemError::LoadedBucketMismatch {
+            actual: current.entity_id(),
+            expected,
+        }
+        .into());
     }
     Ok(())
 }
 
 pub(crate) fn gem_item_from_verified(body: &VerifiedBody) -> Result<GemItemState> {
-    let payload = body.payload().as_gem().ok_or_else(|| {
-        PrecompileError::Fatal("compressed-entity read returned a non-gem payload".into())
-    })?;
+    let payload = body
+        .payload()
+        .as_gem()
+        .ok_or(GemFatalError::NonGemPayload)?;
     crate::repository::from_canonical_item(payload.clone())
-        .map_err(|error| PrecompileError::Fatal(format!("corrupt gem body: {error}")))
+        .map_err(|error| GemFatalError::CorruptGemBody(error).into())
 }
 
 pub(crate) fn gem_bucket_from_verified(body: &VerifiedBody) -> Result<GemBucketState> {
-    let payload = body.payload().as_gem_bucket().ok_or_else(|| {
-        PrecompileError::Fatal("compressed-entity read returned a non-gem-bucket payload".into())
-    })?;
+    let payload = body
+        .payload()
+        .as_gem_bucket()
+        .ok_or(GemFatalError::NonGemBucketPayload)?;
     crate::repository::from_canonical_bucket(payload.clone())
-        .map_err(|error| PrecompileError::Fatal(format!("corrupt gem bucket body: {error}")))
+        .map_err(|error| GemFatalError::CorruptGemBucketBody(error).into())
 }
 
 /// Called buckets, queued by the hour their notice period closes in.
@@ -487,9 +491,3 @@ outbe_primitives::impl_call_bins!(CallBins<B256> {
     cursor: call_bin_cursor,
     failed: call_scan_failed_day,
 });
-
-/// A broken on-chain index is the same on every node, so it reverts: the sweep then
-/// defers the entry instead of failing every block.
-fn corrupt(message: String) -> PrecompileError {
-    PrecompileError::Revert(message)
-}

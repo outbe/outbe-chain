@@ -225,15 +225,15 @@ impl From<WorldwideDay> for u64 {
 }
 
 impl FromStr for WorldwideDay {
-    type Err = String;
+    type Err = crate::errors::WorldwideDayParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let raw = s
             .parse::<u32>()
-            .map_err(|_| "worldwide_day must be a valid u32 value".to_string())?;
+            .map_err(|_| crate::errors::WorldwideDayParseError::InvalidU32)?;
         let value = Self::new(raw);
         if !value.is_valid() {
-            return Err("worldwide_day must be a valid YYYYMMDD date".to_string());
+            return Err(crate::errors::WorldwideDayParseError::InvalidDate);
         }
         Ok(value)
     }

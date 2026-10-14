@@ -9,15 +9,12 @@ use alloy_sol_types::SolEvent;
 use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth};
 use outbe_primitives::{
-    addresses::GRATIS_FACTORY_ADDRESS,
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
+    addresses::GRATIS_FACTORY_ADDRESS, error::Result, storage::StorageHandle,
     units::checked_protocol_to_native,
 };
 
 fn now_secs(storage: &StorageHandle<'_>) -> Result<u64> {
-    u64::try_from(storage.timestamp()?)
-        .map_err(|_| PrecompileError::Revert("timestamp exceeds u64".into()))
+    u64::try_from(storage.timestamp()?).map_err(|_| GratisFactoryError::TimestampOverflow.into())
 }
 
 /// Pledge exactly the reservation's Gratis from its source. Only the source may
@@ -228,8 +225,8 @@ pub fn mine_coen(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    let native_amount = checked_protocol_to_native(amount)
-        .ok_or_else(|| PrecompileError::Revert("native COEN amount overflow".into()))?;
+    let native_amount =
+        checked_protocol_to_native(amount).ok_or(GratisFactoryError::NativeCoenOverflow)?;
 
     // Fold the sale cohort into the gratis burn round-trip. Persist the returned
     // fidelity blob.

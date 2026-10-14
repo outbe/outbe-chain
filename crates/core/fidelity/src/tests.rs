@@ -260,3 +260,182 @@ fn precompile_dispatch_query_auth_and_metadata() {
         );
     });
 }
+
+mod enclave_responses {
+    use alloy_primitives::{Address, B256, U256};
+    use ed25519_dalek::{Signer, SigningKey};
+    use outbe_primitives::error::{PrecompileError, Result};
+    use outbe_tee::protocol::{
+        fidelity_cohort_attestation_preimage, fidelity_query_attestation_preimage,
+        fidelity_snapshot_attestation_preimage, EnclaveResponse, FidelityCohortResult,
+        FidelityLeagueEntry, FidelityOpOutcome, FidelityQueryResult,
+    };
+
+    use crate::enclave_client::{validate_answer, LeagueSnapshot};
+
+    const HASH: B256 = B256::repeat_byte(7);
+    const OTHER_HASH: B256 = B256::repeat_byte(8);
+
+    fn signer() -> SigningKey {
+        SigningKey::from_bytes(&[9; 32])
+    }
+
+    fn attestation_pub() -> [u8; 32] {
+        signer().verifying_key().to_bytes()
+    }
+
+    fn fatal<T: core::fmt::Debug>(result: Result<T>) -> String {
+        match result {
+            Err(PrecompileError::Fatal(message)) => message,
+            other => panic!("expected a Fatal error, got {other:?}"),
+        }
+    }
+
+    fn enclave_error() -> EnclaveResponse {
+        EnclaveResponse::Error {
+            message: "boom".into(),
+        }
+    }
+
+    fn cohort(tag_flip: bool) -> FidelityCohortResult {
+        let mut result = FidelityCohortResult {
+            outcome: FidelityOpOutcome {
+                new_blob: vec![1, 2, 3],
+                qualified_start_initialized: Some(5),
+                league: 3,
+            },
+            inputs_canonical_hash: HASH,
+            attestation_tag: Vec::new(),
+        };
+        let preimage = fidelity_cohort_attestation_preimage(HASH, &result);
+        result.attestation_tag = signer().sign(&preimage).to_bytes().to_vec();
+        result.attestation_tag[0] ^= u8::from(tag_flip);
+        result
+    }
+
+    fn query(tag_flip: bool) -> FidelityQueryResult {
+        let mut result = FidelityQueryResult {
+            rcfi: U256::from(11),
+            efficiency: U256::from(12),
+            league: 4,
+            inputs_canonical_hash: HASH,
+            attestation_tag: Vec::new(),
+        };
+        let preimage = fidelity_query_attestation_preimage(HASH, &result);
+        result.attestation_tag = signer().sign(&preimage).to_bytes().to_vec();
+        result.attestation_tag[0] ^= u8::from(tag_flip);
+        result
+    }
+
+    fn snapshot(hash: B256, tag_flip: bool) -> EnclaveResponse {
+        let leagues = vec![FidelityLeagueEntry {
+            owner: Address::repeat_byte(1),
+            league: 2,
+        }];
+        let preimage = fidelity_snapshot_attestation_preimage(hash, &leagues);
+        let mut attestation_tag = signer().sign(&preimage).to_bytes().to_vec();
+        attestation_tag[0] ^= u8::from(tag_flip);
+        EnclaveResponse::FidelityLeaguesSnapshotted {
+            leagues,
+            inputs_canonical_hash: hash,
+            attestation_tag,
+        }
+    }
+
+    fn cohort_response(result: FidelityCohortResult) -> EnclaveResponse {
+        EnclaveResponse::FidelityCohortApplied {
+            result: Box::new(result),
+        }
+    }
+
+    fn query_response(result: FidelityQueryResult) -> EnclaveResponse {
+        EnclaveResponse::FidelityIndexQueried {
+            result: Box::new(result),
+        }
+    }
+
+    #[test]
+    fn cohort_response_needs_its_variant_input_hash_and_attestation() {
+        let key = attestation_pub();
+        let validate =
+            |hash, response| validate_answer::<FidelityCohortResult>(hash, &key, response);
+        assert_eq!(
+            validate(HASH, cohort_response(cohort(false))).unwrap(),
+            cohort(false)
+        );
+        assert_eq!(
+            fatal(validate(OTHER_HASH, cohort_response(cohort(false)))),
+            "tee_enclave_nondeterminism"
+        );
+        assert_eq!(
+            fatal(validate(OTHER_HASH, cohort_response(cohort(true)))),
+            "tee_enclave_nondeterminism"
+        );
+        assert!(fatal(validate(HASH, cohort_response(cohort(true))))
+            .starts_with("tee_fidelity_attestation_invalid: "));
+        assert_eq!(
+            fatal(validate(HASH, enclave_error())),
+            "enclave ApplyFidelityCohortOp error: boom"
+        );
+        assert!(fatal(validate(HASH, query_response(query(false))))
+            .starts_with("unexpected enclave response: "));
+    }
+
+    #[test]
+    fn snapshot_response_needs_its_variant_input_hash_and_attestation() {
+        let key = attestation_pub();
+        let validate = |hash, response| {
+            validate_answer::<LeagueSnapshot>(hash, &key, response).map(|snapshot| snapshot.leagues)
+        };
+        assert_eq!(
+            validate(HASH, snapshot(HASH, false)).unwrap(),
+            vec![FidelityLeagueEntry {
+                owner: Address::repeat_byte(1),
+                league: 2,
+            }]
+        );
+        assert_eq!(
+            fatal(validate(OTHER_HASH, snapshot(HASH, false))),
+            "tee_enclave_nondeterminism"
+        );
+        assert_eq!(
+            fatal(validate(OTHER_HASH, snapshot(HASH, true))),
+            "tee_enclave_nondeterminism"
+        );
+        assert!(fatal(validate(HASH, snapshot(HASH, true)))
+            .starts_with("tee_fidelity_attestation_invalid: "));
+        assert_eq!(
+            fatal(validate(HASH, enclave_error())),
+            "enclave SnapshotFidelityLeagues error: boom"
+        );
+        assert!(fatal(validate(HASH, cohort_response(cohort(false))))
+            .starts_with("unexpected enclave response: "));
+    }
+
+    #[test]
+    fn query_response_needs_its_variant_input_hash_and_attestation() {
+        let key = attestation_pub();
+        let validate =
+            |hash, response| validate_answer::<FidelityQueryResult>(hash, &key, response);
+        assert_eq!(
+            validate(HASH, query_response(query(false))).unwrap(),
+            query(false)
+        );
+        assert_eq!(
+            fatal(validate(OTHER_HASH, query_response(query(false)))),
+            "tee_enclave_nondeterminism"
+        );
+        assert_eq!(
+            fatal(validate(OTHER_HASH, query_response(query(true)))),
+            "tee_enclave_nondeterminism"
+        );
+        assert!(fatal(validate(HASH, query_response(query(true))))
+            .starts_with("tee_fidelity_attestation_invalid: "));
+        assert_eq!(
+            fatal(validate(HASH, enclave_error())),
+            "enclave QueryFidelityIndex error: boom"
+        );
+        assert!(fatal(validate(HASH, snapshot(HASH, false)))
+            .starts_with("unexpected enclave response: "));
+    }
+}

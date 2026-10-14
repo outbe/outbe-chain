@@ -103,7 +103,7 @@ impl HistoricalCommitteeAuthority for TrieHistoricalCommitteeAuthority {
             ));
         }
         let witness = HistoricalCommitteeWitness::decode(membership_proof, limits)
-            .map_err(|error| HistoricalCommitteeError::new(error.to_string()))?;
+            .map_err(HistoricalCommitteeError::from_display)?;
         if witness.snapshot.committee_set_hash_v2(epoch) != committee_set_hash {
             return Err(HistoricalCommitteeError::new(
                 "historical committee snapshot hash mismatch",
@@ -507,11 +507,11 @@ pub(crate) fn verify_public_account_proof(
     let reth_proof = proof.to_reth_proof();
     reth_proof
         .verify(state_root)
-        .map_err(|error| PublicFinalizedIntentProofBuildError::AccountProof(error.to_string()))?;
+        .map_err(PublicFinalizedIntentProofBuildError::account_proof)?;
     for storage_proof in &reth_proof.storage_proofs {
-        storage_proof.verify(proof.storage_root).map_err(|error| {
-            PublicFinalizedIntentProofBuildError::StorageProof(error.to_string())
-        })?;
+        storage_proof
+            .verify(proof.storage_root)
+            .map_err(PublicFinalizedIntentProofBuildError::storage_proof)?;
     }
     Ok(())
 }
@@ -638,9 +638,9 @@ where
 
         let canonical_record = record
             .encode_canonical(&self.limits)
-            .map_err(|error| FinalizedIntentProofBuildError::Intent(error.to_string()))?;
+            .map_err(FinalizedIntentProofBuildError::intent)?;
         let logical_key = outbe_ocomp_protocol::intent::intent_storage_key(intent_id)
-            .map_err(|error| FinalizedIntentProofBuildError::Intent(error.to_string()))?;
+            .map_err(FinalizedIntentProofBuildError::intent)?;
         let intent_slots = storage_bytes_slots(logical_key, &canonical_record);
         let intent_proof = state
             .proof(
@@ -687,7 +687,7 @@ where
                 record
                     .intent
                     .encode_canonical(&self.limits)
-                    .map_err(|error| FinalizedIntentProofBuildError::Intent(error.to_string()))?,
+                    .map_err(FinalizedIntentProofBuildError::intent)?,
             ),
             intent_account_proof: ProofBytes(encode_account_witness(
                 &intent_proof,
@@ -697,7 +697,7 @@ where
         };
         proof
             .encode_canonical(&self.limits)
-            .map_err(|error| FinalizedIntentProofBuildError::Intent(error.to_string()))?;
+            .map_err(FinalizedIntentProofBuildError::intent)?;
         let expected = ExpectedFinalizedIntentBindingV1 {
             chain_id: record.intent.chain_id,
             genesis_hash: record.intent.genesis_hash,
@@ -730,8 +730,8 @@ impl<A: HistoricalCommitteeAuthority> FinalizedIntentVerifier<A> {
 
         let encoded_header = proof.canonical_request_header_rlp.0.as_slice();
         let mut input = encoded_header;
-        let header = OutbeHeader::decode(&mut input)
-            .map_err(|error| FinalizedIntentVerifierError::HeaderDecode(error.to_string()))?;
+        let header =
+            OutbeHeader::decode(&mut input).map_err(FinalizedIntentVerifierError::header_decode)?;
         if !input.is_empty() {
             return Err(FinalizedIntentVerifierError::HeaderTrailingBytes);
         }
@@ -764,7 +764,7 @@ impl<A: HistoricalCommitteeAuthority> FinalizedIntentVerifier<A> {
             &metadata.canonical_commonware_finalization_proof.0,
             header_hash,
         )
-        .map_err(|error| FinalizedIntentVerifierError::ConsensusFinality(error.to_string()))?;
+        .map_err(FinalizedIntentVerifierError::consensus_finality)?;
 
         Ok(FinalizedRequestBindingV1 {
             block_number: header.inner.number,
@@ -933,15 +933,15 @@ fn read_pending_job_record(
     limits: &SchemaLimits,
 ) -> Result<OcompJobRecordV1, FinalizedIntentProofBuildError> {
     let logical_key = outbe_ocomp_protocol::intent::intent_storage_key(intent_id)
-        .map_err(|error| FinalizedIntentProofBuildError::Intent(error.to_string()))?;
+        .map_err(FinalizedIntentProofBuildError::intent)?;
     let base = logical_key.mapping_slot(U256::from(OCOMP_JOB_RECORDS_BASE_SLOT));
     let encoded = read_storage_bytes(state, METADOSIS_ADDRESS, base, limits.max_bounded_bytes)?;
     let record = OcompJobRecordV1::decode_canonical(&encoded, limits)
-        .map_err(|error| FinalizedIntentProofBuildError::Intent(error.to_string()))?;
+        .map_err(FinalizedIntentProofBuildError::intent)?;
     let decoded_id = record
         .intent
         .intent_id(limits)
-        .map_err(|error| FinalizedIntentProofBuildError::Intent(error.to_string()))?;
+        .map_err(FinalizedIntentProofBuildError::intent)?;
     if decoded_id != intent_id || record.status != OcompJobStatus::AwaitingFinality {
         return Err(FinalizedIntentProofBuildError::Intent(
             "exact state does not contain the requested pending intent".to_owned(),
@@ -958,7 +958,7 @@ fn read_storage_bytes(
 ) -> Result<Vec<u8>, FinalizedIntentProofBuildError> {
     let head = state
         .storage(address, B256::new(base.to_be_bytes::<32>()))
-        .map_err(|error| FinalizedIntentProofBuildError::State(error.to_string()))?
+        .map_err(FinalizedIntentProofBuildError::state)?
         .unwrap_or_default();
     if !head.bit(0) {
         let encoded = head.to_be_bytes::<32>();
@@ -990,7 +990,7 @@ fn read_storage_bytes(
                 address,
                 B256::new((data_base + U256::from(offset)).to_be_bytes::<32>()),
             )
-            .map_err(|error| FinalizedIntentProofBuildError::State(error.to_string()))?
+            .map_err(FinalizedIntentProofBuildError::state)?
             .unwrap_or_default()
             .to_be_bytes::<32>();
         encoded.extend_from_slice(&word);
@@ -1101,14 +1101,12 @@ pub fn build_verified_raw_contract_opening_from_public_proof(
             })
             .collect(),
         account_proof: ProofBytes(
-            encode_account_witness(&reth_proof, contract_address).map_err(|error| {
-                PublicFinalizedIntentProofBuildError::Witness(error.to_string())
-            })?,
+            encode_account_witness(&reth_proof, contract_address)
+                .map_err(PublicFinalizedIntentProofBuildError::witness)?,
         ),
         storage_proof: ProofBytes(
-            encode_storage_witness(&reth_proof, &expected_slots).map_err(|error| {
-                PublicFinalizedIntentProofBuildError::Witness(error.to_string())
-            })?,
+            encode_storage_witness(&reth_proof, &expected_slots)
+                .map_err(PublicFinalizedIntentProofBuildError::witness)?,
         ),
     };
     verify_raw_contract_opening(
@@ -1118,7 +1116,7 @@ pub fn build_verified_raw_contract_opening_from_public_proof(
         ordered_slots,
         limits,
     )
-    .map_err(|error| PublicFinalizedIntentProofBuildError::Witness(error.to_string()))?;
+    .map_err(PublicFinalizedIntentProofBuildError::witness)?;
     Ok(opening)
 }
 
@@ -1176,10 +1174,7 @@ pub fn verify_raw_contract_opening(
         }
         .with_proof(nodes)
         .verify(account_root)
-        .map_err(|error| FinalizedIntentVerifierError::StorageProof {
-            index,
-            reason: error.to_string(),
-        })?;
+        .map_err(|error| FinalizedIntentVerifierError::storage_proof(index, error))?;
     }
     Ok(())
 }

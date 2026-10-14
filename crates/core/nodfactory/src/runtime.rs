@@ -8,7 +8,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_common::pow;
@@ -239,7 +239,7 @@ pub fn call_terms(
     }
     let params = outbe_nod::config::read(storage)?;
     let call_price = outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate)
-        .ok_or_else(|| PrecompileError::Fatal("Nod call price overflow".into()))?;
+        .ok_or(crate::errors::NodFactoryError::CallPriceOverflow)?;
     Ok(Some(CallTerms {
         call_price_minor: call_price,
         reference_currency,

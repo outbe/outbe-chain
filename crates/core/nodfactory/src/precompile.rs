@@ -100,9 +100,9 @@ pub fn dispatch(
                     canonicalHead: canonical_head,
                 })
             }),
-            materializeCertifiedNods(_) => Err(PrecompileError::Fatal(
-                "Nod materialization bypassed its bounded dispatcher".into(),
-            )),
+            materializeCertifiedNods(_) => {
+                Err(crate::errors::NodFactoryError::MaterializationBypassedDispatcher.into())
+            }
         }
     })
 }

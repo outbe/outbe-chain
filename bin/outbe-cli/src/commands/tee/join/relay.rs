@@ -3,6 +3,7 @@ use super::finalized_binding_matches_intent;
 
 use super::ExactJoinRelayV1;
 
+use crate::errors::TeeJoinError;
 use crate::rpc::Rpc;
 
 use alloy_primitives::keccak256;
@@ -27,7 +28,7 @@ pub(in super::super) async fn relay_exact_join_transaction(
     resumes_finalized_target: bool,
 ) -> Result<String> {
     if keccak256(&relay.raw_transaction) != relay.transaction_hash {
-        eyre::bail!("durable join relay transaction hash mismatch");
+        return Err(TeeJoinError::RelayTxHashMismatch.into());
     }
     let encoded_hash = format!("0x{}", hex::encode(relay.transaction_hash));
     if resumes_finalized_target {
@@ -64,10 +65,9 @@ pub(in super::super) async fn relay_exact_join_transaction(
     let returned_hash = returned
         .parse::<B256>()
         .wrap_err("parse durable registerEnclave transaction hash")?;
-    if returned_hash != relay.transaction_hash {
-        eyre::bail!("RPC returned a different durable join transaction hash");
-    }
-    Ok(encoded_hash)
+    (returned_hash == relay.transaction_hash)
+        .then_some(encoded_hash)
+        .ok_or_else(|| TeeJoinError::ReturnedTxHashMismatch.into())
 }
 
 pub(in super::super) async fn await_finalized_join_target(
@@ -82,15 +82,12 @@ pub(in super::super) async fn await_finalized_join_target(
         match view.binding.as_ref() {
             Some(binding) if finalized_binding_matches_intent(binding, intent)? => return Ok(view),
             Some(binding) if view.schedule.finalized_timestamp < binding.valid_until => {
-                eyre::bail!("finalized Registry contains a competing live join binding");
+                return Err(TeeJoinError::CompetingLiveBinding.into());
             }
             _ => {}
         }
         if started.elapsed() >= timeout {
-            eyre::bail!(
-                "timed out after {}s waiting for exact finalized tee join binding",
-                timeout.as_secs()
-            );
+            return Err(TeeJoinError::FinalizedJoinTimeout(timeout.as_secs()).into());
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
@@ -153,7 +150,7 @@ async fn sign_join_relay_tx(
 
     let relay_signer = RelaySignerV1::new(ctx.private_key_hex)?;
     if relay_signer.address() != ctx.evm_signer.address() {
-        eyre::bail!("global EVM signer address is inconsistent");
+        return Err(TeeJoinError::InconsistentSignerAddress.into());
     }
     let account_nonce = client
         .eth_get_transaction_count(ctx.evm_signer.address())
@@ -162,10 +159,12 @@ async fn sign_join_relay_tx(
     let required_balance = gas_price.saturating_mul(U256::from(ctx.gas_limit));
     let balance = client.eth_get_balance(ctx.evm_signer.address()).await?;
     if balance < required_balance {
-        eyre::bail!(
-            "TEE join EVM signer {} has {balance} but needs at least {required_balance}",
-            ctx.evm_signer.address()
-        );
+        return Err(TeeJoinError::InsufficientJoinBalance {
+            signer: ctx.evm_signer.address(),
+            balance,
+            required: required_balance,
+        }
+        .into());
     }
     relay_signer.sign_renewal(UnsignedRelayTransactionV1 {
         chain_id: ctx.rpc_chain_id,
@@ -186,17 +185,15 @@ async fn submit_candidate_join_tx(
         .node_data_dir
         .expect("candidate join requires NodeHost state");
     let relay = if let Some(durable) = outbe_tee::load_replacement_candidate_relay(node_data_dir)
-        .map_err(|error| eyre::eyre!("load durable candidate relay: {error}"))?
+        .map_err(TeeJoinError::LoadCandidateRelay)?
     {
         if durable.calldata_hash() != calldata_hash {
-            eyre::bail!("durable candidate transaction targets different calldata");
+            return Err(TeeJoinError::CandidateRelayCalldataMismatch.into());
         }
         durable
     } else {
         if ctx.resumes_finalized_target {
-            eyre::bail!(
-                "finalized candidate binding has no durable pre-relay transaction checkpoint"
-            );
+            return Err(TeeJoinError::MissingCandidateRelayCheckpoint.into());
         }
         let raw = sign_join_relay_tx(client, ctx).await?;
         outbe_tee::persist_replacement_candidate_relay(
@@ -204,7 +201,7 @@ async fn submit_candidate_join_tx(
             calldata_hash,
             &raw.raw_transaction,
         )
-        .map_err(|error| eyre::eyre!("persist exact candidate transaction: {error}"))?
+        .map_err(TeeJoinError::PersistCandidateRelay)?
     };
     let exact = ExactJoinRelayV1 {
         transaction_hash: relay.transaction_hash(),
@@ -223,10 +220,10 @@ async fn submit_committed_join_tx(
         .node_data_dir
         .expect("committed join requires NodeHost state");
     let relay = if let Some(durable) = outbe_tee::load_committed_join_relay(node_data_dir)
-        .map_err(|error| eyre::eyre!("load durable committed relay: {error}"))?
+        .map_err(TeeJoinError::LoadCommittedRelay)?
     {
         if durable.calldata_hash() != calldata_hash {
-            eyre::bail!("durable committed transaction targets different calldata");
+            return Err(TeeJoinError::CommittedRelayCalldataMismatch.into());
         }
         durable
     } else {
@@ -249,7 +246,7 @@ async fn submit_committed_join_tx(
             from_block,
             &raw.raw_transaction,
         )
-        .map_err(|error| eyre::eyre!("persist exact committed transaction: {error}"))?
+        .map_err(TeeJoinError::PersistCommittedRelay)?
     };
     let exact = ExactJoinRelayV1 {
         transaction_hash: relay.transaction_hash(),
@@ -268,7 +265,7 @@ fn cleanup_completed_committed_join(
 
     let mut reopened =
         outbe_tee::connect_committed_node_host_enclave(ctx.enclave_socket, node_data_dir)
-            .map_err(|error| eyre::eyre!("reopen completed committed enclave: {error}"))?;
+            .map_err(TeeJoinError::ReopenCompletedCommittedEnclave)?;
     match reopened.request(&EnclaveRequest::GetPublicKeys)? {
         EnclaveResponse::PublicKeys {
             offer_key_ready: true,
@@ -276,7 +273,7 @@ fn cleanup_completed_committed_join(
             ..
         } if recipient_x25519_pub == ctx.expected_offer_pub => {}
         other => {
-            eyre::bail!("cleanup recovery did not reopen the exact permanent offer key: {other:?}");
+            return Err(TeeJoinError::CleanupOfferKeyNotReady(format!("{other:?}")).into());
         }
     }
     super::persist_authorized_join_admission_anchor_v1(
@@ -287,7 +284,7 @@ fn cleanup_completed_committed_join(
         ctx.intent_hash,
     )?;
     outbe_tee::clear_committed_join_checkpoint(node_data_dir, ctx.intent_hash)
-        .map_err(|error| eyre::eyre!("clear recovered committed join checkpoint: {error}"))?;
+        .map_err(TeeJoinError::ClearRecoveredCheckpoint)?;
     println!(
         "[ok] finalized tee join cleanup recovered without another transaction or onboarding ingest"
     );

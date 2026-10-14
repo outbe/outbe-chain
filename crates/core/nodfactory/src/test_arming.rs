@@ -76,7 +76,7 @@ fn issue(
         call.creatorPublicKey.0,
         call.gratisLoadMinor,
     )
-    .map_err(|e| PrecompileError::Revert(e.to_string()))?;
+    .map_err(crate::errors::NodFactoryError::revert_message)?;
     runtime::issue_nod(storage, scope, parent, &encrypted)?;
     if call.issuedAt != 0 {
         let bucket_key =
@@ -92,9 +92,7 @@ fn issue(
 fn requeue_called(storage: &StorageHandle<'_>, bucket_key: B256, deadline: u64) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
     if nod.called_deadline.read(&bucket_key)? == 0 {
-        return Err(PrecompileError::Revert(
-            "closeCallNoticeForTest: bucket not queued".into(),
-        ));
+        return Err(crate::errors::NodFactoryError::BucketNotQueuedForTest.into());
     }
     nod.remove_called(bucket_key)?;
     nod.push_called(bucket_key, deadline)

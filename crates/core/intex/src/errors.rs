@@ -34,6 +34,12 @@ pub enum IntexError {
         iso: u16,
         worldwide_day: outbe_primitives::time::WorldwideDay,
     },
+    #[error("proceeds deadline cannot be the finalized marker")]
+    ProceedsDeadlineFinalizedMarker,
+    #[error("unknown intex profile selector: {0}")]
+    UnknownProfileSelector(u8),
+    #[error("called group member out of range")]
+    CalledGroupMemberOutOfRange,
 }
 
 impl From<IntexError> for PrecompileError {

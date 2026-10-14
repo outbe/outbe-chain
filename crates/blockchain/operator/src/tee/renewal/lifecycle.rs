@@ -58,13 +58,8 @@ pub(super) fn promoted_policy(
             // Promotion installs B's committed manifest. The completed journal
             // remains as recovery evidence. It must not freeze B's renewals.
             // A caller still holding A's manifest may not use this exception.
-            if config
-                .manifest
-                .authorization_hash()
-                .map_err(|e| eyre::eyre!(e))?
-                != context.candidate_manifest_hash
-            {
-                eyre::bail!("renewal manifest does not match the promoted enclave");
+            if config.manifest.authorization_hash()? != context.candidate_manifest_hash {
+                return Err(RenewalError::PromotedManifestMismatch.into());
             }
             promoted_policy = Some(context.successor_policy_hash);
         }
@@ -77,9 +72,7 @@ pub(super) fn promoted_policy(
                 | super::super::UpgradeJournalStateV1::Finalized { .. }
                 | super::super::UpgradeJournalStateV1::TerminalMissedCutoff { .. }
         ) {
-            eyre::bail!(
-                "renewal is blocked while an enclave upgrade is journaled to preserve exact transition counters"
-            );
+            return Err(RenewalError::BlockedByActiveUpgrade.into());
         }
     }
     Ok(promoted_policy)
@@ -128,7 +121,7 @@ pub(super) async fn replay_journal(
             ..
         } => {
             if view.binding != finalized_binding && !target_matches(&view.binding, &attempt)? {
-                eyre::bail!("finalized Registry binding diverged from the renewal journal");
+                return Err(RenewalError::FinalizedBindingDiverged.into());
             }
             not_due(view)
         }
@@ -222,7 +215,7 @@ pub(super) fn permanent_staleness(
 
 pub(super) fn renewal_opens_at(binding: &RenewalBindingV1, lease_period: u64) -> Result<u64> {
     if lease_period == 0 || !lease_period.is_multiple_of(2) {
-        eyre::bail!("finalized Registry lease period is not a positive even duration");
+        return Err(RenewalError::InvalidLeasePeriod.into());
     }
     Ok(binding.valid_until.saturating_sub(lease_period / 2))
 }
@@ -233,7 +226,7 @@ pub(super) fn renewal_is_open(
     lease_period: u64,
 ) -> Result<bool> {
     if finalized_timestamp >= binding.valid_until {
-        eyre::bail!("finalized enclave lease expired; run tee join to recover");
+        return Err(RenewalError::LeaseExpired.into());
     }
     Ok(finalized_timestamp >= renewal_opens_at(binding, lease_period)?)
 }

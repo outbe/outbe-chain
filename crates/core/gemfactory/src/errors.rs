@@ -1,7 +1,11 @@
+//! Error types for the GemFactory precompile.
+
+use alloy_primitives::{B256, U256};
 use outbe_common::pow::PowError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
+/// Errors that the GemFactory runtime returns.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum GemFactoryError {
@@ -61,11 +65,29 @@ pub enum GemFactoryError {
 
     #[error("promis load must be positive")]
     ZeroPromisLoad,
+
+    #[error("{0} undecodable")]
+    UndecodableReturn(&'static str),
+
+    #[error("gem bucket {bucket_key} has an empty member slot during forfeit")]
+    EmptyMemberSlotDuringForfeit { bucket_key: B256 },
+
+    #[error("gem bucket {bucket_key} member {gem_id} has no body during forfeit")]
+    MissingMemberBodyDuringForfeit { bucket_key: B256, gem_id: U256 },
+
+    #[error("gem bucket {bucket_key} indexes an ineligible member {gem_id}")]
+    IneligibleBucketMember { bucket_key: B256, gem_id: U256 },
+
+    #[error("gem call price overflow")]
+    CallPriceOverflow,
 }
 
 impl From<GemFactoryError> for PrecompileError {
     fn from(value: GemFactoryError) -> Self {
-        PrecompileError::Revert(value.to_string())
+        match value {
+            fatal @ GemFactoryError::CallPriceOverflow => PrecompileError::Fatal(fatal.to_string()),
+            other => PrecompileError::Revert(other.to_string()),
+        }
     }
 }
 

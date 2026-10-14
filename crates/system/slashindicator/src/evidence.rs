@@ -9,6 +9,8 @@ use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
 use outbe_primitives::error::{PrecompileError, Result};
 
+use crate::errors::SlashIndicatorError;
+
 /// The ordered committee (BLS MinPk public keys) that ran the evidence's epoch. The
 /// vote namespaces are committee-bound. Evidence verification must therefore use
 /// the SAME committee that the Simplex signer used. The runtime supplies it from the
@@ -34,19 +36,17 @@ impl EvidenceBlock {
     /// Format: `pubkey[48] || signature[96] || proposal_bytes[remaining]`
     pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() < 48 + 96 + 1 {
-            return Err(PrecompileError::Revert(
-                "evidence block too short: need at least 145 bytes".into(),
-            ));
+            return Err(SlashIndicatorError::EvidenceBlockTooShort.into());
         }
         // The length guard above proves that these fixed slices have the exact size,
         // so the conversions cannot fail. Map to a structured error instead of
         // `unwrap()` on the precompile path.
         let pubkey: [u8; 48] = data[..48]
             .try_into()
-            .map_err(|_| PrecompileError::Revert("evidence pubkey slice".into()))?;
+            .map_err(|_| PrecompileError::from(SlashIndicatorError::EvidencePubkeySlice))?;
         let signature: [u8; 96] = data[48..144]
             .try_into()
-            .map_err(|_| PrecompileError::Revert("evidence signature slice".into()))?;
+            .map_err(|_| PrecompileError::from(SlashIndicatorError::EvidenceSignatureSlice))?;
         let proposal_bytes = data[144..].to_vec();
         Ok(Self {
             pubkey,
@@ -79,9 +79,9 @@ impl EvidenceBlock {
         use blst::BLST_ERROR;
 
         let pk = PublicKey::from_bytes(&self.pubkey)
-            .map_err(|_| PrecompileError::Revert("invalid BLS public key in evidence".into()))?;
+            .map_err(|_| PrecompileError::from(SlashIndicatorError::InvalidBlsPublicKey))?;
         let sig = Signature::from_bytes(&self.signature)
-            .map_err(|_| PrecompileError::Revert("invalid BLS signature in evidence".into()))?;
+            .map_err(|_| PrecompileError::from(SlashIndicatorError::InvalidBlsSignature))?;
 
         let signed_payload = build_signed_payload_with_ns(namespace, &self.proposal_bytes);
 
@@ -90,9 +90,7 @@ impl EvidenceBlock {
         let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
         let result = sig.verify(true, &signed_payload, dst, &[], &pk, true);
         if result != BLST_ERROR::BLST_SUCCESS {
-            return Err(PrecompileError::Revert(
-                "invalid BLS signature in evidence".into(),
-            ));
+            return Err(SlashIndicatorError::InvalidBlsSignature.into());
         }
         Ok(())
     }
@@ -150,9 +148,7 @@ fn read_leb128(data: &[u8], pos: &mut usize) -> Result<u64> {
     let mut shift = 0u32;
     loop {
         if *pos >= data.len() {
-            return Err(PrecompileError::Revert(
-                "unexpected end of data while reading varint".into(),
-            ));
+            return Err(SlashIndicatorError::UnexpectedEndOfVarint.into());
         }
         let byte = data[*pos];
         *pos += 1;
@@ -163,7 +159,7 @@ fn read_leb128(data: &[u8], pos: &mut usize) -> Result<u64> {
         }
         shift += 7;
         if shift >= 64 {
-            return Err(PrecompileError::Revert("varint overflow".into()));
+            return Err(SlashIndicatorError::VarintOverflow.into());
         }
     }
 }

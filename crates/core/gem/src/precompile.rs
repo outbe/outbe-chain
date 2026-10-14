@@ -75,9 +75,7 @@ fn dispatch_metadata(
                 .total_supply()
                 .map(U256::from)
         }),
-        _ => Err(outbe_primitives::error::PrecompileError::Fatal(
-            "metadata route received an entity call".into(),
-        )),
+        _ => Err(crate::errors::GemFatalError::MetadataRouteEntityCall.into()),
     }
 }
 
@@ -126,9 +124,7 @@ fn dispatch_entity(
                 api::get_item(storage, scope, parent, c.gemId)?.ok_or(GemError::GemNotFound)?;
             api::is_qualified(storage, &item)
         }),
-        _ => Err(outbe_primitives::error::PrecompileError::Fatal(
-            "entity route received a metadata call".into(),
-        )),
+        _ => Err(crate::errors::GemFatalError::EntityRouteMetadataCall.into()),
     }
 }
 

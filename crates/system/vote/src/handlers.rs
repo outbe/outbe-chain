@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::VoteError;
@@ -46,8 +46,7 @@ pub fn decode_proposal_payload(payload: &[u8]) -> Result<serde_json::Value> {
 /// Decodes the stored JSON payload of an approved proposal for `module`.
 /// Returns a fatal error if the stored payload is malformed JSON.
 pub fn decode_stored_proposal_payload(payload: &[u8], module: &str) -> Result<serde_json::Value> {
-    serde_json::from_slice(payload)
-        .map_err(|_| PrecompileError::Fatal(format!("stored {module} proposal payload is invalid")))
+    serde_json::from_slice(payload).map_err(|_| VoteError::stored_payload_invalid(module))
 }
 
 /// Target-module handler for approved vote proposals.

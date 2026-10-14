@@ -48,8 +48,8 @@ impl<'storage, T: Storable> StorageVec<'storage, T> {
     pub fn set(&self, index: u32, value: T) -> Result<()> {
         let length = self.len()?;
         if index >= length {
-            return Err(crate::error::PrecompileError::Fatal(
-                "vec index out of bounds".into(),
+            return Err(crate::error::PrecompileError::fatal(
+                "vec index out of bounds",
             ));
         }
         self.storage

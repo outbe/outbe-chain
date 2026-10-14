@@ -448,8 +448,8 @@ pub fn build_ceremony_info(
 impl DkgSession {
     fn max_players(&self) -> Result<NonZeroU32> {
         let n = u32::try_from(self.recipient_enc_keys.len())
-            .map_err(|_| TeeError::Dkg("participant count exceeds u32".to_string()))?;
-        NonZeroU32::new(n).ok_or_else(|| TeeError::Dkg("empty participant set".to_string()))
+            .map_err(|_| TeeError::dkg_err("participant count exceeds u32"))?;
+        NonZeroU32::new(n).ok_or_else(|| TeeError::dkg_err("empty participant set"))
     }
 
     /// Seam A (bytes): `(encoded pub_msg, [(encoded recipient bls, sealed share)])`.
@@ -504,7 +504,7 @@ impl DkgSession {
             let signed = SignedDealerLog::<Variant, PrivKey>::read_cfg(&mut reader, &max)
                 .map_err(|e| dkg_err("decode signed log", e))?;
             let (pk, log) = verify_dealer_log(&self.info, signed)
-                .ok_or_else(|| TeeError::Dkg("dealer log failed verification".to_string()))?;
+                .ok_or_else(|| TeeError::dkg_err("dealer log failed verification"))?;
             distinct_dealers.insert(commonware_codec::Encode::encode(&pk).to_vec());
             logs.push((pk, log));
         }
@@ -517,7 +517,7 @@ impl DkgSession {
         // reshare is a separate consensus ceremony. This founding path is all-n.)
         let expected = max.get() as usize;
         if distinct_dealers.len() != expected {
-            return Err(TeeError::Dkg(format!(
+            return Err(TeeError::dkg_err(format!(
                 "incomplete dealer set: {} of {expected} committee dealers",
                 distinct_dealers.len(),
             )));
@@ -554,7 +554,7 @@ impl DkgSessionStore {
         recipient_enc_keys: BTreeMap<PubKey, [u8; 32]>,
     ) -> Result<()> {
         if self.sessions.contains_key(&id) {
-            return Err(TeeError::Dkg(format!(
+            return Err(TeeError::dkg_err(format!(
                 "ceremony {} already open",
                 hex::encode(id)
             )));

@@ -117,7 +117,8 @@ where
             Err(e) => {
                 self.reset_fcu_heartbeat_deadline();
                 warn!(%e, "failed to send forkchoice update");
-                maybe_build.send_error(eyre::eyre!("FCU failed: {e}"));
+                maybe_build
+                    .send_error(crate::errors::ExecutorError::FcuFailed(format!("{e}")).into());
                 return;
             }
             Ok(response) => response,
@@ -147,10 +148,13 @@ where
 
         if fcu_response.is_invalid() {
             warn!(?fcu_response, "forkchoice update returned invalid status");
-            maybe_build.send_error(eyre::eyre!(
-                "FCU returned invalid: {:?}",
-                fcu_response.payload_status
-            ));
+            maybe_build.send_error(
+                crate::errors::ExecutorError::FcuInvalid(format!(
+                    "{:?}",
+                    fcu_response.payload_status
+                ))
+                .into(),
+            );
             return;
         }
 
@@ -165,16 +169,20 @@ where
                         let _ = response.send(Ok(id));
                     }
                     None => {
-                        let _ = response.send(Err(eyre::eyre!(
-                            "FCU did not return payload_id: payload_status={:?} latest_valid_hash={:?} head={} safe={} finalized={} head_height={} finalized_height={}",
-                            fcu_response.payload_status,
-                            fcu_response.payload_status.latest_valid_hash,
-                            new_state.forkchoice.head_block_hash,
-                            new_state.forkchoice.safe_block_hash,
-                            new_state.forkchoice.finalized_block_hash,
-                            new_state.head_height,
-                            new_state.finalized_height,
-                        )));
+                        let _ =
+                            response.send(Err(crate::errors::ExecutorError::FcuMissingPayloadId {
+                                payload_status: format!("{:?}", fcu_response.payload_status),
+                                latest_valid_hash: format!(
+                                    "{:?}",
+                                    fcu_response.payload_status.latest_valid_hash
+                                ),
+                                head: new_state.forkchoice.head_block_hash,
+                                safe: new_state.forkchoice.safe_block_hash,
+                                finalized: new_state.forkchoice.finalized_block_hash,
+                                head_height: new_state.head_height,
+                                finalized_height: new_state.finalized_height,
+                            }
+                            .into()));
                         // Don't commit state if we didn't get a payload_id.
                         return;
                     }
@@ -208,11 +216,12 @@ where
                 }
                 if height == Height::zero() {
                     let expected = self.state.forkchoice.finalized_block_hash;
-                    return Err(eyre::eyre!(
-                        "marshal delivered unexpected genesis anchor: digest {digest}, \
-                         canonical finalized height {}, canonical hash {expected}",
-                        self.state.finalized_height
-                    ));
+                    return Err(crate::errors::ExecutorError::UnexpectedGenesisAnchor {
+                        digest,
+                        finalized_height: self.state.finalized_height,
+                        expected,
+                    }
+                    .into());
                 }
                 info!(
                     %height,
@@ -260,10 +269,12 @@ where
                             "finalized block failed local execution; \
                              finalized state diverged - failing fast"
                         );
-                        Err(eyre::eyre!(
-                            "executor cannot apply finalized block at \
-                             height {height} digest {digest}: {error}"
-                        ))
+                        Err(crate::errors::ExecutorError::ApplyFinalizedBlockFailed {
+                            height,
+                            digest,
+                            reason: error,
+                        }
+                        .into())
                     }
                 }
             }
@@ -290,11 +301,10 @@ where
         digest: crate::digest::Digest,
         block: crate::block::ConsensusBlock,
     ) -> eyre::Result<()> {
-        let parent_height = height.get().checked_sub(1).ok_or_else(|| {
-            eyre::eyre!(
-                "cannot execute finalized genesis block through successor path: digest {digest}"
-            )
-        })?;
+        let parent_height = height
+            .get()
+            .checked_sub(1)
+            .ok_or(crate::errors::ExecutorError::ExecuteGenesisThroughSuccessor(digest))?;
         wait_for_finalized_parent(
             self.projection_readiness.clone(),
             ProjectionCheckpoint {
@@ -340,17 +350,21 @@ where
                         );
                     }
                     if !status.is_valid() && !status.is_syncing() {
-                        return Err(eyre::eyre!(
-                            "finalized block rejected by execution layer at \
-                             height {height} digest {digest}: status={status:?}"
-                        ));
+                        return Err(crate::errors::ExecutorError::FinalizedBlockRejected {
+                            height,
+                            digest,
+                            status: format!("{status:?}"),
+                        }
+                        .into());
                     }
                 }
                 Err(e) => {
-                    return Err(eyre::eyre!(
-                        "failed to send finalized block to execution layer at \
-                         height {height} digest {digest}: {e}"
-                    ));
+                    return Err(crate::errors::ExecutorError::SendFinalizedBlockFailed {
+                        height,
+                        digest,
+                        reason: format!("{e}"),
+                    }
+                    .into());
                 }
             }
         }
@@ -379,14 +393,18 @@ where
                 }
                 Ok(())
             }
-            Ok(Err(error)) => Err(eyre::eyre!(
-                "failed to canonicalize finalized block at \
-                 height {height} digest {digest}: {error}"
-            )),
-            Err(_) => Err(eyre::eyre!(
-                "executor canonicalize response dropped for finalized block at \
-                 height {height} digest {digest}"
-            )),
+            Ok(Err(error)) => Err(crate::errors::ExecutorError::CanonicalizeFinalizedFailed {
+                height,
+                digest,
+                reason: error,
+            }
+            .into()),
+            Err(_) => {
+                Err(
+                    crate::errors::ExecutorError::CanonicalizeResponseDropped { height, digest }
+                        .into(),
+                )
+            }
         }
     }
 

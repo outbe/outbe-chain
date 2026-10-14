@@ -1,7 +1,10 @@
+//! Typed error definitions for the L2Registry system precompile.
+
 use alloy_primitives::Address;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
+/// Represents errors returned by the L2Registry runtime.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum L2RegistryError {
@@ -51,5 +54,21 @@ pub enum L2RegistryError {
 impl From<L2RegistryError> for PrecompileError {
     fn from(err: L2RegistryError) -> Self {
         PrecompileError::Revert(err.to_string())
+    }
+}
+
+impl L2RegistryError {
+    pub fn into_execution_outcome(
+        result: outbe_primitives::error::Result<()>,
+    ) -> outbe_primitives::error::Result<outbe_vote::handlers::TargetExecutionOutcome> {
+        use outbe_vote::handlers::TargetExecutionOutcome;
+        match result {
+            Ok(()) => Ok(TargetExecutionOutcome::Applied),
+            Err(PrecompileError::Revert(reason)) => Ok(TargetExecutionOutcome::Error { reason }),
+            Err(PrecompileError::RevertBytes(reason)) => Ok(TargetExecutionOutcome::Error {
+                reason: format!("0x{}", hex::encode(reason)),
+            }),
+            Err(error) => Err(error),
+        }
     }
 }

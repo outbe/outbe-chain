@@ -75,7 +75,7 @@ async fn run(
         // Preserve the biased receive > chain > retry > grace > timeout order.
         commonware_macros::select! {
             msg_result = channels.receiver.recv() => {
-                let (from, mut raw) = msg_result.map_err(|e| eyre::eyre!("DKG P2P receiver error: {e}"))?;
+                let (from, mut raw) = msg_result.map_err(crate::errors::DkgError::p2p_receiver)?;
                 let Some(msg) = state.read_message(&from, &mut raw) else { continue };
                 if state.handle_message(from, msg, &mut channels.sender, &channels.progress_tx).await? == MessageOutcome::SkipIteration {
                     continue;

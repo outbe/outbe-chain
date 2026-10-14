@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::{PrecompileError, Result};
 
+use crate::errors::ValidatorSetError;
 use crate::schema::ValidatorSet;
 use crate::state_machine::ValidatorLifecycle;
 
@@ -91,10 +92,11 @@ impl ValidatorSet<'_> {
     /// does not define a second participant ceiling.
     pub fn set_config_max_validators(&mut self, max_validators: u32) -> Result<()> {
         if max_validators > CONSENSUS_VALIDATOR_BOUND {
-            return Err(PrecompileError::Revert(format!(
-                "max validators exceeds consensus bound: {max_validators} > {}",
-                CONSENSUS_VALIDATOR_BOUND
-            )));
+            return Err(ValidatorSetError::MaxValidatorsExceedsConsensusBound {
+                max_validators,
+                bound: CONSENSUS_VALIDATOR_BOUND,
+            }
+            .into());
         }
         self.config_max_validators.write(max_validators)
     }
@@ -118,7 +120,7 @@ pub struct ValidatorParticipation {
 }
 
 fn registered_status(lifecycle: &ValidatorLifecycle) -> Result<u8> {
-    lifecycle.stored_status().ok_or_else(|| {
-        PrecompileError::Fatal("Unregistered lifecycle has no persisted status".into())
-    })
+    lifecycle
+        .stored_status()
+        .ok_or_else(|| PrecompileError::from(ValidatorSetError::UnregisteredLifecycleNoStatus))
 }

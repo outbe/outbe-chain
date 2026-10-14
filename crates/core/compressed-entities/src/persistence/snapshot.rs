@@ -22,8 +22,7 @@ impl MdbxSnapshot {
     pub(super) fn open(path: PathBuf, tx: Tx<RO>) -> Result<Self, PersistenceError> {
         let marker = super::read_marker(&tx, &path)?;
         let catalog_root = super::read_required_tree_root(&tx, &path, TreeNamespace::Catalog)?;
-        let wrapped = crate::sealed_root(catalog_root)
-            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+        let wrapped = crate::sealed_root(catalog_root).map_err(PersistenceError::staging)?;
         if wrapped != marker.new_root {
             return Err(PersistenceError::CatalogWrapperMismatch {
                 expected: marker.new_root,

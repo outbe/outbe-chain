@@ -25,7 +25,7 @@ pub(super) fn validate_layout<'a>(
     activation: OcompLifecycleActivation,
 ) -> Result<(SystemTxLayout<'a>, OutbeBlockArtifacts), ConsensusError> {
     binding::validate_system_layout(body, header, activation)
-        .map_err(|error| consensus_other(error.to_string()))
+        .map_err(crate::errors::consensus_display_error)
 }
 
 pub(super) fn validate_parent_accounting(
@@ -47,7 +47,7 @@ pub(super) fn validate_boundary_outcome(
     artifacts: &OutbeBlockArtifacts,
 ) -> Result<(), ConsensusError> {
     binding::validate_boundary_outcome_binding(layout, artifacts)
-        .map_err(|error| consensus_other(error.to_string()))
+        .map_err(crate::errors::consensus_display_error)
 }
 
 pub(super) fn validate_late_credits(

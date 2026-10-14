@@ -29,10 +29,9 @@ pub(crate) fn verify_pin_authority(
         | PinStateV1::GcPending { candidate, .. }
         | PinStateV1::Released { candidate, .. } => candidate,
     };
-    ensure!(
-        key == candidate.block_hash,
-        "retention journal key differs from request block hash"
-    );
+    if key != candidate.block_hash {
+        return Err(SnapshotOcompError::RetentionKeyBlockHashMismatch.into());
+    }
     let expected_job = match record.state {
         PinStateV1::AwaitingJobFinalization { .. } => None,
         PinStateV1::Finalized { job_id, .. }
@@ -46,13 +45,13 @@ pub(crate) fn verify_pin_authority(
         WorldwideDay::new(candidate.wwd),
         expected_job,
     )?;
-    ensure!(
-        job.intent_height == candidate.block_number
-            && job.intent.ce_sealed_root == candidate.ce_sealed_root
-            && job.intent.protocol_bundle_hash == candidate.protocol_bundle_hash
-            && job.intent.input_lease_id()? == candidate.input_lease_id,
-        "retained candidate differs from canonical request or input lease"
-    );
+    if job.intent_height != candidate.block_number
+        || job.intent.ce_sealed_root != candidate.ce_sealed_root
+        || job.intent.protocol_bundle_hash != candidate.protocol_bundle_hash
+        || job.intent.input_lease_id()? != candidate.input_lease_id
+    {
+        return Err(SnapshotOcompError::RetainedCandidateRequestMismatch.into());
+    }
     // The canonical getter validates finalized B bindings. Awaiting pins also
     // need the retained request header even before canonical finality exists.
     let number = candidate.block_number;
@@ -62,13 +61,13 @@ pub(crate) fn verify_pin_authority(
     let canonical_hash = view
         .canonical_hash(number)?
         .ok_or_else(|| Incomplete(format!("missing canonical pin request hash B={number}")))?;
-    ensure!(
-        header.inner.number == number
-            && header.hash_slow() == canonical_hash
-            && canonical_hash == candidate.block_hash
-            && header.inner.state_root == candidate.state_root,
-        "retained candidate differs from canonical request header B={number}"
-    );
+    if header.inner.number != number
+        || header.hash_slow() != canonical_hash
+        || canonical_hash != candidate.block_hash
+        || header.inner.state_root != candidate.state_root
+    {
+        return Err(SnapshotOcompError::RetainedCandidateHeaderMismatch { number }.into());
+    }
     match record.state {
         PinStateV1::Finalized {
             finality_recorded_height,
@@ -97,13 +96,13 @@ pub(crate) fn verify_pin_authority(
             let finalized = job
                 .finalized
                 .as_ref()
-                .ok_or_else(|| eyre::eyre!("retained finalized pin lacks canonical finality"))?;
-            ensure!(
-                finalized.finality_recorded_height == finality_recorded_height
-                    && finalized.open_height == open_height
-                    && finalized.deadline_height == deadline_height,
-                "retained pin finality window differs from canonical finality"
-            );
+                .ok_or(SnapshotOcompError::RetainedFinalizedPinLacksFinality)?;
+            if finalized.finality_recorded_height != finality_recorded_height
+                || finalized.open_height != open_height
+                || finalized.deadline_height != deadline_height
+            {
+                return Err(SnapshotOcompError::RetainedPinFinalityWindowMismatch.into());
+            }
         }
         PinStateV1::AwaitingJobFinalization { .. } | PinStateV1::Released { .. } => {}
     }
@@ -196,7 +195,7 @@ pub(crate) fn verify_lease_inputs(
         )?;
         visited = visited
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("Tribute visit count overflow"))?;
+            .ok_or(SnapshotOcompError::TributeVisitCountOverflow)?;
     }
     // Count underflow is unavailable input. A different complete population
     // fails the finalized collection root check.

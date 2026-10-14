@@ -32,7 +32,7 @@ pub fn mine_promis(
     let promis_minor = series
         .promis_load_minor
         .checked_mul(units)
-        .ok_or_else(|| PrecompileError::Revert("promis overflow".into()))?;
+        .ok_or(IntexFactoryError::PromisOverflow)?;
 
     // PoW over the per-(series, owner) sequence. Bump it on success.
     let mut factory = IntexFactoryContract::new(storage.clone());
@@ -40,7 +40,7 @@ pub fn mine_promis(
     validate_pow(owner, promis_minor, series_id, seq, nonce)?;
     let next_seq = seq
         .checked_add(1)
-        .ok_or_else(|| PrecompileError::Revert("mining sequence overflow".into()))?;
+        .ok_or(IntexFactoryError::MiningSequenceOverflow)?;
     // The sequence moves only together with the burn and the mint.
     storage.clone().with_checkpoint(|| {
         factory.write_mine_seq(series_id, owner, next_seq)?;
@@ -58,8 +58,8 @@ pub fn mine_promis(
             .into(),
         )?;
 
-        let exercised = u32::try_from(units)
-            .map_err(|_| PrecompileError::Revert("exercised units exceed the series".into()))?;
+        let exercised =
+            u32::try_from(units).map_err(|_| IntexFactoryError::ExercisedUnitsExceedSeries)?;
         outbe_intex::api::record_exercised_units(storage, series_id, owner, exercised)?;
 
         // Promis is confidential: the mint runs inside the enclave, authorized by the

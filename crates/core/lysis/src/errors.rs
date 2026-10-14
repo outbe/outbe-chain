@@ -1,0 +1,107 @@
+//! Error types for the Lysis module.
+
+use alloy_primitives::U256;
+use outbe_primitives::error::PrecompileError;
+use thiserror::Error;
+
+use crate::program_v1::FidelityPhaseV1;
+
+/// Revert errors that the Lysis algorithm returns.
+#[derive(Debug, Error)]
+pub enum LysisError {
+    #[error("lysis: fp_root intermediate overflow")]
+    FpRootIntermediateOverflow,
+
+    #[error("lysis: fp_root result exceeds U256")]
+    FpRootResultExceedsU256,
+
+    #[error("lysis: U256 -> I256 conversion overflow ({0})")]
+    U256ToI256Overflow(U256),
+}
+
+impl From<LysisError> for PrecompileError {
+    fn from(err: LysisError) -> Self {
+        PrecompileError::Revert(err.to_string())
+    }
+}
+
+/// Deterministic errors that the Lysis V1 semantic program returns.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub enum ProgramErrorV1 {
+    #[error("Lysis V1 input is empty")]
+    EmptyInput,
+
+    #[error("Lysis V1 input is not raw-ID ordered at {ordinal}")]
+    NonCanonicalInput { ordinal: usize },
+
+    #[error("Lysis V1 duplicate input at {ordinal}")]
+    DuplicateInput { ordinal: usize },
+
+    #[error("Lysis V1 WorldwideDay mismatch at {ordinal}")]
+    WorldwideDayMismatch { ordinal: usize },
+
+    #[error("Lysis V1 invalid Tribute identity at {ordinal}")]
+    InvalidTributeIdentity { ordinal: usize },
+
+    #[error("Lysis V1 total nominal overflow at {ordinal}")]
+    TotalNominalOverflow { ordinal: usize },
+
+    #[error("Lysis V1 total nominal is zero")]
+    ZeroTotalNominal,
+
+    #[error("Lysis V1 Fidelity {phase:?} unavailable at {ordinal}")]
+    FidelityUnavailable {
+        ordinal: usize,
+        phase: FidelityPhaseV1,
+    },
+
+    #[error("Lysis V1 Fidelity mismatch at {ordinal}: {first} != {second}")]
+    FidelityMismatch {
+        ordinal: usize,
+        first: u16,
+        second: u16,
+    },
+
+    #[error("Lysis V1 Oracle {currency} unavailable at {ordinal}")]
+    EntryPriceUnavailable { ordinal: usize, currency: u16 },
+
+    #[error("Lysis V1 arithmetic: {message}")]
+    Arithmetic { message: String },
+
+    #[error("Lysis V1 zero Gratis load at {ordinal}")]
+    ZeroGratisLoad { ordinal: usize },
+
+    #[error(
+        "Lysis V1 zero monetary cost at {ordinal}: entry price {entry_price_minor}, Gratis load {gratis_load_minor}"
+    )]
+    ZeroCost {
+        ordinal: usize,
+        /// The entry price operand for the cost formula.
+        entry_price_minor: U256,
+        gratis_load_minor: U256,
+    },
+
+    #[error("Lysis V1 Gratis load exceeds remaining at {ordinal}")]
+    GratisLoadExceedsRemaining { ordinal: usize },
+
+    #[error("Lysis V1 invalid Nod target at {ordinal}")]
+    InvalidNodTarget { ordinal: usize },
+
+    #[error("Lysis V1 output count mismatch")]
+    OutputCountMismatch,
+}
+
+impl ProgramErrorV1 {
+    /// Creates an arithmetic error from a display value.
+    pub fn arithmetic(err: impl core::fmt::Display) -> Self {
+        Self::Arithmetic {
+            message: err.to_string(),
+        }
+    }
+}
+
+impl From<ProgramErrorV1> for PrecompileError {
+    fn from(error: ProgramErrorV1) -> Self {
+        PrecompileError::BodyReadCorruption(error.to_string())
+    }
+}

@@ -24,9 +24,7 @@ impl TeeRegistry<'_> {
             .is_zero()
             && self.upgrade_candidate_expiry.read(&node_id_hash)? > now
         {
-            return Err(PrecompileError::Revert(
-                "cancel the live candidate before preparing another".into(),
-            ));
+            return Err(TeeRegistryError::LiveCandidateAlreadyExists.into());
         }
         self.upgrade_candidate_context
             .write(&node_id_hash, candidate_context_hash)?;
@@ -80,9 +78,7 @@ impl TeeRegistry<'_> {
                 .read(&node_id_hash)?
                 .is_zero()
         {
-            return Err(PrecompileError::Revert(
-                "prepared upgrade binding was cancelled or consumed".into(),
-            ));
+            return Err(TeeRegistryError::PreparedUpgradeBindingCancelledOrConsumed.into());
         }
         if expected_operation == AttestationOperationV1::TransitionEnclaveMeasurement
             && !self
@@ -111,9 +107,7 @@ impl TeeRegistry<'_> {
                     .upgrade_target_hash()
                     .map_err(|e| revert_codec("candidate target", e))?
         {
-            return Err(PrecompileError::Revert(
-                "transition does not match the live upgrade candidate".into(),
-            ));
+            return Err(TeeRegistryError::TransitionDoesNotMatchLiveCandidate.into());
         }
         Ok(())
     }
@@ -208,9 +202,7 @@ impl TeeRegistry<'_> {
         } = *context;
         match expected_operation {
             AttestationOperationV1::PrepareEnclaveUpgrade => {
-                return Err(PrecompileError::Fatal(
-                    "candidate crossed active-binding write boundary".into(),
-                ))
+                return Err(TeeRegistryError::CandidateCrossedActiveBindingWriteBoundary.into())
             }
             AttestationOperationV1::RegisterEnclave => self.emit(EnclaveRegisteredV1 {
                 nodeIdHash: node_id_hash,

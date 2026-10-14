@@ -16,7 +16,7 @@ use commonware_cryptography::bls12381::{
     },
 };
 use commonware_utils::{ordered::Set, N3f1};
-use eyre::{ensure, Result, WrapErr};
+use eyre::{Result, WrapErr};
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
     reshare_artifact::ConsensusHeaderArtifact,
@@ -24,7 +24,7 @@ use outbe_primitives::{
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use crate::{config, util::rate_limit::LogRateLimiter, validators::ValidatorSet};
+use crate::{config, errors::DkgError, util::rate_limit::LogRateLimiter, validators::ValidatorSet};
 
 /// Explicit DKG ceremony state machine + non-consensus dealer-log gossip buffer.
 pub(crate) mod ceremony;
@@ -133,8 +133,8 @@ impl Mailbox {
         participants: Set<bls12381::PublicKey>,
         finalized_dealer_log_tx: Option<mpsc::UnboundedSender<Bytes>>,
     ) -> Result<()> {
-        let max_players = NonZeroU32::new(participants.len() as u32)
-            .ok_or_else(|| eyre::eyre!("DKG ceremony requires at least one participant"))?;
+        let max_players =
+            NonZeroU32::new(participants.len() as u32).ok_or(DkgError::NoParticipants)?;
         let dealers = previous_output
             .as_ref()
             .map(|output| output.players().clone())
@@ -305,17 +305,17 @@ impl Mailbox {
     ) -> Result<()> {
         let expected = self
             .with_state(|state| state.pending_boundary.clone())
-            .ok_or_else(|| eyre::eyre!("no pending DKG boundary artifact"))?;
-        ensure!(
-            epoch.get() == artifact.epoch,
-            "boundary artifact epoch {} does not match verify epoch {}",
-            artifact.epoch,
-            epoch.get()
-        );
-        ensure!(
-            expected == *artifact,
-            "carried DKG boundary artifact does not match local expectation"
-        );
+            .ok_or(DkgError::NoPendingBoundaryArtifact)?;
+        if epoch.get() != artifact.epoch {
+            return Err(DkgError::BoundaryEpochMismatch {
+                artifact_epoch: artifact.epoch,
+                verify_epoch: epoch.get(),
+            }
+            .into());
+        }
+        if expected != *artifact {
+            return Err(DkgError::BoundaryArtifactMismatch.into());
+        }
         Ok(())
     }
 
@@ -419,7 +419,7 @@ impl Mailbox {
                 .ceremony
                 .as_ref()
                 .filter(|ceremony| ceremony.canonical.epoch == epoch)
-                .ok_or_else(|| eyre::eyre!("no active DKG ceremony for epoch {}", epoch.get()))?;
+                .ok_or_else(|| DkgError::NoActiveCeremony { epoch: epoch.get() })?;
             ceremony
                 .canonical
                 .verify_dealer_log(bytes)
@@ -480,9 +480,7 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
     let mut new_active_set = Vec::with_capacity(participants.len());
     for bls_pk in participants.iter() {
         let Some(idx) = validator_set.public_keys.iter().position(|pk| pk == bls_pk) else {
-            return Err(eyre::eyre!(
-                "DKG output contains a player absent from the validator set"
-            ));
+            return Err(DkgError::OutputPlayerAbsentFromValidatorSet.into());
         };
         new_active_set.push(validator_set.addresses[idx]);
     }
@@ -497,7 +495,7 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
         outbe_primitives::reshare_artifact::tee_expired_target_exclusions_hash(
             &tee_expired_target_exclusions,
         )
-        .map_err(|error| eyre::eyre!("invalid TEE expiry exclusions: {error}"))?;
+        .map_err(DkgError::invalid_tee_expiry_exclusions)?;
 
     // V2 canonical committee snapshot identity.
     //
@@ -522,7 +520,7 @@ pub fn build_boundary_artifact(input: BoundaryArtifactInput<'_>) -> Result<DkgBo
         group_pk_bytes_vec.clone(),
         public_polynomial_hash(output.public()),
     )
-    .map_err(|e| eyre::eyre!("DKG boundary committee snapshot build failed: {e}"))?;
+    .map_err(DkgError::committee_snapshot_build_failed)?;
     let committee_set_hash = crate::proof::committee_set_hash_v2(epoch.get(), &committee_snapshot);
 
     Ok(DkgBoundaryArtifact {
@@ -607,12 +605,12 @@ pub fn assert_canonical_output(
     context: &str,
 ) -> eyre::Result<()> {
     if local != canonical {
-        return Err(eyre::eyre!(
-            "local DKG output does not match canonical finalized-log output ({context}): \
-             local {}, canonical {}",
-            dkg_output_hash(local),
-            dkg_output_hash(canonical),
-        ));
+        return Err(DkgError::CanonicalOutputMismatch {
+            context: context.to_owned(),
+            local: dkg_output_hash(local),
+            canonical: dkg_output_hash(canonical),
+        }
+        .into());
     }
     Ok(())
 }

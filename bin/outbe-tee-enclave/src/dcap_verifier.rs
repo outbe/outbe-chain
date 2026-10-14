@@ -13,7 +13,11 @@ use outbe_tee::{
     protocol::{EnclaveRequest, EnclaveResponse},
 };
 
-use crate::{keys::EnclaveKeys, transport::DerivedTributeOfferKey};
+use crate::{
+    errors::{DcapVerifyError, EnclaveResult},
+    keys::EnclaveKeys,
+    transport::DerivedTributeOfferKey,
+};
 
 #[derive(Debug)]
 struct UploadV1 {
@@ -67,7 +71,7 @@ impl DcapVerificationSessionV1 {
     pub(crate) fn handle(
         &mut self,
         request: EnclaveRequest,
-    ) -> Result<DcapVerificationProgressV1, &'static str> {
+    ) -> EnclaveResult<DcapVerificationProgressV1> {
         let result = match request {
             EnclaveRequest::BeginDcapVerificationV1 {
                 request_hash,
@@ -94,10 +98,10 @@ impl DcapVerificationSessionV1 {
             } => {
                 let node_signature = node_signature
                     .try_into()
-                    .map_err(|_| "DCAP onboarding node signature length is invalid")?;
+                    .map_err(|_| DcapVerifyError::OnboardingNodeSignatureLen)?;
                 let enclave_signature = enclave_signature
                     .try_into()
-                    .map_err(|_| "DCAP onboarding enclave signature length is invalid")?;
+                    .map_err(|_| DcapVerifyError::OnboardingEnclaveSignatureLen)?;
                 self.begin(
                     request_hash,
                     evidence_len,
@@ -118,7 +122,7 @@ impl DcapVerificationSessionV1 {
                 bytes,
             } => self.push(request_hash, offset, bytes),
             EnclaveRequest::FinishDcapVerificationV1 { request_hash } => self.finish(request_hash),
-            _ => Err("request is not part of DCAP verification upload"),
+            _ => Err(DcapVerifyError::NotUploadRequest.into()),
         };
         if result.is_err() {
             self.upload = None;
@@ -133,23 +137,23 @@ impl DcapVerificationSessionV1 {
         policy_len: u32,
         block_timestamp: u64,
         purpose: VerificationPurposeV1,
-    ) -> Result<DcapVerificationProgressV1, &'static str> {
+    ) -> EnclaveResult<DcapVerificationProgressV1> {
         if self.upload.is_some() {
-            return Err("a DCAP verification upload is already active");
+            return Err(DcapVerifyError::UploadAlreadyActive.into());
         }
-        let evidence_len = usize::try_from(evidence_len)
-            .map_err(|_| "DCAP evidence length exceeds this target")?;
+        let evidence_len =
+            usize::try_from(evidence_len).map_err(|_| DcapVerifyError::EvidenceLenTarget)?;
         let policy_len =
-            usize::try_from(policy_len).map_err(|_| "DCAP policy length exceeds this target")?;
+            usize::try_from(policy_len).map_err(|_| DcapVerifyError::PolicyLenTarget)?;
         if evidence_len > MAX_ATTESTATION_EVIDENCE_BYTES {
-            return Err("DCAP evidence length exceeds the protocol cap");
+            return Err(DcapVerifyError::EvidenceLenCap.into());
         }
         if policy_len > MAX_TEE_POLICY_BYTES {
-            return Err("DCAP policy length exceeds the protocol cap");
+            return Err(DcapVerifyError::PolicyLenCap.into());
         }
         let total = evidence_len
             .checked_add(policy_len)
-            .ok_or("DCAP verification upload length overflow")?;
+            .ok_or(DcapVerifyError::UploadLenOverflow)?;
         self.upload = Some(UploadV1 {
             request_hash,
             evidence_len,
@@ -166,63 +170,60 @@ impl DcapVerificationSessionV1 {
         request_hash: B256,
         offset: u32,
         bytes: Vec<u8>,
-    ) -> Result<DcapVerificationProgressV1, &'static str> {
+    ) -> EnclaveResult<DcapVerificationProgressV1> {
         let upload = self
             .upload
             .as_mut()
-            .ok_or("no DCAP verification upload is active")?;
+            .ok_or(DcapVerifyError::NoUploadActive)?;
         if upload.request_hash != request_hash {
-            return Err("DCAP verification chunk request hash mismatch");
+            return Err(DcapVerifyError::ChunkHashMismatch.into());
         }
         if bytes.is_empty() || bytes.len() > MAX_DCAP_VERIFICATION_CHUNK_BYTES {
-            return Err("DCAP verification chunk length is invalid");
+            return Err(DcapVerifyError::ChunkLenInvalid.into());
         }
-        let offset = usize::try_from(offset).map_err(|_| "DCAP verification offset overflow")?;
+        let offset = usize::try_from(offset).map_err(|_| DcapVerifyError::OffsetOverflow)?;
         if offset != upload.bytes.len() {
-            return Err("DCAP verification chunk offset is not sequential");
+            return Err(DcapVerifyError::ChunkOffsetNonSequential.into());
         }
         let total = upload
             .evidence_len
             .checked_add(upload.policy_len)
-            .ok_or("DCAP verification upload length overflow")?;
+            .ok_or(DcapVerifyError::UploadLenOverflow)?;
         let next = offset
             .checked_add(bytes.len())
-            .ok_or("DCAP verification chunk length overflow")?;
+            .ok_or(DcapVerifyError::ChunkLenOverflow)?;
         if next > total {
-            return Err("DCAP verification chunk exceeds the declared upload length");
+            return Err(DcapVerifyError::ChunkExceedsDeclaredLen.into());
         }
         upload.bytes.extend_from_slice(&bytes);
-        let next_offset = u32::try_from(next).map_err(|_| "DCAP verification offset overflow")?;
+        let next_offset = u32::try_from(next).map_err(|_| DcapVerifyError::OffsetOverflow)?;
         Ok(DcapVerificationProgressV1::ChunkAccepted {
             request_hash,
             next_offset,
         })
     }
 
-    fn finish(&mut self, request_hash: B256) -> Result<DcapVerificationProgressV1, &'static str> {
-        let upload = self
-            .upload
-            .take()
-            .ok_or("no DCAP verification upload is active")?;
+    fn finish(&mut self, request_hash: B256) -> EnclaveResult<DcapVerificationProgressV1> {
+        let upload = self.upload.take().ok_or(DcapVerifyError::NoUploadActive)?;
         if upload.request_hash != request_hash {
-            return Err("DCAP verification finish request hash mismatch");
+            return Err(DcapVerifyError::FinishHashMismatch.into());
         }
         let total = upload
             .evidence_len
             .checked_add(upload.policy_len)
-            .ok_or("DCAP verification upload length overflow")?;
+            .ok_or(DcapVerifyError::UploadLenOverflow)?;
         if upload.bytes.len() != total {
-            return Err("DCAP verification upload is truncated");
+            return Err(DcapVerifyError::UploadTruncated.into());
         }
         let policy = upload.bytes[upload.evidence_len..].to_vec();
         let evidence = upload.bytes[..upload.evidence_len].to_vec();
-        let computed = match &upload.purpose {
+        let computed = match upload.purpose {
             VerificationPurposeV1::Generic => {
                 dcap_verification_request_hash(&evidence, &policy, upload.block_timestamp)
             }
             VerificationPurposeV1::RegisterOnboarding {
-                node_signature,
-                enclave_signature,
+                ref node_signature,
+                ref enclave_signature,
                 expected_tribute_offer_public,
                 key_epoch,
                 tribute_offer_epoch,
@@ -232,14 +233,14 @@ impl DcapVerificationSessionV1 {
                 block_timestamp: upload.block_timestamp,
                 node_signature,
                 enclave_signature,
-                expected_tribute_offer_public: *expected_tribute_offer_public,
-                key_epoch: *key_epoch,
-                tribute_offer_epoch: *tribute_offer_epoch,
+                expected_tribute_offer_public,
+                key_epoch,
+                tribute_offer_epoch,
             }),
         }
-        .map_err(|_| "DCAP verification request commitment is invalid")?;
+        .map_err(|_| DcapVerifyError::CommitmentInvalid)?;
         if computed != request_hash {
-            return Err("DCAP verification request commitment mismatch");
+            return Err(DcapVerifyError::CommitmentMismatch.into());
         }
         Ok(DcapVerificationProgressV1::Complete(Box::new(
             CompleteDcapVerificationV1 {
@@ -262,8 +263,8 @@ pub(crate) fn complete_verification_response(
     #[cfg(feature = "native-dcap")]
     let outcome = verify_complete_request(&request);
     #[cfg(not(feature = "native-dcap"))]
-    let outcome: Result<DcapVerificationOutcomeV1, &'static str> =
-        Err("enclave was built without the pinned native DCAP verifier");
+    let outcome: EnclaveResult<DcapVerificationOutcomeV1> =
+        Err(DcapVerifyError::MissingNativeDcapVerifier.into());
 
     outcome
         .and_then(|outcome| {
@@ -286,7 +287,7 @@ fn prepare_verification_response(
     keys: &EnclaveKeys,
     resident_offer_key: Option<&DerivedTributeOfferKey>,
     source_manifest: Option<&outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1>,
-) -> Result<EnclaveResponse, &'static str> {
+) -> EnclaveResult<EnclaveResponse> {
     let onboarding = matches!(
         request.purpose,
         VerificationPurposeV1::RegisterOnboarding { .. }
@@ -304,19 +305,19 @@ fn prepare_verification_response(
     };
     let outcome = outcome
         .encode_canonical()
-        .map_err(|_| "enclave produced a non-canonical DCAP outcome")?;
+        .map_err(|_| DcapVerifyError::NonCanonicalOutcome)?;
     if onboarding {
         let onboarding_artifact = artifact
             .map(|artifact| artifact.encode_canonical())
             .transpose()
-            .map_err(|_| "enclave produced a non-canonical onboarding artifact")?
+            .map_err(|_| DcapVerifyError::NonCanonicalOnboardingArtifact)?
             .unwrap_or_default();
         let preimage = dcap_onboarding_attestation_preimage(
             request.request_hash,
             &outcome,
             &onboarding_artifact,
         )
-        .map_err(|_| "enclave produced an oversized onboarding result")?;
+        .map_err(|_| DcapVerifyError::OversizedOnboardingResult)?;
         return Ok(EnclaveResponse::DcapOnboardingVerificationFinishedV1 {
             request_hash: request.request_hash,
             outcome,
@@ -325,7 +326,7 @@ fn prepare_verification_response(
         });
     }
     let preimage = dcap_verification_attestation_preimage(request.request_hash, &outcome)
-        .map_err(|_| "enclave produced an oversized DCAP outcome")?;
+        .map_err(|_| DcapVerifyError::OversizedOutcome)?;
     Ok(EnclaveResponse::DcapVerificationFinishedV1 {
         request_hash: request.request_hash,
         outcome,
@@ -386,30 +387,30 @@ fn build_gramine_direct_dev_onboarding_artifact(
     context: DcapOnboardingContextV1,
     resident_offer_key: Option<&DerivedTributeOfferKey>,
     source_manifest: Option<&outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1>,
-) -> Result<DcapOnboardingArtifactV1, &'static str> {
+) -> EnclaveResult<DcapOnboardingArtifactV1> {
     use outbe_primitives::tee_attestation_v1::AttestationMode;
 
-    let source_manifest = source_manifest.ok_or("onboarding source is not initialized")?;
+    let source_manifest = source_manifest.ok_or(DcapVerifyError::OnboardingSourceNotInitialized)?;
     if source_manifest.attestation_mode != AttestationMode::GramineDirectDev
         || source_manifest.chain_id != context.chain_id
         || source_manifest.genesis_hash != context.genesis_hash
     {
-        return Err("GramineDirectDev onboarding source network binding mismatch");
+        return Err(DcapVerifyError::DirectDevSourceNetworkMismatch.into());
     }
     let resident_offer_key =
-        resident_offer_key.ok_or("onboarding source offer key is not ready")?;
+        resident_offer_key.ok_or(DcapVerifyError::OnboardingSourceOfferKeyNotReady)?;
     if resident_offer_key.public() != context.tribute_offer_public
         || resident_offer_key.key_epoch() != context.key_epoch
         || resident_offer_key.tribute_offer_epoch() != context.tribute_offer_epoch
     {
-        return Err("GramineDirectDev onboarding offer-key context mismatch");
+        return Err(DcapVerifyError::DirectDevOfferKeyContextMismatch.into());
     }
     crate::crypto::encrypt_onboarding_artifact_v1(
         resident_offer_key.secret(),
         context,
         resident_offer_key.group_sig(),
     )
-    .map_err(|_| "purpose-bound GramineDirectDev onboarding artifact encryption failed")
+    .map_err(|_| DcapVerifyError::DirectDevArtifactEncryptionFailed.into())
 }
 
 fn build_onboarding_artifact(
@@ -418,7 +419,7 @@ fn build_onboarding_artifact(
     resident_offer_key: Option<&DerivedTributeOfferKey>,
     source_manifest: Option<&outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1>,
     source_code_identity: (B256, B256, u16, u16),
-) -> Result<Option<outbe_tee::dcap_protocol::DcapOnboardingArtifactV1>, &'static str> {
+) -> EnclaveResult<Option<outbe_tee::dcap_protocol::DcapOnboardingArtifactV1>> {
     if !matches!(outcome, DcapVerificationOutcomeV1::Accepted(_)) {
         return Ok(None);
     }
@@ -444,9 +445,9 @@ fn build_onboarding_artifact(
         }
     };
     let intent = &evidence.intent;
-    let source_manifest = source_manifest.ok_or("onboarding source is not initialized")?;
+    let source_manifest = source_manifest.ok_or(DcapVerifyError::OnboardingSourceNotInitialized)?;
     let resident_offer_key =
-        resident_offer_key.ok_or("onboarding source offer key is not ready")?;
+        resident_offer_key.ok_or(DcapVerifyError::OnboardingSourceOfferKeyNotReady)?;
     let DcapVerificationOutcomeV1::Accepted(verdict) = outcome else {
         unreachable!("non-accepted outcomes return before onboarding construction")
     };
@@ -476,14 +477,14 @@ fn build_onboarding_artifact(
         genesis_hash: intent.genesis_hash,
         intent_hash: intent
             .intent_hash()
-            .map_err(|_| "accepted onboarding intent hash is unavailable")?,
+            .map_err(|_| DcapVerifyError::OnboardingIntentHashUnavailable)?,
         node_id_hash: intent
             .node_id
             .node_id_hash()
-            .map_err(|_| "accepted onboarding node id hash is unavailable")?,
+            .map_err(|_| DcapVerifyError::OnboardingNodeIdHashUnavailable)?,
         enclave_id: intent
             .derived_enclave_id()
-            .map_err(|_| "accepted onboarding enclave id is unavailable")?,
+            .map_err(|_| DcapVerifyError::OnboardingEnclaveIdUnavailable)?,
         binding_id: intent.binding_id,
         policy_hash: intent.policy_hash,
         recipient_x25519: intent.recipient_x25519,
@@ -497,7 +498,7 @@ fn build_onboarding_artifact(
         resident_offer_key.group_sig(),
     )
     .map(Some)
-    .map_err(|_| "purpose-bound onboarding artifact encryption failed")
+    .map_err(|_| DcapVerifyError::ArtifactEncryptionFailed.into())
 }
 
 fn validate_onboarding_registration(
@@ -550,7 +551,7 @@ fn onboarding_context_matches(
 #[cfg(feature = "native-dcap")]
 fn verify_complete_request(
     request: &CompleteDcapVerificationV1,
-) -> Result<DcapVerificationOutcomeV1, &'static str> {
+) -> EnclaveResult<DcapVerificationOutcomeV1> {
     use outbe_primitives::tee_attestation_v1::{AttestationEvidenceV1, TeePolicyV1};
 
     let evidence = match AttestationEvidenceV1::decode_canonical(&request.evidence) {

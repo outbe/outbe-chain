@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY};
@@ -51,7 +51,7 @@ pub(crate) fn preflight_brief(
         return Err(DesisError::InvalidStageTransition.into());
     }
     let midnight = now - now % SECONDS_PER_DAY;
-    u32::try_from(midnight).map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))
+    u32::try_from(midnight).map_err(|_| DesisError::BriefAnchorExceedsU32.into())
 }
 
 pub(crate) fn record_preflighted_brief(
@@ -259,9 +259,7 @@ fn fold_profile(
             let scaled = prev_issued
                 .checked_mul(prev_load)
                 .and_then(|v| v.checked_mul(u128::from(BID_QUANTITY_FLOOR_BPS)))
-                .ok_or_else(|| {
-                    PrecompileError::Revert("min bid quantity scaling overflow".into())
-                })?;
+                .ok_or(DesisError::MinBidQuantityScalingOverflow)?;
             let derived = scaled / (10_000 * today_load);
             derived.min(u128::from(u16::MAX)) as u16
         }
@@ -304,12 +302,8 @@ fn send_stage_start(
     } = start;
     let mut prices = Vec::with_capacity(config.reference_prices.len());
     for row in &config.reference_prices {
-        let marked_up = |rate| {
-            outbe_primitives::markup::marked_up(row.entry_price_minor, rate)
-                .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
-        };
-        let floor = marked_up(iparams.floor_rate)?;
-        let call = marked_up(iparams.call_rate)?;
+        let floor = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.floor_rate)?;
+        let call = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.call_rate)?;
         prices.push(IOriginRouter::ReferenceCurrencyPrice {
             isoCode: row.iso_code,
             entryPriceMinor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,

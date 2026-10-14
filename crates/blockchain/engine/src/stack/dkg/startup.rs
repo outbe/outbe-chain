@@ -13,10 +13,9 @@ pub(in crate::stack) fn validate_recovered_vrf_material(
     };
     let group_pk_bytes = commonware_codec::Encode::encode(polynomial.public());
     let local_vrf_group_public_key = alloy_primitives::keccak256(&group_pk_bytes);
-    ensure!(
-        local_vrf_group_public_key == boundary.vrf_group_public_key,
-        "saved DKG material does not match finalized VRF group public key"
-    );
+    if local_vrf_group_public_key != boundary.vrf_group_public_key {
+        return Err(crate::errors::StackDkgError::SavedDkgMaterialVrfGroupKeyMismatch.into());
+    }
     Ok(())
 }
 
@@ -56,15 +55,17 @@ pub(in crate::stack) fn select_recovery_participants(
 ) -> Result<commonware_utils::ordered::Set<bls12381::PublicKey>> {
     let recorded = boundary.reshare.new_active_set.len();
     let recovered = recovered_output_players.len();
-    ensure!(
-        recovered > 0 && recovered == recorded,
-        "validator set has drifted from saved DKG: recovered DKG output has {recovered} \
-         player(s) but the recovered boundary (epoch {}, activation height {}) recorded an \
-         active set of {recorded} validator(s) - the restored consensus material does not \
-         match the chain's recovered DKG boundary",
-        boundary.epoch,
-        boundary.planned_activation_height,
-    );
+    if !(recovered > 0 && recovered == recorded) {
+        return Err(
+            crate::errors::StackDkgError::ValidatorSetDriftedFromSavedDkg {
+                recovered,
+                epoch: boundary.epoch,
+                activation_height: boundary.planned_activation_height,
+                recorded,
+            }
+            .into(),
+        );
+    }
     Ok(recovered_output_players.clone())
 }
 
@@ -82,17 +83,23 @@ pub(in crate::stack) fn recover_latest_boundary_artifact(
     let min_height = last_execution_height.saturating_sub(max_scan);
     let mut height = last_execution_height;
     while height > min_height {
-        let Some(header) = provider
-            .sealed_header(height)
-            .map_err(|error| eyre::eyre!("failed to read header {height}: {error}"))?
+        let Some(header) = provider.sealed_header(height).map_err(|error| {
+            crate::errors::StackDkgError::ReadHeaderAtHeight {
+                height,
+                reason: format!("{error}"),
+            }
+        })?
         else {
             height = height.saturating_sub(1);
             continue;
         };
         let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
-            .map_err(|error| {
-                eyre::eyre!("failed to decode header artifacts at {height}: {error}")
-            })?;
+            .map_err(
+                |error| crate::errors::StackDkgError::DecodeHeaderArtifactsAtHeight {
+                    height,
+                    reason: format!("{error}"),
+                },
+            )?;
         if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
             artifacts.consensus_header_artifact
         {
@@ -156,21 +163,23 @@ fn read_startup_dkg_snapshot(
         last_consensus_finalized_height,
         ..
     } = *request;
-    let last_execution_height = node
-        .provider
-        .last_block_number()
-        .map_err(|e| eyre::eyre!("failed to get last block number: {e}"))?;
+    let last_execution_height = node.provider.last_block_number().map_err(|e| {
+        crate::errors::StackDkgError::GetLastBlockNumber {
+            reason: format!("{e}"),
+        }
+    })?;
     let last_execution_hash = if last_execution_height > 0 {
         node.provider
             .block_hash(last_execution_height)
-            .map_err(|e| {
-                eyre::eyre!("failed to get block hash for height {last_execution_height}: {e}")
+            .map_err(|e| crate::errors::StackDkgError::GetBlockHashForHeight {
+                height: last_execution_height,
+                reason: format!("{e}"),
             })?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "missing block hash for execution height {last_execution_height}; refusing genesis fallback"
-                )
-            })?
+            .ok_or(
+                crate::errors::StackDkgError::MissingBlockHashForExecutionHeight {
+                    height: last_execution_height,
+                },
+            )?
     } else {
         genesis_hash
     };
@@ -301,7 +310,9 @@ where
         .clone()
         .into_iter()
         .try_collect()
-        .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?;
+        .map_err(|e| crate::errors::StackDkgError::InvalidParticipantSet {
+            reason: format!("{e}"),
+        })?;
     let local_key_in_current_consensus_set = startup_participants.position(local_pk).is_some();
     let expected_remote_peers = validator_set.public_keys.len().saturating_sub(1);
     let required_remote_peers =
@@ -342,15 +353,15 @@ where
 
         let elapsed = elapsed_since(ctx.current(), started_at);
         if elapsed >= config::STARTUP_GENESIS_FORMATION_PROBE_TIMEOUT {
-            return Err(eyre::eyre!(
-                "could not prove genesis formation before DKG round 0: connected_reth_peers={} required_remote_peers={} configured_remote_peers={} reth_syncing={} reth_initial_syncing={} peer_query_failed={}",
-                evidence.connected_peers,
+            return Err(crate::errors::StackDkgError::GenesisFormationProbeTimeout {
+                connected_peers: evidence.connected_peers,
                 required_remote_peers,
                 expected_remote_peers,
-                evidence.is_syncing,
-                evidence.is_initially_syncing,
-                evidence.peer_query_failed,
-            ));
+                is_syncing: evidence.is_syncing,
+                is_initially_syncing: evidence.is_initially_syncing,
+                peer_query_failed: evidence.peer_query_failed,
+            }
+            .into());
         }
 
         info!(
@@ -388,9 +399,10 @@ pub(in crate::stack) enum ThresholdMaterial {
 pub(in crate::stack) fn missing_current_threshold_material_error(
     reason: impl std::fmt::Display,
 ) -> eyre::Report {
-    eyre::eyre!(
-        "startup cannot recover threshold material before sync starts: {reason}. Restart with the current --consensus.public-polynomial and --consensus.dkg-output without --consensus.signing-share so the node can sync as VerifierOnly and acquire a share through the running reshare path"
-    )
+    crate::errors::StackDkgError::MissingCurrentThresholdMaterial {
+        reason: format!("{reason}"),
+    }
+    .into()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -475,42 +487,34 @@ pub(in crate::stack) fn validate_offer_key_before_threshold_work(
         && startup_dkg_mode(context, local_key_in_current_consensus_set)
             == StartupDkgMode::InitialGenesisDkg;
     if founding {
-        ensure!(
-            on_chain_offer.is_zero(),
-            "fresh block-1 founding startup found a pre-existing canonical offer key"
-        );
+        if !on_chain_offer.is_zero() {
+            return Err(crate::errors::StackDkgError::FreshGenesisFoundPreexistingOfferKey.into());
+        }
         return Ok(());
     }
 
-    let resident_offer = resident_offer.ok_or_else(|| {
-        eyre::eyre!(
-            "existing identity has no permanent resident offer key before threshold work; no recovery or fallback exists"
-        )
-    })?;
-    ensure!(
-        !resident_offer.is_zero(),
-        "existing identity has a zero permanent resident offer key before threshold work; no recovery or fallback exists"
-    );
+    let resident_offer = resident_offer
+        .ok_or(crate::errors::StackDkgError::ExistingIdentityMissingResidentOfferKey)?;
+    if resident_offer.is_zero() {
+        return Err(crate::errors::StackDkgError::ExistingIdentityZeroResidentOfferKey.into());
+    }
 
     let has_existing_local_state = context.last_execution_height > 0
         || context.last_consensus_finalized_height > 0
         || context.has_chain_finalized_dkg_boundary();
     if on_chain_offer.is_zero() {
-        ensure!(
-            !has_existing_local_state,
-            "existing canonical state has no mandatory OST3 offer key; no recovery or fallback exists"
-        );
-        ensure!(
-            verifier_join,
-            "only an empty-DB verifier join with an installed permanent key may defer exact offer-key comparison until certified sync"
-        );
+        if has_existing_local_state {
+            return Err(crate::errors::StackDkgError::ExistingCanonicalStateMissingOfferKey.into());
+        }
+        if !verifier_join {
+            return Err(crate::errors::StackDkgError::NonVerifierDeferredOfferKeyComparison.into());
+        }
         return Ok(());
     }
 
-    ensure!(
-        resident_offer == on_chain_offer,
-        "local enclave does not hold the canonical permanent offer key before threshold work; no recovery or fallback exists"
-    );
+    if resident_offer != on_chain_offer {
+        return Err(crate::errors::StackDkgError::ResidentOfferKeyMismatch.into());
+    }
     Ok(())
 }
 
@@ -605,36 +609,36 @@ pub(in crate::stack) fn ordered_addresses_from_recovered_boundary(
 ) -> Result<Vec<EthAddress>> {
     let boundary_output = decode_boundary_output(boundary)
         .wrap_err("failed to decode recovered DKG boundary output for address mapping")?;
-    ensure!(
-        boundary_output.players() == participants,
-        "recovered DKG boundary output players do not match active participant set"
-    );
+    if boundary_output.players() != participants {
+        return Err(crate::errors::StackDkgError::RecoveredBoundaryPlayersMismatch.into());
+    }
 
     let ordered_addresses = boundary.reshare.new_active_set.clone();
-    ensure!(
-        ordered_addresses.len() == participants.len(),
-        "recovered DKG boundary active-set length {} does not match participant count {}",
-        ordered_addresses.len(),
-        participants.len(),
-    );
-    ensure!(
-        active_set_hash_from_addresses(&ordered_addresses) == boundary.reshare.active_set_hash,
-        "recovered DKG boundary active-set hash does not match active-set addresses"
-    );
-    ensure!(
-        alloy_primitives::keccak256(boundary.vrf_group_public_key_bytes.as_ref())
-            == boundary.vrf_group_public_key,
-        "recovered DKG boundary VRF group public key bytes do not match hash"
-    );
+    if ordered_addresses.len() != participants.len() {
+        return Err(
+            crate::errors::StackDkgError::RecoveredBoundaryActiveSetLengthMismatch {
+                addresses_len: ordered_addresses.len(),
+                participants_len: participants.len(),
+            }
+            .into(),
+        );
+    }
+    if active_set_hash_from_addresses(&ordered_addresses) != boundary.reshare.active_set_hash {
+        return Err(crate::errors::StackDkgError::RecoveredBoundaryActiveSetHashMismatch.into());
+    }
+    if alloy_primitives::keccak256(boundary.vrf_group_public_key_bytes.as_ref())
+        != boundary.vrf_group_public_key
+    {
+        return Err(crate::errors::StackDkgError::RecoveredBoundaryVrfKeyBytesMismatch.into());
+    }
 
     let mut committee = Vec::with_capacity(participants.len());
     for (address, bls_pk) in ordered_addresses.iter().zip(participants.iter()) {
         let encoded = commonware_codec::Encode::encode(bls_pk).to_vec();
         let consensus_pubkey: [u8; 48] = encoded.as_slice().try_into().map_err(|_| {
-            eyre::eyre!(
-                "encoded MinPk consensus pubkey has unexpected length: expected 48, got {}",
-                encoded.len()
-            )
+            crate::errors::StackDkgError::EncodedConsensusPubkeyLengthMismatch {
+                actual: encoded.len(),
+            }
         })?;
         committee.push(outbe_consensus::proof::CommitteeEntry {
             address: *address,
@@ -647,11 +651,11 @@ pub(in crate::stack) fn ordered_addresses_from_recovered_boundary(
         vrf_group_public_key_bytes: boundary.vrf_group_public_key_bytes.to_vec(),
         vrf_public_polynomial_hash: dkg_manager::public_polynomial_hash(boundary_output.public()),
     };
-    ensure!(
-        outbe_consensus::proof::committee_set_hash_v2(boundary.epoch, &snapshot)
-            == boundary.committee_set_hash,
-        "recovered DKG boundary committee_set_hash does not match boundary committee/address mapping"
-    );
+    if outbe_consensus::proof::committee_set_hash_v2(boundary.epoch, &snapshot)
+        != boundary.committee_set_hash
+    {
+        return Err(crate::errors::StackDkgError::RecoveredBoundaryCommitteeSetHashMismatch.into());
+    }
 
     Ok(ordered_addresses)
 }
@@ -668,9 +672,12 @@ pub(in crate::stack) fn tee_bootstrap_setup(
 )> {
     let evm_key_path = args
         .effective_validator_evm_key()?
-        .ok_or_else(|| eyre::eyre!("TEE bootstrap requires a validator EVM key"))?;
-    let evm_signer = outbe_primitives::signer::load::from_file(&evm_key_path)
-        .map_err(|e| eyre::eyre!("failed to load validator EVM signer for TEE bootstrap: {e}"))?;
+        .ok_or(crate::errors::StackDkgError::TeeBootstrapRequiresEvmKey)?;
+    let evm_signer = outbe_primitives::signer::load::from_file(&evm_key_path).map_err(|e| {
+        crate::errors::StackDkgError::LoadValidatorEvmSignerForTeeBootstrap {
+            reason: format!("{e}"),
+        }
+    })?;
     let committee: std::collections::BTreeSet<alloy_primitives::Address> =
         ordered_validator_addresses(participants, validator_set)?
             .into_iter()
@@ -744,9 +751,9 @@ pub(in crate::stack) fn validator_set_for_dkg_output_players(
     let mut p2p_addresses = Vec::with_capacity(players.len());
     for player in players.iter() {
         let Some(idx) = source.public_keys.iter().position(|pk| pk == player) else {
-            return Err(eyre::eyre!(
-                "DKG output contains a player absent from the frozen validator set"
-            ));
+            return Err(
+                crate::errors::StackDkgError::DkgOutputPlayerAbsentFromFrozenValidatorSet.into(),
+            );
         };
         public_keys.push(source.public_keys[idx].clone());
         addresses.push(source.addresses[idx]);
@@ -767,7 +774,12 @@ pub(in crate::stack) fn participants_from_validator_set(
         .clone()
         .into_iter()
         .try_collect()
-        .map_err(|e| eyre::eyre!("invalid DKG output participant set: {e}"))
+        .map_err(|e| {
+            crate::errors::StackDkgError::InvalidDkgOutputParticipantSet {
+                reason: format!("{e}"),
+            }
+            .into()
+        })
 }
 
 fn validate_dkg_output_players_exact(
@@ -775,17 +787,19 @@ fn validate_dkg_output_players_exact(
     validator_set: &validators::ValidatorSet,
 ) -> Result<()> {
     let players = output.players();
-    ensure!(
-        players.len() == validator_set.public_keys.len(),
-        "DKG output player count {} does not match validator set size {}",
-        players.len(),
-        validator_set.public_keys.len()
-    );
+    if players.len() != validator_set.public_keys.len() {
+        return Err(crate::errors::StackDkgError::DkgOutputPlayerCountMismatch {
+            players_len: players.len(),
+            validators_len: validator_set.public_keys.len(),
+        }
+        .into());
+    }
     for public_key in &validator_set.public_keys {
-        ensure!(
-            players.position(public_key).is_some(),
-            "validator set public key is missing from DKG output players"
-        );
+        if players.position(public_key).is_none() {
+            return Err(
+                crate::errors::StackDkgError::ValidatorPublicKeyMissingFromDkgOutputPlayers.into(),
+            );
+        }
     }
     Ok(())
 }

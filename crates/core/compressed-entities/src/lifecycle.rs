@@ -45,8 +45,8 @@ impl BlockLifecycle for CompressedEntitiesLifecycle {
         let evm_root = State::new(ctx.runtime.storage.clone()).root()?;
         ctx.scope.open_exact_parent(evm_root)?;
         if ctx.scope.parent_root()? != evm_root {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "exact parent tree root does not match compressed-entity EVM root".into(),
+            return Err(crate::errors::fatal_error(
+                "exact parent tree root does not match compressed-entity EVM root",
             ));
         }
         ctx.scope.activate()
@@ -97,8 +97,8 @@ fn prepare_seal_output(ctx: &CompressedEntitiesLifecycleContext<'_, '_>) -> Resu
         ctx.scope
             .prepare_tree_seal(ctx.runtime.block.block_number, &mutations, &retirements)?;
     if staged_tree_batch.parent_root() != parent_root {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(
-            "prepared compressed-entity tree batch has the wrong parent root".into(),
+        return Err(crate::errors::fatal_error(
+            "prepared compressed-entity tree batch has the wrong parent root",
         ));
     }
     let new_root = staged_tree_batch.new_root();

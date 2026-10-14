@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use eyre::{eyre, Result};
+use eyre::Result;
 use futures::{SinkExt as _, StreamExt as _};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, Instant};
@@ -18,6 +18,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use super::{CandlePrice, Provider, TickerPrice};
 use crate::config::ApiProviderConfig;
+use crate::errors::CexError;
 use decode::{
     clear_routes, decompress_gzip, normalize_symbol, process_payload, subscription_messages,
 };
@@ -151,11 +152,11 @@ pub(crate) fn validate_exchange_markets(endpoint: &ApiProviderConfig) -> Result<
     }
     for market in &endpoint.markets {
         if is_iso_symbol(&market.quote) {
-            return Err(eyre!(
-                "exchange '{}' market quote '{}' is an ISO code; write the exchange's market, such as USDT, USDC or USD",
-                endpoint.name,
-                market.quote
-            ));
+            return Err(CexError::IsoMarketQuote {
+                exchange: endpoint.name.clone(),
+                quote: market.quote.clone(),
+            }
+            .into());
         }
     }
     Ok(())
@@ -439,7 +440,7 @@ where
     loop {
         tokio::select! {
             incoming = stream.next() => {
-                let message = incoming.ok_or_else(|| eyre!("websocket stream ended"))??;
+                let message = incoming.ok_or(CexError::StreamEnded)??;
                 last_seen = Instant::now();
                 match message {
                     Message::Text(text) => {
@@ -466,13 +467,13 @@ where
                     }
                     Message::Ping(payload) => sink.send(Message::Pong(payload)).await?,
                     Message::Pong(_) => {}
-                    Message::Close(frame) => return Err(eyre!("remote closed websocket: {frame:?}")),
+                    Message::Close(frame) => return Err(CexError::RemoteClosed(frame).into()),
                     Message::Frame(_) => {}
                 }
             }
             _ = heartbeat.tick() => {
                 if last_seen.elapsed() >= STALE_CONNECTION_AFTER {
-                    return Err(eyre!("websocket received no data or pong for {STALE_CONNECTION_AFTER:?}"));
+                    return Err(CexError::StaleConnection(STALE_CONNECTION_AFTER).into());
                 }
                 if kind == ExchangeKind::Okx {
                     sink.send(Message::Text("ping".into())).await?;

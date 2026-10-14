@@ -328,11 +328,11 @@ fn promotion_rejects_a_preexisting_cross_mode_successor() {
         run_installed(&current, |_storage, mut registry| {
             write_staged_policy_slots(&registry, proposal_id, &successor);
 
-            assert!(matches!(
-                registry
+            assert!(crate::errors::is_fatal_containing(
+                &registry
                     .promote_staged_successor_policy_v1(proposal_id, 50)
                     .unwrap_err(),
-                PrecompileError::Fatal(message) if message.contains("attestation mode")
+                "attestation mode",
             ));
             assert_eq!(registry.active_policy_v1().unwrap(), current);
             assert_eq!(

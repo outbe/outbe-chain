@@ -1,6 +1,11 @@
+//! Error types for the Gem precompile.
+
+use alloy_primitives::{B256, U256};
+use outbe_compressed_entities::WwdEntityId;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
+/// Revert errors that the Gem runtime returns.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum GemError {
@@ -18,13 +23,81 @@ pub enum GemError {
 
     #[error("gem already exists")]
     AlreadyExists,
+
+    #[error("unknown gem profile selector: {0}")]
+    UnknownProfileSelector(u8),
+
+    #[error("gem bucket {bucket_id} existence disagrees with member count {member_count}")]
+    BucketExistenceMismatch {
+        bucket_id: WwdEntityId,
+        member_count: u32,
+    },
+
+    #[error("gem total supply overflow")]
+    TotalSupplyOverflow,
+
+    #[error("gem settled count overflow")]
+    SettledCountOverflow,
+
+    #[error("gem total supply underflow")]
+    TotalSupplyUnderflow,
+
+    #[error("gem bucket {bucket_id} settled count underflow")]
+    SettledCountUnderflow { bucket_id: WwdEntityId },
+
+    #[error("loaded gem bucket {actual} does not match item bucket {expected}")]
+    LoadedBucketMismatch {
+        actual: WwdEntityId,
+        expected: WwdEntityId,
+    },
+
+    #[error("gem bucket {bucket} is empty")]
+    EmptyBucket { bucket: B256 },
+
+    #[error("gem {gem_id} is not in bucket {bucket}")]
+    GemNotInBucket { gem_id: U256, bucket: B256 },
+
+    #[error("gem bucket {bucket} member slot {slot} is empty during removal")]
+    EmptyBucketSlotOnRemoval { bucket: B256, slot: u32 },
 }
 
-/// Failure at the typed gem persistence boundary.
+/// Fatal errors that the Gem runtime returns.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum GemFatalError {
+    #[error("gem {gem_id} has no bucket body {bucket_id}")]
+    MissingBucketBody {
+        gem_id: U256,
+        bucket_id: WwdEntityId,
+    },
+
+    #[error("metadata route received an entity call")]
+    MetadataRouteEntityCall,
+
+    #[error("entity route received a metadata call")]
+    EntityRouteMetadataCall,
+
+    #[error("gem bucket {bucket} member index overflow")]
+    BucketMemberIndexOverflow { bucket: B256 },
+
+    #[error("compressed-entity read returned a non-gem payload")]
+    NonGemPayload,
+
+    #[error("corrupt gem body: {0}")]
+    CorruptGemBody(GemRepositoryError),
+
+    #[error("compressed-entity read returned a non-gem-bucket payload")]
+    NonGemBucketPayload,
+
+    #[error("corrupt gem bucket body: {0}")]
+    CorruptGemBucketBody(GemRepositoryError),
+}
+
+/// Errors that the gem repository returns.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum GemRepositoryError {
-    /// Backend-neutral storage failure.
+    /// Off-chain storage returns an error.
     #[error("off-chain storage failure: {0}")]
     Storage(#[from] outbe_offchain_storage::StorageError),
     /// StoredBody or typed payload violates the canonical profile.
@@ -42,10 +115,10 @@ pub enum GemRepositoryError {
     /// An owner-index key violates its fixed binary layout.
     #[error("malformed gem owner index key")]
     MalformedIndexKey,
-    /// Owner-index values must be exactly empty.
+    /// An owner-index value is not empty.
     #[error("gem owner index value is not empty")]
     NonEmptyIndexValue,
-    /// Owner-index documents must not carry primary provenance.
+    /// An owner-index document carries primary metadata.
     #[error("gem owner index unexpectedly carries metadata")]
     IndexMetadata,
     /// An owner index selects a missing primary body.
@@ -53,13 +126,13 @@ pub enum GemRepositoryError {
     DanglingIndex {
         gem_id: outbe_compressed_entities::WwdEntityId,
     },
-    /// The selecting primary key and embedded body id disagree.
+    /// The primary key and embedded body id do not match.
     #[error("gem primary key/body mismatch: expected {expected}, found {actual}")]
     PrimaryKeyBodyMismatch {
         expected: outbe_compressed_entities::WwdEntityId,
         actual: outbe_compressed_entities::WwdEntityId,
     },
-    /// An owner index selected a body owned by someone else.
+    /// An owner index selects a body with a different owner.
     #[error("gem owner index/body mismatch for {gem_id}")]
     IndexedOwnerMismatch {
         gem_id: outbe_compressed_entities::WwdEntityId,
@@ -67,16 +140,16 @@ pub enum GemRepositoryError {
     /// An id-only repository page is not strictly ascending after its cursor.
     #[error("gem {index} id page is not strictly ascending")]
     NonAscendingIdPage { index: &'static str },
-    /// The storage adapter returned a continuation that is not the last page key.
+    /// The storage adapter returns a next cursor that is not the last page key.
     #[error("gem {index} id page has an invalid continuation")]
     InvalidPageContinuation { index: &'static str },
-    /// The selecting bucket key and embedded body key disagree.
+    /// The bucket key and embedded body key do not match.
     #[error("gem bucket id/body mismatch: expected {expected}, found {actual}")]
     BucketIdBodyMismatch {
         expected: outbe_compressed_entities::WwdEntityId,
         actual: outbe_compressed_entities::WwdEntityId,
     },
-    /// A projection session may mutate only identities loaded into its repository snapshot.
+    /// A session mutates an identity that the repository snapshot does not contain.
     #[error("{entity} projection identity {identity} was not loaded")]
     UntrackedProjectionIdentity {
         entity: &'static str,
@@ -87,5 +160,11 @@ pub enum GemRepositoryError {
 impl From<GemError> for PrecompileError {
     fn from(value: GemError) -> Self {
         PrecompileError::Revert(value.to_string())
+    }
+}
+
+impl From<GemFatalError> for PrecompileError {
+    fn from(value: GemFatalError) -> Self {
+        PrecompileError::Fatal(value.to_string())
     }
 }

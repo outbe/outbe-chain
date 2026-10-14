@@ -38,16 +38,11 @@ impl VoteTarget for UpdateVoteTarget {
         _context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome> {
         let payload = decode_stored_proposal_payload(payload, "Update")?;
-        let decoded = ScheduleUpdatePayload::from_value(&payload).map_err(|err| {
-            PrecompileError::Fatal(format!("stored Update proposal payload is invalid: {err}"))
-        })?;
+        let decoded = ScheduleUpdatePayload::from_value(&payload)
+            .map_err(UpdateError::stored_proposal_payload_invalid)?;
         let outcome =
             ctx.with_checkpoint(|| stage_approved_update(ctx, proposal_id, &payload, &decoded));
-        match outcome {
-            Ok(()) => Ok(TargetExecutionOutcome::Applied),
-            Err(PrecompileError::Revert(reason)) => Ok(TargetExecutionOutcome::Error { reason }),
-            Err(err) => Err(err),
-        }
+        UpdateError::into_execution_outcome(outcome)
     }
 }
 
@@ -67,9 +62,7 @@ fn stage_approved_update(
                 .list_waiting_for_activation_proposal_ids()?
                 .is_empty())
     {
-        return Err(PrecompileError::Revert(
-            "enclave rollout requires an exclusive scheduled upgrade".into(),
-        ));
+        return Err(UpdateError::EnclaveRolloutRequiresExclusiveScheduledUpgrade.into());
     }
     match Update::new(ctx.storage.clone()).schedule_update_from_propose_classified(
         proposal_id,
@@ -95,7 +88,7 @@ fn stage_measurement_upgrade(
         let predecessor = tee_registry
             .active_policy_v1()?
             .policy_hash()
-            .map_err(|err| PrecompileError::Fatal(format!("invalid active TEE policy: {err}")))?;
+            .map_err(UpdateError::invalid_active_tee_policy)?;
         tee_registry.stage_measurement_upgrade_v1(
             proposal_id,
             mrenclave,
@@ -111,9 +104,10 @@ fn stage_ocomp_successor(
     proposal_id: U256,
     decoded: &ScheduleUpdatePayload,
 ) -> Result<()> {
-    if let Some(successor) = decoded.ocomp_successor().map_err(|err| {
-        PrecompileError::Fatal(format!("stored Update OCOMP successor is invalid: {err}"))
-    })? {
+    if let Some(successor) = decoded
+        .ocomp_successor()
+        .map_err(UpdateError::stored_ocomp_successor_invalid)?
+    {
         OcompRegistry::new(ctx.storage.clone()).stage_successor(
             proposal_id,
             &successor,
@@ -141,20 +135,26 @@ fn classify_domain_error(err: UpdateError) -> Result<TargetExecutionOutcome> {
         | UpdateError::TeePolicyActivationMismatch
         | UpdateError::InvalidOcompSuccessor
         | UpdateError::OcompSuccessorChainIdentityMismatch
-        | UpdateError::OcompSuccessorActivationMismatch => Err(PrecompileError::Fatal(format!(
-            "Update Vote target invariant failure: {err}"
-        ))),
+        | UpdateError::OcompSuccessorActivationMismatch
+        | UpdateError::ActiveVersionDoesNotFitU32
+        | UpdateError::CannotActivateVersionAboveCeiling { .. }
+        | UpdateError::UpgradeHandlerFailed { .. }
+        | UpdateError::StagedTeePolicyMissingProposal { .. }
+        | UpdateError::StagedOcompSuccessorMissingProposal { .. }
+        | UpdateError::TeePolicyActivationFailed { .. }
+        | UpdateError::StoredProposalPayloadInvalid(_)
+        | UpdateError::EnclaveRolloutRequiresExclusiveScheduledUpgrade
+        | UpdateError::InvalidActiveTeePolicy(_)
+        | UpdateError::StoredOcompSuccessorInvalid(_)
+        | UpdateError::VoteTargetInvariantFailure(_)
+        | UpdateError::UnexpectedAppliedClassification => {
+            Err(UpdateError::VoteTargetInvariantFailure(err.to_string()).into())
+        }
     }
 }
 
 fn classify_domain_error_as_precompile(err: UpdateError) -> PrecompileError {
-    match classify_domain_error(err) {
-        Ok(TargetExecutionOutcome::Error { reason }) => PrecompileError::Revert(reason),
-        Ok(TargetExecutionOutcome::Applied) => {
-            PrecompileError::Fatal("unexpected applied Update classification".into())
-        }
-        Err(error) => error,
-    }
+    UpdateError::outcome_into_precompile_error(classify_domain_error(err))
 }
 
 #[cfg(test)]

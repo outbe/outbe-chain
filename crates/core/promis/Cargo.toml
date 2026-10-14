@@ -11,6 +11,7 @@ outbe-primitives.workspace = true
 outbe-tee.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+thiserror.workspace = true
 
 # In-process enclave engine for the `test-enclave` seam (see enclave_client.rs).
 # Optional: pulled in only when a downstream crate enables `test-enclave` to

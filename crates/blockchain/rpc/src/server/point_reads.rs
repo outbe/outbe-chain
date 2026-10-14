@@ -40,7 +40,7 @@ where
     })
     .await
     .map_err(|error| internal_err(format!("point-read worker failed: {error}")))?
-    .map_err(|error| invalid_params(error.to_string()))
+    .map_err(invalid_params)
 }
 
 fn finalized_header<P: HeaderProvider<Header = OutbeHeader> + BlockIdReader>(

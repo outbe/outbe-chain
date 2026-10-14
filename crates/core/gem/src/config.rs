@@ -10,6 +10,7 @@ use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE_PCT,
     POSITION_VALIDITY_SECONDS,
 };
+use crate::errors::GemError;
 use crate::schema::GemContract;
 
 pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
@@ -56,7 +57,8 @@ impl GemParams {
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        outbe_primitives::profile::select(selector, chain_id, "gem", Self::PROD, Self::DEV)
+        outbe_primitives::profile::select(selector, chain_id, Self::PROD, Self::DEV)
+            .ok_or_else(|| GemError::UnknownProfileSelector(selector).into())
     }
 }
 

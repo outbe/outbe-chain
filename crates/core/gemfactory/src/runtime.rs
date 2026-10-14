@@ -5,7 +5,7 @@ use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemParams, GemView};
 use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::markup::marked_up;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
@@ -119,8 +119,8 @@ pub(crate) fn derived_call_terms(
     if entry_price_minor.is_zero() {
         return Ok(None);
     }
-    let call_price = marked_up(entry_price_minor, params.call_rate)
-        .ok_or_else(|| PrecompileError::Fatal("gem call price overflow".into()))?;
+    let call_price =
+        marked_up(entry_price_minor, params.call_rate).ok_or(GemFactoryError::CallPriceOverflow)?;
     Ok(Some(CallTerms {
         call_price_minor: call_price,
         reference_currency,
@@ -283,7 +283,7 @@ fn burn_intex_into_gem_factory(
         .into(),
     )?;
     IIntexNFT1155::sendToGemFactoryCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("sendToGemFactory return undecodable".into()))
+        .map_err(|_| GemFactoryError::UndecodableReturn("sendToGemFactory return").into())
 }
 
 /// Issue one Merchant gem to a customer, draining the position's capacity.

@@ -42,7 +42,7 @@ use commonware_runtime::{
     Storage,
 };
 use commonware_utils::{ordered::Map, TryCollect as _, NZU32};
-use eyre::{ensure, Result, WrapErr};
+use eyre::{Result, WrapErr};
 use rand_core_commonware::CryptoRng;
 use reth_ethereum::chainspec::EthChainSpec as _;
 use reth_ethereum::network::api::{NetworkInfo, Peers, PeersInfo};

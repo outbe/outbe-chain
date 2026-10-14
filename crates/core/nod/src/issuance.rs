@@ -5,12 +5,13 @@ use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_primitives::error::Result;
 pub(crate) fn validate_item(item: &NodItemState, entry_price_minor: U256) -> Result<()> {
     let canonical_id = derive_poseidon_entity_id(item.owner, item.worldwide_day)
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+        .map_err(NodError::entity_id_derivation)?;
     if item.nod_id != canonical_id {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-            "Nod item canonical identity mismatch: expected {canonical_id}, found {}",
-            item.nod_id
-        )));
+        return Err(NodError::CanonicalIdentityMismatch {
+            expected: canonical_id,
+            found: item.nod_id,
+        }
+        .into());
     }
     let terms = &item.encrypted.terms;
     if !item.encrypted.has_valid_encoding()
@@ -32,14 +33,10 @@ pub(crate) fn validate_item(item: &NodItemState, entry_price_minor: U256) -> Res
             entry_price_minor,
         )
     {
-        return Err(outbe_primitives::error::PrecompileError::Revert(
-            "encrypted NOD terms mismatch".into(),
-        ));
+        return Err(NodError::EncryptedTermsMismatch.into());
     }
     if item.is_settled {
-        return Err(outbe_primitives::error::PrecompileError::Revert(
-            "cannot issue a settled Nod".into(),
-        ));
+        return Err(NodError::CannotIssueSettledNod.into());
     }
     // ISO 0 is not a currency, and its bin namespace aliases the
     // un-namespaced key while never appearing in the oracle's
@@ -55,10 +52,11 @@ pub(crate) fn validate_item(item: &NodItemState, entry_price_minor: U256) -> Res
         item.reference_currency,
     );
     if item.bucket_key != canonical_bucket_key {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-            "Nod bucket identity mismatch: expected {canonical_bucket_key}, found {}",
-            item.bucket_key
-        )));
+        return Err(NodError::BucketIdentityMismatch {
+            expected: canonical_bucket_key,
+            found: item.bucket_key,
+        }
+        .into());
     }
     Ok(())
 }

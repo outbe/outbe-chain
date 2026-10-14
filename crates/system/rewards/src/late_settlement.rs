@@ -27,11 +27,12 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::Result,
     units::{native_to_protocol_floor, NATIVE_UNITS_PER_PROTOCOL_UNIT},
 };
 
 use crate::constants::{decay_weight, fixed_denominator};
+use crate::errors::RewardsError;
 use crate::schema::Rewards;
 
 /// Record one credited voter for `fb_hash` at inclusion distance `k`. Keep the
@@ -51,16 +52,12 @@ pub fn record_late_credit(
         return Ok(());
     }
     if k > outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K as u8 {
-        return Err(PrecompileError::Fatal(
-            "reward credit outside inclusion window".into(),
-        ));
+        return Err(RewardsError::CreditOutsideInclusionWindow.into());
     }
     if k > 0 {
         let day = rewards.pending_reward_day.read(&fb_hash)?;
         if day == 0 {
-            return Err(PrecompileError::Fatal(
-                "late reward credit has no canonical UTC day".into(),
-            ));
+            return Err(RewardsError::LateCreditMissingCanonicalUtcDay.into());
         }
         crate::finalized_metadata_hook::record_reward_participation(ctx, fb_hash, day, voter)?;
     }
@@ -74,7 +71,7 @@ pub fn record_late_credit(
             .write(&idx, voter)?;
         let next = idx
             .checked_add(1)
-            .ok_or_else(|| PrecompileError::Revert("late_voter_count overflow".into()))?;
+            .ok_or(RewardsError::LateVoterCountOverflow)?;
         rewards.late_voter_count.write(&fb_hash, next)?;
         kmap.write(&voter, k + 1)?;
     } else {
@@ -202,9 +199,7 @@ pub fn settle_window(
     let pending = rewards.pending_fees.read(&fb_hash)?;
     let denominator = fixed_denominator(committee_size);
     if denominator.is_zero() {
-        return Err(PrecompileError::Revert(
-            "late settle denominator is zero (empty committee)".into(),
-        ));
+        return Err(RewardsError::LateSettleDenominatorZero.into());
     }
     let window = MaturedWindow {
         fb_hash,
@@ -217,9 +212,9 @@ pub fn settle_window(
 
     // Solvency: full attendance pays at most the pool (D = N*w_max), so
     // distributed <= pending. checked_sub guards any violation.
-    let residue = pending.checked_sub(distributed).ok_or_else(|| {
-        PrecompileError::Revert("late settle insolvent: distributed exceeds escrow".into())
-    })?;
+    let residue = pending
+        .checked_sub(distributed)
+        .ok_or(RewardsError::LateSettleInsolvent)?;
     if !residue.is_zero() {
         recycle_residue(ctx, &rewards, residue)?;
     }
@@ -227,12 +222,10 @@ pub fn settle_window(
     // Parity invariant (checked once): sum payout + residue == pending.
     if distributed
         .checked_add(residue)
-        .ok_or_else(|| PrecompileError::Revert("late parity overflow".into()))?
+        .ok_or(RewardsError::LateParityOverflow)?
         != pending
     {
-        return Err(PrecompileError::Revert(
-            "late settle parity violated".into(),
-        ));
+        return Err(RewardsError::LateSettleParityViolated.into());
     }
 
     rewards.fee_settled.write(&fb_hash, true)?;
@@ -276,7 +269,7 @@ fn pay_credited_voters(
         let payout = window
             .pending
             .checked_mul(weight)
-            .ok_or_else(|| PrecompileError::Revert("late payout multiply overflow".into()))?
+            .ok_or(RewardsError::LatePayoutMultiplyOverflow)?
             / window.denominator;
         if payout.is_zero() {
             continue;
@@ -285,7 +278,7 @@ fn pay_credited_voters(
             .transfer_balance(REWARDS_ADDRESS, voter, payout)?;
         distributed = distributed
             .checked_add(payout)
-            .ok_or_else(|| PrecompileError::Revert("late distributed overflow".into()))?;
+            .ok_or(RewardsError::LateDistributedOverflow)?;
     }
     Ok(distributed)
 }
@@ -298,7 +291,7 @@ fn recycle_residue(ctx: &BlockRuntimeContext, rewards: &Rewards<'_>, residue: U2
     // next window.
     let native = residue
         .checked_add(rewards.late_residue_dust_native.read()?)
-        .ok_or_else(|| PrecompileError::Revert("late residue dust overflow".into()))?;
+        .ok_or(RewardsError::LateResidueDustOverflow)?;
     let dust = native % NATIVE_UNITS_PER_PROTOCOL_UNIT;
     let burned = native - dust;
     let units = native_to_protocol_floor(native);

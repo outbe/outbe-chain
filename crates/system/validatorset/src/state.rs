@@ -32,7 +32,7 @@ use outbe_ocomp_protocol::committee::{
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
-use crate::errors::ActivationError;
+use crate::errors::{ActivationError, ValidatorSetError};
 use crate::schema::ValidatorSet;
 
 // Canonical V2 committee types and pure-function hashers live in
@@ -139,9 +139,7 @@ fn split_ocomp_public_key(public_key: &[u8; 33]) -> (B256, B256) {
 
 fn join_ocomp_public_key(lo: B256, hi: B256) -> Result<[u8; 33]> {
     if hi.0[1..].iter().any(|byte| *byte != 0) {
-        return Err(PrecompileError::Fatal(
-            "stored OCOMP snapshot public-key padding is non-zero".into(),
-        ));
+        return Err(ValidatorSetError::NonZeroOcompSnapshotPubkeyPadding.into());
     }
     let mut public_key = [0u8; 33];
     public_key[..32].copy_from_slice(lo.as_slice());
@@ -242,10 +240,9 @@ pub fn write_committee_snapshot(
     // consensus member without admitted OCOMP material is a broken state
     // invariant and must not leave a partially-written snapshot behind.
     let ocomp_members = resolve_ocomp_members(&vs, snapshot)?;
-    let member_count: u16 = ocomp_members
-        .len()
-        .try_into()
-        .map_err(|_| PrecompileError::Fatal("OCOMP snapshot member count exceeds u16".into()))?;
+    let member_count: u16 = ocomp_members.len().try_into().map_err(|_| {
+        PrecompileError::from(ValidatorSetError::OcompSnapshotMemberCountExceedsU16)
+    })?;
     let extension = OcompSnapshotExtensionV1 {
         epoch,
         committee_set_hash: hash,
@@ -291,15 +288,16 @@ struct SnapshotHeader {
 
 impl SnapshotHeader {
     fn of(snapshot: &CommitteeSnapshot) -> Result<Self> {
-        let committee_len: u64 =
-            snapshot.committee.len().try_into().map_err(|_| {
-                PrecompileError::Revert("committee snapshot length exceeds u64".into())
-            })?;
+        let committee_len: u64 = snapshot.committee.len().try_into().map_err(|_| {
+            PrecompileError::from(ValidatorSetError::CommitteeSnapshotLengthExceedsU64)
+        })?;
         let vrf_pk_len: u64 = snapshot
             .vrf_group_public_key_bytes
             .len()
             .try_into()
-            .map_err(|_| PrecompileError::Revert("vrf group pk bytes length exceeds u64".into()))?;
+            .map_err(|_| {
+                PrecompileError::from(ValidatorSetError::VrfGroupPkBytesLengthExceedsU64)
+            })?;
         Ok(Self {
             committee_len,
             vrf_pk_len,
@@ -317,26 +315,24 @@ fn resolve_ocomp_members(
     let mut ocomp_members = Vec::with_capacity(snapshot.committee.len());
     for entry in &snapshot.committee {
         let registration = vs.ocomp_registration(entry.address)?.ok_or_else(|| {
-            PrecompileError::Fatal(format!(
-                "active validator {} has no admitted OCOMP registration",
-                entry.address
-            ))
+            PrecompileError::from(ValidatorSetError::ActiveValidatorMissingOcompRegistration {
+                validator: entry.address,
+            })
         })?;
         let expected_identity = validator_identity_hash_v1(entry.address, &entry.consensus_pubkey)
             .map_err(|error| {
-                PrecompileError::Fatal(format!(
-                    "cannot derive OCOMP identity for active validator {}: {error}",
-                    entry.address
-                ))
+                ValidatorSetError::cannot_derive_ocomp_identity_for_active(entry.address, error)
             })?;
         if registration.core.validator_identity_hash != expected_identity
             || registration.core.key_epoch != POC_KEY_EPOCH
             || registration.core.allowed_purpose_bitmap != RESULT_SIGNATURE_PURPOSE_BITMAP
         {
-            return Err(PrecompileError::Fatal(format!(
-                "active validator {} has stale or invalid OCOMP registration",
-                entry.address
-            )));
+            return Err(
+                ValidatorSetError::ActiveValidatorStaleOrInvalidOcompRegistration {
+                    validator: entry.address,
+                }
+                .into(),
+            );
         }
         ocomp_members.push(OcompSnapshotMemberV1 {
             validator_address: entry.address,
@@ -357,9 +353,8 @@ fn ensure_snapshot_replay_matches(
     expected_extension: &OcompSnapshotExtensionV1,
     ocomp_members: &[OcompSnapshotMemberV1],
 ) -> Result<()> {
-    let stored_snapshot = read_committee_snapshot(storage.clone(), key)?.ok_or_else(|| {
-        PrecompileError::Fatal("committee snapshot exists flag has no readable record".into())
-    })?;
+    let stored_snapshot = read_committee_snapshot(storage.clone(), key)?
+        .ok_or_else(|| PrecompileError::from(ValidatorSetError::SnapshotExistsFlagWithoutRecord))?;
     let stored_extension = read_ocomp_snapshot_extension(storage.clone(), key)?;
     let mut members_match = stored_extension.as_ref() == Some(expected_extension);
     if members_match {
@@ -374,9 +369,7 @@ fn ensure_snapshot_replay_matches(
         }
     }
     if stored_snapshot != *snapshot || !members_match {
-        return Err(PrecompileError::Fatal(format!(
-            "committee snapshot replay mismatch for key {key}"
-        )));
+        return Err(ValidatorSetError::CommitteeSnapshotReplayMismatch { key }.into());
     }
     Ok(())
 }
@@ -470,7 +463,7 @@ pub fn read_ocomp_snapshot_extension(
         .committee_snapshot_ocomp_member_count
         .read(&snapshot_key)?;
     let member_count: u16 = member_count.try_into().map_err(|_| {
-        PrecompileError::Fatal("stored OCOMP snapshot member count exceeds u16".into())
+        PrecompileError::from(ValidatorSetError::StoredOcompSnapshotMemberCountExceedsU16)
     })?;
     Ok(Some(OcompSnapshotExtensionV1 {
         epoch: vs.committee_snapshot_ocomp_epoch.read(&snapshot_key)?,
@@ -650,7 +643,7 @@ fn read_vrf_group_public_key(vs: &ValidatorSet<'_>, snapshot_key: B256) -> Resul
         .read(&snapshot_key)?;
     let vrf_pk_len_usize: usize = vrf_pk_len
         .try_into()
-        .map_err(|_| PrecompileError::Revert("vrf group pk length exceeds usize".into()))?;
+        .map_err(|_| PrecompileError::from(ValidatorSetError::VrfGroupPkLengthExceedsUsize))?;
     let mut vrf_group_public_key_bytes = Vec::with_capacity(vrf_pk_len_usize);
     if vrf_pk_len > 0 {
         let num_chunks = vrf_pk_len.div_ceil(32);

@@ -12,6 +12,7 @@ use outbe_gem::{api as gem_api, ExpiryHours, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::ExpiryDeferred;
 use crate::runtime::emit_event;
 
@@ -134,19 +135,12 @@ fn forfeit_member(
         parent,
     } = *bodies;
     if gem_id.is_zero() {
-        return Err(PrecompileError::Revert(format!(
-            "gem bucket {bucket_key} has an empty member slot during forfeit"
-        )));
+        return Err(GemFactoryError::EmptyMemberSlotDuringForfeit { bucket_key }.into());
     }
-    let (item, bucket) = gem_api::load_pair(storage, scope, parent, gem_id)?.ok_or_else(|| {
-        PrecompileError::Revert(format!(
-            "gem bucket {bucket_key} member {gem_id} has no body during forfeit"
-        ))
-    })?;
+    let (item, bucket) = gem_api::load_pair(storage, scope, parent, gem_id)?
+        .ok_or(GemFactoryError::MissingMemberBodyDuringForfeit { bucket_key, gem_id })?;
     if item.body().is_settled() || item.body().bucket_key != bucket_key {
-        return Err(PrecompileError::Revert(format!(
-            "gem bucket {bucket_key} indexes an ineligible member {gem_id}"
-        )));
+        return Err(GemFactoryError::IneligibleBucketMember { bucket_key, gem_id }.into());
     }
     let owner = item.body().owner;
     let promis_load_minor = item.body().promis_load_minor;

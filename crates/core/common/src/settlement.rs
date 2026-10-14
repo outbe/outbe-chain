@@ -3,34 +3,12 @@
 //! the settlement asset's minor units.
 
 use alloy_primitives::U256;
-use core::fmt;
 use outbe_primitives::units::{MAX_ASSET_DECIMALS, PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
+
+pub use crate::errors::RoundingError;
 
 /// Decimals of a price x load product.
 pub const OBLIGATION_DECIMALS: u8 = 2 * PROTOCOL_AMOUNT_DECIMALS;
-
-/// Ways the floor can refuse.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RoundingError {
-    UnsupportedDecimals(u8),
-    ZeroRate,
-    Overflow,
-    /// A positive obligation that floors to nothing would sell the right for free.
-    RoundsToZero,
-}
-
-impl fmt::Display for RoundingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnsupportedDecimals(decimals) => {
-                write!(f, "settlement asset has unsupported decimals {decimals}")
-            }
-            Self::ZeroRate => f.write_str("settlement rate denominator is zero"),
-            Self::Overflow => f.write_str("settlement conversion overflow"),
-            Self::RoundsToZero => f.write_str("settlement cost rounds to zero"),
-        }
-    }
-}
 
 /// `floor(numerator x 10^asset_decimals / (denominator x 10^obligation_decimals))`.
 ///

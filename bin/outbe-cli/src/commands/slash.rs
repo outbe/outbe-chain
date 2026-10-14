@@ -6,6 +6,7 @@ use clap::Subcommand;
 use eyre::Result;
 
 use crate::abi::{self, ISlashIndicator, SLASH_INDICATOR_ADDR};
+use crate::errors::SlashError;
 use crate::rpc::Rpc;
 
 #[derive(Subcommand)]
@@ -144,10 +145,10 @@ async fn submit_evidence(
     Ok(())
 }
 
-fn parse_evidence_hex(label: &str, value: &str) -> Result<Vec<u8>> {
+fn parse_evidence_hex(label: &'static str, value: &str) -> Result<Vec<u8>> {
     let bytes = hex::decode(value.strip_prefix("0x").unwrap_or(value))?;
     if bytes.is_empty() {
-        eyre::bail!("{label} evidence must be non-empty");
+        return Err(SlashError::EmptyEvidence(label).into());
     }
     Ok(bytes)
 }

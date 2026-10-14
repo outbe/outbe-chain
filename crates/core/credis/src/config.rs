@@ -7,6 +7,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::{CALL_NOTICE_PERIOD, CALL_THRESHOLD, CALL_WINDOW, SECS_PER_DAY};
+use crate::errors::CredisError;
 use crate::schema::CredisContract;
 
 pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
@@ -38,7 +39,8 @@ impl CredisParams {
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        outbe_primitives::profile::select(selector, chain_id, "credis", Self::PROD, Self::DEV)
+        outbe_primitives::profile::select(selector, chain_id, Self::PROD, Self::DEV)
+            .ok_or_else(|| CredisError::UnknownProfileSelector(selector).into())
     }
 }
 
