@@ -61,12 +61,14 @@ where
                 PendingDkgHandoffDecision::Expired { deadline } => {
                     self.vrf_safety.mark_expired(consensus_finalized_height);
                     publish_randomness_status(&self.bridge, &self.vrf_safety);
-                    return Err(eyre::eyre!(
-                                    "pending DKG activation missed VRF expiry: cycle {}, height {}, deadline {}",
-                                    pending.target.dkg_cycle,
-                                    consensus_finalized_height,
-                                    deadline
-                                ));
+                    return Err(
+                        crate::errors::StackEpochError::PendingActivationMissedVrfExpiry {
+                            cycle: pending.target.dkg_cycle,
+                            height: consensus_finalized_height,
+                            deadline,
+                        }
+                        .into(),
+                    );
                 }
                 PendingDkgHandoffDecision::Wait => {}
                 PendingDkgHandoffDecision::Activate {
@@ -84,9 +86,12 @@ where
                         return Ok(Some(EventAction::Continue));
                     };
                     let Some(pending) = self.rotation.pending_dkg_activation.take() else {
-                        return Err(eyre::eyre!(
-                                        "pending DKG activation missing after precheck at height {activation_height}"
-                                    ));
+                        return Err(
+                            crate::errors::StackEpochError::PendingActivationMissingAfterPrecheck {
+                                height: activation_height,
+                            }
+                            .into(),
+                        );
                     };
                     let target = pending.target;
                     let dkg_complete = pending.complete;
@@ -126,25 +131,28 @@ where
                     let activated_signing_share = Some(dkg_complete.share);
                     let next_epoch =
                         next_consensus_epoch_after_dkg_activation(self.state.current_epoch);
-                    ensure!(
-                        boundary_artifact.epoch == next_epoch.get(),
-                        "completed DKG boundary epoch {} does not match activation epoch {}",
-                        boundary_artifact.epoch,
-                        next_epoch.get()
-                    );
+                    if boundary_artifact.epoch != next_epoch.get() {
+                        return Err(
+                            crate::errors::StackEpochError::CompletedBoundaryEpochMismatch {
+                                boundary_epoch: boundary_artifact.epoch,
+                                activation_epoch: next_epoch.get(),
+                            }
+                            .into(),
+                        );
+                    }
                     let published_boundary = self
                         .dkg_manager
                         .pending_boundary_artifact(next_epoch)
                         .await
-                        .ok_or_else(|| {
-                            eyre::eyre!(
-                                "completed DKG boundary is missing from manager at activation"
-                            )
-                        })?;
-                    ensure!(
-                        published_boundary == boundary_artifact,
-                        "published pre-announce boundary diverged before activation"
-                    );
+                        .ok_or(
+                            crate::errors::StackEpochError::CompletedBoundaryMissingFromManager,
+                        )?;
+                    if published_boundary != boundary_artifact {
+                        return Err(
+                            crate::errors::StackEpochError::PublishedPreannounceBoundaryDiverged
+                                .into(),
+                        );
+                    }
                     let epoch_boundary_height =
                         activation_height.max(target.planned_activation_height);
 
@@ -260,9 +268,9 @@ where
                     .dealer_only_dkg_activation
                     .as_ref()
                     .map(|pending| pending.target.clone())
-                    .ok_or_else(|| {
-                        eyre::eyre!("dealer-only activation disappeared while preparing boundary")
-                    })?;
+                    .ok_or(
+                        crate::errors::StackEpochError::DealerOnlyActivationDisappearedPreparingBoundary,
+                    )?;
                 // Recording the next boundary drops an untaken commit.
                 if self
                     .promote_boundary(RetireScope::PendingMaterialOnly)
@@ -319,11 +327,9 @@ where
                     .rotation
                     .dealer_only_dkg_activation
                     .as_mut()
-                    .ok_or_else(|| {
-                        eyre::eyre!(
-                            "dealer-only activation disappeared before boundary publication"
-                        )
-                    })?;
+                    .ok_or(
+                        crate::errors::StackEpochError::DealerOnlyActivationDisappearedBeforePublication,
+                    )?;
                 pending.boundary_artifact = Some(boundary_artifact);
                 info!(
                     epoch = %self.state.current_epoch,
@@ -376,12 +382,14 @@ where
                 PendingDkgHandoffDecision::Expired { deadline } => {
                     self.vrf_safety.mark_expired(consensus_finalized_height);
                     publish_randomness_status(&self.bridge, &self.vrf_safety);
-                    return Err(eyre::eyre!(
-                                    "dealer-only DKG activation missed VRF expiry: cycle {}, height {}, deadline {}",
-                                    target_dkg_cycle,
-                                    consensus_finalized_height,
-                                    deadline
-                                ));
+                    return Err(
+                        crate::errors::StackEpochError::DealerOnlyActivationMissedVrfExpiry {
+                            cycle: target_dkg_cycle,
+                            height: consensus_finalized_height,
+                            deadline,
+                        }
+                        .into(),
+                    );
                 }
                 PendingDkgHandoffDecision::Wait => {}
                 PendingDkgHandoffDecision::Activate {
@@ -405,32 +413,37 @@ where
                     // new polynomial + participant set here (it has them from the
                     // ceremony) rather than reuse the old ones.
                     let canonical_output = select_pending_canonical_output(
-                                    self.dkg_manager.canonical_output(self.state.current_epoch),
-                                    self.rotation.dealer_only_dkg_activation
-                                        .as_ref()
-                                        .and_then(|pending| pending.recovered_output.as_ref()),
-                                )
-                                    .ok_or_else(|| eyre::eyre!(
-                                        "dealer-only pending boundary lost its canonical output before activation"
-                                    ))?;
+                        self.dkg_manager.canonical_output(self.state.current_epoch),
+                        self.rotation
+                            .dealer_only_dkg_activation
+                            .as_ref()
+                            .and_then(|pending| pending.recovered_output.as_ref()),
+                    )
+                    .ok_or(
+                        crate::errors::StackEpochError::DealerOnlyPendingBoundaryLostCanonicalOutput,
+                    )?;
                     let next_epoch =
                         next_consensus_epoch_after_dkg_activation(self.state.current_epoch);
-                    let published_boundary = self.dkg_manager
-                                    .pending_boundary_artifact(next_epoch)
-                                    .await
-                                    .ok_or_else(|| {
-                                        eyre::eyre!(
-                                            "dealer-only completed DKG boundary is missing from manager at activation"
-                                        )
-                                    })?;
-                    ensure!(
-                        published_boundary == boundary_artifact,
-                        "dealer-only published preannounce boundary diverged before activation"
-                    );
+                    let published_boundary = self
+                        .dkg_manager
+                        .pending_boundary_artifact(next_epoch)
+                        .await
+                        .ok_or(
+                            crate::errors::StackEpochError::DealerOnlyBoundaryMissingFromManager,
+                        )?;
+                    if published_boundary != boundary_artifact {
+                        return Err(
+                            crate::errors::StackEpochError::DealerOnlyPublishedPreannounceDiverged
+                                .into(),
+                        );
+                    }
                     let Some(dealer_only) = self.rotation.dealer_only_dkg_activation.take() else {
-                        return Err(eyre::eyre!(
-                                        "dealer-only activation missing after decision at height {activation_height}"
-                                    ));
+                        return Err(
+                            crate::errors::StackEpochError::DealerOnlyActivationMissingAfterDecision {
+                                height: activation_height,
+                            }
+                            .into(),
+                        );
                     };
                     let target = dealer_only.target;
                     let activated_validator_set = validator_set_for_dkg_output_players(

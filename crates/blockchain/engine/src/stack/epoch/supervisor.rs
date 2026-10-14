@@ -70,10 +70,12 @@ where
                 .await?
             };
             if let Some(pending_epoch) = self.rotation.deferred_startup_pending_epoch.take() {
-                ensure!(
-                    self.channels.next_epoch_subchannels.is_none(),
-                    "recovered future DKG handoff collided with an existing subchannel stash"
-                );
+                if self.channels.next_epoch_subchannels.is_some() {
+                    return Err(
+                        crate::errors::StackEpochError::RecoveredFutureDkgHandoffSubchannelCollision
+                            .into(),
+                    );
+                }
                 self.channels.next_epoch_subchannels = Some(
                 outbe_consensus::epoch_subchannels::register_epoch_subchannels(
                     pending_epoch,
@@ -241,27 +243,27 @@ where
                 result = &mut self.actors.executor_handle_task => {
                     info!("executor actor exited");
                     let executor_result = result
-                        .map_err(|e| eyre::eyre!("executor actor task failed: {e:?}"))?;
+                        .map_err(crate::errors::StackEpochError::executor_actor_task_failed)?;
                     executor_result.wrap_err("executor actor returned fatal error")?;
                     return Ok(EpochLoopOutcome::StackExit);
                 },
                 result = &mut self.actors.handler_handle => {
                     info!("application handler exited");
                     let application_result = result
-                        .map_err(|e| eyre::eyre!("application handler task failed: {e:?}"))?;
+                        .map_err(crate::errors::StackEpochError::application_handler_task_failed)?;
                     application_result.wrap_err("application handler returned fatal error")?;
                     return Ok(EpochLoopOutcome::StackExit);
                 },
                 result = &mut self.actors.finalization_handle => {
                     info!("finalization actor exited");
                     let finalization_result = result
-                        .map_err(|e| eyre::eyre!("finalization actor task failed: {e:?}"))?;
+                        .map_err(crate::errors::StackEpochError::finalization_actor_task_failed)?;
                     finalization_result.wrap_err("finalization actor returned fatal error")?;
                     return Ok(EpochLoopOutcome::StackExit);
                 },
                 result = &mut self.actors.peer_manager_handle_task => {
                     info!("peer manager actor exited");
-                    result.map_err(|e| eyre::eyre!("peer manager actor exited: {e:?}"))?;
+                    result.map_err(crate::errors::StackEpochError::peer_manager_actor_exited)?;
                     return Ok(EpochLoopOutcome::StackExit);
                 },
                 // SSA-8: the marshal actor is consensus-liveness-critical (block
@@ -274,7 +276,7 @@ where
                 // is fatal and shuts the node down with the cause.
                 result = &mut self.actors.marshal_handle => {
                     info!("marshal actor exited");
-                    result.map_err(|e| eyre::eyre!("marshal actor exited: {e:?}"))?;
+                    result.map_err(crate::errors::StackEpochError::marshal_actor_exited)?;
                     return Ok(EpochLoopOutcome::StackExit);
                 },
                 // The Commonware runtime still manages the broadcast (buffered

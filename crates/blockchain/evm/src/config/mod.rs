@@ -417,7 +417,7 @@ impl OutbeEvmConfig {
         scope: &Arc<ExecutionScope>,
         block_number: u64,
         parent_hash: B256,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::errors::CompressedEntitiesScopeConfigError> {
         if let Some(service) = &self.compressed_tree_service {
             if block_number > 0 {
                 scope
@@ -427,7 +427,7 @@ impl OutbeEvmConfig {
                         block_number - 1,
                         parent_hash,
                     )
-                    .map_err(|error| error.to_string())?;
+                    .map_err(crate::errors::CompressedEntitiesScopeConfigError::from_display)?;
             }
         }
         Ok(())

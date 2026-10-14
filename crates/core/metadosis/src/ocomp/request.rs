@@ -360,12 +360,12 @@ fn freeze_request_limits(
     let state = metadosis.ocomp_fsm_state(wwd, &schema_limits)?;
     let mode = state
         .request_effect_mode()
-        .map_err(|error| storage_corruption_message(error.to_string()))?;
+        .map_err(storage_corruption_message)?;
     let authoritative_receipt = metadosis.request_limit_receipt(wwd, &schema_limits)?;
     let receipt =
         apply_or_validate_limit_effect(ctx, effect, mode, authoritative_receipt.as_ref())?;
     let receipt_hash = receipt.receipt_hash(&schema_limits).map_err(|error| {
-        storage_corruption_message(format!("hash OCOMP request receipt: {error}"))
+        crate::errors::storage_corruption_context("hash OCOMP request receipt", error)
     })?;
 
     Ok(FrozenRequest {
@@ -437,7 +437,7 @@ fn build_request_intent(
     let attempt = u32::try_from(pending_nonce)
         .map_err(|_| storage_corruption_message("OCOMP pending nonce exceeds u32"))?;
     let (_, collection_key) = partition_collection_key(PartitionRef::TributeWwd(wwd))
-        .map_err(|error| storage_corruption_message(error.to_string()))?;
+        .map_err(storage_corruption_message)?;
     let activation_preconditions =
         request_activation_preconditions(request, admitted, &collection_key);
     let previous_vwap = metadosis.worldwide_days.entry(wwd).previous_vwap().read()?;

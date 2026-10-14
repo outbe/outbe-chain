@@ -1,8 +1,11 @@
+//! Error types for the GemFactory precompile.
+
 use outbe_common::pow::PowError;
 use outbe_common::settlement::RoundingError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
+/// Errors that the GemFactory runtime returns.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum GemFactoryError {
@@ -83,6 +86,9 @@ pub enum GemFactoryError {
 
     #[error("settlement token moved an unexpected amount")]
     SettlementAmountMismatch,
+
+    #[error("{0} undecodable")]
+    UndecodableReturn(&'static str),
 }
 
 impl From<GemFactoryError> for PrecompileError {

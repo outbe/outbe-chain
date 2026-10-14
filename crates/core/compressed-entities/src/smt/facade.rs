@@ -126,6 +126,16 @@ pub(crate) enum TreeError {
     Poseidon(String),
 }
 
+impl TreeError {
+    pub(crate) fn vendor(error: impl core::fmt::Display) -> Self {
+        Self::Vendor(error.to_string())
+    }
+
+    pub(crate) fn poseidon(error: impl core::fmt::Display) -> Self {
+        Self::Poseidon(error.to_string())
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct MemoryStore {
     branches: BTreeMap<BranchKey, BranchNode>,
@@ -451,7 +461,7 @@ pub(crate) fn derive_tree_key(
     identity: WwdEntityId,
 ) -> Result<TreeKey, TreeError> {
     crate::collection::tree_key_bytes(collection.into(), identity)
-        .map_err(|error| TreeError::Poseidon(error.to_string()))
+        .map_err(TreeError::poseidon)
         .and_then(TreeKey::from_be_bytes)
 }
 

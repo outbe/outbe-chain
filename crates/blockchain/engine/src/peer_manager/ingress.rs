@@ -26,10 +26,10 @@ impl Mailbox {
                 peers,
                 response,
             }))
-            .map_err(|_| eyre::eyre!("peer_manager mailbox closed"))?;
+            .map_err(|_| crate::errors::PeerManagerError::MailboxClosed)?;
         receiver
             .await
-            .map_err(|_| eyre::eyre!("peer_manager dropped DKG publication"))?
+            .map_err(|_| crate::errors::PeerManagerError::DroppedDkgPublication)?
     }
 
     pub(crate) fn new(inner: mpsc::UnboundedSender<MessageWithCause>) -> Self {

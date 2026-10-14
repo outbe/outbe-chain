@@ -24,7 +24,7 @@ pub(super) fn reward_gem_retryable_error(message: impl Into<String>) -> Precompi
         error = %message,
         "validator reward Gem batch remains pending"
     );
-    PrecompileError::Revert(message)
+    crate::errors::RewardsError::RewardGemRetryable(message).into()
 }
 
 pub(super) fn require_reward_gem_queue_consistency(

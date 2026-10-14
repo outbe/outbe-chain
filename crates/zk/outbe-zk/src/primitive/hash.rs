@@ -13,9 +13,7 @@ pub const BINDING_DOMAIN: u64 = 1;
 /// sponge over the barretenberg `poseidon2_permutation`.
 pub fn poseidon2(inputs: &[Fr]) -> Result<Fr, Error> {
     use outbe_poseidon::PoseidonHasher as _;
-    outbe_poseidon::Poseidon2::new()
-        .hash(inputs)
-        .map_err(|error| Error::Hash(error.to_string()))
+    Ok(outbe_poseidon::Poseidon2::new().hash(inputs)?)
 }
 
 /// Iterated 2-to-1 hash seeded at `seed`; an empty body returns `seed`.

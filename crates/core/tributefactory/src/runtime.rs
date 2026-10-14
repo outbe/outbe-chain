@@ -98,9 +98,10 @@ impl TributeFactoryContract<'_> {
         // reconnect+retry, non-determinism, bad attestation) are Fatal - see
         // `enclave_offer` - never a deterministic revert.
         let results = processor(host_chain_id, &[offer])?;
-        let result = results.into_iter().next().ok_or_else(|| {
-            PrecompileError::Fatal("enclave returned an empty tribute offer result".into())
-        })?;
+        let result = results
+            .into_iter()
+            .next()
+            .ok_or(TributeFactoryError::EmptyTributeOfferResult)?;
 
         if let TributeOfferStatus::Rejected { reason } = &result.status {
             return Err(TributeFactoryError::EnclaveRejected(reason.clone()).into());
@@ -112,11 +113,12 @@ impl TributeFactoryContract<'_> {
             result.zk_expected_hashes.as_ref(),
         )?;
 
-        let record = result.tribute.as_ref().ok_or_else(|| {
-            PrecompileError::Fatal("created Tribute result has no canonical body".into())
-        })?;
+        let record = result
+            .tribute
+            .as_ref()
+            .ok_or(TributeFactoryError::CreatedTributeMissingBody)?;
         let expected_digest = derive_poseidon_digest(record.owner, worldwide_day)
-            .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+            .map_err(TributeFactoryError::fatal)?;
         let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
         if result.token_id != expected_digest || record.tribute_id != tribute_id {
             return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
@@ -155,12 +157,10 @@ impl TributeFactoryContract<'_> {
                 parent,
                 &record
                     .calculation_view()
-                    .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+                    .map_err(TributeFactoryError::fatal)?,
             )?;
             #[cfg(not(any(test, feature = "bench-utils")))]
-            return Err(PrecompileError::Fatal(
-                "encrypted offer returned a legacy body".into(),
-            ));
+            return Err(TributeFactoryError::EncryptedOfferReturnedLegacyBody.into());
         }
 
         Ok(())
@@ -179,9 +179,8 @@ impl TributeFactoryContract<'_> {
             return Ok(());
         }
 
-        let timestamp = u64::try_from(self.storage.timestamp()?).map_err(|_| {
-            PrecompileError::Fatal("TributeFactory block timestamp exceeds u64".into())
-        })?;
+        let timestamp = u64::try_from(self.storage.timestamp()?)
+            .map_err(|_| TributeFactoryError::TimestampExceedsU64)?;
         let reward_utc_day = WorldwideDay::new(timestamp_to_date_key(timestamp));
         let mut agent_reward = AgentRewardContract::new(self.storage.clone());
 
@@ -231,7 +230,7 @@ fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<Trib
     // UltraKeccakZK: DefaultIO + Oink + Sumcheck + Shplemini.
     let combined_len = 4 + (4 + 82 + 12 * log_n as usize) * 32;
     let words = decode_public_words::<4>(proof, combined_len)
-        .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
+        .map_err(TributeFactoryError::malformed_zk_proof)?;
     Ok(TributePublicInputs::from_raw_parts(words))
 }
 
@@ -255,11 +254,7 @@ fn validate_zk_result(
     }
     let verified = Barretenberg::default()
         .verify_combined(verification_key, zk_proof)
-        .map_err(|error| {
-            PrecompileError::Fatal(format!(
-                "ZK verifier unavailable: zk verification backend failed: {error}"
-            ))
-        })?;
+        .map_err(TributeFactoryError::zk_verifier_unavailable)?;
     if !verified {
         return Err(TributeFactoryError::InvalidZkProof.into());
     }
@@ -336,7 +331,7 @@ pub(crate) fn validate_agent_reward_addresses(
 // recomputes amounts.
 
 #[cfg(test)]
-mod zk_result_tests {
+mod tests {
     use super::*;
     use outbe_tee::protocol::TributeZkExpectedHashes;
     use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;

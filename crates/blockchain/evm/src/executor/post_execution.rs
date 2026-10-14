@@ -31,7 +31,7 @@ where
         }
 
         validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
-            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+            .map_err(BlockExecutionError::msg)?;
 
         let requests = if self
             .inner

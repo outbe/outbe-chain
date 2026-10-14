@@ -183,8 +183,8 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
         expected_parent_root: B256,
     ) -> Result<Option<crate::Commitment>> {
         if expected_parent_root != self.parent_root() {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "empty reference parent does not match the EVM root".into(),
+            return Err(fatal_scope(
+                "empty reference parent does not match the EVM root",
             ));
         }
         Ok(None)
@@ -528,8 +528,8 @@ pub mod scope_factory;
 
 mod scope;
 
-fn fatal_scope(message: impl Into<String>) -> outbe_primitives::error::PrecompileError {
-    outbe_primitives::error::PrecompileError::Fatal(message.into())
+fn fatal_scope(message: impl core::fmt::Display) -> outbe_primitives::error::PrecompileError {
+    crate::errors::fatal_error(message)
 }
 
 impl Default for ExecutionScope {

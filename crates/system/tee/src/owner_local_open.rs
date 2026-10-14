@@ -1,7 +1,7 @@
 //! Owner-local opening of context-bound ciphertexts. Domain adapters select
 //! the record context, key inputs, nonce domain, envelope and result type.
 
-use crate::offer_encrypt::hkdf_sha256;
+use crate::{errors::LocalCryptoError, offer_encrypt::hkdf_sha256};
 use ring::aead;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
@@ -11,8 +11,8 @@ pub(crate) struct LocalOpen<'a> {
     pub nonce_context: &'a [u8],
     pub nonce_info: &'a [u8],
     pub ciphertext: &'a [u8],
-    pub invalid_key_error: &'static str,
-    pub decryption_error: &'static str,
+    pub invalid_key_error: LocalCryptoError,
+    pub decryption_error: LocalCryptoError,
 }
 
 pub(crate) struct OpenedLocalBytes {
@@ -26,7 +26,9 @@ impl OpenedLocalBytes {
     }
 }
 
-pub(crate) fn open_local_ciphertext(input: LocalOpen<'_>) -> Result<OpenedLocalBytes, String> {
+pub(crate) fn open_local_ciphertext(
+    input: LocalOpen<'_>,
+) -> Result<OpenedLocalBytes, LocalCryptoError> {
     let nonce_material = Zeroizing::new(hkdf_sha256(
         input.key,
         input.nonce_context,
@@ -64,12 +66,12 @@ pub(crate) fn owner_amount_nonce_context(crypto_slot: &[u8]) -> Vec<u8> {
 pub(crate) fn owner_x25519_shared(
     owner_secret: &[u8; 32],
     enclave_public: &[u8; 32],
-) -> Result<([u8; 32], Zeroizing<[u8; 32]>), String> {
+) -> Result<([u8; 32], Zeroizing<[u8; 32]>), LocalCryptoError> {
     let secret = StaticSecret::from(*owner_secret);
     let owner_public = PublicKey::from(&secret).to_bytes();
     let shared = secret.diffie_hellman(&PublicKey::from(*enclave_public));
     if !shared.was_contributory() {
-        return Err("invalid network X25519 public key".into());
+        return Err(LocalCryptoError::InvalidNetworkX25519PublicKey);
     }
     Ok((owner_public, Zeroizing::new(*shared.as_bytes())))
 }
@@ -82,15 +84,15 @@ pub(crate) struct OwnerAmountBlob<'a> {
     pub crypto_slot: &'a [u8],
     pub nonce_info: &'a [u8],
     pub blob: &'a [u8],
-    pub invalid_key_error: &'static str,
-    pub decryption_error: &'static str,
+    pub invalid_key_error: LocalCryptoError,
+    pub decryption_error: LocalCryptoError,
 }
 
 /// Derive the immutable amount key and open its first-counter envelope.
 pub(crate) fn open_owner_amount_blob(
     shared: &[u8; 32],
     input: OwnerAmountBlob<'_>,
-) -> Result<OpenedLocalBytes, String> {
+) -> Result<OpenedLocalBytes, LocalCryptoError> {
     let key = Zeroizing::new(hkdf_sha256(input.context_digest, shared, input.key_info)?);
     let nonce_context = owner_amount_nonce_context(input.crypto_slot);
     open_local_ciphertext(LocalOpen {

@@ -3,11 +3,13 @@
 //! Stateless classification happens before the ordinary Ethereum validator.
 //! Authorization reads committed state and does not write it.
 
+pub(crate) use crate::errors::{
+    OcompCarrierTemporaryError, OcompNextBlockError, OutbeOcompSystemCarrierPoolError,
+};
 use alloy_primitives::{Address, B256, U256};
 use outbe_metadosis::api::{verify_result_vote_carrier, ResultVoteCarrierAdmission};
 use outbe_ocomp_protocol::system_carrier::OcompSystemCarrierCandidate;
 use outbe_primitives::{
-    error::PrecompileError,
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
@@ -19,11 +21,10 @@ use reth_evm::ConfigureEvm;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_storage_api::{BlockNumReader, StateProvider, StateProviderFactory};
 use reth_transaction_pool::{
-    error::{InvalidPoolTransactionError, PoolTransactionError},
-    validate::ValidTransaction,
-    EthPoolTransaction, EthTransactionValidator, TransactionOrigin, TransactionValidationOutcome,
+    error::InvalidPoolTransactionError, validate::ValidTransaction, EthPoolTransaction,
+    EthTransactionValidator, TransactionOrigin, TransactionValidationOutcome,
 };
-use std::{any::Any, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 pub(crate) struct CarrierAdmissionContext {
     pub(crate) origin: TransactionOrigin,
@@ -128,25 +129,23 @@ where
 fn next_active_block(
     activation: OcompLifecycleActivation,
     best_number: u64,
-) -> Result<u64, String> {
+) -> Result<u64, OcompNextBlockError> {
     let next_block = best_number
         .checked_add(1)
-        .ok_or_else(|| "OCOMP carrier next block height overflow".to_owned())?;
+        .ok_or(OcompNextBlockError::Overflow)?;
     if !activation.is_active_at(next_block) {
-        return Err(format!(
-            "OCOMP system carrier is not active at next block {next_block}"
-        ));
+        return Err(OcompNextBlockError::NotActive(next_block));
     }
     Ok(next_block)
 }
 
 fn invalid<Tx: EthPoolTransaction>(
     transaction: Tx,
-    reason: String,
+    reason: impl std::fmt::Display,
 ) -> TransactionValidationOutcome<Tx> {
     TransactionValidationOutcome::Invalid(
         transaction,
-        InvalidPoolTransactionError::other(OutbeOcompSystemCarrierPoolError(reason)),
+        InvalidPoolTransactionError::other(OutbeOcompSystemCarrierPoolError::from_display(reason)),
     )
 }
 
@@ -337,18 +336,6 @@ pub(crate) fn result_vote_pool_decision(
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum OcompCarrierTemporaryError {
-    #[error("OCOMP result vote is not open until height {open_height}")]
-    NotYetOpen { open_height: u64 },
-    #[error("OCOMP result vote window at height {deadline_height} is due and still open")]
-    DeadlineDueUnclosed { deadline_height: u64 },
-    #[error("OCOMP result vote state is unavailable: {source}")]
-    StateUnavailable { source: PrecompileError },
-    #[error("OCOMP committed state is corrupt: {source}")]
-    CorruptCommittedState { source: PrecompileError },
-}
-
 /// Bridges Reth's state provider into Outbe's read-only precompile storage.
 pub(crate) struct RethStateReader<'a, P> {
     state: &'a P,
@@ -371,19 +358,5 @@ where
             .map_err(|e| {
                 outbe_primitives::error::PrecompileError::Storage(format!("state read failed: {e}"))
             })
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("OCOMP system carrier rejected: {0}")]
-pub(crate) struct OutbeOcompSystemCarrierPoolError(pub(crate) String);
-
-impl PoolTransactionError for OutbeOcompSystemCarrierPoolError {
-    fn is_bad_transaction(&self) -> bool {
-        true
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }

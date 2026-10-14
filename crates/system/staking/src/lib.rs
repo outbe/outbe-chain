@@ -1,4 +1,5 @@
 pub mod contract;
+pub mod errors;
 pub mod hooks;
 pub mod logic;
 mod ocomp_recovery;

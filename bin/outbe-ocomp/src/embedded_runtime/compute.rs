@@ -28,10 +28,10 @@ impl ComputeJob {
                     generation: self.generation,
                     completed,
                 },
-                Err(detail) => EmbeddedComputeOutcomeV1::Unrecoverable {
+                Err(error) => EmbeddedComputeOutcomeV1::Unrecoverable {
                     job_id: self.record.spec.summary.job_id,
                     generation: self.generation,
-                    detail,
+                    detail: error.to_string(),
                 },
             };
             let _ = self.sender.send(outcome);
@@ -39,13 +39,11 @@ impl ComputeJob {
         }
     }
 
-    fn attempt(&self) -> Result<Option<CompletedSupervisorJobV1>, String> {
-        let adoption = SupervisorExportAdoption::open(self.adoption_config.clone())
-            .map_err(|error| error.to_string())?;
-        let binding = match adoption
-            .try_adopt(&self.record)
-            .map_err(|error| error.to_string())?
-        {
+    fn attempt(
+        &self,
+    ) -> Result<Option<CompletedSupervisorJobV1>, crate::errors::EmbeddedComputeAttemptError> {
+        let adoption = SupervisorExportAdoption::open(self.adoption_config.clone())?;
+        let binding = match adoption.try_adopt(&self.record)? {
             SupervisorExportAdoptionOutcome::Pending => return Ok(None),
             SupervisorExportAdoptionOutcome::Adopted(binding) => binding,
         };
@@ -57,7 +55,7 @@ impl ComputeJob {
             Err(error) if error.class() == SupervisorJobFailureClassV1::Retryable => {
                 return Ok(None)
             }
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(error.into()),
         };
         #[cfg(feature = "test-protocol-overrides")]
         let completed = CompletedSupervisorJobV1 {
@@ -67,7 +65,7 @@ impl ComputeJob {
                 &completed.canonical_result,
                 &self.mismatch_limits,
             )
-            .map_err(|error| error.to_string())?,
+            .map_err(crate::errors::EmbeddedComputeAttemptError::mismatch_override)?,
             ..completed
         };
         Ok(Some(completed))

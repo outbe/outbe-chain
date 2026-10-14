@@ -3,10 +3,14 @@
 //! The pool keeps standard Reth validation and adds deterministic ZeroFee
 //! guards for whitelisted validator transactions.
 
+pub mod errors;
 pub mod maintain;
 
 mod ocomp_admission;
 
+use crate::errors::{
+    OutbeOcompSystemCarrierPoolError, OutbeReservedSystemTxPoolError, OutbeZeroFeePoolError,
+};
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
 use outbe_ocomp_protocol::system_carrier::{
@@ -30,14 +34,12 @@ use reth_node_builder::{
 };
 use reth_storage_api::{BlockNumReader, StateProviderFactory};
 use reth_transaction_pool::{
-    blobstore::DiskFileBlobStore,
-    error::{InvalidPoolTransactionError, PoolTransactionError},
-    validate::ValidTransaction,
+    blobstore::DiskFileBlobStore, error::InvalidPoolTransactionError, validate::ValidTransaction,
     EthPoolTransaction, EthTransactionValidator, Pool, PoolTransaction, Priority,
     TransactionOrdering, TransactionOrigin, TransactionValidationOutcome,
     TransactionValidationTaskExecutor, TransactionValidator,
 };
-use std::{any::Any, fmt, marker::PhantomData, time::SystemTime};
+use std::{fmt, marker::PhantomData, time::SystemTime};
 
 fn is_reserved_system_tx<T>(tx: &T) -> bool
 where
@@ -368,7 +370,7 @@ where
                 return TransactionValidationOutcome::Invalid(
                     transaction,
                     InvalidPoolTransactionError::other(
-                        ocomp_admission::OutbeOcompSystemCarrierPoolError(error.to_string()),
+                        OutbeOcompSystemCarrierPoolError::from_display(error),
                     ),
                 )
             }
@@ -443,7 +445,7 @@ where
                 }
                 Err(err) => TransactionValidationOutcome::Invalid(
                     parts.transaction.into_transaction(),
-                    InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
+                    InvalidPoolTransactionError::other(err),
                 ),
             },
             Ok(None) => {
@@ -463,9 +465,7 @@ where
                         Err(err) => {
                             return TransactionValidationOutcome::Invalid(
                                 parts.transaction.into_transaction(),
-                                InvalidPoolTransactionError::other(OutbeZeroFeePoolError(
-                                    err.to_string(),
-                                )),
+                                InvalidPoolTransactionError::other(err),
                             )
                         }
                     }
@@ -479,13 +479,13 @@ where
                     Ok(SponsorshipOutcome::NotSponsored) => normal_fee_outcome(parts),
                     Err(err) => TransactionValidationOutcome::Invalid(
                         parts.transaction.into_transaction(),
-                        InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
+                        InvalidPoolTransactionError::other(err),
                     ),
                 }
             }
             Err(err) => TransactionValidationOutcome::Invalid(
                 parts.transaction.into_transaction(),
-                InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
+                InvalidPoolTransactionError::other(OutbeZeroFeePoolError::from_display(err)),
             ),
         }
     }
@@ -518,7 +518,7 @@ where
             .inner
             .client()
             .latest()
-            .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?;
+            .map_err(OutbeZeroFeePoolError::from_display)?;
 
         // Resolve the signer's account + (optional) delegation bytecode
         // from the latest committed state. Then give the already-fetched
@@ -528,7 +528,7 @@ where
         // without a provider mock. See the `sponsorship_decision` tests.
         let Some(account) = state
             .basic_account(&signer)
-            .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?
+            .map_err(OutbeZeroFeePoolError::from_display)?
         else {
             return Ok(SponsorshipOutcome::NotSponsored);
         };
@@ -536,7 +536,7 @@ where
         let delegation_bytecode = match account.bytecode_hash {
             Some(hash) => state
                 .bytecode_by_hash(&hash)
-                .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?,
+                .map_err(OutbeZeroFeePoolError::from_display)?,
             None => None,
         };
         let delegated_to = delegation_bytecode
@@ -554,7 +554,7 @@ where
             .inner
             .client()
             .latest()
-            .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?;
+            .map_err(OutbeZeroFeePoolError::from_display)?;
 
         let reader = ocomp_admission::RethStateReader::new(&state);
         let mut provider = ReadOnlyStorageProvider::new(reader);
@@ -563,7 +563,7 @@ where
         outbe_zerofee::registry()
             .authorize_fee_waiver(storage, candidate)
             .map(|_| ())
-            .map_err(|e| OutbeZeroFeePoolError(e.to_string()))
+            .map_err(OutbeZeroFeePoolError::from_display)
     }
 
     fn validate_bootstrap_state(
@@ -574,10 +574,10 @@ where
             .inner
             .client()
             .latest()
-            .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?;
+            .map_err(OutbeZeroFeePoolError::from_display)?;
         let Some(account) = state
             .basic_account(&candidate.signer)
-            .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?
+            .map_err(OutbeZeroFeePoolError::from_display)?
         else {
             return Ok(false);
         };
@@ -645,38 +645,9 @@ fn sponsorship_decision(
         return Ok(SponsorshipOutcome::NotSponsored);
     }
 
-    outbe_zerofee::precheck_sponsorship(signer)
-        .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?;
+    outbe_zerofee::precheck_sponsorship(signer).map_err(OutbeZeroFeePoolError::from_display)?;
 
     Ok(SponsorshipOutcome::Accepted)
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("reserved system transaction address is not accepted from users")]
-struct OutbeReservedSystemTxPoolError;
-
-impl PoolTransactionError for OutbeReservedSystemTxPoolError {
-    fn is_bad_transaction(&self) -> bool {
-        true
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("zero-fee policy rejected transaction: {0}")]
-struct OutbeZeroFeePoolError(String);
-
-impl PoolTransactionError for OutbeZeroFeePoolError {
-    fn is_bad_transaction(&self) -> bool {
-        false
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 #[cfg(test)]

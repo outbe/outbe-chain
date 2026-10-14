@@ -76,9 +76,9 @@ pub fn verify_attestation(
     tag: &[u8],
 ) -> Result<(), crate::TransportError> {
     let key = ed25519_dalek::VerifyingKey::from_bytes(attestation_pub)
-        .map_err(|error| crate::TransportError::TributeOfferAttestation(error.to_string()))?;
+        .map_err(crate::TransportError::tribute_offer_attestation)?;
     let signature = ed25519_dalek::Signature::from_slice(tag)
-        .map_err(|error| crate::TransportError::TributeOfferAttestation(error.to_string()))?;
+        .map_err(crate::TransportError::tribute_offer_attestation)?;
     key.verify_strict(preimage, &signature)
-        .map_err(|error| crate::TransportError::TributeOfferAttestation(error.to_string()))
+        .map_err(crate::TransportError::tribute_offer_attestation)
 }

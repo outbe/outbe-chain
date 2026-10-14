@@ -383,9 +383,7 @@ impl StablecoinFactoryContract<'_> {
         if schema == 0 || schema == FACTORY_SCHEMA_VERSION {
             return Ok(());
         }
-        Err(PrecompileError::Fatal(format!(
-            "stablecoin Factory schema {schema} is unsupported"
-        )))
+        Err(StablecoinFactoryError::UnsupportedSchema { schema }.into())
     }
 
     fn install_schema_for_write(&self) -> Result<()> {
@@ -393,9 +391,7 @@ impl StablecoinFactoryContract<'_> {
         match schema {
             0 => self.schema_version.write(FACTORY_SCHEMA_VERSION),
             FACTORY_SCHEMA_VERSION => Ok(()),
-            _ => Err(PrecompileError::Fatal(format!(
-                "stablecoin Factory schema {schema} is unsupported"
-            ))),
+            _ => Err(StablecoinFactoryError::UnsupportedSchema { schema }.into()),
         }
     }
 

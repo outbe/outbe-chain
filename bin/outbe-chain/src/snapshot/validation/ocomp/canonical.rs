@@ -138,12 +138,12 @@ fn open_verified_projection_checkpoint(
                 projection.block_number
             ))
         })?;
-    ensure!(
-        p_header.inner.number == projection.block_number
-            && p_header.hash_slow() == p_hash
-            && p_hash == projection.block_hash,
-        "OCOMP projection checkpoint differs from retained canonical header"
-    );
+    if p_header.inner.number != projection.block_number
+        || p_header.hash_slow() != p_hash
+        || p_hash != projection.block_hash
+    {
+        return Err(SnapshotOcompError::ProjectionCheckpointHeaderMismatch.into());
+    }
     if let Some(report) = report {
         report.observed.p = Some(outbe_snapshot::manifest::BlockIdentity {
             number: projection.block_number,
@@ -225,12 +225,12 @@ fn load_and_verify_pins(
             maximum_records,
         )?;
         let authority = verify_pin_authority(state, view, key, &record)?;
-        ensure!(
-            pin_by_intent
-                .insert(authority.candidate.intent_id, index)
-                .is_none(),
-            "multiple retained pins bind the same canonical intent"
-        );
+        if pin_by_intent
+            .insert(authority.candidate.intent_id, index)
+            .is_some()
+        {
+            return Err(SnapshotOcompError::MultipleRetainedPinsForIntent.into());
+        }
         pins.push(CanonicalPinAudit { record, authority });
     }
     Ok((pins, pin_by_intent))
@@ -266,13 +266,13 @@ impl CanonicalObligationVerifier<'_> {
             .view
             .canonical_hash(b)?
             .ok_or_else(|| Incomplete(format!("missing active request canonical hash B={b}")))?;
-        ensure!(
-            header.inner.number == b
-                && header.hash_slow() == hash
-                && job.intent.logical_evaluation_height == b
-                && job.intent.logical_evaluation_time == header.inner.timestamp,
-            "required OCOMP source has a conflicting frozen request identity"
-        );
+        if header.inner.number != b
+            || header.hash_slow() != hash
+            || job.intent.logical_evaluation_height != b
+            || job.intent.logical_evaluation_time != header.inner.timestamp
+        {
+            return Err(SnapshotOcompError::SourceConflictingRequestIdentity.into());
+        }
         if request_frame_required && !self.checked_requests.contains(&b) {
             verify_retained_frames(
                 self.view,
@@ -311,7 +311,7 @@ impl CanonicalObligationVerifier<'_> {
             self.input_chunks = self
                 .input_chunks
                 .checked_add(export.input_chunks)
-                .ok_or_else(|| eyre::eyre!("OCOMP input chunk count overflow"))?;
+                .ok_or(SnapshotOcompError::InputChunkCountOverflow)?;
             self.checked_exports.insert(intent);
         }
         Ok(())

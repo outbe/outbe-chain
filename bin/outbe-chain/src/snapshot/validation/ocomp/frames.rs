@@ -5,20 +5,20 @@ use super::*;
 /// stored spelling and date before using it to discover canonical obligations.
 pub(crate) fn verify_series_day(id: SeriesId) -> eyre::Result<WorldwideDay> {
     let bytes = id.as_bytes();
-    ensure!(
+    require(
         bytes[..8].iter().all(u8::is_ascii_digit) && bytes[8] == b'-' && bytes[12] == b'-',
-        "noncanonical series identity"
-    );
+        SnapshotOcompError::NoncanonicalSeriesIdentity,
+    )?;
     let day = id.worldwide_day();
-    ensure!(
+    require(
         day.value() != 0 && day.is_valid(),
-        "invalid series worldwide day"
-    );
+        SnapshotOcompError::InvalidSeriesWorldwideDay,
+    )?;
     let issuance = [bytes[9], bytes[10], bytes[11]];
-    ensure!(
+    require(
         SeriesId::pack(day, issuance, bytes[13])? == id,
-        "noncanonical series codes"
-    );
+        SnapshotOcompError::NoncanonicalSeriesCodes,
+    )?;
     Ok(day)
 }
 #[derive(Debug, Default)]
@@ -78,22 +78,29 @@ pub(crate) fn verify_closure(
             None => view.static_files.block_hash(number)?,
         }
         .ok_or_else(|| Incomplete(format!("missing closure {name} canonical hash at {number}")))?;
-        ensure!(
+        require(
             header.inner.number == number && header.hash_slow() == hash && point.block_hash == hash,
-            "closure {name} differs from canonical header at {number}"
-        );
+            SnapshotOcompError::ClosureHeaderMismatch {
+                name: name.to_string(),
+                number,
+            },
+        )?;
     }
     match projection {
-        Some(projected) => ensure!(
-            projected.block_number >= checkpoint.current.block_number
-                && (projected.block_number != checkpoint.current.block_number
-                    || projected.block_hash == checkpoint.current.block_hash),
-            "closure checkpoint is ahead of or conflicts with durable projection"
-        ),
-        None => ensure!(
-            checkpoint.current.block_number == 0,
-            "nonzero closure checkpoint exists without durable projection"
-        ),
+        Some(projected) => {
+            require(
+                projected.block_number > checkpoint.current.block_number
+                    || (projected.block_number == checkpoint.current.block_number
+                        && projected.block_hash == checkpoint.current.block_hash),
+                SnapshotOcompError::ClosureAheadOrConflictsWithProjection,
+            )?;
+        }
+        None => {
+            require(
+                checkpoint.current.block_number == 0,
+                SnapshotOcompError::NonzeroClosureWithoutProjection,
+            )?;
+        }
     }
     let replay = if checkpoint.current.block_number < view.progress.finalized.number {
         // The strict comparison proves addition cannot overflow, even at MAX.
@@ -152,37 +159,36 @@ pub(super) fn visit_retained_frames(
             None => view.static_files.block_hash(height)?,
         }
         .ok_or_else(|| Incomplete(format!("missing replay canonical hash at {height}")))?;
-        ensure!(
+        require(
             header.inner.number == height && header.hash_slow() == hash,
-            "replay header differs from canonical identity at {height}"
-        );
+            SnapshotOcompError::ReplayHeaderIdentityMismatch { height },
+        )?;
         if let Some(previous) = previous {
-            ensure!(
+            require(
                 header.inner.parent_hash == previous,
-                "replay header parent differs at {height}"
-            );
+                SnapshotOcompError::ReplayHeaderParentMismatch { height },
+            )?;
         }
         previous = Some(hash);
-        if height == end.number {
-            ensure!(
-                hash == expected_end,
-                "replay target hash differs at {height}"
-            );
-        }
+        require(
+            height != end.number || hash == expected_end,
+            SnapshotOcompError::ReplayTargetHashMismatch { height },
+        )?;
         let indices = tx
             .get::<tables::BlockBodyIndices>(height)?
             .ok_or_else(|| Incomplete(format!("missing replay body indices at {height}")))?;
         let tx_end = indices
             .first_tx_num
             .checked_add(indices.tx_count)
-            .ok_or_else(|| eyre::eyre!("replay transaction range overflows at {height}"))?;
+            .ok_or(SnapshotOcompError::ReplayTxRangeOverflow { height })?;
         for number in indices.first_tx_num..tx_end {
-            if maximum_transactions.is_some_and(|maximum| result.transactions >= maximum) {
-                return Err(Incomplete(format!(
+            require(
+                !maximum_transactions.is_some_and(|maximum| result.transactions >= maximum),
+                Incomplete(format!(
                     "replay frame scan stopped at block {height}/{}, transaction {number}/{tx_end}; {} blocks, {} transactions visited",
                     end.number, result.blocks, result.transactions
-                )).into());
-            }
+                )),
+            )?;
             // Match the pinned Reth provider. Transactions are static-only.
             // Receipts choose one native backend by its high-water mark. A hole
             // below that mark must not be disguised by a different backend.
@@ -208,12 +214,12 @@ pub(super) fn visit_retained_frames(
             result.transactions = result
                 .transactions
                 .checked_add(1)
-                .ok_or_else(|| eyre::eyre!("replay transaction count overflow"))?;
+                .ok_or(SnapshotOcompError::ReplayTxCountOverflow)?;
         }
         result.blocks = result
             .blocks
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("replay block count overflow"))?;
+            .ok_or(SnapshotOcompError::ReplayBlockCountOverflow)?;
     }
     Ok(result)
 }
@@ -256,39 +262,44 @@ pub(crate) fn locate_request_job(
                     continue;
                 }
                 let event = IMetadosis::OffchainJobRequested::decode_log(log)?;
-                ensure!(
+                require(
                     request.replace(event.data).is_none(),
-                    "request frame B={request_height} contains multiple OCOMP requests"
-                );
+                    SnapshotOcompError::MultipleRequestsInFrame { request_height },
+                )?;
             }
             Ok(())
         },
     )?;
-    let event = request.ok_or_else(|| {
-        eyre::eyre!("complete request frame B={request_height} contains no OCOMP request")
-    })?;
-    ensure!(
+    let event = request.ok_or(SnapshotOcompError::NoRequestInFrame { request_height })?;
+    require(
         event.wwd == expected_day.value(),
-        "request event day differs from artifact"
-    );
+        SnapshotOcompError::RequestEventDayMismatch,
+    )?;
     let job = state.metadosis_job(event.intentId, expected_day, Some(expected_job))?;
     let limits = poc_schema_limits();
-    ensure!(
-        job.intent_height == request_height
-            && job.intent.logical_evaluation_height == request_height
-            && job.intent.logical_evaluation_time == header.inner.timestamp
-            && job.intent.pending_nonce == event.pendingNonce
-            && job.intent.attempt == event.attempt
-            && job
-                .intent
+    require(
+        (
+            job.intent_height,
+            job.intent.logical_evaluation_height,
+            job.intent.logical_evaluation_time,
+            job.intent.pending_nonce,
+            job.intent.attempt,
+            job.intent
                 .activation_preconditions
-                .activation_preconditions_hash(&limits)?
-                == event.activationPreconditionsHash,
-        "request event or frozen block context differs from canonical job"
-    );
-    ensure!(
+                .activation_preconditions_hash(&limits)?,
+        ) == (
+            request_height,
+            request_height,
+            header.inner.timestamp,
+            event.pendingNonce,
+            event.attempt,
+            event.activationPreconditionsHash,
+        ),
+        SnapshotOcompError::RequestEventContextMismatch,
+    )?;
+    require(
         job.intent.job_id(hash, header.inner.state_root, &limits)? == expected_job,
-        "artifact JobId differs from canonical request identity"
-    );
+        SnapshotOcompError::ArtifactJobIdMismatch,
+    )?;
     Ok(job)
 }

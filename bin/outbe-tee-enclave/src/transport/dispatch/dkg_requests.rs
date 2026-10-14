@@ -132,21 +132,19 @@ fn announce(
     let result = (|| {
         let network_binding = initialization
             .ok_or_else(|| {
-                crate::errors::TeeError::Dkg(
-                    "DKG announcement requires initialized state".to_string(),
-                )
+                crate::errors::TeeError::dkg_err("DKG announcement requires initialized state")
             })?
             .network_binding()
-            .map_err(crate::errors::TeeError::Dkg)?
+            .map_err(crate::errors::TeeError::dkg_err)?
             .ok_or_else(|| {
-                crate::errors::TeeError::Dkg(
-                    "DKG announcement requires a committed network binding".to_string(),
+                crate::errors::TeeError::dkg_err(
+                    "DKG announcement requires a committed network binding",
                 )
             })?;
         let participant_set_hash =
             outbe_primitives::tee_attestation_v1::dkg_participant_set_hash_v1(&participant_bls)
                 .map_err(|error| {
-                    crate::errors::TeeError::Dkg(format!("invalid DKG participant set: {error}"))
+                    crate::errors::TeeError::dkg_context("invalid DKG participant set", error)
                 })?;
         let expected_ceremony = outbe_primitives::tee_attestation_v1::dkg_ceremony_id_v1(
             &network_binding,
@@ -154,12 +152,11 @@ fn announce(
             participant_set_hash,
         )
         .map_err(|error| {
-            crate::errors::TeeError::Dkg(format!("invalid DKG ceremony context: {error}"))
+            crate::errors::TeeError::dkg_context("invalid DKG ceremony context", error)
         })?;
         if ceremony_id != expected_ceremony {
-            return Err(crate::errors::TeeError::Dkg(
-                "DKG announcement ceremony id does not match network and participant set"
-                    .to_string(),
+            return Err(crate::errors::TeeError::dkg_err(
+                "DKG announcement ceremony id does not match network and participant set",
             ));
         }
         let bls_pub = keys.tee_bls_public_bytes();
@@ -167,8 +164,8 @@ fn announce(
             .iter()
             .any(|candidate| candidate == &bls_pub)
         {
-            return Err(crate::errors::TeeError::Dkg(
-                "local DKG identity is absent from participant set".to_string(),
+            return Err(crate::errors::TeeError::dkg_err(
+                "local DKG identity is absent from participant set",
             ));
         }
         let enc_pub = keys.dkg_enc_public();
@@ -199,15 +196,18 @@ fn open(
         ..
     } = context;
     let DispatchInitializationContext { initialization, .. } = context;
-    let network_binding = initialization
-        .ok_or_else(|| "DkgOpen requires initialized state".to_string())
-        .and_then(InitializationState::network_binding)
-        .and_then(|binding| {
-            binding.ok_or_else(|| "DkgOpen requires a committed network binding".to_string())
-        });
+    let network_binding = (|| -> EnclaveResult<_> {
+        let state =
+            initialization.ok_or(TransportDispatchError::DkgOpenRequiresInitializedState)?;
+        state
+            .network_binding()?
+            .ok_or_else(|| TransportDispatchError::DkgOpenRequiresCommittedNetworkBinding.into())
+    })();
     match network_binding {
         Ok(network_binding) => dispatch_dkg_open(keys, dkg, &network_binding, request),
-        Err(message) => EnclaveResponse::Error { message },
+        Err(error) => EnclaveResponse::Error {
+            message: error.to_string(),
+        },
     }
 }
 
@@ -223,20 +223,23 @@ fn finalize_offer_key(
         chain_id,
         tribute_offer_epoch,
     } = request;
-    let expected_chain_id = initialization
-        .ok_or_else(|| "DkgFinalizeTributeOffer requires initialized state".to_string())
-        .and_then(InitializationState::network_binding)
-        .and_then(|binding| {
-            binding
-                .map(|binding| B256::from(binding.chain_id))
-                .ok_or_else(|| {
-                    "DkgFinalizeTributeOffer requires a committed network binding".to_string()
-                })
-        });
-    let Ok(expected_chain_id) = expected_chain_id else {
-        return EnclaveResponse::Error {
-            message: expected_chain_id.unwrap_err(),
-        };
+    let expected_chain_id = (|| -> EnclaveResult<B256> {
+        let state =
+            initialization.ok_or(TransportDispatchError::DkgFinalizeRequiresInitializedState)?;
+        state
+            .network_binding()?
+            .map(|binding| B256::from(binding.chain_id))
+            .ok_or_else(|| {
+                TransportDispatchError::DkgFinalizeRequiresCommittedNetworkBinding.into()
+            })
+    })();
+    let expected_chain_id = match expected_chain_id {
+        Ok(expected_chain_id) => expected_chain_id,
+        Err(error) => {
+            return EnclaveResponse::Error {
+                message: error.to_string(),
+            };
+        }
     };
     if chain_id != expected_chain_id {
         return EnclaveResponse::Error {
@@ -260,8 +263,10 @@ fn finalize_offer_key(
         Ok((secret, public, group_sig, group_public_key)) => {
             let derived = DerivedTributeOfferKey::from_parts(secret, public, group_sig)
                 .with_epochs(0, tribute_offer_epoch);
-            if let Err(message) = activate_founding_key(context, derived) {
-                return EnclaveResponse::Error { message };
+            if let Err(error) = activate_founding_key(context, derived) {
+                return EnclaveResponse::Error {
+                    message: error.to_string(),
+                };
             }
             // Release the ceremony's resident secret state.
             dkg.remove(&ceremony_id.0);
@@ -279,33 +284,25 @@ fn finalize_offer_key(
 fn activate_founding_key(
     context: RequestContext<'_>,
     derived: DerivedTributeOfferKey,
-) -> Result<(), String> {
+) -> EnclaveResult<()> {
     let initialization = context.initialization.initialization;
     if let Some(boot) = context.initialization.boot {
-        let network_binding = initialization
-            .ok_or_else(|| {
-                "founding DKG persistence requires initialized production state".to_string()
-            })
-            .and_then(InitializationState::network_binding)
-            .and_then(|binding| {
-                binding.ok_or_else(|| {
-                    "founding DKG persistence requires an initialization manifest".to_string()
-                })
-            })?;
+        let state = initialization
+            .ok_or(TransportDispatchError::FoundingDkgPersistenceRequiresInitState)?;
+        let network_binding = state
+            .network_binding()?
+            .ok_or(TransportDispatchError::FoundingDkgPersistenceRequiresManifest)?;
         persist_then_activate_offer_key(boot, network_binding, context.offer_key, derived)?;
     } else {
         if initialization.map(InitializationState::mode)
             == Some(crate::initialization::InitializationMode::Production)
         {
-            return Err("founding DKG requires durable production sealed storage".into());
+            return Err(TransportDispatchError::FoundingDkgRequiresDurableStorage.into());
         }
         // Hardware-free DKG tests have no durable store.
         if let Err(rejected) = context.offer_key.set(derived) {
             if context.offer_key.get().map(|key| key.public) != Some(rejected.public) {
-                return Err(
-                    "offer key divergence: recovered key differs from the resident offer key"
-                        .into(),
-                );
+                return Err(TransportDispatchError::OfferKeyDivergenceFromResident.into());
             }
         }
     }

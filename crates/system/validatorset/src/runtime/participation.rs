@@ -1,8 +1,9 @@
+use crate::errors::ValidatorSetError;
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
 use crate::state_machine::ValidatorLifecycle;
 use alloy_primitives::{Address, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::Mapping;
 
 impl ValidatorSet<'_> {
@@ -11,9 +12,7 @@ impl ValidatorSet<'_> {
     /// Increments `blocks_proposed` for a current consensus participant.
     pub fn record_proposer(&mut self, addr: Address) -> Result<()> {
         if !self.is_consensus_participant(addr)? {
-            return Err(PrecompileError::Revert(format!(
-                "proposer is not a current consensus participant: {addr}"
-            )));
+            return Err(ValidatorSetError::ProposerNotConsensusParticipant { addr }.into());
         }
         increment_counter(&self.val_blocks_proposed, &addr, "blocks proposed overflow")
     }
@@ -55,12 +54,12 @@ impl ValidatorSet<'_> {
     ) -> Result<()> {
         for addr in voters {
             if !self.is_committee_member(committee, *addr)? {
-                return Err(PrecompileError::Revert(committee.voter_rejection(addr)));
+                return Err(committee.voter_rejection(*addr).into());
             }
         }
         for addr in absent {
             if !self.is_committee_member(committee, *addr)? {
-                return Err(PrecompileError::Revert(committee.absent_rejection(addr)));
+                return Err(committee.absent_rejection(*addr).into());
             }
             increment_counter(&self.val_missed_votes, addr, "missed votes overflow")?;
         }
@@ -109,7 +108,7 @@ impl ValidatorSet<'_> {
         let epoch = self.epoch_number.read()?;
         let new_epoch = epoch
             .checked_add(U256::from(1))
-            .ok_or_else(|| PrecompileError::Fatal("epoch number overflow".into()))?;
+            .ok_or(ValidatorSetError::EpochNumberOverflow)?;
         self.epoch_number.write(new_epoch)?;
         self.epoch_start_timestamp.write(timestamp)?;
         self.epoch_start_block.write(block_number)?;
@@ -145,21 +144,17 @@ enum VotingCommittee {
 }
 
 impl VotingCommittee {
-    fn voter_rejection(self, addr: &Address) -> String {
+    fn voter_rejection(self, addr: Address) -> ValidatorSetError {
         match self {
-            Self::Current => format!("voter is not a current consensus participant: {addr}"),
-            Self::Finalized => format!("finalized voter is not a registered validator: {addr}"),
+            Self::Current => ValidatorSetError::VoterNotConsensusParticipant { addr },
+            Self::Finalized => ValidatorSetError::FinalizedVoterNotRegistered { addr },
         }
     }
 
-    fn absent_rejection(self, addr: &Address) -> String {
+    fn absent_rejection(self, addr: Address) -> ValidatorSetError {
         match self {
-            Self::Current => {
-                format!("absent voter is not a current consensus participant: {addr}")
-            }
-            Self::Finalized => {
-                format!("finalized absent voter is not a registered validator: {addr}")
-            }
+            Self::Current => ValidatorSetError::AbsentVoterNotConsensusParticipant { addr },
+            Self::Finalized => ValidatorSetError::FinalizedAbsentVoterNotRegistered { addr },
         }
     }
 }
@@ -175,6 +170,6 @@ fn increment_counter(
         addr,
         value
             .checked_add(1)
-            .ok_or_else(|| PrecompileError::Fatal(overflow.into()))?,
+            .ok_or(ValidatorSetError::ParticipationCounterOverflow { counter: overflow })?,
     )
 }

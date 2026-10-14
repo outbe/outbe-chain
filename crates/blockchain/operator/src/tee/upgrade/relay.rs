@@ -10,31 +10,31 @@ pub(super) async fn prepare_upgrade_relay_v1(
     let (context, durable, evidence) = load_key_ready_material(node_data_dir)?;
     let proof = evidence
         .transition_key_ready_proof()
-        .ok_or_else(|| eyre::eyre!("durable transition evidence has no key-ready proof"))?;
+        .ok_or(UpgradeError::MissingDurableKeyReadyProof)?;
     let active = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
     let successor = read_finalized_upgrade_policy_v1(rpc)
         .await?
-        .ok_or_else(|| eyre::eyre!("no successor TEE policy is staged at finalized state"))?;
+        .ok_or(UpgradeError::NoStagedSuccessorPolicy)?;
     if active.schedule.finalized_height != successor.finalized_height
         || active.schedule.finalized_hash != successor.finalized_hash
     {
-        eyre::bail!("finalized active binding and staged policy were read at different heads");
+        return Err(UpgradeError::FinalizedHeadMismatch.into());
     }
     let policy_hash = successor
         .policy
         .policy_hash()
-        .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?;
+        .map_err(UpgradeError::HashStagedSuccessorPolicy)?;
     let staged_policy_matches = policy_hash == context.successor_policy_hash
         && successor.policy.activation_height == context.activation_height;
     if !staged_policy_matches
         || evidence.intent().policy_hash != policy_hash
         || evidence.intent().operation != AttestationOperationV1::TransitionEnclaveMeasurement
     {
-        eyre::bail!("durable candidate submission targets another transition policy");
+        return Err(UpgradeError::DurableSubmissionPolicyMismatch.into());
     }
     proof
         .verify_for_transition(evidence.intent(), active.tribute_offer_public.into())
-        .map_err(|error| eyre::eyre!("durable key-ready proof is invalid: {error}"))?;
+        .map_err(UpgradeError::InvalidDurableKeyReadyProof)?;
     ensure_transition_source_or_target_v1(&active.binding, evidence.intent())?;
 
     let (calldata, raw) = sign_transition_relay(rpc, relay, &durable, &successor.policy).await?;
@@ -66,17 +66,19 @@ async fn sign_transition_relay(
             policy.measurement_rules.len(),
             policy.attestation_mode,
         )
-        .map_err(|error| eyre::eyre!("calculate normative transition gas: {error}"))?;
+        .map_err(UpgradeError::CalculateNormativeTransitionGas)?;
     let chain_id = rpc.chain_id().await?;
     let account_nonce = rpc.transaction_count(relay.address()).await?;
     let gas_price = buffered_gas_price(rpc.gas_price().await?);
     let required_balance = gas_price.saturating_mul(U256::from(gas_limit));
     let balance = rpc.balance(relay.address()).await?;
     if balance < required_balance {
-        eyre::bail!(
-            "upgrade relay {} has {balance} but needs at least {required_balance}",
-            relay.address()
-        );
+        return Err(UpgradeError::InsufficientRelayBalance {
+            address: relay.address(),
+            balance,
+            required_balance,
+        }
+        .into());
     }
     let raw = relay.sign_renewal(UnsignedRelayTransactionV1 {
         chain_id,
@@ -96,29 +98,29 @@ fn load_key_ready_material(
     ReplacementCandidateSubmissionV1,
     AttestationEvidenceV1,
 )> {
-    let snapshot = inspect_upgrade_journal_v1(node_data_dir)?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
+    let snapshot =
+        inspect_upgrade_journal_v1(node_data_dir)?.ok_or(UpgradeError::CandidateNotPrepared)?;
     let UpgradeJournalStateV1::CandidateKeyReady {
         context, security, ..
     } = snapshot.lifecycle
     else {
-        eyre::bail!("upgrade relay requires candidate-key-ready checkpoint");
+        return Err(UpgradeError::RelayRequiresCandidateKeyReady.into());
     };
     let durable = load_replacement_candidate_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("reload exact candidate submission: {error}"))?
-        .ok_or_else(|| eyre::eyre!("candidate-key-ready checkpoint has no durable submission"))?;
+        .map_err(UpgradeError::ReloadExactCandidateSubmission)?
+        .ok_or(UpgradeError::KeyReadyMissingDurableSubmission)?;
     let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .map_err(|error| eyre::eyre!("decode durable transition evidence: {error}"))?;
+        .map_err(UpgradeError::DecodeDurableTransitionEvidence)?;
     let proof = evidence
         .transition_key_ready_proof()
-        .ok_or_else(|| eyre::eyre!("durable transition evidence has no key-ready proof"))?;
+        .ok_or(UpgradeError::MissingDurableKeyReadyProof)?;
     let encoded_proof = proof
         .encode_canonical()
-        .map_err(|error| eyre::eyre!("encode durable key-ready proof: {error}"))?;
+        .map_err(UpgradeError::EncodeDurableKeyReadyProof)?;
     if keccak256(encoded_proof) != security.proof_hash
         || B256::from(proof.resident_offer_public) != security.resident_offer_public
     {
-        eyre::bail!("durable transition proof differs from the journaled key-ready checkpoint");
+        return Err(UpgradeError::DurableProofSecurityMismatch.into());
     }
 
     Ok((context, durable, evidence))
@@ -131,17 +133,17 @@ pub(super) async fn finalized_transition_matches_v1(
     submission: &PreparedUpgradeSubmissionV1,
 ) -> Result<bool> {
     let durable = load_replacement_candidate_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("reload exact candidate submission: {error}"))?
-        .ok_or_else(|| eyre::eyre!("submission checkpoint has no durable NodeHost material"))?;
+        .map_err(UpgradeError::ReloadExactCandidateSubmission)?
+        .ok_or(UpgradeError::SubmissionMissingDurableMaterial)?;
     let durable_evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .map_err(|error| eyre::eyre!("decode durable transition evidence: {error}"))?;
+        .map_err(UpgradeError::DecodeDurableTransitionEvidence)?;
     let (intent_hash, evidence_hash) = transition_commitments(&durable_evidence, &durable)?;
     let calldata = transition_calldata(&durable);
     if intent_hash != submission.intent_hash
         || evidence_hash != submission.evidence_hash
         || keccak256(calldata) != submission.calldata_hash
     {
-        eyre::bail!("NodeHost transition material differs from the relay checkpoint");
+        return Err(UpgradeError::NodeHostRelayMaterialMismatch.into());
     }
     let view = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
     ensure_transition_source_or_target_v1(&view.binding, durable_evidence.intent())?;
@@ -167,9 +169,9 @@ fn transition_commitments(
     let intent_hash = evidence
         .intent()
         .intent_hash()
-        .map_err(|error| eyre::eyre!("hash durable transition intent: {error}"))?;
+        .map_err(UpgradeError::HashDurableTransitionIntent)?;
     let evidence_hash = AttestationEvidenceV1::decode_canonical(durable.evidence())
         .and_then(|e| e.evidence_hash())
-        .map_err(|code| eyre::eyre!("hash durable transition evidence: {code:?}"))?;
+        .map_err(UpgradeError::HashDurableTransitionEvidence)?;
     Ok((intent_hash, evidence_hash))
 }

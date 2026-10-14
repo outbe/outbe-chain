@@ -6,6 +6,7 @@ use clap::Subcommand;
 use eyre::Result;
 
 use crate::abi::{self, IStaking, IValidatorSet, VALIDATOR_SET_ADDR};
+use crate::errors::EpochError;
 use crate::rpc::Rpc;
 
 #[derive(Subcommand)]
@@ -53,7 +54,7 @@ async fn fetch_epoch_info(client: &(impl Rpc + Sync)) -> Result<EpochInfo> {
         let decoded = IValidatorSet::getEpochNumberCall::abi_decode_returns(&result)?;
         decoded
             .try_into()
-            .map_err(|_| eyre::eyre!("epoch number exceeds u64"))?
+            .map_err(|_| EpochError::EpochNumberOverflow)?
     };
 
     let epoch_start_timestamp: u64 = {

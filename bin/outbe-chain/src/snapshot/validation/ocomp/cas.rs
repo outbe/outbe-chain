@@ -19,26 +19,24 @@ fn verify_cas_object_entry(
             Incomplete(format!("CAS scan stopped after {} objects", result.objects)).into(),
         );
     }
-    ensure!(
-        entry.file_type()?.is_file(),
-        "CAS object is not a regular file"
-    );
+    if !entry.file_type()?.is_file() {
+        return Err(SnapshotOcompError::CasObjectNotRegularFile.into());
+    }
     let suffix = entry.file_name();
     let suffix = suffix
         .to_str()
-        .ok_or_else(|| eyre::eyre!("invalid CAS object locator"))?;
+        .ok_or(SnapshotOcompError::InvalidCasObjectLocator)?;
     let encoded = format!("{prefix}{suffix}");
     let mut digest = [0_u8; 32];
     hex::decode_to_slice(&encoded, &mut digest)?;
-    ensure!(
-        hex::encode(digest) == encoded,
-        "noncanonical CAS digest locator"
-    );
+    if hex::encode(digest) != encoded {
+        return Err(SnapshotOcompError::NoncanonicalCasDigestLocator.into());
+    }
     let length = entry.metadata()?.len();
     let total = result
         .bytes
         .checked_add(length)
-        .ok_or_else(|| eyre::eyre!("CAS total byte count overflow"))?;
+        .ok_or(SnapshotOcompError::CasTotalByteCountOverflow)?;
     if total > limits.max_total_bytes {
         return Err(Incomplete(format!(
             "CAS scan exceeds {} byte budget after {} objects and {} bytes",
@@ -55,7 +53,7 @@ fn verify_cas_object_entry(
     result.objects = result
         .objects
         .checked_add(1)
-        .ok_or_else(|| eyre::eyre!("CAS object count overflow"))?;
+        .ok_or(SnapshotOcompError::CasObjectCountOverflow)?;
     result.bytes = total;
     Ok(())
 }
@@ -74,7 +72,11 @@ pub(crate) fn verify_present_cas(
             return Ok(CasAudit::default());
         }
         Err(error) => return Err(error.into()),
-        Ok(metadata) => ensure!(metadata.is_dir(), "CAS root is not a native directory"),
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return Err(SnapshotOcompError::CasRootNotDirectory.into());
+            }
+        }
     }
     let scan = || -> eyre::Result<CasAudit> {
         let cas = FilesystemCasReader::open(&root, limits)?;
@@ -82,13 +84,10 @@ pub(crate) fn verify_present_cas(
         for shard in std::fs::read_dir(root.join("objects"))? {
             let shard = shard?;
             let prefix = shard.file_name();
-            let prefix = prefix
-                .to_str()
-                .ok_or_else(|| eyre::eyre!("invalid CAS shard"))?;
-            ensure!(
-                shard.file_type()?.is_dir() && prefix.len() == 2,
-                "invalid native CAS shard"
-            );
+            let prefix = prefix.to_str().ok_or(SnapshotOcompError::InvalidCasShard)?;
+            if !shard.file_type()?.is_dir() || prefix.len() != 2 {
+                return Err(SnapshotOcompError::InvalidNativeCasShard.into());
+            }
             for entry in std::fs::read_dir(shard.path())? {
                 verify_cas_object_entry(
                     &cas,
@@ -128,9 +127,10 @@ pub(crate) fn verify_present_receipt(
 
     let check = || -> eyre::Result<_> {
         let limits = poc_schema_limits();
-        let finalized = job.finalized.as_ref().ok_or_else(|| {
-            eyre::eyre!("present receipt lacks canonical finalized job authority")
-        })?;
+        let finalized = job
+            .finalized
+            .as_ref()
+            .ok_or(SnapshotOcompError::PresentReceiptLacksFinality)?;
         let spec = canonical_job_spec(job)?;
         let cas = FilesystemCasReader::open(ocomp_root.join("cas-v1"), cas_limits)?;
         let receipt = ExportReceiptReader::try_open(
@@ -143,27 +143,27 @@ pub(crate) fn verify_present_receipt(
         let manifest = receipt.manifest();
         // These are the public authority fields compared by the native complete
         // export binding. The native reader owns prepared/receipt/manifest codecs.
-        ensure!(
+        require(
             receipt.job_id() == spec.summary.job_id && manifest.job_id == spec.summary.job_id,
-            "receipt manifest differs from canonical JobId"
-        );
-        ensure!(
+            SnapshotOcompError::ReceiptManifestJobIdMismatch,
+        )?;
+        require(
             manifest.protocol_bundle_hash == spec.summary.protocol_bundle_hash
                 && manifest.protocol_bundle_hash == job.intent.protocol_bundle_hash,
-            "receipt manifest differs from canonical protocol bundle"
-        );
-        ensure!(
+            SnapshotOcompError::ReceiptManifestBundleMismatch,
+        )?;
+        require(
             manifest.attempt == job.intent.attempt && manifest.wwd == job.intent.wwd,
-            "receipt manifest differs from canonical attempt or WWD"
-        );
-        ensure!(
+            SnapshotOcompError::ReceiptManifestAttemptOrWwdMismatch,
+        )?;
+        require(
             manifest.sealed_tribute_collection_key == job.intent.sealed_tribute_collection_key
                 && manifest.sealed_tribute_collection_root
                     == job.intent.sealed_tribute_collection_root
                 && manifest.tribute_count == job.intent.authenticated_day_count
                 && manifest.tribute_nominal_total == job.intent.authenticated_day_nominal,
-            "receipt manifest differs from canonical frozen Tribute authority"
-        );
+            SnapshotOcompError::ReceiptManifestTributeMismatch,
+        )?;
         let checkpoint = CheckpointIdentityV1 {
             finalized_block_number: job.intent_height,
             finalized_block_hash: finalized.finalized_request_block_hash,
@@ -173,19 +173,19 @@ pub(crate) fn verify_present_receipt(
                 outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
             )?,
         };
-        ensure!(
+        require(
             receipt.checkpoint() == &checkpoint && manifest.checkpoint == checkpoint,
-            "receipt checkpoint differs from canonical request or CE schema"
-        );
+            SnapshotOcompError::ReceiptCheckpointMismatch,
+        )?;
         let bundle = read_pinned_bundle(ocomp_root, job.intent.protocol_bundle_hash)?;
         manifest.validate_against_bundle(bundle.bundle(), &limits)?;
         if let Some(expected) = expected_export {
-            ensure!(
+            require(
                 expected.source_generation == receipt.source_pin_generation()
                     && expected.lease_generation == receipt.lease_generation()
                     && expected.manifest_hash == receipt.manifest_hash(),
-                "saved pin export differs from receipt authority"
-            );
+                SnapshotOcompError::SavedPinExportDiffersFromReceipt,
+            )?;
         }
         Ok(receipt)
     };

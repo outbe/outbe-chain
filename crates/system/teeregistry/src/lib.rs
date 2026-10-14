@@ -5,6 +5,7 @@
 //! key once. [`v1_precompile`] is the only public ABI. There is no
 //! caller-authorized registration dispatcher or fallback admission path.
 
+pub mod errors;
 pub mod runtime;
 pub mod schema;
 pub mod upgrade;

@@ -9,13 +9,13 @@ pub(super) fn validate_candidate_identity_v1(
     let node_id_hash = manifest
         .node_id
         .node_id_hash()
-        .map_err(|error| eyre::eyre!("hash candidate node identity: {error}"))?;
+        .map_err(UpgradeError::HashCandidateNodeIdentity)?;
     let enclave_id = manifest
         .enclave_id()
-        .map_err(|error| eyre::eyre!("derive candidate enclave identity: {error}"))?;
+        .map_err(UpgradeError::DeriveCandidateEnclaveIdentity)?;
     let node_host_authorization_hash = manifest
         .node_host_authorization_hash()
-        .map_err(|error| eyre::eyre!("derive candidate NodeHost authorization: {error}"))?;
+        .map_err(UpgradeError::DeriveCandidateAuthorization)?;
     let chain_matches = manifest.chain_id == active.policy.chain_id
         && manifest.genesis_hash == active.policy.genesis_hash
         && node_id_hash == active.binding.node_id_hash;
@@ -23,12 +23,12 @@ pub(super) fn validate_candidate_identity_v1(
         || enclave_id == active.binding.enclave_id
         || node_host_authorization_hash != active.binding.node_host_authorization_hash
     {
-        eyre::bail!("candidate manifest is not a same-NodeHost successor of finalized A");
+        return Err(UpgradeError::NotSameNodeHostSuccessor.into());
     }
     match selector {
         NodeBindingSelectorV1::NodeHost(public) if public == &manifest.node_id.reth_p2p_public => {}
         _ => {
-            eyre::bail!("upgrade selector does not match the candidate node identity");
+            return Err(UpgradeError::SelectorMismatch.into());
         }
     }
     Ok(())
@@ -45,11 +45,11 @@ pub(super) fn ensure_transition_source_or_target_v1(
         == intent
             .node_id
             .node_id_hash()
-            .map_err(|error| eyre::eyre!("hash transition node identity: {error}"))?
+            .map_err(UpgradeError::HashTransitionNodeIdentity)?
         && source_counters_match(current, intent)
         && source_identity_changes_match(current, intent);
     if !source_matches {
-        eyre::bail!("finalized Registry binding matches neither transition source nor target");
+        return Err(UpgradeError::BindingNeitherSourceNorTarget.into());
     }
     Ok(())
 }

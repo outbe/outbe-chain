@@ -4,7 +4,7 @@
 //! derives from its entry price.
 
 use outbe_primitives::chain::is_mainnet;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::{
@@ -62,9 +62,9 @@ impl NodParams {
             PROFILE_AUTO => Ok(Self::for_chain_id(chain_id)),
             PROFILE_DEV => Ok(Self::DEV),
             PROFILE_PROD => Ok(Self::PROD),
-            other => Err(PrecompileError::Revert(format!(
-                "unknown nod profile selector: {other}"
-            ))),
+            other => {
+                Err(crate::errors::NodError::UnknownProfileSelector { selector: other }.into())
+            }
         }
     }
 }

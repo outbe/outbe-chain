@@ -13,6 +13,8 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use crate::errors::TxError;
+
 pub fn buffered_gas_price(suggested: U256) -> U256 {
     suggested
         .saturating_mul(U256::from(2))
@@ -65,7 +67,7 @@ impl RelaySignerV1 {
             || path_metadata.len() == 0
             || path_metadata.len() > 130
         {
-            eyre::bail!("relay private key must be an owner-bound 0600 regular file");
+            return Err(TxError::InvalidKeyFilePermissions.into());
         }
         let file = OpenOptions::new()
             .read(true)
@@ -76,14 +78,14 @@ impl RelaySignerV1 {
             .metadata()
             .wrap_err_with(|| format!("stat opened relay private key {}", path.display()))?;
         if opened.dev() != path_metadata.dev() || opened.ino() != path_metadata.ino() {
-            eyre::bail!("relay private key path changed while opening");
+            return Err(TxError::KeyFilePathChanged.into());
         }
         let mut bytes = Vec::with_capacity(opened.len() as usize);
         file.take(131)
             .read_to_end(&mut bytes)
             .wrap_err_with(|| format!("read relay private key {}", path.display()))?;
         if bytes.len() > 130 {
-            eyre::bail!("relay private key grew beyond its size bound");
+            return Err(TxError::KeyFileSizeExceeded.into());
         }
         let encoded = Zeroizing::new(bytes);
         if encoded.len() == 32 {
@@ -95,11 +97,8 @@ impl RelaySignerV1 {
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let bytes: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| eyre::eyre!("relay private key must contain exactly 32 bytes"))?;
-        let key = SigningKey::from_bytes((&bytes).into())
-            .map_err(|error| eyre::eyre!("invalid relay private key: {error}"))?;
+        let bytes: [u8; 32] = bytes.try_into().map_err(|_| TxError::InvalidKeyLength)?;
+        let key = SigningKey::from_bytes((&bytes).into()).map_err(TxError::InvalidPrivateKey)?;
         let public = key.verifying_key().to_encoded_point(false);
         let hash = keccak256(&public.as_bytes()[1..]);
         let address = Address::from_slice(&hash[12..]);
@@ -165,12 +164,12 @@ impl RelaySignerV1 {
         let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
             .key
             .sign_prehash(digest.as_slice())
-            .map_err(|error| eyre::eyre!("relay signing failed: {error}"))?;
+            .map_err(TxError::SigningFailed)?;
         let bytes = signature.to_bytes();
         let v = chain_id
             .checked_mul(2)
             .and_then(|value| value.checked_add(35 + u64::from(recovery.to_byte())))
-            .ok_or_else(|| eyre::eyre!("EIP-155 recovery id overflow"))?;
+            .ok_or(TxError::RecoveryIdOverflow)?;
         Ok(rlp_list(&[
             rlp_u64(nonce),
             rlp_u256(gas_price),

@@ -30,6 +30,8 @@ use outbe_tee::protocol::{
 };
 use outbe_tee::{verify_tribute_offer_attestation, EnclaveClient};
 
+use crate::errors::{EnclaveInitError, TributeFactoryError};
+
 /// True once the process-global enclave client is installed.
 /// Offers always use the enclave. A missing client returns `PrecompileError::Fatal` with
 /// `tee_sidecar_unavailable`.
@@ -47,18 +49,18 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
     // connects over the Unix domain socket (native sidecar).
     let endpoint = socket
         .to_str()
-        .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
-    let mut client = EnclaveClient::connect_endpoint(endpoint)
-        .map_err(|e| eyre::eyre!("TEE enclave connect at {} failed: {e}", socket.display()))?;
+        .ok_or(EnclaveInitError::InvalidEndpointUtf8)?;
+    let mut client = EnclaveClient::connect_endpoint(endpoint).map_err(|source| {
+        EnclaveInitError::ConnectFailed {
+            socket: socket.display().to_string(),
+            source,
+        }
+    })?;
     // Verify the encrypted channel works before installing the client.
     match client.request(&EnclaveRequest::GetPublicKeys) {
         Ok(EnclaveResponse::PublicKeys { .. }) => {}
-        Ok(other) => {
-            return Err(eyre::eyre!(
-                "unexpected enclave handshake response: {other:?}"
-            ))
-        }
-        Err(e) => return Err(eyre::eyre!("enclave GetPublicKeys failed: {e}")),
+        Ok(other) => return Err(EnclaveInitError::UnexpectedHandshakeResponse(other).into()),
+        Err(e) => return Err(EnclaveInitError::GetPublicKeysFailed(e).into()),
     }
     // Report the enclave's declared attestation mode. This connect-time path does
     // not verify DCAP. Native QVL + TeeRegistry enforce production admission.
@@ -76,7 +78,8 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
              provides no SGX confidentiality or DCAP admission"
         );
     }
-    outbe_tee::install_enclave_client(client, endpoint.to_owned()).map_err(|e| eyre::eyre!(e))?;
+    outbe_tee::install_enclave_client(client, endpoint.to_owned())
+        .map_err(EnclaveInitError::InstallFailed)?;
     Ok(())
 }
 
@@ -119,9 +122,8 @@ pub fn process_tribute_offer_batch_via_enclave(
         });
         (attestation_pub, response)
     })
-    .ok_or_else(|| PrecompileError::Fatal("tee_sidecar_unavailable".to_string()))?;
-    let response =
-        response.map_err(|e| PrecompileError::Fatal(format!("tee_sidecar_unavailable: {e}")))?;
+    .ok_or(TributeFactoryError::TeeSidecarUnavailable)?;
+    let response = response.map_err(TributeFactoryError::sidecar_unavailable)?;
 
     match response {
         EnclaveResponse::TributeOfferBatch {
@@ -135,12 +137,10 @@ pub fn process_tribute_offer_batch_via_enclave(
             &attestation_pub,
             &attestation_tag,
         ),
-        EnclaveResponse::Error { message } => Err(PrecompileError::Fatal(format!(
-            "enclave ProcessTributeOfferBatch error: {message}"
-        ))),
-        other => Err(PrecompileError::Fatal(format!(
-            "unexpected enclave response: {other:?}"
-        ))),
+        EnclaveResponse::Error { message } => {
+            Err(TributeFactoryError::EnclaveBatchError(message).into())
+        }
+        other => Err(TributeFactoryError::UnexpectedEnclaveResponse(other).into()),
     }
 }
 
@@ -161,9 +161,7 @@ fn validate_tribute_offer_batch_response(
 ) -> Result<Vec<TributeOfferResult>, PrecompileError> {
     let expected = outbe_tee::protocol::inputs_canonical_hash(offers);
     if inputs_canonical_hash != expected {
-        return Err(PrecompileError::Fatal(
-            "tee_enclave_nondeterminism: inputs_canonical_hash mismatch".to_string(),
-        ));
+        return Err(TributeFactoryError::InputsCanonicalHashMismatch.into());
     }
     verify_tribute_offer_attestation(
         attestation_pub,
@@ -171,7 +169,7 @@ fn validate_tribute_offer_batch_response(
         &results,
         attestation_tag,
     )
-    .map_err(|e| PrecompileError::Fatal(format!("tee_offer_attestation_invalid: {e}")))?;
+    .map_err(TributeFactoryError::offer_attestation_invalid)?;
     validate_effective_reference_prices(offers, &results)?;
     Ok(results)
 }
@@ -181,11 +179,11 @@ fn validate_effective_reference_prices(
     results: &[TributeOfferResult],
 ) -> Result<(), PrecompileError> {
     if offers.len() != results.len() {
-        return Err(PrecompileError::Fatal(format!(
-            "tee_enclave_nondeterminism: result count mismatch: expected {}, got {}",
-            offers.len(),
-            results.len()
-        )));
+        return Err(TributeFactoryError::ResultCountMismatch {
+            expected: offers.len(),
+            got: results.len(),
+        }
+        .into());
     }
     for (offer, result) in offers.iter().zip(results) {
         if !matches!(
@@ -198,9 +196,7 @@ fn validate_effective_reference_prices(
             .reference_wwd_vwap_minor
             .max(offer.reference_scurve_minor);
         if result.effective_reference_price_minor != expected {
-            return Err(PrecompileError::Fatal(
-                "tee_enclave_nondeterminism: effective reference price mismatch".into(),
-            ));
+            return Err(TributeFactoryError::EffectiveReferencePriceMismatch.into());
         }
     }
     Ok(())

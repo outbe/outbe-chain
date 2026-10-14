@@ -96,9 +96,13 @@ where
     ) {
         RecoveredFcuAction::Complete => return Ok(()),
         RecoveredFcuAction::Fatal => {
-            return Err(eyre::eyre!(
-                "Reth finalized identity {initially_observed:?} conflicts with certified follower recovery anchor {anchor:?}"
-            ));
+            return Err(
+                crate::errors::StackRecoveryError::RethFinalizedIdentityConflictsWithAnchor {
+                    observed: format!("{initially_observed:?}"),
+                    anchor,
+                }
+                .into(),
+            );
         }
         RecoveredFcuAction::Retry => {}
     }
@@ -117,17 +121,28 @@ where
         match classify_recovered_fcu_attempt(anchor, &outcome, observed) {
             RecoveredFcuAction::Complete => return Ok(()),
             RecoveredFcuAction::Fatal => {
-                return Err(eyre::eyre!(
-                    "recovered FCU failed closed for anchor {anchor:?}: outcome={outcome:?}, provider={observed:?}"
-                ));
+                return Err(
+                    crate::errors::StackRecoveryError::RecoveredFcuFailedClosed {
+                        anchor,
+                        outcome: format!("{outcome:?}"),
+                        observed: format!("{observed:?}"),
+                    }
+                    .into(),
+                );
             }
             RecoveredFcuAction::Retry if attempt_number < CERTIFIED_FOLLOWER_FCU_ATTEMPTS => {
                 clock.sleep(CERTIFIED_FOLLOWER_FCU_RETRY_DELAY).await;
             }
             RecoveredFcuAction::Retry => {
-                return Err(eyre::eyre!(
-                    "recovered FCU did not converge on anchor {anchor:?} after {CERTIFIED_FOLLOWER_FCU_ATTEMPTS} attempts: last outcome={outcome:?}, provider={observed:?}"
-                ));
+                return Err(
+                    crate::errors::StackRecoveryError::RecoveredFcuDidNotConverge {
+                        anchor,
+                        attempts: CERTIFIED_FOLLOWER_FCU_ATTEMPTS,
+                        outcome: format!("{outcome:?}"),
+                        observed: format!("{observed:?}"),
+                    }
+                    .into(),
+                );
             }
         }
     }
@@ -139,10 +154,9 @@ pub(in crate::stack) fn read_reth_recovery_forkchoice(
 ) -> Result<RecoveredRethForkchoice> {
     // Persisted execution progress may remain ahead after a canonical rollback.
     let head = state.get_canonical_head();
-    ensure!(
-        head.hash() != B256::ZERO,
-        "Reth returned a zero canonical head"
-    );
+    if head.hash() == B256::ZERO {
+        return Err(crate::errors::StackRecoveryError::RethZeroCanonicalHead.into());
+    }
     let checkpoint = |checkpoint: alloy_eips::BlockNumHash| ProjectionCheckpoint {
         block_number: checkpoint.number,
         block_hash: checkpoint.hash,
@@ -164,20 +178,25 @@ pub(in crate::stack) async fn wait_for_recovered_projection(
         .await
         .map_err(|failure| {
             failure.into_error(
-                || eyre::eyre!("{name} recovery readiness expired without a request budget"),
                 || {
-                    eyre::eyre!(
-                        "{name} projection is ahead of certified follower recovery anchor {}:{}",
-                        anchor.block_number,
-                        anchor.block_hash,
-                    )
+                    crate::errors::StackRecoveryError::ProjectionReadinessExpired(format!("{name}"))
+                        .into()
+                },
+                || {
+                    crate::errors::StackRecoveryError::ProjectionAheadOfRecoveryAnchor {
+                        name: format!("{name}"),
+                        block_number: anchor.block_number,
+                        block_hash: anchor.block_hash,
+                    }
+                    .into()
                 },
                 |failure| {
-                    eyre::eyre!(
-                        "{name} recovery readiness failed ({:?}): {}",
-                        failure.class,
-                        failure.message,
-                    )
+                    crate::errors::StackRecoveryError::ProjectionReadinessFailed {
+                        name: format!("{name}"),
+                        class: format!("{:?}", failure.class),
+                        message: failure.message,
+                    }
+                    .into()
                 },
             )
         })
@@ -227,25 +246,29 @@ where
                 clock.sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
             }
             Ok(None) => {
-                return Err(eyre::eyre!(
-                    "marshal finalization missing for finalized execution height {last_execution_height}; \
-                     likely partial restore/archive corruption; resync/rebuild consensus storage"
-                ));
+                return Err(
+                    crate::errors::StackRecoveryError::MarshalFinalizationMissingCorrupt(
+                        last_execution_height,
+                    )
+                    .into(),
+                );
             }
             Err(_) if attempt < FINALIZED_ROUND_RECOVERY_ATTEMPTS => {
                 clock.sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
             }
             Err(_) => {
-                return Err(eyre::eyre!(
-                    "timed out recovering marshal finalization for finalized execution height {last_execution_height}; \
-                     likely partial restore/archive corruption; resync/rebuild consensus storage"
-                ));
+                return Err(
+                    crate::errors::StackRecoveryError::MarshalFinalizationTimeoutCorrupt(
+                        last_execution_height,
+                    )
+                    .into(),
+                );
             }
         }
     }
 
-    Err(eyre::eyre!(
-        "marshal finalization missing for finalized execution height {last_execution_height}; \
-         likely partial restore/archive corruption; resync/rebuild consensus storage"
-    ))
+    Err(
+        crate::errors::StackRecoveryError::MarshalFinalizationMissingCorrupt(last_execution_height)
+            .into(),
+    )
 }

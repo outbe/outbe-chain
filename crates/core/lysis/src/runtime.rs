@@ -1,16 +1,13 @@
 #[cfg(test)]
-use crate::program_v1::{self, ProgramErrorV1};
+use crate::program_v1;
 use alloy_primitives::U256;
-#[cfg(test)]
-use outbe_primitives::error::PrecompileError;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use std::collections::BTreeMap;
 
 #[cfg(test)]
 pub(crate) fn consume_required_gratis(remaining: &mut U256, gratis_load: U256) -> Result<()> {
-    *remaining =
-        program_v1::validate_required_gratis(*remaining, gratis_load, 0).map_err(program_error)?;
+    *remaining = program_v1::validate_required_gratis(*remaining, gratis_load, 0)?;
     Ok(())
 }
 
@@ -28,18 +25,12 @@ pub(crate) fn compute_fi_fraction_map(
     total_interest: U256,
     lysis_limit_minor: U256,
 ) -> Result<std::collections::HashMap<u16, U256>> {
-    program_v1::compute_fraction_hash_map(
+    Ok(program_v1::compute_fraction_hash_map(
         nominal_amounts,
         tribute_fis,
         total_interest,
         lysis_limit_minor,
-    )
-    .map_err(program_error)
-}
-
-#[cfg(test)]
-fn program_error(error: ProgramErrorV1) -> PrecompileError {
-    PrecompileError::BodyReadCorruption(error.to_string())
+    )?)
 }
 
 /// Freeze, once per WorldwideDay, the finalized VWAPs of the UTC day before its scheduled

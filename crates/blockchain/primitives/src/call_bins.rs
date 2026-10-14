@@ -81,7 +81,7 @@ pub trait CallBinStore<'storage>: BinTreeStorage {
 }
 
 fn corrupt(message: &str) -> PrecompileError {
-    PrecompileError::Revert(format!("call bin index: {message}"))
+    PrecompileError::revert(format!("call bin index: {message}"))
 }
 
 /// The bin `entry` is indexed in, or `None` when it is not indexed.

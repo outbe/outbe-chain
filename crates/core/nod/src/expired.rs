@@ -119,30 +119,23 @@ pub(crate) fn forfeit_member(
         parent,
     } = *bodies;
     if nod_id.is_zero() {
-        return Err(PrecompileError::Revert(format!(
-            "Nod bucket {bucket_key} has an empty member slot during forfeit"
-        )));
+        return Err(
+            crate::errors::NodError::EmptyBucketMemberSlotDuringForfeit { bucket_key }.into(),
+        );
     }
     let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
-    let item = api::load_item(storage, scope, parent, nod_id)?.ok_or_else(|| {
-        PrecompileError::Revert(format!(
-            "Nod bucket {bucket_key} member {nod_id} has no body during forfeit"
-        ))
-    })?;
+    let item = api::load_item(storage, scope, parent, nod_id)?.ok_or(
+        crate::errors::NodError::MissingBucketMemberBodyDuringForfeit { bucket_key, nod_id },
+    )?;
     if item.body().is_settled || item.body().bucket_key != bucket_key {
-        return Err(PrecompileError::Revert(format!(
-            "Nod bucket {bucket_key} indexes an ineligible member {nod_id}"
-        )));
+        return Err(crate::errors::NodError::IneligibleBucketMember { bucket_key, nod_id }.into());
     }
     let owner = item.body().owner;
     let gratis_load_minor = api::calculation_amount(item.body())?;
     let encrypted_gratis_amount = item.body().encrypted.encrypted_gratis_amount.clone();
     let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
-    let bucket = api::load_bucket(storage, scope, parent, bucket_id)?.ok_or_else(|| {
-        PrecompileError::Revert(format!(
-            "Nod bucket {bucket_key} has no body during forfeit"
-        ))
-    })?;
+    let bucket = api::load_bucket(storage, scope, parent, bucket_id)?
+        .ok_or(crate::errors::NodError::MissingBucketBodyDuringForfeit { bucket_key })?;
     api::remove_nod(storage, scope, item, bucket)?;
     nod.emit(INod::NodForfeited {
         owner,

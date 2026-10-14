@@ -20,7 +20,7 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
             retirement_height,
         } => {
             let result = initialization
-                .ok_or_else(|| "remote admission requires initialization".to_string())
+                .ok_or_else(|| TransportDispatchError::RemoteAdmissionRequiresInitialization.into())
                 .and_then(|state| {
                     state.retire_remote_sessions(retirement_height)?;
                     state.authorize_remote_session_at_generation(
@@ -37,7 +37,9 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
                 });
             match result {
                 Ok(()) => EnclaveResponse::RemoteSessionAuthorizedV1 { ticket_id },
-                Err(message) => EnclaveResponse::Error { message },
+                Err(message) => EnclaveResponse::Error {
+                    message: message.to_string(),
+                },
             }
         }
         EnclaveRequest::AuthorizeRemoteSessionV1 {
@@ -64,16 +66,22 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
                 keys,
             ) {
                 Ok(()) => EnclaveResponse::RemoteSessionAuthorizedV1 { ticket_id },
-                Err(message) => EnclaveResponse::Error { message },
+                Err(message) => EnclaveResponse::Error {
+                    message: message.to_string(),
+                },
             }
         }
         EnclaveRequest::RetireRemoteSessionsV1 { activation_height } => {
             match initialization
-                .ok_or_else(|| "remote retirement requires initialized enclave".to_string())
+                .ok_or_else(|| {
+                    TransportDispatchError::RemoteRetirementRequiresInitializedEnclave.into()
+                })
                 .and_then(|state| state.retire_remote_sessions(activation_height))
             {
                 Ok(()) => EnclaveResponse::RemoteSessionsRetiredV1 { activation_height },
-                Err(message) => EnclaveResponse::Error { message },
+                Err(message) => EnclaveResponse::Error {
+                    message: message.to_string(),
+                },
             }
         }
         _ => unreachable!("request family is checked by the exhaustive dispatcher"),

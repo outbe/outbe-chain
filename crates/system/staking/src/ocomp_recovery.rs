@@ -3,7 +3,7 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::STAKING_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::runtime::{
     DeferredValidatorPunishment, OcompMissRecord, OcompRecoveryOutcome,
@@ -11,6 +11,7 @@ use outbe_validatorset::runtime::{
 use outbe_validatorset::ValidatorLifecycle;
 
 use crate::contract::Staking;
+use crate::errors::StakingError;
 
 pub const OCOMP_MISS_SLASH_PERCENT: u64 = 10;
 
@@ -91,9 +92,7 @@ impl Staking<'_> {
             let remaining = bonded - slash;
             let total = self.total_staked.read()?;
             if slash > total {
-                return Err(PrecompileError::Fatal(
-                    "OCOMP bonded slash exceeds total staked".into(),
-                ));
+                return Err(StakingError::OcompBondedSlashExceedsTotalStaked.into());
             }
             self.stake_amount.write(&validator, remaining)?;
             self.total_staked.write(total - slash)?;
@@ -158,14 +157,9 @@ impl Staking<'_> {
                 recovery_deadline: window.recovery_deadline,
             }
         } else {
-            let observability =
-                validators
-                    .jail_validator_deferred(validator)?
-                    .ok_or_else(|| {
-                        PrecompileError::Fatal(
-                            "active OCOMP recovery validator was not jailed".into(),
-                        )
-                    })?;
+            let observability = validators
+                .jail_validator_deferred(validator)?
+                .ok_or(StakingError::ActiveOcompRecoveryValidatorNotJailed)?;
             validators.resolve_ocomp_recovery_window(
                 validator,
                 window.recovery_deadline,
@@ -190,10 +184,11 @@ impl Staking<'_> {
         let validators = ValidatorSet::new(self.storage.clone());
         let validator_count = validators.validator_count()?;
         if validator_count > outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND {
-            return Err(PrecompileError::Fatal(format!(
-                "validator registry exceeds consensus bound: {validator_count} > {}",
-                outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND
-            )));
+            return Err(StakingError::ValidatorRegistryExceedsConsensusBound {
+                count: validator_count,
+                bound: outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND,
+            }
+            .into());
         }
         let addresses = validators.registered_validator_addresses()?;
         let mut log = RecoverySweepLog::default();
@@ -290,5 +285,5 @@ impl RecoverySweepLog {
 fn increment(count: u32, overflow: &'static str) -> Result<u32> {
     count
         .checked_add(1)
-        .ok_or_else(|| PrecompileError::Fatal(overflow.into()))
+        .ok_or_else(|| StakingError::SweepCountOverflow(overflow).into())
 }

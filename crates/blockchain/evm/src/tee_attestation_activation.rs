@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use crate::errors::TeeAttestationActivationError;
 use alloy_primitives::{keccak256, B256, U256};
 use outbe_primitives::{
     chain::{MAINNET_CHAIN_ID, TESTNET_CHAIN_ID},
@@ -37,17 +38,18 @@ pub struct DcapSeededChainSpecBindingV1 {
 }
 
 impl DcapSeededChainSpecBindingV1 {
-    pub fn from_genesis_path(path: &std::path::Path) -> Result<Self, String> {
+    pub fn from_genesis_path(
+        path: &std::path::Path,
+    ) -> Result<Self, TeeAttestationActivationError> {
         let path_text = path
             .to_str()
-            .ok_or_else(|| "seeded genesis path is not UTF-8".to_owned())?;
+            .ok_or(TeeAttestationActivationError::SeededGenesisPathNotUtf8)?;
         let spec = reth_ethereum::cli::chainspec::chain_value_parser(path_text)
-            .map_err(|error| format!("parse seeded genesis ChainSpec: {error}"))?;
-        let value: Value = serde_json::from_slice(
-            &std::fs::read(path)
-                .map_err(|error| format!("read seeded genesis {}: {error}", path.display()))?,
-        )
-        .map_err(|error| format!("parse seeded genesis JSON: {error}"))?;
+            .map_err(TeeAttestationActivationError::parse_seeded_chain_spec)?;
+        let bytes = std::fs::read(path)
+            .map_err(|error| TeeAttestationActivationError::read_seeded_genesis(path, error))?;
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(TeeAttestationActivationError::parse_seeded_json)?;
         Ok(Self {
             chain_id: spec.chain().id(),
             genesis_hash: spec.genesis_hash(),
@@ -56,13 +58,15 @@ impl DcapSeededChainSpecBindingV1 {
     }
 }
 
-fn genesis_consensus_keys_v1(genesis: &Value) -> Result<Vec<[u8; 48]>, String> {
+fn genesis_consensus_keys_v1(
+    genesis: &Value,
+) -> Result<Vec<[u8; 48]>, TeeAttestationActivationError> {
     use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
 
     let alloc = genesis
         .get("alloc")
         .and_then(Value::as_object)
-        .ok_or_else(|| "seeded genesis has no alloc object".to_owned())?;
+        .ok_or(TeeAttestationActivationError::MissingSeededGenesisAlloc)?;
     let validator_address = format!("{VALIDATOR_SET_ADDRESS:x}");
     let entry = alloc
         .iter()
@@ -72,11 +76,11 @@ fn genesis_consensus_keys_v1(genesis: &Value) -> Result<Vec<[u8; 48]>, String> {
                 .eq_ignore_ascii_case(&validator_address)
         })
         .map(|(_, entry)| entry)
-        .ok_or_else(|| "seeded genesis has no ValidatorSet allocation".to_owned())?;
+        .ok_or(TeeAttestationActivationError::MissingValidatorSetAllocation)?;
     let storage = entry
         .get("storage")
         .and_then(Value::as_object)
-        .ok_or_else(|| "seeded genesis ValidatorSet has no storage".to_owned())?;
+        .ok_or(TeeAttestationActivationError::MissingValidatorSetStorage)?;
     let read = |slot, label| read_seeded_validator_word(storage, slot, label);
     let direct_slot = |slot: u64| U256::from(slot).to_be_bytes();
     let mapping_slot = |key: [u8; 32], slot: u64| {
@@ -86,9 +90,9 @@ fn genesis_consensus_keys_v1(genesis: &Value) -> Result<Vec<[u8; 48]>, String> {
         keccak256(preimage).0
     };
     let count = usize::try_from(read(direct_slot(20), "validator_count")?)
-        .map_err(|_| "seeded genesis validator count does not fit usize".to_owned())?;
+        .map_err(|_| TeeAttestationActivationError::ValidatorCountOverflow)?;
     if count == 0 || count > 256 {
-        return Err("seeded genesis validator count is outside 1..=256".into());
+        return Err(TeeAttestationActivationError::ValidatorCountOutOfRange);
     }
     let mut keys = Vec::with_capacity(count);
     for index in 1..=count {
@@ -98,12 +102,12 @@ fn genesis_consensus_keys_v1(genesis: &Value) -> Result<Vec<[u8; 48]>, String> {
         )?;
         let address_key = address_word.to_be_bytes::<32>();
         if address_word.is_zero() || address_key[..12] != [0; 12] {
-            return Err("seeded genesis contains an invalid validator address".into());
+            return Err(TeeAttestationActivationError::InvalidValidatorAddress);
         }
         if read(mapping_slot(address_key, 8), "validator status")? != U256::from(2_u8)
             || read(mapping_slot(address_key, 24), "validator BLS-share flag")? != U256::from(1_u8)
         {
-            return Err("seeded genesis committee member is not ACTIVE with a BLS share".into());
+            return Err(TeeAttestationActivationError::CommitteeMemberNotActiveWithBlsShare);
         }
         let lo = read(
             mapping_slot(address_key, 5),
@@ -116,18 +120,18 @@ fn genesis_consensus_keys_v1(genesis: &Value) -> Result<Vec<[u8; 48]>, String> {
         )?
         .to_be_bytes::<32>();
         if hi[16..] != [0; 16] {
-            return Err("seeded genesis consensus key high word is not right-padded".into());
+            return Err(TeeAttestationActivationError::ConsensusKeyHighWordNotRightPadded);
         }
         let mut key = [0_u8; 48];
         key[..32].copy_from_slice(&lo);
         key[32..].copy_from_slice(&hi[..16]);
         blst::min_pk::PublicKey::from_bytes(&key)
-            .map_err(|_| "seeded genesis contains an invalid MinPk consensus key".to_owned())?;
+            .map_err(|_| TeeAttestationActivationError::InvalidMinPkConsensusKey)?;
         keys.push(key);
     }
     keys.sort_unstable();
     if keys.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err("seeded genesis contains duplicate consensus keys".into());
+        return Err(TeeAttestationActivationError::DuplicateConsensusKeys);
     }
     Ok(keys)
 }
@@ -136,19 +140,23 @@ fn read_seeded_validator_word(
     storage: &serde_json::Map<String, Value>,
     slot: [u8; 32],
     label: &str,
-) -> Result<U256, String> {
+) -> Result<U256, TeeAttestationActivationError> {
     let wanted = hex::encode(slot);
     let raw = storage
         .iter()
         .find(|(key, _)| key.trim_start_matches("0x").eq_ignore_ascii_case(&wanted))
         .and_then(|(_, value)| value.as_str())
-        .ok_or_else(|| format!("seeded genesis lacks ValidatorSet {label}"))?;
+        .ok_or_else(|| TeeAttestationActivationError::MissingValidatorSetWord {
+            label: label.to_owned(),
+        })?;
     let bytes = hex::decode(raw.trim_start_matches("0x"))
-        .map_err(|error| format!("decode ValidatorSet {label}: {error}"))?;
+        .map_err(|error| TeeAttestationActivationError::decode_validator_set_word(label, error))?;
     if bytes.len() > 32 {
-        return Err(format!(
-            "seeded genesis ValidatorSet {label} exceeds one word"
-        ));
+        return Err(
+            TeeAttestationActivationError::ValidatorSetWordExceedsOneWord {
+                label: label.to_owned(),
+            },
+        );
     }
     Ok(U256::from_be_slice(&bytes))
 }
@@ -160,10 +168,10 @@ pub struct TeeAttestationActivationV1 {
 }
 
 impl TeeAttestationActivationV1 {
-    pub fn policy_at(&self, height: u64) -> Result<&TeePolicyV1, String> {
+    pub fn policy_at(&self, height: u64) -> Result<&TeePolicyV1, TeeAttestationActivationError> {
         self.policy_schedule
             .active_policy(height)
-            .map_err(|error| format!("invalid active TEE policy at block {height}: {error}"))
+            .map_err(|error| TeeAttestationActivationError::invalid_active_policy(height, error))
     }
 }
 
@@ -188,37 +196,43 @@ pub struct DcapChainSpecBindingV1 {
 }
 
 impl DcapChainSpecBindingV1 {
-    pub fn from_genesis_path(path: &std::path::Path) -> Result<Self, String> {
+    pub fn from_genesis_path(
+        path: &std::path::Path,
+    ) -> Result<Self, TeeAttestationActivationError> {
         let path = path
             .to_str()
-            .ok_or_else(|| "DCAP genesis path is not UTF-8".to_owned())?;
+            .ok_or(TeeAttestationActivationError::DcapGenesisPathNotUtf8)?;
         let spec = reth_ethereum::cli::chainspec::chain_value_parser(path)
-            .map_err(|error| format!("parse DCAP genesis ChainSpec: {error}"))?
+            .map_err(TeeAttestationActivationError::parse_dcap_chain_spec)?
             .as_ref()
             .clone()
             .map_header(OutbeHeader::new);
         Self::from_chain_spec(&spec)
     }
 
-    pub fn from_chain_spec(spec: &ChainSpec<OutbeHeader>) -> Result<Self, String> {
+    pub fn from_chain_spec(
+        spec: &ChainSpec<OutbeHeader>,
+    ) -> Result<Self, TeeAttestationActivationError> {
         let state = TeeAttestationChainSpecStateV1::from_chain_spec(spec);
-        let activation = state.activation().map_err(str::to_owned)?;
+        let activation = state
+            .activation()
+            .map_err(TeeAttestationActivationError::invalid_chain_spec_activation)?;
         let policy = activation
             .policy_at(TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)?
             .clone();
         if policy.attestation_mode != AttestationMode::DcapRequired {
-            return Err("DCAP release ChainSpec requires DcapRequired policy".into());
+            return Err(TeeAttestationActivationError::RequiresDcapRequiredPolicy);
         }
         let policy_bytes = policy
             .encode_canonical()
-            .map_err(|error| format!("encode DCAP TEE policy: {error}"))?;
+            .map_err(TeeAttestationActivationError::encode_dcap_policy)?;
         let policy_hash = policy
             .policy_hash()
-            .map_err(|error| format!("hash DCAP TEE policy: {error}"))?;
+            .map_err(TeeAttestationActivationError::hash_dcap_policy)?;
         let policy_schedule = activation.policy_schedule.clone();
         let policy_schedule_bytes = policy_schedule
             .encode_canonical()
-            .map_err(|error| format!("encode DCAP TEE policy schedule: {error}"))?;
+            .map_err(TeeAttestationActivationError::encode_dcap_policy_schedule)?;
         Ok(Self {
             chain_id: spec.chain().id(),
             genesis_hash: spec.genesis_hash(),
@@ -239,16 +253,13 @@ impl DcapChainSpecBindingV1 {
         mrsigner: B256,
         isv_prod_id: u16,
         isv_svn: u16,
-    ) -> Result<(), String> {
+    ) -> Result<(), TeeAttestationActivationError> {
         let policy = &self.policy;
         if policy.accepted_platform_tcb_statuses
             != PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
             || policy.accepted_qe_tcb_status != QvlTcbStatusV1::UpToDate
         {
-            return Err(
-                "active DCAP policy must admit Platform UpToDate | SWHardeningNeeded | ConfigurationAndSWHardeningNeeded and QE UpToDate"
-                    .into(),
-            );
+            return Err(TeeAttestationActivationError::InvalidDcapTcbStatuses);
         }
         let matches_rule = policy.measurement_rules.iter().any(|rule| {
             let exact_measurement = rule.mrenclave == mrenclave
@@ -260,9 +271,7 @@ impl DcapChainSpecBindingV1 {
                 && rule.admit_until_height_exclusive == u64::MAX
         });
         if policy.measurement_rules.len() != 1 || !matches_rule {
-            return Err(
-                "active DCAP policy does not exactly bind the signed bundle measurement".into(),
-            );
+            return Err(TeeAttestationActivationError::ReleaseMeasurementMismatch);
         }
         let expected = initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
@@ -275,12 +284,9 @@ impl DcapChainSpecBindingV1 {
             self.chain_id,
             self.genesis_hash,
         )
-        .map_err(|error| format!("derive canonical initial DCAP policy: {error}"))?;
+        .map_err(TeeAttestationActivationError::derive_canonical_initial_dcap_policy)?;
         if *policy != expected {
-            return Err(
-                "active DCAP policy does not equal the canonical initial policy for the signed release"
-                    .into(),
-            );
+            return Err(TeeAttestationActivationError::NonCanonicalInitialDcapPolicy);
         }
         Ok(())
     }
@@ -321,8 +327,11 @@ impl TeeAttestationChainSpecStateV1 {
     }
 
     pub fn activation(&self) -> Result<&TeeAttestationActivationV1, &str> {
+        const UNBOUND_TEE_ATTESTATION_AUTHORITY: &str =
+            "TEE attestation ChainSpec authority is not bound";
+
         match self {
-            Self::Unbound => Err("TEE attestation ChainSpec authority is not bound"),
+            Self::Unbound => Err(UNBOUND_TEE_ATTESTATION_AUTHORITY),
             Self::Active(activation) => Ok(activation),
             Self::Invalid(error) => Err(error),
         }
@@ -342,44 +351,51 @@ fn validate_activation(
     raw: GenesisTeeAttestationV1,
     chain_id: u64,
     genesis_hash: B256,
-) -> Result<TeeAttestationActivationV1, String> {
+) -> Result<TeeAttestationActivationV1, TeeAttestationActivationError> {
     if raw.activation_height != TEE_ATTESTATION_V1_ACTIVATION_HEIGHT {
-        return Err(format!(
-            "{TEE_ATTESTATION_V1_CONFIG_FIELD}.activationHeight must be {}",
-            TEE_ATTESTATION_V1_ACTIVATION_HEIGHT
-        ));
+        return Err(TeeAttestationActivationError::InvalidActivationHeight {
+            field: TEE_ATTESTATION_V1_CONFIG_FIELD,
+            expected: TEE_ATTESTATION_V1_ACTIVATION_HEIGHT,
+        });
     }
     let encoded_schedule = decode_bounded_hex(&raw.policy_schedule)?;
     let policy_schedule = TeePolicyScheduleV1::decode_canonical(&encoded_schedule)
-        .map_err(|error| format!("invalid canonical TEE policy schedule: {error}"))?;
+        .map_err(TeeAttestationActivationError::invalid_canonical_policy_schedule)?;
     validate_initial_schedule_binding(&policy_schedule, chain_id, genesis_hash)?;
     let computed_policy_schedule_hash = policy_schedule
         .schedule_hash()
-        .map_err(|error| format!("cannot hash TEE policy schedule: {error}"))?;
+        .map_err(TeeAttestationActivationError::cannot_hash_policy_schedule)?;
     if raw.policy_schedule_hash != computed_policy_schedule_hash {
-        return Err("TEE policy schedule hash does not match canonical bytes".into());
+        return Err(TeeAttestationActivationError::PolicyScheduleHashMismatch);
     }
     let normative_resource_hash = ResourceScheduleV1::normative()
         .and_then(|schedule| schedule.schedule_hash())
-        .map_err(|error| format!("cannot derive normative resource schedule: {error}"))?;
+        .map_err(TeeAttestationActivationError::cannot_derive_normative_resource_schedule)?;
     if raw.resource_schedule_hash != normative_resource_hash {
-        return Err("TEE manifest does not bind the normative resource schedule".into());
+        return Err(TeeAttestationActivationError::ManifestResourceScheduleMismatch);
     }
     let initial_policy = policy_schedule
         .active_policy(TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
-        .map_err(|error| format!("TEE schedule has no block-1 policy: {error}"))?;
+        .map_err(TeeAttestationActivationError::missing_block1_policy)?;
     if !is_attestation_mode_allowed_for_chain_id(chain_id, initial_policy.attestation_mode) {
         return Err(match initial_policy.attestation_mode {
-            AttestationMode::DcapRequired => format!(
-                "DcapRequired requires devnet, testnet, or mainnet chain ID ({GRAMINE_DIRECT_DEV_CHAIN_ID}, {TESTNET_CHAIN_ID}, or {MAINNET_CHAIN_ID})"
-            ),
-            AttestationMode::GramineDirectDev => format!(
-                "GramineDirectDev requires devnet or testnet chain ID ({GRAMINE_DIRECT_DEV_CHAIN_ID} or {TESTNET_CHAIN_ID})"
-            ),
+            AttestationMode::DcapRequired => {
+                TeeAttestationActivationError::DcapRequiredChainIdDisallowed {
+                    devnet: GRAMINE_DIRECT_DEV_CHAIN_ID,
+                    testnet: TESTNET_CHAIN_ID,
+                    mainnet: MAINNET_CHAIN_ID,
+                }
+            }
+            AttestationMode::GramineDirectDev => {
+                TeeAttestationActivationError::GramineDirectDevChainIdDisallowed {
+                    devnet: GRAMINE_DIRECT_DEV_CHAIN_ID,
+                    testnet: TESTNET_CHAIN_ID,
+                }
+            }
         });
     }
     if initial_policy.resource_schedule_hash != raw.resource_schedule_hash {
-        return Err("initial TEE policy does not bind the manifest resource schedule".into());
+        return Err(TeeAttestationActivationError::InitialPolicyResourceScheduleMismatch);
     }
     Ok(TeeAttestationActivationV1 {
         manifest: TeeAttestationManifestV1 {
@@ -395,34 +411,36 @@ fn validate_initial_schedule_binding(
     policy_schedule: &TeePolicyScheduleV1,
     chain_id: u64,
     genesis_hash: B256,
-) -> Result<(), String> {
+) -> Result<(), TeeAttestationActivationError> {
     if policy_schedule.chain_id != chain_id_word(chain_id)
         || policy_schedule.genesis_hash != genesis_hash
     {
-        return Err("TEE policy schedule does not match ChainSpec identity".into());
+        return Err(TeeAttestationActivationError::PolicyScheduleChainSpecIdentityMismatch);
     }
     if policy_schedule.entries.len() != 1 {
-        return Err("genesis TEE policy schedule must contain exactly one initial policy".into());
+        return Err(TeeAttestationActivationError::GenesisPolicyScheduleEntryCount);
     }
     Ok(())
 }
 
-fn decode_bounded_hex(value: &str) -> Result<Vec<u8>, String> {
+fn decode_bounded_hex(value: &str) -> Result<Vec<u8>, TeeAttestationActivationError> {
     let encoded = value
         .strip_prefix("0x")
-        .ok_or_else(|| "TEE policy schedule must be 0x-prefixed hexadecimal".to_owned())?;
+        .ok_or(TeeAttestationActivationError::PolicyScheduleMissingHexPrefix)?;
     let maximum_hex_len = MAX_TEE_POLICY_SCHEDULE_BYTES
         .checked_mul(2)
-        .ok_or_else(|| "TEE policy schedule cap overflow".to_owned())?;
+        .ok_or(TeeAttestationActivationError::PolicyScheduleCapOverflow)?;
     if encoded.len() > maximum_hex_len {
-        return Err(format!(
-            "TEE policy schedule exceeds {MAX_TEE_POLICY_SCHEDULE_BYTES} bytes"
-        ));
+        return Err(
+            TeeAttestationActivationError::PolicyScheduleExceedsMaxBytes {
+                max_bytes: MAX_TEE_POLICY_SCHEDULE_BYTES,
+            },
+        );
     }
     if encoded.len() % 2 != 0 || !encoded.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("TEE policy schedule is not canonical hexadecimal bytes".into());
+        return Err(TeeAttestationActivationError::PolicyScheduleNotCanonicalHex);
     }
-    hex::decode(encoded).map_err(|error| format!("decode TEE policy schedule: {error}"))
+    hex::decode(encoded).map_err(TeeAttestationActivationError::decode_policy_schedule_hex)
 }
 
 fn chain_id_word(chain_id: u64) -> [u8; 32] {

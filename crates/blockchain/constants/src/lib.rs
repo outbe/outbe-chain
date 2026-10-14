@@ -1,9 +1,11 @@
 //! Immutable protocol parameters shared by every runtime module.
 
+pub mod errors;
+
+pub use errors::ProtocolConstantsError;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "test-protocol-overrides")]
 use std::sync::OnceLock;
-use thiserror::Error;
 
 pub const GENESIS_CONFIG_KEY: &str = "outbeProtocol";
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
@@ -173,29 +175,11 @@ struct GovernanceOverridesV1 {
     voting_window_blocks: Option<u64>,
 }
 
-#[derive(Debug, Error, Eq, PartialEq)]
-pub enum ProtocolConstantsError {
-    #[error("invalid genesis {GENESIS_CONFIG_KEY}: {0}")]
-    InvalidJson(String),
-    #[error("unsupported protocol constants schema version {0}")]
-    UnsupportedSchemaVersion(u16),
-    #[error("protocol constant {field} must be {requirement}, got {actual}")]
-    InvalidValue {
-        field: &'static str,
-        requirement: &'static str,
-        actual: u64,
-    },
-    #[error("config.{GENESIS_CONFIG_KEY} is supported only by test-protocol-overrides builds")]
-    UnsupportedInProduction,
-    #[error("protocol constants were already initialized")]
-    AlreadyInitialized,
-}
-
 impl GenesisProtocolParametersV1 {
     pub fn resolve(value: Option<&serde_json::Value>) -> Result<Self, ProtocolConstantsError> {
         let overrides = match value {
             Some(value) => serde_json::from_value::<GenesisProtocolOverridesV1>(value.clone())
-                .map_err(|error| ProtocolConstantsError::InvalidJson(error.to_string()))?,
+                .map_err(ProtocolConstantsError::from)?,
             None => GenesisProtocolOverridesV1::default(),
         };
         if let Some(version) = overrides.schema_version {

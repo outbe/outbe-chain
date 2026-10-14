@@ -7,6 +7,7 @@
 //! `mine_gratis` converts Promis into Gratis through GratisFactory.
 
 pub mod api;
+pub mod errors;
 pub mod precompile;
 pub mod runtime;
 

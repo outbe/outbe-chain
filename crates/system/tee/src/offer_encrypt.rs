@@ -13,7 +13,7 @@
 //! It uses no enclave-resident secret material. Thus the crate rule holds:
 //! secret-bearing cryptography lives only in `bin/outbe-tee-enclave`.
 
-use crate::OFFER_HKDF_SALT;
+use crate::{errors::LocalCryptoError, OFFER_HKDF_SALT};
 
 /// HKDF info string binding the derived key to the tribute-offer domain.
 pub const OFFER_HKDF_INFO: &[u8] = b"tribute-factory-encryption";
@@ -26,7 +26,7 @@ pub type EncryptedOfferParts = (Vec<u8>, [u8; 12], [u8; 32]);
 pub fn encrypt_tribute_offer(
     offer_pub: &[u8; 32],
     plaintext: &[u8],
-) -> Result<EncryptedOfferParts, String> {
+) -> Result<EncryptedOfferParts, LocalCryptoError> {
     use ring::rand::SecureRandom as _;
     let rng = ring::rand::SystemRandom::new();
     // Cryptographic randomness for an offer-encryption ephemeral + nonce. This is
@@ -34,10 +34,10 @@ pub fn encrypt_tribute_offer(
     // validator's enclave decrypts it deterministically.
     let mut eph_sk = [0u8; 32];
     rng.fill(&mut eph_sk)
-        .map_err(|_| "offer encryption rng failure".to_string())?;
+        .map_err(LocalCryptoError::offer_encryption_rng_failure)?;
     let mut nonce = [0u8; 12];
     rng.fill(&mut nonce)
-        .map_err(|_| "offer encryption rng failure".to_string())?;
+        .map_err(LocalCryptoError::offer_encryption_rng_failure)?;
     let eph_pub = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(eph_sk));
     let cipher_text = encrypt_tribute_offer_with(offer_pub, eph_sk, nonce, plaintext)?;
     Ok((cipher_text, nonce, eph_pub.to_bytes()))
@@ -50,7 +50,7 @@ pub fn encrypt_tribute_offer_with(
     eph_sk: [u8; 32],
     nonce: [u8; 12],
     plaintext: &[u8],
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, LocalCryptoError> {
     let eph_secret = x25519_dalek::StaticSecret::from(eph_sk);
     let shared = eph_secret.diffie_hellman(&x25519_dalek::PublicKey::from(*offer_pub));
     let key = hkdf_sha256(&OFFER_HKDF_SALT, shared.as_bytes(), OFFER_HKDF_INFO)?;
@@ -74,7 +74,11 @@ pub fn canary_offer_json(worldwide_day: u32) -> String {
 }
 
 /// HKDF-SHA256 extract+expand to 32 bytes (matches the enclave).
-pub(crate) fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<[u8; 32], String> {
+pub(crate) fn hkdf_sha256(
+    salt: &[u8],
+    ikm: &[u8],
+    info: &[u8],
+) -> Result<[u8; 32], LocalCryptoError> {
     use ring::hkdf;
     struct Len32;
     impl hkdf::KeyType for Len32 {
@@ -87,9 +91,9 @@ pub(crate) fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<[u8; 3
     let info_refs: &[&[u8]] = &[info];
     let okm = prk
         .expand(info_refs, Len32)
-        .map_err(|_| "hkdf expand".to_string())?;
+        .map_err(LocalCryptoError::hkdf_expand)?;
     let mut out = [0u8; 32];
-    okm.fill(&mut out).map_err(|_| "hkdf fill".to_string())?;
+    okm.fill(&mut out).map_err(LocalCryptoError::hkdf_fill)?;
     Ok(out)
 }
 
@@ -98,7 +102,7 @@ fn chacha20poly1305_encrypt(
     key: &[u8; 32],
     nonce: &[u8; 12],
     plaintext: &[u8],
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, LocalCryptoError> {
     use ring::aead::{self, BoundKey as _};
     struct OneNonce([u8; 12]);
     impl aead::NonceSequence for OneNonce {
@@ -107,12 +111,12 @@ fn chacha20poly1305_encrypt(
         }
     }
     let unbound =
-        aead::UnboundKey::new(&aead::CHACHA20_POLY1305, key).map_err(|_| "aead key".to_string())?;
+        aead::UnboundKey::new(&aead::CHACHA20_POLY1305, key).map_err(LocalCryptoError::aead_key)?;
     let mut sealing = aead::SealingKey::new(unbound, OneNonce(*nonce));
     let mut in_out = plaintext.to_vec();
     sealing
         .seal_in_place_append_tag(aead::Aad::empty(), &mut in_out)
-        .map_err(|_| "aead seal".to_string())?;
+        .map_err(LocalCryptoError::aead_seal)?;
     Ok(in_out)
 }
 

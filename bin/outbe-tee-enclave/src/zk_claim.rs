@@ -23,13 +23,14 @@ use outbe_zk::claim::TributeDraftClaim;
 use outbe_zk::protocol::entity::Entity as EntityTrait;
 
 use crate::compute::CanonicalAmount;
+use crate::errors::{EnclaveResult, ProcessError};
 use crate::payload::TributeInputPayload;
 
 pub(crate) fn derive_expected_hashes(
     offer: &EncryptedTributeOffer,
     payload: &TributeInputPayload,
     amount: &CanonicalAmount,
-) -> Result<Option<TributeZkExpectedHashes>, String> {
+) -> EnclaveResult<Option<TributeZkExpectedHashes>> {
     let Some(context) = &offer.zk_context else {
         return Ok(None);
     };
@@ -39,9 +40,9 @@ pub(crate) fn derive_expected_hashes(
         .su_hashes
         .iter()
         .map(|value| parse_b256(value, "su_hash"))
-        .collect::<Result<Vec<_>, _>>()?;
-    let su_ids = outbe_zk::codec::sort_set(&su_ids)
-        .map_err(|error| format!("invalid canonical su_ids: {error}"))?;
+        .collect::<EnclaveResult<Vec<_>>>()?;
+    let su_ids =
+        outbe_zk::codec::sort_set(&su_ids).map_err(ProcessError::invalid_canonical_su_ids)?;
 
     let draft = TributeDraftClaim {
         id,
@@ -54,7 +55,7 @@ pub(crate) fn derive_expected_hashes(
     };
     let nft_hash = draft
         .entity_hash()
-        .map_err(|error| format!("invalid canonical TributeDraft: {error}"))?;
+        .map_err(ProcessError::invalid_canonical_draft)?;
     let sender = offer.owner.into_array();
     let commitment_id: [u8; 32] = id.into();
     let binding_hash = outbe_zk::primitive::hash::binding(
@@ -63,7 +64,7 @@ pub(crate) fn derive_expected_hashes(
         context.chain_id,
         context.l2_chain_id,
     )
-    .map_err(|error| format!("failed to derive binding_hash: {error}"))?;
+    .map_err(ProcessError::derive_binding_hash)?;
 
     Ok(Some(TributeZkExpectedHashes {
         nft_hash: field_to_b256(nft_hash),
@@ -71,10 +72,10 @@ pub(crate) fn derive_expected_hashes(
     }))
 }
 
-fn parse_b256(value: &str, what: &'static str) -> Result<B256, String> {
+fn parse_b256(value: &str, what: &'static str) -> EnclaveResult<B256> {
     value
         .parse::<B256>()
-        .map_err(|_| format!("{what} must be 0x-prefixed 32-byte hex"))
+        .map_err(|_| ProcessError::InvalidB256Hex { what }.into())
 }
 
 fn field_to_b256(field: Fr) -> B256 {

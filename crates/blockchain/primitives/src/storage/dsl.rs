@@ -264,11 +264,11 @@ where
 }
 
 pub fn missing_record_err(name: &str) -> PrecompileError {
-    PrecompileError::Revert(format!("{name} not found"))
+    PrecompileError::revert(format!("{name} not found"))
 }
 
 pub fn existing_record_err(name: &str) -> PrecompileError {
-    PrecompileError::Revert(format!("{name} already exists"))
+    PrecompileError::revert(format!("{name} already exists"))
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ pub fn dispatch(
     )
 }
 
-type QuoteGenerator = fn(&[u8; 64]) -> Result<Vec<u8>, String>;
+type QuoteGenerator = fn(&[u8; 64]) -> EnclaveResult<Vec<u8>>;
 
 #[derive(Clone, Copy)]
 pub(in crate::transport) struct DispatchInitializationContext<'a> {

@@ -7,7 +7,7 @@
 //! (canonical-hash recheck), attestation (verify-then-discard), and
 //! `tee_sidecar_unavailable` failure mode.
 
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_tee::protocol::{
     fidelity_cohort_canonical_hash, fidelity_query_canonical_hash,
     fidelity_snapshot_canonical_hash, EnclaveRequest, EnclaveResponse, FidelityCohortRequest,
@@ -15,9 +15,7 @@ use outbe_tee::protocol::{
     FidelitySnapshotRequest,
 };
 
-fn unavailable(context: &str) -> PrecompileError {
-    PrecompileError::Fatal(format!("tee_sidecar_unavailable: {context}"))
-}
+use crate::errors::FidelityFatalError;
 
 /// Apply a standalone Fidelity cohort op inside the enclave and validate the
 /// response (determinism recheck + attestation verify-then-discard).
@@ -35,26 +33,25 @@ pub(crate) fn apply_cohort_op(req: FidelityCohortRequest) -> Result<FidelityCoho
         });
         (attestation_pub, response)
     })
-    .ok_or_else(|| unavailable("ApplyFidelityCohortOp"))?;
-    let response = response.map_err(|e| unavailable(&format!("ApplyFidelityCohortOp: {e}")))?;
+    .ok_or(FidelityFatalError::SidecarUnavailable {
+        context: "ApplyFidelityCohortOp",
+    })?;
+    let response = response
+        .map_err(|e| FidelityFatalError::sidecar_request_failed("ApplyFidelityCohortOp", e))?;
 
     let result = match response {
         EnclaveResponse::FidelityCohortApplied { result } => *result,
         EnclaveResponse::Error { message } => {
-            return Err(PrecompileError::Fatal(format!(
-                "enclave ApplyFidelityCohortOp error: {message}"
-            )))
+            return Err(FidelityFatalError::EnclaveOpError {
+                context: "ApplyFidelityCohortOp",
+                message,
+            }
+            .into())
         }
-        other => {
-            return Err(PrecompileError::Fatal(format!(
-                "unexpected enclave response: {other:?}"
-            )))
-        }
+        other => return Err(FidelityFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
     };
     if result.inputs_canonical_hash != expected_hash {
-        return Err(PrecompileError::Fatal(
-            "tee_enclave_nondeterminism".to_string(),
-        ));
+        return Err(FidelityFatalError::EnclaveNondeterminism.into());
     }
     outbe_tee::verify_fidelity_cohort_attestation(
         &attestation_pub,
@@ -62,7 +59,7 @@ pub(crate) fn apply_cohort_op(req: FidelityCohortRequest) -> Result<FidelityCoho
         &result,
         &result.attestation_tag,
     )
-    .map_err(|e| PrecompileError::Fatal(format!("tee_fidelity_attestation_invalid: {e}")))?;
+    .map_err(FidelityFatalError::attestation_invalid)?;
     Ok(result)
 }
 
@@ -81,8 +78,11 @@ pub(crate) fn snapshot_leagues(req: FidelitySnapshotRequest) -> Result<Vec<Fidel
         });
         (attestation_pub, response)
     })
-    .ok_or_else(|| unavailable("SnapshotFidelityLeagues"))?;
-    let response = response.map_err(|e| unavailable(&format!("SnapshotFidelityLeagues: {e}")))?;
+    .ok_or(FidelityFatalError::SidecarUnavailable {
+        context: "SnapshotFidelityLeagues",
+    })?;
+    let response = response
+        .map_err(|e| FidelityFatalError::sidecar_request_failed("SnapshotFidelityLeagues", e))?;
 
     let (leagues, inputs_canonical_hash, attestation_tag) = match response {
         EnclaveResponse::FidelityLeaguesSnapshotted {
@@ -91,20 +91,16 @@ pub(crate) fn snapshot_leagues(req: FidelitySnapshotRequest) -> Result<Vec<Fidel
             attestation_tag,
         } => (leagues, inputs_canonical_hash, attestation_tag),
         EnclaveResponse::Error { message } => {
-            return Err(PrecompileError::Fatal(format!(
-                "enclave SnapshotFidelityLeagues error: {message}"
-            )))
+            return Err(FidelityFatalError::EnclaveOpError {
+                context: "SnapshotFidelityLeagues",
+                message,
+            }
+            .into())
         }
-        other => {
-            return Err(PrecompileError::Fatal(format!(
-                "unexpected enclave response: {other:?}"
-            )))
-        }
+        other => return Err(FidelityFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
     };
     if inputs_canonical_hash != expected_hash {
-        return Err(PrecompileError::Fatal(
-            "tee_enclave_nondeterminism".to_string(),
-        ));
+        return Err(FidelityFatalError::EnclaveNondeterminism.into());
     }
     outbe_tee::verify_fidelity_snapshot_attestation(
         &attestation_pub,
@@ -112,7 +108,7 @@ pub(crate) fn snapshot_leagues(req: FidelitySnapshotRequest) -> Result<Vec<Fidel
         &leagues,
         &attestation_tag,
     )
-    .map_err(|e| PrecompileError::Fatal(format!("tee_fidelity_attestation_invalid: {e}")))?;
+    .map_err(FidelityFatalError::attestation_invalid)?;
     Ok(leagues)
 }
 
@@ -131,26 +127,25 @@ pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResu
         });
         (attestation_pub, response)
     })
-    .ok_or_else(|| unavailable("QueryFidelityIndex"))?;
-    let response = response.map_err(|e| unavailable(&format!("QueryFidelityIndex: {e}")))?;
+    .ok_or(FidelityFatalError::SidecarUnavailable {
+        context: "QueryFidelityIndex",
+    })?;
+    let response = response
+        .map_err(|e| FidelityFatalError::sidecar_request_failed("QueryFidelityIndex", e))?;
 
     let result = match response {
         EnclaveResponse::FidelityIndexQueried { result } => *result,
         EnclaveResponse::Error { message } => {
-            return Err(PrecompileError::Fatal(format!(
-                "enclave QueryFidelityIndex error: {message}"
-            )))
+            return Err(FidelityFatalError::EnclaveOpError {
+                context: "QueryFidelityIndex",
+                message,
+            }
+            .into())
         }
-        other => {
-            return Err(PrecompileError::Fatal(format!(
-                "unexpected enclave response: {other:?}"
-            )))
-        }
+        other => return Err(FidelityFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
     };
     if result.inputs_canonical_hash != expected_hash {
-        return Err(PrecompileError::Fatal(
-            "tee_enclave_nondeterminism".to_string(),
-        ));
+        return Err(FidelityFatalError::EnclaveNondeterminism.into());
     }
     outbe_tee::verify_fidelity_query_attestation(
         &attestation_pub,
@@ -158,7 +153,7 @@ pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResu
         &result,
         &result.attestation_tag,
     )
-    .map_err(|e| PrecompileError::Fatal(format!("tee_fidelity_attestation_invalid: {e}")))?;
+    .map_err(FidelityFatalError::attestation_invalid)?;
     Ok(result)
 }
 
@@ -220,17 +215,12 @@ pub mod test_enclave {
             .expect("test enclave not installed")
     }
 
-    /// Map an in-process engine error to the same `Fatal` shape the real host
-    /// path produces from an `EnclaveResponse::Error`.
-    fn engine_err(context: &str, e: impl core::fmt::Display) -> PrecompileError {
-        PrecompileError::Fatal(format!("enclave {context} error: {e}"))
-    }
-
     pub(super) fn try_cohort(req: &FidelityCohortRequest) -> Option<Result<FidelityCohortResult>> {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
-                outbe_tee_enclave::fidelity::apply_cohort_op(&key, req)
-                    .map_err(|e| engine_err("ApplyFidelityCohortOp", e))
+                outbe_tee_enclave::fidelity::apply_cohort_op(&key, req).map_err(|e| {
+                    FidelityFatalError::enclave_op_error("ApplyFidelityCohortOp", e).into()
+                })
             })
         })
     }
@@ -240,8 +230,9 @@ pub mod test_enclave {
     ) -> Option<Result<Vec<FidelityLeagueEntry>>> {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
-                outbe_tee_enclave::fidelity::snapshot_leagues(&key, req)
-                    .map_err(|e| engine_err("SnapshotFidelityLeagues", e))
+                outbe_tee_enclave::fidelity::snapshot_leagues(&key, req).map_err(|e| {
+                    FidelityFatalError::enclave_op_error("SnapshotFidelityLeagues", e).into()
+                })
             })
         })
     }
@@ -249,8 +240,9 @@ pub mod test_enclave {
     pub(super) fn try_query(req: &FidelityQueryRequest) -> Option<Result<FidelityQueryResult>> {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
-                outbe_tee_enclave::fidelity::query_index(&key, dev_chain(), req)
-                    .map_err(|e| engine_err("QueryFidelityIndex", e))
+                outbe_tee_enclave::fidelity::query_index(&key, dev_chain(), req).map_err(|e| {
+                    FidelityFatalError::enclave_op_error("QueryFidelityIndex", e).into()
+                })
             })
         })
     }

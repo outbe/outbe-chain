@@ -237,19 +237,17 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
     }
 
     if records.len() > u8::MAX as usize {
-        return Err(PrecompileError::Fatal(
-            "too many block artifact records".into(),
-        ));
+        return Err(PrecompileError::fatal("too many block artifact records"));
     }
 
     let payload_len = records.iter().try_fold(0usize, |acc, (_, payload)| {
         ensure_payload_fits_u16("block artifact record", payload.len())?;
         acc.checked_add(1 + 2 + payload.len())
-            .ok_or_else(|| PrecompileError::Fatal("block artifact length overflow".into()))
+            .ok_or_else(|| PrecompileError::fatal("block artifact length overflow"))
     })?;
     let total_len = 4 + 1 + 1 + payload_len;
     if total_len > OUTBE_MAX_EXTRA_DATA_SIZE {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::fatal(format!(
             "block artifacts exceed extra_data budget: {total_len} > {OUTBE_MAX_EXTRA_DATA_SIZE}"
         )));
     }
@@ -278,8 +276,8 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
 
     for _ in 0..record_count {
         if offset + 3 > extra_data.len() {
-            return Err(PrecompileError::Fatal(
-                "truncated block artifact record header".into(),
+            return Err(PrecompileError::fatal(
+                "truncated block artifact record header",
             ));
         }
         let tag = extra_data[offset];
@@ -288,10 +286,10 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
         offset += 2;
         let end = offset
             .checked_add(payload_len)
-            .ok_or_else(|| PrecompileError::Fatal("block artifact record overflow".into()))?;
+            .ok_or_else(|| PrecompileError::fatal("block artifact record overflow"))?;
         let Some(payload) = extra_data.get(offset..end) else {
-            return Err(PrecompileError::Fatal(
-                "truncated block artifact record payload".into(),
+            return Err(PrecompileError::fatal(
+                "truncated block artifact record payload",
             ));
         };
         offset = end;
@@ -300,9 +298,7 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
     }
 
     if offset != extra_data.len() {
-        return Err(PrecompileError::Fatal(
-            "trailing bytes in block artifacts".into(),
-        ));
+        return Err(PrecompileError::fatal("trailing bytes in block artifacts"));
     }
 
     Ok(artifacts)
@@ -321,7 +317,7 @@ pub fn sanitize_prefinal_outbe_block_artifacts(extra_data: &[u8]) -> Result<Byte
     artifacts.compressed_entities_root = None;
     let encoded = encode_outbe_block_artifacts(&artifacts)?;
     if encoded.len() > OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::fatal(format!(
             "pre-final block artifacts exceed reserved extra_data budget: {} > {}",
             encoded.len(),
             OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE
@@ -380,7 +376,7 @@ pub fn tee_expired_target_exclusions_hash(addresses: &[Address]) -> Result<B256>
 
 fn validate_tee_expired_target_exclusions(addresses: &[Address]) -> Result<()> {
     if addresses.len() > MAX_TEE_EXPIRED_TARGET_EXCLUSIONS {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::fatal(format!(
             "TEE expiry exclusions exceed protocol cap: {} > {}",
             addresses.len(),
             MAX_TEE_EXPIRED_TARGET_EXCLUSIONS
@@ -389,13 +385,13 @@ fn validate_tee_expired_target_exclusions(addresses: &[Address]) -> Result<()> {
     let mut unique = std::collections::BTreeSet::new();
     for address in addresses {
         if address.is_zero() {
-            return Err(PrecompileError::Fatal(
-                "TEE expiry exclusions contain zero validator address".into(),
+            return Err(PrecompileError::fatal(
+                "TEE expiry exclusions contain zero validator address",
             ));
         }
         if !unique.insert(*address) {
-            return Err(PrecompileError::Fatal(
-                "TEE expiry exclusions contain duplicate validator address".into(),
+            return Err(PrecompileError::fatal(
+                "TEE expiry exclusions contain duplicate validator address",
             ));
         }
     }
@@ -425,7 +421,7 @@ pub fn decode_late_finalize_credits_artifact(
 
 fn ensure_count_fits_u16(name: &str, count: usize) -> Result<()> {
     if count > u16::MAX as usize {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::fatal(format!(
             "{name} list exceeds u16 count limit: {count}"
         )));
     }
@@ -434,7 +430,7 @@ fn ensure_count_fits_u16(name: &str, count: usize) -> Result<()> {
 
 fn ensure_len_fits_u32(name: &str, len: usize) -> Result<()> {
     if len > u32::MAX as usize {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::fatal(format!(
             "{name} exceeds u32 length limit: {len}"
         )));
     }
@@ -443,7 +439,7 @@ fn ensure_len_fits_u32(name: &str, len: usize) -> Result<()> {
 
 fn ensure_payload_fits_u16(name: &str, len: usize) -> Result<()> {
     if len > u16::MAX as usize {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::fatal(format!(
             "{name} payload exceeds u16 length limit: {len}"
         )));
     }
@@ -452,17 +448,17 @@ fn ensure_payload_fits_u16(name: &str, len: usize) -> Result<()> {
 
 fn decode_block_artifact_record_count(extra_data: &[u8]) -> Result<usize> {
     if extra_data.len() < 4 + 1 + 1 {
-        return Err(PrecompileError::Fatal("block artifacts too short".into()));
+        return Err(PrecompileError::fatal("block artifacts too short"));
     }
 
     if &extra_data[..4] != MAGIC {
-        return Err(PrecompileError::Fatal(
-            "unknown non-empty extra_data block artifact".into(),
+        return Err(PrecompileError::fatal(
+            "unknown non-empty extra_data block artifact",
         ));
     }
 
     if extra_data[4] != VERSION {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::fatal(format!(
             "unsupported block artifact version: {}",
             extra_data[4]
         )));

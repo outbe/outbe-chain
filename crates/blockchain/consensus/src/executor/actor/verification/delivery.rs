@@ -58,10 +58,12 @@ impl VerificationWork {
         cancelled: ExecutionReadCancelled,
     ) -> eyre::Result<()> {
         if !cancelled.budget.same_request(&request.budget) || !request.budget.is_cancelled() {
-            eyre::bail!("execution cancellation does not match its cancelled request");
+            return Err(crate::errors::ExecutorError::CancellationMismatch.into());
         }
         let Owner::Verification(round) = request.owner else {
-            eyre::bail!("unexpected cancellation of parent convergence execution");
+            return Err(
+                crate::errors::ExecutorError::UnexpectedParentConvergenceCancellation.into(),
+            );
         };
         if self.queued.get(&round).is_some_and(|queued| {
             queued.walk.id == request.id && queued.walk.cursor.digest() == request.digest

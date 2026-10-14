@@ -73,7 +73,7 @@ impl MetadosisContract<'_> {
         accountability
             .close(input.at_height, input.limits)
             .map_err(|error| {
-                storage_corruption_message(format!("close OCOMP vote accountability: {error}"))
+                crate::errors::storage_corruption_context("close OCOMP vote accountability", error)
             })?;
         Ok(accountability)
     }
@@ -154,17 +154,11 @@ impl MetadosisContract<'_> {
         if current
             .is_some_and(|record| record.status == outbe_validatorset::runtime::status::ACTIVE)
         {
-            let penalty =
-                staking
-                    .record_ocomp_miss(validator_address)
-                    .map_err(|error| match error {
-                        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
-                            storage_corruption_message(format!(
-                            "record ACTIVE missing OCOMP validator {participant_index}: {error}"
-                        ))
-                        }
-                        other => other,
-                    })?;
+            let penalty = staking
+                .record_ocomp_miss(validator_address)
+                .map_err(|error| {
+                    crate::errors::record_active_miss_error(participant_index, error)
+                })?;
             self.emit(IMetadosis::OcompVoteMissed {
                 validator: validator_address,
                 jobId: missing.job_id,
@@ -192,13 +186,8 @@ fn resolve_recovery_before_miss(
 ) -> Result<()> {
     let resolution = staking
         .resolve_due_ocomp_recovery_window(validator_address)
-        .map_err(|error| match error {
-            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
-                storage_corruption_message(format!(
-                    "resolve due OCOMP recovery for participant {participant_index}: {error}"
-                ))
-            }
-            other => other,
+        .map_err(|error| {
+            crate::errors::resolve_due_ocomp_recovery_error(participant_index, error)
         })?;
     let outcome = match resolution {
         outbe_staking::logic::OcompRecoveryResolution::Restored { .. } => Some("restored"),

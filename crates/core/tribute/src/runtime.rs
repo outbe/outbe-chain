@@ -55,9 +55,7 @@ impl TributeContract<'_> {
         verified_nominal: alloy_primitives::U256,
     ) -> Result<()> {
         if self.ocomp_profile_ready.read()? {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
-                "populated OCOMP Tribute input requires certified retirement".into(),
-            ));
+            return Err(TributeError::PopulatedOcompInputRequiresCertifiedRetirement.into());
         }
         self.consume_lysis_partition_inner(day, verified_count, verified_nominal)
     }
@@ -74,21 +72,13 @@ impl TributeContract<'_> {
             || totals.tribute_count != verified_count
             || totals.tribute_nominal_total_minor != verified_nominal
         {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "Lysis input count/nominal does not match sealed Tribute DayTotals".into(),
-                ),
-            );
+            return Err(TributeError::LysisInputMismatch.into());
         }
         let supply = self
             .total_supply
             .read()?
             .checked_sub(u64::from(verified_count))
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "Tribute total supply underflow during Lysis".into(),
-                )
-            })?;
+            .ok_or(TributeError::TotalSupplyUnderflowDuringLysis)?;
         self.total_supply.write(supply)?;
         self.reset_day_nominal(&totals)?;
         totals.tribute_count = 0;
@@ -108,9 +98,7 @@ impl TributeContract<'_> {
         if self.ocomp_profile_ready.read()? {
             let admission = self.pre_admission_projection(day)?;
             if admission.is_sealed && admission.tribute_count != 0 {
-                return Err(outbe_primitives::error::PrecompileError::Revert(
-                    "populated OCOMP Tribute input requires certified retirement".into(),
-                ));
+                return Err(TributeError::PopulatedOcompInputRequiresCertifiedRetirement.into());
             }
         }
         let storage = self.storage_handle();
@@ -134,11 +122,7 @@ impl TributeContract<'_> {
                 || totals.tribute_count != 0
                 || !totals.tribute_nominal_total_minor.is_zero()
             {
-                return Err(
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                        "MissedOffering requires a sealed empty Tribute partition".into(),
-                    ),
-                );
+                return Err(TributeError::MissedOfferingRequiresSealedEmptyPartition.into());
             }
             self.retire_completed_partition_inner(scope, day)
         });
@@ -182,9 +166,7 @@ impl TributeContract<'_> {
             || totals.tribute_count != 0
             || !totals.tribute_nominal_total_minor.is_zero()
         {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
-                "Tribute WWD is not completed and empty".into(),
-            ));
+            return Err(TributeError::WorldwideDayNotCompletedAndEmpty.into());
         }
         self.emit(ITribute::TributePartitionRetired {
             worldwideDay: day.into(),
@@ -235,11 +217,11 @@ impl TributeContract<'_> {
         self.bump_day_bucket_record(&record, false)?;
         self.update_pre_admission_for_tribute(&record, false)?;
 
-        let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "Tribute total supply underflow during burn".into(),
-            )
-        })?;
+        let supply = self
+            .total_supply
+            .read()?
+            .checked_sub(1)
+            .ok_or(TributeError::TotalSupplyUnderflowDuringBurn)?;
         self.total_supply.write(supply)?;
 
         delete(self.storage_handle(), scope, current)?;

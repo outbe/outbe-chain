@@ -53,10 +53,10 @@ impl PresentJobUnion {
         let encoded = job.encode_canonical(&poc_schema_limits())?;
         let tx = self.db.tx_mut()?;
         if let Some(previous) = tx.get::<InventoryRows>(key.clone())? {
-            ensure!(
+            require(
                 previous == encoded,
-                "conflicting canonical authority for present job"
-            );
+                SnapshotOcompError::ConflictingCanonicalAuthorityForPresentJob,
+            )?;
         }
         tx.put::<InventoryRows>(key, encoded)?;
         tx.commit()?;
@@ -108,10 +108,10 @@ impl PresentJobUnion {
         let key = Self::key(prefix, job);
         let tx = self.db.tx_mut()?;
         if let Some(previous) = tx.get::<InventoryRows>(key.clone())? {
-            ensure!(
+            require(
                 previous == bytes,
-                "conflicting surviving evidence for same job"
-            );
+                SnapshotOcompError::ConflictingSurvivingEvidenceForJob,
+            )?;
         }
         tx.put::<InventoryRows>(key, bytes)?;
         tx.commit()?;
@@ -120,7 +120,10 @@ impl PresentJobUnion {
 
     pub(super) fn publish_evidence(&self, from: u8, to: u8, flag: u8) -> eyre::Result<()> {
         self.visit_prefix(&[from], &mut |key, bytes| {
-            ensure!(key.len() == 33, "invalid scratch evidence key");
+            require(
+                key.len() == 33,
+                SnapshotOcompError::InvalidScratchEvidenceKey,
+            )?;
             let job = B256::from_slice(&key[1..]);
             self.save_evidence(to, job, bytes)?;
             if flag != 0 {
@@ -153,7 +156,10 @@ impl PresentJobUnion {
             .tx()?
             .get::<InventoryRows>(Self::key(b'c', job))?
             .map(|bytes| {
-                ensure!(bytes.len() > fixed + 40, "invalid scratch discovery ACK");
+                require(
+                    bytes.len() > fixed + 40,
+                    SnapshotOcompError::InvalidScratchDiscoveryAck,
+                )?;
                 Ok(StoredDiscoveryAckV1 {
                     reference: DiscoveryAckRefV1::decode_fixed(&bytes[..fixed])?,
                     lease_generation: u64::from_be_bytes(bytes[fixed..fixed + 8].try_into()?),
@@ -182,7 +188,10 @@ impl PresentJobUnion {
             .tx()?
             .get::<InventoryRows>(Self::key(b'v', job))?
             .map(|bytes| {
-                ensure!(bytes.len() == 64, "invalid scratch local-result binding");
+                require(
+                    bytes.len() == 64,
+                    SnapshotOcompError::InvalidScratchLocalResultBinding,
+                )?;
                 Ok((
                     B256::from_slice(&bytes[..32]),
                     B256::from_slice(&bytes[32..]),
@@ -213,7 +222,10 @@ impl PresentJobUnion {
             .tx()?
             .get::<InventoryRows>(Self::key(b'e', job))?
             .map(|bytes| {
-                ensure!(bytes.len() == 48, "invalid scratch export authority");
+                require(
+                    bytes.len() == 48,
+                    SnapshotOcompError::InvalidScratchExportAuthority,
+                )?;
                 Ok(outbe_node::ocomp::retention::ExportAuthorityV1 {
                     source_generation: u64::from_be_bytes(bytes[..8].try_into()?),
                     lease_generation: u64::from_be_bytes(bytes[8..16].try_into()?),
@@ -256,14 +268,14 @@ impl PresentJobUnion {
         visitor: &mut impl FnMut(outbe_ocomp_protocol::CasObjectRefV1) -> eyre::Result<()>,
     ) -> eyre::Result<()> {
         self.visit_prefix(&Self::key(b'r', job), &mut |_, bytes| {
-            ensure!(
+            require(
                 bytes.len() == 41 || bytes.len() == 43,
-                "invalid scratch reference"
-            );
+                SnapshotOcompError::InvalidScratchReference,
+            )?;
             let expected_ocb1_kind = match bytes[40] {
                 0 if bytes.len() == 41 => None,
                 1 if bytes.len() == 43 => Some(u16::from_be_bytes(bytes[41..].try_into()?)),
-                _ => eyre::bail!("invalid scratch reference kind"),
+                _ => return Err(SnapshotOcompError::InvalidScratchReferenceKind.into()),
             };
             visitor(outbe_ocomp_protocol::CasObjectRefV1 {
                 transport_digest: B256::from_slice(&bytes[..32]),
@@ -323,29 +335,29 @@ pub(super) fn present_count(
             visited: count,
         });
 }
-pub(super) fn existing_directory(path: &Path) -> eyre::Result<bool> {
+fn existing_path_kind(
+    path: &Path,
+    predicate: fn(&std::fs::Metadata) -> bool,
+    make_error: fn(String) -> SnapshotOcompError,
+) -> eyre::Result<bool> {
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.into()),
         Ok(metadata) => {
-            ensure!(
-                metadata.is_dir(),
-                "not a native directory: {}",
-                path.display()
-            );
+            require(predicate(&metadata), make_error(path.display().to_string()))?;
             Ok(true)
         }
     }
 }
+pub(super) fn existing_directory(path: &Path) -> eyre::Result<bool> {
+    existing_path_kind(path, std::fs::Metadata::is_dir, |path| {
+        SnapshotOcompError::NotNativeDirectory { path }
+    })
+}
 pub(super) fn existing_file(path: &Path) -> eyre::Result<bool> {
-    match std::fs::symlink_metadata(path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-        Ok(metadata) => {
-            ensure!(metadata.is_file(), "not a native file: {}", path.display());
-            Ok(true)
-        }
-    }
+    existing_path_kind(path, std::fs::Metadata::is_file, |path| {
+        SnapshotOcompError::NotNativeFile { path }
+    })
 }
 pub(super) fn directory_has_entries(path: &Path) -> eyre::Result<bool> {
     if !existing_directory(path)? {
@@ -365,14 +377,14 @@ pub(super) fn scan_present_jobs(
     let mut count = 0_u64;
     for entry in std::fs::read_dir(root)? {
         let entry = entry?;
-        ensure!(
+        require(
             entry.file_type()?.is_dir(),
-            "present job locator is not a directory"
-        );
+            SnapshotOcompError::PresentJobLocatorNotDirectory,
+        )?;
         let name = entry.file_name();
         let name = name
             .to_str()
-            .ok_or_else(|| eyre::eyre!("invalid present job locator"))?;
+            .ok_or(SnapshotOcompError::InvalidPresentJobLocator)?;
         // The exporter retains inventory/opening work beside published input catalogs.
         if flag == PRESENT_INPUTS && name == ".work" {
             continue;
@@ -380,10 +392,10 @@ pub(super) fn scan_present_jobs(
         let mut bytes = [0; 32];
         hex::decode_to_slice(name, &mut bytes)?;
         let job = B256::from(bytes);
-        ensure!(
+        require(
             !job.is_zero() && name == hex::encode(job),
-            "noncanonical present job locator"
-        );
+            SnapshotOcompError::NoncanonicalPresentJobLocator,
+        )?;
         let path = if flag == PRESENT_ADMISSIONS {
             entry.path().join("admissions")
         } else {
@@ -395,7 +407,7 @@ pub(super) fn scan_present_jobs(
         }
         count = count
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("present job count overflow"))?;
+            .ok_or(SnapshotOcompError::PresentJobCountOverflow)?;
     }
     Ok(count)
 }
