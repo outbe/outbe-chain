@@ -25,6 +25,7 @@ outbe-tee-enclave = { workspace = true, optional = true }
 x25519-dalek = { workspace = true, optional = true }
 
 [dev-dependencies]
+outbe-poseidon = { workspace = true, features = ["test-utils"] }
 outbe-nod = { path = ".", features = ["test-enclave"] }
 outbe-tee-enclave.workspace = true
 x25519-dalek.workspace = true

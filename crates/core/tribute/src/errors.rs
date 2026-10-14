@@ -3,6 +3,16 @@ use thiserror::Error;
 
 use crate::TributeRepositoryError;
 
+pub(crate) fn commitment_error(
+    error: outbe_compressed_entities::CommitmentError,
+) -> PrecompileError {
+    if error.is_infrastructure() {
+        PrecompileError::CryptoBackendUnavailable(error.to_string())
+    } else {
+        PrecompileError::Fatal(error.to_string())
+    }
+}
+
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum TributeError {
@@ -46,6 +56,10 @@ impl From<TributeError> for PrecompileError {
 impl From<TributeRepositoryError> for PrecompileError {
     fn from(value: TributeRepositoryError) -> Self {
         use outbe_offchain_storage::StorageErrorKind;
+
+        if value.is_infrastructure() {
+            return PrecompileError::CryptoBackendUnavailable(value.to_string());
+        }
 
         let message = value.to_string();
         match &value {

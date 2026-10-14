@@ -318,6 +318,8 @@ enum NextBlock {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ProjectionError {
+    #[error("node-local cryptographic backend unavailable: {0}")]
+    CryptoBackendUnavailable(#[source] outbe_compressed_entities::CommitmentError),
     #[error("off-chain storage failure: {0}")]
     Storage(#[from] StorageError),
     #[error("Tribute repository failure: {0}")]
@@ -397,6 +399,16 @@ pub enum ProjectionError {
     },
     #[error("tribute {tribute_id} changes after its worldwide day was retired in the same block")]
     TributeStoredAfterDayRetirement { tribute_id: WwdEntityId },
+}
+
+impl ProjectionError {
+    pub(crate) fn commitment(error: outbe_compressed_entities::CommitmentError) -> Self {
+        if error.is_infrastructure() {
+            Self::CryptoBackendUnavailable(error)
+        } else {
+            Self::CorruptProjectedBody(error.to_string())
+        }
+    }
 }
 
 /// Composition of domain-owned entity routing, shared by node and exporters.

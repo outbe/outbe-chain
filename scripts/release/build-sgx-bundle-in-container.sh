@@ -39,6 +39,12 @@ prepare() {
     "${installed}/gramine/libpal.so"
   cp -aL /usr/lib/x86_64-linux-gnu/gramine/runtime/glibc/. \
     "${installed}/gramine/runtime/glibc/"
+  # Native hashing links libc++ even without the proving backend or SRS.
+  # This directory is mounted at /lib and trusted by the signed manifest.
+  for library in libc++.so.1 libc++abi.so.1 libunwind.so.1; do
+    install -m 0644 "/usr/lib/x86_64-linux-gnu/${library}" \
+      "${installed}/gramine/runtime/glibc/${library}"
+  done
   python3 /source/scripts/release/verify_dcap_native_qvl.py \
     --manifest /source/release/dcap-native-qvl-v1.json \
     --root / \

@@ -83,6 +83,73 @@ fn genesis_identity() -> ExactParentIdentity {
     }
 }
 
+#[test]
+fn collection_backend_failure_preserves_finalized_state_and_can_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let service = service(directory.path());
+    let entity = EntityRef::Tribute(WwdEntityId::from_day_and_digest(
+        WorldwideDay::new(7),
+        [3_u8; 32],
+    ));
+    let old_leaf = Commitment::try_from(b256(11).0).unwrap();
+    let parent = service.open_parent(genesis_identity()).unwrap();
+    let provisional = parent
+        .prepare_seal(
+            1,
+            &[FinalLeafMutation {
+                entity,
+                final_leaf: Some(old_leaf),
+            }],
+            &[],
+        )
+        .unwrap();
+    let root = provisional.new_root();
+    let block_hash = b256(91);
+    service.publish_candidate(block_hash, provisional).unwrap();
+    service.apply_finalized(1, block_hash, root).unwrap();
+    drop(parent);
+    let committed = service.finalized_marker().unwrap();
+    let identity = ExactParentIdentity {
+        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+        block_number: 1,
+        block_hash,
+        root,
+    };
+    let parent = service.open_parent(identity).unwrap();
+    let mutations = [FinalLeafMutation {
+        entity,
+        final_leaf: Some(Commitment::try_from(b256(12).0).unwrap()),
+    }];
+    {
+        let _failure = outbe_poseidon::testing::fail_after(2);
+        assert!(matches!(
+            parent.prepare_seal(2, &mutations, &[]),
+            Err(PrecompileError::CryptoBackendUnavailable(_))
+        ));
+    }
+    assert_eq!(service.finalized_marker().unwrap(), committed);
+    assert!(service.candidate(2, b256(92)).unwrap().is_none());
+    assert_eq!(
+        parent.read_leaf_verified(entity, root).unwrap(),
+        Some(old_leaf)
+    );
+    let retry = parent.prepare_seal(2, &mutations, &[]).unwrap();
+    assert_ne!(retry.new_root(), root);
+    drop(retry);
+    drop(parent);
+    drop(service);
+    let reopened = service_with_lease_timeout(directory.path(), std::time::Duration::from_secs(1));
+    assert_eq!(reopened.finalized_marker().unwrap(), committed);
+    assert_eq!(
+        reopened
+            .open_parent(identity)
+            .unwrap()
+            .read_leaf_verified(entity, root)
+            .unwrap(),
+        Some(old_leaf)
+    );
+}
+
 const CHILD_ROOT: &str = "OUTBE_CE_TEST_ROOT";
 const CHILD_OFFER: &str = "OUTBE_CE_TEST_OFFER";
 const CHILD_ACK: &str = "OUTBE_CE_TEST_ACK";

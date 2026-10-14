@@ -7,6 +7,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum PersistenceError {
+    #[error("CES2 hashing failed: {0}")]
+    CryptoBackend(#[source] crate::CommitmentError),
     #[error("I/O error at {path}: {message}")]
     Io { path: PathBuf, message: String },
     #[error("MDBX error at {path}: {message}")]
@@ -143,6 +145,33 @@ pub enum PersistenceError {
 
 impl From<StagingError> for PersistenceError {
     fn from(error: StagingError) -> Self {
-        Self::Staging(error.to_string())
+        match error {
+            StagingError::Hash(error) => Self::CryptoBackend(error),
+            StagingError::Collection(crate::CollectionError::Hash(error)) => {
+                Self::CryptoBackend(error)
+            }
+            StagingError::Persistence(error) => error,
+            other => Self::Staging(other.to_string()),
+        }
+    }
+}
+
+impl PersistenceError {
+    pub fn is_infrastructure(&self) -> bool {
+        matches!(self, Self::CryptoBackend(error) if error.is_infrastructure())
+    }
+
+    pub(crate) fn collection_hash(error: crate::CollectionError) -> Self {
+        match error {
+            crate::CollectionError::Hash(error) => Self::CryptoBackend(error),
+            other => Self::Staging(other.to_string()),
+        }
+    }
+
+    pub(crate) fn tree_hash(error: crate::smt::TreeError) -> Self {
+        match error {
+            crate::smt::TreeError::Poseidon(error) => Self::CryptoBackend(error),
+            other => Self::Staging(other.to_string()),
+        }
     }
 }

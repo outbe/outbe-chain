@@ -5,7 +5,7 @@ use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_primitives::error::Result;
 pub(crate) fn validate_item(item: &NodItemState, entry_price_minor: U256) -> Result<()> {
     let canonical_id = derive_poseidon_entity_id(item.owner, item.worldwide_day)
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+        .map_err(crate::errors::commitment_error)?;
     if item.nod_id != canonical_id {
         return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
             "Nod item canonical identity mismatch: expected {canonical_id}, found {}",

@@ -3,6 +3,16 @@ use thiserror::Error;
 
 use crate::NodRepositoryError;
 
+pub(crate) fn commitment_error(
+    error: outbe_compressed_entities::CommitmentError,
+) -> PrecompileError {
+    if error.is_infrastructure() {
+        PrecompileError::CryptoBackendUnavailable(error.to_string())
+    } else {
+        PrecompileError::Fatal(error.to_string())
+    }
+}
+
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum NodError {
@@ -48,6 +58,10 @@ impl From<NodError> for PrecompileError {
 impl From<NodRepositoryError> for PrecompileError {
     fn from(value: NodRepositoryError) -> Self {
         use outbe_offchain_storage::StorageErrorKind;
+
+        if value.is_infrastructure() {
+            return PrecompileError::CryptoBackendUnavailable(value.to_string());
+        }
 
         match value {
             NodRepositoryError::Storage(error)

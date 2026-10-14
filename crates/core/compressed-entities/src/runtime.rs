@@ -213,7 +213,7 @@ pub(crate) fn list(
 
 fn calculate_commitment(entity_id: WwdEntityId, payload: &[u8]) -> Result<Commitment> {
     body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, entity_id, payload)
-        .map_err(|error| fatal(error.to_string()))
+        .map_err(crate::errors::commitment_error)
 }
 
 fn current_commitment(

@@ -377,7 +377,10 @@ fn shard_path(root: &Path, shard: usize) -> PathBuf {
     root.join(format!("proof-shard-{shard:02}.bin"))
 }
 fn tree_error(error: TreeError) -> TributePartitionReconstructionError {
-    protocol_error(error.to_string())
+    match error {
+        TreeError::Poseidon(error) => TributePartitionReconstructionError::CryptoBackend(error),
+        other => protocol_error(other.to_string()),
+    }
 }
 fn protocol_error(message: String) -> TributePartitionReconstructionError {
     TributePartitionReconstructionError::Tree(message)

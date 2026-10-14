@@ -126,7 +126,7 @@ pub struct ProgramResultV1 {
     pub observations: Vec<SemanticObservationV1>,
 }
 
-/// Deterministic semantic failures, including the lowest raw-ID ordinal.
+/// Semantic failures and typed node-local hashing failures.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProgramErrorV1 {
     EmptyInput,
@@ -162,6 +162,7 @@ pub enum ProgramErrorV1 {
     Arithmetic {
         message: String,
     },
+    IdentityHash(outbe_compressed_entities::CommitmentError),
     ZeroGratisLoad {
         ordinal: usize,
     },
@@ -222,6 +223,7 @@ impl fmt::Display for ProgramErrorV1 {
                 "Lysis V1 Oracle {currency} unavailable at {ordinal}"
             ),
             Self::Arithmetic { message } => write!(formatter, "Lysis V1 arithmetic: {message}"),
+            Self::IdentityHash(error) => write!(formatter, "Lysis V1 identity hash: {error}"),
             Self::ZeroGratisLoad { ordinal } => {
                 write!(formatter, "Lysis V1 zero Gratis load at {ordinal}")
             }
@@ -245,4 +247,27 @@ impl fmt::Display for ProgramErrorV1 {
     }
 }
 
-impl std::error::Error for ProgramErrorV1 {}
+impl ProgramErrorV1 {
+    pub fn is_infrastructure(&self) -> bool {
+        matches!(self, Self::IdentityHash(error) if error.is_infrastructure())
+    }
+}
+
+impl std::error::Error for ProgramErrorV1 {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::IdentityHash(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<ProgramErrorV1> for outbe_primitives::error::PrecompileError {
+    fn from(error: ProgramErrorV1) -> Self {
+        if error.is_infrastructure() {
+            Self::CryptoBackendUnavailable(error.to_string())
+        } else {
+            Self::BodyReadCorruption(error.to_string())
+        }
+    }
+}

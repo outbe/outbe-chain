@@ -12,6 +12,7 @@ use commonware_consensus::types::{Height, Round};
 use commonware_runtime::Clock;
 use futures::{future::BoxFuture, FutureExt};
 use outbe_primitives::{
+    error::PrecompileError,
     projection::{ExecutionReadBudget, ExecutionReadCancelled},
     OutbeExecutionData,
 };
@@ -48,6 +49,7 @@ struct ExecutionRequest {
 enum ExecutionStatus {
     Completed(PayloadStatus),
     Cancelled(ExecutionReadCancelled),
+    CryptoBackendUnavailable,
 }
 
 pub(super) enum Event {
@@ -318,6 +320,11 @@ impl ExecutionStatus {
         };
         let cancelled = match &error {
             reth_ethereum::node::api::BeaconOnNewPayloadError::Internal(source) => {
+                if PrecompileError::find_crypto_backend_failure(source.as_ref()).is_some() {
+                    tracing::error!(error = %source,
+                        "native cryptographic backend unavailable; block validity not determined");
+                    return Ok(Self::CryptoBackendUnavailable);
+                }
                 ExecutionReadCancelled::find(source.as_ref())
             }
             _ => None,

@@ -617,7 +617,9 @@ fn assert_real_zk_offer_with_key_source(
         let mut factory = TributeFactoryContract::new(storage.clone());
         let id = factory
             .offer_tribute_with_processor(&scope, &NoParentBodies, make_offer(), |offers| {
-                Ok(process_tribute_offer_batch(&key, offers).0)
+                process_tribute_offer_batch(&key, offers)
+                    .map(|(results, _)| results)
+                    .map_err(|error| PrecompileError::CryptoBackendUnavailable(error.to_string()))
             })
             .unwrap();
         let stored = TributeContract::new(storage.clone())
@@ -632,7 +634,9 @@ fn assert_real_zk_offer_with_key_source(
         let mut factory = TributeFactoryContract::new(storage.clone());
         let replay = factory
             .offer_tribute_with_processor(&scope, &NoParentBodies, make_offer(), |offers| {
-                Ok(process_tribute_offer_batch(&key, offers).0)
+                process_tribute_offer_batch(&key, offers)
+                    .map(|(results, _)| results)
+                    .map_err(|error| PrecompileError::CryptoBackendUnavailable(error.to_string()))
             })
             .unwrap_err();
         assert!(matches!(replay, PrecompileError::Revert(_)));
@@ -661,7 +665,13 @@ fn assert_real_zk_offer_with_key_source(
                     &scope,
                     &NoParentBodies,
                     make_offer(),
-                    |offers| Ok(process_tribute_offer_batch(&key, offers).0),
+                    |offers| {
+                        process_tribute_offer_batch(&key, offers)
+                            .map(|(results, _)| results)
+                            .map_err(|error| {
+                                PrecompileError::CryptoBackendUnavailable(error.to_string())
+                            })
+                    },
                 )
             })
             .unwrap_err();

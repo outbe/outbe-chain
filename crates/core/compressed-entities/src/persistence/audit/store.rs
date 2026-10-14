@@ -946,6 +946,65 @@ mod tests {
     }
 
     #[test]
+    fn failed_hash_update_cannot_change_committed_native_records() {
+        use crate::smt::{PoseidonSmt, TreeKey as SmtKey, TreeLeaf, TreeRoot};
+        let (_directory, db) = scratch();
+        let namespace = TreeNamespace::Catalog;
+        let key = SmtKey::from_be_bytes(B256::with_last_byte(1).0).unwrap();
+        let old_leaf = TreeLeaf::from_be_bytes(B256::with_last_byte(4).0).unwrap();
+        let committed = {
+            let tx = db.tx_mut().unwrap();
+            let root = {
+                let mut tree = PoseidonSmt::open_with_store(
+                    TreeRoot::EMPTY,
+                    ScratchTreeStore::new(&tx, namespace),
+                );
+                tree.update(key, old_leaf).unwrap()
+            };
+            tx.put::<tables::CeTreeRoots>(namespace.encode(), root.as_bytes().to_vec())
+                .unwrap();
+            tx.commit().unwrap();
+            root
+        };
+        {
+            let tx = db.tx_mut().unwrap();
+            let branches_before = tx.entries::<tables::CeBranches>().unwrap();
+            let leaves_before = tx.entries::<tables::CeLeaves>().unwrap();
+            let mut tree =
+                PoseidonSmt::open_with_store(committed, ScratchTreeStore::new(&tx, namespace));
+            {
+                let _failure = outbe_poseidon::testing::fail_after(2);
+                let error = tree
+                    .update(
+                        key,
+                        TreeLeaf::from_be_bytes(B256::with_last_byte(9).0).unwrap(),
+                    )
+                    .unwrap_err();
+                assert!(error.is_infrastructure(), "{error:?}");
+            }
+            assert_eq!(tree.root().unwrap(), committed);
+            assert_eq!(tree.get(key).unwrap(), old_leaf);
+            assert_eq!(tx.entries::<tables::CeBranches>().unwrap(), branches_before);
+            assert_eq!(tx.entries::<tables::CeLeaves>().unwrap(), leaves_before);
+            drop(tree);
+            // Even committing this caller-owned transaction cannot persist partial hash work.
+            tx.commit().unwrap();
+        }
+        let tx = db.tx().unwrap();
+        assert_eq!(
+            tx.get::<tables::CeTreeRoots>(namespace.encode()).unwrap(),
+            Some(committed.as_bytes().to_vec())
+        );
+        drop(tx);
+        let tx = db.tx_mut().unwrap();
+        let tree = PoseidonSmt::open_with_store(committed, ScratchTreeStore::new(&tx, namespace));
+        assert_eq!(tree.get(key).unwrap(), old_leaf);
+        let proof = tree.prove(vec![key]).unwrap();
+        tree.verify(committed, &proof, vec![(key, old_leaf)])
+            .unwrap();
+    }
+
+    #[test]
     fn audit_rejects_a_wrong_shard_even_when_every_root_and_branch_is_consistent() {
         use super::super::{CeAuditError, CeAuditLimits, CeAuditVisitor, CeAuditWork};
         use crate::{

@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_poseidon::{Poseidon2, PoseidonHasher};
+use outbe_poseidon::{Poseidon2, PoseidonError, PoseidonHasher};
 use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
@@ -70,13 +70,13 @@ pub fn derive_poseidon_digest(
     worldwide_day: WorldwideDay,
 ) -> Result<B256, CommitmentError> {
     // A 160-bit address and a u32 day are both below the BN254 scalar modulus.
-    let mut hasher = Poseidon2::<Fr>::new();
+    let mut hasher = Poseidon2::new();
     let digest = hasher
         .hash(&[
             Fr::from_be_bytes_mod_order(owner.as_slice()),
             Fr::from(worldwide_day.value()),
         ])
-        .map_err(|error| CommitmentError::Poseidon(error.to_string()))?;
+        .map_err(CommitmentError::Poseidon)?;
     Ok(B256::from(field_to_be32(digest)))
 }
 
@@ -183,9 +183,9 @@ pub(crate) fn poseidon(tag: u64, inputs: &[Fr]) -> Result<Fr, CommitmentError> {
     let mut tagged = Vec::with_capacity(inputs.len() + 1);
     tagged.push(Fr::from(tag));
     tagged.extend_from_slice(inputs);
-    Poseidon2::<Fr>::new()
+    Poseidon2::new()
         .hash(&tagged)
-        .map_err(|error| CommitmentError::Poseidon(error.to_string()))
+        .map_err(CommitmentError::Poseidon)
 }
 
 pub(crate) fn field_to_be32(value: Fr) -> [u8; 32] {
@@ -195,13 +195,13 @@ pub(crate) fn field_to_be32(value: Fr) -> [u8; 32] {
     output
 }
 
-/// Deterministic CES2 commitment construction failure.
-#[derive(Debug, Error)]
+/// CES2 commitment construction failure, including node-local hashing failures.
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum CommitmentError {
     #[error("byte input length is not representable as u64")]
     InputTooLong,
     #[error("Poseidon2-BN254 failure: {0}")]
-    Poseidon(String),
+    Poseidon(#[source] PoseidonError),
     #[error("unsupported commitment scheme version {actual}")]
     UnsupportedCommitmentScheme { actual: u32 },
     #[error("unsupported body schema version {actual}")]
@@ -212,4 +212,10 @@ pub enum CommitmentError {
     ZeroPresentLeaf,
     #[error("value is not a canonical BN254 scalar field element")]
     NonCanonicalFieldElement,
+}
+
+impl CommitmentError {
+    pub fn is_infrastructure(&self) -> bool {
+        matches!(self, Self::Poseidon(error) if error.is_infrastructure())
+    }
 }

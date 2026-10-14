@@ -119,7 +119,7 @@ impl TryFrom<B256> for CollectionKey {
 #[derive(Debug, Error)]
 pub enum CollectionError {
     #[error("CES2 collection hashing failed: {0}")]
-    Hash(String),
+    Hash(#[source] crate::CommitmentError),
     #[error("present collection root computed to zero")]
     ZeroCollectionRoot,
     #[error("sealed root computed to zero")]
@@ -138,6 +138,19 @@ pub enum CollectionError {
     DuplicateTributeKey,
     #[error("Tribute partition tree reconstruction failed: {0}")]
     Tree(String),
+}
+
+impl CollectionError {
+    pub fn is_infrastructure(&self) -> bool {
+        matches!(self, Self::Hash(error) if error.is_infrastructure())
+    }
+
+    pub(crate) fn tree(error: crate::smt::TreeError) -> Self {
+        match error {
+            crate::smt::TreeError::Poseidon(error) => Self::Hash(error),
+            other => Self::Tree(other.to_string()),
+        }
+    }
 }
 
 pub fn collection_key(
@@ -159,7 +172,7 @@ pub fn collection_key(
     }
     pbytes(TAG_COLLECTION_KEY, &input)
         .map(CollectionKey)
-        .map_err(|error| CollectionError::Hash(error.to_string()))
+        .map_err(CollectionError::Hash)
 }
 
 pub fn partition_collection_key(
@@ -181,8 +194,7 @@ pub(crate) fn tree_key_bytes(
     entity_id: WwdEntityId,
 ) -> Result<[u8; 32], CollectionError> {
     let collection = collection_key(domain, entity_id)?;
-    let identity = crate::identity_field(entity_id)
-        .map_err(|error| CollectionError::Hash(error.to_string()))?;
+    let identity = crate::identity_field(entity_id).map_err(CollectionError::Hash)?;
     poseidon(
         TAG_KEY,
         &[
@@ -192,7 +204,7 @@ pub(crate) fn tree_key_bytes(
         ],
     )
     .map(field_to_be32)
-    .map_err(|error| CollectionError::Hash(error.to_string()))
+    .map_err(CollectionError::Hash)
 }
 
 pub fn collection_root(
@@ -211,7 +223,7 @@ pub fn collection_root(
     )
     .map(field_to_be32)
     .map(B256::from)
-    .map_err(|error| CollectionError::Hash(error.to_string()))?;
+    .map_err(CollectionError::Hash)?;
     if root == B256::ZERO {
         return Err(CollectionError::ZeroCollectionRoot);
     }
@@ -247,15 +259,14 @@ pub fn tribute_partition_root_from_leaves(
                 actual: entity_id.worldwide_day().value(),
             });
         }
-        let key = derive_tree_key(Collection::Tribute, entity_id)
-            .map_err(|error| CollectionError::Tree(error.to_string()))?;
+        let key = derive_tree_key(Collection::Tribute, entity_id).map_err(CollectionError::tree)?;
         if !seen.insert(key) {
             return Err(CollectionError::DuplicateTributeKey);
         }
-        let shard = shard_index(key, CeDomain::Tribute.shard_count())
-            .map_err(|error| CollectionError::Tree(error.to_string()))?;
-        let leaf = TreeLeaf::from_be_bytes(*commitment.as_bytes())
-            .map_err(|error| CollectionError::Tree(error.to_string()))?;
+        let shard =
+            shard_index(key, CeDomain::Tribute.shard_count()).map_err(CollectionError::tree)?;
+        let leaf =
+            TreeLeaf::from_be_bytes(*commitment.as_bytes()).map_err(CollectionError::tree)?;
         by_shard.entry(shard).or_default().push((key, leaf));
     }
 
@@ -264,12 +275,11 @@ pub fn tribute_partition_root_from_leaves(
         let mut tree = PoseidonSmt::empty();
         roots[shard as usize] = B256::from(
             tree.update_all(updates)
-                .map_err(|error| CollectionError::Tree(error.to_string()))?
+                .map_err(CollectionError::tree)?
                 .as_bytes(),
         );
     }
-    let top = aggregate_b256_shard_roots(&roots)
-        .map_err(|error| CollectionError::Tree(error.to_string()))?;
+    let top = aggregate_b256_shard_roots(&roots).map_err(CollectionError::tree)?;
     let (_, key) = partition_collection_key(PartitionRef::TributeWwd(day))?;
     collection_root(CeDomain::Tribute, key, top)
 }
@@ -284,7 +294,7 @@ pub fn sealed_root(catalog_root: B256) -> Result<B256, CollectionError> {
     )
     .map(field_to_be32)
     .map(B256::from)
-    .map_err(|error| CollectionError::Hash(error.to_string()))?;
+    .map_err(CollectionError::Hash)?;
     if root == B256::ZERO {
         return Err(CollectionError::ZeroSealedRoot);
     }

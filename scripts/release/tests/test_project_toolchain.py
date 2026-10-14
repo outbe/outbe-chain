@@ -108,6 +108,21 @@ class ProjectToolchainContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "system package set"):
                 load_verifier().load_and_validate_pin(path)
 
+    def test_static_barretenberg_version_and_platform_drift_fail_closed(self) -> None:
+        for old, new, message in (
+            ("20260522", "20260523", "versions must match"),
+            ("static-amd64-linux", "static-arm64-linux", "release target"),
+        ):
+            pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+            static = pin["zk_tools"]["barretenberg_static"]
+            static["archive_url"] = static["archive_url"].replace(old, new)
+            static["version"] = static["version"].replace(old, new)
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "project-toolchain-v1.json"
+                path.write_text(json.dumps(pin), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    load_verifier().load_and_validate_pin(path)
+
     def test_native_dcap_build_contract_reads_the_release_pins(self) -> None:
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
         source = TEE_BUILD_SCRIPT.read_text(encoding="utf-8")

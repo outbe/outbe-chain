@@ -506,7 +506,7 @@ fn commitment_for_stored_bytes(
         tribute_id,
         stored.payload(),
     )
-    .map_err(|error| TributeRepositoryError::RetainedCommitment(error.to_string()))?;
+    .map_err(TributeRepositoryError::RetainedCommitment)?;
     Ok(B256::from(*commitment.as_bytes()))
 }
 

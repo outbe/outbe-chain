@@ -63,6 +63,15 @@ ADD --checksum=sha256:384c4fc800905b213e26aabd738a96a4a85b1a76ffc27fb19aeb6d3349
 ADD --checksum=sha256:d207ec90fbfa2fba24d7a47b7a75892ee052b7984252b866a4a0c1b5296e1571 \
     https://github.com/AztecProtocol/barretenberg/releases/download/v5.0.0-nightly.20260522/barretenberg-amd64-linux.tar.gz \
     /tmp/barretenberg.tar.gz
+ADD --checksum=sha256:13201af753e786e604db905254f41a1064b246e3bdc2463ef8201677e7836885 \
+    https://github.com/AztecProtocol/barretenberg/releases/download/v5.0.0-nightly.20260522/barretenberg-static-amd64-linux.tar.gz \
+    /tmp/barretenberg-static.tar.gz
+ENV BB_LIB_DIR=/opt/outbe/barretenberg/lib \
+    BARRETENBERG_VERSION=5.0.0-nightly.20260522
+RUN mkdir -p "${BB_LIB_DIR}" && \
+    tar -xzf /tmp/barretenberg-static.tar.gz -C "${BB_LIB_DIR}" && \
+    test -s "${BB_LIB_DIR}/libbb-external.a" && \
+    rm /tmp/barretenberg-static.tar.gz
 RUN tar -xzf /tmp/nargo.tar.gz -C /usr/local/bin && \
     tar -xzf /tmp/barretenberg.tar.gz -C /usr/local/bin && \
     chmod 0755 /usr/local/bin/nargo /usr/local/bin/bb && \

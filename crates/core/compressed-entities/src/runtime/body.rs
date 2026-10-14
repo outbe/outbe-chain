@@ -44,7 +44,7 @@ fn prepare_encrypted_tribute(
         entity_id,
         &payload,
     )
-    .map_err(|error| fatal(error.to_string()))?;
+    .map_err(crate::errors::commitment_error)?;
     Ok(PreparedBody {
         collection: Collection::Tribute,
         entity_id,
@@ -149,7 +149,13 @@ pub(super) fn verify_stored(
         entity_id,
         payload,
     )
-    .map_err(|error| origin.invalid(error.to_string()))?;
+    .map_err(|error| {
+        if error.is_infrastructure() {
+            crate::errors::commitment_error(error)
+        } else {
+            origin.invalid(error.to_string())
+        }
+    })?;
     if actual != expected {
         // Preserve the exact authenticated input, not a re-encoded replacement.
         // Bodies are canonical on-chain event payloads, never enclave key material.
@@ -234,7 +240,7 @@ fn prepare_encrypted_nod_item(body: &crate::NodItemBodyV2) -> Result<PreparedBod
         entity_id,
         &payload,
     )
-    .map_err(|error| fatal(error.to_string()))?;
+    .map_err(crate::errors::commitment_error)?;
     Ok(PreparedBody {
         collection: Collection::NodItem,
         entity_id,

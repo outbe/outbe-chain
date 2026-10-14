@@ -10,6 +10,10 @@ readonly OUT=/out
 # The builder image ships the exact-pinned Intel DCAP stack; refuse to produce
 # release ELFs whose native QVL silently fell back to the fail-closed stub.
 export OUTBE_NATIVE_DCAP=require
+# Do not let caller overrides select an unrelated native FFI artifact.
+export BB_LIB_DIR=/opt/outbe/barretenberg/lib
+export BARRETENBERG_VERSION=5.0.0-nightly.20260522
+test -s "${BB_LIB_DIR}/libbb-external.a"
 
 for required in SOURCE_COMMIT SOURCE_DATE_EPOCH SOURCE_DESCRIBE RELEASE_TAG; do
   if [[ -z "${!required:-}" ]]; then

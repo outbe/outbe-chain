@@ -10,11 +10,10 @@
 
 use std::io::Read;
 
-use barretenberg_rs::api::BarretenbergApi;
-use barretenberg_rs::backends::FfiBackend;
 use barretenberg_rs::generated_types::{CircuitInput, ProofSystemSettings};
 use base64::Engine;
 use flate2::read::GzDecoder;
+use outbe_barretenberg::{with_api, NativeApi, RuntimeError};
 use sha2::{Digest, Sha256};
 
 use outbe_zk::noir::demo_tribute::DemoTribute;
@@ -56,7 +55,7 @@ fn cache_path() -> std::path::PathBuf {
     std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".bb-crs/bn254_g1.dat")
 }
 
-fn num_points(api: &mut BarretenbergApi<FfiBackend>, acir: &[u8]) -> u32 {
+fn num_points(api: &mut NativeApi, acir: &[u8]) -> u32 {
     let circuit = CircuitInput {
         name: String::new(),
         bytecode: acir.to_vec(),
@@ -83,21 +82,23 @@ fn pin_row(label: &str, n: u32) -> String {
 #[test]
 #[ignore = "regen helper: needs local CRS + libbb; run with --ignored --nocapture"]
 fn print_srs_pins() {
-    let backend = FfiBackend::new().unwrap();
-    let mut api = BarretenbergApi::new(backend);
-    let circuits: &[(&str, &str)] = &[
-        ("demo tribute", DemoTribute::BYTECODE_B64),
-        ("niflheim tribute", NiflheimTribute::BYTECODE_B64),
-    ];
-    println!("\n--- paste into PINNED_G1_SHA256 ---");
-    for (label, b64) in circuits {
-        let n = num_points(&mut api, &acir(b64));
-        println!("{}", pin_row(label, n));
-    }
-    println!("--- end ---\n");
+    with_api(|api| {
+        let circuits: &[(&str, &str)] = &[
+            ("demo tribute", DemoTribute::BYTECODE_B64),
+            ("niflheim tribute", NiflheimTribute::BYTECODE_B64),
+        ];
+        println!("\n--- paste into PINNED_G1_SHA256 ---");
+        for (label, b64) in circuits {
+            let n = num_points(api, &acir(b64));
+            println!("{}", pin_row(label, n));
+        }
+        println!("--- end ---\n");
+        Ok::<_, RuntimeError>(())
+    })
+    .unwrap();
 }
 
-fn gate_counts(api: &mut BarretenbergApi<FfiBackend>, acir: &[u8]) -> (u32, u32) {
+fn gate_counts(api: &mut NativeApi, acir: &[u8]) -> (u32, u32) {
     let circuit = CircuitInput {
         name: String::new(),
         bytecode: acir.to_vec(),
@@ -115,18 +116,20 @@ fn gate_counts(api: &mut BarretenbergApi<FfiBackend>, acir: &[u8]) -> (u32, u32)
 #[test]
 #[ignore = "complexity capture: needs libbb; run with --ignored --nocapture"]
 fn print_circuit_complexity() {
-    let backend = FfiBackend::new().unwrap();
-    let mut api = BarretenbergApi::new(backend);
-    let circuits: &[(&str, &str)] = &[
-        ("demo tribute", DemoTribute::BYTECODE_B64),
-        ("niflheim tribute", NiflheimTribute::BYTECODE_B64),
-    ];
-    println!("\n--- circuit complexity ---");
-    println!("| circuit | num_gates | dyadic (2^k) |");
-    println!("|---|---|---|");
-    for (label, b64) in circuits {
-        let (g, d) = gate_counts(&mut api, &acir(b64));
-        println!("| {label} | {g} | {d} |");
-    }
-    println!("--- end ---\n");
+    with_api(|api| {
+        let circuits: &[(&str, &str)] = &[
+            ("demo tribute", DemoTribute::BYTECODE_B64),
+            ("niflheim tribute", NiflheimTribute::BYTECODE_B64),
+        ];
+        println!("\n--- circuit complexity ---");
+        println!("| circuit | num_gates | dyadic (2^k) |");
+        println!("|---|---|---|");
+        for (label, b64) in circuits {
+            let (g, d) = gate_counts(api, &acir(b64));
+            println!("| {label} | {g} | {d} |");
+        }
+        println!("--- end ---\n");
+        Ok::<_, RuntimeError>(())
+    })
+    .unwrap();
 }

@@ -55,7 +55,7 @@ EXPECTED_SYSTEM_PACKAGES = (
     "pkg-config",
 )
 EXPECTED_HOST_ONLY_PACKAGES = ("libsgx-dcap-default-qpl",)
-EXPECTED_ZK_TOOLS = ("barretenberg", "nargo")
+EXPECTED_ZK_TOOLS = ("barretenberg", "barretenberg_static", "nargo")
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -184,6 +184,14 @@ def load_and_validate_pin(path: Path) -> dict[str, Any]:
             or f"/v{tool['version']}/" not in tool["archive_url"]
         ):
             raise ValueError(f"project {name} tool must use an exact GitHub archive pin")
+    if zk_tools["barretenberg_static"]["version"] != zk_tools["barretenberg"]["version"]:
+        raise ValueError("Barretenberg CLI and static library versions must match")
+    static = zk_tools["barretenberg_static"]
+    if static["archive_url"] != (
+        "https://github.com/AztecProtocol/barretenberg/releases/download/"
+        f"v{static['version']}/barretenberg-static-amd64-linux.tar.gz"
+    ):
+        raise ValueError("Barretenberg static library must match the Linux amd64 release target")
     return pin
 
 
@@ -379,6 +387,13 @@ def repository_differences(repo_root: Path) -> list[str]:
         )
 
     recipe = (repo_root / "Dockerfile.project-toolchain").read_text(encoding="utf-8")
+    for name, tool in pin["zk_tools"].items():
+        archive_instruction = (
+            f"ADD --checksum=sha256:{tool['archive_sha256']} \\\n"
+            f"    {tool['archive_url']} \\\n"
+        )
+        if archive_instruction not in recipe:
+            differences.append(f"project toolchain recipe does not checksum-pin {name}")
     if f"rust:{rust['version']}-" not in recipe:
         differences.append("project toolchain recipe does not use the pinned Rust version")
     if f"gramineproject/gramine:{gramine['version']}-" not in recipe:

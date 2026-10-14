@@ -109,12 +109,11 @@ impl MdbxAuthenticatedTree {
         if changed_shards.is_empty() {
             return Ok(None);
         }
-        let parent_top = aggregate_b256_shard_roots(&session.parent_shard_roots)
-            .map_err(|error| tree_corruption(error.to_string()))?;
-        let new_top = aggregate_b256_shard_roots(&new_roots)
-            .map_err(|error| tree_corruption(error.to_string()))?;
-        let new_collection_root = collection_root(domain, collection_key, new_top)
-            .map_err(|error| tree_corruption(error.to_string()))?;
+        let parent_top =
+            aggregate_b256_shard_roots(&session.parent_shard_roots).map_err(classify_tree_error)?;
+        let new_top = aggregate_b256_shard_roots(&new_roots).map_err(classify_tree_error)?;
+        let new_collection_root =
+            collection_root(domain, collection_key, new_top).map_err(classify_collection_error)?;
         let shard_set = ProvisionalShardSetBatch::new(
             domain.shard_count(),
             crate::staging::RootTransition {
@@ -125,7 +124,7 @@ impl MdbxAuthenticatedTree {
             new_roots,
             changed_shards,
         )
-        .map_err(|error| tree_corruption(error.to_string()))?;
+        .map_err(classify_staging_error)?;
         let collection_batch = CollectionBatch::new(
             domain,
             collection_key,
@@ -133,7 +132,7 @@ impl MdbxAuthenticatedTree {
             new_collection_root,
             shard_set,
         )
-        .map_err(|error| tree_corruption(error.to_string()))?;
+        .map_err(classify_staging_error)?;
         Ok(Some(collection_batch))
     }
     fn prepare_retirements(
@@ -145,8 +144,8 @@ impl MdbxAuthenticatedTree {
     ) -> Result<()> {
         let mut unique_retirements = BTreeSet::new();
         for partition in retirements {
-            let (domain, collection_key) = crate::partition_collection_key(*partition)
-                .map_err(|error| tree_corruption(error.to_string()))?;
+            let (domain, collection_key) =
+                crate::partition_collection_key(*partition).map_err(classify_collection_error)?;
             if !unique_retirements.insert(collection_key) {
                 return Err(tree_corruption("duplicate collection retirement at seal"));
             }
@@ -169,7 +168,7 @@ impl MdbxAuthenticatedTree {
                 parent_collection_root,
                 session.parent_shard_roots.clone(),
             )
-            .map_err(|error| tree_corruption(error.to_string()))?;
+            .map_err(classify_staging_error)?;
             let catalog_key = TreeKey::from_be_bytes(*collection_key.as_bytes())
                 .map_err(|error| tree_corruption(error.to_string()))?;
             catalog_updates.push((catalog_key, TreeLeaf::ZERO));
@@ -217,16 +216,17 @@ impl MdbxAuthenticatedTree {
                     &proof,
                     parents,
                 )
-                .map_err(|error| tree_corruption(error.to_string()))?;
+                .map_err(classify_tree_error)?;
             B256::from(
                 catalog_tree
                     .update_all(catalog_updates)
-                    .map_err(|error| tree_corruption(error.to_string()))?
+                    .map_err(classify_tree_error)?
                     .as_bytes(),
             )
         };
         let catalog_batch = catalog_tree
             .into_store()
+            .map_err(classify_tree_error)?
             .freeze_shard(new_catalog_root)
             .map_err(|error| tree_corruption(error.to_string()))?
             .map(|batch| ProvisionalCatalogBatch {
@@ -235,10 +235,9 @@ impl MdbxAuthenticatedTree {
                 branch_changes: batch.branch_changes,
                 leaf_changes: batch.leaf_changes,
             });
-        let parent_r_sealed = sealed_root(self.view.catalog_root())
-            .map_err(|error| tree_corruption(error.to_string()))?;
-        let new_r_sealed =
-            sealed_root(new_catalog_root).map_err(|error| tree_corruption(error.to_string()))?;
+        let parent_r_sealed =
+            sealed_root(self.view.catalog_root()).map_err(classify_collection_error)?;
+        let new_r_sealed = sealed_root(new_catalog_root).map_err(classify_collection_error)?;
         ProvisionalTreeBatch::new(
             block_number,
             self.identity.block_hash,
@@ -255,7 +254,7 @@ impl MdbxAuthenticatedTree {
             changed_collections,
             catalog_batch,
         )
-        .map_err(|error| tree_corruption(error.to_string()))
+        .map_err(classify_staging_error)
     }
 }
 fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedCollectionMutations> {
@@ -269,8 +268,7 @@ fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedCollectionM
             ));
         }
         let (domain, _, id) = entity_parts(mutation.entity);
-        let collection =
-            collection_key(domain, id).map_err(|error| tree_corruption(error.to_string()))?;
+        let collection = collection_key(domain, id).map_err(classify_collection_error)?;
         let key = entity_tree_key(mutation.entity)?;
         if let Some(other) = unique_keys.insert((collection, key), mutation.entity) {
             if other != mutation.entity {
@@ -315,7 +313,7 @@ fn prepare_shard(
         &proof,
         parents.clone(),
     )
-    .map_err(|error| tree_corruption(error.to_string()))?;
+    .map_err(classify_tree_error)?;
     let effective = updates
         .into_iter()
         .zip(parents)
@@ -324,8 +322,7 @@ fn prepare_shard(
         })
         .collect::<Vec<_>>();
     if !effective.is_empty() {
-        tree.update_all(effective)
-            .map_err(|error| tree_corruption(error.to_string()))?;
+        tree.update_all(effective).map_err(classify_tree_error)?;
     }
     let new_root = B256::from(
         tree.root()
@@ -334,6 +331,7 @@ fn prepare_shard(
     );
     let batch = tree
         .into_store()
+        .map_err(classify_tree_error)?
         .freeze_shard(new_root)
         .map_err(|error| tree_corruption(error.to_string()))?;
     Ok((new_root, batch))

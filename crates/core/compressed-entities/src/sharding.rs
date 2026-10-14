@@ -13,6 +13,8 @@ pub const K_CANDIDATES: [u32; 9] = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 
 #[derive(Debug, Error)]
 pub enum ShardingError {
+    #[error("Poseidon shard-top backend failed: {0}")]
+    CryptoBackend(#[source] crate::CommitmentError),
     #[error("shard count must be a power of two in 1..=256, got {actual}")]
     InvalidShardCount { actual: u32 },
     #[error("Poseidon shard-top aggregation failed")]
@@ -32,7 +34,10 @@ pub fn empty_shard_top_root(shard_count: u32) -> Result<alloy_primitives::B256, 
         })?
     ])
     .map(|root| alloy_primitives::B256::from(root.as_bytes()))
-    .map_err(|_| ShardingError::TreeHash)
+    .map_err(|error| match error {
+        TreeError::Poseidon(error) => ShardingError::CryptoBackend(error),
+        _ => ShardingError::TreeHash,
+    })
 }
 
 pub(crate) fn aggregate_b256_shard_roots(roots: &[B256]) -> Result<B256, TreeError> {
@@ -82,8 +87,8 @@ pub(crate) fn aggregate_shard_roots(roots: &[TreeRoot]) -> Result<TreeRoot, Tree
                 Fr::from_be_bytes_mod_order(&pair[0].as_bytes()),
                 Fr::from_be_bytes_mod_order(&pair[1].as_bytes()),
             ];
-            let output = crate::commitment::poseidon(TAG_TOP_NODE, &inputs)
-                .map_err(|_| TreeError::TreeHashError)?;
+            let output =
+                crate::commitment::poseidon(TAG_TOP_NODE, &inputs).map_err(TreeError::Poseidon)?;
             let bytes = field_to_be32(output);
             if bytes == [0_u8; 32] {
                 return Err(TreeError::TreeHashError);

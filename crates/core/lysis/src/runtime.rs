@@ -39,7 +39,7 @@ pub(crate) fn compute_fi_fraction_map(
 
 #[cfg(test)]
 fn program_error(error: ProgramErrorV1) -> PrecompileError {
-    PrecompileError::BodyReadCorruption(error.to_string())
+    error.into()
 }
 
 /// Freeze, once per WorldwideDay, the finalized VWAPs of the UTC day before its scheduled

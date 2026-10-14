@@ -66,11 +66,11 @@ pub fn compute_token_id(
     owner: Address,
     worldwide_day: WorldwideDay,
     draft_id: &str,
-) -> Result<B256, String> {
+) -> Result<B256, crate::process::OfferError> {
     // Validate the draft id (reject malformed input) but keep it out of the hash.
     parse_draft_id(draft_id)?;
     outbe_compressed_entities::derive_poseidon_digest(owner, worldwide_day)
-        .map_err(|error| error.to_string())
+        .map_err(crate::process::OfferError::from)
 }
 
 /// Computes the Tribute-only S-curve pricing contract:

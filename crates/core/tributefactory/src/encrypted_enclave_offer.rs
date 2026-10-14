@@ -43,7 +43,11 @@ pub(crate) fn process_encrypted_offers(
             &key,
         ),
         EnclaveResponse::Error { message } => {
-            Err(fatal(format!("encrypted Tribute offer enclave: {message}")))
+            // The enclave returns deterministic offer refusals in `results`.
+            // A batch-level error (including native hash failure) is local.
+            Err(PrecompileError::EnclaveUnavailable(format!(
+                "encrypted Tribute offer enclave: {message}"
+            )))
         }
         _ => Err(fatal("unexpected encrypted Tribute offer response")),
     }

@@ -41,7 +41,11 @@ pub(crate) fn zk_verify(input: &[u8]) -> Result<[u8; 32]> {
     let verified = Barretenberg::default()
         .verify_combined(descriptor.vk_bytes, call.combined_proof)
         .map_err(|error| {
-            PrecompileError::Revert(format!("zk verification backend failed: {error}"))
+            if error.is_infrastructure() {
+                PrecompileError::CryptoBackendUnavailable(error.to_string())
+            } else {
+                PrecompileError::Revert(format!("zk verification backend failed: {error}"))
+            }
         })?;
     trace!(circuit = descriptor.label, verified, "zk_verify");
 

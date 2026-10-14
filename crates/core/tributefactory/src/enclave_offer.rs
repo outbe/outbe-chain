@@ -135,7 +135,7 @@ pub fn process_tribute_offer_batch_via_enclave(
             &attestation_pub,
             &attestation_tag,
         ),
-        EnclaveResponse::Error { message } => Err(PrecompileError::Fatal(format!(
+        EnclaveResponse::Error { message } => Err(PrecompileError::EnclaveUnavailable(format!(
             "enclave ProcessTributeOfferBatch error: {message}"
         ))),
         other => Err(PrecompileError::Fatal(format!(

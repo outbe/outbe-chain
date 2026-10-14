@@ -11,7 +11,12 @@ use std::sync::Arc;
 
 #[derive(Clone, Default)]
 pub(crate) struct ExecutionAbortBridge {
-    terminal: Arc<Mutex<Option<ExecutionReadCancelled>>>,
+    terminal: Arc<Mutex<Option<ExecutionAbort>>>,
+}
+
+enum ExecutionAbort {
+    ReadCancelled(ExecutionReadCancelled),
+    CryptoBackendUnavailable(String),
 }
 
 impl ExecutionAbortBridge {
@@ -20,11 +25,23 @@ impl ExecutionAbortBridge {
     }
 
     pub(crate) fn observe(&self, error: &PrecompileError, readers: Option<&RuntimeBodyReaders>) {
+        // A handler cannot convert a failed native operation into a deterministic
+        // revert or success by catching a child error. Clear only at call end.
+        if matches!(
+            *self.terminal.lock(),
+            Some(ExecutionAbort::CryptoBackendUnavailable(_))
+        ) {
+            return;
+        }
         match error {
             PrecompileError::BodyReadRequestDeadline => {
                 *self.terminal.lock() = readers
                     .and_then(RuntimeBodyReaders::cancelled_read_budget)
-                    .map(|budget| ExecutionReadCancelled { budget });
+                    .map(|budget| ExecutionAbort::ReadCancelled(ExecutionReadCancelled { budget }));
+            }
+            PrecompileError::CryptoBackendUnavailable(message) => {
+                *self.terminal.lock() =
+                    Some(ExecutionAbort::CryptoBackendUnavailable(message.clone()));
             }
             // A child fatal is propagated by this provider into its caller.
             PrecompileError::SubCall(SubCallError::Fatal(_)) => {}
@@ -42,7 +59,7 @@ impl ExecutionAbortBridge {
     pub(crate) fn check_subcall(&self) -> Result<(), SubCallError> {
         if self.terminal.lock().is_some() {
             return Err(SubCallError::Fatal(
-                "execution already stopped on a cancelled body read".into(),
+                "execution already stopped on a node-local infrastructure failure".into(),
             ));
         }
         Ok(())
@@ -55,10 +72,16 @@ pub(crate) struct ExecutionCall {
 
 impl ExecutionCall {
     pub(crate) fn finish<T, D>(self, result: Result<T, EVMError<D>>) -> Result<T, EVMError<D>> {
-        let cancelled = self.bridge.terminal.lock().take();
-        match (result, cancelled) {
-            (Err(EVMError::Custom(_)), Some(cancelled)) | (Ok(_), Some(cancelled)) => {
-                Err(EVMError::CustomAny(AnyError::new(cancelled)))
+        let abort = self.bridge.terminal.lock().take();
+        match (result, abort) {
+            (Err(EVMError::Custom(_)), Some(abort)) | (Ok(_), Some(abort)) => {
+                let error = match abort {
+                    ExecutionAbort::ReadCancelled(cancelled) => AnyError::new(cancelled),
+                    ExecutionAbort::CryptoBackendUnavailable(message) => {
+                        AnyError::new(PrecompileError::CryptoBackendUnavailable(message))
+                    }
+                };
+                Err(EVMError::CustomAny(error))
             }
             (result, _) => result,
         }
@@ -76,6 +99,23 @@ mod tests {
     use super::*;
     use outbe_offchain_storage::MemoryStorage;
     use outbe_primitives::projection::ExecutionReadBudget;
+
+    #[test]
+    fn crypto_abort_survives_caught_child_errors_and_does_not_leak() {
+        let bridge = ExecutionAbortBridge::default();
+        let call = bridge.begin_call();
+        bridge.observe(
+            &PrecompileError::CryptoBackendUnavailable("injected".into()),
+            None,
+        );
+        bridge.observe(&PrecompileError::Revert("caught child error".into()), None);
+        let result: Result<(), EVMError<std::convert::Infallible>> = Ok(());
+        let error = call.finish(result);
+        assert!(matches!(error, Err(EVMError::CustomAny(_))));
+        assert!(bridge.check_subcall().is_ok());
+        let result: Result<(), EVMError<std::convert::Infallible>> = Ok(());
+        assert!(bridge.begin_call().finish(result).is_ok());
+    }
 
     #[test]
     fn abort_marker_cannot_reclassify_a_database_or_later_provider_failure() {

@@ -23,6 +23,15 @@ pub fn projection_frame_failure_class(error: &eyre::Report) -> ProjectionFailure
         return storage_failure_class(storage);
     }
     if error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<outbe_offchain_data::ProjectionError>(),
+            Some(outbe_offchain_data::ProjectionError::CryptoBackendUnavailable(_))
+        )
+    }) {
+        // Local hashing failure is not evidence of a malformed finalized event.
+        return ProjectionFailureClass::Other;
+    }
+    if error.chain().any(|cause| {
         cause
             .downcast_ref::<outbe_offchain_data::ProjectionError>()
             .is_some()

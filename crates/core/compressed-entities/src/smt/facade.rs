@@ -13,7 +13,8 @@ use outbe_sparse_merkle_tree_v061::{
 };
 use thiserror::Error;
 
-use super::codec::{hash_error, is_canonical, PoseidonCkbHasher};
+use super::codec::{hash_error, hash_scope, is_canonical, PoseidonCkbHasher};
+use super::overlay::UpdateOverlay;
 use crate::{schema::Collection, WwdEntityId};
 
 /// A canonical field encoding retains its tree role in the type system.
@@ -93,10 +94,12 @@ impl TreeProof {
     }
 
     pub(crate) fn compute_root(&self, key: TreeKey, leaf: TreeLeaf) -> Result<TreeRoot, TreeError> {
-        self.0
-            .compute_root::<PoseidonCkbHasher>(vec![(key.ckb(), leaf.ckb())])
-            .map_err(vendor_error)
-            .and_then(checked_root)
+        hash_scope(|| {
+            self.0
+                .compute_root::<PoseidonCkbHasher>(vec![(key.ckb(), leaf.ckb())])
+                .map_err(vendor_error)
+                .and_then(checked_root)
+        })
     }
 }
 
@@ -123,7 +126,15 @@ pub(crate) enum TreeError {
     #[error("vendored CKB SMT failure: {0}")]
     Vendor(String),
     #[error("Poseidon-BN254 tree-key derivation failed: {0}")]
-    Poseidon(String),
+    Poseidon(#[source] crate::CommitmentError),
+    #[error("tree update failed; discard store and reload committed state")]
+    UpdateInvalidated,
+}
+
+impl TreeError {
+    pub(crate) fn is_infrastructure(&self) -> bool {
+        matches!(self, Self::Poseidon(error) if error.is_infrastructure())
+    }
 }
 
 #[derive(Clone, Default)]
@@ -173,7 +184,8 @@ impl StoreWriteOps<H256> for MemoryStore {
 
 /// Private, single-engine facade. Persistence adapters use the same CKB Store seams.
 pub(crate) struct PoseidonSmt<S = MemoryStore> {
-    inner: SparseMerkleTree<PoseidonCkbHasher, H256, S>,
+    inner: Option<SparseMerkleTree<PoseidonCkbHasher, H256, S>>,
+    invalidated: bool,
 }
 
 /// Reduces strictly ordered non-zero leaves to the canonical CKB SMT root
@@ -182,6 +194,7 @@ pub(crate) struct SortedPoseidonRootReducer<O = NoSortedNodeObserver> {
     observer: O,
     frontier: Vec<Option<PendingSortedNode>>,
     current: Option<PendingSortedNode>,
+    invalidated: bool,
 }
 
 struct PendingSortedNode {
@@ -232,10 +245,22 @@ impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
             observer,
             frontier: std::iter::repeat_with(|| None).take(256).collect(),
             current: None,
+            invalidated: false,
         }
     }
 
     pub(crate) fn push(&mut self, key: TreeKey, leaf: TreeLeaf) -> Result<(), TreeError> {
+        if self.invalidated {
+            return Err(TreeError::UpdateInvalidated);
+        }
+        let result = self.push_inner(key, leaf);
+        if result.is_err() {
+            self.invalidated = true;
+        }
+        result
+    }
+
+    fn push_inner(&mut self, key: TreeKey, leaf: TreeLeaf) -> Result<(), TreeError> {
         if leaf == TreeLeaf::ZERO {
             return Err(TreeError::ZeroLeaf);
         }
@@ -280,6 +305,9 @@ impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
     }
 
     pub(crate) fn finish_observing(mut self) -> Result<(TreeRoot, O, Option<u64>), TreeError> {
+        if self.invalidated {
+            return Err(TreeError::UpdateInvalidated);
+        }
         if self.current.is_none() {
             if self.frontier.iter().any(Option::is_some) {
                 return Err(TreeError::ReducerInvariant(
@@ -299,7 +327,7 @@ impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
             .current
             .take()
             .ok_or(TreeError::ReducerInvariant("root subtree disappeared"))?;
-        let root = checked_root(current.value.hash::<PoseidonCkbHasher>())?;
+        let root = hash_scope(|| checked_root(current.value.hash::<PoseidonCkbHasher>()))?;
         Ok((root, self.observer, Some(current.archive_id)))
     }
 
@@ -311,6 +339,10 @@ impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
     }
 
     fn merge_current_level(&mut self, height: u8) -> Result<(), TreeError> {
+        hash_scope(|| self.merge_current_level_scoped(height))
+    }
+
+    fn merge_current_level_scoped(&mut self, height: u8) -> Result<(), TreeError> {
         let mut current = self
             .current
             .take()
@@ -341,6 +373,7 @@ impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
         } else {
             merge::<PoseidonCkbHasher>(height, &parent_key, &current.value, &MergeValue::zero())
         };
+        validate_merge_value(&current.value)?;
         self.current = Some(current);
         Ok(())
     }
@@ -355,7 +388,8 @@ impl Default for PoseidonSmt<MemoryStore> {
 impl PoseidonSmt<MemoryStore> {
     pub(crate) fn empty() -> Self {
         Self {
-            inner: SparseMerkleTree::new(H256::zero(), MemoryStore::default()),
+            inner: Some(SparseMerkleTree::new(H256::zero(), MemoryStore::default())),
+            invalidated: false,
         }
     }
 }
@@ -363,16 +397,29 @@ impl PoseidonSmt<MemoryStore> {
 impl<S> PoseidonSmt<S> {
     pub(crate) fn open_with_store(root: TreeRoot, store: S) -> Self {
         Self {
-            inner: SparseMerkleTree::new(root.ckb(), store),
+            inner: Some(SparseMerkleTree::new(root.ckb(), store)),
+            invalidated: false,
         }
     }
 
     pub(crate) fn root(&self) -> Result<TreeRoot, TreeError> {
-        checked_root(*self.inner.root())
+        checked_root(*self.inner()?.root())
     }
 
-    pub(crate) fn into_store(self) -> S {
-        self.inner.take_store()
+    pub(crate) fn into_store(self) -> Result<S, TreeError> {
+        if self.invalidated {
+            return Err(TreeError::UpdateInvalidated);
+        }
+        self.inner
+            .map(SparseMerkleTree::take_store)
+            .ok_or(TreeError::UpdateInvalidated)
+    }
+
+    fn inner(&self) -> Result<&SparseMerkleTree<PoseidonCkbHasher, H256, S>, TreeError> {
+        if self.invalidated {
+            return Err(TreeError::UpdateInvalidated);
+        }
+        self.inner.as_ref().ok_or(TreeError::UpdateInvalidated)
     }
 
     pub(crate) fn verify(
@@ -381,40 +428,45 @@ impl<S> PoseidonSmt<S> {
         proof: &TreeProof,
         leaves: Vec<(TreeKey, TreeLeaf)>,
     ) -> Result<(), TreeError> {
-        let keys: Vec<_> = leaves.iter().map(|(key, _)| *key).collect();
-        ensure_unique_keys(&keys)?;
-        let calculated = proof
-            .0
-            .compute_root::<PoseidonCkbHasher>(
-                leaves
-                    .into_iter()
-                    .map(|(key, leaf)| (key.ckb(), leaf.ckb()))
-                    .collect(),
-            )
-            .map_err(vendor_error)?;
-        let calculated = checked_root(calculated)?;
-        if calculated != root {
-            return Err(TreeError::InvalidProof);
-        }
-        Ok(())
+        self.inner()?;
+        hash_scope(|| {
+            let keys: Vec<_> = leaves.iter().map(|(key, _)| *key).collect();
+            ensure_unique_keys(&keys)?;
+            let calculated = proof
+                .0
+                .compute_root::<PoseidonCkbHasher>(
+                    leaves
+                        .into_iter()
+                        .map(|(key, leaf)| (key.ckb(), leaf.ckb()))
+                        .collect(),
+                )
+                .map_err(vendor_error)?;
+            let calculated = checked_root(calculated)?;
+            if calculated != root {
+                return Err(TreeError::InvalidProof);
+            }
+            Ok(())
+        })
     }
 }
 
 impl<S: StoreReadOps<H256>> PoseidonSmt<S> {
     pub(crate) fn get(&self, key: TreeKey) -> Result<TreeLeaf, TreeError> {
-        let leaf = self.inner.get(&key.ckb()).map_err(vendor_error)?;
+        let leaf = self.inner()?.get(&key.ckb()).map_err(vendor_error)?;
         TreeLeaf::from_be_bytes(leaf.into())
     }
 
     pub(crate) fn prove(&self, keys: Vec<TreeKey>) -> Result<TreeProof, TreeError> {
-        ensure_unique_keys(&keys)?;
-        let ckb_keys: Vec<_> = keys.into_iter().map(TreeKey::ckb).collect();
-        let proof = self
-            .inner
-            .merkle_proof(ckb_keys.clone())
-            .and_then(|proof| proof.compile(ckb_keys))
-            .map_err(vendor_error)?;
-        Ok(TreeProof(proof))
+        hash_scope(|| {
+            ensure_unique_keys(&keys)?;
+            let ckb_keys: Vec<_> = keys.into_iter().map(TreeKey::ckb).collect();
+            let proof = self
+                .inner()?
+                .merkle_proof(ckb_keys.clone())
+                .and_then(|proof| proof.compile(ckb_keys))
+                .map_err(vendor_error)?;
+            Ok(TreeProof(proof))
+        })
     }
 }
 
@@ -434,15 +486,31 @@ impl<S: StoreReadOps<H256> + StoreWriteOps<H256>> PoseidonSmt<S> {
         if updates.is_empty() {
             return self.root();
         }
-        self.inner
-            .update_all(
-                updates
-                    .into_iter()
-                    .map(|(key, leaf)| (key.ckb(), leaf.ckb()))
-                    .collect(),
-            )
-            .map_err(vendor_error)?;
-        checked_root(*self.inner.root())
+        let (root, changes) = hash_scope(|| {
+            let inner = self.inner()?;
+            let mut staged = SparseMerkleTree::<PoseidonCkbHasher, H256, _>::new(
+                *inner.root(),
+                UpdateOverlay::new(inner.store()),
+            );
+            staged
+                .update_all(
+                    updates
+                        .into_iter()
+                        .map(|(key, leaf)| (key.ckb(), leaf.ckb()))
+                        .collect(),
+                )
+                .map_err(vendor_error)?;
+            let root = checked_root(*staged.root())?;
+            Ok((root, staged.take_store().changes))
+        })?;
+        let inner = self.inner.as_mut().ok_or(TreeError::UpdateInvalidated)?;
+        if let Err(error) = changes.apply(inner.store_mut()) {
+            self.invalidated = true;
+            return Err(vendor_error(error));
+        }
+        let inner = self.inner.take().ok_or(TreeError::UpdateInvalidated)?;
+        self.inner = Some(SparseMerkleTree::new(root.ckb(), inner.take_store()));
+        Ok(root)
     }
 }
 
@@ -451,7 +519,10 @@ pub(crate) fn derive_tree_key(
     identity: WwdEntityId,
 ) -> Result<TreeKey, TreeError> {
     crate::collection::tree_key_bytes(collection.into(), identity)
-        .map_err(|error| TreeError::Poseidon(error.to_string()))
+        .map_err(|error| match error {
+            crate::CollectionError::Hash(error) => TreeError::Poseidon(error),
+            other => TreeError::Vendor(other.to_string()),
+        })
         .and_then(TreeKey::from_be_bytes)
 }
 
@@ -466,7 +537,7 @@ fn ensure_unique_keys(keys: &[TreeKey]) -> Result<(), TreeError> {
     Ok(())
 }
 
-fn validate_merge_value(value: &MergeValue) -> Result<(), TreeError> {
+pub(super) fn validate_merge_value(value: &MergeValue) -> Result<(), TreeError> {
     match value {
         MergeValue::Value(value) => validate_ckb(*value, "branch value"),
         MergeValue::MergeWithZero {
@@ -503,15 +574,10 @@ fn checked_root(root: H256) -> Result<TreeRoot, TreeError> {
 }
 
 fn vendor_error(error: VendorError) -> TreeError {
-    let message = error.to_string();
-    if message.contains("poison") || message.contains("canonical") {
-        TreeError::TreeHashError
-    } else {
-        TreeError::Vendor(message)
-    }
+    TreeError::Vendor(error.to_string())
 }
 
-fn vendor_store_error(error: TreeError) -> VendorError {
+pub(super) fn vendor_store_error(error: TreeError) -> VendorError {
     VendorError::Store(error.to_string())
 }
 

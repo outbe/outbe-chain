@@ -115,8 +115,14 @@ impl TributeFactoryContract<'_> {
         let record = result.tribute.as_ref().ok_or_else(|| {
             PrecompileError::Fatal("created Tribute result has no canonical body".into())
         })?;
-        let expected_digest = derive_poseidon_digest(record.owner, worldwide_day)
-            .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+        let expected_digest =
+            derive_poseidon_digest(record.owner, worldwide_day).map_err(|error| {
+                if error.is_infrastructure() {
+                    PrecompileError::CryptoBackendUnavailable(error.to_string())
+                } else {
+                    PrecompileError::Fatal(error.to_string())
+                }
+            })?;
         let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
         if result.token_id != expected_digest || record.tribute_id != tribute_id {
             return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
@@ -256,9 +262,11 @@ fn validate_zk_result(
     let verified = Barretenberg::default()
         .verify_combined(verification_key, zk_proof)
         .map_err(|error| {
-            PrecompileError::Fatal(format!(
-                "ZK verifier unavailable: zk verification backend failed: {error}"
-            ))
+            if error.is_infrastructure() {
+                PrecompileError::CryptoBackendUnavailable(error.to_string())
+            } else {
+                TributeFactoryError::MalformedZkProof(error.to_string()).into()
+            }
         })?;
     if !verified {
         return Err(TributeFactoryError::InvalidZkProof.into());
@@ -406,7 +414,7 @@ mod zk_result_tests {
     }
 
     #[test]
-    fn treats_backend_rejection_as_fatal_after_public_inputs_match() {
+    fn rejects_malformed_proof_deterministically_after_public_inputs_match() {
         let public = public_inputs();
         let expected = TributeZkExpectedHashes {
             nft_hash: public.nft_hash,
@@ -421,8 +429,13 @@ mod zk_result_tests {
         )
         .unwrap_err();
         assert!(
-            matches!(error, PrecompileError::Fatal(_)),
+            matches!(error, PrecompileError::Revert(_)),
             "unexpected error: {error}"
+        );
+        assert!(!error.is_node_local());
+        assert_eq!(
+            error.sweep_failure(),
+            outbe_primitives::error::SweepFailure::Skip
         );
     }
 

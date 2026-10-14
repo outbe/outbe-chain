@@ -133,6 +133,7 @@ fn bench_components(c: &mut Criterion) {
     g.bench_function("process_one_full", |b| {
         b.iter(|| {
             process_tribute_offer_batch(std::hint::black_box(&key), std::hint::black_box(&one))
+                .unwrap()
         })
     });
 
@@ -150,6 +151,7 @@ fn bench_batch_throughput(c: &mut Criterion) {
         g.bench_with_input(BenchmarkId::from_parameter(n), &batch, |b, batch| {
             b.iter(|| {
                 process_tribute_offer_batch(std::hint::black_box(&key), std::hint::black_box(batch))
+                    .unwrap()
             })
         });
     }

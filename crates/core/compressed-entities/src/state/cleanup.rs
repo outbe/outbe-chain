@@ -88,7 +88,7 @@ impl State<'_> {
             let partition =
                 PartitionRef::TributeWwd(outbe_primitives::time::WorldwideDay::new(*day));
             let (_, key) =
-                partition_collection_key(partition).map_err(|error| fatal(error.to_string()))?;
+                partition_collection_key(partition).map_err(crate::errors::collection_error)?;
             let storage_key = B256::from(*key.as_bytes());
             if !unique_retirements.insert(storage_key)
                 || schema.pending_retirement.read(&storage_key)? != U256::from(1)

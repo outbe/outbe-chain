@@ -36,6 +36,11 @@ pub enum PrecompileError {
     #[error("compressed-entity tree unavailable: {0}")]
     TreeUnavailable(String),
 
+    /// This node's native cryptographic backend cannot execute the operation.
+    /// This is not evidence that the transaction or block is invalid.
+    #[error("cryptographic backend unavailable: {0}")]
+    CryptoBackendUnavailable(String),
+
     /// One transaction can never fit inside the configured CE work budget.
     #[error("transaction exceeds the compressed-entity work limit")]
     TransactionCeWorkLimitExceeded,
@@ -137,6 +142,7 @@ impl PrecompileError {
             | Self::BodyReadUnavailable(_)
             | Self::BodyReadRequestDeadline
             | Self::TreeUnavailable(_)
+            | Self::CryptoBackendUnavailable(_)
             | Self::TransactionCeWorkLimitExceeded
             | Self::BlockCeWorkCapacityExhausted
             | Self::Fatal(_)
@@ -159,6 +165,54 @@ pub enum SweepFailure {
 }
 
 impl PrecompileError {
+    /// Find a typed native-backend failure through execution/import adapters.
+    /// Do not infer backend availability from a fatal error's display text.
+    pub fn find_crypto_backend_failure<'a>(
+        mut error: &'a (dyn std::error::Error + 'static),
+    ) -> Option<&'a Self> {
+        loop {
+            if let Some(error) = error.downcast_ref::<Self>() {
+                if matches!(error, Self::CryptoBackendUnavailable(_)) {
+                    return Some(error);
+                }
+            }
+            // Transparent wrappers delegate `source()` to their inner cause's
+            // source, which can skip the typed error entirely. Inspect the
+            // production executor/import wrappers before following `source()`.
+            if let Some(reth_ethereum::node::api::BeaconOnNewPayloadError::Internal(inner)) =
+                error.downcast_ref::<reth_ethereum::node::api::BeaconOnNewPayloadError>()
+            {
+                error = inner.as_ref();
+                continue;
+            }
+            if let Some(reth_ethereum::node::api::InsertBlockFatalError::BlockExecutionError(
+                inner,
+            )) = error.downcast_ref::<reth_ethereum::node::api::InsertBlockFatalError>()
+            {
+                error = inner;
+                continue;
+            }
+            if let Some(alloy_evm::block::BlockExecutionError::Internal(inner)) =
+                error.downcast_ref::<alloy_evm::block::BlockExecutionError>()
+            {
+                error = inner;
+                continue;
+            }
+            if let Some(inner) =
+                error.downcast_ref::<alloy_evm::block::InternalBlockExecutionError>()
+            {
+                error = match inner {
+                    alloy_evm::block::InternalBlockExecutionError::Other(inner)
+                    | alloy_evm::block::InternalBlockExecutionError::EVM { error: inner, .. } => {
+                        inner.as_ref()
+                    }
+                };
+                continue;
+            }
+            error = error.source()?;
+        }
+    }
+
     /// A failure of this node's own storage, readers or enclave, which another node would not hit.
     pub fn is_node_local(&self) -> bool {
         match self {
@@ -166,6 +220,7 @@ impl PrecompileError {
             | Self::BodyReadUnavailable(_)
             | Self::BodyReadRequestDeadline
             | Self::TreeUnavailable(_)
+            | Self::CryptoBackendUnavailable(_)
             | Self::EnclaveUnavailable(_)
             | Self::SubCall(SubCallError::DatabaseError(_)) => true,
             Self::OutOfGas
@@ -249,6 +304,11 @@ mod tests {
             ),
             (
                 PrecompileError::TreeUnavailable("x".into()),
+                true,
+                SweepFailure::Propagate,
+            ),
+            (
+                PrecompileError::CryptoBackendUnavailable("x".into()),
                 true,
                 SweepFailure::Propagate,
             ),

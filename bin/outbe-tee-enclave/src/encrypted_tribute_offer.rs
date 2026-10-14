@@ -16,7 +16,7 @@ use crate::{
     compute::{compute_nominal, compute_token_id, parse_canonical_amount},
     crypto::ecdhe_tribute_offer_decrypt,
     payload::{self, TributeInputPayload},
-    process::TributeOfferKeyMaterial,
+    process::{OfferError, TributeOfferKeyMaterial},
     tribute_encryption::encrypt_tribute,
     zk_claim::derive_expected_hashes,
 };
@@ -32,15 +32,16 @@ pub fn process_encrypted_tribute_offer_batch(
     key: &TributeOfferKeyMaterial<'_>,
     chain_id: u64,
     offers: &[EncryptedTributeOffer],
-) -> (Vec<EncryptedTributeOfferResultV2>, B256) {
+) -> Result<(Vec<EncryptedTributeOfferResultV2>, B256), OfferError> {
     let results = offers
         .iter()
-        .map(|offer| {
-            process_one(key, chain_id, offer)
-                .unwrap_or_else(EncryptedTributeOfferResultV2::rejected)
+        .map(|offer| match process_one(key, chain_id, offer) {
+            Ok(result) => Ok(result),
+            Err(error) if error.is_infrastructure() => Err(error),
+            Err(error) => Ok(EncryptedTributeOfferResultV2::rejected(error.to_string())),
         })
-        .collect();
-    (results, encrypted_offer_inputs_hash(chain_id, offers))
+        .collect::<Result<Vec<_>, OfferError>>()?;
+    Ok((results, encrypted_offer_inputs_hash(chain_id, offers)))
 }
 
 fn decrypt_payload(
@@ -67,7 +68,7 @@ fn process_one(
     key: &TributeOfferKeyMaterial<'_>,
     chain_id: u64,
     offer: &EncryptedTributeOffer,
-) -> Result<EncryptedTributeOfferResultV2, String> {
+) -> Result<EncryptedTributeOfferResultV2, OfferError> {
     if offer
         .zk_context
         .as_ref()

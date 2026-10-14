@@ -73,6 +73,11 @@
       "archive_url": "https://github.com/AztecProtocol/barretenberg/releases/download/v5.0.0-nightly.20260522/barretenberg-amd64-linux.tar.gz",
       "version": "5.0.0-nightly.20260522"
     },
+    "barretenberg_static": {
+      "archive_sha256": "13201af753e786e604db905254f41a1064b246e3bdc2463ef8201677e7836885",
+      "archive_url": "https://github.com/AztecProtocol/barretenberg/releases/download/v5.0.0-nightly.20260522/barretenberg-static-amd64-linux.tar.gz",
+      "version": "5.0.0-nightly.20260522"
+    },
     "nargo": {
       "archive_sha256": "384c4fc800905b213e26aabd738a96a4a85b1a76ffc27fb19aeb6d33494a787b",
       "archive_url": "https://github.com/noir-lang/noir/releases/download/v1.0.0-beta.22/nargo-x86_64-unknown-linux-gnu.tar.gz",

@@ -32,8 +32,7 @@ pub fn generate_nod_id(
     owner: Address,
     worldwide_day: WorldwideDay,
 ) -> outbe_primitives::error::Result<WwdEntityId> {
-    derive_poseidon_entity_id(owner, worldwide_day)
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
+    derive_poseidon_entity_id(owner, worldwide_day).map_err(crate::errors::commitment_error)
 }
 
 pub fn parse_nod_id(nod_id: &str) -> Result<WwdEntityId> {
@@ -44,4 +43,32 @@ pub fn parse_nod_id(nod_id: &str) -> Result<WwdEntityId> {
     trimmed
         .parse::<WwdEntityId>()
         .map_err(|_| NodError::InvalidNodIdHex.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_primitives::error::PrecompileError;
+
+    #[test]
+    fn identity_failure_after_success_is_node_local_and_recoverable() {
+        let owner = Address::repeat_byte(0x35);
+        let day = WorldwideDay::new(20260724);
+        let expected = generate_nod_id(owner, day).unwrap();
+        {
+            let _failure = outbe_poseidon::testing::fail_after(1);
+            assert_eq!(generate_nod_id(owner, day).unwrap(), expected);
+            let error = generate_nod_id(owner, day).unwrap_err();
+            assert!(matches!(
+                error,
+                PrecompileError::CryptoBackendUnavailable(_)
+            ));
+            assert!(error.is_node_local());
+        }
+        assert_eq!(generate_nod_id(owner, day).unwrap(), expected);
+        assert!(matches!(
+            parse_nod_id("invalid"),
+            Err(PrecompileError::Revert(_))
+        ));
+    }
 }

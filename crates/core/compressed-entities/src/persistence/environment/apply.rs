@@ -15,7 +15,7 @@ impl CeMdbx {
     ) -> Result<ApplyOutcome, PersistenceError> {
         batch
             .validate_encoded_size()
-            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+            .map_err(PersistenceError::from)?;
         validate_root(batch.parent_root())?;
         validate_root(batch.new_root())?;
         let next = batch.marker(self.identity.commitment_scheme_version);
@@ -39,8 +39,7 @@ impl CeMdbx {
 
         let parent_catalog = read_required_tree_root(&tx, &self.path, TreeNamespace::Catalog)?;
         if parent_catalog != batch.parent_catalog_root
-            || crate::sealed_root(parent_catalog)
-                .map_err(|error| PersistenceError::Staging(error.to_string()))?
+            || crate::sealed_root(parent_catalog).map_err(PersistenceError::collection_hash)?
                 != current.new_root
         {
             return Err(PersistenceError::ParentCatalogRootMismatch);
@@ -65,7 +64,7 @@ impl CeMdbx {
             .map_err(|error| self.db_error(error))?;
         }
         let wrapped = crate::sealed_root(batch.new_catalog_root)
-            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+            .map_err(PersistenceError::collection_hash)?;
         if wrapped != batch.new_root() {
             return Err(PersistenceError::CatalogWrapperMismatch {
                 expected: batch.new_root(),
@@ -130,9 +129,9 @@ impl CeMdbx {
 
         self.apply_collection_shards(tx, collection_key, &collection.shard_set)?;
         let top = aggregate_b256_shard_roots(&collection.shard_set.new_shard_roots)
-            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+            .map_err(PersistenceError::tree_hash)?;
         let recomputed = crate::collection_root(domain, collection_key, top)
-            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+            .map_err(PersistenceError::collection_hash)?;
         if recomputed != collection.new_collection_root {
             return Err(PersistenceError::NewCollectionRootMismatch);
         }
@@ -158,9 +157,9 @@ impl CeMdbx {
             return Err(PersistenceError::ParentShardRootsMismatch);
         }
         let top = aggregate_b256_shard_roots(&retirement.parent_shard_roots)
-            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+            .map_err(PersistenceError::tree_hash)?;
         if crate::collection_root(domain, collection_key, top)
-            .map_err(|error| PersistenceError::Staging(error.to_string()))?
+            .map_err(PersistenceError::collection_hash)?
             != retirement.parent_collection_root
         {
             return Err(PersistenceError::ParentCatalogRootMismatch);

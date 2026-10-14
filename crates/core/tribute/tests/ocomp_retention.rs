@@ -28,6 +28,49 @@ fn tribute(day: WorldwideDay, discriminator: u8) -> TributeData {
 }
 
 #[test]
+fn retained_commitment_failure_after_success_preserves_current_and_retained_state() {
+    let storage = Arc::new(MemoryStorage::new());
+    let reader: StorageReaderHandle = storage.clone();
+    let writer: StorageWriterHandle = storage;
+    let current_reader = TributeRepositoryReader::new(reader.clone());
+    let current_writer = TributeRepositoryWriter::new(reader.clone(), writer.clone());
+    let retained = RetainedTributeReader::new(reader);
+    let day = WorldwideDay::new(20260724);
+    let body = tribute(day, 0x39);
+    current_writer.put(&body).unwrap();
+    let pin = RetainedTributePin {
+        input_lease_id: B256::repeat_byte(0x49),
+        worldwide_day: day,
+    };
+    let initial = retained.plan_retain_current(pin, body.tribute_id).unwrap();
+    writer.apply_atomic(&initial).unwrap();
+    let before = retained.list_by_day(pin, None, 4).unwrap().records;
+    {
+        let _failure = outbe_poseidon::testing::fail_after(1);
+        let error = retained
+            .plan_retain_current(pin, body.tribute_id)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            TributeRepositoryError::RetainedCommitment(_)
+        ));
+        assert!(error.is_infrastructure());
+        let mapped: outbe_primitives::error::PrecompileError = error.into();
+        assert!(matches!(
+            mapped,
+            outbe_primitives::error::PrecompileError::CryptoBackendUnavailable(_)
+        ));
+        assert!(mapped.is_node_local());
+    }
+    assert!(current_reader.get(body.tribute_id).unwrap().is_some());
+    let after = retained.list_by_day(pin, None, 4).unwrap().records;
+    assert_eq!(after.len(), before.len());
+    assert_eq!(after[0].body_commitment, before[0].body_commitment);
+    assert!(retained.plan_retain_current(pin, body.tribute_id).is_ok());
+    assert!(!TributeRepositoryError::MalformedPrimaryKey.is_infrastructure());
+}
+
+#[test]
 fn atomic_retirement_keeps_exact_job_scoped_bytes_until_exact_job_gc() {
     let storage = Arc::new(MemoryStorage::new());
     let reader: StorageReaderHandle = storage.clone();

@@ -581,7 +581,12 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
             input,
             |offers| {
                 let enclave_started = Instant::now();
-                let (results, inputs_hash) = process_tribute_offer_batch(&key, offers);
+                let (results, inputs_hash) =
+                    process_tribute_offer_batch(&key, offers).map_err(|error| {
+                        outbe_primitives::error::PrecompileError::CryptoBackendUnavailable(
+                            error.to_string(),
+                        )
+                    })?;
                 enclave_ns = elapsed_ns(enclave_started);
                 black_box(inputs_hash);
                 Ok(results)

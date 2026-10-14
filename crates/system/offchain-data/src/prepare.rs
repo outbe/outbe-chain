@@ -130,7 +130,7 @@ pub(super) fn validate_tribute_transition(
                 identity,
                 stored.payload(),
             )
-            .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            .map_err(ProjectionError::commitment)?;
             B256::from(*commitment.as_bytes())
         }
         None => B256::ZERO,
@@ -157,7 +157,7 @@ pub(super) fn validate_nod_transition(
                 identity,
                 &payload,
             )
-            .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            .map_err(ProjectionError::commitment)?;
             B256::from(*commitment.as_bytes())
         }
         None => B256::ZERO,
@@ -180,7 +180,7 @@ pub(super) fn validate_bucket_transition(
                 .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
             let commitment =
                 body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
-                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+                    .map_err(ProjectionError::commitment)?;
             B256::from(*commitment.as_bytes())
         }
         None => B256::ZERO,
@@ -252,7 +252,7 @@ fn validate_gem_transition<T>(
                 .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
             let commitment =
                 body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
-                    .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+                    .map_err(ProjectionError::commitment)?;
             B256::from(*commitment.as_bytes())
         }
         None => B256::ZERO,

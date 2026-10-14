@@ -119,7 +119,7 @@ pub enum TributeRepositoryError {
     RetainedIdentity(#[from] core::array::TryFromSliceError),
     /// CES2 commitment construction failed for a retained body.
     #[error("failed to derive retained Tribute commitment: {0}")]
-    RetainedCommitment(String),
+    RetainedCommitment(#[source] outbe_compressed_entities::CommitmentError),
     /// One job/entity identity resolved to different retained bytes or commitments.
     #[error("OCOMP retained job {job_id} has conflicting bytes for Tribute {tribute_id}")]
     ConflictingRetainedBody {
@@ -171,6 +171,17 @@ pub enum TributeRepositoryError {
     /// Exact job GC requires body and index key sets to agree.
     #[error("OCOMP retained job {job_id} body/index namespaces disagree")]
     RetainedNamespaceMismatch { job_id: B256 },
+}
+
+impl TributeRepositoryError {
+    /// Whether a native cryptographic backend failure caused this error.
+    #[must_use]
+    pub fn is_infrastructure(&self) -> bool {
+        match self {
+            Self::RetainedCommitment(error) => error.is_infrastructure(),
+            _ => false,
+        }
+    }
 }
 
 /// Cloneable read authority for Tribute bodies and typed indexes.

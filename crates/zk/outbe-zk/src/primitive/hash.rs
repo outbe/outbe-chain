@@ -15,7 +15,7 @@ pub fn poseidon2(inputs: &[Fr]) -> Result<Fr, Error> {
     use outbe_poseidon::PoseidonHasher as _;
     outbe_poseidon::Poseidon2::new()
         .hash(inputs)
-        .map_err(|error| Error::Hash(error.to_string()))
+        .map_err(Error::Hash)
 }
 
 /// Iterated 2-to-1 hash seeded at `seed`; an empty body returns `seed`.

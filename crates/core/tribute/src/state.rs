@@ -480,7 +480,7 @@ pub(crate) fn validate_tribute_for_issue(tribute: &TributeData) -> Result<()> {
         return Err(TributeError::SettlementAmountMustBePositive.into());
     }
     let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+        .map_err(crate::errors::commitment_error)?;
     if tribute.tribute_id != expected {
         return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
             "Tribute canonical identity mismatch: expected {expected}, found {}",

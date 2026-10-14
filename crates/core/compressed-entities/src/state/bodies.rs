@@ -123,7 +123,7 @@ impl<'storage> State<'storage> {
             Collection::GemBucket => CeDomain::GemBucket,
         };
         let collection_key =
-            collection_key(domain, entity_id).map_err(|error| fatal(error.to_string()))?;
+            collection_key(domain, entity_id).map_err(crate::errors::collection_error)?;
         if !self
             .schema()
             .pending_retirement

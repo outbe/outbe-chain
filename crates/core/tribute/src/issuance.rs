@@ -45,7 +45,7 @@ impl TributeContract<'_> {
             record.owner,
             record.worldwide_day,
         )
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+        .map_err(crate::errors::commitment_error)?;
         if record.owner.is_zero() || record.tribute_id != expected {
             return Err(TributeError::InvalidOwner.into());
         }

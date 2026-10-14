@@ -194,6 +194,8 @@ pub enum PointReadRequestError {
 
 #[derive(Debug, Error)]
 pub enum PointReadServiceError {
+    #[error("point proof hashing backend failed: {0}")]
+    CryptoBackend(#[source] crate::CommitmentError),
     #[error("compressed-entity proof service is not ready at genesis")]
     GenesisUnavailable,
     #[error("compressed-entity proof materialization is inconsistent: {0}")]
@@ -202,6 +204,15 @@ pub enum PointReadServiceError {
     MalformedProofLength { actual: usize },
     #[error("point proof package is invalid: {0}")]
     InvalidPackage(&'static str),
+}
+
+impl PointReadServiceError {
+    fn materialization(error: impl std::error::Error + 'static) -> Self {
+        match crate::errors::infrastructure_cause(&error) {
+            Some(cause) => Self::CryptoBackend(cause),
+            None => Self::Materialization(error.to_string()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -288,12 +299,12 @@ impl CompressedTreeService {
             raw_id: request.raw_id,
         };
         let collection = collection_key(domain, request.raw_id)
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+            .map_err(PointReadServiceError::materialization)?;
         let (catalog_leaf, root_catalog_proof) = frozen::catalog_entry(&view, collection)?;
         if catalog_leaf == TreeLeaf::ZERO {
             if view
                 .collection_has_records(collection)
-                .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?
+                .map_err(PointReadServiceError::materialization)?
             {
                 return Err(PointReadServiceError::Materialization(
                     "orphan records behind absent catalog leaf".into(),
@@ -560,30 +571,27 @@ pub(crate) fn single_body_proof(
 ) -> Result<(B256, CollectionBodyProofV1), PointReadServiceError> {
     let leaf = canonical_body_leaf(domain, id, body)?;
     let key = derive_tree_key(collection_for_domain(domain), id)
-        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-    let shard = shard_index(key, domain.shard_count())
-        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+        .map_err(PointReadServiceError::materialization)?;
+    let shard =
+        shard_index(key, domain.shard_count()).map_err(PointReadServiceError::materialization)?;
     let mut tree = PoseidonSmt::empty();
     tree.update(
         key,
-        TreeLeaf::from_be_bytes(leaf.0)
-            .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?,
+        TreeLeaf::from_be_bytes(leaf.0).map_err(PointReadServiceError::materialization)?,
     )
-    .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    .map_err(PointReadServiceError::materialization)?;
     let root = tree
         .root()
-        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+        .map_err(PointReadServiceError::materialization)?;
     let mut roots = vec![B256::ZERO; domain.shard_count() as usize];
     roots[shard as usize] = B256::from(root.as_bytes());
-    let top = aggregate_b256_shard_roots(&roots)
-        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-    let collection = collection_key(domain, id)
-        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
-    let collection_root = collection_root(domain, collection, top)
-        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+    let top = aggregate_b256_shard_roots(&roots).map_err(PointReadServiceError::materialization)?;
+    let collection = collection_key(domain, id).map_err(PointReadServiceError::materialization)?;
+    let collection_root =
+        collection_root(domain, collection, top).map_err(PointReadServiceError::materialization)?;
     let proof = tree
         .prove(vec![key])
-        .map_err(|e| PointReadServiceError::Materialization(e.to_string()))?;
+        .map_err(PointReadServiceError::materialization)?;
     Ok((
         collection_root,
         CollectionBodyProofV1 {

@@ -102,7 +102,21 @@ impl fmt::Display for LysisArtifactErrorV1 {
     }
 }
 
-impl std::error::Error for LysisArtifactErrorV1 {}
+impl LysisArtifactErrorV1 {
+    pub fn is_infrastructure(&self) -> bool {
+        matches!(self, Self::Program(error) if error.is_infrastructure())
+    }
+}
+
+impl std::error::Error for LysisArtifactErrorV1 {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Program(error) => Some(error),
+            Self::Protocol(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl From<ProgramErrorV1> for LysisArtifactErrorV1 {
     fn from(error: ProgramErrorV1) -> Self {

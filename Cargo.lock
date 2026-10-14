@@ -8220,6 +8220,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-barretenberg"
+version = "0.1.0"
+dependencies = [
+ "barretenberg-rs",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-ccaregistry"
 version = "0.1.0"
 dependencies = [
@@ -8730,6 +8738,7 @@ dependencies = [
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-oracle",
+ "outbe-poseidon",
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
@@ -9050,6 +9059,7 @@ dependencies = [
  "outbe-nod",
  "outbe-ocomp-protocol",
  "outbe-oracle",
+ "outbe-poseidon",
  "outbe-primitives",
  "serde",
  "serde_json",
@@ -9128,6 +9138,7 @@ dependencies = [
  "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-oracle",
+ "outbe-poseidon",
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-tee",
@@ -9433,6 +9444,10 @@ version = "0.13.0"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.6.0",
+ "barretenberg-rs",
+ "outbe-barretenberg",
+ "rmp-serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9857,6 +9872,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-fidelity-math",
  "outbe-ocomp-protocol",
+ "outbe-poseidon",
  "outbe-primitives",
  "outbe-tee",
  "outbe-zk",
@@ -9905,6 +9921,7 @@ dependencies = [
  "outbe-macros",
  "outbe-ocomp-protocol",
  "outbe-offchain-storage",
+ "outbe-poseidon",
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
@@ -10095,6 +10112,7 @@ dependencies = [
  "base64 0.22.1",
  "blake2 0.10.6",
  "hex-literal",
+ "outbe-barretenberg",
  "outbe-poseidon",
  "serde_json",
  "thiserror 2.0.18",
@@ -10116,6 +10134,7 @@ dependencies = [
  "base64 0.22.1",
  "bn254_blackbox_solver",
  "flate2",
+ "outbe-barretenberg",
  "outbe-zk",
  "reqwest 0.13.2",
  "sha2 0.10.9",

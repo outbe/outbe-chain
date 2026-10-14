@@ -28,10 +28,7 @@ impl AuthenticatedCatalogView {
         let catalog_root = snapshot.tree_root(TreeNamespace::Catalog)?.ok_or(
             StagingError::InvalidCatalogEnvelope("catalog root is missing"),
         )?;
-        if sealed_root(catalog_root).map_err(|_| {
-            StagingError::InvalidCatalogEnvelope("invalid exact-parent catalog root")
-        })? != required.root
-        {
+        if sealed_root(catalog_root).map_err(StagingError::Collection)? != required.root {
             return Err(StagingError::InvalidCatalogEnvelope(
                 "exact-parent catalog root does not match authoritative sealed root",
             ));

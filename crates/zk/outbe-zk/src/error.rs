@@ -3,11 +3,15 @@
 use thiserror::Error;
 
 /// Errors produced by cryptographic primitives and protocol logic.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum Error {
     /// A hash/KDF operation failed.
     #[error("hash error: {0}")]
-    Hash(String),
+    Hash(#[source] outbe_poseidon::PoseidonError),
+
+    /// Node-local native dispatcher or transport failure, not an invalid proof.
+    #[error("crypto backend unavailable: {0}")]
+    CryptoBackend(#[from] outbe_barretenberg::RuntimeError),
 
     /// A curve point that must be affine/non-identity was the identity.
     #[error("unexpected identity point: {0}")]
@@ -41,4 +45,14 @@ pub enum Error {
     /// malformed path).
     #[error("merkle error: {0}")]
     Merkle(String),
+}
+
+impl Error {
+    pub fn is_infrastructure(&self) -> bool {
+        match self {
+            Self::Hash(error) => error.is_infrastructure(),
+            Self::CryptoBackend(error) => error.is_infrastructure(),
+            _ => false,
+        }
+    }
 }

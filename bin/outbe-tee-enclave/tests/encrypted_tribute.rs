@@ -216,8 +216,39 @@ fn offer_creator_owns_the_tribute_while_proof_binding_uses_the_transaction_calle
         tribute_offer_private_key: &f.enclave_secret,
         salt: &outbe_tee::OFFER_HKDF_SALT,
     };
+    {
+        let _failure = outbe_poseidon::testing::fail_after(1);
+        let error = process_encrypted_tribute_offer_batch(
+            &key,
+            f.encrypted.context.chain_id,
+            &[offer.clone()],
+        )
+        .unwrap_err();
+        assert!(error.is_infrastructure());
+        assert!(matches!(
+            error,
+            outbe_tee_enclave::process::OfferError::Zk { .. }
+        ));
+    }
+    {
+        let mut plain = offer.clone();
+        plain.zk_context = None;
+        let _failure = outbe_poseidon::testing::fail_after(1);
+        let error = process_encrypted_tribute_offer_batch(
+            &key,
+            f.encrypted.context.chain_id,
+            &[plain.clone(), plain],
+        )
+        .unwrap_err();
+        assert!(error.is_infrastructure());
+        assert!(matches!(
+            error,
+            outbe_tee_enclave::process::OfferError::Commitment(_)
+        ));
+    }
     let (results, _) =
-        process_encrypted_tribute_offer_batch(&key, f.encrypted.context.chain_id, &[offer.clone()]);
+        process_encrypted_tribute_offer_batch(&key, f.encrypted.context.chain_id, &[offer.clone()])
+            .unwrap();
     let result = &results[0];
     assert_eq!(result.status, TributeOfferStatus::Created);
     let tribute = result.tribute.as_ref().unwrap();
@@ -239,7 +270,8 @@ fn offer_creator_owns_the_tribute_while_proof_binding_uses_the_transaction_calle
     let first_binding = result.zk_expected_hashes.as_ref().unwrap().binding_hash;
     offer.owner = Address::repeat_byte(0x88);
     let (other, _) =
-        process_encrypted_tribute_offer_batch(&key, f.encrypted.context.chain_id, &[offer]);
+        process_encrypted_tribute_offer_batch(&key, f.encrypted.context.chain_id, &[offer])
+            .unwrap();
     assert_eq!(
         other[0].tribute.as_ref().unwrap().context.owner,
         tribute.context.owner
