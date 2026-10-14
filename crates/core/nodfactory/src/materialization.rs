@@ -194,8 +194,7 @@ pub(crate) fn materialize_after_attempt(
     if loads.len() != verified.actions().len() || loads.iter().any(|load| load.is_zero()) {
         return Err(PrecompileError::Fatal(
             "Nod materialization test load does not match the batch".into(),
-        )
-        .into());
+        ));
     }
     for (action, load) in verified.actions().iter().zip(loads) {
         let params = NodIssueParams {

@@ -152,9 +152,7 @@ pub(in super::super) fn execute_shuffle_unit(
                 })
             })
             .collect::<Vec<_>>();
-        return build_bucket_shuffle_unit_artifact(
-            spec, run_span, coverage, records, limits, inbox,
-        );
+        build_bucket_shuffle_unit_artifact(spec, run_span, coverage, records, limits, inbox)
     } else {
         if resolved.len() != 2 {
             return Err(WorkerError::UnitBindingMismatch);
@@ -221,9 +219,7 @@ pub(in super::super) fn execute_shuffle_unit(
             let VerifiedShuffleRecordV1::Bucket(record) = record?;
             Ok(record)
         });
-        return build_bucket_shuffle_unit_artifact(
-            spec, run_span, coverage, records, limits, inbox,
-        );
+        build_bucket_shuffle_unit_artifact(spec, run_span, coverage, records, limits, inbox)
     }
 }
 
