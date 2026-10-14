@@ -4,9 +4,8 @@
 
 use alloy_primitives::U256;
 use outbe_oracle::{
-    api::get_all_reference_currencies,
     call_sweep::{self, CallSweep, CALL_SWEEP},
-    call_window::{CallWindow, CallWindows},
+    call_window::CallWindow,
 };
 use outbe_primitives::{
     block::BlockRuntimeContext, call_bins, call_breach::ScanTerms, daily_sweep::PinnedDay,
@@ -80,32 +79,22 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
-        let currencies = get_all_reference_currencies(ctx)?;
         let params = crate::config::read_from(&self.gem, ctx.block.chain_id)?;
-        let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
-        let mut budget = SweepBudget::per_block();
         let mut called: u32 = 0;
         let gem = &self.gem;
-        let finished = call_bins::walk_currencies(
-            &currencies,
+        let finished = call_sweep::walk_day(
+            ctx,
+            pinned_day,
             &gem.call_currency_cursor,
-            &mut budget,
-            |iso_code, budget| {
-                let skipped = || {
-                    GemContract::new(ctx.storage.clone()).emit(CallScanSkipped {
-                        referenceCurrency: iso_code,
-                        utcDay: pinned_day,
-                    })
-                };
-                let Some((window, ceiling)) = call_sweep::currency_ceiling(
-                    &CallBins(gem, iso_code),
-                    &mut windows,
-                    || scan_terms(gem, iso_code, &params),
-                    skipped,
-                )?
-                else {
-                    return Ok(true);
-                };
+            |iso_code| CallBins(gem, iso_code),
+            |iso_code| scan_terms(gem, iso_code, &params),
+            |iso_code| {
+                GemContract::new(ctx.storage.clone()).emit(CallScanSkipped {
+                    referenceCurrency: iso_code,
+                    utcDay: pinned_day,
+                })
+            },
+            |iso_code, window, ceiling, budget| {
                 let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, budget)?;
                 called = called.saturating_add(calls);
                 Ok(finished)

@@ -122,6 +122,41 @@ pub fn continue_day<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut
     Ok(called)
 }
 
+/// One block's slice of the pinned day: every currency from the cursor, each walked by
+/// `walk` up to the highest bin its window can have breached. `scan_terms` names the
+/// widest terms a currency's entries were sealed with, and `skipped` reports a currency
+/// whose window price fits no bin. Returns whether the day ended.
+pub fn walk_day<'s, B: CallBinStore<'s>>(
+    ctx: &BlockRuntimeContext,
+    pinned_day: u32,
+    currency_cursor: &Value<'s, u32>,
+    bins: impl Fn(u16) -> B,
+    mut scan_terms: impl FnMut(u16) -> Result<ScanTerms>,
+    mut skipped: impl FnMut(u16) -> Result<()>,
+    mut walk: impl FnMut(u16, &CallWindow, u32, &mut SweepBudget) -> Result<bool>,
+) -> Result<bool> {
+    let currencies = get_all_reference_currencies(ctx)?;
+    let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
+    let mut budget = SweepBudget::per_block();
+    call_bins::walk_currencies(
+        &currencies,
+        currency_cursor,
+        &mut budget,
+        |reference_currency, budget| {
+            let Some((window, ceiling)) = currency_ceiling(
+                &bins(reference_currency),
+                &mut windows,
+                || scan_terms(reference_currency),
+                || skipped(reference_currency),
+            )?
+            else {
+                return Ok(true);
+            };
+            walk(reference_currency, window, ceiling, budget)
+        },
+    )
+}
+
 /// The currency's window and the highest bin a breached entry can sit in. `None`
 /// when the currency is settled for the pinned day: nothing left past its cursor, too
 /// few priced days, or a price no bin covers. The last marks the day failed and calls

@@ -23,9 +23,8 @@
 use std::collections::BTreeSet;
 
 use alloy_primitives::B256;
-use outbe_oracle::api::get_all_reference_currencies;
 use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
-use outbe_oracle::call_window::{CallWindow, CallWindows};
+use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins,
@@ -149,32 +148,22 @@ fn call_slice(
     pinned_day: u32,
     called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
-    let currencies = get_all_reference_currencies(ctx)?;
     let params = crate::config::read_from(nod, ctx.block.chain_id)?;
-    let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
-    let mut budget = SweepBudget::per_block();
     let mut caller = NodContract::new(ctx.storage.clone());
     let mut called: u32 = 0;
-    let finished = call_bins::walk_currencies(
-        &currencies,
+    let finished = call_sweep::walk_day(
+        ctx,
+        pinned_day,
         &nod.call_currency_cursor,
-        &mut budget,
-        |iso_code, budget| {
-            let skipped = || {
-                NodContract::new(ctx.storage.clone()).emit(INod::CallScanSkipped {
-                    referenceCurrency: iso_code,
-                    utcDay: pinned_day,
-                })
-            };
-            let Some((window, ceiling)) = call_sweep::currency_ceiling(
-                &CallBins(nod, iso_code),
-                &mut windows,
-                || scan_terms(nod, iso_code, &params),
-                skipped,
-            )?
-            else {
-                return Ok(true);
-            };
+        |iso_code| CallBins(nod, iso_code),
+        |iso_code| scan_terms(nod, iso_code, &params),
+        |iso_code| {
+            NodContract::new(ctx.storage.clone()).emit(INod::CallScanSkipped {
+                referenceCurrency: iso_code,
+                utcDay: pinned_day,
+            })
+        },
+        |iso_code, window, ceiling, budget| {
             let scan = CurrencyScan {
                 iso_code,
                 window,

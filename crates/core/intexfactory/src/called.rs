@@ -7,9 +7,8 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
-use outbe_oracle::api::get_all_reference_currencies;
 use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
-use outbe_oracle::call_window::{CallWindow, CallWindows};
+use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::daily_sweep::PinnedDay;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
@@ -95,41 +94,31 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
-        let currencies = get_all_reference_currencies(ctx)?;
         let params = crate::config::read_from(&self.factory, ctx.block.chain_id)?;
-        let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
-        let mut budget = SweepBudget::per_block();
         let index = &self.factory;
         let mut called: u32 = 0;
-        let finished = call_bins::walk_currencies(
-            &currencies,
+        let finished = call_sweep::walk_day(
+            ctx,
+            pinned_day,
             &index.call_currency_cursor,
-            &mut budget,
-            |iso_code, budget| {
-                let skipped = || {
-                    crate::runtime::emit_event(
-                        &ctx.storage,
-                        crate::precompile::IIntexFactory::CallScanSkipped {
-                            referenceCurrency: iso_code,
-                            utcDay: pinned_day,
-                        },
-                    )
-                };
-                let Some((window, ceiling)) = call_sweep::currency_ceiling(
-                    &CallBins(index, iso_code),
-                    &mut windows,
-                    || {
-                        index.scan_call_terms(
-                            iso_code,
-                            params.call_window_seconds,
-                            params.call_threshold_seconds,
-                        )
+            |iso_code| CallBins(index, iso_code),
+            |iso_code| {
+                index.scan_call_terms(
+                    iso_code,
+                    params.call_window_seconds,
+                    params.call_threshold_seconds,
+                )
+            },
+            |iso_code| {
+                crate::runtime::emit_event(
+                    &ctx.storage,
+                    crate::precompile::IIntexFactory::CallScanSkipped {
+                        referenceCurrency: iso_code,
+                        utcDay: pinned_day,
                     },
-                    skipped,
-                )?
-                else {
-                    return Ok(true);
-                };
+                )
+            },
+            |iso_code, window, ceiling, budget| {
                 let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, budget)?;
                 called = called.saturating_add(calls);
                 Ok(finished)
