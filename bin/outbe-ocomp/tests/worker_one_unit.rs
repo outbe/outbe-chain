@@ -1637,8 +1637,6 @@ fn real_worker_processes_execute_through_output_finalize() {
         tribute_id: chunk.ordered_nod_actions[0].tribute_id,
         nod_id: chunk.ordered_nod_actions[0].nod_id,
     };
-    let mut tribute_nominals = std::collections::BTreeMap::new();
-    tribute_nominals.insert(*tribute.tribute_id, tribute.nominal_amount_minor);
     let run_finalizer =
         |intent: &JobIntentV1, artifacts: Vec<UnitArtifactV1>, chunk_bytes: Vec<u8>| {
             let units = artifacts
@@ -1673,7 +1671,7 @@ fn real_worker_processes_execute_through_output_finalize() {
                         canonical_chunk_bytes: chunk_bytes,
                     })),
                     bucket_records: std::iter::once(Ok(bucket_record.clone())),
-                    tribute_nominals: &tribute_nominals,
+                    eligible_nominal_total: tribute.nominal_amount_minor,
                 },
                 &limits,
             )

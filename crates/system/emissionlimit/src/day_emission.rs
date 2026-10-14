@@ -126,7 +126,7 @@ pub fn day_emission_limit(day_number: u32) -> U256 {
         );
         o2 - d * MATH_SCALE / (MATH_SCALE + exponent)
     };
-    let reward = emission / (MATH_SCALE * UNITS_PER_COEN) * UNITS_PER_COEN;
+    let reward = emission / (MATH_SCALE * SCALE_1E6_U256) * SCALE_1E6_U256;
     if reward < FLOOR_DAY_EMISSION {
         FLOOR_DAY_EMISSION
     } else {
@@ -238,7 +238,7 @@ mod tests {
         for (day, expected) in reference_days() {
             let actual = day_emission_limit(day);
             assert_eq!(actual, expected, "day {day}");
-            assert_eq!(actual % UNITS_PER_COEN, U256::ZERO, "day {day}");
+            assert_eq!(actual % SCALE_1E6_U256, U256::ZERO, "day {day}");
         }
     }
 
