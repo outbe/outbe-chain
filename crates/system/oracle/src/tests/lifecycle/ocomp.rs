@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 #[test]
 fn ocomp_pre_admission_reads_priced_currencies_and_bounded_counts() {
@@ -149,7 +150,7 @@ fn prefork_oracle_event_failures_preserve_historical_best_effort_mutations() {
         assert_eq!(oracle.scurve_count.read().unwrap(), 1);
         assert_eq!(
             oracle.scurve_peak_day.read(&0).unwrap(),
-            SCURVE_CURRENT_DAY - 2 * crate::scurve::DAY_SECONDS
+            SCURVE_CURRENT_DAY - 2 * SECONDS_PER_DAY
         );
         assert!(!oracle.ocomp_profile_ready.read().unwrap());
     });

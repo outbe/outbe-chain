@@ -4,6 +4,7 @@
 
 use alloy_primitives::U256;
 use outbe_primitives::address_pair::AddressPair;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 use crate::schema::OracleContract;
 
@@ -48,7 +49,10 @@ fn finalized_window_vwap_requires_two_thirds_round_coverage() {
     // 73 of them is not enough. The judgement is per pair.
     with_storage_at(cutoff + 5 * 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle.config_lookback_duration.write(86_400).unwrap();
+        oracle
+            .config_lookback_duration
+            .write(SECONDS_PER_DAY)
+            .unwrap();
         let usd = AddressPair::new_coen_to(840);
         let eur = AddressPair::new_coen_to(978);
         oracle.register_pair(usd).unwrap();
@@ -71,7 +75,10 @@ fn finalized_window_vwap_requires_two_thirds_round_coverage() {
     // 1,100 of 1,800 (61%) is not enough even though the price is positive.
     with_storage_at(cutoff + 5 * 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
-        oracle.config_lookback_duration.write(86_400).unwrap();
+        oracle
+            .config_lookback_duration
+            .write(SECONDS_PER_DAY)
+            .unwrap();
         let usd = AddressPair::new_coen_to(840);
         oracle.register_pair(usd).unwrap();
         fill_window(&mut oracle, usd, start, 1_100, None);
