@@ -1,73 +1,55 @@
 //! relations obligations for the offline OCOMP audit.
 use super::*;
 
-/// Final selected OCOMP composition. Caller records the Ocomp status.
-pub(crate) fn verify_ocomp_relations(
-    state: &CanonicalState<'_>,
-    view: &crate::snapshot::native::RethReadOnlyView,
-    layout: &crate::snapshot::config::RequestedLayout,
-    scratch_parent: &Path,
+fn seed_canonical_work_union(
+    canonical: &canonical::CanonicalOcompAudit,
+    work: &PresentJobUnion,
     report: &mut super::super::report::ValidationReport,
 ) -> eyre::Result<()> {
-    let limits = CasLimits {
-        max_object_bytes: 1_048_576,
-        max_total_bytes: u64::MAX,
-    };
-    let mut errors = PresentJoinErrors::default();
-    // Exactly one canonical inventory/obligation scan, before local populations.
-    let canonical = errors.observe(verify_canonical_obligations(
-        state,
-        view,
-        layout,
-        scratch_parent,
-        None,
-        Some(report),
-    ));
-    let mut protected = layout.protected.clone();
-    protected.0.extend([
-        layout.chain_root.clone(),
-        layout.consensus_root.clone(),
-        layout.ocomp_root.clone(),
-        layout.static_files_root.clone(),
-        layout.execution_rocksdb_root.clone(),
-    ]);
-    protected
-        .0
-        .extend(layout.projection.as_ref().map(|p| p.root.clone()));
-    let work = PresentJobUnion::create(scratch_parent, &protected)?;
-    if let Some(canonical) = &canonical {
-        report.observed.p = Some(outbe_snapshot::manifest::BlockIdentity {
-            number: canonical.projection.block_number,
-            hash: hex::encode(canonical.projection.block_hash),
-        });
-        for (name, count) in [
-            ("verified_active_intents", canonical.bounds.active_intents),
-            ("verified_closure_frames", canonical.closure.replay.blocks),
-            ("verified_source_leases", canonical.source_leases),
-            ("verified_complete_exports", canonical.complete_exports),
-            ("verified_export_input_chunks", canonical.input_chunks),
-            ("verified_pending_nod_jobs", canonical.nod.jobs),
-            ("verified_pending_nod_batches", canonical.nod.batches),
-            ("verified_pending_nod_actions", canonical.nod.actions),
-        ] {
-            present_count(report, name, count);
-        }
-        for active in &canonical.active {
-            work.save_job(b'a', &active.job)?;
-        }
-        for pin in &canonical.pins {
-            work.save_job(b'a', &pin.authority.job)?;
-            if let (Some(finalized), Some(export)) =
-                (&pin.authority.job.finalized, pin.authority.export)
-            {
-                work.save_export(finalized.job_id, export)?;
-            }
+    report.observed.p = Some(outbe_snapshot::manifest::BlockIdentity {
+        number: canonical.projection.block_number,
+        hash: hex::encode(canonical.projection.block_hash),
+    });
+    for (name, count) in [
+        ("verified_active_intents", canonical.bounds.active_intents),
+        ("verified_closure_frames", canonical.closure.replay.blocks),
+        ("verified_source_leases", canonical.source_leases),
+        ("verified_complete_exports", canonical.complete_exports),
+        ("verified_export_input_chunks", canonical.input_chunks),
+        ("verified_pending_nod_jobs", canonical.nod.jobs),
+        ("verified_pending_nod_batches", canonical.nod.batches),
+        ("verified_pending_nod_actions", canonical.nod.actions),
+    ] {
+        present_count(report, name, count);
+    }
+    for active in &canonical.active {
+        work.save_job(b'a', &active.job)?;
+    }
+    for pin in &canonical.pins {
+        work.save_job(b'a', &pin.authority.job)?;
+        if let (Some(finalized), Some(export)) =
+            (&pin.authority.job.finalized, pin.authority.export)
+        {
+            work.save_export(finalized.job_id, export)?;
         }
     }
+    Ok(())
+}
+
+fn collect_present_discovery_and_results(
+    state: &CanonicalState<'_>,
+    view: &crate::snapshot::native::RethReadOnlyView,
+    ocomp_root: &Path,
+    work: &PresentJobUnion,
+    (errors, report): (
+        &mut PresentJoinErrors,
+        &mut super::super::report::ValidationReport,
+    ),
+) -> eyre::Result<()> {
     if let Some(audit) = errors.observe(verify_present_discovery(
         state,
         view,
-        &layout.ocomp_root,
+        ocomp_root,
         None,
         &mut |record, job| {
             if let outbe_ocomp::discovery_spool::DiscoverySpoolRecordV1::Ack(ack) = record {
@@ -86,7 +68,7 @@ pub(crate) fn verify_ocomp_relations(
     if let Some(audit) = errors.observe(verify_present_local_results(
         state,
         view,
-        &layout.ocomp_root,
+        ocomp_root,
         None,
         &mut |job, result| {
             work.save_job(b'l', job)?;
@@ -98,10 +80,15 @@ pub(crate) fn verify_ocomp_relations(
         present_count(report, "present_local_results", audit.results);
         present_count(report, "present_terminal_digests", audit.terminal_digests);
     }
-    if let Some(audit) = errors.observe(verify_present_cas(&layout.ocomp_root, limits, None)) {
-        present_count(report, "present_cas_objects", audit.objects);
-        present_count(report, "present_cas_bytes", audit.bytes);
-    }
+    Ok(())
+}
+
+fn scan_present_job_directories(
+    ocomp_root: &Path,
+    work: &PresentJobUnion,
+    errors: &mut PresentJoinErrors,
+    report: &mut super::super::report::ValidationReport,
+) {
     for (prefix, flag, name) in [
         (
             "exporter-v1/receipts",
@@ -124,36 +111,32 @@ pub(crate) fn verify_ocomp_relations(
             "public_job_directories",
         ),
     ] {
-        if let Some(count) = errors.observe(scan_present_jobs(
-            &layout.ocomp_root.join(prefix),
-            flag,
-            &work,
-        )) {
+        if let Some(count) = errors.observe(scan_present_jobs(&ocomp_root.join(prefix), flag, work))
+        {
             present_count(report, name, count);
         }
     }
-    if let Some(count) = errors.observe(collect_present_references(&layout.ocomp_root, &work)) {
+    if let Some(count) = errors.observe(collect_present_references(ocomp_root, work)) {
         present_count(report, "present_reference_records", count);
     }
+}
+
+fn audit_present_job_union(
+    context: &PresentJobContext<'_, '_>,
+    canonical: Option<&canonical::CanonicalOcompAudit>,
+    work: &PresentJobUnion,
+    errors: &mut PresentJoinErrors,
+    report: &mut super::super::report::ValidationReport,
+) -> eyre::Result<()> {
     let mut counts = PresentArtifactCounts::default();
     let mut jobs = 0_u64;
-    let context = PresentJobContext {
-        state,
-        view,
-        layout,
-        scratch: scratch_parent,
-        protected: &protected,
-        work: &work,
-        cas_limits: limits,
-    };
-    // Each job callback runs after the union read transaction is released.
     work.visit_prefix(b"u", &mut |key, value| {
         ensure!(
             key.len() == 33 && value.len() == 1,
             "invalid scratch job union"
         );
         let job = B256::from_slice(&key[1..]);
-        if let Some(canonical) = &canonical {
+        if let Some(canonical) = canonical {
             let active = canonical.active.iter().any(|active| {
                 active
                     .job
@@ -162,7 +145,7 @@ pub(crate) fn verify_ocomp_relations(
                     .is_some_and(|finalized| finalized.job_id == job)
             });
             errors.observe(verify_present_job(
-                &context,
+                context,
                 job,
                 value[0],
                 active,
@@ -185,6 +168,66 @@ pub(crate) fn verify_ocomp_relations(
     ] {
         present_count(report, name, count);
     }
+    Ok(())
+}
+
+/// Final selected OCOMP composition. Caller records the Ocomp status.
+pub(crate) fn verify_ocomp_relations(
+    state: &CanonicalState<'_>,
+    view: &crate::snapshot::native::RethReadOnlyView,
+    layout: &crate::snapshot::config::RequestedLayout,
+    scratch_parent: &Path,
+    report: &mut super::super::report::ValidationReport,
+) -> eyre::Result<()> {
+    let limits = CasLimits {
+        max_object_bytes: 1_048_576,
+        max_total_bytes: u64::MAX,
+    };
+    let mut errors = PresentJoinErrors::default();
+    let canonical = errors.observe(verify_canonical_obligations(
+        state,
+        view,
+        (layout, scratch_parent),
+        None,
+        Some(report),
+    ));
+    let mut protected = layout.protected.clone();
+    protected.0.extend([
+        layout.chain_root.clone(),
+        layout.consensus_root.clone(),
+        layout.ocomp_root.clone(),
+        layout.static_files_root.clone(),
+        layout.execution_rocksdb_root.clone(),
+    ]);
+    protected
+        .0
+        .extend(layout.projection.as_ref().map(|p| p.root.clone()));
+    let work = PresentJobUnion::create(scratch_parent, &protected)?;
+    if let Some(canonical) = &canonical {
+        seed_canonical_work_union(canonical, &work, report)?;
+    }
+    collect_present_discovery_and_results(
+        state,
+        view,
+        &layout.ocomp_root,
+        &work,
+        (&mut errors, report),
+    )?;
+    if let Some(audit) = errors.observe(verify_present_cas(&layout.ocomp_root, limits, None)) {
+        present_count(report, "present_cas_objects", audit.objects);
+        present_count(report, "present_cas_bytes", audit.bytes);
+    }
+    scan_present_job_directories(&layout.ocomp_root, &work, &mut errors, report);
+    let context = PresentJobContext {
+        state,
+        view,
+        layout,
+        scratch: scratch_parent,
+        protected: &protected,
+        work: &work,
+        cas_limits: limits,
+    };
+    audit_present_job_union(&context, canonical.as_ref(), &work, &mut errors, report)?;
     if let Some((live, retained)) =
         errors.observe(verify_present_projection_structure(layout, scratch_parent))
     {

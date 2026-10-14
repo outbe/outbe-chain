@@ -151,6 +151,21 @@ impl FeederHealth {
         let timeout = self.wall_timeout();
         let grace_expired = now.saturating_duration_since(observations.started_at) >= timeout;
         let mut reasons = Vec::new();
+        self.collect_vote_reasons(grace_expired, unix, &mut reasons);
+        self.collect_head_reasons(observations.head.as_ref(), grace_expired, now, &mut reasons);
+        for pair in &observations.expected_pairs {
+            self.collect_oracle_pair_reasons(pair, observations, now, &mut reasons);
+        }
+        if let Some((hash, created_at)) = &observations.pending {
+            if unix.saturating_sub(*created_at) >= timeout.as_secs() {
+                reasons.push(format!("pending transaction {hash} is stale"));
+            }
+        }
+        reasons
+    }
+
+    fn collect_vote_reasons(&self, grace_expired: bool, unix: u64, reasons: &mut Vec<String>) {
+        let timeout = self.wall_timeout();
         let last_vote = self.last_vote_time.load(Ordering::Relaxed);
         if last_vote == 0 {
             if grace_expired {
@@ -159,8 +174,17 @@ impl FeederHealth {
         } else if unix.saturating_sub(last_vote) >= timeout.as_secs() {
             reasons.push("last confirmed vote is stale".into());
         }
+    }
 
-        match &observations.head {
+    fn collect_head_reasons(
+        &self,
+        head: Option<&HeadObservation>,
+        grace_expired: bool,
+        now: Instant,
+        reasons: &mut Vec<String>,
+    ) {
+        let timeout = self.wall_timeout();
+        match head {
             Some(head) => {
                 if now.saturating_duration_since(head.observed_at) >= timeout {
                     reasons.push("committed head observation is stale".into());
@@ -172,38 +196,38 @@ impl FeederHealth {
             None if grace_expired => reasons.push("no committed head observed".into()),
             None => {}
         }
+    }
 
-        for pair in &observations.expected_pairs {
-            match observations.oracle.get(pair) {
-                Some(oracle) => {
-                    if oracle.block == 0 || oracle.timestamp == 0 {
-                        reasons.push(format!("oracle pair {pair} has no published observation"));
-                    }
-                    if now.saturating_duration_since(oracle.observed_at) >= timeout {
-                        reasons.push(format!("oracle pair {pair} observation is stale"));
-                    }
-                    if let Some(head) = &observations.head {
-                        if oracle.block > head.height {
-                            reasons.push(format!(
-                                "oracle pair {pair} update is ahead of observed head"
-                            ));
-                        } else if head.height - oracle.block > self.vote_period.saturating_mul(5) {
-                            reasons.push(format!("oracle pair {pair} last update is stale"));
-                        }
-                    }
-                }
-                None if grace_expired => {
-                    reasons.push(format!("oracle pair {pair} has not been observed"))
-                }
-                None => {}
+    fn collect_oracle_pair_reasons(
+        &self,
+        pair: &str,
+        observations: &Observations,
+        now: Instant,
+        reasons: &mut Vec<String>,
+    ) {
+        let timeout = self.wall_timeout();
+        let grace_expired = now.saturating_duration_since(observations.started_at) >= timeout;
+        let Some(oracle) = observations.oracle.get(pair) else {
+            if grace_expired {
+                reasons.push(format!("oracle pair {pair} has not been observed"));
+            }
+            return;
+        };
+        if oracle.block == 0 || oracle.timestamp == 0 {
+            reasons.push(format!("oracle pair {pair} has no published observation"));
+        }
+        if now.saturating_duration_since(oracle.observed_at) >= timeout {
+            reasons.push(format!("oracle pair {pair} observation is stale"));
+        }
+        if let Some(head) = &observations.head {
+            if oracle.block > head.height {
+                reasons.push(format!(
+                    "oracle pair {pair} update is ahead of observed head"
+                ));
+            } else if head.height - oracle.block > self.vote_period.saturating_mul(5) {
+                reasons.push(format!("oracle pair {pair} last update is stale"));
             }
         }
-        if let Some((hash, created_at)) = &observations.pending {
-            if unix.saturating_sub(*created_at) >= timeout.as_secs() {
-                reasons.push(format!("pending transaction {hash} is stale"));
-            }
-        }
-        reasons
     }
 
     pub fn health_reasons(&self) -> Vec<String> {

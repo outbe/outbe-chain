@@ -211,46 +211,83 @@ pub(in super::super) fn finalized_binding_matches_intent(
     binding: &RenewalBindingV1,
     intent: &RegistrationIntentV1,
 ) -> Result<bool> {
-    Ok(binding.node_id_hash
-        == intent
-            .node_id
-            .node_id_hash()
-            .map_err(|error| eyre::eyre!("hash registration node identity: {error}"))?
-        && binding.enclave_id == intent.enclave_id
-        && binding.binding_id == intent.binding_id
-        && binding.intent_hash
-            == intent
-                .intent_hash()
-                .map_err(|error| eyre::eyre!("hash registration intent: {error}"))?
-        && binding.binding_version == intent.binding_version
-        && binding.registration_version == intent.registration_version
-        && binding.renewal_nonce == intent.renewal_nonce
-        && binding.transition_nonce == intent.transition_nonce
-        && binding.valid_until == intent.requested_valid_until
-        && binding.recipient_x25519 == B256::from(intent.recipient_x25519)
-        && binding.attestation_ed25519 == B256::from(intent.attestation_ed25519)
-        && binding.noise_responder_x25519 == B256::from(intent.noise_responder_x25519)
-        && binding.node_host_authorization_hash == intent.node_host_authorization_hash)
+    let intent_node_id_hash = intent
+        .node_id
+        .node_id_hash()
+        .map_err(|error| eyre::eyre!("hash registration node identity: {error}"))?;
+    let intent_hash = intent
+        .intent_hash()
+        .map_err(|error| eyre::eyre!("hash registration intent: {error}"))?;
+    let binding_tuple = (
+        (
+            binding.node_id_hash,
+            binding.enclave_id,
+            binding.binding_id,
+            binding.intent_hash,
+            binding.binding_version,
+            binding.registration_version,
+            binding.renewal_nonce,
+        ),
+        (
+            binding.transition_nonce,
+            binding.valid_until,
+            binding.recipient_x25519,
+            binding.attestation_ed25519,
+            binding.noise_responder_x25519,
+            binding.node_host_authorization_hash,
+        ),
+    );
+    let intent_tuple = (
+        (
+            intent_node_id_hash,
+            intent.enclave_id,
+            intent.binding_id,
+            intent_hash,
+            intent.binding_version,
+            intent.registration_version,
+            intent.renewal_nonce,
+        ),
+        (
+            intent.transition_nonce,
+            intent.requested_valid_until,
+            B256::from(intent.recipient_x25519),
+            B256::from(intent.attestation_ed25519),
+            B256::from(intent.noise_responder_x25519),
+            intent.node_host_authorization_hash,
+        ),
+    );
+    Ok(binding_tuple == intent_tuple)
 }
 
 pub(in super::super) fn committed_manifest_matches_binding(
     manifest: &outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
     binding: &RenewalBindingV1,
 ) -> Result<bool> {
-    Ok(manifest
+    let node_id_hash = manifest
         .node_id
         .node_id_hash()
-        .map_err(|error| eyre::eyre!("hash committed node identity: {error}"))?
-        == binding.node_id_hash
-        && manifest
-            .enclave_id()
-            .map_err(|error| eyre::eyre!("derive committed enclave identity: {error}"))?
-            == binding.enclave_id
-        && B256::from(manifest.recipient_x25519) == binding.recipient_x25519
-        && B256::from(manifest.attestation_ed25519) == binding.attestation_ed25519
-        && B256::from(manifest.noise_responder_x25519) == binding.noise_responder_x25519
-        && manifest
-            .node_host_authorization_hash()
-            .map_err(|error| eyre::eyre!("derive committed NodeHost authorization: {error}"))?
-            == binding.node_host_authorization_hash)
+        .map_err(|error| eyre::eyre!("hash committed node identity: {error}"))?;
+    let enclave_id = manifest
+        .enclave_id()
+        .map_err(|error| eyre::eyre!("derive committed enclave identity: {error}"))?;
+    let auth_hash = manifest
+        .node_host_authorization_hash()
+        .map_err(|error| eyre::eyre!("derive committed NodeHost authorization: {error}"))?;
+    let manifest_tuple = (
+        node_id_hash,
+        enclave_id,
+        B256::from(manifest.recipient_x25519),
+        B256::from(manifest.attestation_ed25519),
+        B256::from(manifest.noise_responder_x25519),
+        auth_hash,
+    );
+    let binding_tuple = (
+        binding.node_id_hash,
+        binding.enclave_id,
+        binding.recipient_x25519,
+        binding.attestation_ed25519,
+        binding.noise_responder_x25519,
+        binding.node_host_authorization_hash,
+    );
+    Ok(manifest_tuple == binding_tuple)
 }

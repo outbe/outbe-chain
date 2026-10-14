@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_amount_rejects_invalid_inputs() {
+    fn test_parse_amount_rejects_bad_inputs() {
         for (amount, expected) in invalid_amount_cases() {
             let err = parse_amount(amount).unwrap_err();
             assert!(

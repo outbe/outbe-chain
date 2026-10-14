@@ -79,18 +79,12 @@ pub enum LysisSchedulerError {
 /// The caller supplies only the plan ordinal and the worker completion report.
 /// The caller cannot inject roots, specs, input references or producer
 /// artifacts.
-#[allow(clippy::too_many_arguments)]
 pub fn admit_reported_lysis_unit_v1(
-    plan_ordinal: u32,
-    finished: &UnitFinishedV1,
-    catalog: &mut VerifiedAdmissionCatalog,
-    input_refs: &VerifiedInputChunkRefCatalog,
-    bundle: &PinnedProtocolBundle,
-    reader: &FilesystemCasReader,
-    worker_inbox: &WorkerInbox,
-    replay_inbox: &WorkerInbox,
-    cas: &FilesystemCas,
-    limits: &SchemaLimits,
+    (plan_ordinal, finished): (u32, &UnitFinishedV1),
+    (catalog, input_refs): (&mut VerifiedAdmissionCatalog, &VerifiedInputChunkRefCatalog),
+    (bundle, reader): (&PinnedProtocolBundle, &FilesystemCasReader),
+    (worker_inbox, replay_inbox): (&WorkerInbox, &WorkerInbox),
+    (cas, limits): (&FilesystemCas, &SchemaLimits),
 ) -> Result<AdmittedLysisUnitV1, LysisSchedulerError> {
     let (request, plan, manifest, position) = {
         let audit = crate::lysis_plan_audit::open_local_plan_audit(
@@ -118,8 +112,6 @@ pub fn admit_reported_lysis_unit_v1(
     }
 
     let loaded = load_request_inputs(&request.ordered_input_refs, bundle, reader, limits)?;
-    let input_chunks = loaded.input_chunks;
-    let producer_artifacts = loaded.producer_artifacts;
     let reported = worker_inbox.read_reported(
         finished.unit_id,
         finished.exact_staged_bytes,
@@ -136,19 +128,11 @@ pub fn admit_reported_lysis_unit_v1(
         | UnitPhase::GratisPrefix
         | UnitPhase::GratisPrefixDown => {
             let admitted = admit_reported_core_phase_unit(
-                admission_position,
-                &spec,
-                finished,
-                &plan,
-                &manifest,
-                &input_chunks,
-                &producer_artifacts,
-                bundle.bundle(),
-                reader,
-                worker_inbox,
-                cas,
-                catalog,
-                limits,
+                (admission_position, &spec, finished),
+                (&plan, &manifest),
+                (&loaded.input_chunks, &loaded.producer_artifacts),
+                (bundle.bundle(), reader, worker_inbox),
+                (cas, catalog, limits),
             )?;
             AdmittedLysisUnitV1 {
                 plan_ordinal,
@@ -158,129 +142,161 @@ pub fn admit_reported_lysis_unit_v1(
                 admission: admitted.admission,
             }
         }
-        UnitPhase::OutputFinalize => {
-            let PlannedUnitPositionV1::Primary { ordinal, .. } = position else {
-                return Err(LysisSchedulerError::InputShape);
-            };
-            let [amount, prefix] = producer_artifacts.as_slice() else {
-                return Err(LysisSchedulerError::InputShape);
-            };
-            if !input_chunks.is_empty() {
-                return Err(LysisSchedulerError::InputShape);
-            }
-            let admitted = admit_reported_output_finalize_unit(
+        UnitPhase::OutputFinalize => admit_output_finalize_phase(
+            (admission_position, position),
+            (&spec, finished),
+            &loaded,
+            (&plan, &manifest, bundle.bundle()),
+            (worker_inbox, cas, catalog, limits),
+        )?,
+        UnitPhase::BucketShuffle | UnitPhase::RootReduce => admit_producer_tree_phase(
+            ProducerPhaseAdmissionContext {
                 admission_position,
-                ordinal,
-                &spec,
+                spec: &spec,
+                reported_artifact: &reported_artifact,
                 finished,
-                amount,
-                prefix,
-                &plan,
-                &manifest,
-                bundle.bundle(),
-                worker_inbox,
-                cas,
-                catalog,
-                limits,
-            )?;
-            AdmittedLysisUnitV1 {
-                plan_ordinal,
-                phase: spec.phase,
-                artifact_ref: admitted.artifact_ref,
-                result_chunk: None,
-                admission: admitted.admission,
-            }
-        }
-        UnitPhase::BucketShuffle => {
-            if !input_chunks.is_empty() {
-                return Err(LysisSchedulerError::InputShape);
-            }
-            verify_lysis_shuffle_phase_replay(
-                plan_ordinal,
-                &spec,
-                &reported_artifact,
-                &plan,
-                &manifest,
-                &producer_artifacts,
-                bundle.bundle(),
+                loaded: &loaded,
+                plan: &plan,
+                manifest: &manifest,
+                bundle: bundle.bundle(),
                 reader,
+                worker_inbox,
                 replay_inbox,
-                limits,
-            )?;
-            let admitted = admit_reported_lysis_shuffle_unit(
-                admission_position,
-                &spec,
-                finished,
-                worker_inbox,
                 cas,
                 catalog,
                 limits,
-            )?;
-            AdmittedLysisUnitV1 {
-                plan_ordinal,
-                phase: spec.phase,
-                artifact_ref: admitted.artifact_ref,
-                result_chunk: None,
-                admission: admitted.admission,
-            }
-        }
-        UnitPhase::RootReduce => {
-            if !input_chunks.is_empty() {
-                return Err(LysisSchedulerError::InputShape);
-            }
-            verify_lysis_root_reduce_phase_replay(
-                plan_ordinal,
-                &spec,
-                &reported_artifact,
-                &plan,
-                &manifest,
-                &producer_artifacts,
-                bundle.bundle(),
-                reader,
-                replay_inbox,
-                limits,
-            )?;
-            match decode_root_reduce_output(reported_artifact.phase_payload(limits)?, limits)? {
-                RootReduceOutputV1::Leaf { .. } => {
-                    let admitted = admit_reported_lysis_root_reduce_leaf(
-                        admission_position,
-                        &spec,
-                        finished,
-                        worker_inbox,
-                        cas,
-                        catalog,
-                        limits,
-                    )?;
-                    AdmittedLysisUnitV1 {
-                        plan_ordinal,
-                        phase: spec.phase,
-                        artifact_ref: admitted.artifact_ref,
-                        result_chunk: Some(admitted.chunk),
-                        admission: admitted.admission,
-                    }
-                }
-                RootReduceOutputV1::Node { .. } => {
-                    let admitted = admit_reported_lysis_root_reduce_node(
-                        admission_position,
-                        &spec,
-                        finished,
-                        worker_inbox,
-                        cas,
-                        catalog,
-                        limits,
-                    )?;
-                    AdmittedLysisUnitV1 {
-                        plan_ordinal,
-                        phase: spec.phase,
-                        artifact_ref: admitted.artifact_ref,
-                        result_chunk: None,
-                        admission: admitted.admission,
-                    }
-                }
-            }
-        }
+            },
+        )?,
     };
     Ok(admitted)
+}
+
+struct ProducerPhaseAdmissionContext<'a> {
+    admission_position: AdmissionPositionV1,
+    spec: &'a outbe_ocomp_protocol::unit::UnitSpecV1,
+    reported_artifact: &'a UnitArtifactV1,
+    finished: &'a UnitFinishedV1,
+    loaded: &'a LoadedLysisWorkerInputsV1,
+    plan: &'a outbe_ocomp_protocol::unit::PlanCommitmentV1,
+    manifest: &'a outbe_ocomp_protocol::input::InputManifestV1,
+    bundle: &'a outbe_ocomp_protocol::profile::ProtocolBundleV1,
+    reader: &'a FilesystemCasReader,
+    worker_inbox: &'a WorkerInbox,
+    replay_inbox: &'a WorkerInbox,
+    cas: &'a FilesystemCas,
+    catalog: &'a mut VerifiedAdmissionCatalog,
+    limits: &'a SchemaLimits,
+}
+
+fn admit_output_finalize_phase(
+    (admission_position, position): (AdmissionPositionV1, PlannedUnitPositionV1),
+    (spec, finished): (&outbe_ocomp_protocol::unit::UnitSpecV1, &UnitFinishedV1),
+    loaded: &LoadedLysisWorkerInputsV1,
+    (plan, manifest, bundle): (
+        &outbe_ocomp_protocol::unit::PlanCommitmentV1,
+        &outbe_ocomp_protocol::input::InputManifestV1,
+        &outbe_ocomp_protocol::profile::ProtocolBundleV1,
+    ),
+    (worker_inbox, cas, catalog, limits): (
+        &WorkerInbox,
+        &FilesystemCas,
+        &mut VerifiedAdmissionCatalog,
+        &SchemaLimits,
+    ),
+) -> Result<AdmittedLysisUnitV1, LysisSchedulerError> {
+    let PlannedUnitPositionV1::Primary { ordinal, .. } = position else {
+        return Err(LysisSchedulerError::InputShape);
+    };
+    let [amount, prefix] = loaded.producer_artifacts.as_slice() else {
+        return Err(LysisSchedulerError::InputShape);
+    };
+    if !loaded.input_chunks.is_empty() {
+        return Err(LysisSchedulerError::InputShape);
+    }
+    let admitted = admit_reported_output_finalize_unit(
+        (admission_position, ordinal),
+        (spec, finished),
+        (amount, prefix),
+        (plan, manifest, bundle),
+        (worker_inbox, cas, catalog, limits),
+    )?;
+    Ok(AdmittedLysisUnitV1 {
+        plan_ordinal: admission_position.plan_ordinal,
+        phase: spec.phase,
+        artifact_ref: admitted.artifact_ref,
+        result_chunk: None,
+        admission: admitted.admission,
+    })
+}
+
+fn admit_producer_tree_phase(
+    ctx: ProducerPhaseAdmissionContext<'_>,
+) -> Result<AdmittedLysisUnitV1, LysisSchedulerError> {
+    if !ctx.loaded.input_chunks.is_empty() {
+        return Err(LysisSchedulerError::InputShape);
+    }
+    if ctx.spec.phase == UnitPhase::BucketShuffle {
+        verify_lysis_shuffle_phase_replay(
+            (ctx.admission_position.plan_ordinal, ctx.spec, ctx.reported_artifact),
+            (ctx.plan, ctx.manifest),
+            (&ctx.loaded.producer_artifacts, ctx.bundle),
+            (ctx.reader, ctx.replay_inbox, ctx.limits),
+        )?;
+        let admitted = admit_reported_lysis_shuffle_unit(
+            ctx.admission_position,
+            ctx.spec,
+            ctx.finished,
+            (ctx.worker_inbox, ctx.cas),
+            (ctx.catalog, ctx.limits),
+        )?;
+        return Ok(AdmittedLysisUnitV1 {
+            plan_ordinal: ctx.admission_position.plan_ordinal,
+            phase: ctx.spec.phase,
+            artifact_ref: admitted.artifact_ref,
+            result_chunk: None,
+            admission: admitted.admission,
+        });
+    }
+    verify_lysis_root_reduce_phase_replay(
+        (ctx.admission_position.plan_ordinal, ctx.spec, ctx.reported_artifact),
+        (ctx.plan, ctx.manifest),
+        (&ctx.loaded.producer_artifacts, ctx.bundle),
+        (ctx.reader, ctx.replay_inbox, ctx.limits),
+    )?;
+    match decode_root_reduce_output(ctx.reported_artifact.phase_payload(ctx.limits)?, ctx.limits)? {
+        RootReduceOutputV1::Leaf { .. } => {
+            let admitted = admit_reported_lysis_root_reduce_leaf(
+                ctx.admission_position,
+                ctx.spec,
+                ctx.finished,
+                (ctx.worker_inbox, ctx.cas),
+                (ctx.catalog, ctx.limits),
+            )?;
+            Ok(AdmittedLysisUnitV1 {
+                plan_ordinal: ctx.admission_position.plan_ordinal,
+                phase: ctx.spec.phase,
+                artifact_ref: admitted.artifact_ref,
+                result_chunk: Some(admitted.chunk),
+                admission: admitted.admission,
+            })
+        }
+        RootReduceOutputV1::Node { .. } => {
+            let admitted = admit_reported_lysis_root_reduce_node(
+                ctx.admission_position,
+                ctx.spec,
+                ctx.finished,
+                (ctx.worker_inbox, ctx.cas),
+                (ctx.catalog, ctx.limits),
+            )?;
+            Ok(AdmittedLysisUnitV1 {
+                plan_ordinal: ctx.admission_position.plan_ordinal,
+                phase: ctx.spec.phase,
+                artifact_ref: admitted.artifact_ref,
+                result_chunk: None,
+                admission: admitted.admission,
+            })
+        }
+    }
 }
 
 fn load_request_inputs(

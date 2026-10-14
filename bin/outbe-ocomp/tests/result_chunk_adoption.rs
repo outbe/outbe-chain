@@ -295,10 +295,8 @@ fn supervisor_admits_internal_root_reduce_node_without_a_result_chunk() {
         },
         &spec,
         &finished,
-        &inbox,
-        &cas,
-        &mut catalog,
-        &limits,
+        (&inbox, &cas),
+        (&mut catalog, &limits),
     )
     .unwrap();
     assert_eq!(admitted.admission, AdmissionOutcome::NewlyAdmitted);
@@ -360,10 +358,8 @@ fn supervisor_adopts_only_the_exact_manifest_bound_result_chunk() {
         AdmissionPositionV1 { plan_ordinal: 9 },
         &spec,
         &finished,
-        &inbox,
-        &cas,
-        &mut catalog,
-        &limits,
+        (&inbox, &cas),
+        (&mut catalog, &limits),
     )
     .unwrap();
     assert_eq!(admitted.chunk.chunk_ordinal, 0);
@@ -440,10 +436,8 @@ fn adoption_rejects_missing_or_semantically_substituted_result_chunk() {
             AdmissionPositionV1 { plan_ordinal: 9 },
             &spec,
             &finished,
-            &empty_inbox,
-            &cas,
-            &mut catalog,
-            &limits,
+            (&empty_inbox, &cas),
+            (&mut catalog, &limits),
         )
         .is_err()
     );

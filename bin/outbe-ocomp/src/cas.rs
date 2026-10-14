@@ -152,38 +152,7 @@ impl FilesystemCas {
     }
 
     pub fn object_count(&self) -> Result<usize, CasError> {
-        let mut count = 0_usize;
-        for prefix in read_directory(&self.objects)? {
-            let prefix = prefix.map_err(|source| CasError::Io {
-                path: self.objects.clone(),
-                source,
-            })?;
-            let prefix_path = prefix.path();
-            let prefix_metadata =
-                fs::symlink_metadata(&prefix_path).map_err(|source| CasError::Io {
-                    path: prefix_path.clone(),
-                    source,
-                })?;
-            if !prefix_metadata.file_type().is_dir() || prefix_metadata.file_type().is_symlink() {
-                return Err(CasError::UnsafeObject { path: prefix_path });
-            }
-            for object in read_directory(&prefix_path)? {
-                let object = object.map_err(|source| CasError::Io {
-                    path: prefix_path.clone(),
-                    source,
-                })?;
-                let path = object.path();
-                let metadata = fs::symlink_metadata(&path).map_err(|source| CasError::Io {
-                    path: path.clone(),
-                    source,
-                })?;
-                if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-                    return Err(CasError::UnsafeObject { path });
-                }
-                count = count.checked_add(1).ok_or(CasError::LengthOverflow)?;
-            }
-        }
-        Ok(count)
+        Ok(self.object_count_and_bytes()?.0)
     }
 
     pub fn staging_count(&self) -> Result<usize, CasError> {
@@ -192,13 +161,7 @@ impl FilesystemCas {
                 path: self.staging.clone(),
                 source,
             })?;
-            let metadata = fs::symlink_metadata(entry.path()).map_err(|source| CasError::Io {
-                path: entry.path(),
-                source,
-            })?;
-            if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-                return Err(CasError::UnsafeObject { path: entry.path() });
-            }
+            inspect_regular_object(&entry.path())?;
             count.checked_add(1).ok_or(CasError::LengthOverflow)
         })
     }
@@ -282,41 +245,34 @@ impl FilesystemCas {
         }
     }
 
-    fn used_bytes(&self) -> Result<u64, CasError> {
+    fn object_count_and_bytes(&self) -> Result<(usize, u64), CasError> {
+        let mut count = 0_usize;
         let mut total = 0_u64;
         for prefix in read_directory(&self.objects)? {
-            let prefix = prefix.map_err(|source| CasError::Io {
-                path: self.objects.clone(),
-                source,
-            })?;
-            let prefix_path = prefix.path();
-            let prefix_metadata =
-                fs::symlink_metadata(&prefix_path).map_err(|source| CasError::Io {
-                    path: prefix_path.clone(),
+            let prefix_path = prefix
+                .map_err(|source| CasError::Io {
+                    path: self.objects.clone(),
                     source,
-                })?;
-            if !prefix_metadata.file_type().is_dir() || prefix_metadata.file_type().is_symlink() {
-                return Err(CasError::UnsafeObject { path: prefix_path });
-            }
-            for object in read_directory(&prefix.path())? {
-                let object = object.map_err(|source| CasError::Io {
-                    path: prefix.path(),
-                    source,
-                })?;
-                let path = object.path();
-                let metadata = fs::symlink_metadata(&path).map_err(|source| CasError::Io {
-                    path: path.clone(),
-                    source,
-                })?;
-                if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-                    return Err(CasError::UnsafeObject { path });
-                }
-                total = total
-                    .checked_add(metadata.len())
-                    .ok_or(CasError::LengthOverflow)?;
+                })?
+                .path();
+            reject_symlink_directory(&prefix_path)?;
+            for object in read_directory(&prefix_path)? {
+                let path = object
+                    .map_err(|source| CasError::Io {
+                        path: prefix_path.clone(),
+                        source,
+                    })?
+                    .path();
+                let len = inspect_regular_object(&path)?;
+                count = count.checked_add(1).ok_or(CasError::LengthOverflow)?;
+                total = total.checked_add(len).ok_or(CasError::LengthOverflow)?;
             }
         }
-        Ok(total)
+        Ok((count, total))
+    }
+
+    fn used_bytes(&self) -> Result<u64, CasError> {
+        Ok(self.object_count_and_bytes()?.1)
     }
 
     fn object_path(&self, digest: B256) -> PathBuf {
@@ -340,13 +296,7 @@ impl FilesystemCasReader {
     pub fn open(root: impl AsRef<Path>, limits: CasLimits) -> Result<Self, CasError> {
         let limits = limits.validate()?;
         let objects = root.as_ref().join("objects");
-        let metadata = fs::symlink_metadata(&objects).map_err(|source| CasError::Io {
-            path: objects.clone(),
-            source,
-        })?;
-        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-            return Err(CasError::UnsafeObject { path: objects });
-        }
+        reject_symlink_directory(&objects)?;
         Ok(Self { objects, limits })
     }
 
@@ -356,14 +306,11 @@ impl FilesystemCasReader {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FileIdentity {
-    device: u64,
-    inode: u64,
+struct CasDescriptorStamp {
+    dev_ino: (u64, u64),
     len: u64,
-    modified_seconds: i64,
-    modified_nanoseconds: i64,
-    changed_seconds: i64,
-    changed_nanoseconds: i64,
+    mtime: (i64, i64),
+    ctime: (i64, i64),
 }
 
 fn read_verified_object(
@@ -378,11 +325,30 @@ fn read_verified_object(
         });
     }
     let path = digest_object_path(objects, reference.transport_digest);
-    let mut file = open_regular_nofollow(&path)?;
-    let before = FileIdentity::read(&file, &path)?;
-    if before.len != reference.encoded_bytes {
+    let (bytes, actual_digest) =
+        stream_and_hash_cas_file(&path, reference.encoded_bytes)?;
+    if actual_digest != reference.transport_digest {
+        return Err(CasError::DigestMismatch {
+            expected: reference.transport_digest,
+            actual: actual_digest,
+        });
+    }
+    verify_expected_ocb1_kind(&bytes, reference.expected_ocb1_kind)?;
+    Ok(VerifiedCasObject {
+        reference: reference.clone(),
+        bytes,
+    })
+}
+
+fn stream_and_hash_cas_file(
+    path: &Path,
+    expected_len: u64,
+) -> Result<(Vec<u8>, B256), CasError> {
+    let mut file = open_cas_file(path)?;
+    let before = CasDescriptorStamp::capture(&file, path)?;
+    if before.len != expected_len {
         return Err(CasError::LengthMismatch {
-            expected: reference.encoded_bytes,
+            expected: expected_len,
             actual: before.len,
         });
     }
@@ -392,7 +358,7 @@ fn read_verified_object(
     let mut buffer = [0_u8; 64 * 1024];
     loop {
         let read = file.read(&mut buffer).map_err(|source| CasError::Io {
-            path: path.clone(),
+            path: path.to_path_buf(),
             source,
         })?;
         if read == 0 {
@@ -402,57 +368,48 @@ fn read_verified_object(
         bytes.extend_from_slice(&buffer[..read]);
     }
     let actual_len = u64::try_from(bytes.len()).map_err(|_| CasError::LengthOverflow)?;
-    if actual_len != reference.encoded_bytes {
+    if actual_len != expected_len {
         return Err(CasError::LengthMismatch {
-            expected: reference.encoded_bytes,
+            expected: expected_len,
             actual: actual_len,
         });
     }
-    let after = FileIdentity::read(&file, &path)?;
-    if before != after {
+    if before != CasDescriptorStamp::capture(&file, path)? {
         return Err(CasError::ObjectChanged);
     }
-    let actual_digest = finalize_digest(hasher);
-    if actual_digest != reference.transport_digest {
-        return Err(CasError::DigestMismatch {
-            expected: reference.transport_digest,
-            actual: actual_digest,
-        });
-    }
-    if let Some(expected) = reference.expected_ocb1_kind {
-        if bytes.len() < OCB1_HEADER_LEN || bytes[..4] != OCB1_MAGIC {
-            return Err(CasError::InvalidOcb1Header { expected });
-        }
-        let actual = u16::from_be_bytes([bytes[4], bytes[5]]);
-        if actual != expected {
-            return Err(CasError::Ocb1KindMismatch { expected, actual });
-        }
-    }
-    Ok(VerifiedCasObject {
-        reference: reference.clone(),
-        bytes,
-    })
+    Ok((bytes, finalize_digest(hasher)))
 }
 
-impl FileIdentity {
-    fn read(file: &File, path: &Path) -> Result<Self, CasError> {
-        let metadata = file.metadata().map_err(|source| CasError::Io {
+fn verify_expected_ocb1_kind(bytes: &[u8], expected_kind: Option<u16>) -> Result<(), CasError> {
+    let Some(expected) = expected_kind else {
+        return Ok(());
+    };
+    if bytes.len() < OCB1_HEADER_LEN || bytes[..4] != OCB1_MAGIC {
+        return Err(CasError::InvalidOcb1Header { expected });
+    }
+    let actual = u16::from_be_bytes([bytes[4], bytes[5]]);
+    if actual != expected {
+        return Err(CasError::Ocb1KindMismatch { expected, actual });
+    }
+    Ok(())
+}
+
+impl CasDescriptorStamp {
+    fn capture(file: &File, path: &Path) -> Result<Self, CasError> {
+        let meta = file.metadata().map_err(|source| CasError::Io {
             path: path.to_path_buf(),
             source,
         })?;
-        if !metadata.file_type().is_file() {
+        if !meta.file_type().is_file() {
             return Err(CasError::UnsafeObject {
                 path: path.to_path_buf(),
             });
         }
         Ok(Self {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            len: metadata.len(),
-            modified_seconds: metadata.mtime(),
-            modified_nanoseconds: metadata.mtime_nsec(),
-            changed_seconds: metadata.ctime(),
-            changed_nanoseconds: metadata.ctime_nsec(),
+            dev_ino: (meta.dev(), meta.ino()),
+            len: meta.len(),
+            mtime: (meta.mtime(), meta.mtime_nsec()),
+            ctime: (meta.ctime(), meta.ctime_nsec()),
         })
     }
 }
@@ -492,23 +449,33 @@ impl Drop for PublicationLock {
     }
 }
 
-fn open_regular_nofollow(path: &Path) -> Result<File, CasError> {
-    OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|source| {
-            if source.raw_os_error() == Some(libc::ELOOP) {
-                CasError::UnsafeObject {
-                    path: path.to_path_buf(),
-                }
-            } else {
-                CasError::Io {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            }
-        })
+fn open_cas_file(path: &Path) -> Result<File, CasError> {
+    let mut opts = OpenOptions::new();
+    opts.read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    match opts.open(path) {
+        Ok(file) => Ok(file),
+        Err(source) if source.raw_os_error() == Some(libc::ELOOP) => Err(CasError::UnsafeObject {
+            path: path.to_path_buf(),
+        }),
+        Err(source) => Err(CasError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn inspect_regular_object(path: &Path) -> Result<u64, CasError> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| CasError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(CasError::UnsafeObject {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(metadata.len())
 }
 
 fn create_directory(path: &Path) -> Result<(), CasError> {

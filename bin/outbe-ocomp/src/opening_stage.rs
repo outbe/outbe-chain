@@ -126,16 +126,15 @@ impl DurableOpeningStage {
         let mut owners = inventory.owner_batches()?;
         let mut start = 0_u64;
         let mut completed = 0_u32;
+        let mut task_ctx = OpeningTaskContext {
+            reference_isos: &reference_isos,
+            completed: &mut completed,
+            resolve: &mut resolve,
+            verify: &mut verify,
+            publish_fidelity: &mut publish_fidelity,
+        };
         while let Some(batch) = owners.next_batch(MAX_FIDELITY_OWNERS_PER_OPENING)? {
-            self.process_task(
-                start,
-                batch,
-                &reference_isos,
-                &mut completed,
-                &mut resolve,
-                &mut verify,
-                &mut publish_fidelity,
-            )?;
+            self.process_task(start, batch, &mut task_ctx)?;
             start = start
                 .checked_add(MAX_FIDELITY_OWNERS_PER_OPENING as u64)
                 .ok_or(OpeningStageError::IntegerOverflow)?;
@@ -166,143 +165,189 @@ impl DurableOpeningStage {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn process_task(
+    fn process_task<R, V, P>(
         &self,
         start: u64,
         owners: Vec<alloy_primitives::Address>,
-        reference_isos: &[u16],
-        completed: &mut u32,
-        resolve: &mut impl FnMut(&OpeningSubjectsV1) -> Result<OpeningResolutionV1, OpeningStageError>,
-        verify: &mut impl FnMut(
+        ctx: &mut OpeningTaskContext<'_, R, V, P>,
+    ) -> Result<(), OpeningStageError>
+    where
+        R: FnMut(&OpeningSubjectsV1) -> Result<OpeningResolutionV1, OpeningStageError>,
+        V: FnMut(
             &OpeningSubjectsV1,
             &AuthenticatedOpeningV1,
             &AuthenticatedOpeningV1,
         ) -> Result<(), OpeningStageError>,
-        publish_fidelity: &mut impl FnMut(AuthenticatedOpeningV1) -> Result<(), OpeningStageError>,
-    ) -> Result<(), OpeningStageError> {
+        P: FnMut(AuthenticatedOpeningV1) -> Result<(), OpeningStageError>,
+    {
         let count = u32::try_from(owners.len()).map_err(|_| OpeningStageError::IntegerOverflow)?;
         if count == 0 {
             return Err(OpeningStageError::Authority("empty opening task"));
         }
         let subjects = OpeningSubjectsV1 {
             owners: owners.clone(),
-            reference_isos: reference_isos.to_vec(),
+            reference_isos: ctx.reference_isos.to_vec(),
         };
-        let done_path = self.task_path(start, count, "done");
-        let split_path = self.task_path(start, count, "split");
-        let done_exists = path_exists(&done_path)?;
-        let split_exists = path_exists(&split_path)?;
-        if done_exists && split_exists {
-            return Err(OpeningStageError::Authority(
+        let paths = TaskMarkPaths {
+            done: self.task_path(start, count, "done"),
+            split: self.task_path(start, count, "split"),
+        };
+        match (path_exists(&paths.done)?, path_exists(&paths.split)?) {
+            (true, true) => Err(OpeningStageError::Authority(
                 "contradictory opening task markers",
-            ));
-        }
-        if done_exists {
-            let ordinal = decode_count(
-                &read_bounded(&done_path, envelope_cap(&self.limits))?,
-                DONE_MAGIC,
-            )?;
-            if ordinal != *completed {
-                return Err(OpeningStageError::Authority("opening task ordinal"));
+            )),
+            (true, false) => self.replay_done_task(&paths.done, &subjects, ctx),
+            (false, true) => {
+                self.verify_split_marker(&paths.split, count)?;
+                self.process_split(start, owners, ctx)
             }
-            let opening = self.read_fidelity(ordinal)?;
-            verify_fidelity_subject(&opening, &owners)?;
-            let oracle = self
-                .read_oracle()?
-                .ok_or(OpeningStageError::MissingOracle)?;
-            verify_oracle_subject(&oracle, self.subject.worldwide_day, reference_isos)?;
-            verify(&subjects, &opening, &oracle)?;
-            publish_fidelity(opening)?;
-            *completed = completed
-                .checked_add(1)
-                .ok_or(OpeningStageError::IntegerOverflow)?;
-            return Ok(());
-        }
-        if split_exists {
-            let encoded = read_bounded(&split_path, envelope_cap(&self.limits))?;
-            if encoded != encode_count(SPLIT_MAGIC, count) {
-                return Err(OpeningStageError::Authority("opening split marker"));
-            }
-            return self.process_split(
-                start,
-                owners,
-                reference_isos,
-                completed,
-                resolve,
-                verify,
-                publish_fidelity,
-            );
-        }
-        let ordinal = *completed;
-        let opening_path = self.opening_path(ordinal);
-        if path_exists(&opening_path)? {
-            let opening = self.read_fidelity(ordinal)?;
-            verify_fidelity_subject(&opening, &owners)?;
-            let oracle = self
-                .read_oracle()?
-                .ok_or(OpeningStageError::MissingOracle)?;
-            verify_oracle_subject(&oracle, self.subject.worldwide_day, reference_isos)?;
-            verify(&subjects, &opening, &oracle)?;
-            publish_fidelity(opening)?;
-            persist_exact(&self.tasks, &done_path, &encode_count(DONE_MAGIC, ordinal))?;
-            *completed = completed
-                .checked_add(1)
-                .ok_or(OpeningStageError::IntegerOverflow)?;
-            return Ok(());
-        }
-        match resolve(&subjects)? {
-            OpeningResolutionV1::Split => {
-                if owners.len() == 1 {
-                    return Err(OpeningStageError::SingletonCapacity);
-                }
-                persist_exact(&self.tasks, &split_path, &encode_count(SPLIT_MAGIC, count))?;
-                self.process_split(
-                    start,
-                    owners,
-                    reference_isos,
-                    completed,
-                    resolve,
-                    verify,
-                    publish_fidelity,
-                )
-            }
-            OpeningResolutionV1::Complete(openings) => {
-                let MaterializedOpeningsV1 { fidelity, oracle } = *openings;
-                verify_fidelity_subject(&fidelity, &owners)?;
-                verify_oracle_subject(&oracle, self.subject.worldwide_day, reference_isos)?;
-                verify(&subjects, &fidelity, &oracle)?;
-                self.persist_or_verify_oracle(&oracle)?;
-                persist_exact(
-                    &self.openings,
-                    &opening_path,
-                    &encode_opening(OPENING_MAGIC, &fidelity, &self.limits)?,
-                )?;
-                publish_fidelity(fidelity)?;
-                persist_exact(&self.tasks, &done_path, &encode_count(DONE_MAGIC, ordinal))?;
-                *completed = completed
-                    .checked_add(1)
-                    .ok_or(OpeningStageError::IntegerOverflow)?;
-                Ok(())
-            }
+            (false, false) => self.execute_pending_task(start, owners, &subjects, &paths, ctx),
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn process_split(
+    fn execute_pending_task<R, V, P>(
         &self,
         start: u64,
-        mut owners: Vec<alloy_primitives::Address>,
-        reference_isos: &[u16],
-        completed: &mut u32,
-        resolve: &mut impl FnMut(&OpeningSubjectsV1) -> Result<OpeningResolutionV1, OpeningStageError>,
-        verify: &mut impl FnMut(
+        owners: Vec<alloy_primitives::Address>,
+        subjects: &OpeningSubjectsV1,
+        paths: &TaskMarkPaths,
+        ctx: &mut OpeningTaskContext<'_, R, V, P>,
+    ) -> Result<(), OpeningStageError>
+    where
+        R: FnMut(&OpeningSubjectsV1) -> Result<OpeningResolutionV1, OpeningStageError>,
+        V: FnMut(
             &OpeningSubjectsV1,
             &AuthenticatedOpeningV1,
             &AuthenticatedOpeningV1,
         ) -> Result<(), OpeningStageError>,
-        publish_fidelity: &mut impl FnMut(AuthenticatedOpeningV1) -> Result<(), OpeningStageError>,
-    ) -> Result<(), OpeningStageError> {
+        P: FnMut(AuthenticatedOpeningV1) -> Result<(), OpeningStageError>,
+    {
+        let count = u32::try_from(owners.len()).map_err(|_| OpeningStageError::IntegerOverflow)?;
+        let ordinal = *ctx.completed;
+        let opening_path = self.opening_path(ordinal);
+        if path_exists(&opening_path)? {
+            self.replay_existing_opening(ordinal, subjects, ctx)?;
+            persist_exact(&self.tasks, &paths.done, &encode_count(DONE_MAGIC, ordinal))?;
+            return advance_completed(ctx.completed);
+        }
+        match (ctx.resolve)(subjects)? {
+            OpeningResolutionV1::Split => {
+                if owners.len() == 1 {
+                    return Err(OpeningStageError::SingletonCapacity);
+                }
+                persist_exact(&self.tasks, &paths.split, &encode_count(SPLIT_MAGIC, count))?;
+                self.process_split(start, owners, ctx)
+            }
+            OpeningResolutionV1::Complete(openings) => {
+                self.complete_resolved_task(ordinal, & paths.done, subjects, *openings, ctx)
+            }
+        }
+    }
+
+    fn replay_done_task<R, V, P>(
+        &self,
+        done_path: &Path,
+        subjects: &OpeningSubjectsV1,
+        ctx: &mut OpeningTaskContext<'_, R, V, P>,
+    ) -> Result<(), OpeningStageError>
+    where
+        V: FnMut(
+            &OpeningSubjectsV1,
+            &AuthenticatedOpeningV1,
+            &AuthenticatedOpeningV1,
+        ) -> Result<(), OpeningStageError>,
+        P: FnMut(AuthenticatedOpeningV1) -> Result<(), OpeningStageError>,
+    {
+        let ordinal = decode_count(
+            &read_bounded(done_path, envelope_cap(&self.limits))?,
+            DONE_MAGIC,
+        )?;
+        if ordinal != *ctx.completed {
+            return Err(OpeningStageError::Authority("opening task ordinal"));
+        }
+        self.replay_existing_opening(ordinal, subjects, ctx)?;
+        advance_completed(ctx.completed)
+    }
+
+    fn replay_existing_opening<R, V, P>(
+        &self,
+        ordinal: u32,
+        subjects: &OpeningSubjectsV1,
+        ctx: &mut OpeningTaskContext<'_, R, V, P>,
+    ) -> Result<(), OpeningStageError>
+    where
+        V: FnMut(
+            &OpeningSubjectsV1,
+            &AuthenticatedOpeningV1,
+            &AuthenticatedOpeningV1,
+        ) -> Result<(), OpeningStageError>,
+        P: FnMut(AuthenticatedOpeningV1) -> Result<(), OpeningStageError>,
+    {
+        let opening = self.read_fidelity(ordinal)?;
+        verify_fidelity_subject(&opening, &subjects.owners)?;
+        let oracle = self
+            .read_oracle()?
+            .ok_or(OpeningStageError::MissingOracle)?;
+        verify_oracle_subject(&oracle, self.subject.worldwide_day, ctx.reference_isos)?;
+        (ctx.verify)(subjects, &opening, &oracle)?;
+        (ctx.publish_fidelity)(opening)
+    }
+
+    fn complete_resolved_task<R, V, P>(
+        &self,
+        ordinal: u32,
+        done_path: &Path,
+        subjects: &OpeningSubjectsV1,
+        openings: MaterializedOpeningsV1,
+        ctx: &mut OpeningTaskContext<'_, R, V, P>,
+    ) -> Result<(), OpeningStageError>
+    where
+        V: FnMut(
+            &OpeningSubjectsV1,
+            &AuthenticatedOpeningV1,
+            &AuthenticatedOpeningV1,
+        ) -> Result<(), OpeningStageError>,
+        P: FnMut(AuthenticatedOpeningV1) -> Result<(), OpeningStageError>,
+    {
+        let MaterializedOpeningsV1 { fidelity, oracle } = openings;
+        verify_fidelity_subject(&fidelity, &subjects.owners)?;
+        verify_oracle_subject(&oracle, self.subject.worldwide_day, ctx.reference_isos)?;
+        (ctx.verify)(subjects, &fidelity, &oracle)?;
+        self.persist_or_verify_oracle(&oracle)?;
+        let opening_path = self.opening_path(ordinal);
+        persist_exact(
+            &self.openings,
+            &opening_path,
+            &encode_opening(OPENING_MAGIC, &fidelity, &self.limits)?,
+        )?;
+        (ctx.publish_fidelity)(fidelity)?;
+        persist_exact(&self.tasks, done_path, &encode_count(DONE_MAGIC, ordinal))?;
+        advance_completed(ctx.completed)
+    }
+
+    fn verify_split_marker(&self, split_path: &Path, count: u32) -> Result<(), OpeningStageError> {
+        let encoded = read_bounded(split_path, envelope_cap(&self.limits))?;
+        if encoded != encode_count(SPLIT_MAGIC, count) {
+            return Err(OpeningStageError::Authority("opening split marker"));
+        }
+        Ok(())
+    }
+
+    fn process_split<R, V, P>(
+        &self,
+        start: u64,
+        mut owners: Vec<alloy_primitives::Address>,
+        ctx: &mut OpeningTaskContext<'_, R, V, P>,
+    ) -> Result<(), OpeningStageError>
+    where
+        R: FnMut(&OpeningSubjectsV1) -> Result<OpeningResolutionV1, OpeningStageError>,
+        V: FnMut(
+            &OpeningSubjectsV1,
+            &AuthenticatedOpeningV1,
+            &AuthenticatedOpeningV1,
+        ) -> Result<(), OpeningStageError>,
+        P: FnMut(AuthenticatedOpeningV1) -> Result<(), OpeningStageError>,
+    {
         let midpoint = owners.len() / 2;
         if midpoint == 0 {
             return Err(OpeningStageError::SingletonCapacity);
@@ -311,24 +356,8 @@ impl DurableOpeningStage {
         let right_start = start
             .checked_add(u64::try_from(midpoint).map_err(|_| OpeningStageError::IntegerOverflow)?)
             .ok_or(OpeningStageError::IntegerOverflow)?;
-        self.process_task(
-            start,
-            owners,
-            reference_isos,
-            completed,
-            resolve,
-            verify,
-            publish_fidelity,
-        )?;
-        self.process_task(
-            right_start,
-            right,
-            reference_isos,
-            completed,
-            resolve,
-            verify,
-            publish_fidelity,
-        )
+        self.process_task(start, owners, ctx)?;
+        self.process_task(right_start, right, ctx)
     }
 
     fn persist_or_verify_oracle(
@@ -399,6 +428,11 @@ impl DurableOpeningStage {
     }
 }
 
+struct TaskMarkPaths {
+    done: PathBuf,
+    split: PathBuf,
+}
+
 impl FidelityOpeningCursor {
     pub fn next_opening(&mut self) -> Result<Option<AuthenticatedOpeningV1>, OpeningStageError> {
         if self.next == self.count {
@@ -416,6 +450,21 @@ impl FidelityOpeningCursor {
             .ok_or(OpeningStageError::IntegerOverflow)?;
         Ok(Some(opening))
     }
+}
+
+struct OpeningTaskContext<'a, R, V, P> {
+    reference_isos: &'a [u16],
+    completed: &'a mut u32,
+    resolve: &'a mut R,
+    verify: &'a mut V,
+    publish_fidelity: &'a mut P,
+}
+
+fn advance_completed(completed: &mut u32) -> Result<(), OpeningStageError> {
+    *completed = completed
+        .checked_add(1)
+        .ok_or(OpeningStageError::IntegerOverflow)?;
+    Ok(())
 }
 
 fn verify_fidelity_subject(

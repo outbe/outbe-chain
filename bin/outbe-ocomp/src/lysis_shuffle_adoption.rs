@@ -15,7 +15,7 @@ use crate::{
     },
     cas::{CasError, FilesystemCas, FilesystemCasReader},
     inbox::{WorkerInbox, WorkerInboxError},
-    worker::{execute_unit, UnitExecutionAuthority},
+    lysis_phase_replay::{verify_producer_only_phase_replay, LysisPhaseReplayError},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,41 +53,24 @@ pub enum LysisShuffleAdoptionError {
 /// Descendant adoption remains a separate pass below: replay proves the
 /// deterministic transform, while adoption proves the exact reported
 /// content-addressed closure is available and well formed.
-#[allow(clippy::too_many_arguments)]
 pub fn verify_lysis_shuffle_phase_replay(
-    plan_ordinal: u32,
-    spec: &UnitSpecV1,
-    reported: &UnitArtifactV1,
-    plan: &PlanCommitmentV1,
-    manifest: &InputManifestV1,
-    producer_artifacts: &[UnitArtifactV1],
-    bundle: &ProtocolBundleV1,
-    reader: &FilesystemCasReader,
-    replay_inbox: &WorkerInbox,
-    limits: &SchemaLimits,
+    target: (u32, &UnitSpecV1, &UnitArtifactV1),
+    commitment: (&PlanCommitmentV1, &InputManifestV1),
+    upstream: (&[UnitArtifactV1], &ProtocolBundleV1),
+    runtime: (&FilesystemCasReader, &WorkerInbox, &SchemaLimits),
 ) -> Result<(), LysisShuffleAdoptionError> {
-    if spec.phase != UnitPhase::BucketShuffle {
-        return Err(ProtocolError::InvalidInvariant("shuffle replay phase").into());
-    }
-    reported.validate_against(spec, limits)?;
-    let expected = execute_unit(
-        spec,
-        UnitExecutionAuthority {
-            plan,
-            unit_index: plan_ordinal,
-            manifest,
-            input_chunks: &[],
-            producer_artifacts,
-            bundle,
-            limits,
-            reader,
-            inbox: replay_inbox,
-            cancelled: None,
-        },
-    )
-    .map_err(|_| LysisShuffleAdoptionError::ReplayExecutionFailed)?;
-    if expected.encode_canonical(limits)? != reported.encode_canonical(limits)? {
-        return Err(LysisShuffleAdoptionError::ReplayMismatch);
+    if let Err(failure) = verify_producer_only_phase_replay(
+        (UnitPhase::BucketShuffle, "shuffle replay phase"),
+        target,
+        commitment,
+        upstream,
+        runtime,
+    ) {
+        return Err(match failure {
+            LysisPhaseReplayError::Protocol(protocol) => LysisShuffleAdoptionError::Protocol(protocol),
+            LysisPhaseReplayError::ReplayMismatch => LysisShuffleAdoptionError::ReplayMismatch,
+            _ => LysisShuffleAdoptionError::ReplayExecutionFailed,
+        });
     }
     Ok(())
 }
@@ -98,10 +81,8 @@ pub fn admit_reported_lysis_shuffle_unit(
     position: AdmissionPositionV1,
     spec: &UnitSpecV1,
     finished: &UnitFinishedV1,
-    inbox: &WorkerInbox,
-    cas: &FilesystemCas,
-    catalog: &mut VerifiedAdmissionCatalog,
-    limits: &SchemaLimits,
+    (inbox, cas): (&WorkerInbox, &FilesystemCas),
+    (catalog, limits): (&mut VerifiedAdmissionCatalog, &SchemaLimits),
 ) -> Result<AdmittedLysisShuffleUnitV1, LysisShuffleAdoptionError> {
     spec.validate_semantics(limits)?;
     let unit_id = spec.unit_id(limits)?;
@@ -120,20 +101,10 @@ pub fn admit_reported_lysis_shuffle_unit(
             ProtocolError::InvalidInvariant("reported unit is a Lysis shuffle phase").into(),
         );
     }
-    let expected_kind = outbe_ocomp_protocol::shuffle::ShuffleRunKindV1::Bucket;
     let root = ShuffleRunArtifactV1::decode_canonical(artifact.phase_payload(limits)?, limits)?;
     root.validate_root_semantics(limits)?;
     let header = artifact.output_header(limits)?;
-    if root.protocol_bundle_hash != spec.protocol_bundle_hash
-        || root.job_id != spec.job_id
-        || root.attempt != spec.attempt
-        || root.unit_id != artifact.unit_id
-        || root.kind != expected_kind
-        || root.source_coverage_root != header.source_coverage_root
-        || root.source_coverage_count != header.source_coverage_count
-        || root.ordered_record_root != header.output_coverage_root
-        || root.record_count != header.output_coverage_count
-    {
+    if !matches_shuffle_root_binding(&root, spec, &artifact, &header) {
         return Err(ProtocolError::InvalidInvariant("reported shuffle root binding").into());
     }
 
@@ -156,6 +127,24 @@ pub fn admit_reported_lysis_shuffle_unit(
         closure,
         admission,
     })
+}
+
+fn matches_shuffle_root_binding(
+    root: &ShuffleRunArtifactV1,
+    spec: &UnitSpecV1,
+    artifact: &UnitArtifactV1,
+    header: &outbe_ocomp_protocol::unit::WorkOutputHeaderV1,
+) -> bool {
+    let matches_job = root.protocol_bundle_hash == spec.protocol_bundle_hash
+        && root.job_id == spec.job_id
+        && root.attempt == spec.attempt;
+    let matches_unit = root.unit_id == artifact.unit_id
+        && root.kind == outbe_ocomp_protocol::shuffle::ShuffleRunKindV1::Bucket;
+    let matches_coverage = root.source_coverage_root == header.source_coverage_root
+        && root.source_coverage_count == header.source_coverage_count
+        && root.ordered_record_root == header.output_coverage_root
+        && root.record_count == header.output_coverage_count;
+    matches_job && matches_unit && matches_coverage
 }
 
 /// Verifies the complete bounded page tree from the worker inbox while

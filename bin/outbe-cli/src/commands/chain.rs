@@ -71,74 +71,19 @@ async fn info(client: &(impl Rpc + Sync)) -> Result<()> {
 }
 
 async fn status(client: &(impl Rpc + Sync)) -> Result<()> {
-    let block_number = client.eth_block_number().await?;
-    let chain_id = client.eth_chain_id().await?;
-    let gas_price = client.eth_gas_price().await?;
+    let ci = fetch_chain_info(client).await?;
 
     println!("=== Chain Status ===");
-    println!("Chain ID:       {chain_id}");
-    println!("Block Number:   {block_number}");
-    println!("Gas Price:      {gas_price} unit");
+    println!("Chain ID:       {}", ci.chain_id);
+    println!("Block Number:   {}", ci.block);
+    println!("Gas Price:      {} unit", ci.gas_price);
 
-    // Epoch info via outbe RPC.
     if let Ok(epoch_info) = client.outbe_get_epoch_info().await {
-        println!();
-        println!("=== Epoch ===");
-        if let Some(n) = epoch_info.get("epochNumber").and_then(|v| v.as_u64()) {
-            println!("Epoch Number:   {n}");
-        }
-        if let Some(ts) = epoch_info
-            .get("epochStartTimestamp")
-            .and_then(|v| v.as_u64())
-        {
-            println!("Epoch Start Time: {ts}");
-        }
-        if let Some(block) = epoch_info.get("epochStartBlock").and_then(|v| v.as_u64()) {
-            println!("Epoch Start Block: {block}");
-        }
-        if let Some(c) = epoch_info
-            .get("activeValidatorCount")
-            .and_then(|v| v.as_u64())
-        {
-            println!("Active Validators: {c}");
-        }
-        if let Some(s) = epoch_info.get("totalStaked").and_then(|v| v.as_str()) {
-            println!("Total Staked:   {s}");
-        }
+        print_epoch_status(&epoch_info);
     }
 
-    // Consensus info.
     match client.outbe_consensus_status().await {
-        Ok(cs) => {
-            println!();
-            println!("=== Consensus ===");
-            if let Some(v) = cs.get("currentView").and_then(|v| v.as_u64()) {
-                println!("Current View:   {v}");
-            }
-            if let Some(p) = cs.get("connectedPeers").and_then(|v| v.as_u64()) {
-                println!("Connected Peers: {p}");
-            }
-            let active = cs
-                .get("isActive")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            println!("Active:         {active}");
-            let shares = cs
-                .get("hasThresholdShares")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            println!("Threshold Shares: {shares}");
-            if let Some(f) = cs.get("lastFinalizedBlock").and_then(|v| v.as_u64()) {
-                println!("Last Finalized: {f}");
-                if block_number > 0 && f > 0 {
-                    let lag = block_number.saturating_sub(f);
-                    println!("Finality Lag:   {lag} blocks");
-                }
-            }
-            if let Some(seed) = cs.get("lastVrfSeed").and_then(|v| v.as_str()) {
-                println!("VRF Seed:       {seed}");
-            }
-        }
+        Ok(cs) => print_consensus_status(&cs, ci.block),
         Err(_) => {
             println!();
             println!("=== Consensus ===");
@@ -146,29 +91,83 @@ async fn status(client: &(impl Rpc + Sync)) -> Result<()> {
         }
     }
 
-    // Block timing estimate from last two blocks.
-    if block_number >= 2 {
-        if let (Ok(prev), Ok(curr)) = (
-            client.eth_get_block_by_number(block_number - 1).await,
-            client.eth_get_block_by_number(block_number).await,
-        ) {
-            if let (Some(t1), Some(t2)) = (
-                prev.get("timestamp")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok()),
-                curr.get("timestamp")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok()),
-            ) {
-                let block_time = t2.saturating_sub(t1);
-                println!();
-                println!("=== Timing ===");
-                println!("Last Block Time: {block_time}s");
-            }
-        }
-    }
+    print_block_timing(client, ci.block).await;
 
     Ok(())
+}
+
+fn print_epoch_status(epoch_info: &serde_json::Value) {
+    println!();
+    println!("=== Epoch ===");
+    for (key, label) in [
+        ("epochNumber", "Epoch Number:  "),
+        ("epochStartTimestamp", "Epoch Start Time:"),
+        ("epochStartBlock", "Epoch Start Block:"),
+        ("activeValidatorCount", "Active Validators:"),
+    ] {
+        if let Some(val) = epoch_info.get(key).and_then(|v| v.as_u64()) {
+            println!("{label} {val}");
+        }
+    }
+    if let Some(s) = epoch_info.get("totalStaked").and_then(|v| v.as_str()) {
+        println!("Total Staked:   {s}");
+    }
+}
+
+fn print_consensus_status(cs: &serde_json::Value, block_number: u64) {
+    println!();
+    println!("=== Consensus ===");
+    if let Some(v) = cs.get("currentView").and_then(|v| v.as_u64()) {
+        println!("Current View:   {v}");
+    }
+    if let Some(p) = cs.get("connectedPeers").and_then(|v| v.as_u64()) {
+        println!("Connected Peers: {p}");
+    }
+    let active = cs
+        .get("isActive")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    println!("Active:         {active}");
+    let shares = cs
+        .get("hasThresholdShares")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    println!("Threshold Shares: {shares}");
+    if let Some(f) = cs.get("lastFinalizedBlock").and_then(|v| v.as_u64()) {
+        println!("Last Finalized: {f}");
+        if block_number > 0 && f > 0 {
+            let lag = block_number.saturating_sub(f);
+            println!("Finality Lag:   {lag} blocks");
+        }
+    }
+    if let Some(seed) = cs.get("lastVrfSeed").and_then(|v| v.as_str()) {
+        println!("VRF Seed:       {seed}");
+    }
+}
+
+fn parse_block_timestamp(block: &serde_json::Value) -> Option<u64> {
+    block
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .and_then(|s| u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok())
+}
+
+async fn print_block_timing(client: &(impl Rpc + Sync), block_number: u64) {
+    if block_number < 2 {
+        return;
+    }
+    let (Ok(prev), Ok(curr)) = (
+        client.eth_get_block_by_number(block_number - 1).await,
+        client.eth_get_block_by_number(block_number).await,
+    ) else {
+        return;
+    };
+    if let (Some(t1), Some(t2)) = (parse_block_timestamp(&prev), parse_block_timestamp(&curr)) {
+        let block_time = t2.saturating_sub(t1);
+        println!();
+        println!("=== Timing ===");
+        println!("Last Block Time: {block_time}s");
+    }
 }
 
 async fn balance(client: &(impl Rpc + Sync), address: Address) -> Result<()> {

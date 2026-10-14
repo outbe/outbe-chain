@@ -218,20 +218,27 @@ impl OracleClient {
                 .await?,
         )
     }
+}
+
+pub struct VoteSigningContext<'a> {
+    pub wallet: &'a EthereumWallet,
+    pub signer: Address,
+    pub chain: &'a ChainConfig,
+}
+
+impl OracleClient {
     pub async fn sign_vote(
         &self,
         head: &Head,
-        wallet: &EthereumWallet,
-        signer: Address,
-        chain: &ChainConfig,
+        ctx: &VoteSigningContext<'_>,
         calldata: &[u8],
         replacement: Option<&PendingVote>,
     ) -> Result<PendingVote> {
-        let nonce = self.nonce(head, signer).await?;
+        let nonce = self.nonce(head, ctx.signer).await?;
         // Do not jump over a transaction from another process using this key.
         let pending_nonce = quantity(
             &self
-                .rpc("eth_getTransactionCount", json!([signer, "pending"]))
+                .rpc("eth_getTransactionCount", json!([ctx.signer, "pending"]))
                 .await?,
         )?;
         if let Some(old) = replacement {
@@ -267,21 +274,21 @@ impl OracleClient {
                     .saturating_add(1),
             );
         }
-        let priority = if chain.gasless_oracle_votes {
+        let priority = if ctx.chain.gasless_oracle_votes {
             0
         } else {
             gas_price.max(replacement.map(|old| old.max_fee_per_gas).unwrap_or(0))
         };
         let mut tx = TransactionRequest::default()
-            .from(signer)
+            .from(ctx.signer)
             .to(ORACLE_ADDRESS)
             .input(Bytes::copy_from_slice(calldata).into())
             .gas_limit(1_000_000)
             .nonce(nonce)
             .max_fee_per_gas(cap)
             .max_priority_fee_per_gas(priority);
-        tx.set_chain_id(chain.chain_id);
-        let envelope = tx.build(wallet).await?;
+        tx.set_chain_id(ctx.chain.chain_id);
+        let envelope = tx.build(ctx.wallet).await?;
         let raw = Bytes::from(envelope.encoded_2718());
         Ok(PendingVote {
             hash: format!("{:#x}", keccak256(&raw)),
