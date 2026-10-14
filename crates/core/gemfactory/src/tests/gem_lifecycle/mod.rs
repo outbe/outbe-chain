@@ -123,7 +123,7 @@ pub(crate) fn call_gem(storage: &StorageHandle, world: &World, gem_id: U256, at:
     let bucket = bucket_of(storage, world, gem_id);
     let mut gem = GemContract::new(storage.clone());
     let terms = gem.read_call_terms(bucket).unwrap();
-    crate::called::call_bucket(&mut gem, bucket, &terms, at).unwrap();
+    crate::called::mark_called(&mut gem, bucket, &terms, at).unwrap();
 }
 
 /// Settles a gem the way the factory does once payment is accepted: a called gem

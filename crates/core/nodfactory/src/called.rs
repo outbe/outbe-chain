@@ -215,7 +215,7 @@ pub(crate) fn call_currency(
         budget,
         |bucket_key, budget| {
             call_sweep::call_entry::<NodCallSweep>(&ctx.storage, budget, bucket_key, || {
-                if !call_bucket(nod, window, bucket_key, ctx.block.timestamp)? {
+                if !call_if_breached(nod, window, bucket_key, ctx.block.timestamp)? {
                     return Ok(0);
                 }
                 called += 1;
@@ -228,7 +228,7 @@ pub(crate) fn call_currency(
 }
 
 /// Calls the bucket if the window breached its sealed terms. Returns whether it did.
-fn call_bucket(
+fn call_if_breached(
     nod: &mut NodContract<'_>,
     window: &CallWindow,
     bucket_key: B256,
@@ -261,9 +261,7 @@ fn mark_called(
     notice_period: u32,
 ) -> Result<()> {
     let deadline = api::settlement_deadline_of(now, notice_period);
-    nod.remove_call_bin(bucket_key)?;
-    nod.push_called(bucket_key, deadline)?;
-    nod.bucket_called_at.write(&bucket_key, now)?;
+    nod.record_bucket_called(bucket_key, now, deadline)?;
     nod.emit(INod::NodBucketCalled {
         bucketKey: bucket_key,
         calledAt: now,

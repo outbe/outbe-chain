@@ -381,7 +381,7 @@ pub fn settle_principal(
         .get_credis(credis_id)
         .unwrap();
     let interest = CredisContract::accrued_interest(&record, now_of(storage)).unwrap();
-    runtime::settle(storage.clone(), payer, credis_id, interest + principal).unwrap()
+    runtime::settle_credis(storage.clone(), payer, credis_id, interest + principal).unwrap()
 }
 
 /// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.

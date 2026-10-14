@@ -30,7 +30,10 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// Record the series identity and call-price bin, then arm the day's proceeds fan-in.
 /// Return issuance legs for the caller to broadcast through `send_issuance`.
 /// The broadcast creates IntexNFT1155 series on each target chain, including the origin.
-pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
+pub fn issue_intex(
+    storage: &StorageHandle<'_>,
+    params: IssuanceParams,
+) -> Result<Vec<IssuanceLeg>> {
     if params.issued_units == 0 {
         // Whether the day distributes is the caller's decision: one empty group
         // must not touch the state its siblings armed.

@@ -158,7 +158,7 @@ pub(crate) fn call_currency(
         budget,
         |bucket, budget| {
             call_sweep::call_entry::<GemCallSweep>(&ctx.storage, budget, bucket, || {
-                let calls = u32::from(trigger_bucket_call(
+                let calls = u32::from(call_if_breached(
                     &mut gem,
                     window,
                     bucket,
@@ -178,7 +178,7 @@ pub(crate) fn call_currency(
 /// The terms were sealed when the bucket opened, so a later profile change cannot
 /// re-term it. Days before the first full day of the first member never count: the
 /// bucket did not exist yet.
-pub(crate) fn trigger_bucket_call(
+pub(crate) fn call_if_breached(
     gem: &mut GemContract<'_>,
     window: &CallWindow,
     bucket: B256,
@@ -198,19 +198,19 @@ pub(crate) fn trigger_bucket_call(
     if !breached {
         return Ok(false);
     }
-    call_bucket(gem, bucket, &terms, now)?;
+    mark_called(gem, bucket, &terms, now)?;
     Ok(true)
 }
 
 /// `Issued -> Called` for every unpaid member at once: the bucket leaves the trie for the
 /// expiry queue, where it waits on its sealed notice period as one entry.
-pub(crate) fn call_bucket(
+pub(crate) fn mark_called(
     gem: &mut GemContract<'_>,
     bucket: B256,
     terms: &CallTerms,
     now: u64,
 ) -> Result<()> {
-    let deadline = now.saturating_add(u64::from(terms.call_notice_period_seconds));
+    let deadline = outbe_gem::api::settlement_deadline_of(now, terms.call_notice_period_seconds);
     gem.record_bucket_called(bucket, now, deadline)?;
     gem.emit(GemBucketCalled {
         bucketKey: bucket,

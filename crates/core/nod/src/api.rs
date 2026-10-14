@@ -247,7 +247,7 @@ pub fn list_by_owner(
 }
 
 /// Records payment without consuming the entitlement or changing live supply.
-pub fn settle_nod(
+pub fn record_settled(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     item: LoadedNodItem,

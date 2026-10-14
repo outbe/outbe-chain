@@ -289,7 +289,7 @@ impl NodContract<'_> {
             self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
             self.bucket_issued_at.clear(&item.bucket_key)?;
             self.bucket_nod_count.clear(&item.bucket_key)?;
-            self.remove_callable_bucket(item.bucket_key)?;
+            self.close_bucket(item.bucket_key)?;
             delete(self.storage.clone(), scope, current_bucket)?;
         } else if item.is_settled {
             update(
@@ -478,6 +478,19 @@ impl NodContract<'_> {
         expiry_queue::push(&ExpiryHours(self), bucket_key, deadline)
     }
 
+    /// Records every unpaid member called at once: the bucket leaves the trie for the
+    /// expiry queue, where it waits on `deadline` as one entry.
+    pub fn record_bucket_called(
+        &mut self,
+        bucket_key: B256,
+        now: u64,
+        deadline: u64,
+    ) -> Result<()> {
+        self.remove_call_bin(bucket_key)?;
+        self.bucket_called_at.write(&bucket_key, now)?;
+        self.push_called(bucket_key, deadline)
+    }
+
     /// Reads back the terms `seal_bucket_call_terms` sealed at issuance.
     pub fn read_call_terms(&self, bucket_key: B256) -> Result<CallTerms> {
         Ok(CallTerms {
@@ -497,7 +510,7 @@ impl NodContract<'_> {
 
     /// No-op for a bucket the call index never held, so the removal funnel can call it
     /// unconditionally.
-    pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
+    pub(crate) fn close_bucket(&mut self, bucket_key: B256) -> Result<()> {
         self.remove_call_bin(bucket_key)?;
         self.remove_called(bucket_key)?;
         self.bucket_call_price_minor.clear(&bucket_key)?;

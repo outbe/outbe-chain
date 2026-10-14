@@ -58,7 +58,7 @@ pub fn dispatch(
                 ),
                 settleCredis(c) => mutate(&storage, c, caller, |sender, c| {
                     let (principal, interest) =
-                        runtime::settle(storage.clone(), sender, c.credisId, c.amountMinor)?;
+                        runtime::settle_credis(storage.clone(), sender, c.credisId, c.amountMinor)?;
                     Ok(ICredisFactory::settleCredisReturn {
                         principalPaidMinor: principal,
                         interestPaidMinor: interest,

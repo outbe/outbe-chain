@@ -9,7 +9,7 @@ const MATURE_TS: u64 = ISSUED_AT as u64 + 21 * DAY + 1;
 #[test]
 fn scan_and_call_force_calls_breached_series() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
@@ -40,7 +40,7 @@ fn a_called_series_reports_its_settlement_deadline() {
     let mut storage = factory_provider();
     let notice = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
@@ -79,7 +79,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
     // stays unfinalized. So a read of any other day, or of any other store, drops
     // below the threshold and fails the call.
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let mut oracle = OracleContract::new(s.clone());
         setup_pair(&oracle);
         // Exact midnight UTC, well past issuance.
@@ -136,7 +136,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
 #[test]
 fn call_scan_does_not_halt_on_overflow_vwap() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
@@ -167,7 +167,7 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
     let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
     StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         fill_days(
@@ -347,8 +347,8 @@ fn eur_series(worldwide_day: u32) -> IssuanceParams {
 #[test]
 fn a_currency_rate_never_qualifies_another_currency_series() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
-        runtime::issue(&s, eur_series(8)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, eur_series(8)).unwrap();
 
         let oracle = OracleContract::new(s.clone());
         let above = U256::from(EXPECTED_FLOOR) + U256::from(1);
@@ -766,7 +766,7 @@ fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
 #[test]
 fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
@@ -837,7 +837,7 @@ fn block_at<'s>(s: &StorageHandle<'s>, number: u64, ts: u64) -> BlockRuntimeCont
 #[test]
 fn a_spike_the_day_price_does_not_share_qualifies_nothing() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         write_rate(
             &oracle,
@@ -927,7 +927,7 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
     let mut provider = factory_provider();
     let retry_day = StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;

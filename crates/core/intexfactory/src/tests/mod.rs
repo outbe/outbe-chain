@@ -114,7 +114,7 @@ fn call_group<'s>(
         intex: f,
         factory: &factory,
     };
-    called::try_call_group(call, group, &window, now_ts).unwrap()
+    called::call_if_breached(call, group, &window, now_ts).unwrap()
 }
 
 fn sample(worldwide_day: u32) -> IssuanceParams {

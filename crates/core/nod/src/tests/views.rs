@@ -28,7 +28,7 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
         .unwrap();
         qualify(&storage, &item, U256::from(20));
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
-        api::settle_nod(
+        api::record_settled(
             &storage,
             &scope,
             api::load_item(&storage, &scope, &parent, item.nod_id)
@@ -258,7 +258,7 @@ fn qualification_announces_nothing_and_settlement_updates_the_nod() {
         );
 
         let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
-        api::settle_nod(
+        api::record_settled(
             &storage,
             &scope,
             api::load_item(&storage, &scope, &parent, first.nod_id)
@@ -433,7 +433,7 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
         .unwrap();
         qualify(&storage, &item, U256::from(20));
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
-        api::settle_nod(
+        api::record_settled(
             &storage,
             &scope,
             api::load_item(&storage, &scope, &parent, item.nod_id)
@@ -522,7 +522,7 @@ fn seed_public_lifecycle(
     }
     let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
     if paid {
-        api::settle_nod(
+        api::record_settled(
             storage,
             scope,
             api::load_item(storage, scope, parent, item.nod_id)

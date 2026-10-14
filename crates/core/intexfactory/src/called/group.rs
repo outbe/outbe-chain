@@ -19,7 +19,7 @@ pub(crate) struct GroupCall<'a, 'storage> {
 
 /// Force-call a whole group: its series share trigger, issue time and call
 /// parameters, so one read decides them all. Returns how many were called.
-pub(crate) fn try_call_group(
+pub(crate) fn call_if_breached(
     call: GroupCall<'_, '_>,
     group: &Group,
     window: &CallWindow,

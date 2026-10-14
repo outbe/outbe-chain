@@ -7,7 +7,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE,
+    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE_PCT,
     POSITION_VALIDITY_SECONDS,
 };
 use crate::schema::GemContract;
@@ -33,8 +33,8 @@ impl GemParams {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
-        call_rate: CALL_RATE,
-        floor_rate: FLOOR_RATE,
+        call_rate: CALL_RATE_PCT,
+        floor_rate: FLOOR_RATE_PCT,
         position_validity: POSITION_VALIDITY_SECONDS,
     };
 

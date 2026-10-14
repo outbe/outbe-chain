@@ -156,7 +156,7 @@ fn issue_for_test(
     let mut legs = Vec::new();
     let ids = call.seriesIds.clone();
     for (series_id, issuance_currency) in call.seriesIds.into_iter().zip(call.issuanceCurrencies) {
-        legs.extend(crate::api::issue(
+        legs.extend(crate::api::issue_intex(
             storage,
             crate::schema::IssuanceParams {
                 series_id: SeriesId::from(series_id),

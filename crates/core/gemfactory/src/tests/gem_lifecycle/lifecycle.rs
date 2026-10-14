@@ -290,7 +290,7 @@ fn bucket_body_and_terms_survive_until_unpaid_and_settled_are_zero() {
             view(storage, world, gem_id).terms.call_price_minor + U256::from(1u64),
             (outbe_gem::constants::CALL_WINDOW / 86_400) as usize,
         );
-        assert!(!crate::called::trigger_bucket_call(&mut scan, &window, bucket, T_NOW).unwrap());
+        assert!(!crate::called::call_if_breached(&mut scan, &window, bucket, T_NOW).unwrap());
 
         burn_settled(storage, world, gem_id);
         assert_eq!(

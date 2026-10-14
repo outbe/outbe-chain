@@ -177,7 +177,7 @@ pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<
 
 /// Collect payment first, then return the released collateral to the source's
 /// liquid balance. No Fidelity mutation.
-pub fn settle(
+pub fn settle_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     credis_id: U256,

@@ -413,7 +413,7 @@ impl GemContract<'_> {
 
     /// Parks a bucket in the bin of its sealed call price. No-op for a bucket without
     /// a call price.
-    fn insert_call_bin(&mut self, bucket: B256) -> Result<()> {
+    pub fn insert_call_bin(&mut self, bucket: B256) -> Result<()> {
         let price = self.bucket_call_price_minor.read(&bucket)?;
         if price.is_zero() {
             return Ok(());
@@ -424,7 +424,7 @@ impl GemContract<'_> {
     }
 
     /// No-op for a bucket the trie no longer holds.
-    pub(crate) fn remove_call_bin(&mut self, bucket: B256) -> Result<()> {
+    pub fn remove_call_bin(&mut self, bucket: B256) -> Result<()> {
         let iso = self.bucket_currency.read(&bucket)?;
         call_bins::remove(&CallBins(self, iso), bucket)?;
         Ok(())

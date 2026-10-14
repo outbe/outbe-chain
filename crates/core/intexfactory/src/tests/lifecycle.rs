@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn issue_enrolls_in_call_bin() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let f = IntexContract::new(s.clone());
         let bin = outbe_primitives::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
@@ -102,7 +102,7 @@ fn insert_remove_call_bin_roundtrip() {
 #[test]
 fn try_call_marks_called_when_threshold_met() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let mut f = IntexContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -136,7 +136,7 @@ fn try_call_marks_called_when_threshold_met() {
 #[test]
 fn try_call_skips_when_below_threshold() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let mut f = IntexContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -1505,7 +1505,7 @@ mod called_pstar {
                 members: vec![series],
             };
             assert_eq!(
-                called::try_call_group(
+                called::call_if_breached(
                     called::GroupCall {
                         storage: &s,
                         intex: &mut f,
@@ -1557,7 +1557,7 @@ mod called_pstar {
 #[test]
 fn a_series_qualifies_on_a_closed_day_above_its_floor_from_its_first_full_day() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let qualified = || is_series_qualified(&s, sid(7)).unwrap();
         let close_day = |days_after_issue: u64, vwap: u64| {
@@ -1585,7 +1585,7 @@ fn a_series_qualifies_on_a_closed_day_above_its_floor_from_its_first_full_day() 
 #[test]
 fn is_qualified_dispatch() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         write_day_vwap(
             &OracleContract::new(s.clone()),
             REFERENCE_ISO,

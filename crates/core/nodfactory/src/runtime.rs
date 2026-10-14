@@ -166,7 +166,7 @@ pub fn settle_nod(
     storage.clone().with_checkpoint(|| {
         // Publish the transition before external payment calls so callbacks cannot
         // settle the same Nod twice. A failed payment rolls the transition back.
-        nod_api::settle_nod(storage, scope, item, bucket)?;
+        nod_api::record_settled(storage, scope, item, bucket)?;
         settlement::collect(
             storage,
             NOD_FACTORY_ADDRESS,

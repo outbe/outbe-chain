@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn issue_creates_series_in_registry() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
 
         // The series is captured in Intex with the issuance identity.
         let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
@@ -37,9 +37,9 @@ fn issue_creates_series_in_registry() {
 #[test]
 fn issue_rejects_duplicate_series() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         // The registry record-create rejects a duplicate series id.
-        assert!(runtime::issue(&s, sample(7)).is_err());
+        assert!(runtime::issue_intex(&s, sample(7)).is_err());
     });
 }
 
@@ -48,7 +48,7 @@ fn issue_zero_winners_leaves_the_day_untouched() {
     with_factory(|s| {
         let mut p = sample(7);
         p.issued_units = 0;
-        runtime::issue(&s, p).unwrap();
+        runtime::issue_intex(&s, p).unwrap();
 
         assert!(!outbe_intex::api::series_exists(&s, sid(7)).unwrap());
     });
@@ -74,8 +74,8 @@ fn issuance_legs_route_winners_to_their_own_chain() {
 #[test]
 fn issue_enrolls_series_in_dense_enumeration() {
     with_factory(|s| {
-        runtime::issue(&s, sample(11)).unwrap();
-        runtime::issue(&s, sample(22)).unwrap();
+        runtime::issue_intex(&s, sample(11)).unwrap();
+        runtime::issue_intex(&s, sample(22)).unwrap();
         assert_eq!(outbe_intex::api::total_series(&s).unwrap(), 2);
         assert_eq!(outbe_intex::api::series_id_at(&s, 0).unwrap(), sid(11));
         assert_eq!(outbe_intex::api::series_id_at(&s, 1).unwrap(), sid(22));
@@ -353,7 +353,7 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
             issuance_currency: EUR_ISO,
             ..sample(7)
         };
-        runtime::issue(&s, params).unwrap();
+        runtime::issue_intex(&s, params).unwrap();
     });
     storage
 }

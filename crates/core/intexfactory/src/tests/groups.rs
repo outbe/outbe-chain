@@ -67,7 +67,7 @@ mod group_scans {
     /// Issue one day's series, one per issuance currency.
     fn issue_day(s: &StorageHandle<'_>, worldwide_day: u32) {
         for issuance in ISSUANCES {
-            runtime::issue(s, params(worldwide_day, issuance)).unwrap();
+            runtime::issue_intex(s, params(worldwide_day, issuance)).unwrap();
         }
     }
 

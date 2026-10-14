@@ -174,7 +174,7 @@ fn call_then_forfeit_lifecycle() {
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
-        assert!(crate::called::trigger_bucket_call(
+        assert!(crate::called::call_if_breached(
             &mut gem,
             &window,
             bucket_of(storage, world, gem_id),
@@ -220,7 +220,7 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
 
             let mut gem = GemContract::new(storage.clone());
             assert_eq!(
-                crate::called::trigger_bucket_call(
+                crate::called::call_if_breached(
                     &mut gem,
                     &window,
                     bucket_of(storage, world, gem_id),
@@ -261,7 +261,7 @@ fn second_member_with_a_different_issued_at_joins_the_first_members_bucket() {
         let window = breach_window(T_NOW, threshold + U256::from(1u64), threshold_days);
         let mut gem = GemContract::new(storage.clone());
         assert!(
-            crate::called::trigger_bucket_call(
+            crate::called::call_if_breached(
                 &mut gem,
                 &window,
                 bucket_of(storage, world, first),
@@ -284,7 +284,7 @@ fn call_skips_below_threshold() {
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
-        assert!(!crate::called::trigger_bucket_call(
+        assert!(!crate::called::call_if_breached(
             &mut gem,
             &window,
             bucket_of(storage, world, gem_id),

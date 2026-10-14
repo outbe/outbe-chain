@@ -62,7 +62,7 @@ fn config_dev_profile_drives_issuance_and_qualification() {
             outbe_intex::config::IntexParams::DEV
         );
 
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
 
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = outbe_intex::config::IntexParams::DEV;

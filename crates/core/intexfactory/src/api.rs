@@ -16,11 +16,11 @@ use crate::schema::IssuanceParams;
 /// Create a series and enroll it in the call-price index, returning what each
 /// target chain must be told. The clearing engine calls this after a cleared auction.
 /// The clearing engine then packs the day's legs into messages and sends them.
-pub fn issue(
+pub fn issue_intex(
     storage: &StorageHandle<'_>,
     params: IssuanceParams,
 ) -> Result<Vec<runtime::IssuanceLeg>> {
-    runtime::issue(storage, params)
+    runtime::issue_intex(storage, params)
 }
 
 /// Send a day's issuance legs, packed into as few per-chain messages as the wire allows.

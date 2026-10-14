@@ -17,7 +17,7 @@ pub(crate) mod sol_ext;
 pub(crate) mod state;
 pub mod vwap_push;
 
-pub use api::issue;
+pub use api::issue_intex;
 pub use errors::IntexFactoryError;
 pub use outbe_intex::SeriesId;
 pub use runtime::to_wire_price;
