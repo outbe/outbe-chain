@@ -30,3 +30,16 @@ Feature: Credis happy flow and payments
     When the forfeit sweep reaches the lapsed Credis
     Then the remaining pledge is burned into the Promis Limit pool once
     And the committee nodes agree on the state root
+
+  Scenario: The owner forfeits an issued Credis
+    Given a prepared Credis localnet with funded actors and vault liquidity
+    Then the controlled COEN USD quote is finalized through the real price feeder
+    And the pledge valuation window closes over that quote
+    When the CCA reserves 300 stablecoins for the Credis owner
+    Then the reservation holds the requested liquidity for those actors
+    When the user pledges Gratis
+    And the CCA issues Credis against the pledge and reservation
+    Then the owner holds the issued Credis
+    When the owner forfeits the Credis
+    Then the whole pledge is burned into the Promis Limit pool and the principal written off
+    And the committee nodes agree on the state root
