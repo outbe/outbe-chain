@@ -1,5 +1,5 @@
 use ark_bn254::Fr;
-use ark_ff::{BigInteger, PrimeField};
+use ark_ff::{BigInt, BigInteger, PrimeField};
 use outbe_sparse_merkle_tree_v061::{traits::Hasher, H256};
 use std::cell::RefCell;
 
@@ -135,15 +135,23 @@ pub(super) fn field(value: H256) -> Result<Fr, ()> {
         return Err(());
     }
     let bytes: [u8; 32] = value.into();
-    let field = Fr::from_be_bytes_mod_order(&bytes);
-    if field_to_be32(field) != bytes {
-        return Err(());
+    let mut limbs = [0_u64; 4];
+    for (limb, chunk) in limbs.iter_mut().rev().zip(bytes.chunks_exact(8)) {
+        let mut word = [0_u8; 8];
+        word.copy_from_slice(chunk);
+        *limb = u64::from_be_bytes(word);
     }
-    Ok(field)
+    Fr::from_bigint(BigInt::new(limbs)).ok_or(())
 }
 
 pub(super) fn is_canonical(value: H256) -> bool {
-    field(value).is_ok()
+    let bytes: [u8; 32] = value.into();
+    let mut modulus = [0_u8; 32];
+    for (chunk, limb) in modulus.chunks_exact_mut(8).zip(Fr::MODULUS.0.iter().rev()) {
+        chunk.copy_from_slice(&limb.to_be_bytes());
+    }
+    // Fixed-width big-endian ordering checks the modulus without field arithmetic.
+    bytes < modulus
 }
 
 fn field_to_be32(value: Fr) -> [u8; 32] {
@@ -156,6 +164,17 @@ fn field_to_be32(value: Fr) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    proptest::proptest! {
+        #[test]
+        fn checked_field_conversion_matches_canonical_reference(bytes: [u8; 32]) {
+            let reference = Fr::from_be_bytes_mod_order(&bytes);
+            let canonical = field_to_be32(reference) == bytes;
+            let word = H256::from(bytes);
+            proptest::prop_assert_eq!(is_canonical(word), canonical);
+            proptest::prop_assert_eq!(field(word), canonical.then_some(reference).ok_or(()));
+        }
+    }
 
     #[test]
     fn unexpected_transcript_and_hash_failure_are_poisoned() {

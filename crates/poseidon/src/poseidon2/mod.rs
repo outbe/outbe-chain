@@ -5,7 +5,7 @@
 
 use crate::{PoseidonError, PoseidonHasher};
 use ark_bn254::Fr;
-use ark_ff::{BigInteger, PrimeField};
+use ark_ff::{BigInt, BigInteger, PrimeField};
 use outbe_barretenberg::{with_api, NativeApi, RuntimeError};
 
 const RATE: usize = 3;
@@ -37,11 +37,14 @@ fn decode(bytes: &[u8], index: usize) -> Result<Fr, PoseidonError> {
             actual: bytes.len(),
         });
     }
-    let value = Fr::from_be_bytes_mod_order(bytes);
-    if encode(value) != bytes {
-        return Err(PoseidonError::NoncanonicalField { index });
+    let mut limbs = [0_u64; 4];
+    for (limb, chunk) in limbs.iter_mut().rev().zip(bytes.chunks_exact(8)) {
+        let mut word = [0_u8; 8];
+        word.copy_from_slice(chunk);
+        *limb = u64::from_be_bytes(word);
     }
-    Ok(value)
+    // Checked integer construction rejects noncanonical values without reduction.
+    Fr::from_bigint(BigInt::new(limbs)).ok_or(PoseidonError::NoncanonicalField { index })
 }
 
 fn permutation_scoped(api: &mut NativeApi, inputs: &[Fr; 4]) -> Result<[Fr; 4], PoseidonError> {
