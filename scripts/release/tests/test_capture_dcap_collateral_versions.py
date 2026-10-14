@@ -35,6 +35,15 @@ class CaptureDcapCollateralVersionTests(unittest.TestCase):
             raw_der,
         )
 
+    def test_v3_0_raw_crl_with_abi_nul_is_normalized_to_raw_der(self) -> None:
+        raw_der = bytes.fromhex("3003020101")
+        self.assertEqual(
+            self.capture.canonical_crl_component(
+                raw_der + b"\0", 0, "test CRL"
+            ),
+            raw_der,
+        )
+
     def test_v3_1_raw_crl_is_preserved(self) -> None:
         raw_der = bytes.fromhex("3003020101")
         self.assertEqual(
@@ -42,8 +51,17 @@ class CaptureDcapCollateralVersionTests(unittest.TestCase):
             raw_der,
         )
 
-    def test_unknown_minor_and_noncanonical_hex_fail_closed(self) -> None:
-        for value, minor in ((b"300\0", 0), (b"zz\0", 0), (b"\x30\x00", 2)):
+    def test_malformed_crl_encodings_fail_closed(self) -> None:
+        malformed = (
+            (b"300\0", 0),
+            (b"zz\0", 0),
+            (b"30 03 02 01 01\0", 0),
+            (bytes.fromhex("3003020101") + b"\0\0", 0),
+            (bytes.fromhex("3003020101") + b"x", 1),
+            (b"3003020101\0", 1),
+            (b"\x30\x00", 2),
+        )
+        for value, minor in malformed:
             with self.subTest(value=value, minor=minor):
                 with self.assertRaises(ValueError):
                     self.capture.canonical_crl_component(value, minor, "test CRL")
