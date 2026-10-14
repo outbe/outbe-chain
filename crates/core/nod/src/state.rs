@@ -17,7 +17,7 @@ use crate::{
     schema::{CallTerms, NodBucketState, NodContract, NodItemState},
 };
 
-/// `entry × (100 + call_rate) / 100` plus the profile's other call terms.
+/// The entry marked up by the call rate, plus the profile's other call terms.
 ///
 /// `None` when entry is zero: a zero call price would fire on the first scan.
 /// The profile is read exactly here. Every later check reads the bucket's
@@ -30,12 +30,10 @@ pub(crate) fn derived_call_terms(
     if entry_price_minor.is_zero() {
         return Ok(None);
     }
-    let call_price = entry_price_minor
-        .checked_mul(U256::from(100 + u32::from(params.call_rate)))
+    let call_price = outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate)
         .ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Fatal("Nod call price overflow".into())
-        })?
-        / U256::from(100u64);
+        })?;
     Ok(Some(CallTerms {
         call_price_minor: call_price,
         reference_currency,

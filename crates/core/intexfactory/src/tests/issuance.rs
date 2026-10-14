@@ -84,18 +84,18 @@ fn issue_enrolls_series_in_dense_enumeration() {
 
 #[test]
 fn floor_and_call_derivation() {
-    let floor = runtime::marked_up(U256::from(ENTRY_PRICE), FLOOR_RATE).unwrap();
-    let call = runtime::marked_up(U256::from(ENTRY_PRICE), CALL_RATE).unwrap();
+    let floor = outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), FLOOR_RATE).unwrap();
+    let call = outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), CALL_RATE).unwrap();
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
     assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
     let one = U256::from(1_000_000u64);
     assert_eq!(
-        runtime::marked_up(one, FLOOR_RATE).unwrap(),
+        outbe_primitives::markup::marked_up(one, FLOOR_RATE).unwrap(),
         U256::from(1_080_000u64)
     );
     assert_eq!(
-        runtime::marked_up(one, CALL_RATE).unwrap(),
+        outbe_primitives::markup::marked_up(one, CALL_RATE).unwrap(),
         U256::from(2_280_000u64)
     );
 }

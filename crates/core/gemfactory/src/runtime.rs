@@ -8,6 +8,7 @@ use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::markup::marked_up;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::SCALE_1E6_U256;
@@ -684,12 +685,8 @@ fn compute_floor(
     Ok(floor_price)
 }
 
-/// Floor price = `entry x (100 + FLOOR_RATE) / 100` (8% markup => 1.08x).
 fn derived_floor(entry_price: U256, floor_rate: u16) -> Result<U256> {
-    let acc = entry_price
-        .checked_mul(U256::from(100 + u64::from(floor_rate)))
-        .ok_or(GemFactoryError::Overflow)?;
-    Ok(acc / U256::from(100u64))
+    marked_up(entry_price, floor_rate).ok_or_else(|| GemFactoryError::Overflow.into())
 }
 
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {

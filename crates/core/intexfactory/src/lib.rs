@@ -22,7 +22,7 @@ pub use api::{issue, read_params};
 pub use config::IntexParams;
 pub use errors::IntexFactoryError;
 pub use outbe_intex::SeriesId;
-pub use runtime::{marked_up, to_wire_price};
+pub use runtime::to_wire_price;
 pub use schema::{IntexFactoryContract, IssuanceParams};
 
 /// Narrow benchmark-only access to the already-public issuance hand-off type.

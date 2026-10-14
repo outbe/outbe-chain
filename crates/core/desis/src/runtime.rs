@@ -304,8 +304,12 @@ fn send_stage_start(
     } = start;
     let mut prices = Vec::with_capacity(config.reference_prices.len());
     for row in &config.reference_prices {
-        let floor = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.floor_rate)?;
-        let call = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.call_rate)?;
+        let marked_up = |rate| {
+            outbe_primitives::markup::marked_up(row.entry_price_minor, rate)
+                .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
+        };
+        let floor = marked_up(iparams.floor_rate)?;
+        let call = marked_up(iparams.call_rate)?;
         prices.push(IOriginRouter::ReferenceCurrencyPrice {
             isoCode: row.iso_code,
             entryPriceMinor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,

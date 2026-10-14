@@ -45,9 +45,6 @@ pub const MAX_VWAP_DAYS_PER_FIRING: u32 = 8;
 /// Rows one DAILY_VWAP message may carry. Mirrors the codec's `MAX_REFERENCE_PRICES`.
 pub const MAX_VWAP_ROWS: usize = 6;
 
-/// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
-pub const PRICE_RATE_DEN: u16 = 100;
-
 /// Floor price = entry * 1.08.
 pub const FLOOR_RATE: u16 = 8;
 /// Call price = entry * 2.28; its breach arms a Call Event.

@@ -8,6 +8,7 @@ use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result, SweepFailure};
+use outbe_primitives::markup::marked_up;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::SCALE_1E6_U256;
@@ -18,7 +19,7 @@ use outbe_vaultrouter::api::IVaultRouter;
 use crate::config;
 use crate::constants::{
     INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
-    ORIGIN_ROUTER_ADDRESS, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
+    ORIGIN_ROUTER_ADDRESS, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -47,8 +48,10 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     let mut factory = IntexFactoryContract::new(storage.clone());
     let cfg = config::read_from(&factory, storage.chain_id()?)?;
 
-    let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)?;
-    let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)?;
+    let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)
+        .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))?;
+    let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)
+        .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))?;
 
     let entry_price_minor_u64 = to_wire_price(params.entry_price_minor)?;
     let floor_price_minor_u64 = to_wire_price(floor_price_minor)?;
@@ -269,14 +272,6 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
 pub fn to_wire_price(price_minor: U256) -> Result<u64> {
     u64::try_from(price_minor)
         .map_err(|_| PrecompileError::Revert("price exceeds the wire type".into()))
-}
-
-/// Applies a markup rate in percentage points: `entry * (100 + rate) / 100`.
-pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
-    entry_price
-        .checked_mul(U256::from(PRICE_RATE_DEN + rate))
-        .map(|v| v / U256::from(PRICE_RATE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
 }
 
 /// Disjoint unit counts of a series, for a reader that must not redo the arithmetic.

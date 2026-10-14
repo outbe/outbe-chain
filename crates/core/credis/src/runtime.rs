@@ -12,7 +12,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 use outbe_primitives::units::SCALE_1E6_U256;
 
-use crate::constants::{CALL_RATE_PCT, DAYS_PER_YEAR, PRICE_RATE_DEN};
+use crate::constants::{CALL_RATE_PCT, DAYS_PER_YEAR};
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{Credis, CredisContract, CredisState};
@@ -79,11 +79,9 @@ pub struct Forfeit {
     pub principal_written_off: U256,
 }
 
-/// `price x (100 + rate_pct) / 100`.
+/// The anchor marked up by the call rate.
 pub fn calc_call_price(price: U256) -> Result<U256> {
-    price
-        .checked_mul(U256::from(PRICE_RATE_DEN + CALL_RATE_PCT))
-        .map(|v| v / U256::from(PRICE_RATE_DEN))
+    outbe_primitives::markup::marked_up(price, CALL_RATE_PCT)
         .ok_or_else(|| CredisError::ArithmeticOverflow.into())
 }
 

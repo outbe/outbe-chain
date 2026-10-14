@@ -15,7 +15,7 @@ use crate::schema::IntexFactoryContract;
 pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
 
 /// Resolved IntexFactory protocol parameters. Periods are seconds. Rates are
-/// percentage points over [`crate::constants::PRICE_RATE_DEN`].
+/// percentage points over [`outbe_primitives::markup::PRICE_RATE_DEN`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntexParams {
     pub call_window_seconds: u32,

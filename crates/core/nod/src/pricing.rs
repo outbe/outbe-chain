@@ -1,20 +1,17 @@
 //! Pure NOD price bounds and call-price bins.
 use alloy_primitives::U256;
 use outbe_primitives::call_bins::BIN_STEP_BP;
+use outbe_primitives::markup::marked_up;
 use outbe_primitives::{error::Result, math::reference_price};
 
 /// Calculates the floor from the entry price. Returns `None` on overflow.
 pub fn floor_price_minor(entry_price_minor: U256) -> Option<U256> {
-    entry_price_minor
-        .checked_mul(U256::from(100 + crate::constants::FLOOR_RATE_PCT))
-        .map(|scaled| scaled / U256::from(100u64))
+    marked_up(entry_price_minor, crate::constants::FLOOR_RATE_PCT)
 }
 
 /// Whether the floor and the call price at any `u16` call rate fit `U256` for this entry.
 pub fn is_issuable_entry(entry_price_minor: U256) -> bool {
-    entry_price_minor
-        .checked_mul(U256::from(100 + u32::from(u16::MAX)))
-        .is_some()
+    marked_up(entry_price_minor, u16::MAX).is_some()
 }
 
 /// Maps a six-decimal call price (or oracle rate) to a 24-bit
