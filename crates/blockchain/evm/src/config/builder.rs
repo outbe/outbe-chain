@@ -139,28 +139,33 @@ where
                 if install.activation_height == height => {}
             (None, OcompLifecycleActivation::Disabled) => {}
             (Some(_), OcompLifecycleActivation::Disabled) => {
-                return Err(eyre::eyre!(
-                    "OCOMP fork install requires an active lifecycle schedule"
-                ));
+                return Err(
+                    crate::errors::OutbeEvmBuilderError::OcompForkInstallRequiresLifecycleSchedule
+                        .into(),
+                );
             }
             (None, OcompLifecycleActivation::AtBlock(_)) => {
-                return Err(eyre::eyre!(
-                    "active OCOMP lifecycle requires a chain-manifest fork install"
-                ));
+                return Err(
+                    crate::errors::OutbeEvmBuilderError::ActiveOcompLifecycleRequiresForkInstall
+                        .into(),
+                );
             }
             (Some(install), OcompLifecycleActivation::AtBlock(height)) => {
-                return Err(eyre::eyre!(
-                    "OCOMP fork install height {} differs from lifecycle height {height}",
-                    install.activation_height
-                ));
+                return Err(
+                    crate::errors::OutbeEvmBuilderError::OcompForkInstallHeightMismatch {
+                        install_height: install.activation_height,
+                        lifecycle_height: height,
+                    }
+                    .into(),
+                );
             }
         }
-        let runtime_body_readers = self.runtime_body_readers.ok_or_else(|| {
-            eyre::eyre!("live Outbe EVM construction requires RuntimeBodyReaders")
-        })?;
-        let compressed_tree_service = self.compressed_tree_service.ok_or_else(|| {
-            eyre::eyre!("live Outbe EVM construction requires CompressedTreeService")
-        })?;
+        let runtime_body_readers = self
+            .runtime_body_readers
+            .ok_or(crate::errors::OutbeEvmBuilderError::MissingRuntimeBodyReaders)?;
+        let compressed_tree_service = self
+            .compressed_tree_service
+            .ok_or(crate::errors::OutbeEvmBuilderError::MissingCompressedTreeService)?;
         // always install a provider-backed
         // `AccountedParentArtifactProvider` so the executor can resolve the
         // parent artifact in both bridge mode (cache + provider) and full-node

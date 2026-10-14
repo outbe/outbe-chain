@@ -570,14 +570,13 @@ impl Localnet {
                 reth_p2p_public: original.node_id.reth_p2p_public,
             },
             |hash| {
-                let signature = signer
-                    .sign_hash_sync(&hash)
-                    .map_err(|error| error.to_string())?;
-                let mut bytes = [0_u8; 65];
-                bytes[..32].copy_from_slice(&signature.r().to_be_bytes::<32>());
-                bytes[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
-                bytes[64] = u8::from(signature.v());
-                Ok(bytes)
+                signer.sign_hash_sync(&hash).map(|signature| {
+                    let mut bytes = [0_u8; 65];
+                    bytes[..32].copy_from_slice(&signature.r().to_be_bytes::<32>());
+                    bytes[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
+                    bytes[64] = u8::from(signature.v());
+                    bytes
+                })
             },
         )?;
         let replacement = outbe_tee::load_committed_enclave_manifest_v1(&replacement_host)?;
@@ -913,14 +912,13 @@ impl Localnet {
                 reth_p2p_public,
             },
             |hash| {
-                let signature = signer
-                    .sign_hash_sync(&hash)
-                    .map_err(|error| error.to_string())?;
-                let mut bytes = [0_u8; 65];
-                bytes[..32].copy_from_slice(&signature.r().to_be_bytes::<32>());
-                bytes[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
-                bytes[64] = u8::from(signature.v());
-                Ok(bytes)
+                signer.sign_hash_sync(&hash).map(|signature| {
+                    let mut bytes = [0_u8; 65];
+                    bytes[..32].copy_from_slice(&signature.r().to_be_bytes::<32>());
+                    bytes[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
+                    bytes[64] = u8::from(signature.v());
+                    bytes
+                })
             },
         )
         .wrap_err_with(|| format!("initialize founder-{index} NodeHost before committee launch"))?;

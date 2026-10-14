@@ -12,6 +12,7 @@ ark-ff.workspace = true
 base64.workspace = true
 flate2 = "1"
 sha2.workspace = true
+thiserror.workspace = true
 acir = { git = "https://github.com/noir-lang/noir.git", tag = "v1.0.0-beta.22", package = "acir" }
 acvm = { git = "https://github.com/noir-lang/noir.git", tag = "v1.0.0-beta.22", package = "acvm" }
 bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir.git", tag = "v1.0.0-beta.22", package = "bn254_blackbox_solver" }

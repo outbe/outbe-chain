@@ -30,6 +30,7 @@ use outbe_barretenberg::{with_api, RuntimeError};
 use outbe_zk::error::Error;
 use outbe_zk::protocol::zk::{Circuit, CircuitId, ProofGenerator, ProofVerifier};
 
+use crate::errors::CrsInitError;
 use crate::witness;
 
 mod srs;
@@ -61,25 +62,23 @@ pub fn preinit_srs(num_points: u32) -> Result<(), Error> {
 /// `OUTBE_BB_SRS_PATH`, when set, selects a pre-staged G1 SRS file. Rust panics
 /// become infrastructure errors; this cannot recover a native process abort.
 pub fn init_crs() -> Result<(), Error> {
-    static INIT: OnceLock<Result<(), Error>> = OnceLock::new();
-    INIT.get_or_init(|| {
-        let srs_path = std::env::var("OUTBE_BB_SRS_PATH").ok();
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if let Some(path) = srs_path {
-                set_srs_path(path.into());
+    static INIT: OnceLock<Result<(), CrsInitError>> = OnceLock::new();
+    Ok(INIT
+        .get_or_init(|| {
+            let srs_path = std::env::var("OUTBE_BB_SRS_PATH").ok();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(path) = srs_path {
+                    set_srs_path(path.into());
+                }
+                preinit_srs(CANONICAL_SRS_POINTS)
+            }));
+            match outcome {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(error)) => Err(CrsInitError::from(error)),
+                Err(_) => Err(CrsInitError::Panicked),
             }
-            preinit_srs(CANONICAL_SRS_POINTS)
-        }));
-        match outcome {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => Err(error),
-            Err(_) => Err(RuntimeError::Setup(
-                "SRS initialization panicked; process restart required".into(),
-            )
-            .into()),
-        }
-    })
-    .clone()
+        })
+        .clone()?)
 }
 
 /// Verify a decoded combined proof against its compile-time circuit identity.

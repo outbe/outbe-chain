@@ -207,7 +207,7 @@ pub enum PointReadServiceError {
 }
 
 impl PointReadServiceError {
-    fn materialization(error: impl std::error::Error + 'static) -> Self {
+    pub(crate) fn materialization(error: impl std::error::Error + 'static) -> Self {
         match crate::errors::infrastructure_cause(&error) {
             Some(cause) => Self::CryptoBackend(cause),
             None => Self::Materialization(error.to_string()),

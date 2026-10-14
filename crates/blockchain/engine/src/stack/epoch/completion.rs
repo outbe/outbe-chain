@@ -38,7 +38,9 @@ where
         };
 
         let current_height = self.node.provider.last_block_number().map_err(|error| {
-            eyre::eyre!("failed to read latest block height after DKG completion: {error}")
+            crate::errors::StackEpochError::ReadLatestBlockHeightAfterCompletion {
+                reason: format!("{error}"),
+            }
         })?;
         self.ensure_dkg_target_timely(
             super::expiry::DkgTargetDeadline::from(&target),
@@ -167,15 +169,13 @@ where
             return Ok(EventAction::Continue);
         };
         if dealer_only_complete.participants != target.participants {
-            return Err(eyre::eyre!(
-                "dealer-only DKG participant set does not match frozen target"
-            ));
+            return Err(crate::errors::StackEpochError::DealerOnlyParticipantSetMismatch.into());
         }
 
         let current_height = self.node.provider.last_block_number().map_err(|error| {
-            eyre::eyre!(
-                "failed to read latest block height after dealer-only DKG completion: {error}"
-            )
+            crate::errors::StackEpochError::ReadLatestBlockHeightAfterDealerOnlyCompletion {
+                reason: format!("{error}"),
+            }
         })?;
         self.ensure_dkg_target_timely(
             super::expiry::DkgTargetDeadline::from(&target),

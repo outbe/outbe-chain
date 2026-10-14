@@ -1,3 +1,4 @@
+use crate::errors::StorageIdentityError;
 use alloy_primitives::B256;
 use outbe_primitives::chain::MAINNET_CHAIN_ID;
 use serde::{Deserialize, Serialize};
@@ -32,11 +33,11 @@ pub fn bind_consensus_storage_identity(
         return validate_existing_marker(&marker_path, chain_id, genesis_hash);
     }
     if fs::read_dir(storage_dir)?.next().transpose()?.is_some() {
-        eyre::bail!(
-            "Mainnet consensus storage {} is nonempty but has no {} marker",
-            storage_dir.display(),
-            CONSENSUS_IDENTITY_FILE
-        );
+        return Err(StorageIdentityError::NonemptyWithoutMarker {
+            storage_dir: storage_dir.display().to_string(),
+            marker_file: CONSENSUS_IDENTITY_FILE,
+        }
+        .into());
     }
 
     let identity = ConsensusStorageIdentityRecordV1 {
@@ -68,10 +69,7 @@ fn ensure_real_directory(storage_dir: &Path) -> eyre::Result<()> {
             Ok(())
         }
         Ok(_) => {
-            eyre::bail!(
-                "Mainnet consensus storage {} must be a real directory",
-                storage_dir.display()
-            );
+            Err(StorageIdentityError::NotRealDirectory(storage_dir.display().to_string()).into())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             fs::create_dir_all(storage_dir)?;
@@ -88,9 +86,8 @@ fn validate_existing_marker(
 ) -> eyre::Result<()> {
     let metadata = fs::symlink_metadata(marker_path)?;
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-        eyre::bail!(
-            "Mainnet consensus identity marker {} must be a regular file",
-            marker_path.display()
+        return Err(
+            StorageIdentityError::MarkerNotRegularFile(marker_path.display().to_string()).into(),
         );
     }
     let identity: ConsensusStorageIdentityRecordV1 =
@@ -101,14 +98,14 @@ fn validate_existing_marker(
         genesis_hash,
     };
     if identity != expected {
-        eyre::bail!(
-            "Mainnet consensus identity mismatch in {}: expected chain {} genesis {}, found chain {} genesis {}",
-            marker_path.display(),
-            expected.chain_id,
-            expected.genesis_hash,
-            identity.chain_id,
-            identity.genesis_hash
-        );
+        return Err(StorageIdentityError::IdentityMismatch {
+            marker_path: marker_path.display().to_string(),
+            expected_chain_id: expected.chain_id,
+            expected_genesis_hash: expected.genesis_hash,
+            actual_chain_id: identity.chain_id,
+            actual_genesis_hash: identity.genesis_hash,
+        }
+        .into());
     }
     Ok(())
 }

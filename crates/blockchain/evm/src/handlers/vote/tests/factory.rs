@@ -1,5 +1,7 @@
 //! Real StablecoinFactory target: approval, expiry, error and fatal finalization paths.
 
+use outbe_primitives::error::PrecompileError;
+
 use super::*;
 
 #[test]

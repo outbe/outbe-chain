@@ -53,19 +53,19 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
         let guard = UpgradeJournalGuardV1::acquire(node_dir)?;
         let journal = guard
             .load()?
-            .ok_or_else(|| eyre::eyre!("run upgrade-prepare first"))?;
+            .ok_or(TeeUpgradeNetworkError::UpgradeNotPrepared)?;
         if journal.lifecycle.context().candidate_manifest_hash != manifest_hash {
-            eyre::bail!("connected candidate differs from prepared upgrade");
+            return Err(TeeUpgradeNetworkError::CandidateManifestMismatch.into());
         }
         if !matches!(
             journal.lifecycle,
             UpgradeJournalStateV1::CandidatePrepared { .. }
                 | UpgradeJournalStateV1::KeyProvisioned { .. }
         ) {
-            eyre::bail!(
-                "candidate has already advanced to {}; use upgrade-submit or upgrade-finalize",
-                journal.lifecycle.label()
-            );
+            return Err(TeeUpgradeNetworkError::CandidateAlreadyAdvanced(
+                journal.lifecycle.label().to_owned(),
+            )
+            .into());
         }
         let active = read_finalized_bound_renewal_view_v1(&CliFinalityRpc(rpc), selector).await?;
         let existing = guard.load_network_submission()?;
@@ -103,11 +103,9 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
             return Ok(None);
         };
         let evidence = AttestationEvidenceV1::decode_canonical(&value.evidence)
-            .map_err(|e| eyre::eyre!("saved prepare evidence: {e}"))?;
+            .map_err(TeeUpgradeNetworkError::DecodeSavedPrepareEvidence)?;
         if evidence.intent().binding_id != binding_id {
-            eyre::bail!(
-                "saved candidate uses another binding ID; retain the original --binding-id"
-            );
+            return Err(TeeUpgradeNetworkError::SavedBindingIdMismatch.into());
         }
         if new_attempt {
             self.require_new_attempt(&evidence, active).await?;
@@ -135,21 +133,19 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
                 .intent()
                 .node_id
                 .node_id_hash()
-                .map_err(|e| eyre::eyre!("node: {e}"))?,
+                .map_err(TeeUpgradeNetworkError::NodeIdHash)?,
             &format!("0x{:x}", active.schedule.finalized_height),
         )
         .await?;
         if !pending.contextHash.is_zero()
             && pending.validUntil > active.schedule.finalized_timestamp
         {
-            eyre::bail!("cancel the live candidate before --new-attempt");
+            return Err(TeeUpgradeNetworkError::LiveCandidateExistsForNewAttempt.into());
         }
         if pending.nonce < evidence.intent().transition_nonce
             && active.schedule.finalized_timestamp < evidence.intent().requested_valid_until
         {
-            eyre::bail!(
-                "previous prepare is not finalized or expired; replay it before starting another"
-            );
+            return Err(TeeUpgradeNetworkError::PreviousPreparePending.into());
         }
         Ok(())
     }
@@ -165,29 +161,29 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
         let valid_until = self.target.valid_until;
         let successor = read_finalized_upgrade_policy_v1(&CliFinalityRpc(rpc))
             .await?
-            .ok_or_else(|| eyre::eyre!("no approved successor"))?;
+            .ok_or(TeeUpgradeNetworkError::NoApprovedSuccessor)?;
         if successor.finalized_hash != active.schedule.finalized_hash {
-            eyre::bail!("finalized head advanced during preparation; retry");
+            return Err(TeeUpgradeNetworkError::FinalizedHeadAdvanced.into());
         }
         if successor
             .policy
             .policy_hash()
-            .map_err(|e| eyre::eyre!("policy: {e}"))?
+            .map_err(TeeUpgradeNetworkError::PolicyHash)?
             != context.successor_policy_hash
         {
-            eyre::bail!("approved successor changed");
+            return Err(TeeUpgradeNetworkError::ApprovedSuccessorChanged.into());
         }
         let tag = format!("0x{:x}", active.schedule.finalized_height);
         let node = candidate
             .manifest()
             .node_id
             .node_id_hash()
-            .map_err(|e| eyre::eyre!("node: {e}"))?;
+            .map_err(TeeUpgradeNetworkError::NodeIdHash)?;
         let pending = pending_at(rpc, node, &tag).await?;
         if !pending.contextHash.is_zero()
             && pending.validUntil > active.schedule.finalized_timestamp
         {
-            eyre::bail!("a live candidate already exists; recover its saved submission or cancel it explicitly");
+            return Err(TeeUpgradeNetworkError::LiveCandidateAlreadyExists.into());
         }
         let mut intent = transition_intent_v1(
             candidate,
@@ -200,7 +196,7 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
         intent.transition_nonce = pending
             .nonce
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("prepare nonce exhausted"))?;
+            .ok_or(TeeUpgradeNetworkError::PrepareNonceExhausted)?;
         let prepared = generate_transition_evidence_v1(candidate, intent, &successor.policy)?;
         validate_candidate_lease(
             &prepared,
@@ -234,14 +230,14 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
         let evidence = prepared
             .evidence
             .encode_canonical()
-            .map_err(|e| eyre::eyre!("evidence: {e}"))?;
+            .map_err(TeeUpgradeNetworkError::EncodeEvidence)?;
         let intent = &prepared.intent;
         let context = DcapOnboardingContextV1 {
             chain_id: intent.chain_id,
             genesis_hash: intent.genesis_hash,
             intent_hash: intent
                 .intent_hash()
-                .map_err(|e| eyre::eyre!("intent: {e}"))?,
+                .map_err(TeeUpgradeNetworkError::IntentHash)?,
             node_id_hash: node,
             enclave_id: intent.enclave_id,
             binding_id,
@@ -256,7 +252,7 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
             )
             .await?,
         };
-        let signature = sign_node_hash(signing, context.intent_hash).map_err(|e| eyre::eyre!(e))?;
+        let signature = sign_node_hash(signing, context.intent_hash)?;
         let calldata = ITeeRegistryV1::prepareEnclaveUpgradeCall {
             evidence: evidence.clone().into(),
             nodeSignature: signature.to_vec().into(),
@@ -271,7 +267,7 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
                 successor.policy.measurement_rules.len(),
                 successor.policy.attestation_mode,
             )
-            .map_err(|e| eyre::eyre!("prepare gas: {e}"))?;
+            .map_err(TeeUpgradeNetworkError::PrepareGas)?;
         Ok(NetworkPreparePayload {
             evidence,
             context,
@@ -307,7 +303,7 @@ impl<R: Rpc + Sync> NetworkPreparation<'_, R> {
             );
         }
         if rpc.eth_get_balance(relay.address()).await? < price.saturating_mul(U256::from(gas)) {
-            eyre::bail!("insufficient balance for prepare transaction");
+            return Err(TeeUpgradeNetworkError::InsufficientRelayBalance.into());
         }
         let transaction = relay.sign_renewal(UnsignedRelayTransactionV1 {
             chain_id: rpc.eth_chain_id().await?,
@@ -342,18 +338,16 @@ fn validate_candidate_lease(
     let ceiling = prepared
         .collateral_expiration
         .checked_sub(policy.collateral_margin)
-        .ok_or_else(|| eyre::eyre!("collateral safety margin"))?;
+        .ok_or(TeeUpgradeNetworkError::CollateralSafetyMargin)?;
     let lease = window
         .valid_until
         .checked_sub(window.finalized_timestamp)
-        .ok_or_else(|| eyre::eyre!("candidate already expired"))?;
+        .ok_or(TeeUpgradeNetworkError::CandidateAlreadyExpired)?;
     let outside_policy = !(policy.minimum_lease..=policy.maximum_lease).contains(&lease);
     let outside_collateral = window.valid_until > ceiling
         || prepared.collateral_issue_floor > window.finalized_timestamp;
     if outside_policy || outside_collateral {
-        eyre::bail!(
-            "candidate lease is outside policy/collateral limits; choose a valid --valid-until"
-        );
+        return Err(TeeUpgradeNetworkError::CandidateLeaseOutOfBounds.into());
     }
     Ok(())
 }

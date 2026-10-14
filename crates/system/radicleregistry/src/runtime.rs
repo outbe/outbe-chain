@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, FixedBytes, B256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 use crate::{errors::RadicleRegistryError, precompile::IRadicleRegistry, schema::RadicleRegistry};
 
@@ -20,9 +20,7 @@ pub fn repo_id_storage_key(repo_id: RepoId) -> B256 {
 
 pub fn repo_id_from_storage_key(key: B256) -> Result<RepoId> {
     if key.as_slice()[20..] != [0_u8; 12] {
-        return Err(PrecompileError::Fatal(
-            "Radicle repository storage key has a non-zero tail".into(),
-        ));
+        return Err(RadicleRegistryError::NonZeroStorageKeyTail.into());
     }
     Ok(RepoId::from_slice(&key.as_slice()[..20]))
 }
@@ -75,9 +73,7 @@ impl RadicleRegistry<'_> {
         }
         let key = self.repository_by_index.read(&index)?;
         if key.is_zero() || self.repository_index.read(&key)? != index + 1 {
-            return Err(PrecompileError::Fatal(format!(
-                "Radicle repository index {index} is inconsistent"
-            )));
+            return Err(RadicleRegistryError::InconsistentRepositoryIndex { index }.into());
         }
         repo_id_from_storage_key(key)
     }

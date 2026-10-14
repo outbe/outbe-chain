@@ -19,6 +19,7 @@ use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::CasLimits;
 use outbe_ocomp::control::{effective_uid, poc_schema_limits, EndpointIdentity};
 use outbe_ocomp::discovery_spool::{AckPutOutcomeV1, DiscoverySpoolV1, PendingDiscoveryV1};
+use outbe_ocomp::errors::OcompCliError;
 use outbe_ocomp::inbox::WorkerInboxLimits;
 use outbe_ocomp::rpc_input_exporter::{RpcInputExporterConfigV1, RpcInputExporterV1};
 use outbe_ocomp::supervisor::DiscoveryRecord;
@@ -96,13 +97,13 @@ impl ProductionConfig {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let base_path = lookup(BASE_PATH_ENV)
             .map(PathBuf::from)
-            .ok_or("OUTBE_OCOMP_BASE_PATH is required")?;
+            .ok_or(OcompCliError::MissingBasePath)?;
         let validator_index = lookup(VALIDATOR_INDEX_ENV)
-            .ok_or("OCOMP_VALIDATOR_INDEX is required")?
+            .ok_or(OcompCliError::MissingValidatorIndex)?
             .into_string()
-            .map_err(|_| "OCOMP_VALIDATOR_INDEX must be valid UTF-8")?
+            .map_err(|_| OcompCliError::InvalidValidatorIndexUtf8)?
             .parse::<u16>()
-            .map_err(|_| "OCOMP_VALIDATOR_INDEX must be an unsigned 16-bit integer")?;
+            .map_err(|_| OcompCliError::InvalidValidatorIndexInt)?;
         Ok(Self {
             base_path,
             validator_index,
@@ -128,7 +129,7 @@ impl ProductionLayout {
         validator_index: u16,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         if !base_path.is_absolute() || base_path.parent().is_none() || base_path == Path::new("/") {
-            return Err("OCOMP base path must be a non-root absolute path".into());
+            return Err(OcompCliError::InvalidBasePath.into());
         }
 
         let domain_root = base_path
@@ -166,9 +167,7 @@ struct RuntimeProfile {
 impl RuntimeProfile {
     fn resolve(args: &RuntimeArgs) -> Result<Self, Box<dyn std::error::Error>> {
         if !args.supervisor_address.ip().is_loopback() || args.supervisor_address.port() == 0 {
-            return Err(
-                "--supervisor-address must be a nonzero loopback registration endpoint".into(),
-            );
+            return Err(OcompCliError::InvalidSupervisorAddress.into());
         }
         let Some(root) = args.development_root.as_ref() else {
             let production = ProductionConfig::from_environment()?;
@@ -189,14 +188,14 @@ impl RuntimeProfile {
         };
 
         if !cfg!(debug_assertions) {
-            return Err("--development-root is unavailable in release outbe-ocomp builds".into());
+            return Err(OcompCliError::DevelopmentRootUnavailableInRelease.into());
         }
         if !root.is_absolute() || root.parent().is_none() || root == std::path::Path::new("/") {
-            return Err("--development-root must be a non-root absolute path".into());
+            return Err(OcompCliError::InvalidDevelopmentRootPath.into());
         }
         let metadata = std::fs::symlink_metadata(root)?;
         if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-            return Err("--development-root must name an existing real directory".into());
+            return Err(OcompCliError::InvalidDevelopmentRootDir.into());
         }
         let uid = effective_uid()?;
         Ok(Self {
@@ -274,7 +273,7 @@ fn install_private_tribute_reader(chain_id: u64) -> Result<(), Box<dyn std::erro
         (Some(endpoint), Some(directory)) => {
             let endpoint = endpoint
                 .into_string()
-                .map_err(|_| "OUTBE_OCOMP_TEE_ENDPOINT must be valid UTF-8")?;
+                .map_err(|_| OcompCliError::InvalidTeeEndpointUtf8)?;
             outbe_ocomp::private_tribute_reader::install_private_tribute_reader(
                 &endpoint,
                 &PathBuf::from(directory),
@@ -282,16 +281,13 @@ fn install_private_tribute_reader(chain_id: u64) -> Result<(), Box<dyn std::erro
             )?;
             Ok(())
         }
-        _ => Err(
-            "OUTBE_OCOMP_TEE_ENDPOINT and OUTBE_OCOMP_NODE_DATA_DIR must be configured together"
-                .into(),
-        ),
+        _ => Err(OcompCliError::IncompleteTeeReaderConfig.into()),
     }
 }
 
-fn worker_process_nonce(host_boot_nonce: B256, worker_ordinal: u8) -> Result<B256, &'static str> {
+fn worker_process_nonce(host_boot_nonce: B256, worker_ordinal: u8) -> Result<B256, OcompCliError> {
     if usize::from(worker_ordinal) >= MAX_REGISTERED_WORKERS {
-        return Err("worker ordinal exceeds the supported per-Supervisor worker count");
+        return Err(OcompCliError::WorkerOrdinalExceedsMax);
     }
     let mut preimage = Vec::with_capacity(64);
     preimage.extend_from_slice(b"OCOMP_WORKER_PROCESS_NONCE_V1");
@@ -299,7 +295,7 @@ fn worker_process_nonce(host_boot_nonce: B256, worker_ordinal: u8) -> Result<B25
     preimage.push(worker_ordinal);
     let nonce = keccak256(preimage);
     if nonce.is_zero() {
-        Err("derived worker process nonce is reserved zero")
+        Err(OcompCliError::ZeroWorkerProcessNonce)
     } else {
         Ok(nonce)
     }
@@ -308,30 +304,30 @@ fn worker_process_nonce(host_boot_nonce: B256, worker_ordinal: u8) -> Result<B25
 fn worker_observability_address(
     supervisor_address: SocketAddr,
     worker_ordinal: u8,
-) -> Result<SocketAddr, &'static str> {
+) -> Result<SocketAddr, OcompCliError> {
     if usize::from(worker_ordinal) >= MAX_REGISTERED_WORKERS {
-        return Err("worker ordinal exceeds the supported per-Supervisor worker count");
+        return Err(OcompCliError::WorkerOrdinalExceedsMax);
     }
     let offset = 2_u16
         .checked_add(u16::from(worker_ordinal))
-        .ok_or("worker observability port offset overflow")?;
+        .ok_or(OcompCliError::WorkerObservabilityPortOffsetOverflow)?;
     let port = supervisor_address
         .port()
         .checked_add(offset)
-        .ok_or("worker observability port overflow")?;
+        .ok_or(OcompCliError::WorkerObservabilityPortOverflow)?;
     Ok(SocketAddr::new(supervisor_address.ip(), port))
 }
 
 fn snapshot_exporter_observability_address(
     supervisor_address: SocketAddr,
-) -> Result<SocketAddr, &'static str> {
+) -> Result<SocketAddr, OcompCliError> {
     // Two six-port Supervisor/transport/Worker lane windows are reserved for
     // the active and staged-successor protocol bundles.
     let offset = 12_u16;
     let port = supervisor_address
         .port()
         .checked_add(offset)
-        .ok_or("snapshot exporter observability port overflow")?;
+        .ok_or(OcompCliError::SnapshotExporterObservabilityPortOverflow)?;
     Ok(SocketAddr::new(supervisor_address.ip(), port))
 }
 
@@ -490,7 +486,7 @@ fn spawn_snapshot_exporter_lanes(
             })?;
         trigger
             .try_send(())
-            .map_err(|error| runtime_error(format!("wake snapshot exporter lane: {error}")))?;
+            .map_err(OcompCliError::wake_snapshot_exporter_lane)?;
         controls.insert(
             bundle_hash,
             SnapshotExporterLaneControlV1 { spool, trigger },
@@ -565,9 +561,7 @@ fn export_pending_discovery(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bundle_hash = pending.spec.summary.protocol_bundle_hash;
     if lane.protocol_bundle.hash() != bundle_hash {
-        return Err(runtime_error(format!(
-            "discovery offer references unconfigured protocol bundle {bundle_hash}"
-        )));
+        return Err(OcompCliError::UnconfiguredProtocolBundle(bundle_hash).into());
     }
     let record = DiscoveryRecord {
         generation: pending.reference.generation,
@@ -617,17 +611,13 @@ async fn run_snapshot_exporter_reconciler(
                     match lane.trigger.try_send(()) {
                         Ok(()) | Err(mpsc::TrySendError::Full(())) => {}
                         Err(mpsc::TrySendError::Disconnected(())) => {
-                            return Err(runtime_error(format!(
-                                "snapshot exporter lane {bundle_hash} exited"
-                            )));
+                            return Err(OcompCliError::SnapshotExporterLaneExited(*bundle_hash).into());
                         }
                     }
                 }
             }
             completion = completions.recv() => {
-                let completion = completion.ok_or_else(|| {
-                    runtime_error("all snapshot exporter lane workers exited")
-                })?;
+                let completion = completion.ok_or(OcompCliError::AllSnapshotExporterLanesExited)?;
                 match completion {
                     SnapshotExporterCompletionV1::Failed {
                         bundle_hash,
@@ -665,7 +655,7 @@ fn pending_discovery_count(
     for lane in lanes.values() {
         count = count
             .checked_add(lane.spool.pending_count()?)
-            .ok_or_else(|| runtime_error("discovery pending count overflow"))?;
+            .ok_or(OcompCliError::DiscoveryPendingCountOverflow)?;
     }
     Ok(count)
 }
@@ -674,27 +664,19 @@ fn discovery_spool_path(root: &Path, protocol_bundle_hash: B256) -> PathBuf {
     root.join(hex::encode(protocol_bundle_hash.as_slice()))
 }
 
-fn runtime_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
-    std::io::Error::other(message.into()).into()
-}
-
 fn required_protocol_bundle_hashes() -> Result<Vec<B256>, Box<dyn std::error::Error>> {
     let encoded = env::var(PROTOCOL_BUNDLE_HASHES_ENV)
         .or_else(|_| env::var("OCOMP_PROTOCOL_BUNDLE_HASH"))
-        .map_err(|_| {
-            format!("required environment variable {PROTOCOL_BUNDLE_HASHES_ENV} is missing")
-        })?;
+        .map_err(|_| OcompCliError::MissingRequiredEnv(PROTOCOL_BUNDLE_HASHES_ENV))?;
     let mut unique = BTreeSet::new();
     for item in encoded.split(',') {
         if item.is_empty() || item.trim() != item {
-            return Err("OCOMP protocol bundle hash list is not canonical".into());
+            return Err(OcompCliError::NonCanonicalBundleHashList.into());
         }
         unique.insert(item.parse::<B256>()?);
     }
     if unique.is_empty() || unique.len() > 2 || unique.iter().any(B256::is_zero) {
-        return Err(
-            "OCOMP protocol bundle hash list must contain one or two non-zero hashes".into(),
-        );
+        return Err(OcompCliError::InvalidBundleHashListCount.into());
     }
     Ok(unique.into_iter().collect())
 }
@@ -713,7 +695,7 @@ fn protocol_bundle_path_for_hash(
     if runtime.protocol_bundle_path.is_file() {
         return Ok(runtime.protocol_bundle_path.clone());
     }
-    Err(format!("OCOMP protocol bundle {protocol_bundle_hash} is not installed").into())
+    Err(OcompCliError::ProtocolBundleNotInstalled(protocol_bundle_hash).into())
 }
 
 fn retry_snapshot_exporter_startup<T, E>(
@@ -731,7 +713,7 @@ fn retry_snapshot_exporter_startup<T, E>(
 }
 
 fn required_env(name: &'static str) -> Result<String, Box<dyn std::error::Error>> {
-    env::var(name).map_err(|_| format!("required environment variable {name} is missing").into())
+    env::var(name).map_err(|_| OcompCliError::MissingRequiredEnv(name).into())
 }
 
 fn install_consensus_domain(chain_id: u64) -> Result<(), Box<dyn std::error::Error>> {

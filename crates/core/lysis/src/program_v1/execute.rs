@@ -348,9 +348,7 @@ pub(crate) fn compute_fraction_map_from_groups(
         f,
         fmax,
     )
-    .map_err(|error| ProgramErrorV1::Arithmetic {
-        message: error.to_string(),
-    })?;
+    .map_err(ProgramErrorV1::arithmetic)?;
     // Match the ascending league IDs and nominals for projection and output.
     fractions.reverse();
 
@@ -381,11 +379,7 @@ fn scaled_floor(
     multiplier: U256,
     denominator: U256,
 ) -> Result<U256, ProgramErrorV1> {
-    checked_mul_div_floor(numerator, multiplier, denominator).map_err(|error| {
-        ProgramErrorV1::Arithmetic {
-            message: error.to_string(),
-        }
-    })
+    checked_mul_div_floor(numerator, multiplier, denominator).map_err(ProgramErrorV1::arithmetic)
 }
 
 pub(crate) fn calculate_gratis_load(
@@ -407,9 +401,7 @@ pub(crate) fn calculate_cost(
 ) -> Result<U256, ProgramErrorV1> {
     // Use the same minor-unit minimum as Nod reads and settlement.
     let cost = outbe_nod::api::settlement_cost_minor(entry_price_minor, gratis_load_minor)
-        .map_err(|error| ProgramErrorV1::Arithmetic {
-            message: error.to_string(),
-        })?;
+        .map_err(ProgramErrorV1::arithmetic)?;
     if cost.is_zero() {
         return Err(ProgramErrorV1::ZeroCost {
             ordinal,

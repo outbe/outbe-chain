@@ -1,6 +1,5 @@
 use outbe_primitives::block::BlockLifecycle;
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::PrecompileError;
 use outbe_primitives::error::Result;
 
 use super::current_preloaded_system_tx_context;
@@ -37,9 +36,7 @@ pub(super) fn run_cycle_tick_at_activation(
     }
 
     #[cfg(not(test))]
-    Err(PrecompileError::Fatal(
-        "Cycle execution body read authority was not supplied".into(),
-    ))
+    Err(crate::errors::BeginBlockPrecompileError::MissingCycleBodyReadAuthority.into())
 }
 
 /// Offline/component execution without installed body readers. Tests get an
@@ -69,9 +66,10 @@ pub(super) fn run_reward_gem_delivery_without_readers(ctx: &BlockRuntimeContext)
     #[cfg(not(test))]
     {
         let _ = ctx;
-        Err(PrecompileError::Fatal(
-            "RewardsGemDelivery execution body read authority was not supplied".into(),
-        ))
+        Err(
+            crate::errors::BeginBlockPrecompileError::MissingRewardsGemDeliveryBodyReadAuthority
+                .into(),
+        )
     }
 }
 
@@ -147,10 +145,12 @@ fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
         // proposer becomes a consensus participant in BoundaryOutcome, at which
         // point `run_boundary_outcome` records this proposal exactly once.
     } else {
-        return Err(PrecompileError::Fatal(format!(
-            "proposer is not a current consensus participant: {}",
-            ctx.block.proposer
-        )));
+        return Err(
+            crate::errors::BeginBlockPrecompileError::ProposerNotConsensusParticipant {
+                proposer: ctx.block.proposer,
+            }
+            .into(),
+        );
     }
     Ok(())
 }

@@ -624,7 +624,7 @@ fn sync_directory(path: &Path) -> Result<(), TributePartitionReconstructionError
         .map_err(|source| io_error("fsync scratch directory", path, source))
 }
 
-fn map_tree(error: crate::smt::TreeError) -> TributePartitionReconstructionError {
+pub(crate) fn map_tree(error: crate::smt::TreeError) -> TributePartitionReconstructionError {
     match error {
         crate::smt::TreeError::Poseidon(error) => {
             TributePartitionReconstructionError::CryptoBackend(error)

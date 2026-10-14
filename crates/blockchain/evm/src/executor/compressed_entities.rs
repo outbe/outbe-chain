@@ -100,10 +100,13 @@ where
                         .to_be_bytes::<32>(),
                 );
                 if evm_root != output.new_root {
-                    return Err(PrecompileError::Fatal(format!(
-                        "compressed-entities SealOutput/EVM root mismatch: seal={}, evm={}",
-                        output.new_root, evm_root
-                    )));
+                    return Err(
+                        crate::errors::ExecutorHookError::SealOutputEvmRootMismatch {
+                            seal: output.new_root,
+                            evm: evm_root,
+                        }
+                        .into(),
+                    );
                 }
                 Ok(output)
             })?

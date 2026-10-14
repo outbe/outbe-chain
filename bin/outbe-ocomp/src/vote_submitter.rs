@@ -624,18 +624,16 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             return Err(VoteSubmissionErrorV1::RawTransactionTooLarge);
         }
         let mut raw = prepared.raw_transaction.0.as_slice();
-        let transaction =
-            EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut raw).map_err(|error| {
-                VoteSubmissionErrorV1::InvalidPreparedTransaction(error.to_string())
-            })?;
+        let transaction = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut raw)
+            .map_err(VoteSubmissionErrorV1::invalid_prepared_transaction)?;
         if !raw.is_empty() || !matches!(&transaction, EthereumTxEnvelope::Eip1559(_)) {
             return Err(VoteSubmissionErrorV1::InvalidPreparedTransaction(
                 "not one exact EIP-1559 envelope".to_owned(),
             ));
         }
-        let recovered = transaction.recover_signer().map_err(|error| {
-            VoteSubmissionErrorV1::InvalidPreparedTransaction(error.to_string())
-        })?;
+        let recovered = transaction
+            .recover_signer()
+            .map_err(VoteSubmissionErrorV1::invalid_prepared_transaction)?;
         let actual_fields = (
             recovered,
             transaction.chain_id(),

@@ -43,9 +43,7 @@ pub fn encode_call(
     let mut bytes = CALL_V1.to_vec();
     // A tuple has the same postcard layout as the owned envelope, without
     // cloning potentially large request buffers.
-    bytes.extend(
-        postcard::to_allocvec(&(ctx, request)).map_err(|e| TransportError::Codec(e.to_string()))?,
-    );
+    bytes.extend(postcard::to_allocvec(&(ctx, request)).map_err(TransportError::codec)?);
     if bytes.len() > MAX_FRAME_LEN - 16 {
         return Err(TransportError::FrameTooLarge(bytes.len() + 16));
     }
@@ -54,15 +52,15 @@ pub fn encode_call(
 
 pub fn decode_call(bytes: &[u8]) -> Result<EnclaveCallV1, TransportError> {
     if let Some(body) = bytes.strip_prefix(CALL_V1) {
-        let (call, rest) = postcard::take_from_bytes::<EnclaveCallV1>(body)
-            .map_err(|e| TransportError::Codec(e.to_string()))?;
+        let (call, rest) =
+            postcard::take_from_bytes::<EnclaveCallV1>(body).map_err(TransportError::codec)?;
         if !rest.is_empty() {
             return Err(TransportError::Codec("trailing enclave call bytes".into()));
         }
         Ok(call)
     } else {
-        let (request, rest) = postcard::take_from_bytes::<EnclaveRequest>(bytes)
-            .map_err(|e| TransportError::Codec(e.to_string()))?;
+        let (request, rest) =
+            postcard::take_from_bytes::<EnclaveRequest>(bytes).map_err(TransportError::codec)?;
         if !rest.is_empty() {
             return Err(TransportError::Codec(
                 "trailing legacy request bytes".into(),
@@ -109,7 +107,7 @@ pub fn read_frame<R: Read>(r: &mut R) -> Result<Vec<u8>, TransportError> {
 
 /// Serialize a request to bytes (postcard).
 pub fn encode_request(req: &EnclaveRequest) -> Result<Vec<u8>, TransportError> {
-    postcard::to_allocvec(req).map_err(|e| TransportError::Codec(e.to_string()))
+    postcard::to_allocvec(req).map_err(TransportError::codec)
 }
 
 /// Deserialize a request from bytes (postcard).
@@ -119,12 +117,12 @@ pub fn decode_request(bytes: &[u8]) -> Result<EnclaveRequest, TransportError> {
 
 /// Serialize a response to bytes (postcard).
 pub fn encode_response(resp: &EnclaveResponse) -> Result<Vec<u8>, TransportError> {
-    postcard::to_allocvec(resp).map_err(|e| TransportError::Codec(e.to_string()))
+    postcard::to_allocvec(resp).map_err(TransportError::codec)
 }
 
 /// Deserialize a response from bytes (postcard).
 pub fn decode_response(bytes: &[u8]) -> Result<EnclaveResponse, TransportError> {
-    postcard::from_bytes(bytes).map_err(|e| TransportError::Codec(e.to_string()))
+    postcard::from_bytes(bytes).map_err(TransportError::codec)
 }
 
 #[cfg(test)]

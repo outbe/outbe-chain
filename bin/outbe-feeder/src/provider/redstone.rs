@@ -9,13 +9,14 @@
 
 use alloy_primitives::{address, Address};
 use async_trait::async_trait;
-use eyre::{ensure, eyre, Context, Result};
+use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::config::{ApiProviderConfig, FeederConfig};
+use crate::errors::RedstoneError;
 use crate::fixed::{FixedValue, JsonDecimal};
 
 const DEFAULT_GATEWAY_URL: &str = "https://oracle-gateway.a.redstone.finance";
@@ -62,10 +63,9 @@ pub struct RedstoneProvider {
 
 impl RedstoneProvider {
     pub fn new(endpoint: &ApiProviderConfig) -> Result<Self> {
-        ensure!(
-            !endpoint.api_key.trim().is_empty(),
-            "api provider redstone needs an api_key"
-        );
+        if endpoint.api_key.trim().is_empty() {
+            return Err(RedstoneError::MissingApiKey.into());
+        }
         let gateway_url = if endpoint.rest.trim().is_empty() {
             DEFAULT_GATEWAY_URL.to_owned()
         } else {
@@ -93,11 +93,10 @@ pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
         .api_providers
         .iter()
         .find(|endpoint| endpoint.name == "redstone")
-        .ok_or_else(|| eyre!("provider redstone requires a [[api_providers]] entry"))?;
-    ensure!(
-        !endpoint.api_key.trim().is_empty(),
-        "api provider redstone needs an api_key"
-    );
+        .ok_or(RedstoneError::MissingApiProviderEntry)?;
+    if endpoint.api_key.trim().is_empty() {
+        return Err(RedstoneError::MissingApiKey.into());
+    }
     Ok(())
 }
 
@@ -125,12 +124,12 @@ fn select_price(feed: &str, packages: &[SignedPackage], now: u64) -> Result<Fixe
         .iter()
         .map(|p| p.timestamp_ms / 1000)
         .max()
-        .ok_or_else(|| eyre!("no packages"))?;
+        .ok_or(RedstoneError::NoPackages)?;
     if newest > now.saturating_add(MAX_FUTURE_SECS) {
-        return Err(eyre!("package timestamp is in the future"));
+        return Err(RedstoneError::FuturePackageTimestamp.into());
     }
     if now.saturating_sub(newest) > MAX_AGE_SECS {
-        return Err(eyre!("packages are stale ({} s)", now - newest));
+        return Err(RedstoneError::StalePackages(now - newest).into());
     }
     let mut signers = BTreeSet::new();
     let mut values = Vec::new();
@@ -144,14 +143,15 @@ fn select_price(feed: &str, packages: &[SignedPackage], now: u64) -> Result<Fixe
             .find(|point| point.feed_id == feed)
             .and_then(|point| point.value.fixed())
             .filter(|value| !value.is_zero())
-            .ok_or_else(|| eyre!("package from {} has no valid value", package.signer))?;
+            .ok_or(RedstoneError::InvalidPackageValue(package.signer))?;
         values.push(value);
     }
     if values.len() < UNIQUE_SIGNERS {
-        return Err(eyre!(
-            "{} registered signers, need {UNIQUE_SIGNERS}",
-            values.len()
-        ));
+        return Err(RedstoneError::InsufficientSigners {
+            found: values.len(),
+            needed: UNIQUE_SIGNERS,
+        }
+        .into());
     }
     values.sort_unstable();
     // Lower central value: deterministic and never outside the observed range.
@@ -202,10 +202,7 @@ impl Provider for RedstoneProvider {
             .map_err(reqwest::Error::without_url)
             .with_context(|| "redstone gateway request failed")?;
         if !response.status().is_success() {
-            return Err(eyre!(
-                "redstone gateway returned status {}",
-                response.status()
-            ));
+            return Err(RedstoneError::GatewayStatus(response.status()).into());
         }
         let packages: HashMap<String, Vec<SignedPackage>> = response
             .json()
@@ -217,7 +214,7 @@ impl Provider for RedstoneProvider {
         for (feed, key) in requested {
             let selected = packages
                 .get(&feed)
-                .ok_or_else(|| eyre!("feed missing from response"))
+                .ok_or_else(|| eyre::Report::new(RedstoneError::FeedMissingFromResponse))
                 .and_then(|list| select_price(&feed, list, now));
             match selected {
                 Ok(price) => {

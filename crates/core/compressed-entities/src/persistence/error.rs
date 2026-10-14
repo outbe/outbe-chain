@@ -174,4 +174,9 @@ impl PersistenceError {
             other => Self::Staging(other.to_string()),
         }
     }
+
+    /// Converts a displayable staging error into a persistence error.
+    pub(crate) fn staging(error: impl core::fmt::Display) -> Self {
+        Self::Staging(error.to_string())
+    }
 }

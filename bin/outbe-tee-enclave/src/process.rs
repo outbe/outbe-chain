@@ -28,14 +28,15 @@ use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOffe
 
 use crate::compute::{compute_nominal, compute_token_id, parse_canonical_amount};
 use crate::crypto::ecdhe_tribute_offer_decrypt;
+use crate::errors::{EnclaveError, ProcessError};
 use crate::payload::parse_and_validate;
 use crate::zk_claim::derive_expected_hashes;
 
 /// Offer validation failures retain crypto causes until the batch boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum OfferError {
-    #[error("{0}")]
-    Invalid(String),
+    #[error(transparent)]
+    Domain(#[from] EnclaveError),
     #[error(transparent)]
     Commitment(#[from] outbe_compressed_entities::CommitmentError),
     #[error("{context}: {source}")]
@@ -49,22 +50,16 @@ pub enum OfferError {
 impl OfferError {
     pub fn is_infrastructure(&self) -> bool {
         match self {
-            Self::Invalid(_) => false,
+            Self::Domain(_) => false,
             Self::Commitment(error) => error.is_infrastructure(),
             Self::Zk { source, .. } => source.is_infrastructure(),
         }
     }
 }
 
-impl From<String> for OfferError {
-    fn from(reason: String) -> Self {
-        Self::Invalid(reason)
-    }
-}
-
-impl From<&str> for OfferError {
-    fn from(reason: &str) -> Self {
-        Self::Invalid(reason.to_owned())
+impl From<ProcessError> for OfferError {
+    fn from(error: ProcessError) -> Self {
+        Self::Domain(error.into())
     }
 }
 
@@ -88,7 +83,7 @@ pub fn process_tribute_offer_batch(
         let result = match process_one(key, offer) {
             Ok(result) => result,
             Err(error) if error.is_infrastructure() => return Err(error),
-            Err(error) => rejected(error.to_string()),
+            Err(error) => rejected(error),
         };
         results.push(result);
     }
@@ -108,21 +103,20 @@ fn process_one(
         &offer.nonce,
         &offer.cipher_text,
     )
-    .map_err(|e| format!("decryption failed: {e}"))?;
+    .map_err(ProcessError::decryption_failed)?;
 
     let payload = parse_and_validate(&plaintext)?;
     let amount = parse_canonical_amount(&payload.amount_base, &payload.amount_micro)?;
     let zk_expected_hashes = derive_expected_hashes(offer, &payload, &amount)?;
     let amount_minor = amount.amount_minor;
     if amount_minor.is_zero() {
-        return Err("amount must be positive".into());
+        return Err(ProcessError::AmountNotPositive.into());
     }
 
     if offer.issuance_wwd_vwap_minor.is_zero() || offer.reference_wwd_vwap_minor.is_zero() {
-        return Err(format!(
-            "required WorldwideDay VWAP unavailable for worldwide_day {}",
-            offer.worldwide_day
-        )
+        return Err(ProcessError::VwapUnavailable {
+            worldwide_day: offer.worldwide_day,
+        }
         .into());
     }
 
@@ -159,7 +153,7 @@ fn process_one(
 /// Build a `Rejected` result. Nothing is known beyond the reason. Every field
 /// the host sent stays on the host, and everything else needed decryption to
 /// have succeeded. `owner` is zero rather than echoed for the same reason.
-fn rejected(reason: String) -> TributeOfferResult {
+fn rejected(reason: OfferError) -> TributeOfferResult {
     TributeOfferResult {
         token_id: B256::ZERO,
         owner: Address::ZERO,
@@ -170,7 +164,9 @@ fn rejected(reason: String) -> TributeOfferResult {
         wallet_addresses: Vec::new(),
         sra_addresses: Vec::new(),
         zk_expected_hashes: None,
-        status: TributeOfferStatus::Rejected { reason },
+        status: TributeOfferStatus::Rejected {
+            reason: reason.to_string(),
+        },
     }
 }
 

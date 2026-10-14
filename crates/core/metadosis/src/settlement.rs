@@ -47,7 +47,7 @@ impl MetadosisContract<'_> {
                     .and_then(|tail| scaled.checked_add(tail / denominator))
             })
             .ok_or_else(|| {
-                crate::errors::storage_corruption("Metadosis full-precision demand overflow".into())
+                crate::errors::storage_corruption("Metadosis full-precision demand overflow")
             })?;
         let mut day_gratis_limit_minor = wwd_metadosis_limit;
         match wwd_type {
@@ -239,9 +239,9 @@ fn settle_empty_day(
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
     let to_promis = dispatch_brief(ctx, day_type, wwd, U256::ZERO)?;
     // A day with no tributes allocates nothing, so its whole limit stays on the warehouse.
-    let returned = to_promis.checked_add(day_limit).ok_or_else(|| {
-        crate::errors::storage_corruption("Metadosis day limit return overflow".into())
-    })?;
+    let returned = to_promis
+        .checked_add(day_limit)
+        .ok_or_else(|| crate::errors::storage_corruption("Metadosis day limit return overflow"))?;
     commit_outer_transition(metadosis, wwd, transition, ctx.block.block_number)?;
     TributeContract::new(metadosis.storage.clone()).retire_completed_partition(scope, wwd)?;
     metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
@@ -288,7 +288,7 @@ fn settle_zero_allocation(
         day_type == WwdDayType::Green,
     )
     .ok_or_else(|| {
-        crate::errors::storage_corruption("Metadosis Lysis Limit exceeds the day's nominal".into())
+        crate::errors::storage_corruption("Metadosis Lysis Limit exceeds the day's nominal")
     })?;
     let to_promis = dispatch_brief(ctx, day_type, wwd, desis_limit_minor)?;
     // Nobody issues the limit headroom above the day's own nominal, so it stays on the
@@ -299,7 +299,7 @@ fn settle_zero_allocation(
         .and_then(|rest| rest.checked_sub(desis_limit_minor))
         .and_then(|headroom| headroom.checked_add(to_promis))
         .ok_or_else(|| {
-            crate::errors::storage_corruption("Metadosis split exceeds the day limit".into())
+            crate::errors::storage_corruption("Metadosis split exceeds the day limit")
         })?;
     promis_limit.add_to_total_unallocated(returned)?;
     commit_outer_transition(metadosis, wwd, transition, ctx.block.block_number)?;
@@ -348,7 +348,7 @@ fn dispatch_brief(
             .checked_sub(briefed_desis_limit_minor)
             .ok_or_else(|| {
                 crate::errors::storage_corruption(
-                    "accepted Desis brief exceeds the Metadosis routing limit".into(),
+                    "accepted Desis brief exceeds the Metadosis routing limit",
                 )
             }),
         outbe_desis::api::AuctionBriefReceipt::RejectedToCarryOver {
@@ -360,7 +360,7 @@ fn dispatch_brief(
                 || rejected_desis_limit_minor <= max_accepted
             {
                 return Err(crate::errors::storage_corruption(
-                    "Desis rejection receipt does not match the dispatched limit".into(),
+                    "Desis rejection receipt does not match the dispatched limit",
                 ));
             }
             Ok(rejected_desis_limit_minor)

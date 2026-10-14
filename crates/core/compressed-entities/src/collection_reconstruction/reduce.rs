@@ -11,8 +11,8 @@ pub(super) fn sorted_run(
         let mut current_shard = None;
         let mut reducer = SortedPoseidonRootReducer::new();
         while let Some(record) = reader.next_record()? {
-            let derived_shard = shard_index(record.key, CeDomain::Tribute.shard_count())
-                .map_err(super::map_tree)?;
+            let derived_shard =
+                shard_index(record.key, CeDomain::Tribute.shard_count()).map_err(map_tree)?;
             if record.shard != derived_shard {
                 return Err(TributePartitionReconstructionError::CorruptRun(
                     path.to_path_buf(),
@@ -46,7 +46,7 @@ pub(super) fn sorted_run(
         }
         reader.finish()?;
     }
-    let shard_top_root = aggregate_b256_shard_roots(&roots).map_err(super::map_tree)?;
+    let shard_top_root = aggregate_b256_shard_roots(&roots).map_err(map_tree)?;
     let (_, key) = partition_collection_key(PartitionRef::TributeWwd(day))?;
     collection_root(CeDomain::Tribute, key, shard_top_root).map_err(Into::into)
 }

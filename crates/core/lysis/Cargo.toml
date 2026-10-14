@@ -12,6 +12,7 @@ outbe-nod.workspace = true
 outbe-oracle.workspace = true
 outbe-ocomp-protocol.workspace = true
 alloy-primitives.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 outbe-poseidon = { workspace = true, features = ["test-utils"] }

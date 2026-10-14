@@ -32,9 +32,7 @@ pub(crate) fn derived_call_terms(
     }
     let call_price = entry_price_minor
         .checked_mul(U256::from(100 + u32::from(params.call_rate)))
-        .ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal("Nod call price overflow".into())
-        })?
+        .ok_or(NodError::CallPriceOverflow)?
         / U256::from(100u64);
     Ok(Some(CallTerms {
         call_price_minor: call_price,
@@ -218,9 +216,7 @@ impl NodContract<'_> {
             .get_item_verified(scope, parent, item.nod_id)?
             .is_some()
         {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
-                "nod already exists".into(),
-            ));
+            return Err(NodError::NodAlreadyExists.into());
         }
 
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
@@ -232,9 +228,11 @@ impl NodContract<'_> {
             .transpose()?
             .map_or(0, |bucket| bucket.settled_nods);
         if current_bucket.is_some() != (member_count > 0 || settled_count > 0) {
-            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
-                "Nod bucket {bucket_id} existence disagrees with member count {member_count}"
-            )));
+            return Err(NodError::BucketExistenceDisagreesWithMemberCount {
+                bucket_id,
+                member_count,
+            }
+            .into());
         }
         let new_bucket = match current_bucket {
             Some(_) => None,
@@ -261,11 +259,11 @@ impl NodContract<'_> {
             }
         };
 
-        let supply = self.total_supply.read()?.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Revert(
-                "Nod total supply overflow during issuance".into(),
-            )
-        })?;
+        let supply = self
+            .total_supply
+            .read()?
+            .checked_add(1)
+            .ok_or(NodError::TotalSupplyOverflowDuringIssuance)?;
         self.total_supply.write(supply)?;
         self.insert_bucket_member(item.bucket_key, item.nod_id)?;
         let canonical_item = crate::repository::canonical_item(item);
@@ -300,18 +298,17 @@ impl NodContract<'_> {
         let (mut bucket, current_bucket) = bucket.into_parts();
         self.check_loaded_bucket(&item, &current_bucket)?;
         let bucket_id = current_bucket.entity_id();
-        let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Revert(
-                "Nod total supply underflow during removal".into(),
-            )
-        })?;
+        let supply = self
+            .total_supply
+            .read()?
+            .checked_sub(1)
+            .ok_or(NodError::TotalSupplyUnderflowDuringRemoval)?;
         self.total_supply.write(supply)?;
         let remaining = if item.is_settled {
-            bucket.settled_nods = bucket.settled_nods.checked_sub(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Revert(format!(
-                    "Nod bucket {bucket_id} settled count underflow"
-                ))
-            })?;
+            bucket.settled_nods = bucket
+                .settled_nods
+                .checked_sub(1)
+                .ok_or(NodError::BucketSettledCountUnderflow { bucket_id })?;
             self.bucket_nod_count.read(&item.bucket_key)?
         } else {
             self.remove_bucket_member(item.bucket_key, item.nod_id)?
@@ -349,13 +346,12 @@ impl NodContract<'_> {
         let (mut bucket, current_bucket) = bucket.into_parts();
         self.check_loaded_bucket(&item, &current_bucket)?;
         if item.is_settled || !self.settlement_open(&bucket)? {
-            return Err(outbe_primitives::error::PrecompileError::Revert(
-                "Nod settlement requires an unpaid item of a called or qualified bucket".into(),
-            ));
+            return Err(NodError::SettlementRequiresUnpaidCalledOrQualifiedItem.into());
         }
-        bucket.settled_nods = bucket.settled_nods.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Revert("Nod settled count overflow".into())
-        })?;
+        bucket.settled_nods = bucket
+            .settled_nods
+            .checked_add(1)
+            .ok_or(NodError::SettledCountOverflow)?;
         self.remove_bucket_member(item.bucket_key, item.nod_id)?;
         item.is_settled = true;
         update(
@@ -387,10 +383,11 @@ impl NodContract<'_> {
     fn check_loaded_bucket(&self, item: &NodItemState, current: &VerifiedBody) -> Result<()> {
         let expected = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         if current.entity_id() != expected {
-            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
-                "loaded Nod bucket {} does not match item bucket {expected}",
-                current.entity_id()
-            )));
+            return Err(NodError::LoadedBucketMismatch {
+                loaded: current.entity_id(),
+                expected,
+            }
+            .into());
         }
         Ok(())
     }
@@ -426,11 +423,9 @@ impl NodContract<'_> {
         nod_id: WwdEntityId,
     ) -> Result<()> {
         let index = self.bucket_nod_count.read(&bucket_key)?;
-        let next = index.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod bucket {bucket_key} member index overflow"
-            ))
-        })?;
+        let next = index
+            .checked_add(1)
+            .ok_or(NodError::BucketMemberIndexOverflow { bucket_key })?;
         self.bucket_nods.write(
             &crate::index_keys::bucket_nod_key(bucket_key, index),
             nod_id,
@@ -451,28 +446,24 @@ impl NodContract<'_> {
             .bucket_nod_count
             .read(&bucket_key)?
             .checked_sub(1)
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Revert(format!(
-                    "Nod bucket {bucket_key} member count underflow during removal"
-                ))
-            })?;
+            .ok_or(NodError::BucketMemberCountUnderflowDuringRemoval { bucket_key })?;
         if index > last
             || self
                 .bucket_nods
                 .read(&crate::index_keys::bucket_nod_key(bucket_key, index))?
                 != nod_id
         {
-            return Err(outbe_primitives::error::PrecompileError::Revert(format!(
-                "Nod {nod_id} is not indexed in bucket {bucket_key}"
-            )));
+            return Err(NodError::NodNotIndexedInBucket { nod_id, bucket_key }.into());
         }
         let last_key = crate::index_keys::bucket_nod_key(bucket_key, last);
         if index != last {
             let moved = self.bucket_nods.read(&last_key)?;
             if moved.is_zero() {
-                return Err(outbe_primitives::error::PrecompileError::Revert(format!(
-                    "Nod bucket {bucket_key} member slot {last} is empty during removal"
-                )));
+                return Err(NodError::EmptyBucketMemberSlotDuringRemoval {
+                    bucket_key,
+                    slot: last,
+                }
+                .into());
             }
             self.bucket_nods
                 .write(&crate::index_keys::bucket_nod_key(bucket_key, index), moved)?;
@@ -561,20 +552,18 @@ impl NodContract<'_> {
 }
 
 pub(crate) fn nod_item_from_verified(body: &VerifiedBody) -> Result<NodItemState> {
-    let payload = body.payload().as_encrypted_nod_item().ok_or_else(|| {
-        outbe_primitives::error::PrecompileError::Fatal(
-            "compressed-entity read returned a non-Nod-item payload".into(),
-        )
-    })?;
+    let payload = body
+        .payload()
+        .as_encrypted_nod_item()
+        .ok_or(NodError::NonNodItemPayload)?;
     Ok(crate::repository::from_canonical_item(payload.clone()))
 }
 
 pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketState> {
-    let payload = body.payload().as_nod_bucket().ok_or_else(|| {
-        outbe_primitives::error::PrecompileError::Fatal(
-            "compressed-entity read returned a non-Nod-bucket payload".into(),
-        )
-    })?;
+    let payload = body
+        .payload()
+        .as_nod_bucket()
+        .ok_or(NodError::NonNodBucketPayload)?;
     Ok(crate::repository::from_canonical_bucket(payload.clone()))
 }
 

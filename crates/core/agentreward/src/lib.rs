@@ -1,4 +1,5 @@
 pub mod distribution;
+pub mod errors;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;

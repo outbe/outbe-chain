@@ -137,6 +137,19 @@ impl TreeError {
     }
 }
 
+impl TreeError {
+    pub(crate) fn vendor(error: impl core::fmt::Display) -> Self {
+        Self::Vendor(error.to_string())
+    }
+
+    pub(crate) fn poseidon(error: crate::CollectionError) -> Self {
+        match error {
+            crate::CollectionError::Hash(error) => Self::Poseidon(error),
+            other => Self::vendor(other),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct MemoryStore {
     branches: BTreeMap<BranchKey, BranchNode>,
@@ -519,10 +532,7 @@ pub(crate) fn derive_tree_key(
     identity: WwdEntityId,
 ) -> Result<TreeKey, TreeError> {
     crate::collection::tree_key_bytes(collection.into(), identity)
-        .map_err(|error| match error {
-            crate::CollectionError::Hash(error) => TreeError::Poseidon(error),
-            other => TreeError::Vendor(other.to_string()),
-        })
+        .map_err(TreeError::poseidon)
         .and_then(TreeKey::from_be_bytes)
 }
 

@@ -1,5 +1,6 @@
 pub mod api;
 pub mod enclave_client;
+pub mod errors;
 pub mod precompile;
 mod runtime;
 mod schema;

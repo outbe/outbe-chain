@@ -7,7 +7,7 @@ use outbe_common::settlement::{floor_to_asset_units, OBLIGATION_DECIMALS};
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
-use outbe_primitives::error::{PrecompileError, Result, SweepFailure};
+use outbe_primitives::error::{Result, SweepFailure};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::SCALE_1E6_U256;
@@ -42,7 +42,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
 
     // u32 timestamp. It is bounded until 2106.
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
-        .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
+        .map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
 
     let mut factory = IntexFactoryContract::new(storage.clone());
     let cfg = config::read_from(&factory, storage.chain_id()?)?;
@@ -181,7 +181,7 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
         chunk_issuance_messages(pack_issuance_messages(legs))
     {
         let total_chunks = u16::try_from(messages.len())
-            .map_err(|_| PrecompileError::Revert("issuance chunk count exceeds u16".into()))?;
+            .map_err(|_| IntexFactoryError::IssuanceChunkCountExceedsU16)?;
         for (chunk_index, series) in messages.into_iter().enumerate() {
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
@@ -267,8 +267,7 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
 
 /// Narrows a six-decimal COEN/ISO price to the wire's existing `u64` shape.
 pub fn to_wire_price(price_minor: U256) -> Result<u64> {
-    u64::try_from(price_minor)
-        .map_err(|_| PrecompileError::Revert("price exceeds the wire type".into()))
+    u64::try_from(price_minor).map_err(|_| IntexFactoryError::PriceExceedsWireType.into())
 }
 
 /// Applies a markup rate in percentage points: `entry * (100 + rate) / 100`.
@@ -276,7 +275,7 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
     entry_price
         .checked_mul(U256::from(PRICE_RATE_DEN + rate))
         .map(|v| v / U256::from(PRICE_RATE_DEN))
-        .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
+        .ok_or_else(|| IntexFactoryError::MarkedUpPriceOverflow.into())
 }
 
 /// Disjoint unit counts of a series, for a reader that must not redo the arithmetic.
@@ -317,7 +316,7 @@ pub(crate) fn owner_balances(
         gemFactoryUnits: outbe_intex::api::owner_gem_factory_units(storage, series_id, owner)?,
         ownerUnits: issued
             .checked_add(settled)
-            .ok_or_else(|| PrecompileError::Revert("owner units exceed u32".into()))?,
+            .ok_or(IntexFactoryError::OwnerUnitsExceedU32)?,
     })
 }
 
@@ -379,8 +378,8 @@ pub fn settle_intex(
             .into(),
         )?;
 
-        let settled_units = u32::try_from(units)
-            .map_err(|_| PrecompileError::Revert("settled units exceed u32".into()))?;
+        let settled_units =
+            u32::try_from(units).map_err(|_| IntexFactoryError::SettledUnitsExceedU32)?;
         outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
 
         deposit_payment(storage, settler, asset, cost)?;
@@ -513,7 +512,7 @@ fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
 
 fn nft_units_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<u32> {
     u32::try_from(nft_balance_of(storage, account, id)?)
-        .map_err(|_| PrecompileError::Revert("NFT balance exceeds u32".into()))
+        .map_err(|_| IntexFactoryError::NftBalanceExceedsU32.into())
 }
 
 fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<U256> {
@@ -522,7 +521,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
         IERC1155::balanceOfCall { account, id }.abi_encode().into(),
     )?;
     IERC1155::balanceOfCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
+        .map_err(|_| IntexFactoryError::NftBalanceOfUndecodable.into())
 }
 
 mod mining;

@@ -54,69 +54,7 @@ pub(crate) struct EpochBoundaryParent {
     pub(crate) proof_key: CertifiedParentProofKey,
 }
 
-/// Typed error returned by [`resolve_epoch_boundary_parent`].
-///
-/// The variants distinguish *invalid proposal* (the proposer chose a parent
-/// that does not match the canonical anchor) from *local infrastructure issue*
-/// (the validator cannot decide locally because the finalization view or the
-/// marshal store is not yet up to date). The verify path votes `false` only in
-/// the first case. The other variants return as `Err`. The verify path then
-/// withholds its vote until Simplex cancels the request. Local timeouts in
-/// `resolve_for_verify` take the same path.
-#[derive(Debug)]
-pub(crate) enum EpochBoundaryParentError {
-    /// Simplex parent does not match the committed continuity anchor.
-    ParentMismatch {
-        expected: B256,
-        got: B256,
-        epoch: u64,
-    },
-    /// `FinalizationView` has no anchor for `epoch > 0`. The caller waited as
-    /// long as it could. This is a local-infrastructure failure, not a vote.
-    MissingAnchor { epoch: u64 },
-    /// Marshal store cannot return the anchor block.
-    MissingMarshalBlock { height: u64 },
-    /// Marshal returned a block for the anchor digest, but the block height is
-    /// not the anchor height. `got` holds the digest of the returned block.
-    MarshalHashMismatch {
-        height: u64,
-        expected: B256,
-        got: B256,
-    },
-}
-
-impl std::fmt::Display for EpochBoundaryParentError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ParentMismatch {
-                expected,
-                got,
-                epoch,
-            } => write!(
-                f,
-                "epoch boundary parent mismatch: simplex parent {got} != finalized anchor {expected} (epoch={epoch})",
-            ),
-            Self::MissingAnchor { epoch } => write!(
-                f,
-                "broken epoch continuity: epoch={epoch} but no finalized anchor in finalization_view",
-            ),
-            Self::MissingMarshalBlock { height } => write!(
-                f,
-                "epoch boundary parent block at height {height} not found in marshal",
-            ),
-            Self::MarshalHashMismatch {
-                height,
-                expected,
-                got,
-            } => write!(
-                f,
-                "marshal block at height {height} has digest {got} != simplex parent {expected}",
-            ),
-        }
-    }
-}
-
-impl std::error::Error for EpochBoundaryParentError {}
+pub use crate::errors::EpochBoundaryParentError;
 
 /// Guards application work during DKG activation so an old Simplex epoch cannot
 /// submit Engine API work past the activation boundary while the epoch restarts.

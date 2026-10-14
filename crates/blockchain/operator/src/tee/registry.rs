@@ -12,7 +12,10 @@ use outbe_primitives::{
 use outbe_tee::FinalizedRegistryViewV1;
 use serde::{Deserialize, Serialize};
 
-use crate::rpc::{ChainRpc, FinalizedStateRpc, RegistryRpc as RegistryReadRpc};
+use crate::{
+    errors::RegistryError,
+    rpc::{ChainRpc, FinalizedStateRpc, RegistryRpc as RegistryReadRpc},
+};
 
 #[cfg(test)]
 mod abi_tests;
@@ -66,7 +69,7 @@ impl TryFrom<NodeEnclaveBindingV1View> for RenewalBindingV1 {
 
     fn try_from(value: NodeEnclaveBindingV1View) -> Result<Self> {
         if !value.exists {
-            eyre::bail!("finalized Registry has no enclave binding for this node");
+            return Err(RegistryError::MissingEnclaveBinding.into());
         }
         Ok(Self::from_registry_binding_fields_v1(&value))
     }
@@ -124,7 +127,7 @@ async fn read_finalized_upgrade_policy_inner_v1(
     let finalized_hash = finalized
         .get("hash")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("finalized block has no hash"))?
+        .ok_or(RegistryError::FinalizedBlockMissingField("hash"))?
         .parse::<B256>()
         .wrap_err("parse finalized block hash")?;
     let tag = format!("0x{finalized_height:x}");
@@ -140,52 +143,25 @@ async fn read_finalized_upgrade_policy_inner_v1(
         .wrap_err("decode finalized staged successor TEE policy")?;
     if !view.exists {
         if !view.proposalId.is_zero() || !view.policy.is_empty() {
-            eyre::bail!("empty finalized staged policy view has non-empty anchors");
+            return Err(RegistryError::EmptyStagedPolicyNonEmptyAnchors.into());
         }
-        if !allow_activated {
+        let Some((proposal_id, policy_bytes)) =
+            read_activated_upgrade_policy_v1(rpc, &tag, finalized_height, allow_activated).await?
+        else {
             return Ok(None);
-        }
-        let encoded = rpc
-            .call_at(
-                TEE_REGISTRY_ADDRESS,
-                &ITeeRegistryV1::enclaveUpgradeV1Call {}.abi_encode(),
-                &tag,
-            )
-            .await?;
-        let upgrade = ITeeRegistryV1::enclaveUpgradeV1Call::abi_decode_returns(&encoded)?;
-        if upgrade.proposalId.is_zero() || finalized_height < upgrade.activationHeight {
-            return Ok(None);
-        }
-        let encoded = rpc
-            .call_at(
-                TEE_REGISTRY_ADDRESS,
-                &ITeeRegistryV1::activePolicyV1Call {}.abi_encode(),
-                &tag,
-            )
-            .await?;
-        let bytes = ITeeRegistryV1::activePolicyV1Call::abi_decode_returns(&encoded)?;
-        let active = TeePolicyV1::decode_canonical(&bytes)
-            .map_err(|e| eyre::eyre!("invalid active successor: {e}"))?;
-        if active
-            .policy_hash()
-            .map_err(|e| eyre::eyre!("invalid active successor: {e}"))?
-            != upgrade.successorPolicyHash
-            || active.activation_height != upgrade.activationHeight
-        {
-            eyre::bail!("activated enclave upgrade anchors disagree");
-        }
+        };
         view.exists = true;
-        view.proposalId = upgrade.proposalId;
-        view.policy = bytes;
+        view.proposalId = proposal_id;
+        view.policy = policy_bytes;
     }
     if view.proposalId.is_zero() || view.policy.is_empty() {
-        eyre::bail!("finalized staged policy view is incomplete");
+        return Err(RegistryError::IncompleteStagedPolicyView.into());
     }
     let policy = TeePolicyV1::decode_canonical(&view.policy)
-        .map_err(|error| eyre::eyre!("finalized staged TEE policy is non-canonical: {error}"))?;
+        .map_err(RegistryError::NonCanonicalStagedPolicy)?;
     let rpc_chain_id = rpc.chain_id().await.wrap_err("read eth_chainId")?;
     if policy.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
-        eyre::bail!("finalized staged TEE policy chain id does not match eth_chainId");
+        return Err(RegistryError::StagedPolicyChainIdMismatch.into());
     }
     Ok(Some(FinalizedStagedSuccessorPolicyV1 {
         finalized_height,
@@ -193,6 +169,47 @@ async fn read_finalized_upgrade_policy_inner_v1(
         proposal_id: view.proposalId,
         policy,
     }))
+}
+
+async fn read_activated_upgrade_policy_v1(
+    rpc: &(impl FinalizedStateRpc + Sync),
+    tag: &str,
+    finalized_height: u64,
+    allow_activated: bool,
+) -> Result<Option<(U256, alloy_primitives::Bytes)>> {
+    if !allow_activated {
+        return Ok(None);
+    }
+    let encoded = rpc
+        .call_at(
+            TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::enclaveUpgradeV1Call {}.abi_encode(),
+            tag,
+        )
+        .await?;
+    let upgrade = ITeeRegistryV1::enclaveUpgradeV1Call::abi_decode_returns(&encoded)?;
+    if upgrade.proposalId.is_zero() || finalized_height < upgrade.activationHeight {
+        return Ok(None);
+    }
+    let encoded = rpc
+        .call_at(
+            TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::activePolicyV1Call {}.abi_encode(),
+            tag,
+        )
+        .await?;
+    let bytes = ITeeRegistryV1::activePolicyV1Call::abi_decode_returns(&encoded)?;
+    let active =
+        TeePolicyV1::decode_canonical(&bytes).map_err(RegistryError::InvalidActiveSuccessor)?;
+    if active
+        .policy_hash()
+        .map_err(RegistryError::InvalidActiveSuccessor)?
+        != upgrade.successorPolicyHash
+        || active.activation_height != upgrade.activationHeight
+    {
+        return Err(RegistryError::ActivatedUpgradeAnchorsDisagree.into());
+    }
+    Ok(Some((upgrade.proposalId, bytes)))
 }
 
 pub async fn read_finalized_renewal_view_v1(
@@ -221,7 +238,7 @@ async fn resolve_bound_renewal_policy_v1(
     let active_hash = view
         .policy
         .policy_hash()
-        .map_err(|e| eyre::eyre!("invalid policy: {e}"))?;
+        .map_err(RegistryError::InvalidPolicy)?;
     if view
         .binding
         .as_ref()
@@ -229,12 +246,12 @@ async fn resolve_bound_renewal_policy_v1(
     {
         if let Some(staged) = read_finalized_staged_successor_policy_v1(rpc).await? {
             if staged.finalized_hash != view.schedule.finalized_hash {
-                eyre::bail!("renewal binding and staged policy use different finalized heads");
+                return Err(RegistryError::RenewalStagedHeadMismatch.into());
             }
             let hash = staged
                 .policy
                 .policy_hash()
-                .map_err(|e| eyre::eyre!("invalid staged policy: {e}"))?;
+                .map_err(RegistryError::InvalidStagedPolicy)?;
             if view
                 .binding
                 .as_ref()
@@ -250,9 +267,7 @@ async fn resolve_bound_renewal_policy_v1(
 fn require_bound_renewal_view_v1(
     view: FinalizedRegistryChainViewV1,
 ) -> Result<FinalizedRenewalChainViewV1> {
-    let binding = view
-        .binding
-        .ok_or_else(|| eyre::eyre!("finalized Registry has no enclave binding for this node"))?;
+    let binding = view.binding.ok_or(RegistryError::MissingEnclaveBinding)?;
     Ok(FinalizedRenewalChainViewV1 {
         schedule: view.schedule,
         policy: view.policy,
@@ -263,7 +278,7 @@ fn require_bound_renewal_view_v1(
 
 fn require_dcap_renewal_mode_v1(mode: AttestationMode) -> Result<()> {
     if mode != AttestationMode::DcapRequired {
-        eyre::bail!("DCAP renewal is disabled for non-DcapRequired networks");
+        return Err(RegistryError::DcapRenewalDisabled.into());
     }
     Ok(())
 }
@@ -289,20 +304,20 @@ pub async fn read_finalized_registry_view_v1(
     let hash = finalized
         .get("hash")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("finalized block has no hash"))?
+        .ok_or(RegistryError::FinalizedBlockMissingField("hash"))?
         .parse::<B256>()
         .wrap_err("parse finalized block hash")?;
     let state_root = finalized
         .get("stateRoot")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("finalized block has no stateRoot"))?
+        .ok_or(RegistryError::FinalizedBlockMissingField("stateRoot"))?
         .parse::<B256>()
         .wrap_err("parse finalized block stateRoot")?;
     if number != schedule.finalized_height
         || timestamp != schedule.finalized_timestamp
         || hash != schedule.finalized_hash
     {
-        eyre::bail!("finalized schedule and eth finalized block disagree");
+        return Err(RegistryError::FinalizedScheduleDisagreesWithBlock.into());
     }
     let tag = format!("0x{number:x}");
     let policy_bytes = rpc
@@ -315,11 +330,11 @@ pub async fn read_finalized_registry_view_v1(
         .wrap_err("read finalized active TEE policy")?;
     let canonical = ITeeRegistryV1::activePolicyV1Call::abi_decode_returns(&policy_bytes)
         .wrap_err("decode finalized active TEE policy")?;
-    let policy = TeePolicyV1::decode_canonical(&canonical)
-        .map_err(|error| eyre::eyre!("finalized TEE policy is non-canonical: {error}"))?;
+    let policy =
+        TeePolicyV1::decode_canonical(&canonical).map_err(RegistryError::NonCanonicalPolicy)?;
     let rpc_chain_id = rpc.chain_id().await.wrap_err("read eth_chainId")?;
     if policy.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
-        eyre::bail!("finalized TEE policy chain id does not match eth_chainId");
+        return Err(RegistryError::PolicyChainIdMismatch.into());
     }
     let binding_bytes = rpc
         .call_at(TEE_REGISTRY_ADDRESS, &selector.binding_call(), &tag)
@@ -344,7 +359,7 @@ pub async fn read_finalized_registry_view_v1(
         .wrap_err("decode finalized tribute offer public key")?;
     let tribute_offer_public = B256::from(offer.to_be_bytes::<32>());
     if tribute_offer_public.is_zero() {
-        eyre::bail!("finalized Registry tribute offer public key is zero");
+        return Err(RegistryError::ZeroTributeOfferPublicKey.into());
     }
     Ok(FinalizedRegistryChainViewV1 {
         schedule,
@@ -362,11 +377,11 @@ pub async fn read_finalized_registry_view_v1(
     })
 }
 
-fn json_hex_u64(value: &serde_json::Value, field: &str) -> Result<u64> {
+fn json_hex_u64(value: &serde_json::Value, field: &'static str) -> Result<u64> {
     let encoded = value
         .get(field)
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("finalized block has no {field}"))?;
+        .ok_or(RegistryError::FinalizedBlockMissingField(field))?;
     u64::from_str_radix(encoded.strip_prefix("0x").unwrap_or(encoded), 16)
         .wrap_err_with(|| format!("parse finalized block {field}"))
 }

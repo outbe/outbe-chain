@@ -467,18 +467,21 @@ impl RuntimeBodyReaders {
 
     /// Publishes only explicitly classified off-chain body read failures.
     pub fn report_precompile_error(&self, error: &outbe_primitives::error::PrecompileError) {
-        match error {
-            outbe_primitives::error::PrecompileError::BodyReadUnavailable(_) => {
+        use crate::errors::{
+            classify_precompile_body_read_error, PrecompileBodyReadClassification,
+        };
+        match classify_precompile_body_read_error(error) {
+            PrecompileBodyReadClassification::Unavailable => {
                 self.report_unavailable();
             }
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(message) => {
+            PrecompileBodyReadClassification::Corruption(message) => {
                 tracing::warn!(
                     target: "offchain_read",
                     reason = %message,
                     "Body read failed. The precompile returns a revert."
                 );
             }
-            _ => {}
+            PrecompileBodyReadClassification::Other => {}
         }
     }
 }

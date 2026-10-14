@@ -64,16 +64,17 @@ where
     // offers impossible). Local liveness only: this is not a consensus rule on
     // imported blocks. Missing local enclave or NodeHost identity is a startup
     // error, never a production fallback.
-    let socket = args.tee_enclave_socket.clone().ok_or_else(|| {
-        eyre::eyre!("mandatory TEE chain requires --tee-enclave-socket before consensus startup")
-    })?;
+    let socket = args
+        .tee_enclave_socket
+        .clone()
+        .ok_or(crate::errors::StackEpochError::MandatoryTeeRequiresEnclaveSocket)?;
     let tee_attestation =
         outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
             node.chain_spec().as_ref(),
         );
     let tee_activation = tee_attestation
         .activation()
-        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
+        .map_err(crate::errors::StackEpochError::invalid_tee_attestation_chain_spec)?;
     let tee_policy = tee_activation
         .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
         .map_err(eyre::Report::msg)?
@@ -84,9 +85,9 @@ where
         .map_err(eyre::Report::msg)?;
     {
         if coordinate_genesis_bootstrap {
-            let my_validator = proposer_evm_address.ok_or_else(|| {
-                eyre::eyre!("founding validator TEE bootstrap requires its EVM identity")
-            })?;
+            let my_validator = proposer_evm_address.ok_or(
+                crate::errors::StackEpochError::FoundingValidatorTeeBootstrapRequiresEvmIdentity,
+            )?;
             let n = participants.len();
             let tee_remote_peers: std::collections::BTreeSet<bls12381::PublicKey> = participants
                 .iter()
@@ -98,15 +99,15 @@ where
 
             let (dkg_sender, dkg_receiver) = tee_dkg_round0
                 .take()
-                .ok_or_else(|| eyre::eyre!("TEE DKG P2P channel not registered"))?;
+                .ok_or(crate::errors::StackEpochError::TeeDkgChannelNotRegistered)?;
             let (tee_sender, tee_receiver) = tee_bootstrap_round0
                 .take()
-                .ok_or_else(|| eyre::eyre!("TEE bootstrap P2P channel not registered"))?;
+                .ok_or(crate::errors::StackEpochError::TeeBootstrapChannelNotRegistered)?;
             let (evm_signer, participant_committee) =
                 tee_bootstrap_setup(args, participants, validator_set)?;
-            let genesis_boundary = genesis_dkg_boundary_artifact.as_ref().ok_or_else(|| {
-                eyre::eyre!("fresh OST3 bootstrap is missing its canonical genesis DKG boundary")
-            })?;
+            let genesis_boundary = genesis_dkg_boundary_artifact
+                .as_ref()
+                .ok_or(crate::errors::StackEpochError::FreshOst3BootstrapMissingGenesisBoundary)?;
             let committee_snapshot_hash = genesis_boundary.committee_set_hash;
             let committee: std::collections::BTreeSet<alloy_primitives::Address> = genesis_boundary
                 .reshare
@@ -114,20 +115,24 @@ where
                 .iter()
                 .copied()
                 .collect();
-            ensure!(
-                committee == participant_committee,
-                "OST3 epoch-0 DKG boundary differs from the live genesis participants"
-            );
-            ensure!(
-                committee.contains(&my_validator),
-                "local validator is absent from the exact OST3 epoch-0 committee snapshot"
-            );
+            if committee != participant_committee {
+                return Err(
+                    crate::errors::StackEpochError::Ost3Epoch0BoundaryDiffersFromLiveParticipants
+                        .into(),
+                );
+            }
+            if !committee.contains(&my_validator) {
+                return Err(
+                    crate::errors::StackEpochError::LocalValidatorAbsentFromOst3Epoch0Committee
+                        .into(),
+                );
+            }
             let requested_valid_until = node
                 .chain_spec()
                 .genesis
                 .timestamp
                 .checked_add(tee_policy.maximum_lease)
-                .ok_or_else(|| eyre::eyre!("OST3 deterministic block-1 lease overflows u64"))?;
+                .ok_or(crate::errors::StackEpochError::Ost3Block1LeaseOverflow)?;
             let node_data_dir = node
                 .config
                 .datadir
@@ -137,7 +142,7 @@ where
                 .to_path_buf();
             let endpoint = socket
                 .to_str()
-                .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?
+                .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?
                 .to_owned();
             let reth_p2p_secret = node
                 .config
@@ -146,13 +151,13 @@ where
                 .wrap_err("failed to load persistent Reth P2P identity for OST3")?;
             let node_host_signing =
                 k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.secret_bytes().as_slice())
-                    .map_err(|error| eyre::eyre!("invalid Reth P2P signing key: {error}"))?;
+                    .map_err(crate::errors::StackEpochError::invalid_reth_p2p_signing_key)?;
             let reth_p2p_public = node_host_signing
                 .verifying_key()
                 .to_encoded_point(true)
                 .as_bytes()
                 .try_into()
-                .map_err(|_| eyre::eyre!("Reth P2P public key is not compressed SEC1-33"))?;
+                .map_err(|_| crate::errors::StackEpochError::RethP2pPublicKeyNotCompressedSec1)?;
             let node_id = outbe_primitives::tee_attestation_v1::NodeIdV1 { reth_p2p_public };
 
             // Step 1 (TEE DKG -> shared offer key) + Step 2 (bootstrap coordination ->
@@ -177,16 +182,14 @@ where
                                 &endpoint,
                                 &node_data_dir,
                             )
-                            .map_err(|error| {
-                                eyre::eyre!("production NodeHost reconnect failed: {error}")
-                            })?;
+                            .map_err(
+                                crate::errors::StackEpochError::production_node_host_reconnect_failed,
+                            )?;
                             let manifest =
                                 outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
-                                    .map_err(|error| {
-                                        eyre::eyre!(
-                                            "committed NodeHost manifest load failed: {error}"
-                                        )
-                                    })?;
+                                    .map_err(
+                                        crate::errors::StackEpochError::committed_node_host_manifest_load_failed,
+                                    )?;
                             (
                                 outbe_tee::RuntimeEnclaveClient::Production(production),
                                 Some(manifest),
@@ -194,11 +197,9 @@ where
                         }
                         crate::args::ResolvedTeeSession::Development => {
                             let development = outbe_tee::EnclaveClient::connect_endpoint(&endpoint)
-                                .map_err(|error| {
-                                    eyre::eyre!(
-                                        "GramineDirectDev enclave reconnect failed: {error}"
-                                    )
-                                })?;
+                                .map_err(
+                                    crate::errors::StackEpochError::gramine_direct_dev_reconnect_failed,
+                                )?;
                             (
                                 outbe_tee::RuntimeEnclaveClient::Development(Box::new(development)),
                                 None,
@@ -221,7 +222,7 @@ where
                             },
                         )
                         .await
-                        .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;
+                        .map_err(crate::errors::StackEpochError::tee_dkg_ceremony_failed)?;
                     info!(
                         tribute_offer_public = %B256::from(tribute_offer_public),
                         "TEE DKG complete - shared tribute offer key derived"
@@ -243,7 +244,7 @@ where
                                     k256::ecdsa::RecoveryId,
                                 ) = node_host_signing
                                     .sign_prehash(hash.as_slice())
-                                    .map_err(|error| error.to_string())?;
+                                    .map_err(crate::errors::TeeBootstrapError::node_host_sign_prehash)?;
                                 let mut bytes = [0_u8; 65];
                                 bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
                                 bytes[64] = recovery.to_byte();
@@ -275,16 +276,12 @@ where
                         },
                     )
                     .await
-                    .map_err(|e| eyre::eyre!("TEE bootstrap coordination failed: {e}"))?;
+                    .map_err(crate::errors::StackEpochError::tee_bootstrap_coordination_failed)?;
                     Ok::<_, eyre::Report>(payload)
                 })
                 .await
-                .map_err(|_| {
-                    eyre::eyre!(
-                        "TEE DKG + bootstrap did not complete within {}s \
-                     (--tee-bootstrap-timeout-secs); halting before block 1",
-                        args.tee_bootstrap_timeout_secs
-                    )
+                .map_err(|_| crate::errors::StackEpochError::TeeBootstrapTimeout {
+                    timeout_secs: args.tee_bootstrap_timeout_secs,
                 })??;
 
             info!(
@@ -302,10 +299,12 @@ where
             let resident_offer = outbe_tee::resident_offer_public_key_v1().wrap_err(
                 "verifier-join requires the permanent resident offer key before certified sync (no recovery or fallback)",
             )?;
-            ensure!(
-                !resident_offer.is_zero(),
-                "verifier-join enclave has no permanent resident offer key; refusing certified sync (no recovery or fallback)"
-            );
+            if resident_offer.is_zero() {
+                return Err(
+                    crate::errors::StackEpochError::VerifierJoinEnclaveMissingResidentOfferKey
+                        .into(),
+                );
+            }
             info!(
                 offer_public_key = %resident_offer,
                 "verifier-join resident offer key present before certified sync"
@@ -314,15 +313,16 @@ where
             // A restarted active validator must already hold the exact resident
             // offer key committed on-chain. Startup never recovers or replaces a
             // lost key and never falls back to a pre-V1 delivery protocol.
-            let _my_validator = proposer_evm_address.ok_or_else(|| {
-                eyre::eyre!("active validator consensus startup requires its EVM identity")
-            })?;
+            let _my_validator = proposer_evm_address
+                .ok_or(crate::errors::StackEpochError::ActiveValidatorStartupRequiresEvmIdentity)?;
             let on_chain_offer = validators::read_tee_offer_public_at_latest(&node.provider)
                 .wrap_err("failed to read the mandatory on-chain TEE offer key")?;
-            ensure!(
-                !on_chain_offer.is_zero(),
-                "mandatory OST3 chain has no on-chain offer key after block 1"
-            );
+            if on_chain_offer.is_zero() {
+                return Err(
+                    crate::errors::StackEpochError::MandatoryOst3MissingOnChainOfferKeyAfterBlock1
+                        .into(),
+                );
+            }
             let node_data_dir = node
                 .config
                 .datadir
@@ -332,29 +332,30 @@ where
                 .to_path_buf();
             let endpoint = socket
                 .to_str()
-                .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
+                .ok_or(crate::errors::StackEpochError::TeeEnclaveEndpointInvalidUtf8)?;
             let mut enclave = match tee_session {
                 crate::args::ResolvedTeeSession::ProductionNodeHost => {
                     outbe_tee::RuntimeEnclaveClient::Production(
                         outbe_tee::connect_committed_node_host_enclave(endpoint, &node_data_dir)
-                            .map_err(|error| {
-                                eyre::eyre!("production NodeHost reconnect failed: {error}")
-                            })?,
+                            .map_err(
+                            crate::errors::StackEpochError::production_node_host_reconnect_failed,
+                        )?,
                     )
                 }
                 crate::args::ResolvedTeeSession::Development => {
                     outbe_tee::RuntimeEnclaveClient::Development(Box::new(
-                        outbe_tee::EnclaveClient::connect_endpoint(endpoint).map_err(|error| {
-                            eyre::eyre!("GramineDirectDev enclave reconnect failed: {error}")
-                        })?,
+                        outbe_tee::EnclaveClient::connect_endpoint(endpoint).map_err(
+                            crate::errors::StackEpochError::gramine_direct_dev_reconnect_failed,
+                        )?,
                     ))
                 }
             };
             let enclave_offer = crate::tee_bootstrap::query_enclave_offer_public(&mut enclave)?;
-            ensure!(
-                enclave_offer == on_chain_offer,
-                "local enclave does not hold the chain offer key; refusing consensus startup (no recovery or fallback)"
-            );
+            if enclave_offer != on_chain_offer {
+                return Err(
+                    crate::errors::StackEpochError::LocalEnclaveDoesNotHoldChainOfferKey.into(),
+                );
+            }
         }
     }
 

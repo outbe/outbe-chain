@@ -63,7 +63,7 @@ impl OutbeEvmSigner {
     pub fn from_hex(private_key_hex: &str) -> Result<Self, SignerError> {
         let hex = private_key_hex.trim();
         let hex = hex.strip_prefix("0x").unwrap_or(hex);
-        let bytes = hex::decode(hex).map_err(|error| SignerError::InvalidHex(error.to_string()))?;
+        let bytes = hex::decode(hex).map_err(SignerError::invalid_hex)?;
         let len = bytes.len();
         let secret: [u8; 32] = bytes
             .try_into()
@@ -113,7 +113,7 @@ fn sign_recoverable_hash(
 ) -> Result<[u8; 65], SignerError> {
     let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing_key
         .sign_prehash(hash.as_slice())
-        .map_err(|error| SignerError::SigningFailed(error.to_string()))?;
+        .map_err(SignerError::signing_failed)?;
     let sig_bytes = signature.to_bytes();
     if sig_bytes.len() != 64 {
         return Err(SignerError::SignatureEncoding {
@@ -168,9 +168,22 @@ pub enum SignerError {
     SignatureEncoding { len: usize },
 }
 
+impl SignerError {
+    fn invalid_hex(error: impl std::fmt::Display) -> Self {
+        Self::InvalidHex(error.to_string())
+    }
+
+    fn invalid_secret(error: impl std::fmt::Display) -> Self {
+        Self::InvalidSecret(error.to_string())
+    }
+
+    fn signing_failed(error: impl std::fmt::Display) -> Self {
+        Self::SigningFailed(error.to_string())
+    }
+}
+
 fn signing_key_from_bytes(secret: &[u8; 32]) -> Result<SigningKey, SignerError> {
-    SigningKey::from_bytes(secret.into())
-        .map_err(|error| SignerError::InvalidSecret(error.to_string()))
+    SigningKey::from_bytes(secret.into()).map_err(SignerError::invalid_secret)
 }
 
 fn address_from_signing_key(signing_key: &SigningKey) -> Address {

@@ -7,6 +7,7 @@ use outbe_primitives::{
     },
 };
 
+use crate::errors::ValidatorSetError;
 use crate::schema::ValidatorSet;
 use crate::state::{self, CommitteeSnapshot};
 
@@ -107,11 +108,7 @@ pub fn record_finalized_participation(
     vs.participation_prune_ring().record(
         fb_hash,
         |evicted| vs.finalized_participation_recorded.write(&evicted, false),
-        || {
-            outbe_primitives::error::PrecompileError::Fatal(
-                "finalized participation ring sequence overflow".into(),
-            )
-        },
+        || ValidatorSetError::FinalizedParticipationRingSeqOverflow.into(),
     )
 }
 

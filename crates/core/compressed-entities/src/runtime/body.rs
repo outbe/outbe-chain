@@ -153,7 +153,7 @@ pub(super) fn verify_stored(
         if error.is_infrastructure() {
             crate::errors::commitment_error(error)
         } else {
-            origin.invalid(error.to_string())
+            origin.invalid(error)
         }
     })?;
     if actual != expected {
@@ -185,44 +185,38 @@ fn decode_stored_payload(
     let payload = stored_body.payload();
     let decoded = match entity {
         EntityRef::Tribute(_) if stored_body.schema_version() == crate::TRIBUTE_BODY_SCHEMA_V2 => {
-            let body = crate::decode_tribute_v2(payload)
-                .map_err(|error| origin.invalid(error.to_string()))?;
+            let body = crate::decode_tribute_v2(payload).map_err(|error| origin.invalid(error))?;
             (
                 body.context.tribute_id,
                 crate::api::encrypted_tribute_payload(body),
             )
         }
         EntityRef::Tribute(_) => {
-            let body =
-                decode_tribute_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
+            let body = decode_tribute_v1(payload).map_err(|error| origin.invalid(error))?;
             (body.tribute_id, tribute_payload(body))
         }
         EntityRef::NodItem(_) if stored_body.schema_version() == crate::NOD_BODY_SCHEMA_V2 => {
-            let body = crate::decode_nod_item_v2(payload)
-                .map_err(|error| origin.invalid(error.to_string()))?;
+            let body = crate::decode_nod_item_v2(payload).map_err(|error| origin.invalid(error))?;
             (
                 body.encrypted.terms.nod_id,
                 crate::api::encrypted_nod_item_payload(body),
             )
         }
         EntityRef::NodItem(_) => {
-            let body =
-                decode_nod_item_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
+            let body = decode_nod_item_v1(payload).map_err(|error| origin.invalid(error))?;
             (body.nod_id, nod_item_payload(body))
         }
         EntityRef::NodBucket(_) => {
-            let body =
-                decode_nod_bucket_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
+            let body = decode_nod_bucket_v1(payload).map_err(|error| origin.invalid(error))?;
             (body.entity_id(), nod_bucket_payload(body))
         }
         EntityRef::Gem(_) => {
-            let body =
-                crate::decode_gem_v1(payload).map_err(|error| origin.invalid(error.to_string()))?;
+            let body = crate::decode_gem_v1(payload).map_err(|error| origin.invalid(error))?;
             (body.gem_id, crate::api::gem_payload(body))
         }
         EntityRef::GemBucket(_) => {
-            let body = crate::decode_gem_bucket_v1(payload)
-                .map_err(|error| origin.invalid(error.to_string()))?;
+            let body =
+                crate::decode_gem_bucket_v1(payload).map_err(|error| origin.invalid(error))?;
             (body.entity_id(), crate::api::gem_bucket_payload(body))
         }
     };

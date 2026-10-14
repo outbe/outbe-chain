@@ -18,27 +18,22 @@ impl TeeRegistry<'_> {
             if installed == canonical && self.active_v1_policy_hash.read()? == policy_hash {
                 return Ok(());
             }
-            return Err(PrecompileError::Revert(
-                "initial V1 policy is already installed".into(),
-            ));
+            return Err(TeeRegistryError::InitialV1PolicyAlreadyInstalled.into());
         }
         let anchored_hash = self.active_v1_policy_hash.read()?;
         if !anchored_hash.is_zero() && anchored_hash != policy_hash {
-            return Err(PrecompileError::Revert(
-                "initial V1 policy hash conflicts with registry anchor".into(),
-            ));
+            return Err(TeeRegistryError::InitialV1PolicyHashConflict.into());
         }
 
         for (index, chunk) in canonical.chunks(32).enumerate() {
             let mut word = [0u8; 32];
             word[..chunk.len()].copy_from_slice(chunk);
-            let index = u32::try_from(index)
-                .map_err(|_| PrecompileError::Revert("V1 policy has too many chunks".into()))?;
+            let index =
+                u32::try_from(index).map_err(|_| TeeRegistryError::V1PolicyTooManyChunks)?;
             self.active_v1_policy_chunk
                 .write(&index, B256::from(word))?;
         }
-        let len = u32::try_from(canonical.len())
-            .map_err(|_| PrecompileError::Revert("V1 policy is too large".into()))?;
+        let len = u32::try_from(canonical.len()).map_err(|_| TeeRegistryError::V1PolicyTooLarge)?;
         self.active_v1_policy_len.write(len)?;
         self.active_v1_policy_hash.write(policy_hash)?;
         Ok(())
@@ -53,9 +48,7 @@ impl TeeRegistry<'_> {
         policy: &TeePolicyV1,
     ) -> Result<()> {
         if proposal_id.is_zero() {
-            return Err(PrecompileError::Revert(
-                "successor policy proposal id must be nonzero".into(),
-            ));
+            return Err(TeeRegistryError::SuccessorPolicyProposalIdZero.into());
         }
         let canonical = policy
             .encode_canonical()
@@ -72,22 +65,19 @@ impl TeeRegistry<'_> {
             {
                 return Ok(());
             }
-            return Err(PrecompileError::Revert(
-                "another successor V1 policy is already staged".into(),
-            ));
+            return Err(TeeRegistryError::AnotherSuccessorV1PolicyStaged.into());
         }
 
         for (index, chunk) in canonical.chunks(32).enumerate() {
             let mut word = [0u8; 32];
             word[..chunk.len()].copy_from_slice(chunk);
-            let index = u32::try_from(index).map_err(|_| {
-                PrecompileError::Revert("successor V1 policy has too many chunks".into())
-            })?;
+            let index = u32::try_from(index)
+                .map_err(|_| TeeRegistryError::SuccessorV1PolicyTooManyChunks)?;
             self.staged_v1_policy_chunk
                 .write(&index, B256::from(word))?;
         }
         let len = u32::try_from(canonical.len())
-            .map_err(|_| PrecompileError::Revert("successor V1 policy is too large".into()))?;
+            .map_err(|_| TeeRegistryError::SuccessorV1PolicyTooLarge)?;
         self.staged_v1_policy_len.write(len)?;
         self.staged_v1_policy_hash.write(policy_hash)?;
         self.staged_v1_policy_proposal_id.write(proposal_id)?;
@@ -105,34 +95,25 @@ impl TeeRegistry<'_> {
                 || !self.staged_v1_policy_proposal_id.read()?.is_zero()
                 || self.staged_v1_policy_activation_height.read()? != 0
             {
-                return Err(PrecompileError::Fatal(
-                    "empty staged V1 policy has non-empty anchors".into(),
-                ));
+                return Err(TeeRegistryError::EmptyStagedV1PolicyNonEmptyAnchors.into());
             }
             return Ok(None);
         }
         let canonical = self.read_staged_policy_bytes_v1()?;
-        let policy = TeePolicyV1::decode_canonical(&canonical).map_err(|error| {
-            PrecompileError::Fatal(format!("stored staged V1 policy is non-canonical: {error}"))
-        })?;
-        let policy_hash = policy.policy_hash().map_err(|error| {
-            PrecompileError::Fatal(format!("stored staged V1 policy cannot be hashed: {error}"))
-        })?;
+        let policy = TeePolicyV1::decode_canonical(&canonical)
+            .map_err(TeeRegistryError::stored_staged_v1_policy_non_canonical)?;
+        let policy_hash = policy
+            .policy_hash()
+            .map_err(TeeRegistryError::stored_staged_v1_policy_hashing_failed)?;
         if policy_hash != self.staged_v1_policy_hash.read()? {
-            return Err(PrecompileError::Fatal(
-                "stored staged V1 policy hash does not match its anchor".into(),
-            ));
+            return Err(TeeRegistryError::StoredStagedV1PolicyHashMismatch.into());
         }
         if policy.activation_height != self.staged_v1_policy_activation_height.read()? {
-            return Err(PrecompileError::Fatal(
-                "stored staged V1 policy activation does not match its anchor".into(),
-            ));
+            return Err(TeeRegistryError::StoredStagedV1PolicyActivationMismatch.into());
         }
         let proposal_id = self.staged_v1_policy_proposal_id.read()?;
         if proposal_id.is_zero() {
-            return Err(PrecompileError::Fatal(
-                "stored staged V1 policy has zero proposal id".into(),
-            ));
+            return Err(TeeRegistryError::StoredStagedV1PolicyZeroProposalId.into());
         }
         Ok(Some((proposal_id, policy)))
     }
@@ -149,30 +130,25 @@ impl TeeRegistry<'_> {
             if self.active_v1_policy_proposal_id.read()? == proposal_id && !proposal_id.is_zero() {
                 return Ok(());
             }
-            return Err(PrecompileError::Revert(
-                "no successor V1 policy is staged for this update".into(),
-            ));
+            return Err(TeeRegistryError::NoSuccessorV1PolicyStagedForUpdate.into());
         };
         self.validate_policy_promotion_v1(&policy, staged_proposal_id, proposal_id, block_number)?;
-        let canonical = policy.encode_canonical().map_err(|error| {
-            PrecompileError::Fatal(format!("staged successor V1 policy is invalid: {error}"))
-        })?;
-        let policy_hash = policy.policy_hash().map_err(|error| {
-            PrecompileError::Fatal(format!(
-                "staged successor V1 policy cannot be hashed: {error}"
-            ))
-        })?;
+        let canonical = policy
+            .encode_canonical()
+            .map_err(TeeRegistryError::staged_successor_v1_policy_invalid)?;
+        let policy_hash = policy
+            .policy_hash()
+            .map_err(TeeRegistryError::staged_successor_v1_policy_hashing_failed)?;
         for (index, chunk) in canonical.chunks(32).enumerate() {
             let mut word = [0u8; 32];
             word[..chunk.len()].copy_from_slice(chunk);
-            let index = u32::try_from(index).map_err(|_| {
-                PrecompileError::Fatal("successor V1 policy chunk index overflow".into())
-            })?;
+            let index = u32::try_from(index)
+                .map_err(|_| TeeRegistryError::SuccessorV1PolicyChunkIndexOverflow)?;
             self.active_v1_policy_chunk
                 .write(&index, B256::from(word))?;
         }
         let len = u32::try_from(canonical.len())
-            .map_err(|_| PrecompileError::Fatal("successor V1 policy length overflow".into()))?;
+            .map_err(|_| TeeRegistryError::SuccessorV1PolicyLengthOverflow)?;
         self.active_v1_policy_len.write(len)?;
         self.active_v1_policy_hash.write(policy_hash)?;
         self.active_v1_policy_proposal_id.write(proposal_id)?;
@@ -197,9 +173,7 @@ impl TeeRegistry<'_> {
             return Ok(());
         };
         if staged_proposal_id != proposal_id {
-            return Err(PrecompileError::Revert(
-                "cannot discard another update's staged V1 policy".into(),
-            ));
+            return Err(TeeRegistryError::CannotDiscardAnotherUpdateStagedPolicy.into());
         }
         self.clear_staged_successor_policy_v1()
     }
@@ -215,50 +189,39 @@ impl TeeRegistry<'_> {
     /// Calldata cannot supply or override policy authority.
     pub fn active_policy_v1(&self) -> Result<TeePolicyV1> {
         let canonical = self.read_policy_bytes_v1()?;
-        let policy = TeePolicyV1::decode_canonical(&canonical).map_err(|error| {
-            PrecompileError::Fatal(format!("stored V1 policy is non-canonical: {error}"))
-        })?;
+        let policy = TeePolicyV1::decode_canonical(&canonical)
+            .map_err(TeeRegistryError::stored_v1_policy_non_canonical)?;
         if policy.chain_id != chain_id_word(self.storage.chain_id()?)
             || policy.genesis_hash != self.storage.genesis_hash()?
         {
-            return Err(PrecompileError::Fatal(
-                "stored V1 policy chain identity mismatch".into(),
-            ));
+            return Err(TeeRegistryError::StoredV1PolicyChainIdentityMismatch.into());
         }
-        let policy_hash = policy.policy_hash().map_err(|error| {
-            PrecompileError::Fatal(format!("stored V1 policy cannot be hashed: {error}"))
-        })?;
+        let policy_hash = policy
+            .policy_hash()
+            .map_err(TeeRegistryError::stored_v1_policy_hashing_failed)?;
         if self.active_v1_policy_hash.read()? != policy_hash {
-            return Err(PrecompileError::Fatal(
-                "stored V1 policy hash does not match registry anchor".into(),
-            ));
+            return Err(TeeRegistryError::StoredV1PolicyHashMismatch.into());
         }
         if policy.activation_height > self.storage.block_number()? {
-            return Err(PrecompileError::Revert(
-                "no V1 TEE policy is active at this height".into(),
-            ));
+            return Err(TeeRegistryError::NoV1PolicyActiveAtHeight.into());
         }
         Ok(policy)
     }
 
     fn read_policy_bytes_v1(&self) -> Result<Vec<u8>> {
         let len = usize::try_from(self.active_v1_policy_len.read()?)
-            .map_err(|_| PrecompileError::Fatal("stored V1 policy length overflow".into()))?;
+            .map_err(|_| TeeRegistryError::StoredV1PolicyLengthOverflow)?;
         if len == 0 {
-            return Err(PrecompileError::Revert(
-                "V1 TEE policy is not installed".into(),
-            ));
+            return Err(TeeRegistryError::V1PolicyNotInstalled.into());
         }
         if len > MAX_TEE_POLICY_BYTES {
-            return Err(PrecompileError::Fatal(
-                "stored V1 policy exceeds the protocol cap".into(),
-            ));
+            return Err(TeeRegistryError::StoredV1PolicyExceedsCap.into());
         }
         let words = len.div_ceil(32);
         let mut canonical = Vec::with_capacity(words * 32);
         for index in 0..words {
-            let index = u32::try_from(index)
-                .map_err(|_| PrecompileError::Fatal("stored V1 policy index overflow".into()))?;
+            let index =
+                u32::try_from(index).map_err(|_| TeeRegistryError::StoredV1PolicyIndexOverflow)?;
             canonical.extend_from_slice(self.active_v1_policy_chunk.read(&index)?.as_slice());
         }
         canonical.truncate(len);
@@ -266,25 +229,19 @@ impl TeeRegistry<'_> {
     }
 
     fn read_staged_policy_bytes_v1(&self) -> Result<Vec<u8>> {
-        let len = usize::try_from(self.staged_v1_policy_len.read()?).map_err(|_| {
-            PrecompileError::Fatal("stored staged V1 policy length overflow".into())
-        })?;
+        let len = usize::try_from(self.staged_v1_policy_len.read()?)
+            .map_err(|_| TeeRegistryError::StoredStagedV1PolicyLengthOverflow)?;
         if len == 0 {
-            return Err(PrecompileError::Fatal(
-                "staged V1 policy bytes requested while empty".into(),
-            ));
+            return Err(TeeRegistryError::StagedV1PolicyEmptyRead.into());
         }
         if len > MAX_TEE_POLICY_BYTES {
-            return Err(PrecompileError::Fatal(
-                "stored staged V1 policy exceeds the protocol cap".into(),
-            ));
+            return Err(TeeRegistryError::StoredStagedV1PolicyExceedsCap.into());
         }
         let words = len.div_ceil(32);
         let mut canonical = Vec::with_capacity(words * 32);
         for index in 0..words {
-            let index = u32::try_from(index).map_err(|_| {
-                PrecompileError::Fatal("stored staged V1 policy index overflow".into())
-            })?;
+            let index = u32::try_from(index)
+                .map_err(|_| TeeRegistryError::StoredStagedV1PolicyIndexOverflow)?;
             canonical.extend_from_slice(self.staged_v1_policy_chunk.read(&index)?.as_slice());
         }
         canonical.truncate(len);
@@ -296,22 +253,16 @@ impl TeeRegistry<'_> {
         if policy.chain_id != expected_chain_id
             || policy.genesis_hash != self.storage.genesis_hash()?
         {
-            return Err(PrecompileError::Revert(
-                "initial V1 policy chain identity mismatch".into(),
-            ));
+            return Err(TeeRegistryError::InitialV1PolicyChainIdentityMismatch.into());
         }
         if !is_attestation_mode_allowed_for_chain_id(chain_id, policy.attestation_mode) {
-            return Err(PrecompileError::Revert(
-                "initial V1 policy attestation mode is not allowed for this chain".into(),
-            ));
+            return Err(TeeRegistryError::InitialV1PolicyAttestationModeDisallowed.into());
         }
         if policy.policy_version != 1
             || policy.activation_height != 1
             || !policy.predecessor_policy_hash.is_zero()
         {
-            return Err(PrecompileError::Revert(
-                "initial V1 policy must be version one at block one".into(),
-            ));
+            return Err(TeeRegistryError::InitialV1PolicyInvalidVersionOrHeight.into());
         }
 
         Ok(())
@@ -324,13 +275,11 @@ impl TeeRegistry<'_> {
         let expected_version = current
             .policy_version
             .checked_add(1)
-            .ok_or_else(|| PrecompileError::Revert("V1 policy version overflow".into()))?;
+            .ok_or(TeeRegistryError::V1PolicyVersionOverflow)?;
         Self::validate_successor_identity_v1(policy, &current)?;
         Self::validate_successor_lineage_v1(policy, expected_version, current_hash)?;
         if policy.activation_height <= self.storage.block_number()? {
-            return Err(PrecompileError::Revert(
-                "successor V1 policy activation must be in the future".into(),
-            ));
+            return Err(TeeRegistryError::SuccessorV1PolicyActivationNotInFuture.into());
         }
 
         Ok(())
@@ -343,30 +292,22 @@ impl TeeRegistry<'_> {
         block_number: u64,
     ) -> Result<()> {
         if staged_proposal_id != proposal_id {
-            return Err(PrecompileError::Revert(
-                "staged successor V1 policy belongs to another update".into(),
-            ));
+            return Err(TeeRegistryError::StagedSuccessorV1PolicyWrongProposal.into());
         }
         if block_number < policy.activation_height {
-            return Err(PrecompileError::Revert(
-                "successor V1 policy activation height has not been reached".into(),
-            ));
+            return Err(TeeRegistryError::SuccessorV1PolicyActivationHeightNotReached.into());
         }
         let current = self.active_policy_v1()?;
         let current_hash = current
             .policy_hash()
             .map_err(|error| revert_codec("invalid current V1 policy", error))?;
         if policy.attestation_mode != current.attestation_mode {
-            return Err(PrecompileError::Fatal(
-                "staged successor V1 policy changes attestation mode".into(),
-            ));
+            return Err(TeeRegistryError::StagedSuccessorV1PolicyChangesAttestationMode.into());
         }
         let same_chain =
             policy.chain_id == current.chain_id && policy.genesis_hash == current.genesis_hash;
         if !same_chain || !Self::policy_promotion_follows_v1(policy, &current, current_hash)? {
-            return Err(PrecompileError::Fatal(
-                "staged successor V1 policy no longer follows current policy".into(),
-            ));
+            return Err(TeeRegistryError::StagedSuccessorV1PolicyBrokenLineage.into());
         }
         Ok(())
     }
@@ -380,19 +321,15 @@ impl TeeRegistry<'_> {
                 == current
                     .policy_version
                     .checked_add(1)
-                    .ok_or_else(|| PrecompileError::Fatal("V1 policy version overflow".into()))?)
+                    .ok_or(TeeRegistryError::FatalV1PolicyVersionOverflow)?)
     }
 
     fn validate_successor_identity_v1(policy: &TeePolicyV1, current: &TeePolicyV1) -> Result<()> {
         if policy.chain_id != current.chain_id || policy.genesis_hash != current.genesis_hash {
-            return Err(PrecompileError::Revert(
-                "successor V1 policy chain identity mismatch".into(),
-            ));
+            return Err(TeeRegistryError::SuccessorV1PolicyChainIdentityMismatch.into());
         }
         if policy.attestation_mode != current.attestation_mode {
-            return Err(PrecompileError::Revert(
-                "successor V1 policy cannot change attestation mode".into(),
-            ));
+            return Err(TeeRegistryError::SuccessorV1PolicyCannotChangeAttestationMode.into());
         }
         Ok(())
     }
@@ -402,14 +339,10 @@ impl TeeRegistry<'_> {
         current_hash: B256,
     ) -> Result<()> {
         if policy.policy_version != expected_version {
-            return Err(PrecompileError::Revert(
-                "successor V1 policy version is not current plus one".into(),
-            ));
+            return Err(TeeRegistryError::SuccessorV1PolicyInvalidVersion.into());
         }
         if policy.predecessor_policy_hash != current_hash {
-            return Err(PrecompileError::Revert(
-                "successor V1 policy predecessor hash mismatch".into(),
-            ));
+            return Err(TeeRegistryError::SuccessorV1PolicyPredecessorHashMismatch.into());
         }
         Ok(())
     }

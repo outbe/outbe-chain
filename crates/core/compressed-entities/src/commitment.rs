@@ -76,7 +76,7 @@ pub fn derive_poseidon_digest(
             Fr::from_be_bytes_mod_order(owner.as_slice()),
             Fr::from(worldwide_day.value()),
         ])
-        .map_err(CommitmentError::Poseidon)?;
+        .map_err(CommitmentError::poseidon)?;
     Ok(B256::from(field_to_be32(digest)))
 }
 
@@ -185,7 +185,7 @@ pub(crate) fn poseidon(tag: u64, inputs: &[Fr]) -> Result<Fr, CommitmentError> {
     tagged.extend_from_slice(inputs);
     Poseidon2::new()
         .hash(&tagged)
-        .map_err(CommitmentError::Poseidon)
+        .map_err(CommitmentError::poseidon)
 }
 
 pub(crate) fn field_to_be32(value: Fr) -> [u8; 32] {
@@ -217,5 +217,9 @@ pub enum CommitmentError {
 impl CommitmentError {
     pub fn is_infrastructure(&self) -> bool {
         matches!(self, Self::Poseidon(error) if error.is_infrastructure())
+    }
+
+    pub(crate) fn poseidon(error: outbe_poseidon::PoseidonError) -> Self {
+        Self::Poseidon(error)
     }
 }

@@ -27,25 +27,17 @@ impl TributeContract<'_> {
         body: &outbe_primitives::tribute_encryption::EncryptedTributeV2,
     ) -> Result<()> {
         if !body.has_valid_encoding() {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "invalid encrypted Tribute encoding".into(),
-                ),
-            );
+            return Err(TributeError::InvalidEncryptedEncoding.into());
         }
         if body.context.chain_id != self.storage_handle().chain_id()? {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "Tribute chain identity mismatch".into(),
-                ),
-            );
+            return Err(TributeError::ChainIdentityMismatch.into());
         }
         let record = crate::record::from_encrypted(body.clone());
         let expected = outbe_compressed_entities::derive_poseidon_entity_id(
             record.owner,
             record.worldwide_day,
         )
-        .map_err(crate::errors::commitment_error)?;
+        .map_err(TributeError::entity_id_derivation)?;
         if record.owner.is_zero() || record.tribute_id != expected {
             return Err(TributeError::InvalidOwner.into());
         }
@@ -75,11 +67,11 @@ impl TributeContract<'_> {
         }
         self.bump_day_bucket_record(record, true)?;
         self.update_pre_admission_for_tribute(record, true)?;
-        let supply = self.total_supply.read()?.checked_add(1).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "Tribute total supply overflow during issuance".into(),
-            )
-        })?;
+        let supply = self
+            .total_supply
+            .read()?
+            .checked_add(1)
+            .ok_or(TributeError::TotalSupplyOverflowDuringIssuance)?;
         self.total_supply.write(supply)?;
         let (issuance, nominal) = match record.encrypted() {
             Some(body) => {
@@ -94,9 +86,9 @@ impl TributeContract<'_> {
                 )
             }
             None => {
-                let body = record.calculation_view().map_err(|error| {
-                    outbe_primitives::error::PrecompileError::Fatal(error.to_string())
-                })?;
+                let body = record
+                    .calculation_view()
+                    .map_err(TributeError::calculation_view_fatal)?;
                 let canonical = crate::repository::canonical_body(&body);
                 mint(self.storage_handle(), scope, BodyInput::Tribute(&canonical))?;
                 (

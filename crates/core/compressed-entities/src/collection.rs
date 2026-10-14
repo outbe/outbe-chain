@@ -141,6 +141,10 @@ pub enum CollectionError {
 }
 
 impl CollectionError {
+    pub(crate) fn hash(error: crate::CommitmentError) -> Self {
+        Self::Hash(error)
+    }
+
     pub fn is_infrastructure(&self) -> bool {
         matches!(self, Self::Hash(error) if error.is_infrastructure())
     }
@@ -172,7 +176,7 @@ pub fn collection_key(
     }
     pbytes(TAG_COLLECTION_KEY, &input)
         .map(CollectionKey)
-        .map_err(CollectionError::Hash)
+        .map_err(CollectionError::hash)
 }
 
 pub fn partition_collection_key(
@@ -194,7 +198,7 @@ pub(crate) fn tree_key_bytes(
     entity_id: WwdEntityId,
 ) -> Result<[u8; 32], CollectionError> {
     let collection = collection_key(domain, entity_id)?;
-    let identity = crate::identity_field(entity_id).map_err(CollectionError::Hash)?;
+    let identity = crate::identity_field(entity_id).map_err(CollectionError::hash)?;
     poseidon(
         TAG_KEY,
         &[
@@ -204,7 +208,7 @@ pub(crate) fn tree_key_bytes(
         ],
     )
     .map(field_to_be32)
-    .map_err(CollectionError::Hash)
+    .map_err(CollectionError::hash)
 }
 
 pub fn collection_root(
@@ -223,7 +227,7 @@ pub fn collection_root(
     )
     .map(field_to_be32)
     .map(B256::from)
-    .map_err(CollectionError::Hash)?;
+    .map_err(CollectionError::hash)?;
     if root == B256::ZERO {
         return Err(CollectionError::ZeroCollectionRoot);
     }
@@ -294,7 +298,7 @@ pub fn sealed_root(catalog_root: B256) -> Result<B256, CollectionError> {
     )
     .map(field_to_be32)
     .map(B256::from)
-    .map_err(CollectionError::Hash)?;
+    .map_err(CollectionError::hash)?;
     if root == B256::ZERO {
         return Err(CollectionError::ZeroSealedRoot);
     }

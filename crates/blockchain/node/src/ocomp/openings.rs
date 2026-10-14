@@ -49,11 +49,11 @@ where
         &fidelity_slots,
         limits,
     )
-    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    .map_err(RetentionError::source)?;
 
     let day = outbe_primitives::time::WorldwideDay::new(finalized.intent.wwd);
-    let oracle_slots = entry_price_slots(day, &subjects.reference_isos)
-        .map_err(|error| RetentionError::Source(error.to_string()))?;
+    let oracle_slots =
+        entry_price_slots(day, &subjects.reference_isos).map_err(RetentionError::source)?;
     let oracle_proof = source
         .account_proof(NOD_ADDRESS, &oracle_slots, block_hash)
         .map_err(|error| RetentionError::Source(format!("read public Nod price proof: {error}")))?;
@@ -64,7 +64,7 @@ where
         &oracle_slots,
         limits,
     )
-    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    .map_err(RetentionError::source)?;
 
     let openings = LysisOpeningsProofV1 {
         protocol_bundle_hash: finalized.intent.protocol_bundle_hash,
@@ -104,7 +104,7 @@ where
         outbe_primitives::time::WorldwideDay::new(candidate.wwd),
         &subjects.reference_isos,
     )
-    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    .map_err(RetentionError::source)?;
     let fidelity = build_verified_raw_contract_opening(
         state.as_ref(),
         candidate.state_root,
@@ -112,7 +112,7 @@ where
         &fidelity_slots,
         limits,
     )
-    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    .map_err(RetentionError::source)?;
     let oracle = build_verified_raw_contract_opening(
         state.as_ref(),
         candidate.state_root,
@@ -120,7 +120,7 @@ where
         &oracle_slots,
         limits,
     )
-    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    .map_err(RetentionError::source)?;
     let job_id = job_id_from_intent_id(
         candidate.intent_id,
         candidate.block_hash,
@@ -140,7 +140,7 @@ where
     };
     openings
         .validate_profile(limits)
-        .map_err(|error| RetentionError::Source(error.to_string()))?;
+        .map_err(RetentionError::source)?;
     Ok(openings)
 }
 
@@ -158,7 +158,7 @@ pub fn verify_lysis_openings(
 ) -> Result<(), RetentionError> {
     openings
         .validate_profile(limits)
-        .map_err(|error| RetentionError::Source(error.to_string()))?;
+        .map_err(RetentionError::source)?;
     let finalized_job_mismatch = openings.protocol_bundle_hash
         != finalized.intent.protocol_bundle_hash
         || openings.job_id != finalized.job_id
@@ -186,7 +186,7 @@ pub fn verify_lysis_openings(
         &supplied_fidelity_slots,
         limits,
     )
-    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    .map_err(RetentionError::source)?;
     let expected_fidelity_slots =
         ordered_league_snapshot_slots(finalized.intent.wwd, &expected_subjects.owners);
     if supplied_fidelity_slots != expected_fidelity_slots {
@@ -209,12 +209,12 @@ pub fn verify_lysis_openings(
         &supplied_oracle_slots,
         limits,
     )
-    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    .map_err(RetentionError::source)?;
     let expected_oracle_slots = entry_price_slots(
         outbe_primitives::time::WorldwideDay::new(finalized.intent.wwd),
         &expected_subjects.reference_isos,
     )
-    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    .map_err(RetentionError::source)?;
     if supplied_oracle_slots != expected_oracle_slots {
         return Err(RetentionError::Source(
             "Nod price opening does not match the canonical snapshot slot plan".to_owned(),

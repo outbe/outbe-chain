@@ -46,7 +46,7 @@ where
         let signer = *recovered.signer();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+            .map_err(BlockExecutionError::msg)?;
 
         // Witness validate-without-reexec: if Phase 1
         // was already committed in `apply_pre_execution_changes::apply_phase1_commit_in_preexec`,

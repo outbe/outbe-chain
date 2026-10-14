@@ -1,11 +1,13 @@
 //! Verify encrypted offer responses before the factory mutates chain state.
 
 use alloy_primitives::B256;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_tee::{
     protocol::{EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferStatus},
     tribute_v2::{self, EncryptedTributeOfferResultV2},
 };
+
+use crate::errors::TributeFactoryError;
 
 struct SignedOfferBatch {
     results: Vec<EncryptedTributeOfferResultV2>,
@@ -25,8 +27,8 @@ pub(crate) fn process_encrypted_offers(
             }),
         )
     })
-    .ok_or_else(|| fatal("tee_sidecar_unavailable"))?;
-    let response = response.map_err(|error| fatal(format!("tee_sidecar_unavailable: {error}")))?;
+    .ok_or(TributeFactoryError::TeeSidecarUnavailable)?;
+    let response = response.map_err(TributeFactoryError::sidecar_unavailable)?;
     match response {
         EnclaveResponse::EncryptedTributeOfferBatchV2 {
             results,
@@ -45,11 +47,9 @@ pub(crate) fn process_encrypted_offers(
         EnclaveResponse::Error { message } => {
             // The enclave returns deterministic offer refusals in `results`.
             // A batch-level error (including native hash failure) is local.
-            Err(PrecompileError::EnclaveUnavailable(format!(
-                "encrypted Tribute offer enclave: {message}"
-            )))
+            Err(TributeFactoryError::EncryptedOfferEnclaveError(message).into())
         }
-        _ => Err(fatal("unexpected encrypted Tribute offer response")),
+        _ => Err(TributeFactoryError::UnexpectedEncryptedOfferResponse.into()),
     }
 }
 
@@ -66,14 +66,12 @@ fn validate_response(
     } = batch;
     let expected = tribute_v2::encrypted_offer_inputs_hash(chain_id, offers);
     if inputs_hash != expected || results.len() != offers.len() {
-        return Err(fatal(
-            "tee_enclave_nondeterminism: encrypted offer input or count mismatch",
-        ));
+        return Err(TributeFactoryError::EncryptedOfferInputOrCountMismatch.into());
     }
     let preimage = tribute_v2::encrypted_offer_attestation_preimage(expected, &results)
-        .map_err(|error| fatal(error.to_string()))?;
+        .map_err(TributeFactoryError::fatal)?;
     tribute_v2::verify_attestation(key, &preimage, &tag)
-        .map_err(|error| fatal(format!("tee_offer_attestation_invalid: {error}")))?;
+        .map_err(TributeFactoryError::offer_attestation_invalid)?;
     for (offer, result) in offers.iter().zip(&results) {
         validate_record_context(chain_id, offer, result)?;
     }
@@ -87,14 +85,14 @@ fn validate_record_context(
 ) -> Result<()> {
     if matches!(result.status, TributeOfferStatus::Rejected { .. }) {
         if result.tribute.is_some() {
-            return Err(fatal("rejected encrypted offer carries a Tribute"));
+            return Err(TributeFactoryError::RejectedEncryptedOfferCarriesTribute.into());
         }
         return Ok(());
     }
     let body = result
         .tribute
         .as_ref()
-        .ok_or_else(|| fatal("created encrypted offer has no Tribute"))?;
+        .ok_or(TributeFactoryError::CreatedEncryptedOfferMissingTribute)?;
     let context = &body.context;
     let expected = (
         chain_id,
@@ -117,15 +115,9 @@ fn validate_record_context(
         context.offer_input_hash,
     );
     if !body.has_valid_encoding() || actual != expected {
-        return Err(fatal(
-            "tee_enclave_nondeterminism: encrypted Tribute context mismatch",
-        ));
+        return Err(TributeFactoryError::EncryptedTributeContextMismatch.into());
     }
     Ok(())
-}
-
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
 }
 
 #[cfg(test)]

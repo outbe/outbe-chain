@@ -102,11 +102,14 @@ pub(crate) fn parse_dkg_key_backend(
             let passphrase = cli
                 .bls_passphrase
                 .clone()
-                .ok_or_else(|| eyre::eyre!("--bls-key-backend encrypted requires --bls-passphrase or BLS_PASSPHRASE env var"))?;
+                .ok_or(crate::errors::CliError::MissingBlsPassphrase)?;
             Ok(outbe_consensus::bls::KeyBackend::Encrypted(passphrase))
         }
         "os-level" => Ok(outbe_consensus::bls::KeyBackend::OsLevel),
-        other => Err(eyre::eyre!("unknown BLS key backend: {other}")),
+        other => Err(crate::errors::CliError::UnknownBlsKeyBackend {
+            backend: other.to_owned(),
+        }
+        .into()),
     }
 }
 

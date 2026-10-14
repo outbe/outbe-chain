@@ -251,7 +251,7 @@ pub fn seal_tribute_offer_and_group_sig(
     let header_bytes = header.encode();
     let binding_bytes = network_binding
         .encode_canonical()
-        .map_err(|error| TeeError::SealedBlobBadNetworkBinding(error.to_string()))?;
+        .map_err(TeeError::sealed_blob_bad_network_binding)?;
     let mut aad = Vec::with_capacity(HEADER_LEN + NETWORK_BINDING_LEN);
     aad.extend_from_slice(&header_bytes);
     aad.extend_from_slice(&binding_bytes);
@@ -328,7 +328,7 @@ pub fn unseal_network_bound_payload(
     let binding_end = binding_start + NETWORK_BINDING_LEN;
     let binding_bytes = &blob[binding_start..binding_end];
     let network_binding = NetworkBindingV1::decode_canonical(binding_bytes)
-        .map_err(|error| TeeError::SealedBlobBadNetworkBinding(error.to_string()))?;
+        .map_err(TeeError::sealed_blob_bad_network_binding)?;
     let mut aad = Vec::with_capacity(HEADER_LEN + NETWORK_BINDING_LEN);
     aad.extend_from_slice(header_bytes);
     aad.extend_from_slice(binding_bytes);

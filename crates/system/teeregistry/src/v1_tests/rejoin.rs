@@ -275,9 +275,9 @@ fn expired_rejoin_fails_closed_on_corrupt_current_reverse_ownership() {
                 .write(&validator.initial.binding_id, B256::ZERO)
                 .unwrap();
 
-            assert!(matches!(
-                expired.submit(registry).unwrap_err(),
-                PrecompileError::Fatal(message) if message.contains("reverse ownership")
+            assert!(crate::errors::is_fatal_containing(
+                &expired.submit(registry).unwrap_err(),
+                "reverse ownership",
             ));
         });
     });

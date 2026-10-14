@@ -198,10 +198,12 @@ where
                                     "backfill: finalized block failed local execution; \
                                      finalized state diverged - failing fast"
                                 );
-                                return Err(eyre::eyre!(
-                                    "executor backfill cannot apply finalized block at \
-                                     height {height} digest {digest}: {error}"
-                                ));
+                                return Err(crate::errors::ExecutorError::BackfillApplyFailed {
+                                    height,
+                                    digest,
+                                    reason: error,
+                                }
+                                .into());
                             }
                         }
                     }
@@ -220,12 +222,11 @@ where
                             "backfill: marshal is missing a finalized block at or below its \
                              reported finalized height; archive is inconsistent - failing fast"
                         );
-                        return Err(eyre::eyre!(
-                            "executor backfill: marshal missing finalized block at height {h} \
-                             (<= reported finalized height {}); cannot reconstruct contiguous \
-                             execution state",
-                            last_consensus_finalized.get()
-                        ));
+                        return Err(crate::errors::ExecutorError::BackfillMissingBlock {
+                            height: h,
+                            consensus_height: last_consensus_finalized.get(),
+                        }
+                        .into());
                     }
                 }
             }
@@ -286,7 +287,7 @@ where
     async fn handle_message(&mut self, msg: Message) -> eyre::Result<()> {
         match msg {
             Message::ProjectionFailed(failure) => {
-                Err(eyre::eyre!("projection failed: {failure:?}"))
+                Err(crate::errors::ExecutorError::ProjectionFailed(failure).into())
             }
             Message::PendingParent(parent) => self.follow_consensus_parent(parent).await,
             Message::VerifyBlock(request) => {

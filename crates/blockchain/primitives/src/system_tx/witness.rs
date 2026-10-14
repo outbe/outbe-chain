@@ -24,7 +24,7 @@ pub fn validate_phase1_witness_against(
     let tx_hash = validate_phase1_envelope_shape(tx, expected_calldata, chain_id, block_number)?;
     let signer = tx
         .try_recover()
-        .map_err(|error| SystemTxError::Phase1SignatureRecovery(error.to_string()))?;
+        .map_err(SystemTxError::phase1_signature_recovery)?;
     if signer != expected_proposer {
         return Err(SystemTxError::Phase1SignerMismatch {
             expected: expected_proposer,
@@ -42,8 +42,8 @@ pub fn recover_phase1_proposer(
     block_number: u64,
 ) -> Result<(alloy_primitives::Address, Bytes), SystemTxError> {
     let mut tx_slice = tx_bytes;
-    let tx = TransactionSigned::decode_2718(&mut tx_slice)
-        .map_err(|error| SystemTxError::Phase1TxDecode(error.to_string()))?;
+    let tx =
+        TransactionSigned::decode_2718(&mut tx_slice).map_err(SystemTxError::phase1_tx_decode)?;
     if !tx_slice.is_empty() {
         return Err(SystemTxError::Phase1TxDecode(format!(
             "phase1 tx has {} trailing bytes after EIP-2718 envelope",
@@ -54,7 +54,7 @@ pub fn recover_phase1_proposer(
     validate_phase1_envelope_shape(&tx, calldata.as_ref(), chain_id, block_number)?;
     let proposer = tx
         .try_recover()
-        .map_err(|error| SystemTxError::Phase1SignatureRecovery(error.to_string()))?;
+        .map_err(SystemTxError::phase1_signature_recovery)?;
     Ok((proposer, calldata))
 }
 

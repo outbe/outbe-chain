@@ -1,5 +1,6 @@
 //! Exact saved transaction replay and canonical prepare finality.
 use super::*;
+use eyre::WrapErr;
 
 pub(super) async fn wait_for_finalized_prepare(
     rpc: &(impl Rpc + Sync),
@@ -20,9 +21,7 @@ pub(super) async fn wait_for_finalized_prepare(
             break height;
         }
         if started.elapsed() >= timeout {
-            eyre::bail!(
-                "prepare not finalized; saved transaction retained, rerun upgrade-provision"
-            );
+            return Err(TeeUpgradeNetworkError::PrepareNotFinalized.into());
         }
         if !sent {
             relay_saved_prepare(rpc, durable).await?;
@@ -44,7 +43,7 @@ async fn relay_saved_prepare(
         .await
     {
         Ok(hash) if hash.parse::<B256>()? == durable.transaction.transaction_hash => {}
-        Ok(_) => eyre::bail!("RPC returned a different prepare transaction hash"),
+        Ok(_) => return Err(TeeUpgradeNetworkError::PrepareTxHashMismatch.into()),
         Err(e) if e.to_string().to_ascii_lowercase().contains("already known") => {}
         Err(e) => return Err(e).wrap_err("send saved prepare transaction"),
     }
@@ -60,7 +59,7 @@ async fn require_successful_prepare_receipt(
         .await?
     {
         if json_hex_u64_field(&receipt, "status")? == 0 {
-            eyre::bail!("prepare transaction reverted; saved evidence retained for diagnosis");
+            return Err(TeeUpgradeNetworkError::PrepareTxReverted.into());
         }
     }
     Ok(())
@@ -73,9 +72,9 @@ fn decode_saved_context(
     if durable.transaction.relay != relay.address()
         || keccak256(&durable.transaction.raw_transaction) != durable.transaction.transaction_hash
     {
-        eyre::bail!("saved prepare transaction does not match this relay");
+        return Err(TeeUpgradeNetworkError::SavedPrepareRelayMismatch.into());
     }
     let context = DcapOnboardingContextV1::decode_canonical(&durable.context)
-        .map_err(|e| eyre::eyre!("saved context: {e:?}"))?;
+        .map_err(|e| TeeUpgradeNetworkError::DecodeSavedContext(format!("{e:?}")))?;
     Ok(context)
 }

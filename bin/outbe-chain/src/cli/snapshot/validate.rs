@@ -33,10 +33,9 @@ pub(crate) struct ValidateArgs {
     pub node_args: Vec<OsString>,
 }
 
-fn parse_signer(value: &str) -> Result<[u8; 33], String> {
+fn parse_signer(value: &str) -> Result<[u8; 33], crate::errors::CliError> {
     let mut public_key = [0_u8; 33];
-    hex::decode_to_slice(value.strip_prefix("0x").unwrap_or(value), &mut public_key)
-        .map_err(|error| format!("expected 33-byte compressed public key: {error}"))?;
+    hex::decode_to_slice(value.strip_prefix("0x").unwrap_or(value), &mut public_key)?;
     Ok(public_key)
 }
 
@@ -73,7 +72,10 @@ pub(super) fn run(args: ValidateArgs) -> eyre::Result<()> {
         .map(|_| parse_node_inputs(args.node_args.clone()));
     let report_paths = args.report.as_ref().map(|_| match parsed_node.as_ref() {
         Some(Ok(node)) => report_protected_paths(node),
-        Some(Err(error)) => Err(eyre::eyre!("{error:#}")),
+        Some(Err(error)) => Err(crate::errors::CliError::NodeInputParseFailure {
+            details: format!("{error:#}"),
+        }
+        .into()),
         None => Ok(Default::default()),
     });
     let mut report = validate_snapshot_with_node(
@@ -98,10 +100,9 @@ pub(super) fn run(args: ValidateArgs) -> eyre::Result<()> {
         write_report(&path, &report)?;
     }
     console_result?;
-    eyre::ensure!(
-        report.success(),
-        "snapshot validation contains failed or incomplete checks"
-    );
+    if !report.success() {
+        return Err(crate::errors::CliError::SnapshotValidationFailed.into());
+    }
     Ok(())
 }
 

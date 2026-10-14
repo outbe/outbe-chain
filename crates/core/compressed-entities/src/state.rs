@@ -233,6 +233,6 @@ impl<'storage> State<'storage> {
     }
 }
 
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
+fn fatal(message: impl core::fmt::Display) -> PrecompileError {
+    crate::errors::fatal_error(message)
 }

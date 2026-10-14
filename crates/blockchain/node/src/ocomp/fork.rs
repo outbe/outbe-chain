@@ -11,6 +11,8 @@ use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
 
+use crate::errors::OcompForkInstallError;
+
 /// `genesis.config` key in the selected chain manifest.
 pub const OCOMP_FORK_INSTALL_GENESIS_KEY: &str = "ocompForkInstallV1";
 pub const METADOSIS_STORAGE_LAYOUT_GENESIS_KEY: &str = "metadosisStorageLayoutV1";
@@ -43,23 +45,22 @@ pub fn load_ocomp_fork_install(
     else {
         return Ok(None);
     };
-    let manifest = parsed
-        .map_err(|error| eyre::eyre!("invalid genesis config OCOMP fork install: {error}"))?;
+    let manifest = parsed.map_err(OcompForkInstallError::invalid_genesis_config)?;
     let limits = poc_schema_limits();
     let install = OcompForkInstallV1::decode_canonical(&manifest.canonical_bytes, &limits)
-        .map_err(|error| eyre::eyre!("invalid canonical OCOMP fork install: {error}"))?;
+        .map_err(OcompForkInstallError::invalid_canonical_install)?;
     install
         .validate_for_chain(chain_spec.chain().id(), chain_spec.genesis_hash(), &limits)
-        .map_err(|error| eyre::eyre!("OCOMP fork install does not bind selected chain: {error}"))?;
+        .map_err(OcompForkInstallError::chain_binding_mismatch)?;
     let actual_hash = install
         .install_hash(&limits)
-        .map_err(|error| eyre::eyre!("hash OCOMP fork install: {error}"))?;
+        .map_err(OcompForkInstallError::hash_install)?;
     if actual_hash != manifest.install_hash {
-        eyre::bail!(
-            "OCOMP fork install hash mismatch: manifest {}, canonical {}",
-            manifest.install_hash,
-            actual_hash
-        );
+        return Err(OcompForkInstallError::InstallHashMismatch {
+            manifest: manifest.install_hash,
+            canonical: actual_hash,
+        }
+        .into());
     }
     Ok(Some(Arc::new(install)))
 }
@@ -72,12 +73,12 @@ pub fn require_genesis_active_ocomp_fork_install(
     if install.classification != OcompForkInstallClassification::Measurement
         || install.activation_height != GENESIS_ACTIVE_OCOMP_HEIGHT
     {
-        eyre::bail!(
-            "fresh-devnet OCOMP install must be Measurement at block {}, got {:?} at {}",
-            GENESIS_ACTIVE_OCOMP_HEIGHT,
-            install.classification,
-            install.activation_height
-        );
+        return Err(OcompForkInstallError::InvalidFreshDevnetInstall {
+            expected_height: GENESIS_ACTIVE_OCOMP_HEIGHT,
+            classification: install.classification,
+            actual_height: install.activation_height,
+        }
+        .into());
     }
     Ok(install)
 }
@@ -87,17 +88,18 @@ pub fn require_genesis_active_ocomp_fork_install(
 pub fn require_startup_ocomp_fork_install(
     chain_spec: &ChainSpec<OutbeHeader>,
 ) -> eyre::Result<Arc<OcompForkInstallV1>> {
-    let install = load_ocomp_fork_install(chain_spec)?.ok_or_else(|| {
-        eyre::eyre!("chain genesis config is missing required {OCOMP_FORK_INSTALL_GENESIS_KEY}")
-    })?;
+    let install =
+        load_ocomp_fork_install(chain_spec)?.ok_or(OcompForkInstallError::MissingGenesisKey {
+            key: OCOMP_FORK_INSTALL_GENESIS_KEY,
+        })?;
     match install.classification {
         OcompForkInstallClassification::Measurement => {
             if install.activation_height != GENESIS_ACTIVE_OCOMP_HEIGHT {
-                eyre::bail!(
-                    "fresh-devnet Measurement OCOMP install must activate at block {}, got {}",
-                    GENESIS_ACTIVE_OCOMP_HEIGHT,
-                    install.activation_height
-                );
+                return Err(OcompForkInstallError::InvalidMeasurementActivationHeight {
+                    expected_height: GENESIS_ACTIVE_OCOMP_HEIGHT,
+                    actual_height: install.activation_height,
+                }
+                .into());
             }
             require_fresh_devnet_metadosis_layout(chain_spec)?;
         }
@@ -121,16 +123,16 @@ fn require_ocomp_snapshot_retention_horizon(
         .extra_fields
         .get_deserialized::<u64>(EPOCH_LENGTH_BLOCKS_GENESIS_KEY)
         .transpose()
-        .map_err(|error| eyre::eyre!("invalid {EPOCH_LENGTH_BLOCKS_GENESIS_KEY}: {error}"))?
-        .ok_or_else(|| {
-            eyre::eyre!(
-                "OCOMP-enabled chain genesis config is missing required {EPOCH_LENGTH_BLOCKS_GENESIS_KEY}"
-            )
+        .map_err(|error| {
+            OcompForkInstallError::invalid_genesis_field(EPOCH_LENGTH_BLOCKS_GENESIS_KEY, error)
+        })?
+        .ok_or(OcompForkInstallError::MissingOcompGenesisKey {
+            key: EPOCH_LENGTH_BLOCKS_GENESIS_KEY,
         })?;
     let retained_epoch_span = outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS
         .checked_sub(1)
         .and_then(|epochs| epochs.checked_mul(epoch_length_blocks))
-        .ok_or_else(|| eyre::eyre!("OCOMP snapshot retention horizon overflow"))?;
+        .ok_or(OcompForkInstallError::SnapshotRetentionHorizonOverflow)?;
     let required_job_lifetime = OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS
         .checked_add(outbe_ocomp_protocol::state::RESULT_VOTE_MIN_FINALITY_DEPTH)
         .and_then(|blocks| {
@@ -141,21 +143,21 @@ fn require_ocomp_snapshot_retention_horizon(
                     .result_deadline_blocks,
             )
         })
-        .ok_or_else(|| eyre::eyre!("OCOMP maximum job lifetime overflow"))?;
+        .ok_or(OcompForkInstallError::MaximumJobLifetimeOverflow)?;
     if retained_epoch_span <= required_job_lifetime {
-        eyre::bail!(
-            "OCOMP snapshot retention horizon is too short: ({} - 1) * {} = {} must be strictly greater than {} + {} + {} = {}",
-            outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
+        return Err(OcompForkInstallError::SnapshotRetentionHorizonTooShort {
+            retain_epochs: outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
             epoch_length_blocks,
             retained_epoch_span,
-            OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS,
-            outbe_ocomp_protocol::state::RESULT_VOTE_MIN_FINALITY_DEPTH,
-            install
+            awaiting_finality_deadline_blocks: OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS,
+            min_finality_depth: outbe_ocomp_protocol::state::RESULT_VOTE_MIN_FINALITY_DEPTH,
+            result_deadline_blocks: install
                 .request_profile
                 .capacity_profile
                 .result_deadline_blocks,
             required_job_lifetime,
-        );
+        }
+        .into());
     }
     Ok(())
 }
@@ -164,20 +166,16 @@ fn require_fresh_devnet_metadosis_layout(chain_spec: &ChainSpec<OutbeHeader>) ->
     let extra = &chain_spec.genesis.config.extra_fields;
     let parsed = extra
         .get_deserialized::<GenesisMetadosisStorageLayoutV1>(METADOSIS_STORAGE_LAYOUT_GENESIS_KEY)
-        .ok_or_else(|| {
-            eyre::eyre!(
-                "fresh-devnet genesis config is missing required \
-                 {METADOSIS_STORAGE_LAYOUT_GENESIS_KEY}"
-            )
+        .ok_or(OcompForkInstallError::MissingFreshDevnetGenesisKey {
+            key: METADOSIS_STORAGE_LAYOUT_GENESIS_KEY,
         })?;
-    let manifest =
-        parsed.map_err(|error| eyre::eyre!("invalid genesis Metadosis storage layout: {error}"))?;
+    let manifest = parsed.map_err(OcompForkInstallError::invalid_metadosis_storage_layout)?;
     if manifest.layout_hash != METADOSIS_STORAGE_LAYOUT_V1_HASH {
-        eyre::bail!(
-            "fresh-devnet Metadosis storage layout hash mismatch: manifest {}, node {}",
-            manifest.layout_hash,
-            METADOSIS_STORAGE_LAYOUT_V1_HASH
-        );
+        return Err(OcompForkInstallError::MetadosisStorageLayoutHashMismatch {
+            manifest: manifest.layout_hash,
+            node: METADOSIS_STORAGE_LAYOUT_V1_HASH,
+        }
+        .into());
     }
     Ok(())
 }

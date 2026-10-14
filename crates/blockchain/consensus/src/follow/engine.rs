@@ -32,12 +32,13 @@ use commonware_consensus::types::{Epoch, Epocher, Height};
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_runtime::{BufferPooler, Clock, Metrics, Spawner, Storage};
 use commonware_storage::archive::Identifier;
-use eyre::{ensure, eyre, Result};
+use eyre::Result;
 use futures::FutureExt as _;
 use rand_commonware::{CryptoRng, Rng as RngCore};
 use tracing::info;
 
 use crate::digest::Digest;
+use crate::errors::FollowError;
 use crate::follow::driver::{self, Driver};
 use crate::follow::resolver;
 use crate::follow::upstream::{FinalizedSource, LocalBlockSource, TipSource};
@@ -183,13 +184,11 @@ async fn await_marshal_exit(
 ) -> Result<()> {
     // Await the actual task outcome even during shutdown. A stop request is
     // not permission to discard an already completed error or panic.
-    marshal
-        .await
-        .map_err(|error| eyre!("follower marshal exited: {error:?}"))?;
+    marshal.await.map_err(FollowError::marshal_exited)?;
     match stopped.now_or_never() {
         Some(Ok(_)) => Ok(()),
-        Some(Err(error)) => Err(eyre!("follower shutdown signal failed: {error:?}")),
-        None => Err(eyre!("follower marshal exited unexpectedly")),
+        Some(Err(error)) => Err(FollowError::shutdown_signal_failed(error).into()),
+        None => Err(FollowError::MarshalExitedUnexpectedly.into()),
     }
 }
 
@@ -219,20 +218,18 @@ where
     let recovered = source
         .get_finality_proof(recovered_height)
         .await
-        .ok_or_else(|| {
-            eyre!(
-                "upstream did not return recovered finalized height {}",
-                recovered_height.get()
-            )
+        .ok_or_else(|| FollowError::MissingRecoveredFinalizedHeight {
+            height: recovered_height.get(),
         })?;
     recovered.validate_envelope(recovered_height)?;
     let target_epoch = recovered.certified.finalization.proposal.round.epoch();
-    ensure!(
-        target_epoch >= anchor_epoch,
-        "recovered epoch {} precedes follower anchor epoch {}",
-        target_epoch.get(),
-        anchor_epoch.get(),
-    );
+    if target_epoch < anchor_epoch {
+        return Err(FollowError::RecoveredEpochPrecedesAnchor {
+            recovered: target_epoch.get(),
+            anchor: anchor_epoch.get(),
+        }
+        .into());
+    }
 
     let mut epoch = Epoch::new(anchor_epoch.get().saturating_add(1));
     while epoch <= target_epoch {
@@ -253,13 +250,17 @@ where
         let guard = chain.lock();
         guard.verify_finalization(target_epoch, &recovered.certified.finalization)?;
     }
-    ensure!(
-        epocher
-            .containing(recovered_height)
-            .is_some_and(|info| info.epoch() == target_epoch),
-        "reconstructed follower epoch does not contain recovered height {}",
-        recovered_height.get()
-    );
+    if !epocher
+        .containing(recovered_height)
+        .is_some_and(|info| info.epoch() == target_epoch)
+    {
+        return Err(
+            FollowError::ReconstructedEpochDoesNotContainRecoveredHeight {
+                height: recovered_height.get(),
+            }
+            .into(),
+        );
+    }
     Ok(target_epoch)
 }
 
@@ -289,17 +290,19 @@ fn validate_certified_envelope(
     certified: &crate::follow::upstream::CertifiedFinalizedBlock,
     expected_height: Height,
 ) -> Result<()> {
-    ensure!(
-        certified.block.number() == expected_height.get(),
-        "certified block reports height {}, expected {}",
-        certified.block.number(),
-        expected_height.get(),
-    );
-    ensure!(
-        certified.finalization.proposal.payload == certified.block.digest(),
-        "finalization payload differs from block at height {}",
-        expected_height.get(),
-    );
+    if certified.block.number() != expected_height.get() {
+        return Err(FollowError::CertifiedBlockHeightMismatch {
+            actual: certified.block.number(),
+            expected: expected_height.get(),
+        }
+        .into());
+    }
+    if certified.finalization.proposal.payload != certified.block.digest() {
+        return Err(FollowError::FinalizationPayloadMismatch {
+            height: expected_height.get(),
+        }
+        .into());
+    }
     Ok(())
 }
 
@@ -315,11 +318,8 @@ pub(super) fn authenticate_live_finalized(
     validate_certified_envelope(certified, expected_height)?;
     let routed_epoch = epocher
         .containing(expected_height)
-        .ok_or_else(|| {
-            eyre!(
-                "height {} is outside the observed follower epoch window",
-                expected_height.get()
-            )
+        .ok_or_else(|| FollowError::HeightOutsideEpochWindow {
+            height: expected_height.get(),
         })?
         .epoch();
     let admission = chain
@@ -330,10 +330,7 @@ pub(super) fn authenticate_live_finalized(
             AdmissionPolicy::Routed { routed_epoch },
         )
         .map_err(|error| {
-            eyre!(
-                "authenticated delivery at height {} rejected: {error}",
-                expected_height.get()
-            )
+            FollowError::authenticated_delivery_rejected(expected_height.get(), error)
         })?;
     if let Admission::BoundaryRegistered(epoch) = admission {
         epocher.observe_boundary(epoch, expected_height)?;
@@ -365,11 +362,8 @@ pub(super) fn authenticate_ancestor_proof(
         let height = Height::new(block.number());
         let routed_epoch = epocher
             .containing(height)
-            .ok_or_else(|| {
-                eyre!(
-                    "height {} is outside the observed follower epoch window",
-                    height.get()
-                )
+            .ok_or_else(|| FollowError::HeightOutsideEpochWindow {
+                height: height.get(),
             })?
             .epoch();
         let admission = chain
@@ -379,12 +373,7 @@ pub(super) fn authenticate_ancestor_proof(
                 block.header().extra_data().as_ref(),
                 AdmissionPolicy::Routed { routed_epoch },
             )
-            .map_err(|error| {
-                eyre!(
-                    "authenticated ancestor at height {} rejected: {error}",
-                    height.get()
-                )
-            })?;
+            .map_err(|error| FollowError::authenticated_ancestor_rejected(height.get(), error))?;
         if let Admission::BoundaryRegistered(boundary_epoch) = admission {
             epocher.observe_boundary(boundary_epoch, height)?;
         }
@@ -407,21 +396,19 @@ where
     let previous_epoch = Epoch::new(epoch.get().saturating_sub(1));
     let (earliest, latest) = epocher
         .next_boundary_window(previous_epoch)
-        .ok_or_else(|| {
-            eyre!(
-                "missing observed activation for prior epoch {}",
-                previous_epoch.get()
-            )
+        .ok_or_else(|| FollowError::MissingPriorEpochActivation {
+            epoch: previous_epoch.get(),
         })?;
     let scan_end = latest.get().min(recovered_height.get());
-    ensure!(
-        scan_end >= earliest.get(),
-        "recovered height {} precedes activation window {}..={} for epoch {}",
-        recovered_height.get(),
-        earliest.get(),
-        latest.get(),
-        epoch.get()
-    );
+    if scan_end < earliest.get() {
+        return Err(FollowError::RecoveredHeightPrecedesActivationWindow {
+            recovered: recovered_height.get(),
+            earliest: earliest.get(),
+            latest: latest.get(),
+            epoch: epoch.get(),
+        }
+        .into());
+    }
 
     let mut boundary = None;
     for height in (earliest.get()..=scan_end).rev() {
@@ -432,40 +419,34 @@ where
         let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
             candidate.target().header().extra_data().as_ref(),
         )
-        .map_err(|error| eyre!("failed to decode boundary candidate at {height}: {error:?}"))?;
+        .map_err(|error| FollowError::decode_boundary_candidate(height, error))?;
         if matches!(
             artifacts.consensus_header_artifact,
             Some(CHA::BoundaryOutcome(ref value)) if value.epoch == epoch.get()
         ) {
-            ensure!(
-                candidate.certified.finalization.proposal.round.epoch() == epoch,
-                "epoch {} boundary candidate at height {} is finalized by epoch {}",
-                epoch.get(),
-                height,
-                candidate
-                    .certified
-                    .finalization
-                    .proposal
-                    .round
-                    .epoch()
-                    .get()
-            );
+            let cert_epoch = candidate.certified.finalization.proposal.round.epoch();
+            if cert_epoch != epoch {
+                return Err(FollowError::BoundaryCandidateWrongEpoch {
+                    epoch: epoch.get(),
+                    height,
+                    cert_epoch: cert_epoch.get(),
+                }
+                .into());
+            }
             boundary = Some((Height::new(height), candidate));
             break;
         }
     }
-    let (boundary_height, boundary) = boundary.ok_or_else(|| {
-        eyre!(
-            "no BoundaryOutcome for epoch {} in authenticated search window {}..={}",
-            epoch.get(),
-            earliest.get(),
-            scan_end
-        )
-    })?;
+    let (boundary_height, boundary) =
+        boundary.ok_or_else(|| FollowError::MissingBoundaryOutcomeInWindow {
+            epoch: epoch.get(),
+            earliest: earliest.get(),
+            scan_end,
+        })?;
 
     let previous_activation = epocher
         .activation_height(previous_epoch)
-        .ok_or_else(|| eyre!("missing prior activation height"))?
+        .ok_or(FollowError::MissingPriorActivationHeight)?
         .get();
     let mut carrier_height = None;
     for height in (previous_activation..boundary_height.get()).rev() {
@@ -488,25 +469,22 @@ where
             break;
         }
     }
-    let carrier_height = carrier_height.ok_or_else(|| {
-        eyre!(
-            "no prior-epoch-authenticated CommitteePreAnnounce for epoch {} before boundary {}",
-            epoch.get(),
-            boundary_height.get()
-        )
-    })?;
+    let carrier_height =
+        carrier_height.ok_or_else(|| FollowError::MissingCommitteePreAnnounce {
+            epoch: epoch.get(),
+            boundary_height: boundary_height.get(),
+        })?;
 
     // The boundary block, finalized by the new committee itself, must carry
     // the outcome its carrier pre-announced. Live delivery does exactly this check.
     authenticate_ancestor_proof(chain, epocher, boundary_height, &boundary)?;
-    ensure!(
-        chain
-            .lock()
-            .highest_registered()
-            .is_some_and(|registered| registered >= epoch),
-        "epoch {} boundary block did not confirm its committee",
-        epoch.get()
-    );
+    if !chain
+        .lock()
+        .highest_registered()
+        .is_some_and(|registered| registered >= epoch)
+    {
+        return Err(FollowError::BoundaryDidNotConfirmCommittee { epoch: epoch.get() }.into());
+    }
     info!(
         epoch = epoch.get(),
         previous_epoch = previous_epoch.get(),
@@ -538,16 +516,13 @@ where
 
     let candidate = epocher
         .activation_height(anchor_epoch)
-        .ok_or_else(|| eyre!("epocher has no activation carrier for anchor epoch"))?;
+        .ok_or(FollowError::NoAnchorActivationCarrier)?;
 
     let certified = upstream
         .get_finality_proof(candidate)
         .await
-        .ok_or_else(|| {
-            eyre!(
-                "upstream did not return the anchor epoch's boundary block at height {candidate}; \
-                 cannot bootstrap the committee chain"
-            )
+        .ok_or_else(|| FollowError::MissingAnchorBoundaryBlock {
+            height: candidate.get(),
         })?;
 
     certified.validate_envelope(candidate)?;
@@ -555,12 +530,13 @@ where
         &certified.certified.finalization,
         certified.target().header().extra_data().as_ref(),
     )?;
-    ensure!(
-        registered == anchor_epoch,
-        "anchor carrier registered epoch {}, expected {}",
-        registered.get(),
-        anchor_epoch.get()
-    );
+    if registered != anchor_epoch {
+        return Err(FollowError::AnchorCarrierEpochMismatch {
+            registered: registered.get(),
+            expected: anchor_epoch.get(),
+        }
+        .into());
+    }
     epocher.observe_boundary(anchor_epoch, candidate)?;
 
     info!(

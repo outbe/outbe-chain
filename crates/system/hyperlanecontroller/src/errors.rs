@@ -1,7 +1,10 @@
+//! Typed error definitions for the HyperlaneController system precompile.
+
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
+/// Represents errors returned by the HyperlaneController runtime.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum HyperlaneControllerError {

@@ -14,7 +14,8 @@ use tracing::debug;
 
 use super::{Mailbox, State};
 use crate::{
-    block::ConsensusBlock, config, finalization::util::extract_header_artifact_from_block,
+    block::ConsensusBlock, config, errors::DkgError,
+    finalization::util::extract_header_artifact_from_block,
 };
 
 /// Boxed, `Send` future returned by [`AncestryReader`] lookups. Mirrors the
@@ -56,6 +57,10 @@ impl BoundaryRequirementError {
     pub fn is_unavailable(&self) -> bool {
         matches!(self, Self::Unavailable(_))
     }
+
+    pub(crate) fn unavailable(message: impl fmt::Display) -> Self {
+        Self::Unavailable(message.to_string())
+    }
 }
 
 impl fmt::Display for BoundaryRequirementError {
@@ -76,8 +81,12 @@ fn boundary_scan_floor(pending: &DkgBoundaryArtifact) -> u64 {
     }
 }
 
-fn block_boundary_artifact(block: &ConsensusBlock) -> Result<Option<DkgBoundaryArtifact>, String> {
-    match extract_header_artifact_from_block(block)? {
+fn block_boundary_artifact(
+    block: &ConsensusBlock,
+) -> Result<Option<DkgBoundaryArtifact>, BoundaryRequirementError> {
+    match extract_header_artifact_from_block(block)
+        .map_err(BoundaryRequirementError::unavailable)?
+    {
         Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) => Ok(Some(boundary)),
         _ => Ok(None),
     }
@@ -119,8 +128,8 @@ struct BoundaryScanQuery<'a> {
 
 impl Mailbox {
     pub fn boundary_artifact_hash(artifact: &DkgBoundaryArtifact) -> Result<B256> {
-        let bytes = encode_boundary_artifact(artifact)
-            .map_err(|error| eyre::eyre!("failed to encode DKG boundary artifact: {error}"))?;
+        let bytes =
+            encode_boundary_artifact(artifact).map_err(DkgError::encode_boundary_artifact)?;
         Ok(keccak256(bytes.as_ref()))
     }
 
@@ -227,8 +236,8 @@ impl Mailbox {
             return Ok(BoundaryRequirement::MustEmit);
         };
         let original_parent_hash = parent.block_hash();
-        let pending_hash = Self::boundary_artifact_hash(pending)
-            .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
+        let pending_hash =
+            Self::boundary_artifact_hash(pending).map_err(BoundaryRequirementError::unavailable)?;
 
         if let Some(status) = self.cached_boundary_status(original_parent_hash, pending_hash) {
             return Self::cached_boundary_requirement(status, pending, pending_hash);
@@ -293,11 +302,9 @@ impl Mailbox {
             pending_hash,
             original_parent_hash,
         } = *query;
-        if let Some(boundary) =
-            block_boundary_artifact(current).map_err(BoundaryRequirementError::Unavailable)?
-        {
+        if let Some(boundary) = block_boundary_artifact(current)? {
             let boundary_hash = Self::boundary_artifact_hash(&boundary)
-                .map_err(|error| BoundaryRequirementError::Unavailable(error.to_string()))?;
+                .map_err(BoundaryRequirementError::unavailable)?;
             if boundary_hash == pending_hash && boundary == *pending {
                 let committed = CommittedDkgBoundary {
                     artifact: boundary,

@@ -204,11 +204,14 @@ impl MetadosisMutationFrameState {
         block_number: u64,
     ) -> outbe_primitives::error::Result<()> {
         if self.active.is_some() || !self.entitlements.consume(purpose, binding) {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Metadosis mutation purpose is not entitled for this EVM call: \
-                     purpose={purpose:?} binding={binding:#x} remaining={:?}",
-                self.entitlements
-            )));
+            return Err(
+                crate::errors::CtxStorageError::MetadosisMutationPurposeNotEntitled {
+                    purpose,
+                    binding,
+                    remaining: self.entitlements,
+                }
+                .into(),
+            );
         }
         self.active = Some((purpose, binding, chain_id, block_number));
         Ok(())
@@ -220,14 +223,12 @@ impl MetadosisMutationFrameState {
         binding: B256,
     ) -> outbe_primitives::error::Result<()> {
         let Some((active_purpose, active_binding, _, _)) = self.active.as_ref().copied() else {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "Metadosis mutation frame is not active".into(),
-            ));
+            return Err(crate::errors::CtxStorageError::MetadosisMutationFrameNotActive.into());
         };
         if active_purpose != purpose || active_binding != binding {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "Metadosis mutation frame identity mismatch".into(),
-            ));
+            return Err(
+                crate::errors::CtxStorageError::MetadosisMutationFrameIdentityMismatch.into(),
+            );
         }
         self.active = None;
         Ok(())
@@ -245,9 +246,7 @@ impl LysisActivationLease {
 
     fn begin(&mut self, activation_call_id: B256) -> outbe_primitives::error::Result<()> {
         if !self.entitled || self.attempted || self.active_call_id.is_some() {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "certified Lysis activation frame is not entitled for this EVM call".into(),
-            ));
+            return Err(crate::errors::CtxStorageError::LysisActivationFrameNotEntitled.into());
         }
         self.attempted = true;
         self.active_call_id = Some(activation_call_id);
@@ -260,9 +259,9 @@ impl LysisActivationLease {
         _completed: bool,
     ) -> outbe_primitives::error::Result<()> {
         if self.active_call_id != Some(activation_call_id) {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "certified Lysis activation frame identity mismatch".into(),
-            ));
+            return Err(
+                crate::errors::CtxStorageError::LysisActivationFrameIdentityMismatch.into(),
+            );
         }
         self.active_call_id = None;
         Ok(())
@@ -337,9 +336,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         if ContextTr::cfg(self.ctx).chain_id() != chain_id
             || ContextTr::block(self.ctx).number().saturating_to::<u64>() != block_number
         {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "Metadosis mutation frame execution scope mismatch".into(),
-            ));
+            return Err(crate::errors::CtxStorageError::MetadosisMutationFrameScopeMismatch.into());
         }
         self.dispatch_frames
             .metadosis
@@ -396,21 +393,21 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         let hash = internals(self.ctx)
             .db_mut()
             .block_hash(number)
-            .map_err(|e| PrecompileError::Storage(format!("block_hash({number}) failed: {e}")))?;
+            .map_err(|e| crate::errors::CtxStorageError::block_hash_failed(number, e))?;
         Ok((!hash.is_zero()).then_some(hash))
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         internals(self.ctx)
             .set_code(address, code)
-            .map_err(|e| PrecompileError::Storage(e.to_string()))
+            .map_err(crate::errors::CtxStorageError::storage)
     }
 
     fn account_info(&mut self, address: Address) -> Result<AccountInfo> {
         let mut internals = internals(self.ctx);
         let account = internals
             .load_account_code(address)
-            .map_err(|e| PrecompileError::Storage(e.to_string()))?;
+            .map_err(crate::errors::CtxStorageError::storage)?;
         Ok(account.data.account().info.clone())
     }
 
@@ -421,7 +418,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         let mut internals = internals(self.ctx);
         let value = internals
             .sload(address, key)
-            .map_err(|e| PrecompileError::Storage(e.to_string()))?;
+            .map_err(crate::errors::CtxStorageError::storage)?;
         Ok(value.data)
     }
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
@@ -431,7 +428,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                 U256::from(45),
             )
             .map(|value| value.data)
-            .map_err(|e| PrecompileError::Storage(e.to_string()))
+            .map_err(crate::errors::CtxStorageError::storage)
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
@@ -445,7 +442,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         let mut internals = internals(self.ctx);
         internals
             .sstore(address, key, value)
-            .map_err(|e| PrecompileError::Storage(e.to_string()))?;
+            .map_err(crate::errors::CtxStorageError::storage)?;
         Ok(())
     }
 
@@ -504,10 +501,11 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         }
         match internals(self.ctx).transfer(from, to, amount) {
             Ok(None) => Ok(()),
-            Ok(Some(_transfer_error)) => Err(PrecompileError::Fatal(format!(
-                "insufficient balance for transfer from {from}: needs {amount}"
-            ))),
-            Err(e) => Err(PrecompileError::Storage(format!("transfer failed: {e}"))),
+            Ok(Some(_transfer_error)) => Err(
+                crate::errors::CtxStorageError::InsufficientBalanceForTransfer { from, amount }
+                    .into(),
+            ),
+            Err(e) => Err(crate::errors::CtxStorageError::transfer_failed(e)),
         }
     }
 
@@ -517,7 +515,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         }
         internals(self.ctx)
             .balance_incr(address, amount)
-            .map_err(|e| PrecompileError::Storage(format!("balance_incr failed: {e}")))?;
+            .map_err(crate::errors::CtxStorageError::balance_incr_failed)?;
         Ok(())
     }
 
@@ -529,18 +527,20 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             let mut internals = internals(self.ctx);
             let account = internals
                 .load_account(address)
-                .map_err(|e| PrecompileError::Storage(format!("burn account load failed: {e}")))?;
+                .map_err(crate::errors::CtxStorageError::burn_account_load_failed)?;
             account.data.info.balance
         };
-        let new_balance = balance.checked_sub(amount).ok_or_else(|| {
-            PrecompileError::Fatal(format!(
-                "insufficient balance for burn from {address}: has {balance} but needs {amount}"
-            ))
-        })?;
+        let new_balance = balance.checked_sub(amount).ok_or(
+            crate::errors::CtxStorageError::InsufficientBalanceForBurn {
+                address,
+                balance,
+                amount,
+            },
+        )?;
         let mut internals = internals(self.ctx);
         internals
             .set_balance(address, new_balance)
-            .map_err(|e| PrecompileError::Storage(format!("burn set_balance failed: {e}")))?;
+            .map_err(crate::errors::CtxStorageError::burn_set_balance_failed)?;
         Ok(())
     }
 

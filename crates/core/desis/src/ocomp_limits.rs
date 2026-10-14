@@ -6,10 +6,11 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::receipts::desis_request_brief_hash;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api::AuctionBrief;
+use crate::errors::DesisError;
 
 /// Apply the day's immutable `desis_limit_minor` and return the canonical hash
 /// committed by `RequestLimitSplitReceiptV1`. A red day briefs no limit, but
@@ -32,7 +33,7 @@ pub fn apply_request_desis_limit(
         desis_limit_minor,
         logical_anchor,
     )
-    .map_err(|error| PrecompileError::Revert(format!("invalid OCOMP Desis brief hash: {error}")))?;
+    .map_err(DesisError::invalid_ocomp_brief_hash)?;
     // Same door as the settlement paths. Only the overflow policy differs,
     // because this receipt commits a hash a rejection could not fill.
     crate::api::dispatch_auction_brief(

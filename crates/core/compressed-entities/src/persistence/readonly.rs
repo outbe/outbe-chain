@@ -83,7 +83,7 @@ impl CeMdbxReadOnly {
     ) -> Result<crate::staging::AuthenticatedCatalogView, PersistenceError> {
         let snapshot = self.open_snapshot()?;
         crate::staging::AuthenticatedCatalogView::open(snapshot, required)
-            .map_err(|error| PersistenceError::Staging(error.to_string()))
+            .map_err(PersistenceError::staging)
     }
 
     fn open_snapshot(&self) -> Result<Box<dyn FinalizedTreeSnapshot>, PersistenceError> {

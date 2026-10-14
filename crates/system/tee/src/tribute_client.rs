@@ -12,8 +12,8 @@ use crate::{
 pub fn read_tribute_amounts(
     tributes: &[EncryptedTributeV2],
 ) -> Result<Vec<TributeAmountsV2>, TransportError> {
-    let inputs_hash = tribute_v2::tribute_read_inputs_hash(tributes)
-        .map_err(|error| TransportError::Codec(error.to_string()))?;
+    let inputs_hash =
+        tribute_v2::tribute_read_inputs_hash(tributes).map_err(TransportError::codec)?;
     let (attestation_pub, response) =
         request_local_enclave(EnclaveRequest::ReadTributeAmountsV2 {
             tributes: tributes.to_vec(),
@@ -30,7 +30,7 @@ pub fn read_tribute_amounts(
                 ));
             }
             let preimage = tribute_v2::tribute_read_attestation_preimage(inputs_hash, &amounts)
-                .map_err(|error| TransportError::Codec(error.to_string()))?;
+                .map_err(TransportError::codec)?;
             tribute_v2::verify_attestation(&attestation_pub, &preimage, &attestation_tag)?;
             Ok(amounts)
         }

@@ -11,11 +11,9 @@ use std::{
 };
 
 use alloy_primitives::{B256, U256};
-use outbe_primitives::{
-    addresses::UPDATE_ADDRESS,
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-};
+use outbe_primitives::{addresses::UPDATE_ADDRESS, error::Result, storage::StorageHandle};
+
+use crate::errors::{CallContextError, CallContextProviderError};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveContextKindV1 {
@@ -46,9 +44,7 @@ impl EnclaveCallContextV1 {
         let version = storage.sload(UPDATE_ADDRESS, U256::ZERO)?;
         let timestamp = storage.timestamp()?;
         if version > U256::from(u32::MAX) || timestamp > U256::from(u64::MAX) {
-            return Err(PrecompileError::Fatal(
-                "enclave call context integer overflow".into(),
-            ));
+            return Err(CallContextError::IntegerOverflow.into());
         }
         Ok(Self {
             kind: EnclaveContextKindV1::Execution,
@@ -94,25 +90,28 @@ impl Drop for ContextScope {
     }
 }
 
-type ContextProvider = dyn Fn() -> std::result::Result<EnclaveCallContextV1, String> + Send + Sync;
+type ContextProvider =
+    dyn Fn() -> std::result::Result<EnclaveCallContextV1, CallContextProviderError> + Send + Sync;
 static PROVIDER: OnceLock<Arc<ContextProvider>> = OnceLock::new();
 static SNAPSHOT: RwLock<Option<EnclaveCallContextV1>> = RwLock::new(None);
 
 /// CLI/startup snapshot when no live node provider is installed. This never
 /// overrides an execution scope or the node's exact snapshot resolver.
-pub fn set_snapshot(context: EnclaveCallContextV1) -> std::result::Result<(), &'static str> {
+pub fn set_snapshot(context: EnclaveCallContextV1) -> std::result::Result<(), CallContextError> {
     *SNAPSHOT
         .write()
-        .map_err(|_| "enclave snapshot lock poisoned")? = Some(context);
+        .map_err(CallContextError::snapshot_lock_poisoned)? = Some(context);
     Ok(())
 }
 
 /// Install the node's read-only snapshot resolver once. Execution scopes take
 /// precedence, so eth_call/historical re-execution never inherit the live tip.
-pub fn install_provider(provider: Arc<ContextProvider>) -> std::result::Result<(), &'static str> {
+pub fn install_provider(
+    provider: Arc<ContextProvider>,
+) -> std::result::Result<(), CallContextError> {
     PROVIDER
         .set(provider)
-        .map_err(|_| "enclave context provider already installed")
+        .map_err(CallContextError::provider_already_installed)
 }
 
 pub fn resolve() -> std::result::Result<EnclaveCallContextV1, crate::TransportError> {
@@ -123,9 +122,7 @@ pub fn resolve() -> std::result::Result<EnclaveCallContextV1, crate::TransportEr
         Some(provider) => provider().map_err(crate::TransportError::Unavailable),
         None => Ok(SNAPSHOT
             .read()
-            .map_err(|_| {
-                crate::TransportError::Unavailable("enclave snapshot lock poisoned".into())
-            })?
+            .map_err(crate::TransportError::snapshot_lock_poisoned)?
             .unwrap_or_default()),
     }
 }

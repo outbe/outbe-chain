@@ -131,7 +131,7 @@ fn apply_expiry_evidence(
     let live_intent_id = expiry.intent_id;
     state
         .apply(JobFsmCommand::Expire { at_height, at_time })
-        .map_err(|error| storage_corruption_message(error.to_string()))?;
+        .map_err(storage_corruption_message)?;
     let terminal =
         state.terminal_attempts().last().copied().ok_or_else(|| {
             storage_corruption_message("OCOMP expiry produced no terminal evidence")

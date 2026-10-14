@@ -121,16 +121,13 @@ pub(super) fn validate_tribute_transition(
     }
     let current = match old {
         Some(body) => {
-            let stored = body
-                .stored_body()
-                .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let stored = body.stored_body()?;
             let commitment = body_commitment(
                 ACTIVE_COMMITMENT_SCHEME,
                 stored.schema_version(),
                 identity,
                 stored.payload(),
-            )
-            .map_err(ProjectionError::commitment)?;
+            )?;
             B256::from(*commitment.as_bytes())
         }
         None => B256::ZERO,
@@ -149,15 +146,13 @@ pub(super) fn validate_nod_transition(
     }
     let current = match old {
         Some(body) => {
-            let payload = encode_nod_item_v2(&outbe_nod::canonical_item(body))
-                .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let payload = encode_nod_item_v2(&outbe_nod::canonical_item(body))?;
             let commitment = body_commitment(
                 ACTIVE_COMMITMENT_SCHEME,
                 outbe_compressed_entities::NOD_BODY_SCHEMA_V2,
                 identity,
                 &payload,
-            )
-            .map_err(ProjectionError::commitment)?;
+            )?;
             B256::from(*commitment.as_bytes())
         }
         None => B256::ZERO,
@@ -176,11 +171,9 @@ pub(super) fn validate_bucket_transition(
     }
     let current = match old {
         Some(body) => {
-            let payload = encode_nod_bucket_v1(&outbe_nod::canonical_bucket(body))
-                .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let payload = encode_nod_bucket_v1(&outbe_nod::canonical_bucket(body))?;
             let commitment =
-                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
-                    .map_err(ProjectionError::commitment)?;
+                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)?;
             B256::from(*commitment.as_bytes())
         }
         None => B256::ZERO,
@@ -248,11 +241,9 @@ fn validate_gem_transition<T>(
     }
     let current = match old {
         Some(body) => {
-            let payload = encode(body)
-                .map_err(|error| ProjectionError::CorruptProjectedBody(error.to_string()))?;
+            let payload = encode(body)?;
             let commitment =
-                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)
-                    .map_err(ProjectionError::commitment)?;
+                body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, identity, &payload)?;
             B256::from(*commitment.as_bytes())
         }
         None => B256::ZERO,

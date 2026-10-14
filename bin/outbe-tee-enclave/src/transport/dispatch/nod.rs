@@ -1,6 +1,10 @@
 //! Network-key-only encrypted NOD commands.
 use super::tribute::{resident_chain_id, response};
-use crate::{errors::TeeError, keys::EnclaveKeys, transport::SharedTributeOfferKey};
+use crate::{
+    errors::{EnclaveResult, TeeError, TransportDispatchError},
+    keys::EnclaveKeys,
+    transport::SharedTributeOfferKey,
+};
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
     nod_materialization::ProtectedNodMaterializationV2, profile::poc_schema_limits,
@@ -17,13 +21,15 @@ pub(super) fn prepare(
     chain: B256,
     request: &PrepareEncryptedNodsRequestV2,
 ) -> EnclaveResponse {
-    response((|| {
-        let key = offer.get().ok_or("no resident network key")?;
+    response((|| -> EnclaveResult<EnclaveResponse> {
+        let key = offer
+            .get()
+            .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
         if request.authority.chain_id != resident_chain_id(chain)? {
-            return Err("NOD materialization chain mismatch");
+            return Err(TransportDispatchError::NodMaterializationChainMismatch.into());
         }
         let inputs = nod_materialization::hash(b"outbe/nod/prepare-inputs/v2", request)
-            .map_err(|_| "invalid NOD prepare inputs")?;
+            .map_err(|_| TransportDispatchError::InvalidNodPrepareInputs)?;
         let carrier = match crate::nod_materialization::prepare(key.secret(), request) {
             Ok(carrier) => carrier,
             Err(error) => return materialization_failure(keys, inputs, error),
@@ -41,12 +47,12 @@ pub(super) fn prepare(
                     format!("{what}: {actual} > {limit}"),
                 );
             }
-            Err(_) => return Err("invalid protected NOD carrier"),
+            Err(_) => return Err(TransportDispatchError::InvalidProtectedNodCarrier.into()),
         };
 
         let preimage =
             nod_materialization::attestation(b"outbe/nod/prepare-result/v2", inputs, &carrier)
-                .map_err(|_| "invalid NOD prepare result")?;
+                .map_err(|_| TransportDispatchError::InvalidNodPrepareResult)?;
         Ok(EnclaveResponse::EncryptedNodsPreparedV2 {
             carrier,
             inputs_canonical_hash: inputs,
@@ -61,13 +67,15 @@ pub(super) fn open(
     authority: &NodMaterializationAuthorityV2,
     carrier: &[u8],
 ) -> EnclaveResponse {
-    response((|| {
-        let key = offer.get().ok_or("no resident network key")?;
+    response((|| -> EnclaveResult<EnclaveResponse> {
+        let key = offer
+            .get()
+            .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
         if authority.chain_id != resident_chain_id(chain)? {
-            return Err("NOD materialization chain mismatch");
+            return Err(TransportDispatchError::NodMaterializationChainMismatch.into());
         }
         let inputs = nod_materialization::hash(b"outbe/nod/open-inputs/v2", &(authority, carrier))
-            .map_err(|_| "invalid NOD open inputs")?;
+            .map_err(|_| TransportDispatchError::InvalidNodOpenInputs)?;
         let decoded =
             match ProtectedNodMaterializationV2::decode_canonical(carrier, &poc_schema_limits()) {
                 Ok(decoded) => decoded,
@@ -75,7 +83,7 @@ pub(super) fn open(
                     return materialization_failure(
                         keys,
                         inputs,
-                        TeeError::TributeOfferReject(error.to_string()),
+                        TeeError::tribute_offer_reject(error),
                     );
                 }
             };
@@ -85,7 +93,7 @@ pub(super) fn open(
         };
 
         let preimage = nod_materialization::attestation(b"outbe/nod/open-result/v2", inputs, &nods)
-            .map_err(|_| "invalid NOD open result")?;
+            .map_err(|_| TransportDispatchError::InvalidNodOpenResult)?;
         Ok(EnclaveResponse::EncryptedNodsOpenedV2 {
             nods,
             inputs_canonical_hash: inputs,
@@ -99,35 +107,38 @@ pub(super) fn mine(
     chain: B256,
     request: &MineEncryptedNodRequestV2,
 ) -> EnclaveResponse {
-    response((|| {
-        let key = offer.get().ok_or("no resident network key")?;
+    response((|| -> EnclaveResult<EnclaveResponse> {
+        let key = offer
+            .get()
+            .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
         if request.nod.terms.chain_id != resident_chain_id(chain)? {
-            return Err("NOD mine chain mismatch");
+            return Err(TransportDispatchError::NodMineChainMismatch.into());
         }
         let gratis = crate::gratis::derive_gratis_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| "Gratis key unavailable")?;
+            .map_err(|_| TransportDispatchError::GratisKeyUnavailable)?;
         let fidelity = crate::fidelity::derive_fidelity_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| "Fidelity key unavailable")?;
+            .map_err(|_| TransportDispatchError::FidelityKeyUnavailable)?;
         let mut result = match crate::nod_mine::apply(key.secret(), &gratis, &fidelity, request) {
             Ok(result) => result,
             Err(TeeError::TributeOfferReject(reason)) => {
-                let inputs =
-                    nod_mine::inputs_hash(request).map_err(|_| "invalid NOD mint inputs")?;
+                let inputs = nod_mine::inputs_hash(request)
+                    .map_err(|_| TransportDispatchError::InvalidNodMintInputs)?;
                 let preimage = nod_materialization::attestation(
                     b"outbe/nod/mint-rejected/v2",
                     inputs,
                     &reason,
                 )
-                .map_err(|_| "invalid NOD rejection result")?;
+                .map_err(|_| TransportDispatchError::InvalidNodRejectionResult)?;
                 return Ok(EnclaveResponse::EncryptedNodMintRejectedV2 {
                     reason,
                     inputs_canonical_hash: inputs,
                     attestation_tag: keys.sign_attestation(&preimage).to_vec(),
                 });
             }
-            Err(_) => return Err("encrypted NOD mint failed"),
+            Err(_) => return Err(TransportDispatchError::EncryptedNodMintFailed.into()),
         };
-        let preimage = nod_mine::result_preimage(&result).map_err(|_| "invalid NOD mine result")?;
+        let preimage = nod_mine::result_preimage(&result)
+            .map_err(|_| TransportDispatchError::InvalidNodMineResult)?;
         result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
         Ok(EnclaveResponse::EncryptedNodMinedV2 {
             result: Box::new(result),
@@ -145,13 +156,14 @@ pub(super) fn read_amount(
             message: "no resident network key".into(),
         };
     };
-    response((|| {
+    response((|| -> EnclaveResult<EnclaveResponse> {
         if nod.terms.chain_id != resident_chain_id(chain)? {
-            return Err("NOD read chain mismatch");
+            return Err(TransportDispatchError::NodReadChainMismatch.into());
         }
         let amount = crate::nod_encryption::decrypt_nod(key.secret(), nod)
-            .map_err(|_| "invalid encrypted NOD")?;
-        let inputs = nod_mine::nod_read_hash(nod).map_err(|_| "invalid NOD read inputs")?;
+            .map_err(|_| TransportDispatchError::InvalidEncryptedNod)?;
+        let inputs = nod_mine::nod_read_hash(nod)
+            .map_err(|_| TransportDispatchError::InvalidNodReadInputs)?;
         let preimage = nod_mine::nod_read_preimage(inputs, amount);
         Ok(EnclaveResponse::NodAmountReadV2 {
             amount,
@@ -179,21 +191,23 @@ pub(super) fn create_for_test(
         creator_public,
         amount,
     } = fixture;
-    response((|| {
-        let key = offer.get().ok_or("no resident network key")?;
+    response((|| -> EnclaveResult<EnclaveResponse> {
+        let key = offer
+            .get()
+            .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
         if terms.chain_id != resident_chain_id(chain)? {
-            return Err("NOD fixture chain mismatch");
+            return Err(TransportDispatchError::NodFixtureChainMismatch.into());
         }
         let inputs = nod_materialization::hash(
             b"outbe/nod/test-create-inputs/v2",
             &(&terms, &creator_public, amount),
         )
-        .map_err(|_| "invalid NOD fixture inputs")?;
+        .map_err(|_| TransportDispatchError::InvalidNodFixtureInputs)?;
         let nod = crate::nod_encryption::encrypt_nod(key.secret(), &creator_public, terms, amount)
-            .map_err(|_| "invalid NOD fixture")?;
+            .map_err(|_| TransportDispatchError::InvalidNodFixture)?;
         let preimage =
             nod_materialization::attestation(b"outbe/nod/test-create-result/v2", inputs, &nod)
-                .map_err(|_| "invalid NOD fixture result")?;
+                .map_err(|_| TransportDispatchError::InvalidNodFixtureResult)?;
         Ok(EnclaveResponse::NodCreatedForTestV2 {
             nod,
             inputs_canonical_hash: inputs,
@@ -206,10 +220,10 @@ fn materialization_capacity(
     keys: &EnclaveKeys,
     inputs: B256,
     reason: String,
-) -> Result<EnclaveResponse, &'static str> {
+) -> EnclaveResult<EnclaveResponse> {
     let preimage =
         nod_materialization::attestation(b"outbe/nod/materialization-capacity/v2", inputs, &reason)
-            .map_err(|_| "invalid NOD capacity result")?;
+            .map_err(|_| TransportDispatchError::InvalidNodCapacityResult)?;
     Ok(EnclaveResponse::EncryptedNodsCapacityExceededV2 {
         reason,
         inputs_canonical_hash: inputs,
@@ -221,15 +235,15 @@ fn materialization_failure(
     keys: &EnclaveKeys,
     inputs: B256,
     error: TeeError,
-) -> Result<EnclaveResponse, &'static str> {
+) -> EnclaveResult<EnclaveResponse> {
     let reason = match error {
         TeeError::TributeOfferReject(reason) => reason,
         TeeError::DecryptFailed => "invalid protected NOD witness or source ciphertext".to_owned(),
-        _ => return Err("protected NOD materialization failed"),
+        _ => return Err(TransportDispatchError::ProtectedNodMaterializationFailed.into()),
     };
     let preimage =
         nod_materialization::attestation(b"outbe/nod/materialization-rejected/v2", inputs, &reason)
-            .map_err(|_| "invalid NOD rejection result")?;
+            .map_err(|_| TransportDispatchError::InvalidNodRejectionResult)?;
     Ok(EnclaveResponse::EncryptedNodsRejectedV2 {
         reason,
         inputs_canonical_hash: inputs,

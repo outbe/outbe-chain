@@ -67,8 +67,8 @@ impl MdbxAuthenticatedTree {
 
     pub(crate) fn from_view(view: AuthenticatedCatalogView) -> Result<Self> {
         let identity = view.identity();
-        let catalog_root = TreeRoot::from_be_bytes(view.catalog_root().0)
-            .map_err(|error| tree_corruption(error.to_string()))?;
+        let catalog_root =
+            TreeRoot::from_be_bytes(view.catalog_root().0).map_err(tree_corruption)?;
         let catalog_store =
             StagingCkbStore::new(view.clone(), TreeNamespace::Catalog, view.catalog_root());
         Ok(Self {
@@ -106,18 +106,12 @@ impl MdbxAuthenticatedTree {
             .catalog_tree
             .as_ref()
             .ok_or_else(|| tree_corruption("authenticated catalog session already sealed"))?;
-        let catalog_key = TreeKey::from_be_bytes(*key.as_bytes())
-            .map_err(|error| tree_corruption(error.to_string()))?;
-        let leaf = catalog
-            .get(catalog_key)
-            .map_err(|error| tree_corruption(error.to_string()))?;
-        let proof = catalog
-            .prove(vec![catalog_key])
-            .map_err(|error| tree_corruption(error.to_string()))?;
+        let catalog_key = TreeKey::from_be_bytes(*key.as_bytes()).map_err(tree_corruption)?;
+        let leaf = catalog.get(catalog_key).map_err(tree_corruption)?;
+        let proof = catalog.prove(vec![catalog_key]).map_err(tree_corruption)?;
         catalog
             .verify(
-                TreeRoot::from_be_bytes(self.view.catalog_root().0)
-                    .map_err(|error| tree_corruption(error.to_string()))?,
+                TreeRoot::from_be_bytes(self.view.catalog_root().0).map_err(tree_corruption)?,
                 &proof,
                 vec![(catalog_key, leaf)],
             )
@@ -127,7 +121,7 @@ impl MdbxAuthenticatedTree {
             if self
                 .view
                 .collection_has_records(key)
-                .map_err(|error| tree_corruption(error.to_string()))?
+                .map_err(tree_corruption)?
             {
                 return Err(tree_corruption(
                     "orphan collection records behind catalog non-membership",
@@ -149,7 +143,7 @@ impl MdbxAuthenticatedTree {
         let root_count = self
             .view
             .collection_root_count(key)
-            .map_err(|error| tree_corruption(error.to_string()))?;
+            .map_err(tree_corruption)?;
         if root_count != domain.shard_count() as usize {
             return Err(tree_corruption(format!(
                 "present collection has {root_count} shard roots, expected {}",
@@ -163,10 +157,9 @@ impl MdbxAuthenticatedTree {
             let root = self
                 .view
                 .tree_root(namespace)
-                .map_err(|error| tree_corruption(error.to_string()))?
+                .map_err(tree_corruption)?
                 .ok_or_else(|| tree_corruption("present collection has a missing shard root"))?;
-            let tree_root = TreeRoot::from_be_bytes(root.0)
-                .map_err(|error| tree_corruption(error.to_string()))?;
+            let tree_root = TreeRoot::from_be_bytes(root.0).map_err(tree_corruption)?;
             trees.push(PoseidonSmt::open_with_store(
                 tree_root,
                 StagingCkbStore::new(self.view.clone(), namespace, root),
@@ -250,18 +243,13 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
             return Ok(None);
         };
         let tree_key = entity_tree_key(entity)?;
-        let shard = shard_index(tree_key, domain.shard_count())
-            .map_err(|error| tree_corruption(error.to_string()))?;
+        let shard = shard_index(tree_key, domain.shard_count()).map_err(tree_corruption)?;
         let tree = &trees[shard as usize];
-        let leaf = tree
-            .get(tree_key)
-            .map_err(|error| tree_corruption(error.to_string()))?;
-        let proof = tree
-            .prove(vec![tree_key])
-            .map_err(|error| tree_corruption(error.to_string()))?;
+        let leaf = tree.get(tree_key).map_err(tree_corruption)?;
+        let proof = tree.prove(vec![tree_key]).map_err(tree_corruption)?;
         tree.verify(
             TreeRoot::from_be_bytes(session.parent_shard_roots[shard as usize].0)
-                .map_err(|error| tree_corruption(error.to_string()))?,
+                .map_err(tree_corruption)?,
             &proof,
             vec![(tree_key, leaf)],
         )
@@ -269,10 +257,7 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
         let commitment = if leaf == TreeLeaf::ZERO {
             None
         } else {
-            Some(
-                Commitment::try_from(leaf.as_bytes())
-                    .map_err(|error| tree_corruption(error.to_string()))?,
-            )
+            Some(Commitment::try_from(leaf.as_bytes()).map_err(tree_corruption)?)
         };
         state.verified_leaves.insert(entity, commitment);
         Ok(commitment)
@@ -322,8 +307,8 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
             if state.catalog_tree.is_some() {
                 self.ensure_collection(&mut state, domain, key)?;
             } else {
-                let catalog_root = TreeRoot::from_be_bytes(self.view.catalog_root().0)
-                    .map_err(|error| tree_corruption(error.to_string()))?;
+                let catalog_root =
+                    TreeRoot::from_be_bytes(self.view.catalog_root().0).map_err(tree_corruption)?;
                 let catalog_store = StagingCkbStore::new(
                     self.view.clone(),
                     TreeNamespace::Catalog,
@@ -377,7 +362,7 @@ fn classify_tree_error(error: crate::smt::TreeError) -> PrecompileError {
     if error.is_infrastructure() {
         PrecompileError::CryptoBackendUnavailable(error.to_string())
     } else {
-        tree_corruption(error.to_string())
+        tree_corruption(error)
     }
 }
 
@@ -385,7 +370,7 @@ fn classify_collection_error(error: crate::CollectionError) -> PrecompileError {
     if error.is_infrastructure() {
         PrecompileError::CryptoBackendUnavailable(error.to_string())
     } else {
-        tree_corruption(error.to_string())
+        tree_corruption(error)
     }
 }
 
@@ -412,7 +397,7 @@ fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
             // scheme mismatches remain fatal below.
             tree_unavailable(PersistenceError::ExactParentMismatch { required, actual }.to_string())
         }
-        corruption => tree_corruption(corruption.to_string()),
+        corruption => tree_corruption(corruption),
     }
 }
 
@@ -422,19 +407,16 @@ fn classify_staging_error(error: StagingError) -> PrecompileError {
     }
     match error {
         StagingError::Persistence(error) => classify_snapshot_error(error),
-        corruption => tree_corruption(corruption.to_string()),
+        corruption => tree_corruption(corruption),
     }
 }
 
-fn tree_corruption(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(format!(
-        "compressed-entity tree corruption: {}",
-        message.into()
-    ))
+fn tree_corruption(message: impl core::fmt::Display) -> PrecompileError {
+    crate::errors::tree_corruption(message)
 }
 
 #[cfg(test)]
-mod classification_tests {
+mod tests {
     use std::path::PathBuf;
 
     use super::*;

@@ -211,8 +211,7 @@ impl IndexRecord {
             return Err(fatal("non-canonical compressed-entity index record length"));
         }
         let partition = bytes[3..3 + partition_len].to_vec();
-        let entity_id = WwdEntityId::try_from(&bytes[3 + partition_len..])
-            .map_err(|error| fatal(error.to_string()))?;
+        let entity_id = WwdEntityId::try_from(&bytes[3 + partition_len..]).map_err(fatal)?;
         let record = Self {
             kind,
             partition,
@@ -248,8 +247,8 @@ pub(crate) fn index_delta_key(record: &[u8]) -> B256 {
     keccak256(preimage)
 }
 
-fn fatal(message: impl Into<String>) -> outbe_primitives::error::PrecompileError {
-    outbe_primitives::error::PrecompileError::Fatal(message.into())
+fn fatal(message: impl core::fmt::Display) -> outbe_primitives::error::PrecompileError {
+    crate::errors::fatal_error(message)
 }
 
 /// Consensus storage schema at `0xEE0D`.

@@ -1,7 +1,9 @@
 use alloy_primitives::ruint::UintTryTo;
 use alloy_primitives::{Uint, I256, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::units::{SCALE_1E6_U128, SCALE_1E6_U256};
+
+use crate::errors::LysisError;
 
 pub(crate) const SCALE_U128: u128 = SCALE_1E6_U128;
 pub(crate) const SCALE: U256 = SCALE_1E6_U256;
@@ -47,9 +49,9 @@ fn fp_root(x_fp: U256, _p: u32, q: u32) -> Result<U256> {
     // overflow into a structured revert instead of masking it mod 2^256.
     let mut target = U1024::from(x_fp);
     for _ in 0..(q - 1) {
-        target = target.checked_mul(scale_w).ok_or_else(|| {
-            PrecompileError::Revert("lysis: fp_root intermediate overflow".to_string())
-        })?;
+        target = target
+            .checked_mul(scale_w)
+            .ok_or(LysisError::FpRootIntermediateOverflow)?;
     }
     // Search bound: a partial power above 2*target means `mid` is too big.
     // In-use targets sit far inside U1024. Saturate the search bound defensively.
@@ -81,7 +83,7 @@ fn fp_root(x_fp: U256, _p: u32, q: u32) -> Result<U256> {
     // rather than a silent truncation.
     let y: U256 = lo
         .uint_try_to()
-        .map_err(|_| PrecompileError::Revert("lysis: fp_root result exceeds U256".to_string()))?;
+        .map_err(|_| LysisError::FpRootResultExceedsU256)?;
     Ok(y)
 }
 
@@ -308,9 +310,7 @@ pub fn calc_fraction_distribution_fp(
 }
 
 fn u256_to_i256(value: U256) -> Result<I256> {
-    I256::try_from(value).map_err(|_| {
-        PrecompileError::Revert(format!("lysis: U256 -> I256 conversion overflow ({value})"))
-    })
+    I256::try_from(value).map_err(|_| LysisError::U256ToI256Overflow(value).into())
 }
 
 /// Narrow a positive `I256` back to `U256`. Negative inputs clamp to zero.
