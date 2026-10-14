@@ -115,7 +115,7 @@ pub enum TributeFactoryError {
     EnclaveBatchError(String),
 
     #[error("unexpected enclave response: {0:?}")]
-    UnexpectedEnclaveResponse(outbe_tee::protocol::EnclaveResponse),
+    UnexpectedEnclaveResponse(Box<outbe_tee::protocol::EnclaveResponse>),
 
     #[error("tee_enclave_nondeterminism: inputs_canonical_hash mismatch")]
     InputsCanonicalHashMismatch,

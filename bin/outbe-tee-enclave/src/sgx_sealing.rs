@@ -77,7 +77,7 @@ fn hardware_key(request: &KeyRequest) -> EnclaveResult<Zeroizing<[u8; 32]>> {
     // This capability probe prevents executing ENCLU in normal host/unit-test
     // processes. Attestation mode "none" on real SGX remains supported.
     let probe =
-        crate::gramine::sealing_key_raw(true).map_err(SgxSealingError::sealing_unavailable)?;
+        crate::gramine::sealing_key_raw(true).map_err(SgxSealingError::sgx_sealing_unavailable)?;
     let mut probe = Zeroizing::new(probe);
     probe.zeroize();
     let mut raw = HardwareKey([0; 16]);
@@ -99,7 +99,7 @@ fn hardware_key(request: &KeyRequest) -> EnclaveResult<Zeroizing<[u8; 32]>> {
     }
     if status != 0 {
         raw.0.zeroize();
-        return Err(SgxSealingError::EgetkeyFailed { status }.into());
+        return Err(SgxSealingError::CombinedEgetkeyFailed(status).into());
     }
     let result = crate::crypto::hkdf_sha256(&request.0, &raw.0, b"outbe/tee/seal-key/both/v1")
         .map(Zeroizing::new)

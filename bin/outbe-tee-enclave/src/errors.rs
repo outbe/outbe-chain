@@ -184,13 +184,13 @@ impl EnclaveError {
 
 impl PartialEq<&str> for EnclaveError {
     fn eq(&self, other: &&str) -> bool {
-        self.to_string() == *other
+        self.to_string().as_str() == *other
     }
 }
 
 impl PartialEq<str> for EnclaveError {
     fn eq(&self, other: &str) -> bool {
-        self.to_string() == other
+        self.to_string().as_str() == other
     }
 }
 

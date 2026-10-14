@@ -145,7 +145,7 @@ pub(super) fn scan_budget(
     maximum: Option<u64>,
 ) -> eyre::Result<()> {
     require(
-        !maximum.is_some_and(|maximum| visited >= maximum),
+        maximum.is_none_or(|maximum| visited < maximum),
         Incomplete(format!("{label} scan stopped at {visited}/{total}")),
     )?;
     Ok(())
@@ -233,7 +233,7 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
         );
 
         require(
-            !maximum_records.is_some_and(|maximum| active_intents > maximum),
+            maximum_records.is_none_or(|maximum| active_intents <= maximum),
             Incomplete(format!(
                 "active intent scan requires {active_intents} records, exceeding configured budget"
             )),
@@ -412,7 +412,7 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                 };
                 while head.next_nod_ordinal < head.nod_count {
                     require(
-                        !maximum_batches.is_some_and(|maximum| result.batches >= maximum),
+                        maximum_batches.is_none_or(|maximum| result.batches < maximum),
                         Incomplete(format!(
                             "NOD job {job} stopped at {}/{} ordinals after {} batches",
                             head.next_nod_ordinal, head.nod_count, result.batches

@@ -140,7 +140,7 @@ pub fn process_tribute_offer_batch_via_enclave(
         EnclaveResponse::Error { message } => {
             Err(TributeFactoryError::EnclaveBatchError(message).into())
         }
-        other => Err(TributeFactoryError::UnexpectedEnclaveResponse(other).into()),
+        other => Err(TributeFactoryError::UnexpectedEnclaveResponse(Box::new(other)).into()),
     }
 }
 

@@ -201,7 +201,7 @@ fn copy_storage(
     let existing = scratch
         .cursor_dup_read::<tables::HashedStorages>()?
         .seek_by_key_subkey(address, entry.key)?;
-    if !existing.is_none_or(|value| value.key != entry.key) {
+    if existing.is_some_and(|value| value.key == entry.key) {
         return Err(SnapshotError::DuplicateStorage {
             address,
             key: entry.key,

@@ -136,9 +136,9 @@ pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
     }
     let certified = &upstream.certified;
     let epoch = certified.finalization.proposal.round.epoch();
-    if !epocher
+    if epocher
         .containing(Height::new(height))
-        .is_some_and(|bounds| bounds.epoch() == epoch)
+        .is_none_or(|bounds| bounds.epoch() != epoch)
     {
         return Err(crate::errors::StackRecoveryError::AncestorCertificateCommitteeMismatch.into());
     }

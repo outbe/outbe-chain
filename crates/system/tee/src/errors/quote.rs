@@ -17,7 +17,7 @@ pub enum QuoteParseError {
 
 impl PartialEq<&str> for QuoteParseError {
     fn eq(&self, other: &&str) -> bool {
-        self.to_string() == *other
+        self.to_string().as_str() == *other
     }
 }
 
