@@ -200,7 +200,7 @@ pub fn settle(
 /// Forfeit a Credis whose call lapsed.
 pub fn forfeit_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
     let now = u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
-    burn_forfeited(storage, credis_id, |credis| credis.forfeit(credis_id, now))?;
+    burn_forfeited_collateral(storage, credis_id, |credis| credis.forfeit(credis_id, now))?;
     Ok(())
 }
 
@@ -210,14 +210,14 @@ pub fn forfeit_by_owner(
     caller: Address,
     credis_id: U256,
 ) -> Result<Forfeit> {
-    burn_forfeited(storage, credis_id, |credis| {
+    burn_forfeited_collateral(storage, credis_id, |credis| {
         credis.forfeit_by_owner(credis_id, caller)
     })
 }
 
 /// Burn only this Credis's remaining collateral from the source's pledged
 /// balance. Fidelity cohorts stay untouched.
-fn burn_forfeited(
+fn burn_forfeited_collateral(
     storage: StorageHandle<'_>,
     credis_id: U256,
     forfeit: impl FnOnce(&mut CredisContract<'_>) -> Result<Forfeit>,
