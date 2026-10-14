@@ -17,7 +17,6 @@ use super::OcompExExExitV1;
 use super::OcompReadinessV1;
 use super::RetentionReconciliationDispositionV1;
 use super::POLL_INTERVAL;
-use alloy_consensus::BlockHeader as _;
 
 use alloy_primitives::B256;
 
@@ -63,7 +62,6 @@ use outbe_primitives::OutbeReceipt;
 use reth_ethereum::exex::ExExContext;
 
 use reth_node_builder::FullNodeComponents;
-use reth_primitives_traits::Block as _;
 use reth_provider::BlockHashReader;
 use reth_provider::BlockIdReader;
 use reth_provider::BlockNumReader;

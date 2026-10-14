@@ -7,7 +7,7 @@ use outbe_lysis::program_v1::{
     result::{decode_root_reduce_output, RootReduceOutputV1},
 };
 use outbe_ocomp_protocol::{
-    input::{AuthenticatedInputChunkV1, InputChunkRefV1},
+    input::{AuthenticatedInputChunkV1, InputChunkKind, InputChunkRefV1},
     unit::{UnitArtifactV1, UnitPhase},
     CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits, UnitFinishedV1,
 };
@@ -225,8 +225,22 @@ pub fn admit_reported_lysis_unit_v1(
             }
         }
         UnitPhase::RootReduce => {
-            if !input_chunks.is_empty() {
-                return Err(LysisSchedulerError::InputShape);
+            match position {
+                PlannedUnitPositionV1::TreeNode {
+                    level: 0, index, ..
+                } => {
+                    let [(reference, chunk)] = input_chunks.as_slice() else {
+                        return Err(LysisSchedulerError::InputShape);
+                    };
+                    if reference.kind != InputChunkKind::Tribute
+                        || chunk.kind != InputChunkKind::Tribute
+                        || reference.ordinal != index
+                    {
+                        return Err(LysisSchedulerError::InputShape);
+                    }
+                }
+                PlannedUnitPositionV1::TreeNode { .. } if input_chunks.is_empty() => {}
+                _ => return Err(LysisSchedulerError::InputShape),
             }
             verify_lysis_root_reduce_phase_replay(
                 plan_ordinal,
@@ -234,6 +248,7 @@ pub fn admit_reported_lysis_unit_v1(
                 &reported_artifact,
                 &plan,
                 &manifest,
+                &input_chunks,
                 &producer_artifacts,
                 bundle.bundle(),
                 reader,

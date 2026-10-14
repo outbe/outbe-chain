@@ -5,7 +5,7 @@ use outbe_lysis::program_v1::{
     result::{decode_root_reduce_output, RootReduceOutputV1},
 };
 use outbe_ocomp_protocol::{
-    input::InputManifestV1,
+    input::{AuthenticatedInputChunkV1, InputChunkRefV1, InputManifestV1},
     profile::ProtocolBundleV1,
     result::ResultChunkV1,
     unit::{
@@ -75,6 +75,7 @@ pub fn verify_lysis_root_reduce_phase_replay(
     reported: &UnitArtifactV1,
     plan: &PlanCommitmentV1,
     manifest: &InputManifestV1,
+    input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
     producer_artifacts: &[UnitArtifactV1],
     bundle: &ProtocolBundleV1,
     reader: &FilesystemCasReader,
@@ -91,7 +92,7 @@ pub fn verify_lysis_root_reduce_phase_replay(
             plan,
             unit_index: plan_ordinal,
             manifest,
-            input_chunks: &[],
+            input_chunks,
             producer_artifacts,
             bundle,
             limits,

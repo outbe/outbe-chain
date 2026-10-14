@@ -18,7 +18,6 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use super::{CandlePrice, Provider, TickerPrice};
 use crate::config::ApiProviderConfig;
-use crate::fixed::FixedValue;
 use decode::{
     clear_routes, decompress_gzip, normalize_symbol, process_payload, subscription_messages,
 };

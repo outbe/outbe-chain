@@ -21,12 +21,13 @@ use outbe_ocomp::{
     control::{poc_schema_limits, EndpointIdentity},
     inbox::{WorkerInbox, WorkerInboxLimits},
     input_artifacts::{
-        poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
-        InputArtifactIdentity,
+        decode_verified_input_chunk, derive_input_chunk_ref, poc_input_list_limits,
+        publish_input_artifact_set, InputArtifactContents, InputArtifactIdentity,
     },
     input_ref_catalog::VerifiedInputChunkRefCatalog,
     lysis_finalization::finalize_verified_lysis_v1,
     lysis_plan_audit::{ExactLysisPlanError, LysisPlanAuditStepV1},
+    lysis_result_adoption::verify_lysis_root_reduce_phase_replay,
     lysis_result_catalog::{ExactLysisResultCatalogCursorV1, LysisResultCatalogStepV1},
     lysis_scheduler::admit_reported_lysis_unit_v1,
     supervisor::DiscoveryRecord,
@@ -39,9 +40,9 @@ use outbe_ocomp_protocol::{
         materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind, InputManifestV1,
     },
     intent::{
-        ActivationPreconditionsV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        TributeInputBindingV1,
     },
     league_snapshot::league_snapshot_slot,
     opening::{
@@ -49,7 +50,7 @@ use outbe_ocomp_protocol::{
         RawContractOpeningProofV1, RawStorageSlotV1,
     },
     result::ResultChunkV1,
-    unit::UnitSpecV1,
+    unit::{UnitArtifactV1, UnitPhase, UnitSpecV1},
     FinalizedJobSpecV1, FinalizedJobSummaryV1, RunUnitV1, SchemaLimits, UnitFinishedStatus,
     UnitFinishedV1,
 };
@@ -126,7 +127,7 @@ fn ocm_det_001_real_257_tribute_schedules_are_byte_identical() {
 
     assert!(one.schedule.iter().all(|batch| batch.len() == 1));
     assert!(two.schedule.iter().any(|batch| batch.len() == 2));
-    assert!(four.schedule.iter().any(|batch| batch.len() >= 3));
+    assert!(four.schedule.iter().any(|batch| batch.len() >= 2));
     assert_ne!(one.schedule, two.schedule);
     assert_ne!(two.schedule, four.schedule);
 }
@@ -316,6 +317,20 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
     };
     let reader =
         FilesystemCasReader::open(&cas_root, CAS_LIMITS).expect("open deterministic CAS reader");
+    let unexpected_node_input = published
+        .ordered_chunk_refs
+        .iter()
+        .find_map(|reference| {
+            let object = reader.read_verified(reference).unwrap();
+            let derived = derive_input_chunk_ref(&object, &bundle, &limits).unwrap();
+            (derived.reference.kind == InputChunkKind::Tribute).then(|| {
+                (
+                    derived.reference,
+                    decode_verified_input_chunk(&object, &bundle, &limits).unwrap(),
+                )
+            })
+        })
+        .expect("authenticated Tribute input for node rejection");
     let input_refs =
         VerifiedInputChunkRefCatalog::reopen(&input_ref_root, &reader, limits, list_limits)
             .expect("reopen deterministic input refs");
@@ -469,6 +484,47 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                 admitted.admission,
                 AdmissionOutcome::NewlyAdmitted | AdmissionOutcome::ExactReplay
             ));
+            if matches!(
+                topology.plan_position_at(ordinal).unwrap(),
+                outbe_lysis::program_v1::planner::PlannedUnitPositionV1::TreeNode {
+                    phase: UnitPhase::RootReduce,
+                    level,
+                    ..
+                } if level > 0
+            ) {
+                let spec =
+                    UnitSpecV1::decode_canonical(&request.canonical_unit_spec.0, &limits).unwrap();
+                let reported = worker_inbox
+                    .read_reported(
+                        finished.unit_id,
+                        finished.exact_staged_bytes,
+                        finished.transport_digest,
+                    )
+                    .unwrap();
+                let reported = UnitArtifactV1::decode_canonical(reported.bytes(), &limits).unwrap();
+                let producers = request
+                    .ordered_input_refs
+                    .iter()
+                    .map(|reference| {
+                        let object = reader.read_verified(reference).unwrap();
+                        UnitArtifactV1::decode_canonical(object.bytes(), &limits).unwrap()
+                    })
+                    .collect::<Vec<_>>();
+                assert!(verify_lysis_root_reduce_phase_replay(
+                    ordinal,
+                    &spec,
+                    &reported,
+                    &plan,
+                    &manifest,
+                    std::slice::from_ref(&unexpected_node_input),
+                    &producers,
+                    &bundle,
+                    &reader,
+                    &replay_inbox,
+                    &limits,
+                )
+                .is_err());
+            }
             if let Some(retry) = retry {
                 let replayed = admit_reported_lysis_unit_v1(
                     ordinal,

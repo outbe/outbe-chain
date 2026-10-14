@@ -2,8 +2,8 @@
 //! completes and before the activation boundary. Honest validators reject them, so
 //! finalized history and FullNodes only ever carry the genuine committee.
 //!
-//! Validators inherit `OUTBE_TEST_BYZANTINE_PREANNOUNCE` from the harness
-//! process. The node hook exists only in E2E builds with protocol overrides.
+//! The scenario enables the hook through its own node launch environment.
+//! The node hook exists only in E2E builds with protocol overrides.
 
 use std::collections::BTreeMap;
 use std::thread::sleep;
@@ -18,17 +18,13 @@ use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 use crate::internal::certified_handoff::{read_certified, AuthenticatedHistory};
 use crate::world::World;
 
-const BYZANTINE_ENV: &str = "OUTBE_TEST_BYZANTINE_PREANNOUNCE";
 const FORGED_LOG: &str = "byzantine test hook: proposing a forged committee pre-announce";
 const REJECTED_LOG: &str = "proposed block carries invalid header consensus artifact";
 const HANDOFFS: u64 = 2;
 
 #[given("every validator is armed to forge committee pre-announces")]
-fn armed(_world: &mut World) {
-    assert!(
-        std::env::var_os(BYZANTINE_ENV).is_some(),
-        "run this scenario with {BYZANTINE_ENV}=1 so every validator inherits it"
-    );
+fn armed(world: &mut World) {
+    world.localnet.arm_byzantine_preannounces();
 }
 
 #[then("finalized history authenticates from genesis through two committee handoffs")]

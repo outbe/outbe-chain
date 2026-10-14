@@ -8,9 +8,8 @@ use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 #[cfg(all(test, feature = "snapshot-integration"))]
 use outbe_ocomp_protocol::receipts::AggregateActivationReceiptV1;
 use outbe_ocomp_protocol::{
-    nod_materialization::NodMaterializationHeadV1,
-    profile::poc_schema_limits,
-    state::{ActiveGenerationV1, OcompJobRecordV1},
+    nod_materialization::NodMaterializationHeadV1, profile::poc_schema_limits,
+    state::OcompJobRecordV1,
 };
 use outbe_primitives::{
     error::{PrecompileError, Result as StorageResult},
@@ -223,24 +222,5 @@ impl<'a> CanonicalState<'a> {
 
     pub(crate) fn intex_read_series(&self, id: SeriesId) -> eyre::Result<SeriesRecord> {
         self.with_storage(|storage| outbe_intex::api::read_series(&storage, id))
-    }
-
-    pub(crate) fn metadosis_active_lysis_generation(
-        &self,
-        day: WorldwideDay,
-    ) -> eyre::Result<Option<ActiveGenerationV1>> {
-        self.with_storage(|storage| {
-            match outbe_metadosis::api::get_active_lysis_generation(storage, day) {
-                Ok(bytes) => ActiveGenerationV1::decode_canonical(&bytes, &poc_schema_limits())
-                    .map(Some)
-                    .map_err(|error| PrecompileError::Fatal(error.to_string())),
-                Err(PrecompileError::Revert(message))
-                    if message == "ActiveGenerationV1 not found" =>
-                {
-                    Ok(None)
-                }
-                Err(error) => Err(error),
-            }
-        })
     }
 }

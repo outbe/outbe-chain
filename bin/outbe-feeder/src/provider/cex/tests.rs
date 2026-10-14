@@ -1,5 +1,6 @@
 use super::decode::{insert_candle, process_payload, subscription_messages};
 use super::*;
+use crate::fixed::FixedValue;
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
