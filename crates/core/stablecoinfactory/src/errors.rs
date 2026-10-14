@@ -1,3 +1,5 @@
+//! Typed error definitions for the StablecoinFactory precompile.
+
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
@@ -5,6 +7,7 @@ use thiserror::Error;
 
 use crate::abi::IStablecoinFactory;
 
+/// Represents errors returned by the StablecoinFactory runtime.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StablecoinFactoryError {
@@ -52,6 +55,17 @@ pub enum StablecoinFactoryError {
 
     #[error("factory invariant violated: {reason}")]
     Invariant { reason: String },
+
+    #[error("stablecoin Factory schema {schema} is unsupported")]
+    UnsupportedSchema { schema: u32 },
+}
+
+#[derive(Debug, Error)]
+pub enum AbiDecodeError {
+    #[error(transparent)]
+    Sol(#[from] alloy_sol_types::Error),
+    #[error("non-canonical ABI calldata or trailing bytes")]
+    NonCanonicalCalldata,
 }
 
 impl From<StablecoinFactoryError> for PrecompileError {
@@ -119,6 +133,9 @@ impl From<StablecoinFactoryError> for PrecompileError {
             }
             StablecoinFactoryError::Invariant { reason } => {
                 return PrecompileError::Fatal(format!("stablecoin factory: {reason}"));
+            }
+            StablecoinFactoryError::UnsupportedSchema { .. } => {
+                return PrecompileError::Fatal(error.to_string());
             }
         };
         PrecompileError::RevertBytes(Bytes::from(encoded))

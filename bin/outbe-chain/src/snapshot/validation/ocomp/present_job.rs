@@ -1,64 +1,92 @@
 //! present job obligations for the offline OCOMP audit.
 use super::*;
+use outbe_ocomp::{
+    export_binding::ExportedManifestBindingReader, export_receipt::ExportReceiptReader,
+};
+use outbe_ocomp_protocol::input::InputManifestV1;
+use std::path::PathBuf;
 
-pub(super) fn verify_present_job(
-    context: &PresentJobContext<'_, '_>,
-    id: B256,
-    flags: u8,
-    active: bool,
-    counts: &mut PresentArtifactCounts,
-) -> eyre::Result<()> {
-    let PresentJobContext {
-        state,
-        view,
-        layout,
-        scratch,
-        protected,
-        work,
-        cas_limits,
-    } = *context;
-    use outbe_ocomp::{
-        export_binding::ExportedManifestBindingReader, export_receipt::ExportReceiptReader,
-    };
-    let root = &layout.ocomp_root;
-    let name = hex::encode(id);
-    let receipt_path = root.join("exporter-v1/receipts").join(&name);
-    let binding_path = root.join("supervisor-v1/export-bindings").join(&name);
-    let input_path = root.join("exporter-v1/input-refs").join(&name);
-    let admission_path = root
-        .join("supervisor-v1/jobs")
-        .join(&name)
-        .join("admissions");
-    let schema = poc_schema_limits();
-    let mut errors = PresentJoinErrors::default();
-    let mut job = work.job(id)?;
-    let ack = work.ack(id)?;
-    if let (Some(ack), Some(export)) = (&ack, work.export(id)?) {
-        errors.observe(compare_surviving_ack_export(ack, export));
+struct PresentJobReaders {
+    receipt_reader: Option<ExportReceiptReader>,
+    binding_reader: Option<ExportedManifestBindingReader>,
+    receipt_present: bool,
+    binding_present: bool,
+    input_present: bool,
+    input_path: PathBuf,
+    admission_path: PathBuf,
+}
+
+impl PresentJobReaders {
+    fn open(
+        root: &Path,
+        id: B256,
+        (flags, active, has_ack): (u8, bool, bool),
+        errors: &mut PresentJoinErrors,
+    ) -> eyre::Result<Self> {
+        let name = hex::encode(id);
+        let receipt_path = root.join("exporter-v1/receipts").join(&name);
+        let binding_path = root.join("supervisor-v1/export-bindings").join(&name);
+        let input_path = root.join("exporter-v1/input-refs").join(&name);
+        let admission_path = root
+            .join("supervisor-v1/jobs")
+            .join(&name)
+            .join("admissions");
+        let schema = poc_schema_limits();
+        let receipt_reader = if flags & PRESENT_RECEIPT != 0 {
+            errors.observe(
+                ExportReceiptReader::open(root.join("exporter-v1/receipts"), id, schema)
+                    .map_err(Into::into),
+            )
+        } else {
+            None
+        };
+        let binding_reader = if flags & PRESENT_BINDING != 0 {
+            errors.observe(
+                ExportedManifestBindingReader::open_existing(&binding_path, schema)
+                    .map_err(Into::into),
+            )
+        } else {
+            None
+        };
+        let receipt_present =
+            flags & PRESENT_RECEIPT != 0 && existing_file(&receipt_path.join("receipt.ref"))?;
+        let binding_present =
+            flags & PRESENT_BINDING != 0 && existing_file(&binding_path.join("binding.ref"))?;
+        let input_present =
+            flags & PRESENT_INPUTS != 0 && existing_file(&input_path.join("catalog.header"))?;
+        observe_incomplete_reader_flags(
+            id,
+            &receipt_path,
+            (flags, active, has_ack),
+            (receipt_present, input_present),
+            errors,
+        )?;
+        Ok(Self {
+            receipt_reader,
+            binding_reader,
+            receipt_present,
+            binding_present,
+            input_present,
+            input_path,
+            admission_path,
+        })
     }
-    let result_binding = work.result_binding(id)?;
-    let mut manifest = None;
-    let receipt_reader = if flags & PRESENT_RECEIPT != 0 {
-        errors.observe(
-            ExportReceiptReader::open(root.join("exporter-v1/receipts"), id, schema)
-                .map_err(Into::into),
-        )
-    } else {
-        None
-    };
-    let binding_reader = if flags & PRESENT_BINDING != 0 {
-        errors.observe(
-            ExportedManifestBindingReader::open_existing(&binding_path, schema).map_err(Into::into),
-        )
-    } else {
-        None
-    };
-    let receipt_present =
-        flags & PRESENT_RECEIPT != 0 && existing_file(&receipt_path.join("receipt.ref"))?;
-    let binding_present =
-        flags & PRESENT_BINDING != 0 && existing_file(&binding_path.join("binding.ref"))?;
-    let input_present =
-        flags & PRESENT_INPUTS != 0 && existing_file(&input_path.join("catalog.header"))?;
+
+    fn needs_cas(&self, flags: u8) -> bool {
+        self.receipt_present
+            || self.binding_present
+            || self.input_present
+            || flags & (PRESENT_ADMISSIONS | PRESENT_REFERENCES) != 0
+    }
+}
+
+fn observe_incomplete_reader_flags(
+    id: B256,
+    receipt_path: &Path,
+    (flags, active, has_ack): (u8, bool, bool),
+    (receipt_present, input_present): (bool, bool),
+    errors: &mut PresentJoinErrors,
+) -> eyre::Result<()> {
     if flags & PRESENT_RECEIPT != 0
         && !receipt_present
         && existing_file(&receipt_path.join("prepared.ref"))?
@@ -74,80 +102,101 @@ pub(super) fn verify_present_job(
         ))
         .into()));
     }
-    if active && ack.is_some() && !receipt_present {
+    if active && has_ack && !receipt_present {
         errors.observe::<()>(Err(Incomplete(format!(
             "job {id}: active acknowledged export lacks its required complete receipt"
         ))
         .into()));
     }
-    let needs_cas = receipt_present
-        || binding_present
-        || input_present
-        || flags & (PRESENT_ADMISSIONS | PRESENT_REFERENCES) != 0;
-    if !needs_cas {
-        return errors.finish();
+    Ok(())
+}
+
+fn verify_ack_matches_receipt(
+    ack: &outbe_ocomp::discovery_spool::StoredDiscoveryAckV1,
+    receipt: &outbe_ocomp::export_receipt::VerifiedExportReceipt,
+) -> eyre::Result<()> {
+    compare_surviving_ack_export(
+        ack,
+        outbe_node::ocomp::retention::ExportAuthorityV1 {
+            source_generation: receipt.source_pin_generation(),
+            lease_generation: receipt.lease_generation(),
+            manifest_hash: receipt.manifest_hash(),
+        },
+    )?;
+    if ack.reference.export_receipt_digest != receipt.receipt_ref().transport_digest
+        || ack.committed != receipt.committed()
+    {
+        return Err(SnapshotOcompError::SurvivingAckReceiptCommitmentMismatch.into());
     }
-    let cas = FilesystemCasReader::open(root.join("cas-v1"), cas_limits)?;
-    if receipt_present {
-        if let Some(reader) = &receipt_reader {
-            if let Some(receipt) = errors.observe(reader.load_exact(&cas).map_err(Into::into)) {
-                if job.is_none() {
-                    job = errors.observe(locate_request_job(
-                        state,
-                        view,
-                        receipt.checkpoint().finalized_block_number,
-                        id,
-                        WorldwideDay::new(receipt.manifest().wwd),
-                        None,
-                    ));
-                }
-                if let Some(authority) = &job {
-                    if let Some(receipt) = errors.observe(verify_present_receipt(
-                        root,
-                        authority,
-                        work.export(id)?,
-                        cas_limits,
-                    )) {
-                        if let Some(ack) = &ack {
-                            errors.observe((|| -> eyre::Result<()> {
-                                compare_surviving_ack_export(
-                                    ack,
-                                    outbe_node::ocomp::retention::ExportAuthorityV1 {
-                                        source_generation: receipt.source_pin_generation(),
-                                        lease_generation: receipt.lease_generation(),
-                                        manifest_hash: receipt.manifest_hash(),
-                                    },
-                                )?;
-                                ensure!(
-                                    ack.reference.export_receipt_digest
-                                        == receipt.receipt_ref().transport_digest
-                                        && ack.committed == receipt.committed(),
-                                    "surviving discovery ACK differs from receipt commitment"
-                                );
-                                Ok(())
-                            })());
-                        }
-                        manifest = Some(receipt.manifest().clone());
-                        increment_present(&mut counts.receipts, 1)?;
-                    }
-                }
-            }
-        }
+    Ok(())
+}
+
+fn verify_present_receipt_step(
+    context: &PresentJobContext<'_, '_>,
+    id: B256,
+    (readers, cas, ack): (
+        &PresentJobReaders,
+        &FilesystemCasReader,
+        Option<&outbe_ocomp::discovery_spool::StoredDiscoveryAckV1>,
+    ),
+    job: &mut Option<OcompJobRecordV1>,
+    errors: &mut PresentJoinErrors,
+) -> eyre::Result<Option<InputManifestV1>> {
+    if !readers.receipt_present {
+        return Ok(None);
     }
-    // Reopen/close the independent sealed input catalog even without job authority.
-    let inputs = if input_present {
-        errors.observe(
-            VerifiedInputChunkRefCatalog::reopen(
-                &input_path,
-                &cas,
-                schema,
-                poc_input_list_limits(),
-            )
-            .map_err(Into::into),
-        )
-    } else {
-        None
+    let Some(reader) = &readers.receipt_reader else {
+        return Ok(None);
     };
+    let Some(receipt) = errors.observe(reader.load_exact(cas).map_err(Into::into)) else {
+        return Ok(None);
+    };
+    if job.is_none() {
+        *job = errors.observe(locate_request_job(
+            context.state,
+            context.view,
+            (
+                receipt.checkpoint().finalized_block_number,
+                id,
+                WorldwideDay::new(receipt.manifest().wwd),
+            ),
+            None,
+        ));
+    }
+    let Some(authority) = job.as_ref() else {
+        return Ok(None);
+    };
+    let Some(receipt) = errors.observe(verify_present_receipt(
+        &context.layout.ocomp_root,
+        authority,
+        context.work.export(id)?,
+        context.cas_limits,
+    )) else {
+        return Ok(None);
+    };
+    if let Some(ack) = ack {
+        errors.observe(verify_ack_matches_receipt(ack, &receipt));
+    }
+    Ok(Some(receipt.manifest().clone()))
+}
+
+fn reopen_present_input_catalog(
+    readers: &PresentJobReaders,
+    cas: &FilesystemCasReader,
+    errors: &mut PresentJoinErrors,
+) -> Option<VerifiedInputChunkRefCatalog> {
+    if !readers.input_present {
+        return None;
+    }
+    let inputs = errors.observe(
+        VerifiedInputChunkRefCatalog::reopen(
+            &readers.input_path,
+            cas,
+            poc_schema_limits(),
+            poc_input_list_limits(),
+        )
+        .map_err(Into::into),
+    );
     if let Some(inputs) = &inputs {
         errors.observe((|| -> eyre::Result<()> {
             for reference in inputs.exact_cursor()? {
@@ -156,6 +205,141 @@ pub(super) fn verify_present_job(
             Ok(())
         })());
     }
+    inputs
+}
+
+fn verify_present_binding_step(
+    context: &PresentJobContext<'_, '_>,
+    id: B256,
+    (readers, cas, inputs): (
+        &PresentJobReaders,
+        &FilesystemCasReader,
+        Option<&VerifiedInputChunkRefCatalog>,
+    ),
+    (job, bundle, ack): (
+        &OcompJobRecordV1,
+        &PinnedProtocolBundle,
+        Option<&outbe_ocomp::discovery_spool::StoredDiscoveryAckV1>,
+    ),
+    (manifest, errors): (&mut Option<InputManifestV1>, &mut PresentJoinErrors),
+) -> eyre::Result<bool> {
+    if !readers.binding_present {
+        return Ok(false);
+    }
+    let (Some(reader), Some(inputs)) = (&readers.binding_reader, inputs) else {
+        errors.observe::<()>(Err(Incomplete(format!(
+            "job {id}: present binding comparison lacks complete input catalog"
+        ))
+        .into()));
+        return Ok(false);
+    };
+    let loaded = load_and_verify_present_binding(
+        context,
+        id,
+        (readers, reader, cas, inputs),
+        (job, bundle, ack),
+        manifest.as_ref(),
+    );
+    if let Some(binding_manifest) = errors.observe(loaded) {
+        *manifest = Some(binding_manifest);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn load_and_verify_present_binding(
+    context: &PresentJobContext<'_, '_>,
+    id: B256,
+    (readers, reader, cas, inputs): (
+        &PresentJobReaders,
+        &ExportedManifestBindingReader,
+        &FilesystemCasReader,
+        &VerifiedInputChunkRefCatalog,
+    ),
+    (job, bundle, ack): (
+        &OcompJobRecordV1,
+        &PinnedProtocolBundle,
+        Option<&outbe_ocomp::discovery_spool::StoredDiscoveryAckV1>,
+    ),
+    receipt_manifest: Option<&InputManifestV1>,
+) -> eyre::Result<InputManifestV1> {
+    let binding = reader.load_integrity(cas, &canonical_job_spec(job)?, bundle.bundle(), inputs)?;
+    validate_present_manifest(binding.manifest(), job, bundle)?;
+    if let Some(ack) = ack {
+        let request = binding.commit_replay_request();
+        compare_surviving_ack_export(
+            ack,
+            outbe_node::ocomp::retention::ExportAuthorityV1 {
+                source_generation: request.pin_generation,
+                lease_generation: request.lease_generation,
+                manifest_hash: request.manifest_hash,
+            },
+        )?;
+        binding.require_exact_node_replay(&ack.committed)?;
+    }
+    if receipt_manifest.is_some_and(|expected| binding.manifest() != expected) {
+        return Err(SnapshotOcompError::PresentReceiptBindingManifestMismatch.into());
+    }
+    if let Some(receipt_reader) = readers
+        .receipt_reader
+        .as_ref()
+        .filter(|_| readers.receipt_present)
+    {
+        let receipt = receipt_reader.load_exact(cas)?;
+        if binding.commit_replay_request() != receipt.commit_replay_request() {
+            return Err(SnapshotOcompError::PresentReceiptBindingExportMismatch.into());
+        }
+        binding.require_exact_node_replay(&receipt.committed())?;
+    }
+    if let Some(expected) = context.work.export(id)? {
+        let request = binding.commit_replay_request();
+        if (
+            request.pin_generation,
+            request.lease_generation,
+            request.manifest_hash,
+        ) != (
+            expected.source_generation,
+            expected.lease_generation,
+            expected.manifest_hash,
+        ) {
+            return Err(SnapshotOcompError::PresentBindingSavedPinMismatch.into());
+        }
+    }
+    Ok(binding.manifest().clone())
+}
+
+pub(super) fn verify_present_job(
+    context: &PresentJobContext<'_, '_>,
+    id: B256,
+    flags: u8,
+    active: bool,
+    counts: &mut PresentArtifactCounts,
+) -> eyre::Result<()> {
+    let root = &context.layout.ocomp_root;
+    let mut errors = PresentJoinErrors::default();
+    let mut job = context.work.job(id)?;
+    let ack = context.work.ack(id)?;
+    if let (Some(ack), Some(export)) = (&ack, context.work.export(id)?) {
+        errors.observe(compare_surviving_ack_export(ack, export));
+    }
+    let result_binding = context.work.result_binding(id)?;
+    let readers = PresentJobReaders::open(root, id, (flags, active, ack.is_some()), &mut errors)?;
+    if !readers.needs_cas(flags) {
+        return errors.finish();
+    }
+    let cas = FilesystemCasReader::open(root.join("cas-v1"), context.cas_limits)?;
+    let mut manifest = verify_present_receipt_step(
+        context,
+        id,
+        (&readers, &cas, ack.as_ref()),
+        &mut job,
+        &mut errors,
+    )?;
+    if manifest.is_some() {
+        increment_present(&mut counts.receipts, 1)?;
+    }
+    // Reopen/close the independent sealed input catalog even without job authority.
+    let inputs = reopen_present_input_catalog(&readers, &cas, &mut errors);
     let Some(job) = job else {
         // A bare JobId does not justify historical state scans or invented B/day.
         errors.observe::<()>(Err(Incomplete(format!(
@@ -165,334 +349,61 @@ pub(super) fn verify_present_job(
         return errors.finish();
     };
     let bundle = read_pinned_bundle(root, job.intent.protocol_bundle_hash)?;
-    if binding_present {
-        match (&binding_reader, &inputs) {
-            (Some(reader), Some(inputs)) => {
-                let loaded = (|| -> eyre::Result<_> {
-                    let binding = reader.load_integrity(
-                        &cas,
-                        &canonical_job_spec(&job)?,
-                        bundle.bundle(),
-                        inputs,
-                    )?;
-                    validate_present_manifest(binding.manifest(), &job, &bundle)?;
-                    if let Some(ack) = &ack {
-                        let request = binding.commit_replay_request();
-                        compare_surviving_ack_export(
-                            ack,
-                            outbe_node::ocomp::retention::ExportAuthorityV1 {
-                                source_generation: request.pin_generation,
-                                lease_generation: request.lease_generation,
-                                manifest_hash: request.manifest_hash,
-                            },
-                        )?;
-                        binding.require_exact_node_replay(&ack.committed)?;
-                    }
-                    if let Some(receipt_manifest) = &manifest {
-                        ensure!(
-                            binding.manifest() == receipt_manifest,
-                            "present receipt/binding manifest mismatch"
-                        );
-                    }
-                    if let Some(reader) = &receipt_reader {
-                        if receipt_present {
-                            let receipt = reader.load_exact(&cas)?;
-                            ensure!(
-                                binding.commit_replay_request() == receipt.commit_replay_request(),
-                                "present receipt/binding export authority mismatch"
-                            );
-                            binding.require_exact_node_replay(&receipt.committed())?;
-                        }
-                    }
-                    if let Some(expected) = work.export(id)? {
-                        let request = binding.commit_replay_request();
-                        ensure!(
-                            request.pin_generation == expected.source_generation
-                                && request.lease_generation == expected.lease_generation
-                                && request.manifest_hash == expected.manifest_hash,
-                            "present binding differs from saved pin export"
-                        );
-                    }
-                    Ok(binding)
-                })();
-                if let Some(binding) = errors.observe(loaded) {
-                    manifest = Some(binding.manifest().clone());
-                    increment_present(&mut counts.bindings, 1)?;
-                }
-            }
-            _ => {
-                errors.observe::<()>(Err(Incomplete(format!(
-                    "job {id}: present binding comparison lacks complete input catalog"
-                ))
-                .into()));
-            }
-        }
+    if verify_present_binding_step(
+        context,
+        id,
+        (&readers, &cas, inputs.as_ref()),
+        (&job, &bundle, ack.as_ref()),
+        (&mut manifest, &mut errors),
+    )? {
+        increment_present(&mut counts.bindings, 1)?;
     }
     // Per-job membership is discarded if the enclosing admission audit fails.
-    let membership = ReferenceMembership::create(scratch, protected)?;
-    let mut membership_valid = false;
-    let mut membership_complete = false;
+    let membership = ReferenceMembership::create(context.scratch, context.protected)?;
+    let (mut membership_valid, mut membership_complete) = (false, false);
     if flags & PRESENT_ADMISSIONS != 0 {
-        let audit_admissions = (|| -> eyre::Result<()> {
-            let inputs = inputs.as_ref().ok_or_else(|| {
-                Incomplete(format!(
-                    "job {id}: admissions comparison lacks input catalog"
-                ))
-            })?;
-            let admissions = AdmissionCatalogReader::open_existing(&admission_path, &cas, schema)?;
-            let audit = outbe_ocomp::lysis_plan_audit::open_read_only_local_plan_integrity_audit(
-                &admissions,
-                inputs,
-                &cas,
-                &bundle,
-                &schema,
-            )?;
-            validate_present_manifest(audit.manifest(), &job, &bundle)?;
-            if let Some(result) = result_binding {
-                compare_surviving_result_binding(
-                    result,
-                    audit.manifest(),
-                    Some(audit.plan().plan_hash(&schema)?),
-                )?;
-            }
-            if let Some(expected) = &manifest {
-                ensure!(
-                    audit.manifest() == expected,
-                    "present admission/receipt manifest mismatch"
-                );
-            }
-            manifest = Some(audit.manifest().clone());
-            let present = verify_present_admissions(
-                root,
-                audit.manifest(),
-                job.intent.frozen_metadosis_values.lysis_limit_minor,
-                job.intent.logical_evaluation_time,
-                cas_limits,
-                None,
-                &mut |reference| membership.insert(id, reference),
-            )?;
-            increment_present(&mut counts.admissions, u64::from(present.present))?;
+        let audit_admissions = PresentAdmissionsVerify {
+            context,
+            id,
+            admission_path: &readers.admission_path,
+            cas: &cas,
+            job: &job,
+            bundle: &bundle,
+            inputs: inputs.as_ref(),
+            result_binding,
+            membership: &membership,
+            require_certified: flags & PRESENT_REFERENCES != 0,
+        }
+        .run(&mut manifest, counts);
+        if let Some(complete) = errors.observe(audit_admissions) {
             membership_valid = true;
-            if present.present == present.expected {
-                let chunks = verify_complete_present_results(
-                    context,
-                    &job,
-                    &bundle,
-                    &audit,
-                    &membership,
-                    flags & PRESENT_REFERENCES != 0,
-                )?;
-                increment_present(&mut counts.results, chunks)?;
-                membership_complete = true;
-            }
-            Ok(())
-        })();
-        if errors.observe(audit_admissions).is_none() {
-            membership_valid = false;
+            membership_complete = complete;
         }
     }
     if let (Some(result), Some(manifest)) = (result_binding, manifest.as_ref()) {
         errors.observe(compare_surviving_result_binding(result, manifest, None));
     }
     if let Some(inputs) = &inputs {
-        let verify = (|| -> eyre::Result<u64> {
-            let mut cursor = inputs.exact_verified_integrity_cursor(&cas, bundle.bundle())?;
-            let expected_count = u32::try_from(cursor.len())?;
-            let mut ordered = outbe_ocomp_protocol::StreamingOrderedListRoot::new(
-                outbe_ocomp_protocol::ListKind::InputChunkReferences,
-                expected_count,
-            )?;
-            let (mut bytes, mut records, mut tribute) = (0_u64, 0_u64, 0_u64);
-            for entry in &mut cursor {
-                let entry = entry?;
-                ensure!(
-                    entry.chunk.job_id == id
-                        && entry.chunk.protocol_bundle_hash == job.intent.protocol_bundle_hash,
-                    "present input chunk differs from canonical job"
-                );
-                ordered.push(
-                    &entry.reference.encode_canonical_record(&schema)?,
-                    schema.max_bounded_bytes,
-                )?;
-                increment_present(&mut bytes, entry.reference.encoded_bytes)?;
-                increment_present(&mut records, u64::from(entry.reference.record_count))?;
-                if entry.reference.kind == outbe_ocomp_protocol::input::InputChunkKind::Tribute {
-                    increment_present(&mut tribute, u64::from(entry.reference.record_count))?;
-                }
-            }
-            let list_root = ordered.finish()?;
-            let expected = manifest.as_ref().ok_or_else(|| Incomplete(format!("job {id}: sealed catalog internally valid; full manifest authority comparison unavailable")))?;
-            validate_present_manifest(expected, &job, &bundle)?;
-            ensure!(
-                expected.input_chunk_count == expected_count
-                    && expected.input_chunk_list_root == list_root
-                    && expected.exact_encoded_bytes == bytes
-                    && u64::from(expected.exact_record_count) == records
-                    && u64::from(expected.tribute_count) == tribute,
-                "present input catalog differs from authenticated manifest"
-            );
-            for entry in inputs.exact_verified_integrity_cursor(&cas, bundle.bundle())? {
-                let entry = entry?;
-                if entry.reference.kind == outbe_ocomp_protocol::input::InputChunkKind::Tribute {
-                    ensure!(
-                        entry.chunk.job_id == id
-                            && entry.chunk.protocol_bundle_hash == job.intent.protocol_bundle_hash,
-                        "present input chunk differs from canonical job"
-                    );
-                    membership.insert(
-                        id,
-                        &outbe_ocomp_protocol::CasObjectRefV1 {
-                            transport_digest: entry.reference.transport_digest,
-                            encoded_bytes: entry.reference.encoded_bytes,
-                            expected_ocb1_kind: Some(
-                                outbe_ocomp_protocol::ObjectKind::AuthenticatedInputChunkV1.tag(),
-                            ),
-                        },
-                    )?;
-                }
-            }
-            Ok(u64::from(expected_count))
-        })();
+        let verify = verify_present_input_catalog(
+            id,
+            (&cas, &bundle),
+            inputs,
+            (&job, manifest.as_ref()),
+            &membership,
+        );
         if let Some(chunks) = errors.observe(verify) {
             increment_present(&mut counts.inputs, chunks)?;
         }
     }
     if flags & PRESENT_REFERENCES != 0 {
-        // Each full ref is checked against same-job native plan/result evidence.
-        // A successful partial catalog proves positive membership only.
-        let verified = (|| -> eyre::Result<()> {
-            let mut count = 0_u64;
-            work.visit_refs(id, &mut |reference| {
-                if !membership_valid {
-                    cas.read_verified(&reference)?;
-                    return Err(Incomplete(format!("job {id}: materialization reference lacks available plan membership evidence")).into());
-                }
-                membership.verify(id, &reference, &cas, membership_complete)?;
-                increment_present(&mut count, 1)
-            })?;
-            increment_present(&mut counts.references, count)?;
-            if !membership_complete {
-                return Err(Incomplete(format!(
-                    "job {id}: retained reference membership is partial; certified output-root comparison unavailable"
-                )).into());
-            }
-            Ok(())
-        })();
+        let verified = verify_present_reference_membership(
+            id,
+            context.work,
+            &cas,
+            (&membership, membership_valid, membership_complete),
+            counts,
+        );
         errors.observe(verified);
     }
     errors.finish()
-}
-
-pub(super) fn verify_complete_present_results<'a>(
-    context: &PresentJobContext<'_, '_>,
-    job: &OcompJobRecordV1,
-    bundle: &PinnedProtocolBundle,
-    audit: &'a LocalLysisPlanAuditV1<'a>,
-    membership: &ReferenceMembership,
-    require_certified: bool,
-) -> eyre::Result<u64> {
-    let state = context.state;
-    let scratch = context.scratch;
-    let protected = context.protected;
-    use outbe_lysis::program_v1::phases::NodBucketKeyV1;
-    use outbe_ocomp::lysis_result_catalog::{
-        ExactLysisResultCatalogCursorV1, LysisResultCatalogStepV1,
-    };
-    use outbe_ocomp_protocol::{
-        shuffle::ShuffleBucketRecordV1, ListKind, StreamingOrderedListRoot,
-    };
-    let limits = poc_schema_limits();
-    let id = job
-        .finalized
-        .as_ref()
-        .ok_or_else(|| eyre::eyre!("result catalog without finalized job"))?
-        .job_id;
-    let certified = state.nod_certified_generation(WorldwideDay::new(job.intent.wwd))?;
-    if require_certified {
-        let expected = certified.as_ref().ok_or_else(|| Incomplete(format!("job {id}: retained materialization reference lacks certified generation comparison")))?;
-        ensure!(
-            expected.job_id == id,
-            "materialization reference job differs from canonical certified generation"
-        );
-    }
-    let sorted = PresentJobUnion::create(scratch, protected)?;
-    let mut nod = StreamingOrderedListRoot::new(ListKind::NodActions, audit.plan().tribute_count)?;
-    let mut output = StreamingOrderedListRoot::new(
-        ListKind::CompleteOutputManifest,
-        audit.plan().primary_work_unit_count,
-    )?;
-    let mut chunks = 0_u64;
-    let (mut allocation, mut cost) = (U256::ZERO, U256::ZERO);
-    let mut complete = false;
-    for step in ExactLysisResultCatalogCursorV1::open(audit)? {
-        match step? {
-            LysisResultCatalogStepV1::Chunk(chunk) => {
-                membership.insert(id, chunk.producer_artifact_ref())?;
-                membership.insert(id, &chunk.output_manifest_entry().result_chunk_ref)?;
-                output.push(
-                    &chunk
-                        .output_manifest_entry()
-                        .encode_canonical_record(&limits)?,
-                    limits.max_bounded_bytes,
-                )?;
-                allocation = allocation
-                    .checked_add(chunk.summary().lysis_allocation_minor)
-                    .ok_or_else(|| eyre::eyre!("result allocation overflow"))?;
-                cost = cost
-                    .checked_add(chunk.summary().nod_cost_total)
-                    .ok_or_else(|| eyre::eyre!("result NOD cost overflow"))?;
-                let tx = sorted.db.tx_mut()?;
-                for action in &chunk.chunk().ordered_nod_actions {
-                    nod.push(
-                        &action.encode_canonical_record(&limits)?,
-                        limits.max_bounded_bytes,
-                    )?;
-                    // Same native record projection as Lysis finalizer::stream_result_chunks.
-                    // Scratch sorting replaces its external globally ordered record input.
-                    let record = ShuffleBucketRecordV1 {
-                        bucket_key: action.bucket_key(),
-                        raw_ordinal: action.raw_ordinal,
-                        tribute_id: action.tribute_id,
-                        nod_id: action.nod_id,
-                    };
-                    let mut key = vec![b'b'];
-                    key.extend_from_slice(record.bucket_key.as_slice());
-                    key.extend_from_slice(&record.raw_ordinal.to_be_bytes());
-                    ensure!(
-                        tx.get::<InventoryRows>(key.clone())?.is_none(),
-                        "duplicate native bucket record sort key"
-                    );
-                    tx.put::<InventoryRows>(key, record.encode_canonical_record(&limits)?)?;
-                }
-                tx.commit()?;
-                increment_present(&mut chunks, 1)?;
-            }
-            LysisResultCatalogStepV1::Complete => complete = true,
-            _ => {}
-        }
-    }
-    ensure!(complete, "native result catalog did not reach Complete");
-    let mut bucket =
-        StreamingOrderedListRoot::new(ListKind::BucketRecords, audit.plan().tribute_count)?;
-    sorted.visit_prefix(b"b", &mut |_, record| {
-        bucket.push(&record, limits.max_bounded_bytes)?;
-        Ok(())
-    })?;
-    let (nod_root, bucket_root, output_root) = (nod.finish()?, bucket.finish()?, output.finish()?);
-    if let Some(expected) = certified.filter(|expected| expected.job_id == id) {
-        ensure!(
-            expected.protocol_bundle_hash == job.intent.protocol_bundle_hash
-                && expected.program_semantics_hash == bundle.bundle().lysis_program_semantics_hash
-                && expected.tribute_count == audit.plan().tribute_count
-                && expected.nod_count == audit.plan().tribute_count
-                && expected.bucket_count == audit.plan().tribute_count
-                && expected.nod_root == nod_root
-                && expected.bucket_root == bucket_root
-                && expected.output_manifest_root == output_root
-                && expected.lysis_allocation_minor == allocation
-                && expected.nod_amount_total == cost,
-            "complete present result catalog differs from canonical certified outputs"
-        );
-    }
-    Ok(chunks)
 }

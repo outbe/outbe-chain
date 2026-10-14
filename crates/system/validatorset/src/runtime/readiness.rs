@@ -1,4 +1,5 @@
 use super::{registered_status, ValidatorRecord};
+use crate::errors::ValidatorSetError;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{self, ValidatorLifecycle, ValidatorState};
 use alloy_primitives::{keccak256, Address, B256};
@@ -7,7 +8,7 @@ use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
     SchemaLimits,
 };
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use std::collections::BTreeSet;
 
 impl ValidatorSet<'_> {
@@ -52,28 +53,20 @@ impl ValidatorSet<'_> {
     ) -> Result<OcompKeyRegistrationV1> {
         let limits = poc_schema_limits();
         let registration = OcompKeyRegistrationV1::decode_canonical(encoded_registration, &limits)
-            .map_err(|error| {
-                PrecompileError::Revert(format!("invalid OCOMP registration: {error}"))
-            })?;
+            .map_err(ValidatorSetError::invalid_ocomp_registration)?;
         if registration.core.chain_id != self.storage.chain_id()? {
-            return Err(PrecompileError::Revert(
-                "OCOMP registration chain id mismatch".into(),
-            ));
+            return Err(ValidatorSetError::OcompRegistrationChainIdMismatch.into());
         }
         if registration.core.genesis_hash != self.storage.genesis_hash()? {
-            return Err(PrecompileError::Revert(
-                "OCOMP registration genesis hash mismatch".into(),
-            ));
+            return Err(ValidatorSetError::OcompRegistrationGenesisHashMismatch.into());
         }
-        let consensus_pubkey = before.consensus_pubkey().ok_or_else(|| {
-            PrecompileError::Fatal("registered validator is missing consensus pubkey".into())
-        })?;
+        let consensus_pubkey = before
+            .consensus_pubkey()
+            .ok_or(ValidatorSetError::RegisteredValidatorMissingConsensusPubkey)?;
         let expected_identity = validator_identity_hash_v1(caller, consensus_pubkey)
-            .map_err(|error| PrecompileError::Fatal(format!("validator identity hash: {error}")))?;
+            .map_err(ValidatorSetError::validator_identity_hash_error)?;
         if registration.core.validator_identity_hash != expected_identity {
-            return Err(PrecompileError::Revert(
-                "OCOMP registration validator identity mismatch".into(),
-            ));
+            return Err(ValidatorSetError::OcompRegistrationIdentityMismatch.into());
         }
         Ok(registration)
     }
@@ -91,22 +84,16 @@ impl ValidatorSet<'_> {
         if let Some(existing) = existing_registration.as_ref() {
             let pinned_key_hash = keccak256(existing.core.ocomp_public_key_sec1);
             if pinned_key_hash != key_hash {
-                return Err(PrecompileError::Revert(
-                    "OCOMP public key is immutable in key_epoch 1".into(),
-                ));
+                return Err(ValidatorSetError::OcompPublicKeyImmutableInEpoch1.into());
             }
             let pinned_owner = self.ocomp_key_hash_to_validator.read(&pinned_key_hash)?;
             if pinned_owner != caller {
-                return Err(PrecompileError::Fatal(format!(
-                    "OCOMP key reservation for {caller} is inconsistent"
-                )));
+                return Err(ValidatorSetError::InconsistentOcompKeyReservation { caller }.into());
             }
         }
         let existing_owner = self.ocomp_key_hash_to_validator.read(&key_hash)?;
         if !existing_owner.is_zero() && existing_owner != caller {
-            return Err(PrecompileError::Revert(
-                "OCOMP public key already registered by another validator".into(),
-            ));
+            return Err(ValidatorSetError::OcompPublicKeyAlreadyRegistered.into());
         }
         Ok(key_hash)
     }
@@ -124,11 +111,11 @@ impl ValidatorSet<'_> {
     ) -> Result<()> {
         let active = self.get_active_validators()?;
         if active.is_empty() || active.len() != registrations.len() {
-            return Err(PrecompileError::Fatal(format!(
-                "OCOMP founder registrations must exactly cover ACTIVE ValidatorSet: {} registrations for {} validators",
-                registrations.len(),
-                active.len()
-            )));
+            return Err(ValidatorSetError::FounderOcompRegistrationsCountMismatch {
+                registrations: registrations.len(),
+                validators: active.len(),
+            }
+            .into());
         }
 
         let mut import = FounderImport {
@@ -141,7 +128,7 @@ impl ValidatorSet<'_> {
         let mut prepared = Vec::new();
         prepared
             .try_reserve_exact(registrations.len())
-            .map_err(|_| PrecompileError::Fatal("allocate OCOMP founder import".into()))?;
+            .map_err(|_| ValidatorSetError::AllocateOcompFounderImport)?;
 
         let mut exact_existing = 0usize;
         for (validator, registration) in active.iter().zip(registrations) {
@@ -156,9 +143,7 @@ impl ValidatorSet<'_> {
             return Ok(());
         }
         if exact_existing != 0 {
-            return Err(PrecompileError::Fatal(
-                "partial OCOMP founder registration import is fatal".into(),
-            ));
+            return Err(ValidatorSetError::PartialOcompFounderRegistrationImport.into());
         }
 
         let guard = self.storage.checkpoint_guard();
@@ -186,10 +171,10 @@ impl ValidatorSet<'_> {
         match stored {
             Some(existing) if existing == *registration && owner == founder.validator => Ok(true),
             None if owner.is_zero() => Ok(false),
-            _ => Err(PrecompileError::Fatal(format!(
-                "partial or conflicting OCOMP founder state for {}",
-                founder.validator
-            ))),
+            _ => Err(ValidatorSetError::PartialOrConflictingOcompFounderState {
+                validator: founder.validator,
+            }
+            .into()),
         }
     }
 }
@@ -202,13 +187,11 @@ fn ready_lifecycle(lifecycle: ValidatorLifecycle) -> Result<ValidatorLifecycle> 
             state_machine::confirm_ready(waiting),
         )),
         ValidatorLifecycle::Joining(joining) => Ok(ValidatorLifecycle::Joining(joining)),
-        ValidatorLifecycle::Absent => {
-            Err(PrecompileError::Revert("validator not registered".into()))
+        ValidatorLifecycle::Absent => Err(ValidatorSetError::ValidatorNotRegistered.into()),
+        lifecycle => Err(ValidatorSetError::ConfirmValidatorReadyRequiresPending {
+            status: registered_status(&lifecycle)?,
         }
-        lifecycle => Err(PrecompileError::Revert(format!(
-            "confirmValidatorReady requires PENDING status, got {}",
-            registered_status(&lifecycle)?
-        ))),
+        .into()),
     }
 }
 
@@ -240,46 +223,30 @@ impl FounderImport {
     ) -> Result<PreparedFounder> {
         registration
             .validate_proof_of_possession(&self.limits)
-            .map_err(|error| {
-                PrecompileError::Fatal(format!(
-                    "invalid OCOMP founder proof of possession: {error}"
-                ))
-            })?;
+            .map_err(ValidatorSetError::invalid_ocomp_founder_pop)?;
         if registration.core.chain_id != self.chain_id
             || registration.core.genesis_hash != self.genesis_hash
         {
-            return Err(PrecompileError::Fatal(
-                "OCOMP founder registration chain binding mismatch".into(),
-            ));
+            return Err(ValidatorSetError::OcompFounderChainBindingMismatch.into());
         }
         let expected_identity =
             validator_identity_hash_v1(validator.validator_address, &validator.consensus_pubkey)
-                .map_err(|error| {
-                    PrecompileError::Fatal(format!(
-                        "derive OCOMP founder validator identity: {error}"
-                    ))
-                })?;
+                .map_err(ValidatorSetError::derive_ocomp_founder_identity)?;
         if registration.core.validator_identity_hash != expected_identity {
-            return Err(PrecompileError::Fatal(format!(
-                "OCOMP founder registration identity mismatch for {}",
-                validator.validator_address
-            )));
+            return Err(ValidatorSetError::OcompFounderIdentityMismatch {
+                validator: validator.validator_address,
+            }
+            .into());
         }
         if !self.identities.insert(expected_identity)
             || !self.keys.insert(registration.core.ocomp_public_key_sec1)
         {
-            return Err(PrecompileError::Fatal(
-                "OCOMP founder registrations contain duplicate identity or key".into(),
-            ));
+            return Err(ValidatorSetError::DuplicateOcompFounderIdentityOrKey.into());
         }
 
         let encoded = registration
             .encode_canonical(&self.limits)
-            .map_err(|error| {
-                PrecompileError::Fatal(format!(
-                    "encode canonical OCOMP founder registration: {error}"
-                ))
-            })?;
+            .map_err(ValidatorSetError::encode_canonical_ocomp_founder_registration)?;
         Ok(PreparedFounder {
             validator: validator.validator_address,
             key_hash: keccak256(registration.core.ocomp_public_key_sec1),

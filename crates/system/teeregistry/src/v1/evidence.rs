@@ -32,11 +32,10 @@ impl TeeRegistry<'_> {
         if outcome.registration == V1RegistrationOutcome::Idempotent {
             return Ok(());
         }
-        let artifact = outcome.artifact.as_ref().ok_or_else(|| {
-            PrecompileError::Fatal(
-                "created registration has no purpose-bound onboarding artifact".into(),
-            )
-        })?;
+        let artifact = outcome
+            .artifact
+            .as_ref()
+            .ok_or(TeeRegistryError::MissingPurposeBoundOnboardingArtifact)?;
         let context = artifact.context;
         let expected_offer_public = self.offer_public_key()?;
         if expected_offer_public.is_zero()
@@ -46,16 +45,10 @@ impl TeeRegistry<'_> {
                 expected_offer_public,
             )?
         {
-            return Err(PrecompileError::Fatal(
-                "purpose-bound onboarding artifact does not match committed Registry binding"
-                    .into(),
-            ));
+            return Err(TeeRegistryError::OnboardingArtifactBindingMismatch.into());
         }
         let encoded = artifact.encode_canonical().map_err(|code| {
-            PrecompileError::Fatal(format!(
-                "purpose-bound onboarding artifact is non-canonical: {:#06x}",
-                code.code()
-            ))
+            TeeRegistryError::OnboardingArtifactNonCanonical { code: code.code() }
         })?;
         self.emit(OfferKeySealedForRegistryV1 {
             nodeIdHash: node_id_hash,
@@ -119,9 +112,7 @@ impl TeeRegistry<'_> {
                 .map_err(|e| revert_codec("upgrade policy", e))?
                 != upgrade.successor_policy_hash
         {
-            return Err(PrecompileError::Revert(
-                "candidate requires an approved MRENCLAVE upgrade".into(),
-            ));
+            return Err(TeeRegistryError::CandidateRequiresApprovedUpgrade.into());
         }
         self.apply_evidence_mutation_with_active_policy_v1(
             AttestationOperationV1::PrepareEnclaveUpgrade,
@@ -146,9 +137,7 @@ impl TeeRegistry<'_> {
         }
         self.require_associated_caller_v1(caller, node)?;
         if expected.is_zero() || self.upgrade_candidate_context.read(&node)? != expected {
-            return Err(PrecompileError::Revert(
-                "pending upgrade changed or is absent".into(),
-            ));
+            return Err(TeeRegistryError::PendingUpgradeChangedOrAbsent.into());
         }
         self.clear_upgrade_candidate_v1(node)?;
         self.emit(
@@ -178,9 +167,7 @@ impl TeeRegistry<'_> {
         if self.storage.enclave_upgrade_id()?.is_zero()
             && self.storage.block_number()? >= policy.activation_height
         {
-            return Err(PrecompileError::Revert(
-                "measurement rollout closes at successor policy activation".into(),
-            ));
+            return Err(TeeRegistryError::MeasurementRolloutClosed.into());
         }
         self.apply_evidence_mutation_with_active_policy_v1(
             AttestationOperationV1::TransitionEnclaveMeasurement,
@@ -224,9 +211,7 @@ impl TeeRegistry<'_> {
             self.validate_transition_key_ready_proof_v1(&decoded)?;
         }
         if decoded.mode() != policy.attestation_mode {
-            return Err(PrecompileError::Revert(
-                "attestation evidence mode does not match the active V1 policy".into(),
-            ));
+            return Err(TeeRegistryError::AttestationEvidenceModeMismatch.into());
         }
 
         let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
@@ -277,26 +262,18 @@ impl TeeRegistry<'_> {
         if evidence.mode() == AttestationMode::GramineDirectDev
             && self.enclave_upgrade_v1()?.proposal_id.is_zero()
         {
-            return Err(PrecompileError::Revert(
-                "DirectDev transition requires a MRENCLAVE upgrade".into(),
-            ));
+            return Err(TeeRegistryError::DirectDevTransitionRequiresUpgrade.into());
         }
-        let proof = evidence.transition_key_ready_proof().ok_or_else(|| {
-            PrecompileError::Revert("measurement transition is missing key-ready proof".into())
-        })?;
+        let proof = evidence
+            .transition_key_ready_proof()
+            .ok_or(TeeRegistryError::MissingTransitionKeyReadyProof)?;
         let offer_public = self.offer_public_key()?;
         if offer_public.is_zero() {
-            return Err(PrecompileError::Fatal(
-                "measurement transition requires the permanent offer-key commitment".into(),
-            ));
+            return Err(TeeRegistryError::TransitionRequiresOfferKeyCommitment.into());
         }
         proof
             .verify_for_transition(evidence.intent(), offer_public.0)
-            .map_err(|error| {
-                PrecompileError::Revert(format!(
-                    "measurement transition key-ready proof is invalid: {error}"
-                ))
-            })
+            .map_err(TeeRegistryError::invalid_transition_key_ready_proof)
     }
     fn apply_current_evidence_mutation_v1(
         &mut self,
@@ -314,9 +291,9 @@ impl TeeRegistry<'_> {
         issue_onboarding_artifact: bool,
     ) -> Result<VerifiedEvidenceClaimsV1> {
         let EnclaveEvidenceV1 { evidence, .. } = request;
-        let policy_bytes = policy.encode_canonical().map_err(|error| {
-            PrecompileError::Fatal(format!("active V1 policy cannot be encoded: {error}"))
-        })?;
+        let policy_bytes = policy
+            .encode_canonical()
+            .map_err(TeeRegistryError::active_v1_policy_encoding_failed)?;
         let consensus_timestamp = consensus_timestamp(&self.storage)?;
         let (outcome, onboarding_artifact) = if issue_onboarding_artifact {
             self.verify_dcap_registration_claims_v1(DcapVerificationContextV1 {
@@ -327,33 +304,19 @@ impl TeeRegistry<'_> {
             })?
         } else {
             (
-                        outbe_tee::verify_dcap_evidence_v1(
-                            evidence,
-                            &policy_bytes,
-                            consensus_timestamp,
-                        )
-                        .map_err(|error| {
-                            PrecompileError::Fatal(format!(
-                                "enclave-resident DCAP verifier is unavailable or unauthenticated: {error}"
-                            ))
-                        })?,
-                        None,
-                    )
+                outbe_tee::verify_dcap_evidence_v1(evidence, &policy_bytes, consensus_timestamp)
+                    .map_err(TeeRegistryError::dcap_verifier_unavailable)?,
+                None,
+            )
         };
         let verdict = match outcome {
             DcapVerificationOutcomeV1::Accepted(verdict) => verdict,
             DcapVerificationOutcomeV1::Rejected(code) => {
-                return Err(PrecompileError::Revert(format!(
-                    "DCAP evidence rejected with code {:#06x}",
-                    code.code()
-                )))
+                return Err(TeeRegistryError::DcapEvidenceRejected { code: code.code() }.into())
             }
         };
         let evidence_hash = dcap_evidence_hash_v1(evidence).map_err(|code| {
-            PrecompileError::Fatal(format!(
-                "accepted DCAP evidence cannot be hashed: {:#06x}",
-                code.code()
-            ))
+            TeeRegistryError::AcceptedDcapEvidenceHashingFailed { code: code.code() }
         })?;
         Ok(VerifiedEvidenceClaimsV1 {
             claims: VerifiedEnclaveClaimsV1::from_dcap(&verdict)?,
@@ -420,15 +383,11 @@ impl TeeRegistry<'_> {
             ..
         } = request;
         if expected_operation != AttestationOperationV1::RegisterEnclave {
-            return Err(PrecompileError::Fatal(
-                "onboarding artifact requested for a non-registration operation".into(),
-            ));
+            return Err(TeeRegistryError::OnboardingArtifactNonRegistration.into());
         }
         let offer_public = self.offer_public_key()?;
         if offer_public.is_zero() {
-            return Err(PrecompileError::Fatal(
-                "DcapRequired registration requires the OST3 offer-key commitment".into(),
-            ));
+            return Err(TeeRegistryError::DcapRegistrationRequiresOfferKeyCommitment.into());
         }
         let result = outbe_tee::verify_dcap_registration_and_seal_v1(
             outbe_tee::RegistrationVerificationRequest {
@@ -442,11 +401,7 @@ impl TeeRegistry<'_> {
                 tribute_offer_epoch: self.tribute_offer_epoch()?,
             },
         )
-        .map_err(|error| {
-            PrecompileError::Fatal(format!(
-                "purpose-bound DCAP onboarding verifier is unavailable or unauthenticated: {error}"
-            ))
-        })?;
+        .map_err(TeeRegistryError::dcap_onboarding_verifier_unavailable)?;
         Ok((result.outcome, result.artifact))
     }
 
@@ -472,9 +427,7 @@ impl TeeRegistry<'_> {
             || dev.dev_signature != *enclave_signature
             || !dev.intent.verify_enclave_signature(&dev.dev_signature)
         {
-            return Err(PrecompileError::Revert(
-                "GramineDirectDev evidence signature does not bind the registration intent".into(),
-            ));
+            return Err(TeeRegistryError::DirectDevSignatureMismatch.into());
         }
         let evidence_hash = decoded
             .evidence_hash()
@@ -503,15 +456,13 @@ impl TeeRegistry<'_> {
             onboarding_artifact
         } else if policy.attestation_mode == AttestationMode::GramineDirectDev {
             if expected_operation != AttestationOperationV1::RegisterEnclave {
-                return Err(PrecompileError::Fatal(
-                    "onboarding artifact requested for a non-registration operation".into(),
-                ));
+                return Err(TeeRegistryError::OnboardingArtifactNonRegistration.into());
             }
             let offer_public = self.offer_public_key()?;
             if offer_public.is_zero() {
-                return Err(PrecompileError::Fatal(
-                    "GramineDirectDev registration requires the OST3 offer-key commitment".into(),
-                ));
+                return Err(
+                    TeeRegistryError::DirectDevRegistrationRequiresOfferKeyCommitment.into(),
+                );
             }
             let context = DcapOnboardingContextV1 {
                 chain_id: intent.chain_id,
@@ -533,18 +484,11 @@ impl TeeRegistry<'_> {
             let _enclave_context =
                 outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
             Some(
-                outbe_tee::prepare_gramine_direct_dev_onboarding_artifact_v1(context).map_err(
-                    |error| {
-                        PrecompileError::Fatal(format!(
-                            "purpose-bound GramineDirectDev onboarding artifact failed: {error}"
-                        ))
-                    },
-                )?,
+                outbe_tee::prepare_gramine_direct_dev_onboarding_artifact_v1(context)
+                    .map_err(TeeRegistryError::direct_dev_onboarding_artifact_failed)?,
             )
         } else {
-            return Err(PrecompileError::Fatal(
-                "created registration has no purpose-bound onboarding artifact".into(),
-            ));
+            return Err(TeeRegistryError::MissingPurposeBoundOnboardingArtifact.into());
         };
         Ok(artifact)
     }

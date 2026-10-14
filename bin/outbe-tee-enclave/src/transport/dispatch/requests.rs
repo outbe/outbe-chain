@@ -24,7 +24,7 @@ pub fn dispatch(
     )
 }
 
-type QuoteGenerator = fn(&[u8; 64]) -> Result<Vec<u8>, String>;
+type QuoteGenerator = fn(&[u8; 64]) -> EnclaveResult<Vec<u8>>;
 
 #[derive(Clone, Copy)]
 pub(in crate::transport) struct DispatchInitializationContext<'a> {
@@ -103,11 +103,13 @@ pub(in crate::transport) fn dispatch_with_initialization(
             expected_key_epoch,
             expected_tribute_offer_epoch,
         } => complete_gramine_direct_dev_onboarding_ingest_response(
-            &artifact,
-            expected_intent_hash,
-            expected_tribute_offer_public,
-            expected_key_epoch,
-            expected_tribute_offer_epoch,
+            OnboardingArtifactExpectations {
+                artifact: &artifact,
+                expected_intent_hash,
+                expected_tribute_offer_public,
+                expected_key_epoch,
+                expected_tribute_offer_epoch,
+            },
             keys,
             offer_key,
             context.boot,

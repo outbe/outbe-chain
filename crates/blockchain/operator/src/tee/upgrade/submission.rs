@@ -18,7 +18,7 @@ pub(super) async fn run<R: RenewalRpc + Sync, N: UpgradeNodeSignerV1>(
     let replayed = inspect_upgrade_journal_v1(service.node_data_dir)?.is_some();
     loop {
         let snapshot = inspect_upgrade_journal_v1(service.node_data_dir)?
-            .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
+            .ok_or(UpgradeError::CandidateNotPrepared)?;
         if reset_if_expired(service, &snapshot).await? {
             continue;
         }
@@ -69,14 +69,35 @@ async fn reset_if_expired<R: RegistryRpc + Sync, N>(
 
 fn terminal_outcome(lifecycle: &UpgradeJournalStateV1) -> Result<UpgradeSubmissionOutcomeV1> {
     match lifecycle {
-        UpgradeJournalStateV1::CandidatePrepared { .. } => eyre::bail!("candidate key is not provisioned; run upgrade-provision"),
-        UpgradeJournalStateV1::Finalized { submission, finalized_height, .. } =>
-            Ok(UpgradeSubmissionOutcomeV1::Finalized { transaction_hash: last_transaction_hash(submission)?, finalized_height: *finalized_height }),
-        UpgradeJournalStateV1::Promoted { submission, finalized_height, .. } =>
-            Ok(UpgradeSubmissionOutcomeV1::Promoted { transaction_hash: last_transaction_hash(submission)?, finalized_height: *finalized_height }),
-        UpgradeJournalStateV1::TerminalMissedCutoff { finalized_height, activation_height, .. } =>
-            eyre::bail!("upgrade missed successor activation cutoff {activation_height} at finalized height {finalized_height}"),
-        _ => eyre::bail!("upgrade checkpoint is not a terminal submission state"),
+        UpgradeJournalStateV1::CandidatePrepared { .. } => {
+            Err(UpgradeError::CandidateKeyNotProvisioned.into())
+        }
+        UpgradeJournalStateV1::Finalized {
+            submission,
+            finalized_height,
+            ..
+        } => Ok(UpgradeSubmissionOutcomeV1::Finalized {
+            transaction_hash: last_transaction_hash(submission)?,
+            finalized_height: *finalized_height,
+        }),
+        UpgradeJournalStateV1::Promoted {
+            submission,
+            finalized_height,
+            ..
+        } => Ok(UpgradeSubmissionOutcomeV1::Promoted {
+            transaction_hash: last_transaction_hash(submission)?,
+            finalized_height: *finalized_height,
+        }),
+        UpgradeJournalStateV1::TerminalMissedCutoff {
+            finalized_height,
+            activation_height,
+            ..
+        } => Err(UpgradeError::MissedActivationCutoff {
+            activation_height: *activation_height,
+            finalized_height: *finalized_height,
+        }
+        .into()),
+        _ => Err(UpgradeError::NonTerminalSubmissionState.into()),
     }
 }
 
@@ -101,10 +122,10 @@ async fn submit_prepared<R: RegistryRpc + RelayRpc + Sync, N>(
     let raw = submission
         .relay_variants
         .last()
-        .ok_or_else(|| eyre::eyre!("upgrade submission has no relay bytes"))?;
+        .ok_or(UpgradeError::MissingRelayBytes)?;
     let returned_hash = send_prepared(service.rpc, raw).await?;
     if returned_hash != raw.transaction_hash {
-        eyre::bail!("RPC returned a transaction hash different from the signed transition bytes");
+        return Err(UpgradeError::SubmittedTransitionHashMismatch.into());
     }
     let finalized = read_finalized_bound_renewal_view_v1(service.rpc, service.selector).await?;
     record_upgrade_submitted_v1(service.node_data_dir, finalized.schedule.finalized_height)?;
@@ -145,7 +166,7 @@ async fn replay_submitted<R: RegistryRpc + RelayRpc + Sync, N>(
         let raw = submission
             .relay_variants
             .last()
-            .ok_or_else(|| eyre::eyre!("upgrade submission has no relay bytes"))?;
+            .ok_or(UpgradeError::MissingRelayBytes)?;
         replay_exact(service.rpc, raw, transaction_hash).await?;
     }
     Ok(UpgradeSubmissionOutcomeV1::AlreadySubmitted { transaction_hash })
@@ -158,7 +179,7 @@ async fn replay_exact(
 ) -> Result<()> {
     match rpc.send_raw_transaction(&raw.raw_transaction).await {
         Ok(hash) if hash.parse::<B256>()? == transaction_hash => Ok(()),
-        Ok(_) => eyre::bail!("RPC returned a different replay transaction hash"),
+        Ok(_) => Err(UpgradeError::ReplayTransactionHashMismatch.into()),
         Err(error) if transaction_is_already_known(&error) => Ok(()),
         Err(error) => Err(error).wrap_err("replay exact measurement-transition transaction"),
     }

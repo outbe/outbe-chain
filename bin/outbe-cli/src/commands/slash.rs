@@ -1,11 +1,12 @@
 //! Slash information and evidence submission commands.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, B256};
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
 
 use crate::abi::{self, ISlashIndicator, SLASH_INDICATOR_ADDR};
+use crate::errors::SlashError;
 use crate::rpc::Rpc;
 
 #[derive(Subcommand)]
@@ -58,14 +59,7 @@ impl SlashCmd {
             Self::Info { address } => info(client, address).await,
             Self::Config => config(client).await,
             Self::History { limit } => history(client, limit).await,
-            Self::Evidence { kind } => match kind {
-                EvidenceCmd::DoubleProposal { block1, block2 } => {
-                    submit_double_proposal(client, private_key, block1, block2).await
-                }
-                EvidenceCmd::ConflictingVote { vote1, vote2 } => {
-                    submit_conflicting_vote(client, private_key, vote1, vote2).await
-                }
-            },
+            Self::Evidence { kind } => submit_evidence(client, private_key, kind).await,
         }
     }
 }
@@ -117,26 +111,33 @@ async fn info(client: &(impl Rpc + Sync), address: Address) -> Result<()> {
     Ok(())
 }
 
-async fn submit_double_proposal(
+async fn submit_evidence(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
-    block1: String,
-    block2: String,
+    kind: EvidenceCmd,
 ) -> Result<()> {
     let signer = super::require_signer(private_key)?;
-    let b1 = parse_evidence_hex("block1", &block1)?;
-    let b2 = parse_evidence_hex("block2", &block2)?;
-
-    let call = ISlashIndicator::submitDoubleProposalEvidenceCall {
-        block1: b1.into(),
-        block2: b2.into(),
+    let calldata = match kind {
+        EvidenceCmd::DoubleProposal { block1, block2 } => {
+            ISlashIndicator::submitDoubleProposalEvidenceCall {
+                block1: parse_evidence_hex("block1", &block1)?.into(),
+                block2: parse_evidence_hex("block2", &block2)?.into(),
+            }
+            .abi_encode()
+        }
+        EvidenceCmd::ConflictingVote { vote1, vote2 } => {
+            ISlashIndicator::submitConflictingVoteEvidenceCall {
+                vote1: parse_evidence_hex("vote1", &vote1)?.into(),
+                vote2: parse_evidence_hex("vote2", &vote2)?.into(),
+            }
+            .abi_encode()
+        }
     };
-
     let tx_hash = signer
         .send_tx(
             client,
             abi::SLASH_INDICATOR_ADDR,
-            call.abi_encode(),
+            calldata,
             Default::default(),
         )
         .await?;
@@ -144,37 +145,10 @@ async fn submit_double_proposal(
     Ok(())
 }
 
-async fn submit_conflicting_vote(
-    client: &(impl Rpc + Sync),
-    private_key: Option<&str>,
-    vote1: String,
-    vote2: String,
-) -> Result<()> {
-    let signer = super::require_signer(private_key)?;
-    let v1 = parse_evidence_hex("vote1", &vote1)?;
-    let v2 = parse_evidence_hex("vote2", &vote2)?;
-
-    let call = ISlashIndicator::submitConflictingVoteEvidenceCall {
-        vote1: v1.into(),
-        vote2: v2.into(),
-    };
-
-    let tx_hash = signer
-        .send_tx(
-            client,
-            abi::SLASH_INDICATOR_ADDR,
-            call.abi_encode(),
-            Default::default(),
-        )
-        .await?;
-    println!("Transaction sent: {tx_hash}");
-    Ok(())
-}
-
-fn parse_evidence_hex(label: &str, value: &str) -> Result<Vec<u8>> {
+fn parse_evidence_hex(label: &'static str, value: &str) -> Result<Vec<u8>> {
     let bytes = hex::decode(value.strip_prefix("0x").unwrap_or(value))?;
     if bytes.is_empty() {
-        eyre::bail!("{label} evidence must be non-empty");
+        return Err(SlashError::EmptyEvidence(label).into());
     }
     Ok(bytes)
 }
@@ -200,27 +174,71 @@ async fn config(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
+struct SlashTopics {
+    proposer_felony: String,
+    proposer_misd: String,
+    voter_misd: String,
+    evidence: String,
+}
+
+impl SlashTopics {
+    fn new() -> Self {
+        Self {
+            proposer_felony: slash_event_topic(b"ProposerFelony(address,uint64,uint64)"),
+            proposer_misd: slash_event_topic(b"ProposerMisdemeanor(address,uint64)"),
+            voter_misd: slash_event_topic(b"VoterMisdemeanor(address,uint64)"),
+            evidence: slash_event_topic(b"EvidenceFelonyApplied(address,address,uint256,uint256)"),
+        }
+    }
+
+    fn format_row(&self, parsed: &super::ParsedLog<'_>) -> Option<String> {
+        let topic0 = parsed.topic(0);
+        let validator = parsed.topic_addr(1);
+        if topic0 == self.proposer_felony {
+            Some(format!(
+                "{:<14} {:<12} {:<44} miss={}, felony={}",
+                parsed.block,
+                "FELONY",
+                validator,
+                parsed.word_u64(0),
+                parsed.word_u64(1)
+            ))
+        } else if topic0 == self.proposer_misd || topic0 == self.voter_misd {
+            let label = if topic0 == self.proposer_misd {
+                "PROP_MISD"
+            } else {
+                "VOTER_MISD"
+            };
+            Some(format!(
+                "{:<14} {:<12} {:<44} miss={}",
+                parsed.block,
+                label,
+                validator,
+                parsed.word_u64(0)
+            ))
+        } else if topic0 == self.evidence {
+            let submitter = parsed.topic_addr(2);
+            let slashed = parsed.word_u256(0);
+            Some(format!(
+                "{:<14} {:<12} {:<44} slashed={} COEN, by={}",
+                parsed.block,
+                "EVIDENCE",
+                validator,
+                super::format_coen_amount(slashed),
+                submitter,
+            ))
+        } else {
+            None
+        }
+    }
+}
+
+fn slash_event_topic(signature: &[u8]) -> String {
+    format!("{:?}", B256::from(keccak256(signature)))
+}
+
 async fn history(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
-    // Fetch all slash-related events: ProposerFelony, ProposerMisdemeanor, VoterMisdemeanor,
-    // EvidenceFelonyApplied
-    let topic_proposer_felony = format!(
-        "{:?}",
-        B256::from(keccak256(b"ProposerFelony(address,uint64,uint64)",))
-    );
-    let topic_proposer_misd = format!(
-        "{:?}",
-        B256::from(keccak256(b"ProposerMisdemeanor(address,uint64)",))
-    );
-    let topic_voter_misd = format!(
-        "{:?}",
-        B256::from(keccak256(b"VoterMisdemeanor(address,uint64)",))
-    );
-    let topic_evidence = format!(
-        "{:?}",
-        B256::from(keccak256(
-            b"EvidenceFelonyApplied(address,address,uint256,uint256)",
-        ))
-    );
+    let topics = SlashTopics::new();
 
     // Fetch all logs from SlashIndicator without topic filter to get all event types
     let all_logs = client
@@ -235,108 +253,23 @@ async fn history(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
     println!("{:<14} {:<12} {:<44} Details", "Block", "Type", "Validator");
     println!("{}", "-".repeat(90));
 
-    let start = if all_logs.len() > limit {
-        all_logs.len() - limit
-    } else {
-        0
-    };
-
-    for log in &all_logs[start..] {
-        let block = log["blockNumber"]
-            .as_str()
-            .and_then(|s| u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok())
-            .unwrap_or(0);
-
-        let topics = log["topics"].as_array().cloned().unwrap_or_default();
-        let topic0 = topics.first().and_then(|v| v.as_str()).unwrap_or("");
-
-        let data = log["data"].as_str().unwrap_or("0x");
-        let data_hex = data.strip_prefix("0x").unwrap_or(data);
-        let bytes = hex::decode(data_hex).unwrap_or_default();
-
-        if topic0 == topic_proposer_felony {
-            let validator = topics.get(1).and_then(|v| v.as_str()).unwrap_or("?");
-            let miss_count = if bytes.len() >= 32 {
-                U256::from_be_slice(&bytes[0..32]).to::<u64>()
-            } else {
-                0
-            };
-            let felony_count = if bytes.len() >= 64 {
-                U256::from_be_slice(&bytes[32..64]).to::<u64>()
-            } else {
-                0
-            };
-            println!(
-                "{:<14} {:<12} {:<44} miss={}, felony={}",
-                block,
-                "FELONY",
-                format_topic_addr(validator),
-                miss_count,
-                felony_count
-            );
-        } else if topic0 == topic_proposer_misd {
-            let validator = topics.get(1).and_then(|v| v.as_str()).unwrap_or("?");
-            let miss_count = if bytes.len() >= 32 {
-                U256::from_be_slice(&bytes[0..32]).to::<u64>()
-            } else {
-                0
-            };
-            println!(
-                "{:<14} {:<12} {:<44} miss={}",
-                block,
-                "PROP_MISD",
-                format_topic_addr(validator),
-                miss_count
-            );
-        } else if topic0 == topic_voter_misd {
-            let validator = topics.get(1).and_then(|v| v.as_str()).unwrap_or("?");
-            let miss_count = if bytes.len() >= 32 {
-                U256::from_be_slice(&bytes[0..32]).to::<u64>()
-            } else {
-                0
-            };
-            println!(
-                "{:<14} {:<12} {:<44} miss={}",
-                block,
-                "VOTER_MISD",
-                format_topic_addr(validator),
-                miss_count
-            );
-        } else if topic0 == topic_evidence {
-            let validator = topics.get(1).and_then(|v| v.as_str()).unwrap_or("?");
-            let submitter = topics.get(2).and_then(|v| v.as_str()).unwrap_or("?");
-            let slashed = if bytes.len() >= 32 {
-                U256::from_be_slice(&bytes[0..32])
-            } else {
-                U256::ZERO
-            };
-            println!(
-                "{:<14} {:<12} {:<44} slashed={} COEN, by={}",
-                block,
-                "EVIDENCE",
-                format_topic_addr(validator),
-                super::format_coen_amount(slashed),
-                format_topic_addr(submitter),
-            );
+    for log in super::recent_logs(&all_logs, limit) {
+        let parsed = super::ParsedLog::from_value(log);
+        if let Some(line) = topics.format_row(&parsed) {
+            println!("{line}");
         }
     }
 
     Ok(())
 }
 
-/// Extracts the last 40 hex chars from a topic (address is zero-padded to 32 bytes).
-fn format_topic_addr(topic: &str) -> String {
-    let s = topic.strip_prefix("0x").unwrap_or(topic);
-    if s.len() >= 40 {
-        format!("0x{}", &s[s.len() - 40..])
-    } else {
-        topic.to_string()
-    }
-}
+#[cfg(test)]
+use super::format_topic_addr;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::U256;
 
     #[test]
     fn test_format_topic_addr_standard_padded() {
@@ -466,11 +399,13 @@ mod tests {
         let mock =
             recording_send_tx_rpc(TEST_KEY, abi::SLASH_INDICATOR_ADDR, data, U256::ZERO).unwrap();
 
-        submit_double_proposal(
+        submit_evidence(
             &mock,
             Some(TEST_KEY),
-            "0xaabb".to_string(),
-            "0xccdd".to_string(),
+            EvidenceCmd::DoubleProposal {
+                block1: "0xaabb".to_string(),
+                block2: "0xccdd".to_string(),
+            },
         )
         .await
         .unwrap();
@@ -481,9 +416,16 @@ mod tests {
     async fn test_submit_double_proposal_no_key_errors() {
         let mock =
             recording_send_tx_rpc(TEST_KEY, abi::SLASH_INDICATOR_ADDR, vec![], U256::ZERO).unwrap();
-        let err = submit_double_proposal(&mock, None, "0xaabb".into(), "0xccdd".into())
-            .await
-            .unwrap_err();
+        let err = submit_evidence(
+            &mock,
+            None,
+            EvidenceCmd::DoubleProposal {
+                block1: "0xaabb".into(),
+                block2: "0xccdd".into(),
+            },
+        )
+        .await
+        .unwrap_err();
         assert!(
             err.to_string().contains("--private-key required"),
             "expected private-key error, got: {err}"
@@ -507,11 +449,13 @@ mod tests {
             let mock =
                 recording_send_tx_rpc(TEST_KEY, abi::SLASH_INDICATOR_ADDR, vec![], U256::ZERO)
                     .unwrap();
-            let err = submit_double_proposal(
+            let err = submit_evidence(
                 &mock,
                 Some(TEST_KEY),
-                block1.to_string(),
-                block2.to_string(),
+                EvidenceCmd::DoubleProposal {
+                    block1: block1.to_string(),
+                    block2: block2.to_string(),
+                },
             )
             .await
             .unwrap_err();
@@ -538,9 +482,16 @@ mod tests {
         let mock =
             recording_send_tx_rpc(TEST_KEY, abi::SLASH_INDICATOR_ADDR, data, U256::ZERO).unwrap();
 
-        submit_conflicting_vote(&mock, Some(TEST_KEY), "0x1122".into(), "0x3344".into())
-            .await
-            .unwrap();
+        submit_evidence(
+            &mock,
+            Some(TEST_KEY),
+            EvidenceCmd::ConflictingVote {
+                vote1: "0x1122".into(),
+                vote2: "0x3344".into(),
+            },
+        )
+        .await
+        .unwrap();
         mock.assert_done();
     }
 
@@ -548,9 +499,16 @@ mod tests {
     async fn test_submit_conflicting_vote_no_key_errors() {
         let mock =
             recording_send_tx_rpc(TEST_KEY, abi::SLASH_INDICATOR_ADDR, vec![], U256::ZERO).unwrap();
-        let err = submit_conflicting_vote(&mock, None, "0x1122".into(), "0x3344".into())
-            .await
-            .unwrap_err();
+        let err = submit_evidence(
+            &mock,
+            None,
+            EvidenceCmd::ConflictingVote {
+                vote1: "0x1122".into(),
+                vote2: "0x3344".into(),
+            },
+        )
+        .await
+        .unwrap_err();
         assert!(
             err.to_string().contains("--private-key required"),
             "expected private-key error, got: {err}"
@@ -574,11 +532,13 @@ mod tests {
             let mock =
                 recording_send_tx_rpc(TEST_KEY, abi::SLASH_INDICATOR_ADDR, vec![], U256::ZERO)
                     .unwrap();
-            let err = submit_conflicting_vote(
+            let err = submit_evidence(
                 &mock,
                 Some(TEST_KEY),
-                vote1.to_string(),
-                vote2.to_string(),
+                EvidenceCmd::ConflictingVote {
+                    vote1: vote1.to_string(),
+                    vote2: vote2.to_string(),
+                },
             )
             .await
             .unwrap_err();

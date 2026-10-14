@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
-use crate::schema::TeeRegistry;
+use crate::{errors::TeeRegistryError, schema::TeeRegistry};
 
 /// The one-time bootstrap payload written into the registry by the
 /// `TeeBootstrap` system transaction (Phase 3b). The system-tx native
@@ -75,14 +75,13 @@ impl TeeRegistry<'_> {
     /// Store the founding committee's DKG group public key from the canonical
     /// bootstrap payload, chunked into 32-byte words plus a byte length.
     pub fn set_group_public_key(&mut self, bytes: &[u8]) -> Result<()> {
-        let len = u32::try_from(bytes.len())
-            .map_err(|_| PrecompileError::Revert("group public key too large".to_string()))?;
+        let len =
+            u32::try_from(bytes.len()).map_err(|_| TeeRegistryError::GroupPublicKeyTooLarge)?;
         self.group_public_key_len.write(len)?;
         for (i, chunk) in bytes.chunks(32).enumerate() {
             let mut word = [0u8; 32];
             word[..chunk.len()].copy_from_slice(chunk);
-            let idx = u32::try_from(i)
-                .map_err(|_| PrecompileError::Revert("group public key too large".to_string()))?;
+            let idx = u32::try_from(i).map_err(|_| TeeRegistryError::GroupPublicKeyTooLarge)?;
             self.group_public_key.write(&idx, B256::from(word))?;
         }
         Ok(())
@@ -96,9 +95,7 @@ impl TeeRegistry<'_> {
     /// even if the system-tx ordering guard is bypassed.
     pub fn write_bootstrap(&mut self, data: &TeeBootstrapData) -> Result<()> {
         if self.bootstrapped.read()? {
-            return Err(PrecompileError::Revert(
-                "TEE registry already bootstrapped".to_string(),
-            ));
+            return Err(TeeRegistryError::AlreadyBootstrapped.into());
         }
 
         self.tribute_offer_public_key

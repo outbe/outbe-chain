@@ -1,5 +1,6 @@
 //! A called Credis left unpaid past its notice: it reads Forfeited at once, and the
-//! forfeit sweep burns the rest of its pledge into the Promis Limit pool.
+//! forfeit sweep burns the rest of its pledge into the Promis Limit pool. An owner may
+//! forfeit their Credis themselves, with the same burn.
 
 use std::time::Duration;
 
@@ -21,6 +22,7 @@ use crate::world::credis::{
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::{test_issuance, World};
 
+const ISSUED: u8 = 0;
 const CALLED: u8 = 1;
 const FORFEITED: u8 = 3;
 const BREACH_RATE: U256 = U256::from_limbs([2_000_000, 0, 0, 0]);
@@ -256,21 +258,7 @@ fn burned(world: &mut World) {
     let height = finalized_checkpoint(world).height;
     let forfeited_at = forfeit_block(&url, f.credis_id).expect("forfeit block");
     assert!(forfeited_at <= height);
-    let unallocated = |height| {
-        eth::read_call_at(
-            &url,
-            addresses::PROMIS_LIMIT_ADDR,
-            &eth::IPromisLimit::totalUnallocatedCall {},
-            height,
-        )
-        .expect("unallocated pool")
-    };
-    // Other modules credit the pool too: only the forfeit's own block is attributable.
-    assert_eq!(
-        unallocated(forfeited_at) - unallocated(forfeited_at - 1),
-        burned,
-        "the forfeit did not credit exactly the burned Gratis to the pool"
-    );
+    assert_pool_credited(&url, forfeited_at, burned);
     assert_single_event(
         &url,
         CREDIS_ADDRESS,
@@ -301,6 +289,76 @@ fn burned(world: &mut World) {
     );
     assert_eq!(state.cca_stables, PRINCIPAL);
     assert_eq!(settlement_revert(world, f).0, "Credis is closed");
+}
+
+#[when("the owner forfeits the Credis")]
+fn owner_forfeits(world: &mut World) {
+    let url = url(world);
+    let f = fixture(world);
+    assert_eq!(latest(world).state, ISSUED);
+    let receipt = send(
+        &url,
+        CREDIS_FACTORY_ADDRESS,
+        &f.owner_key,
+        &ICredisFactory::forfeitCredisCall {
+            credisId: f.credis_id,
+        },
+        None,
+    );
+    assert_receipt_event(
+        &receipt,
+        CREDIS_ADDRESS,
+        &ICredis::CredisForfeited {
+            credisId: f.credis_id,
+            cca: f.cca,
+            gratisBurnedMinor: f.gratis_minor,
+            principalWrittenOffMinor: PRINCIPAL,
+        },
+    );
+}
+
+#[then("the whole pledge is burned into the Promis Limit pool and the principal written off")]
+fn owner_forfeit_burned(world: &mut World) {
+    let url = url(world);
+    let f = fixture(world);
+    let forfeited_at = forfeit_block(&url, f.credis_id).expect("forfeit block");
+    assert_pool_credited(&url, forfeited_at, f.gratis_minor);
+    let state = snapshot(world);
+    let record = state.record.as_ref().expect("forfeited Credis");
+    assert_eq!(record.state, FORFEITED);
+    assert_eq!(record.call.calledAt, 0);
+    assert_eq!(
+        record.outcome,
+        ICredis::Outcome {
+            principalPaidMinor: U256::ZERO,
+            principalWrittenOffMinor: PRINCIPAL,
+            gratisReturnedMinor: U256::ZERO,
+            gratisBurnedMinor: f.gratis_minor,
+        }
+    );
+    assert_eq!(state.pledged, U256::ZERO);
+    assert_eq!(state.liquid, INITIAL_GRATIS - f.gratis_minor);
+    assert_eq!(state.vault_stables, LIQUIDITY - PRINCIPAL);
+    assert_eq!(state.cca_stables, PRINCIPAL);
+    assert_eq!(settlement_revert(world, f).0, "Credis is closed");
+}
+
+/// Other modules credit the pool too: only the forfeit's own block is attributable.
+fn assert_pool_credited(url: &str, forfeited_at: u64, burned: U256) {
+    let unallocated = |height| {
+        eth::read_call_at(
+            url,
+            addresses::PROMIS_LIMIT_ADDR,
+            &eth::IPromisLimit::totalUnallocatedCall {},
+            height,
+        )
+        .expect("unallocated pool")
+    };
+    assert_eq!(
+        unallocated(forfeited_at) - unallocated(forfeited_at - 1),
+        burned,
+        "the forfeit did not credit exactly the burned Gratis to the pool"
+    );
 }
 
 /// Why a settlement by the Credis owner reverts, and the block read.

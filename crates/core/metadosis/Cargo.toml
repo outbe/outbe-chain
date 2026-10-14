@@ -15,7 +15,6 @@ outbe-ocompregistry.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-desis.workspace = true
 outbe-fidelity.workspace = true
-outbe-intex.workspace = true
 outbe-tribute.workspace = true
 outbe-validatorset.workspace = true
 outbe-nod.workspace = true

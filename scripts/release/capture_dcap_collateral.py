@@ -119,21 +119,60 @@ def canonical_text_component(value: bytes, label: str) -> bytes:
     return canonical
 
 
-def canonical_crl_component(value: bytes, minor_version: int, label: str) -> bytes:
-    """Normalize PCS v3.0 hex CRLs and v3.1 raw CRLs to canonical DER."""
-    if minor_version == 1:
-        if not value:
-            raise ValueError(f"{label} is empty")
+def canonical_der_component(value: bytes, label: str) -> bytes:
+    """Return one complete DER SEQUENCE, dropping only an ABI terminator."""
+    if len(value) < 2 or value[0] != 0x30:
+        raise ValueError(f"{label} is not a DER SEQUENCE")
+
+    encoded_length = value[1]
+    if encoded_length < 0x80:
+        header_size = 2
+        content_size = encoded_length
+    else:
+        length_size = encoded_length & 0x7F
+        if length_size == 0 or length_size > 4 or len(value) < 2 + length_size:
+            raise ValueError(f"{label} has an invalid DER length")
+        length_bytes = value[2 : 2 + length_size]
+        if length_bytes[0] == 0:
+            raise ValueError(f"{label} has a non-canonical DER length")
+        content_size = int.from_bytes(length_bytes, "big")
+        if content_size < 0x80:
+            raise ValueError(f"{label} has a non-canonical DER length")
+        header_size = 2 + length_size
+
+    object_size = header_size + content_size
+    if len(value) == object_size:
         return value
-    if minor_version != 0:
+    if len(value) == object_size + 1 and value[object_size] == 0:
+        return value[:object_size]
+    raise ValueError(f"{label} has trailing or truncated DER bytes")
+
+
+def canonical_crl_component(value: bytes, minor_version: int, label: str) -> bytes:
+    """Normalize legacy hex and size-delimited raw CRLs to canonical DER."""
+    if minor_version not in (0, 1):
         raise ValueError(f"{label} uses unsupported collateral minor version")
-    encoded = canonical_text_component(value, label)
+
+    # Intel PCS-backed QPL 1.26 can return raw DER plus one ABI NUL while
+    # reporting collateral version 3.0.  The top-level DER length, rather than
+    # the version field or embedded zero bytes, unambiguously bounds the CRL.
+    if value.startswith(b"\x30"):
+        return canonical_der_component(value, label)
+    if minor_version == 1:
+        raise ValueError(f"{label} v3.1 payload is not raw DER")
+
+    encoded = value[:-1] if value.endswith(b"\0") else value
+    if not encoded or b"\0" in encoded:
+        raise ValueError(f"{label} contains an invalid NUL")
     if len(encoded) % 2 != 0:
         raise ValueError(f"{label} contains odd-length hexadecimal DER")
     try:
-        return bytes.fromhex(encoded.decode("ascii"))
-    except (UnicodeDecodeError, ValueError) as error:
+        encoded_text = encoded.decode("ascii")
+    except UnicodeDecodeError as error:
         raise ValueError(f"{label} is not canonical hexadecimal DER") from error
+    if not re.fullmatch(r"[0-9A-Fa-f]+", encoded_text):
+        raise ValueError(f"{label} is not canonical hexadecimal DER")
+    return canonical_der_component(bytes.fromhex(encoded_text), label)
 
 
 def _bytes_at(pointer: int | None, size: int, label: str) -> bytes:

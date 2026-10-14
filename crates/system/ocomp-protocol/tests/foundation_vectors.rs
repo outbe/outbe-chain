@@ -521,9 +521,9 @@ fn ordered_list_caps_fail_before_internal_tree_allocation() {
 
 #[test]
 fn generated_registry_is_complete_and_unique() {
-    assert_eq!(ObjectKind::ALL.len(), 36);
-    assert_eq!(HashDomain::ALL.len(), 50);
-    assert_eq!(ListKind::ALL.len(), 13);
+    assert_eq!(ObjectKind::ALL.len(), 35);
+    assert_eq!(HashDomain::ALL.len(), 49);
+    assert_eq!(ListKind::ALL.len(), 12);
     for (kind, tag) in [
         (ObjectKind::ProtocolBundleV1, 0x0001),
         (ObjectKind::OcompJobRecordV1, 0x001e),
@@ -532,7 +532,7 @@ fn generated_registry_is_complete_and_unique() {
     ] {
         assert_eq!(kind.tag(), tag);
     }
-    for tag in [0x000f, 0x0011, 0x001a] {
+    for tag in [0x000f, 0x0011, 0x0016, 0x001a] {
         assert_eq!(
             ObjectKind::try_from(tag),
             Err(ProtocolError::UnknownObjectKind(tag))

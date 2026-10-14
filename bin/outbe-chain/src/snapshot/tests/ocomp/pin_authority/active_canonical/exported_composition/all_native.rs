@@ -605,49 +605,71 @@ fn damage(fixture: &AllFixture, damage: Damage) {
     }
 }
 
-#[test]
-fn freshly_signed_all_distinguishes_native_semantic_damage_from_files_and_provenance() {
-    for fault in [
-        Damage::None,
-        Damage::Evm,
-        Damage::Ce,
-        Damage::Body,
-        Damage::Receipt,
-        Damage::MissingCatalog,
-    ] {
-        let fixture = AllFixture::new(2);
-        damage(&fixture, fault);
-        let artifact = tempfile::tempdir().unwrap();
-        let inputs = fixture.signed(artifact.path());
-        let before = fingerprint(artifact.path());
-        let report = fixture.validate(&inputs);
-        assert_eq!(fingerprint(artifact.path()), before);
-        for check in [CheckName::Files, CheckName::Provenance, CheckName::Headers] {
-            assert_eq!(
-                report.check(check).status,
-                CheckStatus::Passed,
-                "{fault:?}, {check:?}: {report:?}"
-            );
-        }
-        assert_eq!(report.provenance.signature_valid, Some(true));
-        assert_eq!(report.provenance.expected_signer_match, Some(true));
-        let expected = match fault {
-            Damage::None => {
-                assert_native_success(&report);
-                continue;
-            }
-            Damage::Evm => (CheckName::Evm, CheckStatus::Failed),
-            Damage::Ce => (CheckName::Ce, CheckStatus::Failed),
-            Damage::Body => (CheckName::Bodies, CheckStatus::Failed),
-            Damage::Receipt => (CheckName::Ocomp, CheckStatus::Failed),
-            Damage::MissingCatalog => (CheckName::Ocomp, CheckStatus::Incomplete),
-        };
+/// A freshly signed `all` artifact keeps files, provenance and headers passing and
+/// reports `fault` in the native check it damages.
+fn assert_damage_is_distinguished(fault: Damage) {
+    let fixture = AllFixture::new(2);
+    damage(&fixture, fault);
+    let artifact = tempfile::tempdir().unwrap();
+    let inputs = fixture.signed(artifact.path());
+    let before = fingerprint(artifact.path());
+    let report = fixture.validate(&inputs);
+    assert_eq!(fingerprint(artifact.path()), before);
+    for check in [CheckName::Files, CheckName::Provenance, CheckName::Headers] {
         assert_eq!(
-            report.check(expected.0).status,
-            expected.1,
-            "{fault:?}: {report:?}"
+            report.check(check).status,
+            CheckStatus::Passed,
+            "{fault:?}, {check:?}: {report:?}"
         );
-        assert!(report.check(expected.0).diagnostic.is_some());
-        assert!(!report.success());
     }
+    assert_eq!(report.provenance.signature_valid, Some(true));
+    assert_eq!(report.provenance.expected_signer_match, Some(true));
+    let expected = match fault {
+        Damage::None => {
+            assert_native_success(&report);
+            return;
+        }
+        Damage::Evm => (CheckName::Evm, CheckStatus::Failed),
+        Damage::Ce => (CheckName::Ce, CheckStatus::Failed),
+        Damage::Body => (CheckName::Bodies, CheckStatus::Failed),
+        Damage::Receipt => (CheckName::Ocomp, CheckStatus::Failed),
+        Damage::MissingCatalog => (CheckName::Ocomp, CheckStatus::Incomplete),
+    };
+    assert_eq!(
+        report.check(expected.0).status,
+        expected.1,
+        "{fault:?}: {report:?}"
+    );
+    assert!(report.check(expected.0).diagnostic.is_some());
+    assert!(!report.success());
+}
+
+#[test]
+fn freshly_signed_all_passes_undamaged_native_state() {
+    assert_damage_is_distinguished(Damage::None);
+}
+
+#[test]
+fn freshly_signed_all_distinguishes_evm_damage_from_files_and_provenance() {
+    assert_damage_is_distinguished(Damage::Evm);
+}
+
+#[test]
+fn freshly_signed_all_distinguishes_ce_damage_from_files_and_provenance() {
+    assert_damage_is_distinguished(Damage::Ce);
+}
+
+#[test]
+fn freshly_signed_all_distinguishes_body_damage_from_files_and_provenance() {
+    assert_damage_is_distinguished(Damage::Body);
+}
+
+#[test]
+fn freshly_signed_all_distinguishes_receipt_damage_from_files_and_provenance() {
+    assert_damage_is_distinguished(Damage::Receipt);
+}
+
+#[test]
+fn freshly_signed_all_distinguishes_missing_catalog_damage_from_files_and_provenance() {
+    assert_damage_is_distinguished(Damage::MissingCatalog);
 }

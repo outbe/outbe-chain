@@ -29,26 +29,26 @@ async fn load_views<R: RegistryRpc + Sync, N>(
     let candidate = &*service.candidate;
     let node_data_dir = service.node_data_dir;
     let selector = service.selector;
-    let checkpoint = inspect_upgrade_journal_v1(node_data_dir)?
-        .ok_or_else(|| eyre::eyre!("upgrade candidate is not prepared"))?;
+    let checkpoint =
+        inspect_upgrade_journal_v1(node_data_dir)?.ok_or(UpgradeError::CandidateNotPrepared)?;
     let UpgradeJournalStateV1::KeyProvisioned { ref context, .. } = checkpoint.lifecycle else {
-        eyre::bail!("candidate key readiness requires the key-provisioned checkpoint");
+        return Err(UpgradeError::KeyReadyRequiresKeyProvisioned.into());
     };
     let candidate_manifest_hash = candidate
         .manifest()
         .authorization_hash()
-        .map_err(|error| eyre::eyre!("hash candidate manifest: {error}"))?;
+        .map_err(UpgradeError::HashCandidateManifest)?;
     if candidate_manifest_hash != context.candidate_manifest_hash {
-        eyre::bail!("connected candidate differs from the journaled candidate manifest");
+        return Err(UpgradeError::ConnectedCandidateManifestMismatch.into());
     }
     let active = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
     let successor = read_finalized_upgrade_policy_v1(rpc)
         .await?
-        .ok_or_else(|| eyre::eyre!("no successor TEE policy is staged at finalized state"))?;
+        .ok_or(UpgradeError::NoStagedSuccessorPolicy)?;
     if active.schedule.finalized_height != successor.finalized_height
         || active.schedule.finalized_hash != successor.finalized_hash
     {
-        eyre::bail!("finalized active binding and staged policy were read at different heads");
+        return Err(UpgradeError::FinalizedHeadMismatch.into());
     }
     validate_successor(&active, &successor, context)?;
     validate_candidate_identity_v1(candidate, selector, &active)?;
@@ -64,9 +64,9 @@ fn validate_successor(
     let active_policy_hash = active
         .policy
         .policy_hash()
-        .map_err(|error| eyre::eyre!("hash active finalized policy: {error}"))?;
+        .map_err(UpgradeError::HashActiveFinalizedPolicy)?;
     if !successor_identity_matches(active, successor, context, active_policy_hash)? {
-        eyre::bail!("staged successor is not the direct successor of the finalized active policy");
+        return Err(UpgradeError::InvalidDirectSuccessorPolicy.into());
     }
     Ok(())
 }
@@ -86,7 +86,7 @@ fn successor_identity_matches(
         && successor
             .policy
             .policy_hash()
-            .map_err(|e| eyre::eyre!("invalid successor: {e}"))?
+            .map_err(UpgradeError::InvalidSuccessorPolicy)?
             != active_policy_hash
     {
         return Ok(false);
@@ -94,7 +94,7 @@ fn successor_identity_matches(
     if successor
         .policy
         .policy_hash()
-        .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?
+        .map_err(UpgradeError::HashStagedSuccessorPolicy)?
         != context.successor_policy_hash
     {
         return Ok(false);
@@ -105,21 +105,21 @@ fn successor_identity_matches(
 fn recover_saved_candidate(node_data_dir: &Path, views: &PreparationViews) -> Result<bool> {
     let PreparationViews { active, successor } = views;
     if let Some(durable) = load_replacement_candidate_submission(node_data_dir)
-        .map_err(|error| eyre::eyre!("reload durable candidate submission: {error}"))?
+        .map_err(UpgradeError::ReloadDurableCandidateSubmission)?
     {
         let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-            .map_err(|e| eyre::eyre!("invalid durable transition: {e}"))?;
+            .map_err(UpgradeError::InvalidDurableTransition)?;
         if active.schedule.finalized_timestamp >= evidence.intent().requested_valid_until {
             ensure_transition_source_or_target_v1(&active.binding, evidence.intent())?;
             if transition_target_matches_v1(&active.binding, evidence.intent()) {
-                eyre::bail!("expired transition already executed; finalize it before renewing");
+                return Err(UpgradeError::ExpiredTransitionAlreadyExecuted.into());
             }
             outbe_tee::node_host::clear_expired_transition_submission_v1(
                 node_data_dir,
                 evidence
                     .intent()
                     .intent_hash()
-                    .map_err(|e| eyre::eyre!("invalid intent: {e}"))?,
+                    .map_err(UpgradeError::InvalidTransitionIntent)?,
                 active.schedule.finalized_timestamp,
             )?;
         } else {
@@ -155,15 +155,15 @@ fn build_candidate<R, N>(
     let ceiling = prepared
         .collateral_expiration
         .checked_sub(successor.policy.collateral_margin)
-        .ok_or_else(|| eyre::eyre!("transition collateral margin underflows"))?;
+        .ok_or(UpgradeError::TransitionCollateralMarginUnderflow)?;
     if prepared.intent.requested_valid_until > ceiling {
         let minimum = active
             .schedule
             .finalized_timestamp
             .checked_add(successor.policy.minimum_lease)
-            .ok_or_else(|| eyre::eyre!("minimum transition lease overflows"))?;
+            .ok_or(UpgradeError::MinimumTransitionLeaseOverflow)?;
         if ceiling < minimum {
-            eyre::bail!("fresh Intel collateral cannot satisfy the successor minimum lease");
+            return Err(UpgradeError::CollateralBelowMinimumLease.into());
         }
         prepared.intent.requested_valid_until = ceiling;
         prepared = generate_transition_evidence_v1(candidate, prepared.intent, &successor.policy)?;
@@ -187,7 +187,7 @@ fn persist_key_ready<R, N: UpgradeNodeSignerV1>(
     let intent_hash = prepared
         .intent
         .intent_hash()
-        .map_err(|error| eyre::eyre!("hash transition intent: {error}"))?;
+        .map_err(UpgradeError::HashTransitionIntent)?;
     let node_signature = node_signer
         .sign_node_hash(intent_hash)
         .wrap_err("sign transition intent with node authority")?;
@@ -198,10 +198,10 @@ fn persist_key_ready<R, N: UpgradeNodeSignerV1>(
         &node_signature,
         &prepared.enclave_signature,
     )
-    .map_err(|error| eyre::eyre!("persist exact candidate submission: {error}"))?;
+    .map_err(UpgradeError::PersistCandidateSubmission)?;
     let proof = evidence
         .transition_key_ready_proof()
-        .ok_or_else(|| eyre::eyre!("candidate transition evidence has no key-ready proof"))?;
+        .ok_or(UpgradeError::MissingCandidateKeyReadyProof)?;
     record_candidate_key_ready_v1(
         node_data_dir,
         evidence.intent(),
@@ -220,16 +220,16 @@ fn validate_transition_time_window_v1(
         .intent
         .requested_valid_until
         .checked_sub(finalized_timestamp)
-        .ok_or_else(|| eyre::eyre!("transition lease is already expired at finalized time"))?;
+        .ok_or(UpgradeError::TransitionLeaseAlreadyExpired)?;
     let ceiling = prepared
         .collateral_expiration
         .checked_sub(policy.collateral_margin)
-        .ok_or_else(|| eyre::eyre!("transition collateral margin underflows"))?;
+        .ok_or(UpgradeError::TransitionCollateralMarginUnderflow)?;
     let lease_matches = prepared.collateral_issue_floor <= finalized_timestamp
         && lease >= policy.minimum_lease
         && lease <= policy.maximum_lease;
     if !lease_matches || prepared.intent.requested_valid_until > ceiling {
-        eyre::bail!("candidate evidence cannot satisfy the staged successor lease window");
+        return Err(UpgradeError::EvidenceViolatesLeaseWindow.into());
     }
     Ok(())
 }
@@ -241,18 +241,18 @@ fn recover_candidate_key_ready_v1(
     expected_offer_public: B256,
 ) -> Result<()> {
     let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-        .map_err(|error| eyre::eyre!("decode durable transition evidence: {error}"))?;
+        .map_err(UpgradeError::DecodeDurableTransitionEvidence)?;
     if evidence.intent().operation != AttestationOperationV1::TransitionEnclaveMeasurement
         || evidence.intent().policy_hash
             != successor
                 .policy_hash()
-                .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?
+                .map_err(UpgradeError::HashStagedSuccessorPolicy)?
     {
-        eyre::bail!("durable candidate submission targets another transition policy");
+        return Err(UpgradeError::DurableSubmissionPolicyMismatch.into());
     }
     let proof = evidence
         .transition_key_ready_proof()
-        .ok_or_else(|| eyre::eyre!("durable transition evidence has no key-ready proof"))?;
+        .ok_or(UpgradeError::MissingDurableKeyReadyProof)?;
     record_candidate_key_ready_v1(
         node_data_dir,
         evidence.intent(),

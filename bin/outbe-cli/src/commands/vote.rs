@@ -8,6 +8,7 @@ use clap::Subcommand;
 use eyre::{Result, WrapErr};
 
 use crate::abi::{IVote, VOTE_ADDRESS};
+use crate::errors::VoteError;
 use crate::rpc::Rpc;
 
 #[derive(Subcommand)]
@@ -68,9 +69,9 @@ impl VoteCmd {
                     (true, false) => true,
                     (false, true) => false,
                     (true, true) => {
-                        return Err(eyre::eyre!("specify either --yes or --no, not both"));
+                        return Err(VoteError::ConflictingVoteDirection.into());
                     }
-                    (false, false) => return Err(eyre::eyre!("specify --yes or --no")),
+                    (false, false) => return Err(VoteError::MissingVoteDirection.into()),
                 };
                 cast_vote(client, private_key, proposal_id, approve).await
             }
@@ -87,9 +88,7 @@ fn resolve_proposal_payload(
         (Some(payload), None) => Ok(payload),
         (None, Some(path)) => std::fs::read_to_string(&path)
             .wrap_err_with(|| format!("read proposal payload from {}", path.display())),
-        _ => Err(eyre::eyre!(
-            "specify exactly one of --payload or --payload-file"
-        )),
+        _ => Err(VoteError::MissingOrDuplicatePayloadSource.into()),
     }
 }
 
@@ -107,9 +106,7 @@ fn split_proposal_json(payload: String) -> Result<(String, Option<u64>)> {
     let window = window
         .as_u64()
         .filter(|window| *window > 0)
-        .ok_or_else(|| {
-            eyre::eyre!("votingWindowBlocks must be a positive integer number of blocks")
-        })?;
+        .ok_or(VoteError::InvalidVotingWindowBlocks)?;
     Ok((serde_json::to_string(&value)?, Some(window)))
 }
 
@@ -179,7 +176,7 @@ async fn prepare_enclave_upgrade_payload(
     let tag = finalized
         .get("number")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("finalized block has no number"))?;
+        .ok_or(VoteError::FinalizedBlockMissingNumber)?;
     let height = u64::from_str_radix(tag.trim_start_matches("0x"), 16)?;
     let bytes = client
         .eth_call_at(
@@ -189,18 +186,16 @@ async fn prepare_enclave_upgrade_payload(
         )
         .await?;
     let canonical = ITeeRegistryV1::activePolicyV1Call::abi_decode_returns(&bytes)?;
-    let policy = TeePolicyV1::decode_canonical(&canonical)
-        .map_err(|e| eyre::eyre!("invalid finalized policy: {e}"))?;
+    let policy =
+        TeePolicyV1::decode_canonical(&canonical).map_err(VoteError::InvalidFinalizedPolicy)?;
     if policy.measurement_rules.len() != 1
         || update.mrenclave == Some(policy.measurement_rules[0].mrenclave)
     {
-        eyre::bail!(
-            "enclave upgrade requires a different MRENCLAVE and one predecessor measurement"
-        );
+        return Err(VoteError::InvalidEnclaveUpgradeMeasurement.into());
     }
     let chain_id = client.eth_chain_id().await?;
     if policy.chain_id != U256::from(chain_id).to_be_bytes() {
-        eyre::bail!("TEE policy chain identity mismatch");
+        return Err(VoteError::TeePolicyChainMismatch.into());
     }
     update.validate(height, chain_id)?;
     let payload = serde_json::to_string(&update)?;
@@ -350,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_vote_propose_payload_file() {
+    fn test_cli_parse_vote_propose_with_payload_file() {
         let cli = Cli::try_parse_from([
             "outbe-cli",
             "vote",

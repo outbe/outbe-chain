@@ -16,10 +16,7 @@ use outbe_ocomp_protocol::{
     vote::{OcompQuorumV1, RecordVoteOutcomeV1, ResultVotePrefixV1, ResultVoteV1},
     SchemaLimits,
 };
-use outbe_primitives::{
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::{
     aggregate::ValidatedWwdAggregate,
@@ -162,36 +159,12 @@ pub(super) fn preflight_result_vote_calldata<'a>(
     Ok(&data[68..payload_end])
 }
 
-fn map_vote_transition_error(error: PrecompileError) -> PrecompileError {
-    if crate::errors::is_business_failure(&error) {
-        return error;
-    }
-    if is_deadline_passed_result_vote_revert(&error) {
-        return error;
-    }
-    match error {
-        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => vote_reject(PROTOCOL_VOTE),
-        other => other,
-    }
-}
-
-#[must_use]
-pub fn is_deadline_passed_result_vote_revert(error: &PrecompileError) -> bool {
-    matches!(error, PrecompileError::RevertBytes(data) if is_deadline_passed_result_vote_revert_data(data))
-}
-
-#[must_use]
-pub fn is_deadline_passed_result_vote_revert_data(data: &[u8]) -> bool {
-    data == deadline_passed_result_vote_revert_data().as_ref()
-}
-
-#[must_use]
-pub fn deadline_passed_result_vote_revert_data() -> Bytes {
-    let PrecompileError::RevertBytes(expected) = vote_reject(DEADLINE_PASSED) else {
-        unreachable!("vote_reject always returns RevertBytes");
-    };
-    expected
-}
+use crate::errors::map_vote_transition_error;
+#[allow(unused_imports)]
+pub use crate::errors::{
+    deadline_passed_result_vote_revert_data, is_deadline_passed_result_vote_revert,
+    is_deadline_passed_result_vote_revert_data,
+};
 
 /// Immutable protocol, attempt, and committee identity for a result vote.
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -433,6 +406,7 @@ mod tests {
     use outbe_ocomp_protocol::{
         abi::SUBMIT_LYSIS_RESULT_SELECTOR, encode_envelope, registry::ObjectKind, OCB1_HEADER_LEN,
     };
+    use outbe_primitives::error::PrecompileError;
 
     fn dynamic_bytes_calldata(payload_len: usize) -> Vec<u8> {
         assert!(payload_len >= OCB1_HEADER_LEN + 150);

@@ -1,68 +1,38 @@
-use super::classify_canonical_job;
-use super::local_result_restore_policy;
 use super::request_projection_is_closed;
 use super::same_locator;
-use super::CanonicalJobDispositionV1;
 use super::EmbeddedOcompExExV1;
-use super::LocalResultRestorePolicyV1;
-use super::LocalVoteEligibilityV1;
 use super::RequestLocatorV1;
-use super::RuntimeJobV1;
+use crate::errors::OcompExExError;
 
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::U256;
 
-use eyre::bail;
 use eyre::Context as _;
 
 use metrics::counter;
 use metrics::gauge;
 
 use outbe_node::finalized_frame::FinalizedFrame;
-
 use outbe_node::ocomp::retention::FinalizedRequestObservationV1;
-
 use outbe_ocomp::discovery_control::DiscoveryOfferRefV1;
-
 use outbe_ocomp::discovery_spool::RetirementReportV1;
-
-use outbe_ocomp::embedded::EmbeddedJobEventV1;
-
-use outbe_ocomp::embedded::EmbeddedJobStateV1;
-
-use outbe_ocomp::embedded::EmbeddedTerminalReasonV1;
-
-use outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1;
-
 use outbe_ocomp::supervisor::DiscoveryRecord;
 use outbe_ocomp_protocol::common::BoundedBytes;
 use outbe_ocomp_protocol::control::FinalizedJobSpecV1;
 use outbe_ocomp_protocol::control::FinalizedJobSummaryV1;
-
 use outbe_ocomp_protocol::profile::poc_schema_limits;
-
 use outbe_ocomp_protocol::state::OcompJobRecordV1;
-
 use outbe_primitives::projection::ProjectionCheckpoint;
-
 use outbe_primitives::projection::ProjectionStatus;
-
 use outbe_primitives::storage::readonly::StorageReader;
-
 use outbe_primitives::OutbeReceipt;
-
 use reth_provider::BlockHashReader;
 use reth_provider::BlockIdReader;
-
 use reth_provider::BlockReader;
 use reth_provider::ReceiptProvider;
 use reth_provider::StateProvider;
 use reth_provider::StateProviderFactory;
-
-use std::sync::atomic::AtomicBool;
-
-use std::sync::Arc;
 
 pub(super) fn finalized_reader_lags(finalized_head: u64, scanned: u64, closed: u64) -> (u64, u64) {
     (
@@ -98,7 +68,7 @@ pub(super) fn discovery_record(
     let finalized = record
         .finalized
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("OCOMP job is not finalized"))?;
+        .ok_or(OcompExExError::JobNotFinalized)?;
     let spec = FinalizedJobSpecV1 {
         summary: FinalizedJobSummaryV1 {
             cursor: locator.block_number,
@@ -178,7 +148,7 @@ where
         match self.requests.get(&locator.intent_id) {
             Some(existing) if same_locator(*existing, locator) => {}
             Some(_) => {
-                bail!("conflicting OCOMP request locator replay");
+                return Err(OcompExExError::ConflictingRequestLocatorReplay.into());
             }
             None => {
                 self.requests.insert(locator.intent_id, locator);
@@ -201,283 +171,22 @@ where
             .activation_preconditions
             .activation_preconditions_hash(&limits)
             .wrap_err("hash OCOMP request activation preconditions")?;
-        if record.intent_height != locator.block_number
-            || record.intent.wwd != locator.wwd
-            || record.intent.pending_nonce != locator.pending_nonce
-            || record.intent.attempt != locator.attempt
-            || activation_hash != locator.activation_preconditions_hash
-        {
-            bail!("OCOMP request locator disagrees with exact typed state");
-        }
-        Ok(())
-    }
-
-    pub(super) async fn refresh_jobs(
-        &mut self,
-        height: u64,
-        hash: B256,
-        drive_work: bool,
-    ) -> eyre::Result<()> {
-        let limits = poc_schema_limits();
-        let locators = self.requests.values().copied().collect::<Vec<_>>();
-        for locator in locators {
-            let record = outbe_node::ocomp::retention::read_ocomp_job_record_at(
-                &self.provider,
-                hash,
-                locator.intent_id,
-                &limits,
-            )
-            .wrap_err("read current exact OCOMP job record")?;
-            let disposition = classify_canonical_job(record.status, record.finalized.is_some())?;
-            match disposition {
-                CanonicalJobDispositionV1::AwaitingFinality => continue,
-                CanonicalJobDispositionV1::Closed {
-                    has_finalized_job: false,
-                    ..
-                } => {
-                    self.materialized_requests.insert(locator.intent_id);
-                    continue;
-                }
-                CanonicalJobDispositionV1::FinalizedAwaitingOpen
-                | CanonicalJobDispositionV1::VotingOpen
-                | CanonicalJobDispositionV1::Completed
-                | CanonicalJobDispositionV1::Closed {
-                    has_finalized_job: true,
-                    ..
-                } => {}
-            }
-            let finalized = record
-                .finalized
-                .as_ref()
-                .ok_or_else(|| eyre::eyre!("OCOMP finalized payload disappeared"))?;
-            if finalized.finalized_request_block_hash != locator.block_hash
-                || finalized.finalized_request_state_root != locator.state_root
-            {
-                bail!("OCOMP finalized job disagrees with its request block identity");
-            }
-            let job_id = record
-                .intent
-                .job_id(locator.block_hash, locator.state_root, &limits)
-                .wrap_err("derive finalized OCOMP JobId")?;
-            if job_id != finalized.job_id {
-                bail!("OCOMP finalized job carries a conflicting JobId");
-            }
-            match self.intent_jobs.insert(locator.intent_id, job_id) {
-                Some(existing) if existing != job_id => {
-                    bail!("OCOMP intent replay resolved to a conflicting JobId");
-                }
-                Some(_) | None => {}
-            }
-            let discovered = !self.jobs.contains_key(&job_id);
-            if discovered {
-                let retained_candidates =
-                    match self.retention_selector.discovery_job_records(job_id) {
-                        Ok(record) => record,
-                        Err(
-                            outbe_node::ocomp::retention::RetentionError::RetentionCoordinatorNotInstalled,
-                        ) => continue,
-                        Err(outbe_node::ocomp::retention::RetentionError::InvalidTransition(_)) => {
-                            let released = match self.retention_selector.released_job_authority(job_id) {
-                                Ok(released) => released,
-                                Err(outbe_node::ocomp::retention::RetentionError::InvalidTransition(_)) => None,
-                                Err(error) => return Err(error.into()),
-                            };
-                            if let Some(released) = released {
-                                if !matches!(disposition, CanonicalJobDispositionV1::Closed { .. } | CanonicalJobDispositionV1::Completed) {
-                                    bail!("released OCOMP job is not canonically terminal");
-                                }
-                                self.verify_released_export_ack(locator, &record, job_id, &limits)?;
-                                // Reconstruct the closed runtime projection as well as its
-                                // intent mapping: retirement needs the exact original offer.
-                                vec![(released.source_generation, outbe_node::ocomp::retention::FinalizedJobPinV1 {
-                                    candidate: released.candidate,
-                                    job_id,
-                                    finality_recorded_height: finalized.finality_recorded_height,
-                                    open_height: finalized.open_height,
-                                    deadline_height: finalized.deadline_height,
-                                })]
-                            } else {
-                                self.retention_selector
-                                    .bind_canonical_finalized_job(locator.block_hash, &record)
-                                    .wrap_err("bind OCOMP retention to canonical finalized typed state")?;
-                                self.retention_selector
-                                    .discovery_job_records(job_id)
-                                    .wrap_err("load exact OCOMP retention generation after canonical binding")?
-                            }
-                        }
-                        Err(error) => {
-                            return Err(error).wrap_err("load exact OCOMP retention generation");
-                        }
-                    };
-                let input_lease_id = record
-                    .intent
-                    .input_lease_id()
-                    .wrap_err("derive exact OCOMP input lease")?;
-                let mut fallback = None;
-                let mut selected = None;
-                for (source_generation, retained) in retained_candidates {
-                    if retained.job_id != job_id
-                        || retained.candidate.block_number != locator.block_number
-                        || retained.candidate.block_hash != locator.block_hash
-                        || retained.candidate.state_root != locator.state_root
-                        || retained.candidate.intent_id != locator.intent_id
-                        || retained.candidate.wwd != locator.wwd
-                        || retained.candidate.ce_sealed_root != record.intent.ce_sealed_root
-                        || retained.candidate.protocol_bundle_hash
-                            != record.intent.protocol_bundle_hash
-                        || retained.candidate.input_lease_id != input_lease_id
-                        || retained.finality_recorded_height != finalized.finality_recorded_height
-                        || retained.open_height != finalized.open_height
-                        || retained.deadline_height != finalized.deadline_height
-                    {
-                        bail!("OCOMP retained pin disagrees with finalized typed state");
-                    }
-                    let candidate =
-                        discovery_record(locator, &record, job_id, source_generation, &limits)?;
-                    let spool = self
-                        .discovery_spools
-                        .get(&record.intent.protocol_bundle_hash)
-                        .ok_or_else(|| {
-                            eyre::eyre!(
-                                "OCOMP discovery spool is missing for bundle {}",
-                                record.intent.protocol_bundle_hash
-                            )
-                        })?;
-                    let probe = DiscoveryOfferRefV1::from_spec(
-                        self.chain_id,
-                        self.genesis_hash,
-                        candidate.generation,
-                        &candidate.spec,
-                        &limits,
-                    )?;
-                    let pending = spool.pending(&probe.observation_id)?;
-                    let acknowledged = spool.ack(&probe.observation_id)?;
-                    let durable_reference = pending
-                        .as_ref()
-                        .map(|pending| pending.reference.clone())
-                        .or_else(|| acknowledged.as_ref().map(|ack| ack.reference.offer_ref()));
-                    let has_durable_authority = durable_reference.as_ref() == Some(&probe);
-                    if has_durable_authority {
-                        if selected.replace(candidate).is_some() {
-                            bail!("multiple OCOMP discovery generations have durable authority");
-                        }
-                    } else if fallback.is_none() {
-                        fallback = Some(candidate);
-                    }
-                }
-                let discovery = selected.or(fallback).ok_or_else(|| {
-                    eyre::eyre!("OCOMP retention returned no discovery generation")
-                })?;
-                let generation = self
-                    .state
-                    .observe_job(job_id, finalized.deadline_height)
-                    .wrap_err("observe embedded OCOMP job")?;
-                let cancelled = Arc::new(AtomicBool::new(false));
-                self.jobs.insert(
-                    job_id,
-                    RuntimeJobV1 {
-                        record: discovery,
-                        generation,
-                        cancelled,
-                        compute_started: false,
-                        vote_eligibility: if self.policy == EmbeddedNodePolicyV1::Validator {
-                            LocalVoteEligibilityV1::Pending
-                        } else {
-                            LocalVoteEligibilityV1::NotMember
-                        },
-                        vote_started: false,
-                        canonical_result: None,
-                    },
-                );
-            }
-            let canonical_expired = matches!(
-                disposition,
-                CanonicalJobDispositionV1::Closed {
-                    reason: EmbeddedTerminalReasonV1::Expired,
-                    ..
-                }
-            );
-            let export_acknowledged = if canonical_expired {
-                false
-            } else {
-                self.reconcile_export_ack(job_id, &record, drive_work)?
-            };
-            self.retention_selector
-                .reconcile_canonical_terminal(&record, height)?;
-            if export_acknowledged {
-                self.materialized_requests.insert(locator.intent_id);
-            }
-
-            match disposition {
-                CanonicalJobDispositionV1::FinalizedAwaitingOpen => {}
-                CanonicalJobDispositionV1::VotingOpen => {
-                    if !export_acknowledged || !drive_work {
-                        continue;
-                    }
-                    let eligibility_became_available =
-                        self.refresh_vote_eligibility(locator, &record, job_id)?;
-                    let compute_started = self
-                        .jobs
-                        .get(&job_id)
-                        .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
-                        .compute_started;
-                    if local_result_restore_policy(
-                        disposition,
-                        self.policy,
-                        discovered,
-                        eligibility_became_available,
-                        compute_started,
-                    ) == LocalResultRestorePolicyV1::BeforeCompute
-                    {
-                        self.restore_local_result(job_id)?;
-                    }
-                    self.ensure_compute_started(job_id)?;
-                }
-                CanonicalJobDispositionV1::Completed => {
-                    if !export_acknowledged {
-                        continue;
-                    }
-                    self.observe_completed(job_id, &record, height).await?;
-                    if self.policy == EmbeddedNodePolicyV1::FullNode {
-                        let compute_started = self
-                            .jobs
-                            .get(&job_id)
-                            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
-                            .compute_started;
-                        if local_result_restore_policy(
-                            disposition,
-                            self.policy,
-                            discovered,
-                            false,
-                            compute_started,
-                        ) == LocalResultRestorePolicyV1::AfterCanonicalCompleted
-                        {
-                            self.restore_local_result(job_id)?;
-                        }
-                        self.ensure_compute_started(job_id)?;
-                    }
-                }
-                CanonicalJobDispositionV1::Closed { reason, .. } => {
-                    self.observe_terminal(job_id, reason)?;
-                }
-                CanonicalJobDispositionV1::AwaitingFinality => {
-                    unreachable!("awaiting-finality records returned before job discovery")
-                }
-            }
-            if height >= finalized.deadline_height
-                && matches!(
-                    self.state.state(job_id),
-                    Some(
-                        EmbeddedJobStateV1::Computing
-                            | EmbeddedJobStateV1::LocalReady
-                            | EmbeddedJobStateV1::WaitAtDeadline
-                    )
-                )
-            {
-                self.state
-                    .reduce(job_id, EmbeddedJobEventV1::Deadline)
-                    .wrap_err("observe OCOMP deadline")?;
-            }
+        let expected = (
+            locator.block_number,
+            locator.wwd,
+            locator.pending_nonce,
+            locator.attempt,
+            locator.activation_preconditions_hash,
+        );
+        let actual = (
+            record.intent_height,
+            record.intent.wwd,
+            record.intent.pending_nonce,
+            record.intent.attempt,
+            activation_hash,
+        );
+        if actual != expected {
+            return Err(OcompExExError::RequestLocatorDisagreesWithState.into());
         }
         Ok(())
     }
@@ -491,9 +200,9 @@ where
         let expected_number = self
             .scanned_height
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("unified OCOMP scan height overflow"))?;
+            .ok_or(OcompExExError::UnifiedScanHeightOverflow)?;
         if checkpoint.block_number != expected_number || frame.parent_hash() != self.scanned_hash {
-            bail!("unified OCOMP frame scan is not contiguous");
+            return Err(OcompExExError::UnifiedFrameScanNotContiguous.into());
         }
         self.scanned_height = identity.number;
         self.scanned_hash = identity.hash;
@@ -540,13 +249,15 @@ where
             let Some(job_id) = self.intent_jobs.get(intent_id) else {
                 continue;
             };
-            let job = self.jobs.get(job_id).ok_or_else(|| {
-                eyre::eyre!("closed OCOMP job disappeared before spool retirement")
-            })?;
+            let job = self
+                .jobs
+                .get(job_id)
+                .ok_or(OcompExExError::ClosedJobDisappearedBeforeSpoolRetirement)?;
             let bundle_hash = job.record.spec.summary.protocol_bundle_hash;
-            let spool = self.discovery_spools.get(&bundle_hash).ok_or_else(|| {
-                eyre::eyre!("closed OCOMP job references an unknown discovery spool")
-            })?;
+            let spool = self
+                .discovery_spools
+                .get(&bundle_hash)
+                .ok_or(OcompExExError::ClosedJobUnknownDiscoverySpool)?;
             let reference = DiscoveryOfferRefV1::from_spec(
                 self.chain_id,
                 self.genesis_hash,
@@ -616,7 +327,7 @@ where
             || (closed.block_number == target.block_number
                 && closed.block_hash != target.block_hash)
         {
-            bail!("OCOMP closure checkpoint is ahead of or conflicts with finalized target");
+            return Err(OcompExExError::ClosureCheckpointConflictsWithTarget.into());
         }
         let ready_height = self
             .state
@@ -624,7 +335,7 @@ where
         let ready_hash = self
             .provider
             .block_hash(ready_height)?
-            .ok_or_else(|| eyre::eyre!("OCOMP readiness checkpoint is unavailable"))?;
+            .ok_or(OcompExExError::ReadinessCheckpointUnavailable)?;
         let checkpoint = ProjectionCheckpoint {
             block_number: ready_height,
             block_hash: ready_hash,

@@ -303,7 +303,7 @@ impl AuthenticatedTributeStream<'_, '_> {
             TributeCommitmentAuthority::Authenticated(partition) => Some(B256::from(
                 *partition
                     .tribute_commitment(candidate.tribute_id)
-                    .map_err(|error| FinalizedTributeError::Ce(error.to_string()))?
+                    .map_err(FinalizedTributeError::ce)?
                     .ok_or(FinalizedTributeError::UnauthenticatedCandidate(
                         candidate.tribute_id,
                     ))?

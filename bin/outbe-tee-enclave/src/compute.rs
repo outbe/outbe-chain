@@ -24,6 +24,8 @@ use alloy_primitives::{Address, B256, U256, U512};
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_tee::protocol::WorldwideDay;
 
+use crate::errors::{ComputeError, EnclaveResult};
+
 /// Canonical Tribute amount parsed once before the ZK/non-ZK paths diverge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CanonicalAmount {
@@ -34,15 +36,13 @@ pub(crate) struct CanonicalAmount {
 
 /// Parse the `tribute_draft_id` (a 32-byte value as a hex string, optional `0x`
 /// prefix) into raw bytes. Mirrors host `parse_su_hashes`.
-fn parse_draft_id(draft_id: &str) -> Result<[u8; 32], String> {
+fn parse_draft_id(draft_id: &str) -> EnclaveResult<[u8; 32]> {
     let hex_str = draft_id.strip_prefix("0x").unwrap_or(draft_id);
-    let bytes =
-        hex::decode(hex_str).map_err(|_| format!("invalid tribute_draft_id hex: {draft_id}"))?;
+    let bytes = hex::decode(hex_str).map_err(|_| ComputeError::InvalidDraftIdHex {
+        draft_id: draft_id.to_owned(),
+    })?;
     if bytes.len() != 32 {
-        return Err(format!(
-            "tribute_draft_id must be 32 bytes, got {}",
-            bytes.len()
-        ));
+        return Err(ComputeError::DraftIdLength { len: bytes.len() }.into());
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
@@ -66,11 +66,11 @@ pub fn compute_token_id(
     owner: Address,
     worldwide_day: WorldwideDay,
     draft_id: &str,
-) -> Result<B256, String> {
+) -> EnclaveResult<B256> {
     // Validate the draft id (reject malformed input) but keep it out of the hash.
     parse_draft_id(draft_id)?;
     outbe_compressed_entities::derive_poseidon_digest(owner, worldwide_day)
-        .map_err(|error| error.to_string())
+        .map_err(|error| ComputeError::from(error).into())
 }
 
 /// Computes the Tribute-only S-curve pricing contract:
@@ -86,36 +86,36 @@ pub(crate) fn compute_nominal(
     issuance_wwd_vwap_minor: U256,
     reference_wwd_vwap_minor: U256,
     reference_scurve_minor: U256,
-) -> Result<(U256, U256), String> {
+) -> EnclaveResult<(U256, U256)> {
     if issuance_wwd_vwap_minor.is_zero() {
-        return Err("issuance WorldwideDay VWAP is zero".to_string());
+        return Err(ComputeError::IssuanceVwapZero.into());
     }
     if reference_wwd_vwap_minor.is_zero() {
-        return Err("reference WorldwideDay VWAP is zero".to_string());
+        return Err(ComputeError::ReferenceVwapZero.into());
     }
     let effective_reference_price_minor = reference_wwd_vwap_minor.max(reference_scurve_minor);
     let numerator = U512::from(amount_minor)
         .checked_mul(U512::from(SCALE_1E6_U256))
         .and_then(|value| value.checked_mul(U512::from(reference_wwd_vwap_minor)))
-        .ok_or_else(|| "nominal amount overflow".to_string())?;
+        .ok_or(ComputeError::NominalAmountOverflow)?;
     let denominator = U512::from(issuance_wwd_vwap_minor)
         .checked_mul(U512::from(effective_reference_price_minor))
-        .ok_or_else(|| "nominal denominator overflow".to_string())?;
+        .ok_or(ComputeError::NominalDenominatorOverflow)?;
     let quotient = numerator / denominator;
     let nominal = U256::checked_from_limbs_slice(quotient.as_limbs())
-        .ok_or_else(|| "nominal amount overflow".to_string())?;
+        .ok_or(ComputeError::NominalAmountOverflow)?;
     if !amount_minor.is_zero() && nominal.is_zero() {
-        return Err("nominal amount rounds to zero".to_string());
+        return Err(ComputeError::NominalRoundsToZero.into());
     }
     Ok((nominal, effective_reference_price_minor))
 }
 
-fn parse_canonical_u64(value: &str, field: &'static str) -> Result<u64, String> {
+fn parse_canonical_u64(value: &str, field: &'static str) -> EnclaveResult<u64> {
     let parsed = value
         .parse::<u64>()
-        .map_err(|_| format!("{field} must be a canonical u64"))?;
+        .map_err(|_| ComputeError::NonCanonicalU64 { field })?;
     if parsed.to_string() != value {
-        return Err(format!("{field} must be a canonical u64"));
+        return Err(ComputeError::NonCanonicalU64 { field }.into());
     }
     Ok(parsed)
 }
@@ -126,16 +126,16 @@ fn parse_canonical_u64(value: &str, field: &'static str) -> Result<u64, String> 
 pub(crate) fn parse_canonical_amount(
     base_amount: &str,
     micro_amount: &str,
-) -> Result<CanonicalAmount, String> {
+) -> EnclaveResult<CanonicalAmount> {
     let base = parse_canonical_u64(base_amount, "amount_base")?;
     let micro = parse_canonical_u64(micro_amount, "amount_micro")?;
     if U256::from(micro) >= SCALE_1E6_U256 {
-        return Err("amount_micro must be less than 1000000".to_string());
+        return Err(ComputeError::AmountMicroRange.into());
     }
     let amount_minor = U256::from(base)
         .checked_mul(SCALE_1E6_U256)
         .and_then(|value| value.checked_add(U256::from(micro)))
-        .ok_or_else(|| "amount overflow".to_string())?;
+        .ok_or(ComputeError::AmountOverflow)?;
     Ok(CanonicalAmount {
         base,
         micro,
@@ -164,7 +164,7 @@ mod tests {
         .unwrap()
     }
 
-    fn parse_amount_minor(base: &str, micro: &str) -> Result<U256, String> {
+    fn parse_amount_minor(base: &str, micro: &str) -> EnclaveResult<U256> {
         Ok(parse_canonical_amount(base, micro)?.amount_minor)
     }
 

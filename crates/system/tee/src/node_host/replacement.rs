@@ -188,14 +188,15 @@ impl ReplacementCandidateEnclaveV1 {
 /// Stage one fresh enclave under the already committed NodeHost identity
 /// and persistent NodeHost key. The committed enclave remains the normal
 /// startup target.
-pub fn prepare_node_host_enclave_replacement_candidate<F>(
+pub fn prepare_node_host_enclave_replacement_candidate<F, E>(
     endpoint: &str,
     node_data_dir: &Path,
     identity: NodeHostIdentityV1,
     sign_authorization: F,
 ) -> Result<ReplacementCandidateEnclaveV1, TransportError>
 where
-    F: Fn(B256) -> Result<[u8; 65], String>,
+    F: Fn(B256) -> Result<[u8; 65], E>,
+    E: std::fmt::Display,
 {
     prepare_enclave_replacement_candidate(endpoint, node_data_dir, identity, sign_authorization)
 }
@@ -571,14 +572,15 @@ fn finish_promotion(
     Ok(candidate.manifest)
 }
 
-fn prepare_enclave_replacement_candidate<F>(
+fn prepare_enclave_replacement_candidate<F, E>(
     endpoint: &str,
     node_data_dir: &Path,
     identity: NodeHostIdentityV1,
     sign_authorization: F,
 ) -> Result<ReplacementCandidateEnclaveV1, TransportError>
 where
-    F: Fn(B256) -> Result<[u8; 65], String>,
+    F: Fn(B256) -> Result<[u8; 65], E>,
+    E: std::fmt::Display,
 {
     validate_identity(&identity)?;
     let (paths, _state_lock) = lock_node_host_state(node_data_dir)?;
@@ -622,9 +624,10 @@ struct CandidatePreparation<'a, F> {
     sign_authorization: &'a F,
 }
 
-impl<F> CandidatePreparation<'_, F>
+impl<F, E> CandidatePreparation<'_, F>
 where
-    F: Fn(B256) -> Result<[u8; 65], String>,
+    F: Fn(B256) -> Result<[u8; 65], E>,
+    E: std::fmt::Display,
 {
     fn resume(
         &self,

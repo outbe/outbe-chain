@@ -28,13 +28,13 @@ pub(in crate::stack) async fn resolve_epoch_floor<E: Clock>(
                 break Digest(hash);
             }
             if ctx.current() >= deadline {
-                return Err(eyre::eyre!(
-                    "epoch={} restart without finalized anchor after {:?}; \
-                         handle_genesis would return ZERO, or Phase 1 would lack \
-                         the finalized-round proof key for parent_view=0",
-                    epoch.get(),
-                    EPOCH_RESTART_ANCHOR_TIMEOUT,
-                ));
+                return Err(
+                    crate::errors::StackEpochError::EpochRestartWithoutFinalizedAnchor {
+                        epoch: epoch.get(),
+                        timeout: EPOCH_RESTART_ANCHOR_TIMEOUT,
+                    }
+                    .into(),
+                );
             }
             ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
         }
@@ -70,14 +70,24 @@ pub(in crate::stack) async fn wait_for_activation_anchor<E: Clock>(
         }
         if ctx.current() >= deadline {
             return Err(match transition {
-                AnchorTransition::Dkg => eyre::eyre!(
-                    "DKG activation race after {:?}: finalized_anchor=(height={}, hash={}, round_ready={}) activation_height={}; FinalizationActor is lagging the DKG manager",
-                    EPOCH_RESTART_ANCHOR_TIMEOUT, finalized, finalized_hash, round_ready, activation_height
-                ),
-                AnchorTransition::DealerDemotion => eyre::eyre!(
-                    "exited-validator demotion activation race after {:?}: finalized=(height={}, hash={}, round_ready={}) activation_height={}",
-                    EPOCH_RESTART_ANCHOR_TIMEOUT, finalized, finalized_hash, round_ready, activation_height
-                ),
+                AnchorTransition::Dkg => crate::errors::StackEpochError::DkgActivationRaceTimeout {
+                    timeout: EPOCH_RESTART_ANCHOR_TIMEOUT,
+                    finalized,
+                    finalized_hash,
+                    round_ready,
+                    activation_height,
+                }
+                .into(),
+                AnchorTransition::DealerDemotion => {
+                    crate::errors::StackEpochError::DealerDemotionActivationRaceTimeout {
+                        timeout: EPOCH_RESTART_ANCHOR_TIMEOUT,
+                        finalized,
+                        finalized_hash,
+                        round_ready,
+                        activation_height,
+                    }
+                    .into()
+                }
             });
         }
         ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;

@@ -88,7 +88,7 @@ pub struct OcompExExExitV1 {
     pub failure: ProjectionFailure,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RequestLocatorV1 {
     intent_id: B256,
     wwd: u32,
@@ -194,6 +194,8 @@ use discovery::{
 
 #[cfg(test)]
 use discovery::finalized_reader_lags;
+
+mod refresh;
 
 mod retention;
 use retention::{

@@ -1,73 +1,55 @@
 //! relations obligations for the offline OCOMP audit.
 use super::*;
 
-/// Final selected OCOMP composition. Caller records the Ocomp status.
-pub(crate) fn verify_ocomp_relations(
-    state: &CanonicalState<'_>,
-    view: &crate::snapshot::native::RethReadOnlyView,
-    layout: &crate::snapshot::config::RequestedLayout,
-    scratch_parent: &Path,
+fn seed_canonical_work_union(
+    canonical: &canonical::CanonicalOcompAudit,
+    work: &PresentJobUnion,
     report: &mut super::super::report::ValidationReport,
 ) -> eyre::Result<()> {
-    let limits = CasLimits {
-        max_object_bytes: 1_048_576,
-        max_total_bytes: u64::MAX,
-    };
-    let mut errors = PresentJoinErrors::default();
-    // Exactly one canonical inventory/obligation scan, before local populations.
-    let canonical = errors.observe(verify_canonical_obligations(
-        state,
-        view,
-        layout,
-        scratch_parent,
-        None,
-        Some(report),
-    ));
-    let mut protected = layout.protected.clone();
-    protected.0.extend([
-        layout.chain_root.clone(),
-        layout.consensus_root.clone(),
-        layout.ocomp_root.clone(),
-        layout.static_files_root.clone(),
-        layout.execution_rocksdb_root.clone(),
-    ]);
-    protected
-        .0
-        .extend(layout.projection.as_ref().map(|p| p.root.clone()));
-    let work = PresentJobUnion::create(scratch_parent, &protected)?;
-    if let Some(canonical) = &canonical {
-        report.observed.p = Some(outbe_snapshot::manifest::BlockIdentity {
-            number: canonical.projection.block_number,
-            hash: hex::encode(canonical.projection.block_hash),
-        });
-        for (name, count) in [
-            ("verified_active_intents", canonical.bounds.active_intents),
-            ("verified_closure_frames", canonical.closure.replay.blocks),
-            ("verified_source_leases", canonical.source_leases),
-            ("verified_complete_exports", canonical.complete_exports),
-            ("verified_export_input_chunks", canonical.input_chunks),
-            ("verified_pending_nod_jobs", canonical.nod.jobs),
-            ("verified_pending_nod_batches", canonical.nod.batches),
-            ("verified_pending_nod_actions", canonical.nod.actions),
-        ] {
-            present_count(report, name, count);
-        }
-        for active in &canonical.active {
-            work.save_job(b'a', &active.job)?;
-        }
-        for pin in &canonical.pins {
-            work.save_job(b'a', &pin.authority.job)?;
-            if let (Some(finalized), Some(export)) =
-                (&pin.authority.job.finalized, pin.authority.export)
-            {
-                work.save_export(finalized.job_id, export)?;
-            }
+    report.observed.p = Some(outbe_snapshot::manifest::BlockIdentity {
+        number: canonical.projection.block_number,
+        hash: hex::encode(canonical.projection.block_hash),
+    });
+    for (name, count) in [
+        ("verified_active_intents", canonical.bounds.active_intents),
+        ("verified_closure_frames", canonical.closure.replay.blocks),
+        ("verified_source_leases", canonical.source_leases),
+        ("verified_complete_exports", canonical.complete_exports),
+        ("verified_export_input_chunks", canonical.input_chunks),
+        ("verified_pending_nod_jobs", canonical.nod.jobs),
+        ("verified_pending_nod_batches", canonical.nod.batches),
+        ("verified_pending_nod_actions", canonical.nod.actions),
+    ] {
+        present_count(report, name, count);
+    }
+    for active in &canonical.active {
+        work.save_job(b'a', &active.job)?;
+    }
+    for pin in &canonical.pins {
+        work.save_job(b'a', &pin.authority.job)?;
+        if let (Some(finalized), Some(export)) =
+            (&pin.authority.job.finalized, pin.authority.export)
+        {
+            work.save_export(finalized.job_id, export)?;
         }
     }
+    Ok(())
+}
+
+fn collect_present_discovery_and_results(
+    state: &CanonicalState<'_>,
+    view: &crate::snapshot::native::RethReadOnlyView,
+    ocomp_root: &Path,
+    work: &PresentJobUnion,
+    (errors, report): (
+        &mut PresentJoinErrors,
+        &mut super::super::report::ValidationReport,
+    ),
+) -> eyre::Result<()> {
     if let Some(audit) = errors.observe(verify_present_discovery(
         state,
         view,
-        &layout.ocomp_root,
+        ocomp_root,
         None,
         &mut |record, job| {
             if let outbe_ocomp::discovery_spool::DiscoverySpoolRecordV1::Ack(ack) = record {
@@ -86,7 +68,7 @@ pub(crate) fn verify_ocomp_relations(
     if let Some(audit) = errors.observe(verify_present_local_results(
         state,
         view,
-        &layout.ocomp_root,
+        ocomp_root,
         None,
         &mut |job, result| {
             work.save_job(b'l', job)?;
@@ -98,10 +80,15 @@ pub(crate) fn verify_ocomp_relations(
         present_count(report, "present_local_results", audit.results);
         present_count(report, "present_terminal_digests", audit.terminal_digests);
     }
-    if let Some(audit) = errors.observe(verify_present_cas(&layout.ocomp_root, limits, None)) {
-        present_count(report, "present_cas_objects", audit.objects);
-        present_count(report, "present_cas_bytes", audit.bytes);
-    }
+    Ok(())
+}
+
+fn scan_present_job_directories(
+    ocomp_root: &Path,
+    work: &PresentJobUnion,
+    errors: &mut PresentJoinErrors,
+    report: &mut super::super::report::ValidationReport,
+) {
     for (prefix, flag, name) in [
         (
             "exporter-v1/receipts",
@@ -124,36 +111,31 @@ pub(crate) fn verify_ocomp_relations(
             "public_job_directories",
         ),
     ] {
-        if let Some(count) = errors.observe(scan_present_jobs(
-            &layout.ocomp_root.join(prefix),
-            flag,
-            &work,
-        )) {
+        if let Some(count) = errors.observe(scan_present_jobs(&ocomp_root.join(prefix), flag, work))
+        {
             present_count(report, name, count);
         }
     }
-    if let Some(count) = errors.observe(collect_present_references(&layout.ocomp_root, &work)) {
+    if let Some(count) = errors.observe(collect_present_references(ocomp_root, work)) {
         present_count(report, "present_reference_records", count);
     }
+}
+
+fn audit_present_job_union(
+    context: &PresentJobContext<'_, '_>,
+    canonical: Option<&canonical::CanonicalOcompAudit>,
+    work: &PresentJobUnion,
+    errors: &mut PresentJoinErrors,
+    report: &mut super::super::report::ValidationReport,
+) -> eyre::Result<()> {
     let mut counts = PresentArtifactCounts::default();
     let mut jobs = 0_u64;
-    let context = PresentJobContext {
-        state,
-        view,
-        layout,
-        scratch: scratch_parent,
-        protected: &protected,
-        work: &work,
-        cas_limits: limits,
-    };
-    // Each job callback runs after the union read transaction is released.
     work.visit_prefix(b"u", &mut |key, value| {
-        ensure!(
-            key.len() == 33 && value.len() == 1,
-            "invalid scratch job union"
-        );
+        if key.len() != 33 || value.len() != 1 {
+            return Err(SnapshotOcompError::InvalidScratchJobUnion.into());
+        }
         let job = B256::from_slice(&key[1..]);
-        if let Some(canonical) = &canonical {
+        if let Some(canonical) = canonical {
             let active = canonical.active.iter().any(|active| {
                 active
                     .job
@@ -162,7 +144,7 @@ pub(crate) fn verify_ocomp_relations(
                     .is_some_and(|finalized| finalized.job_id == job)
             });
             errors.observe(verify_present_job(
-                &context,
+                context,
                 job,
                 value[0],
                 active,
@@ -171,7 +153,7 @@ pub(crate) fn verify_ocomp_relations(
         }
         jobs = jobs
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("present job union overflow"))?;
+            .ok_or(SnapshotOcompError::PresentJobUnionOverflow)?;
         Ok(())
     })?;
     present_count(report, "present_job_union", jobs);
@@ -185,6 +167,66 @@ pub(crate) fn verify_ocomp_relations(
     ] {
         present_count(report, name, count);
     }
+    Ok(())
+}
+
+/// Final selected OCOMP composition. Caller records the Ocomp status.
+pub(crate) fn verify_ocomp_relations(
+    state: &CanonicalState<'_>,
+    view: &crate::snapshot::native::RethReadOnlyView,
+    layout: &crate::snapshot::config::RequestedLayout,
+    scratch_parent: &Path,
+    report: &mut super::super::report::ValidationReport,
+) -> eyre::Result<()> {
+    let limits = CasLimits {
+        max_object_bytes: 1_048_576,
+        max_total_bytes: u64::MAX,
+    };
+    let mut errors = PresentJoinErrors::default();
+    let canonical = errors.observe(verify_canonical_obligations(
+        state,
+        view,
+        (layout, scratch_parent),
+        None,
+        Some(report),
+    ));
+    let mut protected = layout.protected.clone();
+    protected.0.extend([
+        layout.chain_root.clone(),
+        layout.consensus_root.clone(),
+        layout.ocomp_root.clone(),
+        layout.static_files_root.clone(),
+        layout.execution_rocksdb_root.clone(),
+    ]);
+    protected
+        .0
+        .extend(layout.projection.as_ref().map(|p| p.root.clone()));
+    let work = PresentJobUnion::create(scratch_parent, &protected)?;
+    if let Some(canonical) = &canonical {
+        seed_canonical_work_union(canonical, &work, report)?;
+    }
+    collect_present_discovery_and_results(
+        state,
+        view,
+        &layout.ocomp_root,
+        &work,
+        (&mut errors, report),
+    )?;
+    if let Some(audit) = errors.observe(verify_present_cas(&layout.ocomp_root, limits, None)) {
+        present_count(report, "present_cas_objects", audit.objects);
+        present_count(report, "present_cas_bytes", audit.bytes);
+    }
+    scan_present_job_directories(&layout.ocomp_root, &work, &mut errors, report);
+    let context = PresentJobContext {
+        state,
+        view,
+        layout,
+        scratch: scratch_parent,
+        protected: &protected,
+        work: &work,
+        cas_limits: limits,
+    };
+    audit_present_job_union(&context, canonical.as_ref(), &work, &mut errors, report)?;
     if let Some((live, retained)) =
         errors.observe(verify_present_projection_structure(layout, scratch_parent))
     {
@@ -210,7 +252,7 @@ pub(super) fn collect_present_references(root: &Path, work: &PresentJobUnion) ->
             work.save_refs(job, ordinal, &refs)?;
             count = count
                 .checked_add(1)
-                .ok_or_else(|| eyre::eyre!("reference record count overflow"))?;
+                .ok_or(SnapshotOcompError::ReferenceRecordCountOverflow)?;
             Ok(())
         })();
         result.map_err(|error| {
@@ -237,7 +279,7 @@ pub(super) struct PresentArtifactCounts {
 pub(super) fn increment_present(count: &mut u64, add: u64) -> eyre::Result<()> {
     *count = count
         .checked_add(add)
-        .ok_or_else(|| eyre::eyre!("present artifact count overflow"))?;
+        .ok_or(SnapshotOcompError::PresentArtifactCountOverflow)?;
     Ok(())
 }
 
@@ -249,28 +291,46 @@ pub(super) fn validate_present_manifest(
     let finalized = job
         .finalized
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("present manifest has no canonical finalized job"))?;
-    ensure!(
-        manifest.job_id == finalized.job_id
-            && manifest.protocol_bundle_hash == job.intent.protocol_bundle_hash
-            && manifest.attempt == job.intent.attempt
-            && manifest.wwd == job.intent.wwd
-            && manifest.sealed_tribute_collection_key == job.intent.sealed_tribute_collection_key
-            && manifest.sealed_tribute_collection_root == job.intent.sealed_tribute_collection_root
-            && manifest.tribute_count == job.intent.authenticated_day_count
-            && manifest.tribute_nominal_total == job.intent.authenticated_day_nominal,
-        "present manifest differs from canonical frozen job authority"
-    );
+        .ok_or(SnapshotOcompError::PresentManifestLacksFinalizedJob)?;
+    require(
+        (
+            manifest.job_id,
+            manifest.protocol_bundle_hash,
+            manifest.attempt,
+            manifest.wwd,
+            manifest.sealed_tribute_collection_key,
+            manifest.sealed_tribute_collection_root,
+            manifest.tribute_count,
+            manifest.tribute_nominal_total,
+        ) == (
+            finalized.job_id,
+            job.intent.protocol_bundle_hash,
+            job.intent.attempt,
+            job.intent.wwd,
+            job.intent.sealed_tribute_collection_key,
+            job.intent.sealed_tribute_collection_root,
+            job.intent.authenticated_day_count,
+            job.intent.authenticated_day_nominal,
+        ),
+        SnapshotOcompError::PresentManifestAuthorityMismatch,
+    )?;
     let checkpoint = &manifest.checkpoint;
-    ensure!(
-        checkpoint.finalized_block_number == job.intent_height
-            && checkpoint.finalized_block_hash == finalized.finalized_request_block_hash
-            && checkpoint.finalized_state_root == finalized.finalized_request_state_root
-            && checkpoint.finalized_ce_root == job.intent.ce_sealed_root
-            && checkpoint.ce_schema_version
-                == u16::try_from(outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION)?,
-        "present manifest differs from canonical checkpoint"
-    );
+    require(
+        (
+            checkpoint.finalized_block_number,
+            checkpoint.finalized_block_hash,
+            checkpoint.finalized_state_root,
+            checkpoint.finalized_ce_root,
+            checkpoint.ce_schema_version,
+        ) == (
+            job.intent_height,
+            finalized.finalized_request_block_hash,
+            finalized.finalized_request_state_root,
+            job.intent.ce_sealed_root,
+            u16::try_from(outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION)?,
+        ),
+        SnapshotOcompError::PresentManifestCheckpointMismatch,
+    )?;
     manifest.validate_against_bundle(bundle.bundle(), &poc_schema_limits())?;
     Ok(())
 }
@@ -289,12 +349,12 @@ pub(super) fn compare_surviving_ack_export(
     ack: &outbe_ocomp::discovery_spool::StoredDiscoveryAckV1,
     export: outbe_node::ocomp::retention::ExportAuthorityV1,
 ) -> eyre::Result<()> {
-    ensure!(
-        ack.reference.generation == export.source_generation
-            && ack.lease_generation == export.lease_generation
-            && ack.manifest_hash == export.manifest_hash,
-        "surviving discovery ACK differs from export authority"
-    );
+    if ack.reference.generation != export.source_generation
+        || ack.lease_generation != export.lease_generation
+        || ack.manifest_hash != export.manifest_hash
+    {
+        return Err(SnapshotOcompError::SurvivingAckExportMismatch.into());
+    }
     Ok(())
 }
 
@@ -303,15 +363,11 @@ pub(super) fn compare_surviving_result_binding(
     manifest: &outbe_ocomp_protocol::input::InputManifestV1,
     plan_hash: Option<B256>,
 ) -> eyre::Result<()> {
-    ensure!(
-        result.0 == manifest.manifest_hash(&poc_schema_limits())?,
-        "surviving local result differs from input manifest"
-    );
-    if let Some(plan_hash) = plan_hash {
-        ensure!(
-            result.1 == plan_hash,
-            "surviving local result differs from plan"
-        );
+    if result.0 != manifest.manifest_hash(&poc_schema_limits())? {
+        return Err(SnapshotOcompError::SurvivingLocalResultManifestMismatch.into());
+    }
+    if plan_hash.is_some_and(|expected| result.1 != expected) {
+        return Err(SnapshotOcompError::SurvivingLocalResultPlanMismatch.into());
     }
     Ok(())
 }

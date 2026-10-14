@@ -208,3 +208,67 @@ impl ValidationReport {
         selected.peek().is_some() && selected.all(|entry| entry.status == CheckStatus::Passed)
     }
 }
+
+pub(super) fn failure_status(error: &eyre::Report) -> CheckStatus {
+    if error.downcast_ref::<super::Incomplete>().is_some()
+        || error.chain().any(|source| {
+            source
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        })
+    {
+        CheckStatus::Incomplete
+    } else {
+        CheckStatus::Failed
+    }
+}
+
+pub(super) fn record_failure(
+    report: &mut ValidationReport,
+    check: CheckName,
+    error: &eyre::Report,
+) {
+    report.record(check, failure_status(error), Some(&format!("{error:#}")));
+}
+
+pub(super) fn record_outcome<T>(
+    report: &mut ValidationReport,
+    check: CheckName,
+    result: &eyre::Result<T>,
+) {
+    match result {
+        Ok(_) => report.record(check, CheckStatus::Passed, None),
+        Err(error) => record_failure(report, check, error),
+    }
+}
+
+pub(super) fn fail_selected(
+    report: &mut ValidationReport,
+    checks: &[CheckName],
+    error: &eyre::Report,
+) {
+    for check in checks {
+        // Preserve an already reported primary contradiction over secondary errors.
+        if report.check(*check).status != CheckStatus::Failed {
+            record_failure(report, *check, error);
+        }
+    }
+}
+
+pub(super) fn block_on(report: &mut ValidationReport, check: CheckName, prerequisite: CheckName) {
+    if report.check(check).status == CheckStatus::Failed {
+        return;
+    }
+    let status = report.check(prerequisite).status;
+    if status != CheckStatus::Passed {
+        report.record(
+            check,
+            if status == CheckStatus::Failed {
+                CheckStatus::Failed
+            } else {
+                CheckStatus::Incomplete
+            },
+            Some(&format!("required {prerequisite:?} check is {status:?}")),
+        );
+    }
+}

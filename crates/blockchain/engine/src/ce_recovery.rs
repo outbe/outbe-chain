@@ -92,14 +92,16 @@ pub(crate) fn apply_replayed_block(
         || provisional.parent_root() != block.parent_root
         || provisional.new_root() != block.new_root
     {
-        eyre::bail!(
-            "replayed CE root/identity mismatch at {}/{}: expected parent {}/{}, root {}; computed {:?}",
-            block.number,
-            block.hash,
-            block.parent_hash,
-            block.parent_root,
-            block.new_root,
-            provisional
+        return Err(
+            crate::errors::CeRecoveryError::ReplayedRootIdentityMismatch {
+                number: block.number,
+                hash: block.hash,
+                parent_hash: block.parent_hash,
+                parent_root: block.parent_root,
+                new_root: block.new_root,
+                provisional: format!("{provisional:?}"),
+            }
+            .into(),
         );
     }
     tree.publish_candidate(block.hash, provisional)?;

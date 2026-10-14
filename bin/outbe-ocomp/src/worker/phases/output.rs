@@ -40,11 +40,8 @@ pub(in super::super) fn execute_output_finalize_unit(
     replay_output_finalize_artifact(
         shard_ordinal,
         spec,
-        &producer_artifacts[0],
-        &producer_artifacts[1],
-        plan,
-        manifest,
-        bundle,
+        (&producer_artifacts[0], &producer_artifacts[1]),
+        (plan, manifest, bundle),
         limits,
     )
     .map_err(WorkerError::from)

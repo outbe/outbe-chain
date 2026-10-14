@@ -1,3 +1,5 @@
+//! Typed error definitions for the Stablecoin precompile.
+
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolError, SolValue};
 use outbe_primitives::error::PrecompileError;
@@ -5,6 +7,7 @@ use thiserror::Error;
 
 use crate::abi::IStablecoin;
 
+/// Represents errors returned by the Stablecoin state runtime.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StablecoinStateError {
@@ -140,6 +143,50 @@ pub enum StablecoinStateError {
 
     #[error("invalid stablecoin permit signature")]
     InvalidPermitSignature,
+
+    #[error("stablecoin Factory initialization reached incompatible schema {stored_schema}")]
+    IncompatibleInitializationSchema { stored_schema: u64 },
+
+    #[error("stablecoin name storage is not UTF-8")]
+    InvalidNameUtf8,
+
+    #[error("stablecoin symbol storage is not UTF-8")]
+    InvalidSymbolUtf8,
+
+    #[error("stablecoin ADMIN slot/role membership mismatch")]
+    AdminRoleMismatch,
+
+    #[error("stablecoin admin transfer reached inconsistent role state")]
+    InconsistentAdminTransferRoleState,
+
+    #[error("stablecoin permit nonce overflow")]
+    PermitNonceOverflow,
+
+    #[error("stablecoin recipient balance overflow")]
+    RecipientBalanceOverflow,
+
+    #[error("stablecoin forced-transfer recipient overflow")]
+    ForcedTransferRecipientOverflow,
+
+    #[error("stablecoin total supply exceeds its stored cap")]
+    TotalSupplyExceedsCap,
+
+    #[error("stablecoin balance overflow")]
+    BalanceOverflow,
+
+    #[error("stablecoin supply/balance invariant is corrupted")]
+    SupplyBalanceInvariantCorrupted,
+
+    #[error("stablecoin frozen-balance invariant is corrupted")]
+    FrozenBalanceInvariantCorrupted,
+}
+
+#[derive(Debug, Error)]
+pub enum AbiDecodeError {
+    #[error(transparent)]
+    Sol(#[from] alloy_sol_types::Error),
+    #[error("non-canonical ABI calldata or trailing bytes")]
+    NonCanonicalCalldata,
 }
 
 impl From<StablecoinStateError> for PrecompileError {
@@ -159,7 +206,19 @@ impl From<StablecoinStateError> for PrecompileError {
                 .abi_encode(),
             )),
             fatal @ (StablecoinStateError::AlreadyInitialized
-            | StablecoinStateError::NonPristineRoot { .. }) => {
+            | StablecoinStateError::NonPristineRoot { .. }
+            | StablecoinStateError::IncompatibleInitializationSchema { .. }
+            | StablecoinStateError::InvalidNameUtf8
+            | StablecoinStateError::InvalidSymbolUtf8
+            | StablecoinStateError::AdminRoleMismatch
+            | StablecoinStateError::InconsistentAdminTransferRoleState
+            | StablecoinStateError::PermitNonceOverflow
+            | StablecoinStateError::RecipientBalanceOverflow
+            | StablecoinStateError::ForcedTransferRecipientOverflow
+            | StablecoinStateError::TotalSupplyExceedsCap
+            | StablecoinStateError::BalanceOverflow
+            | StablecoinStateError::SupplyBalanceInvariantCorrupted
+            | StablecoinStateError::FrozenBalanceInvariantCorrupted) => {
                 PrecompileError::Fatal(fatal.to_string())
             }
             StablecoinStateError::InvalidAddress { account } => PrecompileError::RevertBytes(

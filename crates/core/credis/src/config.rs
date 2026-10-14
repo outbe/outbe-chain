@@ -4,10 +4,11 @@
 //! constant: the requirements fix it at 1.64 times the anchor.
 
 use outbe_primitives::chain::is_mainnet;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::{CALL_NOTICE_PERIOD, CALL_THRESHOLD, CALL_WINDOW, SECS_PER_DAY};
+use crate::errors::CredisError;
 use crate::schema::CredisContract;
 
 /// Resolve by network: PROD on mainnet, DEV everywhere else.
@@ -46,9 +47,7 @@ impl CredisParams {
             PROFILE_AUTO if is_mainnet(chain_id) => Ok(Self::PROD),
             PROFILE_AUTO | PROFILE_DEV => Ok(Self::DEV),
             PROFILE_PROD => Ok(Self::PROD),
-            other => Err(PrecompileError::Revert(format!(
-                "unknown credis profile selector: {other}"
-            ))),
+            other => Err(CredisError::UnknownProfileSelector(other).into()),
         }
     }
 }

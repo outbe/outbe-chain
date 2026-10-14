@@ -14,7 +14,7 @@ pub(crate) fn apply_day_operation(
     if let Some(result) = test_enclave::with_key(|key| {
         outbe_tee_enclave::tribute_day::apply_day_operation(key, &request)
     }) {
-        return result.map_err(|error| TransportError::EnclaveError(error.to_string()));
+        return result.map_err(crate::errors::enclave_transport_error);
     }
     outbe_tee::tribute_day_client::apply_day_operation(request)
 }
@@ -26,7 +26,7 @@ pub(crate) fn read_day_amount(
     if let Some(result) =
         test_enclave::with_key(|key| outbe_tee_enclave::tribute_day::read_day_amount(key, record))
     {
-        return result.map_err(|error| TransportError::EnclaveError(error.to_string()));
+        return result.map_err(crate::errors::enclave_transport_error);
     }
     outbe_tee::tribute_day_client::read_day_amount(record)
 }
@@ -38,7 +38,7 @@ pub(crate) fn read_amounts(
     if let Some(result) = test_enclave::with_key(|key| {
         outbe_tee_enclave::tribute_encryption::decrypt_tribute(key, record)
     }) {
-        return result.map_err(|error| TransportError::EnclaveError(error.to_string()));
+        return result.map_err(crate::errors::enclave_transport_error);
     }
     outbe_tee::tribute_client::read_tribute_amounts(std::slice::from_ref(record))?
         .into_iter()

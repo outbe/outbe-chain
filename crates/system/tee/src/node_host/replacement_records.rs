@@ -239,7 +239,7 @@ impl ReplacementCandidateRecordV1 {
         let manifest = self
             .manifest
             .encode_canonical()
-            .map_err(|error| TransportError::Codec(error.to_string()))?;
+            .map_err(TransportError::codec)?;
         let manifest_len = u16::try_from(manifest.len()).map_err(|_| {
             TransportError::Codec("replacement candidate manifest exceeds its wire field".into())
         })?;

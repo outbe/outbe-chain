@@ -32,28 +32,26 @@ where
         let finalized = self
             .provider
             .finalized_block_num_hash()
-            .map_err(|error| OcompFinalityAuthorityError::LocalAuthority(error.to_string()))?
-            .ok_or_else(|| {
-                OcompFinalityAuthorityError::LocalAuthority(
-                    "finalized checkpoint is unavailable".into(),
-                )
-            })?;
+            .map_err(crate::errors::FinalityAuthorityLocalError::provider)?
+            .ok_or(crate::errors::FinalityAuthorityLocalError::FinalizedCheckpointUnavailable)?;
         if claimed.finalized_block_number > finalized.number {
-            return Err(OcompFinalityAuthorityError::LocalAuthority(format!(
-                "claimed request height {} is above local finalized height {}",
-                claimed.finalized_block_number, finalized.number
-            )));
+            return Err(
+                crate::errors::FinalityAuthorityLocalError::ClaimedHeightAboveFinalized {
+                    claimed: claimed.finalized_block_number,
+                    finalized: finalized.number,
+                }
+                .into(),
+            );
         }
         let canonical_hash = self
             .provider
             .block_hash(claimed.finalized_block_number)
-            .map_err(|error| OcompFinalityAuthorityError::LocalAuthority(error.to_string()))?
-            .ok_or_else(|| {
-                OcompFinalityAuthorityError::LocalAuthority(format!(
-                    "canonical hash at finalized height {} is unavailable",
-                    claimed.finalized_block_number
-                ))
-            })?;
+            .map_err(crate::errors::FinalityAuthorityLocalError::provider)?
+            .ok_or(
+                crate::errors::FinalityAuthorityLocalError::CanonicalHashUnavailable {
+                    height: claimed.finalized_block_number,
+                },
+            )?;
         if canonical_hash != claimed.finalized_block_hash {
             return Err(OcompFinalityAuthorityError::InvalidProof(
                 outbe_ocomp_protocol::intent::FinalizedIntentVerificationError::FinalizedHeaderMetadataMismatch,

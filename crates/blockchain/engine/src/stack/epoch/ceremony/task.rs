@@ -160,10 +160,25 @@ where
                         )
                         .await
                         .map(DkgTaskOutcome::DealerOnly),
-                        (None, _) => Err(eyre::eyre!(attempt.missing_output())),
-                        (Some(_), None) => Err(eyre::eyre!(attempt.missing_share())),
+                        (None, _) => {
+                            Err(crate::errors::StackEpochError::CeremonyPreconditionFailed {
+                                message: attempt.missing_output(),
+                            }
+                            .into())
+                        }
+                        (Some(_), None) => {
+                            Err(crate::errors::StackEpochError::CeremonyPreconditionFailed {
+                                message: attempt.missing_share(),
+                            }
+                            .into())
+                        }
                     },
-                    LocalDkgRole::NotParticipant => Err(eyre::eyre!(attempt.not_participant())),
+                    LocalDkgRole::NotParticipant => {
+                        Err(crate::errors::StackEpochError::CeremonyPreconditionFailed {
+                            message: attempt.not_participant(),
+                        }
+                        .into())
+                    }
                 };
                 let _ = tx.send(result);
             });

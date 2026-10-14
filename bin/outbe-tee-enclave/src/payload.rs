@@ -6,12 +6,14 @@
 //! node needs them to price and admit the offer. Issuance writes both to public
 //! chain state, so encrypting them protected nothing.
 //!
-//! NOTE (Enclave Return Rule): `creator`, `su_hashes`, `wallet_addresses`, and
+//! Enclave Return Rule: `creator`, `su_hashes`, `wallet_addresses`, and
 //! `sra_addresses` are L2-linking material. The enclave reads them to validate
 //! and (in a later slice) to emit privacy-preserving used-markers / agent-reward
 //! routing, but it MUST NOT return them raw to the host.
 
 use serde::Deserialize;
+
+use crate::errors::{EnclaveResult, PayloadError};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TributeInputPayload {
@@ -29,23 +31,23 @@ pub struct TributeInputPayload {
 
 /// Parse decrypted JSON and validate the required fields. Returns a
 /// human-readable reject reason on failure.
-pub fn parse_and_validate(plaintext: &[u8]) -> Result<TributeInputPayload, String> {
-    let payload: TributeInputPayload = serde_json::from_slice(plaintext)
-        .map_err(|e| format!("failed to parse decrypted payload: {e}"))?;
+pub fn parse_and_validate(plaintext: &[u8]) -> EnclaveResult<TributeInputPayload> {
+    let payload: TributeInputPayload =
+        serde_json::from_slice(plaintext).map_err(PayloadError::parse_decrypted_payload)?;
 
     validate(&payload)?;
     Ok(payload)
 }
 
-pub(crate) fn validate(payload: &TributeInputPayload) -> Result<(), String> {
+pub(crate) fn validate(payload: &TributeInputPayload) -> EnclaveResult<()> {
     if payload.tribute_draft_id.is_empty() {
-        return Err("tribute_draft_id is required".to_string());
+        return Err(PayloadError::DraftIdRequired.into());
     }
     if payload.creator.is_empty() {
-        return Err("creator is required".to_string());
+        return Err(PayloadError::CreatorRequired.into());
     }
     if payload.su_hashes.is_empty() {
-        return Err("su_hashes cannot be empty".to_string());
+        return Err(PayloadError::SuHashesEmpty.into());
     }
     Ok(())
 }

@@ -468,16 +468,11 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
             }
 
             let admitted = admit_reported_lysis_unit_v1(
-                ordinal,
-                &finished,
-                &mut admissions,
-                &input_refs,
-                &pinned_bundle,
-                &reader,
-                &worker_inbox,
-                &replay_inbox,
-                &cas,
-                &limits,
+                (ordinal, &finished),
+                (&mut admissions, &input_refs),
+                (&pinned_bundle, &reader),
+                (&worker_inbox, &replay_inbox),
+                (&cas, &limits),
             )
             .unwrap_or_else(|error| panic!("admit deterministic unit {ordinal}: {error}"));
             assert!(matches!(
@@ -511,32 +506,21 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
                     })
                     .collect::<Vec<_>>();
                 assert!(verify_lysis_root_reduce_phase_replay(
-                    ordinal,
-                    &spec,
-                    &reported,
-                    &plan,
-                    &manifest,
+                    (ordinal, &spec, &reported),
+                    (&plan, &manifest),
                     std::slice::from_ref(&unexpected_node_input),
-                    &producers,
-                    &bundle,
-                    &reader,
-                    &replay_inbox,
-                    &limits,
+                    (&producers, &bundle),
+                    (&reader, &replay_inbox, &limits),
                 )
                 .is_err());
             }
             if let Some(retry) = retry {
                 let replayed = admit_reported_lysis_unit_v1(
-                    ordinal,
-                    &retry,
-                    &mut admissions,
-                    &input_refs,
-                    &pinned_bundle,
-                    &reader,
-                    &worker_inbox,
-                    &replay_inbox,
-                    &cas,
-                    &limits,
+                    (ordinal, &retry),
+                    (&mut admissions, &input_refs),
+                    (&pinned_bundle, &reader),
+                    (&worker_inbox, &replay_inbox),
+                    (&cas, &limits),
                 )
                 .unwrap_or_else(|error| {
                     panic!("replay exact deterministic unit {ordinal}: {error}")

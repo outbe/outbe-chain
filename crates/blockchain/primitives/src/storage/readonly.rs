@@ -137,9 +137,7 @@ impl<R: StorageReader> super::PrecompileStorageProvider for ReadOnlyStorageProvi
     }
 
     fn set_code(&mut self, _address: Address, _code: Bytecode) -> Result<()> {
-        Err(PrecompileError::Fatal(
-            "read-only: set_code not supported".into(),
-        ))
+        Err(PrecompileError::fatal("read-only: set_code not supported"))
     }
 
     fn account_info(&mut self, _address: Address) -> Result<AccountInfo> {
@@ -156,15 +154,11 @@ impl<R: StorageReader> super::PrecompileStorageProvider for ReadOnlyStorageProvi
     }
 
     fn sstore(&mut self, _address: Address, _key: U256, _value: U256) -> Result<()> {
-        Err(PrecompileError::Fatal(
-            "read-only: sstore not supported".into(),
-        ))
+        Err(PrecompileError::fatal("read-only: sstore not supported"))
     }
 
     fn tstore(&mut self, _address: Address, _key: U256, _value: U256) -> Result<()> {
-        Err(PrecompileError::Fatal(
-            "read-only: tstore not supported".into(),
-        ))
+        Err(PrecompileError::fatal("read-only: tstore not supported"))
     }
 
     fn emit_event(&mut self, _address: Address, _event: LogData) -> Result<()> {
@@ -202,20 +196,20 @@ impl<R: StorageReader> super::PrecompileStorageProvider for ReadOnlyStorageProvi
     fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
 
     fn transfer_balance(&mut self, _from: Address, _to: Address, _amount: U256) -> Result<()> {
-        Err(PrecompileError::Fatal(
-            "read-only: transfer_balance not supported".into(),
+        Err(PrecompileError::fatal(
+            "read-only: transfer_balance not supported",
         ))
     }
 
     fn increase_balance(&mut self, _address: Address, _amount: U256) -> Result<()> {
-        Err(PrecompileError::Fatal(
-            "read-only: increase_balance not supported".into(),
+        Err(PrecompileError::fatal(
+            "read-only: increase_balance not supported",
         ))
     }
 
     fn decrease_balance(&mut self, _address: Address, _amount: U256) -> Result<()> {
-        Err(PrecompileError::Fatal(
-            "read-only: decrease_balance not supported".into(),
+        Err(PrecompileError::fatal(
+            "read-only: decrease_balance not supported",
         ))
     }
 }

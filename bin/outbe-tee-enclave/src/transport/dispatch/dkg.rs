@@ -1,13 +1,22 @@
 use crate::transport::*;
 
+pub(in crate::transport) struct DkgOpenRequest {
+    pub ceremony_id: alloy_primitives::B256,
+    pub round: u64,
+    pub participants: Vec<outbe_tee::protocol::ParticipantAnnounce>,
+}
+
 pub(in crate::transport) fn dispatch_dkg_open(
     keys: &EnclaveKeys,
     dkg: &mut DkgSessionStore,
     network_binding: &outbe_primitives::tee_attestation_v1::NetworkBindingV1,
-    ceremony_id: alloy_primitives::B256,
-    round: u64,
-    participants: Vec<outbe_tee::protocol::ParticipantAnnounce>,
+    request: DkgOpenRequest,
 ) -> EnclaveResponse {
+    let DkgOpenRequest {
+        ceremony_id,
+        round,
+        participants,
+    } = request;
     let result = (|| {
         // The host relays each `(bls, enc, sig)` it gathered from peers'
         // `DkgParticipantAnnounceV1` responses. The signature is scoped to this
@@ -23,9 +32,7 @@ pub(in crate::transport) fn dispatch_dkg_open(
         let participant_set_hash =
             outbe_primitives::tee_attestation_v1::dkg_participant_set_hash_v1(&participant_bls)
                 .map_err(|error| {
-                    crate::errors::TeeError::Dkg(format!(
-                        "DkgOpen: invalid participant set: {error}"
-                    ))
+                    crate::errors::TeeError::dkg_context("DkgOpen: invalid participant set", error)
                 })?;
         let expected_ceremony = outbe_primitives::tee_attestation_v1::dkg_ceremony_id_v1(
             network_binding,
@@ -33,39 +40,31 @@ pub(in crate::transport) fn dispatch_dkg_open(
             participant_set_hash,
         )
         .map_err(|error| {
-            crate::errors::TeeError::Dkg(format!("DkgOpen: invalid ceremony: {error}"))
+            crate::errors::TeeError::dkg_context("DkgOpen: invalid ceremony", error)
         })?;
         if ceremony_id != expected_ceremony {
-            return Err(crate::errors::TeeError::Dkg(
-                "DkgOpen: ceremony id does not match network and participant set".to_string(),
+            return Err(crate::errors::TeeError::dkg_err(
+                "DkgOpen: ceremony id does not match network and participant set",
             ));
         }
         for p in &participants {
             if p.ceremony_id != ceremony_id
                 || p.round != round
                 || p.participant_set_hash != participant_set_hash
-                || !crate::keys::verify_dkg_enc_binding(
-                    &p.bls_pub,
-                    network_binding,
-                    ceremony_id,
-                    round,
-                    participant_set_hash,
-                    &p.enc_pub,
-                    &p.enc_sig,
-                )
+                || !crate::keys::verify_dkg_enc_binding(network_binding, p)
             {
-                return Err(crate::errors::TeeError::Dkg(
-                    "DkgOpen: enc-key identity binding failed verification".to_string(),
+                return Err(crate::errors::TeeError::dkg_err(
+                    "DkgOpen: enc-key identity binding failed verification",
                 ));
             }
             if !seen_enc.insert(p.enc_pub) {
-                return Err(crate::errors::TeeError::Dkg(
-                    "DkgOpen: duplicate enc key across participants".to_string(),
+                return Err(crate::errors::TeeError::dkg_err(
+                    "DkgOpen: duplicate enc key across participants",
                 ));
             }
             if enc_by_bls.insert(p.bls_pub.clone(), p.enc_pub).is_some() {
-                return Err(crate::errors::TeeError::Dkg(
-                    "DkgOpen: duplicate BLS identity across participants".to_string(),
+                return Err(crate::errors::TeeError::dkg_err(
+                    "DkgOpen: duplicate BLS identity across participants",
                 ));
             }
         }
@@ -74,7 +73,7 @@ pub(in crate::transport) fn dispatch_dkg_open(
         for pk in &pubkeys {
             let bls_bytes = commonware_codec::Encode::encode(pk).to_vec();
             let enc = enc_by_bls.get(&bls_bytes).ok_or_else(|| {
-                crate::errors::TeeError::Dkg("DkgOpen: enc key missing for participant".to_string())
+                crate::errors::TeeError::dkg_err("DkgOpen: enc key missing for participant")
             })?;
             recipient_enc_keys.insert(pk.clone(), *enc);
         }

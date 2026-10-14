@@ -84,31 +84,34 @@ fn validate_durable_header_evidence(
 ) -> eyre::Result<B256> {
     if height == 0 {
         if evidence.header_root.is_some() {
-            eyre::bail!("genesis durable header unexpectedly carries a CE root artifact");
+            return Err(crate::errors::CeFinalizerError::GenesisCarriesCeRootArtifact.into());
         }
         return Ok(evidence.evm_root);
     }
-    let header_root = evidence.header_root.ok_or_else(|| {
-        eyre::eyre!(
-            "durable canonical header is missing CE root artifact at {height}/{}",
-            evidence.block_hash
-        )
-    })?;
+    let header_root =
+        evidence
+            .header_root
+            .ok_or(crate::errors::CeFinalizerError::MissingCeRootArtifact {
+                height,
+                block_hash: evidence.block_hash,
+            })?;
     if header_root.commitment_scheme_version != ACTIVE_COMMITMENT_SCHEME {
-        eyre::bail!(
-            "durable canonical header CE scheme mismatch at {height}/{}: header={}, active={}",
-            evidence.block_hash,
-            header_root.commitment_scheme_version,
-            ACTIVE_COMMITMENT_SCHEME
-        );
+        return Err(crate::errors::CeFinalizerError::CeSchemeMismatch {
+            height,
+            block_hash: evidence.block_hash,
+            header: header_root.commitment_scheme_version,
+            active: ACTIVE_COMMITMENT_SCHEME,
+        }
+        .into());
     }
     if header_root.r_sealed != evidence.evm_root {
-        eyre::bail!(
-            "durable canonical header/EVM CE root mismatch at {height}/{}: header={}, evm={}",
-            evidence.block_hash,
-            header_root.r_sealed,
-            evidence.evm_root
-        );
+        return Err(crate::errors::CeFinalizerError::HeaderEvmCeRootMismatch {
+            height,
+            block_hash: evidence.block_hash,
+            header: header_root.r_sealed,
+            evm: evidence.evm_root,
+        }
+        .into());
     }
     Ok(header_root.r_sealed)
 }
@@ -170,37 +173,50 @@ where
         let durable = self
             .provider
             .database_provider_ro()
-            .map_err(|error| eyre::eyre!("failed to open Reth DB-only provider: {error}"))?;
-        let Some(block_hash) = durable
-            .block_hash(height)
-            .map_err(|error| eyre::eyre!("failed to read durable block {height}: {error}"))?
+            .map_err(|error| crate::errors::CeFinalizerError::OpenDbProvider(format!("{error}")))?;
+        let Some(block_hash) = durable.block_hash(height).map_err(|error| {
+            crate::errors::CeFinalizerError::ReadDurableBlock {
+                height,
+                error: format!("{error}"),
+            }
+        })?
         else {
             return Ok(None);
         };
         let header = durable
             .sealed_header(height)
-            .map_err(|error| eyre::eyre!("failed to read durable header {height}: {error}"))?
-            .ok_or_else(|| eyre::eyre!("durable header {height}/{block_hash} is missing"))?;
+            .map_err(|error| crate::errors::CeFinalizerError::ReadDurableHeader {
+                height,
+                error: format!("{error}"),
+            })?
+            .ok_or(crate::errors::CeFinalizerError::DurableHeaderMissing { height, block_hash })?;
         if header.hash() != block_hash {
-            eyre::bail!(
-                "durable header/hash index conflict at height {height}: index={block_hash}, header={}",
-                header.hash()
-            );
+            return Err(crate::errors::CeFinalizerError::DurableHeaderHashConflict {
+                height,
+                index: block_hash,
+                header: header.hash(),
+            }
+            .into());
         }
         let header_root = decode_outbe_block_artifacts(header.extra_data().as_ref())
-            .map_err(|error| {
-                eyre::eyre!(
-                    "failed to decode durable header artifacts for {height}/{block_hash}: {error}"
-                )
-            })?
+            .map_err(
+                |error| crate::errors::CeFinalizerError::DecodeDurableHeaderArtifacts {
+                    height,
+                    block_hash,
+                    error: format!("{error}"),
+                },
+            )?
             .compressed_entities_root;
         let root = match durable_ce_root(&durable, height, block_hash) {
             Ok(root) => root,
             Err(error) if is_pending_executed_state(&error, height) => return Ok(None),
             Err(error) => {
-                return Err(eyre::eyre!(
-                    "failed to read durable CE root for {height}/{block_hash}: {error}"
-                ));
+                return Err(crate::errors::CeFinalizerError::ReadDurableCeRoot {
+                    height,
+                    block_hash,
+                    error: format!("{error}"),
+                }
+                .into());
             }
         };
         Ok(Some(DurableCeEvidence {
@@ -285,14 +301,11 @@ where
         let (parent_block_hash, parent_root) = if consensus_finalized_height == 0 {
             (B256::ZERO, B256::ZERO)
         } else {
-            let parent = self
-                .block_and_root(consensus_finalized_height - 1)?
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "durable parent checkpoint {} is missing",
-                        consensus_finalized_height - 1
-                    )
-                })?;
+            let parent = self.block_and_root(consensus_finalized_height - 1)?.ok_or(
+                crate::errors::CeFinalizerError::DurableParentCheckpointMissing(
+                    consensus_finalized_height - 1,
+                ),
+            )?;
             (
                 parent.block_hash,
                 validate_durable_header_evidence(consensus_finalized_height - 1, parent)?,
@@ -311,16 +324,19 @@ where
 
     fn replay_block(&self, height: u64) -> eyre::Result<Option<CanonicalCeReplayBlock>> {
         if height == 0 {
-            eyre::bail!("height 0 is the CE replay baseline, not a replay block");
+            return Err(crate::errors::CeFinalizerError::HeightZeroNotReplayBlock.into());
         }
         let Some(evidence) = self.block_and_root(height)? else {
             return Ok(None);
         };
         let Some(parent) = self.block_and_root(height - 1)? else {
-            eyre::bail!(
-                "durable canonical parent {} is unavailable while replaying {height}/{}",
-                height - 1,
-                evidence.block_hash
+            return Err(
+                crate::errors::CeFinalizerError::DurableCanonicalParentUnavailable {
+                    parent_height: height - 1,
+                    height,
+                    block_hash: evidence.block_hash,
+                }
+                .into(),
             );
         };
         let hash = evidence.block_hash;
@@ -330,16 +346,19 @@ where
 
         // This function reads receipts from a fresh DB-only provider. Blockchain-tree or
         // ExEx memory cannot fill a pruned/missing replay row.
-        let durable = self
-            .provider
-            .database_provider_ro()
-            .map_err(|error| eyre::eyre!("failed to open DB-only receipt provider: {error}"))?;
+        let durable = self.provider.database_provider_ro().map_err(|error| {
+            crate::errors::CeFinalizerError::OpenReceiptProvider(format!("{error}"))
+        })?;
         let receipts = durable
             .receipts_by_block(hash.into())
-            .map_err(|error| {
-                eyre::eyre!("failed to read durable receipts for {height}/{hash}: {error}")
-            })?
-            .ok_or_else(|| eyre::eyre!("durable receipts missing for {height}/{hash}"))?;
+            .map_err(
+                |error| crate::errors::CeFinalizerError::ReadDurableReceipts {
+                    height,
+                    hash,
+                    error: format!("{error}"),
+                },
+            )?
+            .ok_or(crate::errors::CeFinalizerError::DurableReceiptsMissing { height, hash })?;
         let mut events = Vec::new();
         let mut retirements = Vec::new();
         for receipt in receipts {
@@ -462,10 +481,13 @@ impl RethCeFinalizer {
             return delivery.validate_redelivery(block, current).await;
         }
         if current.height > block.height {
-            eyre::bail!(
-                "redelivered finalized CE block is behind the durable marker: block={}/{}, marker={current:?}",
-                block.height,
-                block.block_hash
+            return Err(
+                crate::errors::CeFinalizerError::RedeliveredBlockBehindMarker {
+                    height: block.height,
+                    block_hash: block.block_hash,
+                    marker: current,
+                }
+                .into(),
             );
         }
         let authoritative_root = delivery.new_delivery_root(block).await?;

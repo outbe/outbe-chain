@@ -1,5 +1,13 @@
 use crate::transport::*;
 
+pub(in crate::transport) struct OnboardingArtifactExpectations<'a> {
+    pub artifact: &'a [u8],
+    pub expected_intent_hash: B256,
+    pub expected_tribute_offer_public: [u8; 32],
+    pub expected_key_epoch: u64,
+    pub expected_tribute_offer_epoch: u64,
+}
+
 pub(in crate::transport) fn complete_onboarding_artifact_ingest_response(
     request: CompleteOnboardingArtifactIngestV1,
     keys: &EnclaveKeys,
@@ -13,27 +21,26 @@ pub(in crate::transport) fn complete_onboarding_artifact_ingest_response(
     let derived = initialization
         .manifest()
         .and_then(|manifest| {
-            manifest.ok_or_else(|| "onboarding ingest requires an initialization manifest".into())
+            manifest.ok_or_else(|| TransportDispatchError::OnboardingIngestRequiresManifest.into())
         })
-        .map_err(crate::errors::TeeError::Dkg)
+        .map_err(crate::errors::TeeError::dkg_err)
         .and_then(|manifest| {
             if request.verified_admission.block_number == 0
                 || request.verified_admission.block_hash.is_zero()
             {
-                return Err(crate::errors::TeeError::Dkg(
-                    "onboarding ingest lost its verified admission anchor".into(),
+                return Err(crate::errors::TeeError::dkg_err(
+                    "onboarding ingest lost its verified admission anchor",
                 ));
             }
-            derive_onboarding_offer_key_v1(
-                keys,
-                &manifest,
-                &request.artifact,
-                request.expected_intent_hash,
-                request.expected_tribute_offer_public,
-                request.expected_key_epoch,
-                request.expected_tribute_offer_epoch,
-            )
-            .map(|derived| (derived, manifest.network_binding()))
+            let expected = OnboardingArtifactExpectations {
+                artifact: &request.artifact,
+                expected_intent_hash: request.expected_intent_hash,
+                expected_tribute_offer_public: request.expected_tribute_offer_public,
+                expected_key_epoch: request.expected_key_epoch,
+                expected_tribute_offer_epoch: request.expected_tribute_offer_epoch,
+            };
+            derive_onboarding_offer_key_v1(keys, &manifest, &expected)
+                .map(|derived| (derived, manifest.network_binding()))
         });
     let (derived, network_binding) = match derived {
         Ok(value) => value,
@@ -50,7 +57,9 @@ pub(in crate::transport) fn complete_onboarding_artifact_ingest_response(
     };
     let public = derived.public();
     if let Err(error) = persist_then_activate_offer_key(boot, network_binding, offer_key, derived) {
-        return EnclaveResponse::Error { message: error };
+        return EnclaveResponse::Error {
+            message: error.to_string(),
+        };
     }
     EnclaveResponse::FinalizedAdmissionIngestedV1 {
         request_hash: request.request_hash,
@@ -63,147 +72,93 @@ fn complete_upgrade_key_export(
     offer_key: &SharedTributeOfferKey,
     initialization: &InitializationState,
 ) -> EnclaveResponse {
-    let result = (|| -> Result<Vec<u8>, String> {
+    let result = (|| -> EnclaveResult<Vec<u8>> {
         let context =
             outbe_tee::dcap_protocol::DcapOnboardingArtifactV1::decode_canonical(&request.artifact)
-                .map_err(|_| "invalid upgrade export context")?
+                .map_err(|_| TransportDispatchError::InvalidUpgradeExportContext)?
                 .context;
         let manifest = initialization
             .manifest()?
-            .ok_or("source is not initialized")?;
+            .ok_or(TransportDispatchError::SourceNotInitialized)?;
         if manifest.chain_id != context.chain_id
             || manifest.genesis_hash != context.genesis_hash
             || request.verified_admission.block_number == 0
             || request.verified_admission.block_hash.is_zero()
         {
-            return Err("upgrade export lost its verified network authorization".into());
+            return Err(TransportDispatchError::UpgradeExportLostAuthorization.into());
         }
-        let resident = offer_key.get().ok_or("source key is unavailable")?;
+        let resident = offer_key
+            .get()
+            .ok_or(TransportDispatchError::SourceKeyUnavailable)?;
         if resident.public() != context.tribute_offer_public
             || resident.key_epoch() != context.key_epoch
             || resident.tribute_offer_epoch() != context.tribute_offer_epoch
         {
-            return Err("source key does not match the finalized network commitment".into());
+            return Err(TransportDispatchError::SourceKeyMismatchCommitment.into());
         }
         crate::crypto::encrypt_onboarding_artifact_v1(
             resident.secret(),
             context,
             resident.group_sig(),
-        )
-        .map_err(|e| e.to_string())?
+        )?
         .encode_canonical()
-        .map_err(|e| format!("artifact encoding: {e:?}"))
+        .map_err(|e| TransportDispatchError::artifact_encoding(e).into())
     })();
     match result {
         Ok(artifact) => EnclaveResponse::UpgradeKeyExportedV1 {
             request_hash: request.request_hash,
             artifact,
         },
-        Err(message) => EnclaveResponse::Error { message },
+        Err(message) => EnclaveResponse::Error {
+            message: message.to_string(),
+        },
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::transport) fn complete_gramine_direct_dev_onboarding_ingest_response(
-    artifact: &[u8],
-    expected_intent_hash: B256,
-    expected_tribute_offer_public: [u8; 32],
-    expected_key_epoch: u64,
-    expected_tribute_offer_epoch: u64,
+    expected: OnboardingArtifactExpectations<'_>,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
     boot: Option<&EnclaveBootConfig>,
     initialization: Option<&InitializationState>,
 ) -> EnclaveResponse {
-    let Some(initialization) = initialization else {
-        return EnclaveResponse::Error {
-            message: "GramineDirectDev onboarding requires production initialization".into(),
-        };
-    };
-    let manifest = match initialization.manifest() {
-        Ok(Some(manifest)) if manifest.attestation_mode == AttestationMode::GramineDirectDev => {
-            manifest
+    let result = (|| -> EnclaveResult<[u8; 32]> {
+        let initialization =
+            initialization.ok_or(TransportDispatchError::GramineDirectDevRequiresProdInit)?;
+        let manifest = initialization
+            .manifest()?
+            .ok_or(TransportDispatchError::GramineDirectDevRequiresManifest)?;
+        if manifest.attestation_mode != AttestationMode::GramineDirectDev {
+            return Err(TransportDispatchError::GramineDirectDevForbiddenByNetwork.into());
         }
-        Ok(Some(_)) => {
-            return EnclaveResponse::Error {
-                message: "GramineDirectDev onboarding is forbidden by the initialized network"
-                    .into(),
-            }
-        }
-        Ok(None) => {
-            return EnclaveResponse::Error {
-                message: "GramineDirectDev onboarding requires an initialization manifest".into(),
-            }
-        }
-        Err(message) => return EnclaveResponse::Error { message },
-    };
-    let derived = match derive_onboarding_offer_key_v1(
-        keys,
-        &manifest,
-        artifact,
-        expected_intent_hash,
-        expected_tribute_offer_public,
-        expected_key_epoch,
-        expected_tribute_offer_epoch,
-    ) {
-        Ok(derived) => derived,
-        Err(error) => {
-            return EnclaveResponse::Error {
-                message: error.to_string(),
-            }
-        }
-    };
-    let Some(boot) = boot else {
-        return EnclaveResponse::Error {
-            message: "GramineDirectDev onboarding requires durable production sealed storage"
-                .into(),
-        };
-    };
-    let public = derived.public();
-    if let Err(message) =
-        persist_then_activate_offer_key(boot, manifest.network_binding(), offer_key, derived)
-    {
-        return EnclaveResponse::Error { message };
-    }
-    EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
-        tribute_offer_public: public,
+        let derived = derive_onboarding_offer_key_v1(keys, &manifest, &expected)?;
+        let boot = boot.ok_or(TransportDispatchError::GramineDirectDevRequiresDurableStorage)?;
+        let public = derived.public();
+        persist_then_activate_offer_key(boot, manifest.network_binding(), offer_key, derived)?;
+        Ok(public)
+    })();
+    match result {
+        Ok(tribute_offer_public) => EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
+            tribute_offer_public,
+        },
+        Err(message) => EnclaveResponse::Error {
+            message: message.to_string(),
+        },
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::transport) fn derive_onboarding_offer_key_v1(
     keys: &EnclaveKeys,
     manifest: &EnclaveInitializationManifestV1,
-    artifact: &[u8],
-    expected_intent_hash: alloy_primitives::B256,
-    expected_tribute_offer_public: [u8; 32],
-    expected_key_epoch: u64,
-    expected_tribute_offer_epoch: u64,
+    expected: &OnboardingArtifactExpectations<'_>,
 ) -> crate::errors::Result<DerivedTributeOfferKey> {
-    let artifact = outbe_tee::dcap_protocol::DcapOnboardingArtifactV1::decode_canonical(artifact)
-        .map_err(|_| crate::errors::TeeError::DecryptFailed)?;
+    let artifact =
+        outbe_tee::dcap_protocol::DcapOnboardingArtifactV1::decode_canonical(expected.artifact)
+            .map_err(|_| crate::errors::TeeError::DecryptFailed)?;
     let context = artifact.context;
-    let manifest_node_id_hash = manifest
-        .node_id
-        .node_id_hash()
-        .map_err(|error| crate::errors::TeeError::Dkg(error.to_string()))?;
-    let manifest_enclave_id = manifest
-        .enclave_id()
-        .map_err(|error| crate::errors::TeeError::Dkg(error.to_string()))?;
-    if context.chain_id != manifest.chain_id
-        || context.genesis_hash != manifest.genesis_hash
-        || context.intent_hash != expected_intent_hash
-        || context.node_id_hash != manifest_node_id_hash
-        || context.enclave_id != manifest_enclave_id
-        || context.recipient_x25519 != manifest.recipient_x25519
-        || context.recipient_x25519 != keys.tribute_offer_public()
-        || context.tribute_offer_public != expected_tribute_offer_public
-        || context.key_epoch != expected_key_epoch
-        || context.tribute_offer_epoch != expected_tribute_offer_epoch
-    {
-        return Err(crate::errors::TeeError::Dkg(
-            "onboarding artifact does not match initialized identity or finalized Registry context"
-                .into(),
+    if !onboarding_context_matches(&context, keys, manifest, expected)? {
+        return Err(crate::errors::TeeError::dkg_err(
+            "onboarding artifact does not match initialized identity or finalized Registry context",
         ));
     }
     let group_sig = crate::crypto::decrypt_onboarding_artifact_v1(
@@ -216,12 +171,38 @@ pub(in crate::transport) fn derive_onboarding_offer_key_v1(
         context.tribute_offer_epoch,
     )?;
     if public != context.tribute_offer_public {
-        return Err(crate::errors::TeeError::Dkg(
-            "onboarding artifact derives a different offer public key".into(),
+        return Err(crate::errors::TeeError::dkg_err(
+            "onboarding artifact derives a different offer public key",
         ));
     }
     Ok(
         DerivedTributeOfferKey::from_parts(secret, public, group_sig)
             .with_epochs(context.key_epoch, context.tribute_offer_epoch),
     )
+}
+
+fn onboarding_context_matches(
+    context: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
+    keys: &EnclaveKeys,
+    manifest: &EnclaveInitializationManifestV1,
+    expected: &OnboardingArtifactExpectations<'_>,
+) -> crate::errors::Result<bool> {
+    let manifest_node_id_hash = manifest
+        .node_id
+        .node_id_hash()
+        .map_err(crate::errors::TeeError::dkg_err)?;
+    let manifest_enclave_id = manifest
+        .enclave_id()
+        .map_err(crate::errors::TeeError::dkg_err)?;
+    let matches_network = context.chain_id == manifest.chain_id
+        && context.genesis_hash == manifest.genesis_hash
+        && context.intent_hash == expected.expected_intent_hash;
+    let matches_node =
+        context.node_id_hash == manifest_node_id_hash && context.enclave_id == manifest_enclave_id;
+    let matches_recipient = context.recipient_x25519 == manifest.recipient_x25519
+        && context.recipient_x25519 == keys.tribute_offer_public();
+    let matches_offer = context.tribute_offer_public == expected.expected_tribute_offer_public
+        && context.key_epoch == expected.expected_key_epoch
+        && context.tribute_offer_epoch == expected.expected_tribute_offer_epoch;
+    Ok(matches_network && matches_node && matches_recipient && matches_offer)
 }

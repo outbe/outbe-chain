@@ -2,21 +2,45 @@ use alloy_primitives::{address, keccak256, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
+use outbe_primitives::error::PrecompileError;
+use outbe_validatorset::contract::ValidatorSet;
+
+use crate::errors::GovernanceError;
 use crate::status;
 use crate::GovernanceContract;
 
 const AUTH: Address = address!("0x1111111111111111111111111111111111111111");
 const OTHER: Address = address!("0x2222222222222222222222222222222222222222");
 const AUTHOR: Address = address!("0x3333333333333333333333333333333333333333");
+const LATE: Address = address!("0x4444444444444444444444444444444444444444");
+
+/// Registers `addr` and moves it to ACTIVE in the live `ValidatorSet`.
+fn activate_validator(storage: StorageHandle, addr: Address, seed: u8) {
+    let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
+    let mut vs = ValidatorSet::new(storage);
+    vs.config_owner.write(owner).unwrap();
+    vs.set_config_max_validators(100).unwrap();
+    let mut pk = [0u8; 48];
+    pk[0] = seed;
+    vs.register_validator(owner, addr, &pk).unwrap();
+    vs.activate_validator_via_boundary_for_test(addr).unwrap();
+}
 
 fn with_governance<R>(f: impl FnOnce(&mut GovernanceContract) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut storage, |storage| {
+        activate_validator(storage.clone(), AUTH, 1);
         let mut gov = GovernanceContract::new(storage.clone());
-        // Seed one authority directly (as the genesis alloc does).
-        gov.authorities.write(&AUTH, true).unwrap();
         f(&mut gov)
     })
+}
+
+fn assert_not_authorized<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) {
+    let expected = GovernanceError::NotAuthorized.to_string();
+    assert!(
+        matches!(&result, Err(PrecompileError::Revert(msg)) if *msg == expected),
+        "expected NotAuthorized, got {result:?}"
+    );
 }
 
 // ---------------------------------------------------------------- canon ---
@@ -208,6 +232,39 @@ fn status_change_requires_authority_except_author_resubmit() {
     });
 }
 
+// ------------------------------------------- authority = live ValidatorSet ---
+
+#[test]
+fn authority_follows_live_validator_set() {
+    let mut storage = HashMapStorageProvider::new(1);
+    storage.set_block_number(1); // jail records a non-zero height
+    StorageHandle::enter(&mut storage, |storage| {
+        activate_validator(storage.clone(), AUTH, 1);
+        let mut gov = GovernanceContract::new(storage.clone());
+        assert!(gov.is_authority(AUTH).unwrap());
+        // An unknown address is not an authority and the check does not fail.
+        assert!(!gov.is_authority(OTHER).unwrap());
+        gov.update_canon(AUTH, "v1").unwrap();
+
+        // A validator activated after genesis can write.
+        assert!(!gov.is_authority(LATE).unwrap());
+        activate_validator(storage.clone(), LATE, 2);
+        assert!(gov.is_authority(LATE).unwrap());
+        gov.update_canon(LATE, "v2").unwrap();
+
+        // A validator that leaves ACTIVE loses write rights at once.
+        let id = gov.submit_oip(AUTHOR, "body").unwrap();
+        ValidatorSet::new(storage.clone())
+            .jail_validator(AUTH)
+            .unwrap();
+        assert!(!gov.is_authority(AUTH).unwrap());
+        assert_not_authorized(gov.update_canon(AUTH, "v3"));
+        assert_not_authorized(gov.update_meta_canon(AUTH, "m"));
+        assert_not_authorized(gov.set_oip_status(AUTH, id, status::APPROVED));
+        assert_eq!(gov.get_canon().unwrap().1, 2);
+    });
+}
+
 #[test]
 fn gip_mirrors_oip_behavior() {
     with_governance(|gov| {
@@ -255,7 +312,7 @@ fn storage_layout_matches_seeder() {
         assert_eq!(gov.canon_revisions.base_slot(), U256::from(7));
         assert_eq!(gov.next_oip_id.slot(), U256::from(8));
         assert_eq!(gov.next_gip_id.slot(), U256::from(9));
-        assert_eq!(gov.authorities.base_slot(), U256::from(10));
+        assert_eq!(gov.reserved_authorities.base_slot(), U256::from(10));
         // Record maps come last so growing Oip/Gip never shifts a seeded slot.
         assert_eq!(gov.oips.base_slot(), U256::from(11));
         assert_eq!(gov.gips.base_slot(), U256::from(17)); // 11 + Oip::SLOTS(6)
@@ -277,7 +334,7 @@ fn storage_layout_matches_seeder() {
 /// End-to-end proof that `scripts/seed_genesis.py::seed_governance` and the Rust
 /// contract agree on the storage layout. These `(slot, value)` pairs are the
 /// verbatim output of the Python seeder for canon="gain takes time",
-/// meta="meta rules", authority=0xaaaa...0001. We load them raw and read them back
+/// meta="meta rules". We load them raw and read them back
 /// through `GovernanceContract`. Python computed the slots (keccak/StorageBytes).
 /// Rust resolves them independently. Agreement proves the seam.
 #[test]
@@ -318,13 +375,7 @@ fn reads_python_seeder_output() {
             "0xb39221ace053465ec3453ce2b36430bd138b997ecea25c1043da0c366812b828",
             "0x93758306b69d86c6e2158df53b14c3847d00947f2e6ae98e7f1a6d65ee2e7afb",
         ),
-        (
-            "0xc798ca6b006d8eb080cc8018ae9da0e83bf1bef98af67ae90b85b808713e6e9d",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
-        ),
     ];
-    let authority = address!("0xaaaa000000000000000000000000000000000001");
-
     let mut storage = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut storage, |storage| {
         for (slot, val) in seeded {
@@ -348,8 +399,6 @@ fn reads_python_seeder_output() {
             gov.canon_revision_hash(1).unwrap(),
             keccak256(b"gain takes time")
         );
-        assert!(gov.is_authority(authority).unwrap());
-        assert!(!gov.is_authority(OTHER).unwrap());
     });
 }
 

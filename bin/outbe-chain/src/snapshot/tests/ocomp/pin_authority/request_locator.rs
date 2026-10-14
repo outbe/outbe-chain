@@ -312,9 +312,7 @@ fn check(
                 locate_request_job(
                     state,
                     view,
-                    height,
-                    expected_job,
-                    expected_day,
+                    (height, expected_job, expected_day),
                     maximum_transactions,
                 ),
                 job,

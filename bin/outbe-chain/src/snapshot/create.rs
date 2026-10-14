@@ -43,11 +43,12 @@ pub(crate) fn create(
         layout.execution_rocksdb_root.clone(),
     ]);
     validate_layout(&[], &ProtectedPaths(protected.0), &[output.to_path_buf()])?;
-    eyre::ensure!(
-        !output.try_exists()?,
-        "snapshot output already exists: {}",
-        output.display()
-    );
+    if output.try_exists()? {
+        return Err(crate::errors::SnapshotError::OutputAlreadyExists {
+            path: output.display().to_string(),
+        }
+        .into());
+    }
     let parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -66,7 +67,7 @@ pub(crate) fn create(
         let kind = serde_json::to_value(domain.kind)?;
         let id = kind
             .as_str()
-            .ok_or_else(|| eyre::eyre!("invalid native domain label"))?
+            .ok_or(crate::errors::SnapshotError::InvalidDomainLabel)?
             .to_owned();
         let entries = domain
             .members
@@ -75,8 +76,8 @@ pub(crate) fn create(
                 Ok(FileEntry {
                     path: path
                         .to_str()
-                        .ok_or_else(|| {
-                            eyre::eyre!("native member path is not UTF-8: {}", path.display())
+                        .ok_or_else(|| crate::errors::SnapshotError::MemberPathNotUtf8 {
+                            path: path.display().to_string(),
                         })?
                         .to_owned(),
                     kind: EntryKind::File,
@@ -140,17 +141,23 @@ pub(crate) fn create(
     )?;
     Ok((
         manifest,
-        public_key.ok_or_else(|| eyre::eyre!("snapshot signer was not invoked"))?,
+        public_key.ok_or(crate::errors::SnapshotError::SignerNotInvoked)?,
     ))
+}
+
+fn same_domain_members(
+    a: &super::inventory::NativeDomain,
+    b: &super::inventory::NativeDomain,
+) -> bool {
+    (a.kind, a.native_root, &a.root) == (b.kind, b.native_root, &b.root)
+        && a.members.iter().collect::<BTreeSet<_>>() == b.members.iter().collect::<BTreeSet<_>>()
 }
 
 fn same_members(before: &NativeInventory, after: &NativeInventory) -> bool {
     before.domains.len() == after.domains.len()
-        && before.domains.iter().zip(&after.domains).all(|(a, b)| {
-            a.kind == b.kind
-                && a.native_root == b.native_root
-                && a.root == b.root
-                && a.members.iter().collect::<BTreeSet<_>>()
-                    == b.members.iter().collect::<BTreeSet<_>>()
-        })
+        && before
+            .domains
+            .iter()
+            .zip(&after.domains)
+            .all(|(a, b)| same_domain_members(a, b))
 }

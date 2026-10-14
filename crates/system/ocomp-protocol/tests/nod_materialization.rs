@@ -2,20 +2,20 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_ocomp_protocol::test_utils::nod_action_population;
 use outbe_ocomp_protocol::{
     abi::{
-        NOD_FACTORY_ADDRESS, encode_materialize_certified_nods_calldata,
-        encode_protected_materialize_certified_nods_calldata,
+        encode_materialize_certified_nods_calldata,
+        encode_protected_materialize_certified_nods_calldata, NOD_FACTORY_ADDRESS,
     },
     common::BoundedBytes,
     nod_materialization::{
-        NodMaterializationBatchV1, NodMaterializationHeadV1, ProtectedNodMaterializationV2,
-        verify_nod_materialization_batch,
+        verify_nod_materialization_batch, NodMaterializationBatchV1, NodMaterializationHeadV1,
+        ProtectedNodMaterializationV2,
     },
     profile::poc_schema_limits,
     result::NodActionV1,
     system_carrier::{
-        MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS, OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-        OcompSystemCarrierCandidate, OcompSystemCarrierError, OcompSystemCarrierView,
-        classify_ocomp_system_carrier,
+        classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierError,
+        OcompSystemCarrierView, MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+        OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
     },
     transaction_call::TransactionCallFields,
 };
@@ -345,97 +345,83 @@ fn materialization_carrier_rejects_every_noncanonical_envelope_field() {
         },
     };
 
-    assert!(
-        classify_ocomp_system_carrier(
-            OcompSystemCarrierView {
-                call: TransactionCallFields {
-                    to: Some(Address::repeat_byte(0xaa)),
-                    ..canonical.call
-                },
-                ..canonical
+    assert!(classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            call: TransactionCallFields {
+                to: Some(Address::repeat_byte(0xaa)),
+                ..canonical.call
             },
-            &limits,
-        )
-        .unwrap()
-        .is_none()
-    );
-    assert!(
-        classify_ocomp_system_carrier(
-            OcompSystemCarrierView {
-                is_eip1559: false,
-                ..canonical
+            ..canonical
+        },
+        &limits,
+    )
+    .unwrap()
+    .is_none());
+    assert!(classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            is_eip1559: false,
+            ..canonical
+        },
+        &limits,
+    )
+    .is_err_and(|error| matches!(error, OcompSystemCarrierError::NotEip1559)));
+    assert!(classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            call: TransactionCallFields {
+                value: U256::from(1),
+                ..canonical.call
             },
-            &limits,
-        )
-        .is_err_and(|error| matches!(error, OcompSystemCarrierError::NotEip1559))
-    );
-    assert!(
-        classify_ocomp_system_carrier(
-            OcompSystemCarrierView {
-                call: TransactionCallFields {
-                    value: U256::from(1),
-                    ..canonical.call
-                },
-                ..canonical
+            ..canonical
+        },
+        &limits,
+    )
+    .is_err_and(|error| matches!(error, OcompSystemCarrierError::NonZeroValue)));
+    assert!(classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            call: TransactionCallFields {
+                gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT + 1,
+                ..canonical.call
             },
-            &limits,
-        )
-        .is_err_and(|error| matches!(error, OcompSystemCarrierError::NonZeroValue))
-    );
-    assert!(
-        classify_ocomp_system_carrier(
-            OcompSystemCarrierView {
-                call: TransactionCallFields {
-                    gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT + 1,
-                    ..canonical.call
-                },
-                ..canonical
+            ..canonical
+        },
+        &limits,
+    )
+    .is_err_and(|error| matches!(error, OcompSystemCarrierError::WrongGasLimit { .. })));
+    assert!(classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            call: TransactionCallFields {
+                max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS - 1,
+                ..canonical.call
             },
-            &limits,
-        )
-        .is_err_and(|error| matches!(error, OcompSystemCarrierError::WrongGasLimit { .. }))
-    );
-    assert!(
-        classify_ocomp_system_carrier(
-            OcompSystemCarrierView {
-                call: TransactionCallFields {
-                    max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS - 1,
-                    ..canonical.call
-                },
-                ..canonical
+            ..canonical
+        },
+        &limits,
+    )
+    .is_err_and(|error| matches!(error, OcompSystemCarrierError::FeeCapTooLow { .. })));
+    assert!(classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            call: TransactionCallFields {
+                max_priority_fee_per_gas: Some(1),
+                ..canonical.call
             },
-            &limits,
-        )
-        .is_err_and(|error| matches!(error, OcompSystemCarrierError::FeeCapTooLow { .. }))
-    );
-    assert!(
-        classify_ocomp_system_carrier(
-            OcompSystemCarrierView {
-                call: TransactionCallFields {
-                    max_priority_fee_per_gas: Some(1),
-                    ..canonical.call
-                },
-                ..canonical
-            },
-            &limits,
-        )
-        .is_err_and(|error| matches!(error, OcompSystemCarrierError::NonZeroPriorityFee))
-    );
+            ..canonical
+        },
+        &limits,
+    )
+    .is_err_and(|error| matches!(error, OcompSystemCarrierError::NonZeroPriorityFee)));
 
     let malformed = &input[..4];
-    assert!(
-        classify_ocomp_system_carrier(
-            OcompSystemCarrierView {
-                call: TransactionCallFields {
-                    input: malformed,
-                    ..canonical.call
-                },
-                ..canonical
+    assert!(classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            call: TransactionCallFields {
+                input: malformed,
+                ..canonical.call
             },
-            &limits,
-        )
-        .is_err_and(|error| matches!(error, OcompSystemCarrierError::MalformedMaterialization(_)))
-    );
+            ..canonical
+        },
+        &limits,
+    )
+    .is_err_and(|error| matches!(error, OcompSystemCarrierError::MalformedMaterialization(_))));
 }
 
 #[test]
@@ -447,21 +433,19 @@ fn plaintext_calculation_batches_are_not_public_materialization_carriers() {
         &limits,
     )
     .unwrap();
-    assert!(
-        classify_ocomp_system_carrier(
-            OcompSystemCarrierView {
-                is_eip1559: true,
-                call: TransactionCallFields {
-                    to: Some(NOD_FACTORY_ADDRESS),
-                    value: U256::ZERO,
-                    input: &input,
-                    gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-                    max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
-                    max_priority_fee_per_gas: Some(0),
-                },
+    assert!(classify_ocomp_system_carrier(
+        OcompSystemCarrierView {
+            is_eip1559: true,
+            call: TransactionCallFields {
+                to: Some(NOD_FACTORY_ADDRESS),
+                value: U256::ZERO,
+                input: &input,
+                gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+                max_fee_per_gas: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+                max_priority_fee_per_gas: Some(0),
             },
-            &limits
-        )
-        .is_err_and(|error| matches!(error, OcompSystemCarrierError::MalformedMaterialization(_)))
-    );
+        },
+        &limits
+    )
+    .is_err_and(|error| matches!(error, OcompSystemCarrierError::MalformedMaterialization(_))));
 }

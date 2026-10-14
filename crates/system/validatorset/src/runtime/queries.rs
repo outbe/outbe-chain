@@ -2,25 +2,27 @@
 //! counts, epoch metadata and reverse lookups.
 
 use super::{status, EpochSnapshot, ValidatorParticipation, ValidatorRecord};
+use crate::errors::ValidatorSetError;
 use crate::schema::ValidatorSet;
 use crate::state_machine::ValidatorLifecycle;
 use alloy_primitives::{Address, B256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 /// Registry membership projections: ABI records, lifecycle-filtered views
 /// and their counts.
 impl ValidatorSet<'_> {
     fn read_validator_record(&self, addr: Address) -> Result<ValidatorRecord> {
         let state = self.validator_state(addr)?;
-        let stored_status = state.stored_status().ok_or_else(|| {
-            PrecompileError::Fatal("cannot project absent validator into ValidatorRecord".into())
-        })?;
-        let history = state.history().ok_or_else(|| {
-            PrecompileError::Fatal("registered validator is missing history".into())
-        })?;
-        let consensus_pubkey = state.consensus_pubkey().copied().ok_or_else(|| {
-            PrecompileError::Fatal("registered validator is missing consensus public key".into())
-        })?;
+        let stored_status = state
+            .stored_status()
+            .ok_or(ValidatorSetError::CannotProjectAbsentValidator)?;
+        let history = state
+            .history()
+            .ok_or(ValidatorSetError::RegisteredValidatorMissingHistory)?;
+        let consensus_pubkey = state
+            .consensus_pubkey()
+            .copied()
+            .ok_or(ValidatorSetError::RegisteredValidatorMissingConsensusPublicKey)?;
         Ok(ValidatorRecord {
             validator_address: addr,
             consensus_pubkey,
@@ -134,7 +136,7 @@ impl ValidatorSet<'_> {
             .validator_addresses_matching(ValidatorLifecycle::is_active_status)?
             .len()
             .try_into()
-            .map_err(|_| PrecompileError::Revert("active validator count exceeds u32".into()))?;
+            .map_err(|_| ValidatorSetError::ActiveValidatorCountExceedsU32)?;
         Ok(count)
     }
 
@@ -146,9 +148,7 @@ impl ValidatorSet<'_> {
             .validator_addresses_matching(ValidatorLifecycle::is_registered_status)?
             .len()
             .try_into()
-            .map_err(|_| {
-                PrecompileError::Revert("registered validator count exceeds u32".into())
-            })?;
+            .map_err(|_| ValidatorSetError::RegisteredValidatorCountExceedsU32)?;
         Ok(count)
     }
 
@@ -158,7 +158,7 @@ impl ValidatorSet<'_> {
             .validator_addresses_matching(ValidatorLifecycle::is_current_consensus_participant)?
             .len()
             .try_into()
-            .map_err(|_| PrecompileError::Revert("active consensus count exceeds u32".into()))?;
+            .map_err(|_| ValidatorSetError::ActiveConsensusCountExceedsU32)?;
         Ok(count)
     }
 
@@ -179,11 +179,12 @@ impl ValidatorSet<'_> {
         let count = self.validator_count.read()?;
         let mut addresses = Vec::with_capacity(count as usize);
         for index in 1..=u64::from(count) {
-            let address = self.validator_address_at(index)?.ok_or_else(|| {
-                PrecompileError::Fatal(format!(
-                    "validator registry index {index} is empty below validator_count {count}"
-                ))
-            })?;
+            let address = self.validator_address_at(index)?.ok_or(
+                ValidatorSetError::ValidatorRegistryIndexEmpty {
+                    index,
+                    count: u64::from(count),
+                },
+            )?;
             addresses.push(address);
         }
         Ok(addresses)
@@ -197,15 +198,16 @@ impl ValidatorSet<'_> {
         }
         let address = self.index_to_address.read(&index)?;
         if address.is_zero() {
-            return Err(PrecompileError::Fatal(format!(
-                "validator registry index {index} is empty below validator_count {count}"
-            )));
+            return Err(ValidatorSetError::ValidatorRegistryIndexEmpty { index, count }.into());
         }
         let reverse_index = self.address_to_index.read(&address)?;
         if reverse_index != index {
-            return Err(PrecompileError::Fatal(format!(
-                "validator registry reverse index mismatch for {address}: expected {index}, got {reverse_index}"
-            )));
+            return Err(ValidatorSetError::ValidatorRegistryReverseIndexMismatch {
+                address,
+                expected: index,
+                actual: reverse_index,
+            }
+            .into());
         }
         Ok(Some(address))
     }
@@ -253,7 +255,7 @@ impl ValidatorSet<'_> {
         self.epoch_number
             .read()?
             .try_into()
-            .map_err(|_| PrecompileError::Fatal("ValidatorSet.epoch_number exceeds u64".into()))
+            .map_err(|_| ValidatorSetError::EpochNumberExceedsU64.into())
     }
 
     /// Returns all public epoch metadata as one consistent read projection.

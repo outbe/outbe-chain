@@ -7,10 +7,10 @@ use super::join::{
 use super::rpc::{json_b256_field, json_hex_array, json_hex_u256_field, json_hex_u64_field};
 use super::upgrade::connect_upgrade_candidate_v1;
 use super::*;
+use crate::errors::TeeUpgradeNetworkError;
 use alloy_consensus::BlockHeader as _;
 use alloy_primitives::{keccak256, B256, U256};
 use alloy_sol_types::{SolCall, SolValue};
-use eyre::WrapErr;
 use outbe_operator::tee::{
     generate_transition_evidence_v1, read_finalized_bound_renewal_view_v1,
     record_network_key_provisioned_v1, transition_intent_v1, NetworkUpgradeSubmissionV1,
@@ -59,9 +59,7 @@ pub(super) async fn provision(
     let node_key = reth_p2p_secret_key.as_deref();
     let timeout = Duration::from_secs(*timeout_secs);
     let legacy_source = *legacy_direct_dev_source;
-    let relay = RelaySignerV1::new(
-        private_key.ok_or_else(|| eyre::eyre!("upgrade-provision requires --private-key"))?,
-    )?;
+    let relay = RelaySignerV1::new(private_key.ok_or(TeeUpgradeNetworkError::PrivateKeyRequired)?)?;
     let committed = load_committed_enclave_manifest_v1(node_dir)?;
     let (mut candidate, signing, selector) = connect_upgrade_candidate_v1(
         endpoint,
@@ -74,7 +72,7 @@ pub(super) async fn provision(
     let manifest_hash = candidate
         .manifest()
         .authorization_hash()
-        .map_err(|e| eyre::eyre!("manifest: {e}"))?;
+        .map_err(TeeUpgradeNetworkError::InvalidManifest)?;
     let durable = preparation::NetworkPreparation {
         rpc,
         candidate: &mut candidate,
@@ -96,7 +94,7 @@ pub(super) async fn provision(
     )? {
         JoinOfferKeyState::ReadyExact => {}
         JoinOfferKeyState::ReadyMismatch => {
-            eyre::bail!("candidate already contains a different network key")
+            return Err(TeeUpgradeNetworkError::CandidateKeyMismatch.into())
         }
         JoinOfferKeyState::Keyless => {
             let proof = collect_proof(rpc, genesis, finalized_height, &context).await?;
@@ -105,14 +103,14 @@ pub(super) async fn provision(
                 .upgrade_key_v1(&durable.context, &proof, legacy_source)
                 .await?;
             let decoded = DcapOnboardingArtifactV1::decode_canonical(&artifact)
-                .map_err(|e| eyre::eyre!("export artifact: {e:?}"))?;
+                .map_err(|e| TeeUpgradeNetworkError::DecodeExportArtifact(format!("{e:?}")))?;
             if decoded.context != context {
-                eyre::bail!("source returned a different recipient");
+                return Err(TeeUpgradeNetworkError::SourceRecipientMismatch.into());
             }
             let response = candidate.ingest_upgrade_key_v1(&proof, &artifact)?;
             if !matches!(response, EnclaveResponse::FinalizedAdmissionIngestedV1 { tribute_offer_public, .. } if tribute_offer_public == context.tribute_offer_public)
             {
-                eyre::bail!("candidate installed an unexpected network key");
+                return Err(TeeUpgradeNetworkError::UnexpectedInstalledNetworkKey.into());
             }
         }
     }
@@ -139,7 +137,7 @@ async fn pending_at(
 async fn scalar_at(rpc: &(impl Rpc + Sync), call: Vec<u8>, tag: &str) -> Result<u64> {
     let bytes = rpc.eth_call_at(TEE_REGISTRY_ADDRESS, &call, tag).await?;
     let value = U256::abi_decode(&bytes)?;
-    u64::try_from(value).map_err(|_| eyre::eyre!("registry epoch exceeds u64"))
+    u64::try_from(value).map_err(|_| TeeUpgradeNetworkError::RegistryEpochOverflow.into())
 }
 
 async fn collect_proof(
@@ -175,7 +173,10 @@ async fn collect_proof(
         };
         let (block, compact) = admission_history::compact_header(&public, height)?;
         let artifacts = decode_outbe_block_artifacts(block.header().extra_data().as_ref())
-            .map_err(|error| eyre::eyre!("decode block {height} artifacts: {error:?}"))?;
+            .map_err(|error| TeeUpgradeNetworkError::DecodeBlockArtifacts {
+                height,
+                reason: format!("{error:?}"),
+            })?;
         if let Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, .. }) =
             artifacts.consensus_header_artifact
         {
@@ -183,14 +184,14 @@ async fn collect_proof(
                 let transition = compact
                     .clone()
                     .encode_canonical()
-                    .map_err(|error| eyre::eyre!("encode committee transition: {error}"))?;
+                    .map_err(TeeUpgradeNetworkError::EncodeCommitteeTransition)?;
                 transitions.push(transition.into());
                 if transitions.len() > outbe_tee::upgrade_transfer::MAX_UPGRADE_COMMITTEES {
-                    eyre::bail!("upgrade committee proof exceeds count limit");
+                    return Err(TeeUpgradeNetworkError::CommitteeProofCountExceeded.into());
                 }
                 next_transition_epoch = next_transition_epoch
                     .checked_add(1)
-                    .ok_or_else(|| eyre::eyre!("committee transition epoch overflow"))?;
+                    .ok_or(TeeUpgradeNetworkError::CommitteeEpochOverflow)?;
             }
         }
         if height == finalized_height {
@@ -208,7 +209,7 @@ async fn collect_proof(
     let storage = opening
         .get("storageProof")
         .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| eyre::eyre!("eth_getProof has no storageProof array"))?;
+        .ok_or(TeeUpgradeNetworkError::MissingStorageProofArray)?;
     let mut registry_storage = Vec::with_capacity(storage.len());
     for item in storage {
         registry_storage.push(MptStorageProofV1 {
@@ -218,9 +219,7 @@ async fn collect_proof(
         });
     }
     if registry_storage.len() != slots.len() {
-        return Err(eyre::eyre!(
-            "eth_getProof omitted a required TeeRegistry slot"
-        ));
+        return Err(TeeUpgradeNetworkError::OmittedRequiredRegistrySlot.into());
     }
     let admission_witness = FinalizedAdmissionWitnessV1 {
         admission: admission.expect("positive finalized height sets admission proof"),
@@ -228,7 +227,7 @@ async fn collect_proof(
         registry_storage,
     }
     .encode_canonical()
-    .map_err(|error| eyre::eyre!("encode finalized onboarding admission witness: {error}"))?;
+    .map_err(TeeUpgradeNetworkError::EncodeAdmissionWitness)?;
 
     let proof = UpgradeKeyProofV1 {
         anchor_outcome: anchor.into(),

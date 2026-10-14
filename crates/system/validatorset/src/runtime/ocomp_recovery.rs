@@ -1,9 +1,10 @@
 use super::OCOMP_RECOVERY_WINDOW_BLOCKS;
+use crate::errors::ValidatorSetError;
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{self, StakeProjection, ValidatorLifecycle};
 use alloy_primitives::{Address, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OcompMissRecord {
@@ -38,16 +39,14 @@ impl ValidatorSet<'_> {
     pub fn record_ocomp_miss(&mut self, addr: Address) -> Result<OcompMissRecord> {
         let state = self.validator_state(addr)?;
         if !matches!(state.lifecycle(), ValidatorLifecycle::Active(_)) {
-            return Err(PrecompileError::Revert(
-                "OCOMP miss requires an active validator".into(),
-            ));
+            return Err(ValidatorSetError::OcompMissRequiresActiveValidator.into());
         }
 
         let miss_count = self
             .val_ocomp_miss_count
             .read(&addr)?
             .checked_add(1)
-            .ok_or_else(|| PrecompileError::Fatal("OCOMP miss count overflow".into()))?;
+            .ok_or(ValidatorSetError::OcompMissCountOverflow)?;
         let existing_deadline = self.val_ocomp_recovery_deadline.read(&addr)?;
         let guard = self.storage.checkpoint_guard();
         self.val_ocomp_miss_count.write(&addr, miss_count)?;
@@ -56,7 +55,7 @@ impl ValidatorSet<'_> {
                 .storage
                 .block_number()?
                 .checked_add(OCOMP_RECOVERY_WINDOW_BLOCKS)
-                .ok_or_else(|| PrecompileError::Fatal("OCOMP recovery deadline overflow".into()))?;
+                .ok_or(ValidatorSetError::OcompRecoveryDeadlineOverflow)?;
             self.val_ocomp_recovery_deadline
                 .write(&addr, recovery_deadline)?;
             OcompMissRecord::Opened {
@@ -79,15 +78,11 @@ impl ValidatorSet<'_> {
     /// ordinary minimum-stake threshold.
     pub fn record_ocomp_bonded_slash(&mut self, addr: Address, bonded: U256) -> Result<()> {
         if self.val_ocomp_recovery_deadline.read(&addr)? == 0 {
-            return Err(PrecompileError::Revert(
-                "OCOMP bonded slash requires an open recovery window".into(),
-            ));
+            return Err(ValidatorSetError::OcompBondedSlashRequiresOpenWindow.into());
         }
         let before = self.validator_state(addr)?;
         if !matches!(before.lifecycle(), ValidatorLifecycle::Active(_)) {
-            return Err(PrecompileError::Revert(
-                "OCOMP bonded slash requires an active validator".into(),
-            ));
+            return Err(ValidatorSetError::OcompBondedSlashRequiresActiveValidator.into());
         }
         let stake = StakeProjection::new(bonded, before.unbonding_end_hint());
         let lifecycle = state_machine::with_stake(before.lifecycle().clone(), stake)?;
@@ -121,9 +116,7 @@ impl ValidatorSet<'_> {
         outcome: OcompRecoveryOutcome,
     ) -> Result<()> {
         if self.val_ocomp_recovery_deadline.read(&addr)? != recovery_deadline {
-            return Err(PrecompileError::Fatal(
-                "OCOMP recovery resolution deadline mismatch".into(),
-            ));
+            return Err(ValidatorSetError::OcompRecoveryResolutionDeadlineMismatch.into());
         }
         let guard = self.storage.checkpoint_guard();
         self.close_ocomp_recovery_window(addr)?;

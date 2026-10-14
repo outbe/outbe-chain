@@ -15,9 +15,10 @@
 //! Phase 1 precompile enforces the stricter exact-parent sequence.
 
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use tracing::trace;
 
+use crate::errors::AccountingError;
 use crate::state;
 
 /// Records that V2 Phase 1 for `block_number` committed successfully.
@@ -31,9 +32,11 @@ use crate::state;
 pub fn record_phase1_progress(ctx: &BlockRuntimeContext, block_number: u64) -> Result<()> {
     let current = state::last_accounted_block_number(ctx)?;
     if block_number < current {
-        return Err(PrecompileError::Revert(format!(
-            "last_accounted_block_number regression: current={current}, attempted={block_number}"
-        )));
+        return Err(AccountingError::BlockNumberRegression {
+            current,
+            attempted: block_number,
+        }
+        .into());
     }
     trace!(
         target: "outbe::accounting",

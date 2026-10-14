@@ -49,9 +49,7 @@ fn requeue_called_bucket(
 ) -> Result<()> {
     let mut nod = NodContract::new(storage);
     if nod.called_deadline.read(&bucket_key)? == 0 {
-        return Err(outbe_primitives::error::PrecompileError::Revert(
-            "closeCallNoticeForTest: bucket not queued".into(),
-        ));
+        return Err(NodError::BucketNotQueuedForTest.into());
     }
     nod.remove_called_bucket(bucket_key)?;
     nod.push_called_bucket(bucket_key, deadline)

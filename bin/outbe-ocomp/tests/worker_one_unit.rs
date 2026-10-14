@@ -495,16 +495,10 @@ fn real_worker_processes_execute_through_output_finalize() {
         .expect("decode authenticated Tribute chunk");
     let replay_inputs = vec![(derived_tribute.clone(), tribute_chunk)];
     verify_core_phase_replay(
-        0,
-        &spec,
-        &artifact,
-        &plan,
-        &manifest,
-        &replay_inputs,
-        &[],
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
+        (0, &spec, &artifact),
+        (&plan, &manifest),
+        (&replay_inputs, &[]),
+        (&bundle, &reader, &semantic_replay_inbox),
         &limits,
     )
     .expect("supervisor semantic replay accepts exact Enumerate bytes");
@@ -526,16 +520,10 @@ fn real_worker_processes_execute_through_output_finalize() {
     )
     .expect("build digest-valid forged Enumerate artifact");
     assert!(verify_core_phase_replay(
-        0,
-        &spec,
-        &forged_enumerate_artifact,
-        &plan,
-        &manifest,
-        &replay_inputs,
-        &[],
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
+        (0, &spec, &forged_enumerate_artifact),
+        (&plan, &manifest),
+        (&replay_inputs, &[]),
+        (&bundle, &reader, &semantic_replay_inbox),
         &limits,
     )
     .is_err());
@@ -675,16 +663,14 @@ fn real_worker_processes_execute_through_output_finalize() {
     );
     let fidelity_inputs = vec![replay_inputs[0].clone(), fidelity_input];
     verify_core_phase_replay(
-        plan.primary_work_unit_count,
-        &fidelity_spec,
-        &fidelity_artifact,
-        &plan,
-        &manifest,
-        &fidelity_inputs,
-        std::slice::from_ref(&artifact),
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
+        (
+            plan.primary_work_unit_count,
+            &fidelity_spec,
+            &fidelity_artifact,
+        ),
+        (&plan, &manifest),
+        (&fidelity_inputs, std::slice::from_ref(&artifact)),
+        (&bundle, &reader, &semantic_replay_inbox),
         &limits,
     )
     .expect("supervisor semantic replay accepts exact FidelityMap bytes");
@@ -790,16 +776,14 @@ fn real_worker_processes_execute_through_output_finalize() {
     assert_eq!(reduced.aggregate.unwrap().tribute_count, 1);
     assert!(!reduced.ordered_fractions.is_empty());
     verify_core_phase_replay(
-        plan.primary_work_unit_count * 2,
-        &reduce_spec,
-        &reduce_artifact,
-        &plan,
-        &manifest,
-        &[],
-        std::slice::from_ref(&fidelity_artifact),
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
+        (
+            plan.primary_work_unit_count * 2,
+            &reduce_spec,
+            &reduce_artifact,
+        ),
+        (&plan, &manifest),
+        (&[], std::slice::from_ref(&fidelity_artifact)),
+        (&bundle, &reader, &semantic_replay_inbox),
         &limits,
     )
     .expect("supervisor semantic replay accepts exact FixedReduce bytes");
@@ -941,20 +925,17 @@ fn real_worker_processes_execute_through_output_finalize() {
     );
     let amount_inputs = vec![replay_inputs[0].clone(), oracle_input];
     verify_core_phase_replay(
-        3,
-        &amount_spec,
-        &amount_artifact,
-        &plan,
-        &manifest,
-        &amount_inputs,
-        &[
-            artifact.clone(),
-            fidelity_artifact.clone(),
-            reduce_artifact.clone(),
-        ],
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
+        (3, &amount_spec, &amount_artifact),
+        (&plan, &manifest),
+        (
+            &amount_inputs,
+            &[
+                artifact.clone(),
+                fidelity_artifact.clone(),
+                reduce_artifact.clone(),
+            ],
+        ),
+        (&bundle, &reader, &semantic_replay_inbox),
         &limits,
     )
     .expect("supervisor semantic replay accepts exact AmountMap bytes");
@@ -1000,16 +981,10 @@ fn real_worker_processes_execute_through_output_finalize() {
         .validate_against(&prefix_leaf_spec, &limits)
         .expect("validate GratisPrefix leaf artifact");
     verify_core_phase_replay(
-        prefix_offset,
-        &prefix_leaf_spec,
-        &prefix_leaf_artifact,
-        &plan,
-        &manifest,
-        &[],
-        std::slice::from_ref(&amount_artifact),
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
+        (prefix_offset, &prefix_leaf_spec, &prefix_leaf_artifact),
+        (&plan, &manifest),
+        (&[], std::slice::from_ref(&amount_artifact)),
+        (&bundle, &reader, &semantic_replay_inbox),
         &limits,
     )
     .expect("supervisor semantic replay accepts exact GratisPrefix leaf bytes");
@@ -1053,16 +1028,10 @@ fn real_worker_processes_execute_through_output_finalize() {
         .validate_against(&prefix_root_spec, &limits)
         .expect("validate GratisPrefix root artifact");
     verify_core_phase_replay(
-        prefix_offset + 1,
-        &prefix_root_spec,
-        &prefix_root_artifact,
-        &plan,
-        &manifest,
-        &[],
-        std::slice::from_ref(&prefix_leaf_artifact),
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
+        (prefix_offset + 1, &prefix_root_spec, &prefix_root_artifact),
+        (&plan, &manifest),
+        (&[], std::slice::from_ref(&prefix_leaf_artifact)),
+        (&bundle, &reader, &semantic_replay_inbox),
         &limits,
     )
     .expect("supervisor semantic replay accepts exact GratisPrefix root bytes");
@@ -1097,16 +1066,14 @@ fn real_worker_processes_execute_through_output_finalize() {
         .validate_against(&prefix_down_root_spec, &limits)
         .expect("validate GratisPrefixDown root artifact");
     verify_core_phase_replay(
-        prefix_down_offset,
-        &prefix_down_root_spec,
-        &prefix_down_root_artifact,
-        &plan,
-        &manifest,
-        &[],
-        std::slice::from_ref(&prefix_leaf_artifact),
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
+        (
+            prefix_down_offset,
+            &prefix_down_root_spec,
+            &prefix_down_root_artifact,
+        ),
+        (&plan, &manifest),
+        (&[], std::slice::from_ref(&prefix_leaf_artifact)),
+        (&bundle, &reader, &semantic_replay_inbox),
         &limits,
     )
     .expect("supervisor semantic replay accepts exact GratisPrefixDown root bytes");
@@ -1156,19 +1123,20 @@ fn real_worker_processes_execute_through_output_finalize() {
         .validate_against(&prefix_down_leaf_spec, &limits)
         .expect("validate GratisPrefixDown leaf artifact");
     verify_core_phase_replay(
-        prefix_down_offset + 1,
-        &prefix_down_leaf_spec,
-        &prefix_down_leaf_artifact,
-        &plan,
-        &manifest,
-        &[],
-        &[
-            prefix_down_root_artifact.clone(),
-            prefix_leaf_artifact.clone(),
-        ],
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
+        (
+            prefix_down_offset + 1,
+            &prefix_down_leaf_spec,
+            &prefix_down_leaf_artifact,
+        ),
+        (&plan, &manifest),
+        (
+            &[],
+            &[
+                prefix_down_root_artifact.clone(),
+                prefix_leaf_artifact.clone(),
+            ],
+        ),
+        (&bundle, &reader, &semantic_replay_inbox),
         &limits,
     )
     .expect("supervisor semantic replay accepts exact GratisPrefixDown leaf bytes");
@@ -1241,14 +1209,9 @@ fn real_worker_processes_execute_through_output_finalize() {
         tribute.tribute_id
     );
     verify_output_finalize_replay(
-        0,
-        &output_finalize_spec,
-        &output_finalize_artifact,
-        &amount_artifact,
-        &prefix_down_leaf_artifact,
-        &plan,
-        &manifest,
-        &bundle,
+        (0, &output_finalize_spec, &output_finalize_artifact),
+        (&amount_artifact, &prefix_down_leaf_artifact),
+        (&plan, &manifest, &bundle),
         &limits,
     )
     .expect("supervisor semantic replay accepts exact OutputFinalize bytes");
@@ -1282,16 +1245,11 @@ fn real_worker_processes_execute_through_output_finalize() {
     )
     .unwrap();
     let admitted_enumerate = admit_reported_lysis_unit_v1(
-        0,
-        &finished_reports[0],
-        &mut admission_catalog,
-        &input_ref_catalog,
-        &pinned_bundle,
-        &reader,
-        &replay_inbox,
-        &semantic_replay_inbox,
-        &cas,
-        &limits,
+        (0, &finished_reports[0]),
+        (&mut admission_catalog, &input_ref_catalog),
+        (&pinned_bundle, &reader),
+        (&replay_inbox, &semantic_replay_inbox),
+        (&cas, &limits),
     )
     .expect("admit exact supervisor-replayed Enumerate artifact");
     assert_eq!(
@@ -1314,21 +1272,16 @@ fn real_worker_processes_execute_through_output_finalize() {
     .map(|phase| topology.phase_unit_count(phase))
     .sum();
     let admitted_output_finalize = admit_reported_output_finalize_unit(
-        AdmissionPositionV1 {
-            plan_ordinal: output_finalize_plan_ordinal,
-        },
-        0,
-        &output_finalize_spec,
-        &output_finalize_finished,
-        &amount_artifact,
-        &prefix_down_leaf_artifact,
-        &plan,
-        &manifest,
-        &bundle,
-        &replay_inbox,
-        &cas,
-        &mut admission_catalog,
-        &limits,
+        (
+            AdmissionPositionV1 {
+                plan_ordinal: output_finalize_plan_ordinal,
+            },
+            0,
+        ),
+        (&output_finalize_spec, &output_finalize_finished),
+        (&amount_artifact, &prefix_down_leaf_artifact),
+        (&plan, &manifest, &bundle),
+        (&replay_inbox, &cas, &mut admission_catalog, &limits),
     )
     .expect("admit exact replayed OutputFinalize artifact");
     assert_eq!(
@@ -1359,14 +1312,9 @@ fn real_worker_processes_execute_through_output_finalize() {
     )
     .expect("build digest-valid forged OutputFinalize artifact");
     assert!(verify_output_finalize_replay(
-        0,
-        &output_finalize_spec,
-        &forged_artifact,
-        &amount_artifact,
-        &prefix_down_leaf_artifact,
-        &plan,
-        &manifest,
-        &bundle,
+        (0, &output_finalize_spec, &forged_artifact),
+        (&amount_artifact, &prefix_down_leaf_artifact),
+        (&plan, &manifest, &bundle),
         &limits,
     )
     .is_err());
@@ -1419,16 +1367,10 @@ fn real_worker_processes_execute_through_output_finalize() {
     assert_eq!(bucket_root.kind, ShuffleRunKindV1::Bucket);
     assert_eq!(bucket_root.record_count, 1);
     verify_lysis_shuffle_phase_replay(
-        bucket_offset,
-        &bucket_spec,
-        &bucket_artifact,
-        &plan,
-        &manifest,
-        std::slice::from_ref(&output_finalize_artifact),
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
-        &limits,
+        (bucket_offset, &bucket_spec, &bucket_artifact),
+        (&plan, &manifest),
+        (std::slice::from_ref(&output_finalize_artifact), &bundle),
+        (&reader, &semantic_replay_inbox, &limits),
     )
     .expect("supervisor semantic replay accepts exact BucketShuffle bytes");
     adopt_lysis_shuffle_descendants(bucket_root.clone(), &inbox, &cas, &limits)
@@ -1474,17 +1416,14 @@ fn real_worker_processes_execute_through_output_finalize() {
         .validate_against(&root_reduce_spec, &limits)
         .expect("validate RootReduce leaf artifact");
     verify_lysis_root_reduce_phase_replay(
-        root_reduce_offset,
-        &root_reduce_spec,
-        &root_reduce_artifact,
-        &plan,
-        &manifest,
+        (root_reduce_offset, &root_reduce_spec, &root_reduce_artifact),
+        (&plan, &manifest),
         &replay_inputs,
-        &[output_finalize_artifact.clone(), bucket_artifact.clone()],
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
-        &limits,
+        (
+            &[output_finalize_artifact.clone(), bucket_artifact.clone()],
+            &bundle,
+        ),
+        (&reader, &semantic_replay_inbox, &limits),
     )
     .expect("supervisor semantic replay accepts exact RootReduce bytes and ResultChunk");
     let mut wrong_shard = replay_inputs.clone();
@@ -1494,17 +1433,14 @@ fn real_worker_processes_execute_through_output_finalize() {
     wrong_kind[0].1.kind = InputChunkKind::Oracle;
     for invalid_inputs in [Vec::new(), wrong_shard, wrong_kind] {
         assert!(verify_lysis_root_reduce_phase_replay(
-            root_reduce_offset,
-            &root_reduce_spec,
-            &root_reduce_artifact,
-            &plan,
-            &manifest,
+            (root_reduce_offset, &root_reduce_spec, &root_reduce_artifact),
+            (&plan, &manifest),
             &invalid_inputs,
-            &[output_finalize_artifact.clone(), bucket_artifact.clone(),],
-            &bundle,
-            &reader,
-            &semantic_replay_inbox,
-            &limits,
+            (
+                &[output_finalize_artifact.clone(), bucket_artifact.clone(),],
+                &bundle
+            ),
+            (&reader, &semantic_replay_inbox, &limits),
         )
         .is_err());
     }
@@ -1530,17 +1466,18 @@ fn real_worker_processes_execute_through_output_finalize() {
     )
     .expect("build digest-valid forged RootReduce artifact");
     assert!(verify_lysis_root_reduce_phase_replay(
-        root_reduce_offset,
-        &root_reduce_spec,
-        &forged_root_reduce_artifact,
-        &plan,
-        &manifest,
+        (
+            root_reduce_offset,
+            &root_reduce_spec,
+            &forged_root_reduce_artifact
+        ),
+        (&plan, &manifest),
         &replay_inputs,
-        &[output_finalize_artifact.clone(), bucket_artifact.clone(),],
-        &bundle,
-        &reader,
-        &semantic_replay_inbox,
-        &limits,
+        (
+            &[output_finalize_artifact.clone(), bucket_artifact.clone(),],
+            &bundle
+        ),
+        (&reader, &semantic_replay_inbox, &limits),
     )
     .is_err());
     let RootReduceOutputV1::Leaf {

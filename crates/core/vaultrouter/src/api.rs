@@ -5,8 +5,10 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{sol, SolCall};
 
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+
+use crate::errors::VaultRouterError;
 
 sol!("../../../contracts/precompiles/src/IVaultRouter.sol");
 
@@ -35,7 +37,7 @@ pub fn reference_currency_assets(
             .into(),
     )?;
     IVaultRouter::referenceCurrencyAssetsCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("referenceCurrencyAssets undecodable".into()))
+        .map_err(|_| VaultRouterError::RouterCallUndecodable("referenceCurrencyAssets").into())
 }
 
 /// Direct storage read of a reservation. Same-process precompiles use this
@@ -96,6 +98,6 @@ fn call_router<C: SolCall>(storage: &StorageHandle<'_>, call: C) -> Result<C::Re
         let name = C::SIGNATURE
             .split_once('(')
             .map_or(C::SIGNATURE, |(name, _)| name);
-        PrecompileError::Revert(format!("{name} undecodable"))
+        VaultRouterError::RouterCallUndecodable(name).into()
     })
 }

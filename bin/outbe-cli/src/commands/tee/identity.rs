@@ -1,6 +1,7 @@
 use super::call_u256;
 
 use crate::abi::ITeeRegistry;
+use crate::errors::TeeIdentityError;
 use crate::rpc::Rpc;
 
 use alloy_primitives::keccak256;
@@ -39,22 +40,29 @@ pub(super) async fn pubkey(
     enclave_socket: &str,
     diff_chain: bool,
 ) -> Result<()> {
-    let mut enclave = EnclaveClient::connect_endpoint(enclave_socket)
-        .map_err(|e| eyre::eyre!("connect enclave at {enclave_socket}: {e}"))?;
+    let mut enclave = EnclaveClient::connect_endpoint(enclave_socket).map_err(|source| {
+        TeeIdentityError::ConnectEnclave {
+            socket: enclave_socket.to_owned(),
+            source,
+        }
+    })?;
     let label = enclave.attestation_label().to_string();
     let (mrenclave, mrsigner, isv_svn) = enclave.measurements();
     let hardware_quote_type_reported = enclave.is_hardware_attested();
-    let (offer_key_ready, offer_pub, tee_bls_pub) =
-        match enclave.request(&EnclaveRequest::GetPublicKeys) {
-            Ok(EnclaveResponse::PublicKeys {
-                offer_key_ready,
-                recipient_x25519_pub,
-                tee_bls_pub,
-                ..
-            }) => (offer_key_ready, recipient_x25519_pub, tee_bls_pub),
-            Ok(other) => return Err(eyre::eyre!("expected enclave PublicKeys, got {other:?}")),
-            Err(e) => return Err(eyre::eyre!("enclave GetPublicKeys failed: {e}")),
-        };
+    let (offer_key_ready, offer_pub, tee_bls_pub) = match enclave
+        .request(&EnclaveRequest::GetPublicKeys)
+    {
+        Ok(EnclaveResponse::PublicKeys {
+            offer_key_ready,
+            recipient_x25519_pub,
+            tee_bls_pub,
+            ..
+        }) => (offer_key_ready, recipient_x25519_pub, tee_bls_pub),
+        Ok(other) => {
+            return Err(TeeIdentityError::UnexpectedPublicKeysResponse(format!("{other:?}")).into())
+        }
+        Err(e) => return Err(TeeIdentityError::GetPublicKeysFailed(e).into()),
+    };
     println!(
         "enclave offer pubkey (recipient_x25519): 0x{}",
         hex::encode(offer_pub)
@@ -79,9 +87,7 @@ pub(super) async fn pubkey(
         return Ok(());
     }
     if !offer_key_ready {
-        return Err(eyre::eyre!(
-            "enclave permanent offer key is not ready; onboarding recipient cannot be compared with chain state"
-        ));
+        return Err(TeeIdentityError::PermanentOfferKeyNotReady.into());
     }
 
     let onchain = call_u256(
@@ -90,10 +96,7 @@ pub(super) async fn pubkey(
     )
     .await?;
     if onchain.is_zero() {
-        return Err(eyre::eyre!(
-            "on-chain tributeOfferPublicKey == 0 - chain is not TEE-bootstrapped yet, \
-             nothing to diff against"
-        ));
+        return Err(TeeIdentityError::ChainNotTeeBootstrapped.into());
     }
     let onchain_bytes: [u8; 32] = onchain.to_be_bytes();
     println!(
@@ -104,11 +107,11 @@ pub(super) async fn pubkey(
         println!("[OK] MATCH - enclave resident offer key == on-chain registry");
         Ok(())
     } else {
-        Err(eyre::eyre!(
-            "[FAIL] MISMATCH - enclave offer key 0x{} != on-chain 0x{}",
-            hex::encode(offer_pub),
-            hex::encode(onchain_bytes)
-        ))
+        Err(TeeIdentityError::OfferKeyMismatch {
+            enclave: hex::encode(offer_pub),
+            onchain: hex::encode(onchain_bytes),
+        }
+        .into())
     }
 }
 
@@ -126,16 +129,16 @@ pub(super) fn authorize_validator_node_binding(
     };
     let binding_hash = binding
         .binding_hash()
-        .map_err(|error| eyre::eyre!("hash address-to-NodeHost binding: {error}"))?;
+        .map_err(TeeIdentityError::HashValidatorNodeBinding)?;
     let signature = sign_node_hash(evm_signer.key(), binding_hash)
-        .map_err(|error| eyre::eyre!("sign address-to-NodeHost binding: {error}"))?;
+        .map_err(|error| TeeIdentityError::SignValidatorNodeBinding(Box::new(error)))?;
     Ok((binding, binding_hash, signature))
 }
 
 pub(super) fn parse_nonzero_b256(value: &str, argument: &'static str) -> Result<B256> {
     let value = B256::from(parse_hex_array::<32>(value, argument)?);
     if value.is_zero() {
-        return Err(eyre::eyre!("{argument} must be nonzero"));
+        return Err(TeeIdentityError::ArgumentMustBeNonzero(argument).into());
     }
     Ok(value)
 }
@@ -144,10 +147,12 @@ fn parse_hex_array<const N: usize>(value: &str, argument: &'static str) -> Resul
     let encoded = value.strip_prefix("0x").unwrap_or(value);
     let decoded = hex::decode(encoded).wrap_err_with(|| format!("decode {argument} as hex"))?;
     decoded.try_into().map_err(|decoded: Vec<u8>| {
-        eyre::eyre!(
-            "{argument} must contain exactly {N} bytes, got {}",
-            decoded.len()
-        )
+        TeeIdentityError::InvalidHexArrayLength {
+            argument,
+            expected: N,
+            actual: decoded.len(),
+        }
+        .into()
     })
 }
 
@@ -155,10 +160,7 @@ pub(super) fn load_secp256k1_key_file(path: &std::path::Path) -> Result<k256::ec
     let metadata =
         fs::metadata(path).wrap_err_with(|| format!("stat Reth P2P secret {}", path.display()))?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 130 {
-        return Err(eyre::eyre!(
-            "Reth P2P secret {} must be a bounded regular file",
-            path.display()
-        ));
+        return Err(TeeIdentityError::InvalidRethP2pSecretFile(path.to_path_buf()).into());
     }
     let encoded = Zeroizing::new(
         fs::read(path).wrap_err_with(|| format!("read Reth P2P secret {}", path.display()))?,
@@ -171,7 +173,7 @@ pub(super) fn compressed_public_key(key: &k256::ecdsa::SigningKey) -> Result<[u8
         .to_encoded_point(true)
         .as_bytes()
         .try_into()
-        .map_err(|_| eyre::eyre!("Reth P2P public key is not compressed SEC1-33"))
+        .map_err(|_| TeeIdentityError::UncompressedRethP2pPublicKey.into())
 }
 
 pub(super) fn ensure_signer_matches_node_id(
@@ -179,7 +181,7 @@ pub(super) fn ensure_signer_matches_node_id(
     node_id: &NodeIdV1,
 ) -> Result<()> {
     if compressed_public_key(key)? != node_id.reth_p2p_public {
-        eyre::bail!("Reth P2P secret does not match the committed NodeHost identity");
+        return Err(TeeIdentityError::RethP2pSecretMismatch.into());
     }
     Ok(())
 }
@@ -196,26 +198,23 @@ fn parse_secp256k1_key_bytes(encoded: &[u8]) -> Result<k256::ecdsa::SigningKey> 
         let text = text.strip_prefix("0x").unwrap_or(text);
         let decoded = Zeroizing::new(hex::decode(text).wrap_err("decode Reth P2P secret as hex")?);
         if decoded.len() != 32 {
-            return Err(eyre::eyre!(
-                "Reth P2P secret must contain exactly 32 bytes, got {}",
-                decoded.len()
-            ));
+            return Err(TeeIdentityError::InvalidRethP2pSecretLength(decoded.len()).into());
         }
         let mut secret = Zeroizing::new([0_u8; 32]);
         secret.copy_from_slice(decoded.as_ref());
         secret
     };
     k256::ecdsa::SigningKey::from_bytes((&*secret).into())
-        .map_err(|error| eyre::eyre!("invalid Reth P2P secp256k1 secret: {error}"))
+        .map_err(|error| TeeIdentityError::InvalidRethP2pSecret(error).into())
 }
 
 pub(super) fn sign_node_hash(
     key: &k256::ecdsa::SigningKey,
     hash: B256,
-) -> std::result::Result<[u8; 65], String> {
+) -> std::result::Result<[u8; 65], TeeIdentityError> {
     let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = key
         .sign_prehash(hash.as_slice())
-        .map_err(|error| format!("secp256k1 signing failed: {error}"))?;
+        .map_err(TeeIdentityError::Secp256k1SigningFailed)?;
     let mut encoded = [0_u8; 65];
     encoded[..64].copy_from_slice(&signature.to_bytes());
     encoded[64] = recovery_id.to_byte();
@@ -241,7 +240,7 @@ pub(super) fn development_identity_v1(
 
     let node_id_hash = node_id
         .node_id_hash()
-        .map_err(|error| eyre::eyre!("invalid development node identity: {error}"))?;
+        .map_err(TeeIdentityError::InvalidDevelopmentNodeIdentity)?;
     let mut authorization_preimage =
         Vec::with_capacity(DEV_NODE_HOST_DOMAIN_V1.len() + 32 + 32 + 32 + enclave_keys.len());
     authorization_preimage.extend_from_slice(DEV_NODE_HOST_DOMAIN_V1);

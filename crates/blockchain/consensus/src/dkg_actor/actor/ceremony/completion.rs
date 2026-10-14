@@ -1,4 +1,5 @@
 use super::*;
+use crate::errors::DkgError;
 
 impl CeremonyState {
     pub(in crate::dkg_actor::actor) fn timeout_error(&self) -> eyre::Report {
@@ -7,14 +8,14 @@ impl CeremonyState {
         } else {
             self.n
         };
-        eyre::eyre!(
-            "DKG ceremony timed out after {:?} (acks: {}/{}, logs: {}/{})",
-            DKG_TIMEOUT,
-            self.roles.acked_players.len(),
-            self.player_threshold,
-            self.finalized_logs.len(),
+        DkgError::CeremonyTimedOut {
+            timeout: DKG_TIMEOUT,
+            acks: self.roles.acked_players.len(),
+            player_threshold: self.player_threshold,
+            logs: self.finalized_logs.len(),
             log_target,
-        )
+        }
+        .into()
     }
     pub(in crate::dkg_actor::actor) async fn seal_dealer(
         &mut self,
@@ -65,7 +66,7 @@ impl CeremonyState {
             // back. Thus local/P2P subsets cannot diverge from the canonical
             // output.
             if signed_log.clone().check(&self.info).is_none() {
-                return Err(eyre::eyre!("our own finalized log failed verification"));
+                return Err(DkgError::OwnFinalizedLogVerificationFailed.into());
             }
             if !self.chain_finalized_mode {
                 let _ = record_and_store_signed_dealer_log(
@@ -213,7 +214,7 @@ impl CeremonyState {
                 finalize_logs,
                 &Sequential,
             )
-            .map_err(|error| eyre::eyre!("player finalize failed: {error:?}"))?;
+            .map_err(DkgError::player_finalize)?;
 
         info!("DKG ceremony complete - threshold material obtained");
 

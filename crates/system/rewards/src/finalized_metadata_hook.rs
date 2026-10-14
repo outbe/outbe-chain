@@ -22,11 +22,12 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     consensus_metadata::CertifiedParentAccountingMetadata,
-    error::{PrecompileError, Result},
+    error::Result,
     storage::finalized_guard_ring::{FinalizedGuardRing, FINALIZED_GUARD_RETAIN},
     time::{previous_date_key, timestamp_to_date_key},
 };
 
+use crate::errors::RewardsError;
 use crate::schema::Rewards;
 
 /// Number of recent finalized blocks whose per-`fb_hash` guard maps
@@ -64,7 +65,7 @@ fn prune_block_guards(rewards: &Rewards<'_>, fb_hash: B256) -> Result<()> {
             rewards.fee_dust_counted_for_block.write(&evicted, false)?;
             rewards.fee_settled.write(&evicted, false)
         },
-        || PrecompileError::Revert("block_guard_ring_seq overflow".into()),
+        || RewardsError::BlockGuardRingSeqOverflow.into(),
     )
 }
 
@@ -116,7 +117,7 @@ pub fn on_finalized_metadata(
         let closes_at = metadata
             .finalized_block_number
             .checked_add(outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K)
-            .ok_or_else(|| PrecompileError::Fatal("reward window height overflow".into()))?;
+            .ok_or(RewardsError::RewardWindowHeightOverflow)?;
         rewards.pending_reward_day.write(&fb_hash, fb_day)?;
         let previous_close = rewards.daily_last_window_close.read(&fb_day)?;
         rewards
@@ -125,7 +126,7 @@ pub fn on_finalized_metadata(
         let prev_raw = rewards.daily_fee_sum_raw.read(&fb_day)?;
         let next_raw = prev_raw
             .checked_add(validator_fee_sum)
-            .ok_or_else(|| PrecompileError::Revert("daily_fee_sum_raw overflow".into()))?;
+            .ok_or(RewardsError::DailyFeeSumRawOverflow)?;
         rewards.daily_fee_sum_raw.write(&fb_day, next_raw)?;
         rewards.block_metadata_counted.write(&fb_hash, true)?;
     }
@@ -183,9 +184,7 @@ pub(crate) fn record_reward_participation(
 
     if !participation_guard.read(&voter)? {
         if rewards.daily_topup_prepared.read(&fb_day)? {
-            return Err(PrecompileError::Fatal(
-                "reward participation arrived after GEM batch preparation".into(),
-            ));
+            return Err(RewardsError::ParticipationAfterGemBatchPreparation.into());
         }
         let prev_count = day_participation.read(&voter)?;
         if prev_count == 0 {
@@ -195,18 +194,18 @@ pub(crate) fn record_reward_participation(
             day_voter_at.write(&idx, voter)?;
             let next_idx = idx
                 .checked_add(1)
-                .ok_or_else(|| PrecompileError::Revert("daily_voter_count overflow".into()))?;
+                .ok_or(RewardsError::DailyVoterCountOverflow)?;
             rewards.daily_voter_count.write(&fb_day, next_idx)?;
         }
         let next_count = prev_count
             .checked_add(1)
-            .ok_or_else(|| PrecompileError::Revert("daily_participation overflow".into()))?;
+            .ok_or(RewardsError::DailyParticipationOverflow)?;
         day_participation.write(&voter, next_count)?;
 
         let prev_total = rewards.daily_total_participation.read(&fb_day)?;
         let next_total = prev_total
             .checked_add(1)
-            .ok_or_else(|| PrecompileError::Revert("daily_total_participation overflow".into()))?;
+            .ok_or(RewardsError::DailyTotalParticipationOverflow)?;
         rewards
             .daily_total_participation
             .write(&fb_day, next_total)?;
@@ -860,7 +859,11 @@ mod tests {
         let mut provider = seeded_block_ring(u64::MAX, evicted, &[evicted]);
         let result = provider.enter(|storage| prune(storage, fb_hash));
         assert!(
-            matches!(&result, Err(PrecompileError::Revert(message)) if message == "block_guard_ring_seq overflow"),
+            matches!(
+                &result,
+                Err(outbe_primitives::error::PrecompileError::Revert(message))
+                    if message == "block_guard_ring_seq overflow"
+            ),
             "{result:?}"
         );
         assert_eq!(

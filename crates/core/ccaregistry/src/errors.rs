@@ -1,4 +1,4 @@
-//! CCA transition and arithmetic errors.
+//! Error types for the CCA registry.
 use alloy_primitives::Address;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
@@ -32,5 +32,18 @@ pub enum CcaError {
 impl From<CcaError> for PrecompileError {
     fn from(error: CcaError) -> Self {
         Self::Revert(error.to_string())
+    }
+}
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum CcaFatalError {
+    #[error("CCA active index entry missing")]
+    ActiveIndexEntryMissing,
+}
+
+impl From<CcaFatalError> for PrecompileError {
+    fn from(error: CcaFatalError) -> Self {
+        Self::Fatal(error.to_string())
     }
 }

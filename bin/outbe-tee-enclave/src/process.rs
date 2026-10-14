@@ -28,6 +28,7 @@ use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOffe
 
 use crate::compute::{compute_nominal, compute_token_id, parse_canonical_amount};
 use crate::crypto::ecdhe_tribute_offer_decrypt;
+use crate::errors::{EnclaveError, EnclaveResult, ProcessError};
 use crate::payload::parse_and_validate;
 use crate::zk_claim::derive_expected_hashes;
 
@@ -61,7 +62,7 @@ pub fn process_tribute_offer_batch(
 fn process_one(
     key: &TributeOfferKeyMaterial<'_>,
     offer: &EncryptedTributeOffer,
-) -> Result<TributeOfferResult, String> {
+) -> EnclaveResult<TributeOfferResult> {
     let ephemeral = offer.ephemeral_pubkey.to_be_bytes::<32>();
     let plaintext = ecdhe_tribute_offer_decrypt(
         key.tribute_offer_private_key,
@@ -70,21 +71,21 @@ fn process_one(
         &offer.nonce,
         &offer.cipher_text,
     )
-    .map_err(|e| format!("decryption failed: {e}"))?;
+    .map_err(ProcessError::decryption_failed)?;
 
     let payload = parse_and_validate(&plaintext)?;
     let amount = parse_canonical_amount(&payload.amount_base, &payload.amount_micro)?;
     let zk_expected_hashes = derive_expected_hashes(offer, &payload, &amount)?;
     let amount_minor = amount.amount_minor;
     if amount_minor.is_zero() {
-        return Err("amount must be positive".to_string());
+        return Err(ProcessError::AmountNotPositive.into());
     }
 
     if offer.issuance_wwd_vwap_minor.is_zero() || offer.reference_wwd_vwap_minor.is_zero() {
-        return Err(format!(
-            "required WorldwideDay VWAP unavailable for worldwide_day {}",
-            offer.worldwide_day
-        ));
+        return Err(ProcessError::VwapUnavailable {
+            worldwide_day: offer.worldwide_day,
+        }
+        .into());
     }
 
     let (nominal_amount_minor, effective_reference_price_minor) = compute_nominal(
@@ -98,7 +99,6 @@ fn process_one(
     // (owner, worldwide_day) so a duplicate offer for the same owner and day
     // collides and is rejected downstream (TributeAlreadyExists).
     // draft_id is still validated by compute_token_id but not bound into the id.
-    // TODO refactor this to correctly validate tribute_draft_id
     let token_id = compute_token_id(offer.owner, offer.worldwide_day, &payload.tribute_draft_id)?;
 
     Ok(TributeOfferResult {
@@ -121,7 +121,7 @@ fn process_one(
 /// Build a `Rejected` result. Nothing is known beyond the reason. Every field
 /// the host sent stays on the host, and everything else needed decryption to
 /// have succeeded. `owner` is zero rather than echoed for the same reason.
-fn rejected(reason: String) -> TributeOfferResult {
+fn rejected(reason: EnclaveError) -> TributeOfferResult {
     TributeOfferResult {
         token_id: B256::ZERO,
         owner: Address::ZERO,
@@ -132,7 +132,9 @@ fn rejected(reason: String) -> TributeOfferResult {
         wallet_addresses: Vec::new(),
         sra_addresses: Vec::new(),
         zk_expected_hashes: None,
-        status: TributeOfferStatus::Rejected { reason },
+        status: TributeOfferStatus::Rejected {
+            reason: reason.into(),
+        },
     }
 }
 

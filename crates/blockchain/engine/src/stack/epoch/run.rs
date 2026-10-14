@@ -101,7 +101,7 @@ where
                 finalized_ce_committer,
                 ce_startup_recovery,
                 follower_shutdown: follower_shutdown
-                    .ok_or_else(|| eyre::eyre!("follower pre-stop handshake is not installed"))?,
+                    .ok_or(crate::errors::StackEpochError::FollowerPreStopHandshakeNotInstalled)?,
             },
         )
         .await;
@@ -111,7 +111,7 @@ where
     let signing_key_path = args
         .signing_key
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("--consensus.signing-key is required"))?;
+        .ok_or(crate::errors::StackEpochError::SigningKeyRequired)?;
     let key_backend = args.key_backend().wrap_err("invalid BLS key backend")?;
     let signing_key = validators::load_signing_key(signing_key_path, &key_backend)
         .wrap_err("failed to load signing key")?;
@@ -127,7 +127,7 @@ where
     let initial_peer_hash = node
         .provider
         .block_hash(initial_peer_height)?
-        .ok_or_else(|| eyre::eyre!("startup P2P admission block is missing"))?;
+        .ok_or(crate::errors::StackEpochError::StartupP2pAdmissionBlockMissing)?;
     let validator_set =
         validators::read_consensus_validators_at_block(&node.provider, initial_peer_hash)
             .wrap_err("failed to load consensus validator set at startup")?;
@@ -362,18 +362,17 @@ where
     } else {
         node.provider
             .block_hash(recovery_anchor_height)
-            .map_err(|error| {
-                eyre::eyre!(
-                    "failed to read recovery-anchor block hash at height \
-                     {recovery_anchor_height}: {error}"
-                )
-            })?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "missing canonical block hash for recovery anchor at height \
-                     {recovery_anchor_height}"
-                )
-            })?
+            .map_err(
+                |error| crate::errors::StackEpochError::ReadRecoveryAnchorBlockHash {
+                    height: recovery_anchor_height,
+                    reason: format!("{error}"),
+                },
+            )?
+            .ok_or(
+                crate::errors::StackEpochError::MissingRecoveryAnchorBlockHash {
+                    height: recovery_anchor_height,
+                },
+            )?
     };
 
     // -- 10. Create executor actor (state-aware init) --------------------
@@ -437,13 +436,14 @@ where
             epoch_length_blocks,
         });
 
-        let bootstrap_artifact = genesis_dkg_boundary_artifact.take().ok_or_else(|| {
-            eyre::eyre!("fresh bootstrap lost its canonical genesis DKG boundary")
-        })?;
-        ensure!(
-            bootstrap_artifact.vrf_material_version == vrf_material_version,
-            "genesis DKG boundary VRF material version differs from the active startup version"
-        );
+        let bootstrap_artifact = genesis_dkg_boundary_artifact
+            .take()
+            .ok_or(crate::errors::StackEpochError::FreshBootstrapLostGenesisBoundary)?;
+        if bootstrap_artifact.vrf_material_version != vrf_material_version {
+            return Err(
+                crate::errors::StackEpochError::GenesisBoundaryVrfVersionDiffersFromActive.into(),
+            );
+        }
         info!(
             vrf_material_version,
             vrf_group_public_key = %bootstrap_artifact.vrf_group_public_key,
@@ -645,7 +645,7 @@ where
     let parent_cert_dir = args
         .storage_dir
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("consensus storage_dir must be set before stack startup"))?
+        .ok_or(crate::errors::StackEpochError::ConsensusStorageDirRequired)?
         .join("finalized_parent_certs");
     let finalized_parent_cert_store =
         outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore::open(

@@ -71,9 +71,7 @@ fn requeue_called_group(
     let worldwide_day = WorldwideDay::from(worldwide_day);
     let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
     if factory.called_deadline.read(&key)? == 0 {
-        return Err(outbe_primitives::error::PrecompileError::Revert(
-            "closeCallNoticeForTest: no called group".into(),
-        ));
+        return Err(crate::errors::IntexFactoryError::NoCalledGroupForTest.into());
     }
     factory.remove_called_group(iso_code, worldwide_day)?;
     factory.push_called_group(iso_code, worldwide_day, deadline)
@@ -149,9 +147,7 @@ fn issue_for_test(
     // legs once. Sending per series would declare a one-chunk day twice, and the
     // second delivery is dropped as a conflicting repeat rather than applied.
     if call.seriesIds.len() != call.issuanceCurrencies.len() {
-        return Err(outbe_primitives::error::PrecompileError::Revert(
-            "issueForTest: a currency per series".into(),
-        ));
+        return Err(crate::errors::IntexFactoryError::IssueForTestCurrencyCountMismatch.into());
     }
     let mut legs = Vec::new();
     let ids = call.seriesIds.clone();

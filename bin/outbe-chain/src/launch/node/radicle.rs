@@ -1,4 +1,5 @@
 use super::*;
+use crate::errors::LaunchError;
 
 pub(super) type Preflight = (
     alloy_primitives::Address,
@@ -34,7 +35,7 @@ pub(super) async fn preflight(
                 .wrap_err("Radicle sidecar preflight failed")?;
         let evm_key = args
             .effective_validator_evm_key()?
-            .ok_or_else(|| eyre::eyre!("validator EVM key is required for Radicle identity"))?;
+            .ok_or(LaunchError::MissingValidatorEvmKeyForRadicle)?;
         let validator = outbe_primitives::signer::load::from_file(&evm_key)
             .wrap_err("load validator EVM key for Radicle identity")?
             .address();
@@ -57,8 +58,10 @@ pub(super) async fn preflight(
 pub(super) fn start(
     node: &OutbeFullNode,
     args: &ConsensusArgs,
-    radicle_preflight: Option<Preflight>,
-    radicle_status: outbe_radicle::integration::RadicleStatusHandle,
+    (radicle_preflight, radicle_status): (
+        Option<Preflight>,
+        outbe_radicle::integration::RadicleStatusHandle,
+    ),
     radicle_shutdown_token: tokio_util::sync::CancellationToken,
     shutdown: outbe_node::shutdown::NodeShutdown,
 ) -> eyre::Result<RadicleLaunch> {
@@ -104,10 +107,10 @@ pub(super) fn start(
         {
             None => {}
             Some(candidate) if candidate.node_id.is_none() => {
-                eyre::bail!("active validator has no Radicle NodeId binding");
+                return Err(LaunchError::ActiveValidatorMissingRadicleNodeId.into());
             }
             Some(candidate) if candidate.node_id != Some(sidecar.node_id) => {
-                eyre::bail!("local Radicle NodeId does not match finalized validator binding");
+                return Err(LaunchError::LocalRadicleNodeIdMismatch.into());
             }
             Some(_) => publisher.mark_startup_ready(),
         }
@@ -199,7 +202,7 @@ pub(super) fn start(
                                 observer_endpoint_owner.shutdown(&observer_resolver),
                             ).await {
                                 tracing::error!(%error, "Radicle integration shutdown failed");
-                                observer_outcome.record_failure(eyre::eyre!(error).wrap_err("Radicle integration shutdown failed"));
+                                observer_outcome.record_failure(eyre::Report::new(error).wrap_err("Radicle integration shutdown failed"));
                             }
                             break;
                         }

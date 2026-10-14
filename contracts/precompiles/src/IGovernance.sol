@@ -52,7 +52,7 @@ interface IGovernance {
     function getMetaCanonRevisionHash(uint64 version) external view returns (bytes32);
     function getCanonRevisionHash(uint64 version) external view returns (bytes32);
 
-    // --- canon / meta-canon: full-overwrite write (authorities-gated) ---
+    // --- canon / meta-canon: full-overwrite write (gated on ACTIVE validator) ---
     function updateMetaCanon(string calldata text) external returns (uint64 newVersion);
     function updateCanon(string calldata text) external returns (uint64 newVersion);
 
@@ -90,6 +90,6 @@ interface IGovernance {
     function gipCountByAuthor(address author) external view returns (uint256);
     function gipCountByStatus(uint8 status) external view returns (uint256);
 
-    // --- authorities (PoC scaffolding) ---
+    // --- authority: true when `who` is an ACTIVE validator in the live ValidatorSet ---
     function isAuthority(address who) external view returns (bool);
 }

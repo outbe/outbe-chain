@@ -18,7 +18,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const HEALTH_STALE_AFTER: Duration = Duration::from_secs(30);
-static PROMETHEUS_HANDLE: OnceLock<Result<PrometheusHandle, String>> = OnceLock::new();
+static PROMETHEUS_HANDLE: OnceLock<Result<PrometheusHandle, WorkerObservabilityErrorV1>> =
+    OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -130,18 +131,25 @@ impl WorkerObservabilityServerV1 {
     }
 
     pub fn registering(&self) {
-        self.update(WorkerPhaseV1::Registering, None, None, None, None, false);
+        self.update(WorkerStatusUpdate {
+            phase: WorkerPhaseV1::Registering,
+            worker_id: None,
+            registry_generation: None,
+            lease_id: None,
+            unit_id: None,
+            loop_activity: false,
+        });
     }
 
     pub fn idle(&self, worker_id: String, registry_generation: u64) {
-        self.update(
-            WorkerPhaseV1::Idle,
-            Some(worker_id),
-            Some(registry_generation),
-            None,
-            None,
-            true,
-        );
+        self.update(WorkerStatusUpdate {
+            phase: WorkerPhaseV1::Idle,
+            worker_id: Some(worker_id),
+            registry_generation: Some(registry_generation),
+            lease_id: None,
+            unit_id: None,
+            loop_activity: true,
+        });
     }
 
     pub fn working(
@@ -152,14 +160,14 @@ impl WorkerObservabilityServerV1 {
         unit_id: String,
     ) {
         metrics::counter!("outbe_ocomp_worker_units_started_total").increment(1);
-        self.update(
-            WorkerPhaseV1::Working,
-            Some(worker_id),
-            Some(registry_generation),
-            Some(lease_id),
-            Some(unit_id),
-            true,
-        );
+        self.update(WorkerStatusUpdate {
+            phase: WorkerPhaseV1::Working,
+            worker_id: Some(worker_id),
+            registry_generation: Some(registry_generation),
+            lease_id: Some(lease_id),
+            unit_id: Some(unit_id),
+            loop_activity: true,
+        });
     }
 
     pub fn cancelling(&self) {
@@ -200,26 +208,27 @@ impl WorkerObservabilityServerV1 {
         snapshot(&self.state)
     }
 
-    fn update(
-        &self,
-        phase: WorkerPhaseV1,
-        worker_id: Option<String>,
-        registry_generation: Option<u64>,
-        lease_id: Option<String>,
-        unit_id: Option<String>,
-        loop_activity: bool,
-    ) {
+    fn update(&self, update: WorkerStatusUpdate) {
         if let Ok(mut state) = self.state.lock() {
-            state.phase = phase;
-            state.worker_id = worker_id;
-            state.registry_generation = registry_generation;
-            state.lease_id = lease_id;
-            state.unit_id = unit_id;
-            if loop_activity {
+            state.phase = update.phase;
+            state.worker_id = update.worker_id;
+            state.registry_generation = update.registry_generation;
+            state.lease_id = update.lease_id;
+            state.unit_id = update.unit_id;
+            if update.loop_activity {
                 state.last_loop_activity = Instant::now();
             }
         }
     }
+}
+
+struct WorkerStatusUpdate {
+    phase: WorkerPhaseV1,
+    worker_id: Option<String>,
+    registry_generation: Option<u64>,
+    lease_id: Option<String>,
+    unit_id: Option<String>,
+    loop_activity: bool,
 }
 
 pub struct SnapshotExporterObservabilityServerV1 {
@@ -378,10 +387,9 @@ fn prometheus_handle() -> Result<PrometheusHandle, WorkerObservabilityErrorV1> {
         .get_or_init(|| {
             PrometheusBuilder::new()
                 .install_recorder()
-                .map_err(|error| error.to_string())
+                .map_err(WorkerObservabilityErrorV1::recorder)
         })
         .clone()
-        .map_err(WorkerObservabilityErrorV1::Recorder)
 }
 
 fn start_server(
@@ -400,7 +408,7 @@ fn start_server(
             {
                 Ok(runtime) => runtime,
                 Err(error) => {
-                    let _ = ready_tx.send(Err(error.to_string()));
+                    let _ = ready_tx.send(Err(WorkerObservabilityErrorV1::start(error)));
                     return;
                 }
             };
@@ -408,14 +416,14 @@ fn start_server(
                 let acceptor = match salvo::conn::TcpListener::new(address).try_bind().await {
                     Ok(acceptor) => acceptor,
                     Err(error) => {
-                        let _ = ready_tx.send(Err(error.to_string()));
+                        let _ = ready_tx.send(Err(WorkerObservabilityErrorV1::start(error)));
                         return;
                     }
                 };
                 let bound_address = match acceptor.local_addr() {
                     Ok(address) => address,
                     Err(error) => {
-                        let _ = ready_tx.send(Err(error.to_string()));
+                        let _ = ready_tx.send(Err(WorkerObservabilityErrorV1::start(error)));
                         return;
                     }
                 };
@@ -427,11 +435,10 @@ fn start_server(
                 server.serve(router).await;
             });
         })
-        .map_err(|error| WorkerObservabilityErrorV1::Start(error.to_string()))?;
+        .map_err(WorkerObservabilityErrorV1::start)?;
     let (address, handle) = ready_rx
         .recv_timeout(Duration::from_secs(10))
-        .map_err(|error| WorkerObservabilityErrorV1::Start(error.to_string()))?
-        .map_err(WorkerObservabilityErrorV1::Start)?;
+        .map_err(WorkerObservabilityErrorV1::start)??;
     Ok(ObservabilityServerParts {
         address,
         handle,
@@ -641,7 +648,7 @@ fn snapshot_exporter_snapshot(
     })
 }
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum WorkerObservabilityErrorV1 {
     #[error("worker observability address {0} must be a loopback endpoint")]
     InvalidAddress(SocketAddr),

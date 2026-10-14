@@ -75,31 +75,13 @@ pub fn authoritative_bucket_shuffle_records<'a>(
     let object = reader.read_verified(&admission.artifact_ref)?;
     let artifact = UnitArtifactV1::decode_canonical(object.bytes(), limits)?;
     artifact.validate_semantics(limits)?;
-    if artifact.protocol_bundle_hash != authority.protocol_bundle_hash
-        || artifact.job_id != authority.job_id
-        || artifact.attempt != authority.attempt
-        || artifact.unit_id != admission.unit_id
-        || artifact.phase != UnitPhase::BucketShuffle
-    {
+    if !matches_bucket_shuffle_artifact(&artifact, &authority, admission.unit_id) {
         return Err(ProtocolError::InvalidInvariant("final BucketShuffle unit artifact").into());
     }
     let root = ShuffleRunArtifactV1::decode_canonical(artifact.phase_payload(limits)?, limits)?;
     root.validate_root_semantics(limits)?;
     let header = artifact.output_header(limits)?;
-    if root.protocol_bundle_hash != authority.protocol_bundle_hash
-        || root.job_id != authority.job_id
-        || root.attempt != authority.attempt
-        || root.unit_id != admission.unit_id
-        || root.kind != ShuffleRunKindV1::Bucket
-        || root.run_span.start_run != 0
-        || root.run_span.end_run != authority.primary_work_unit_count
-        || root.source_coverage_root != header.source_coverage_root
-        || root.source_coverage_count != authority.tribute_count
-        || root.source_coverage_count != header.source_coverage_count
-        || root.ordered_record_root != header.output_coverage_root
-        || root.record_count != authority.tribute_count
-        || root.record_count != header.output_coverage_count
-    {
+    if !matches_bucket_shuffle_root(&root, &header, &authority, admission.unit_id) {
         return Err(
             ProtocolError::InvalidInvariant("complete authoritative BucketShuffle root").into(),
         );
@@ -112,4 +94,69 @@ pub fn authoritative_bucket_shuffle_records<'a>(
             .map_err(|_| ProtocolError::InvalidInvariant("authoritative BucketShuffle descendant"))
     })
     .map_err(AuthoritativeBucketShuffleError::from)
+}
+
+fn matches_bucket_shuffle_artifact(
+    artifact: &UnitArtifactV1,
+    authority: &crate::admission_catalog::AdmissionPlanAuthorityV1,
+    expected_unit_id: alloy_primitives::B256,
+) -> bool {
+    let actual = (
+        artifact.protocol_bundle_hash,
+        artifact.job_id,
+        artifact.attempt,
+        artifact.unit_id,
+        artifact.phase,
+    );
+    let expected = (
+        authority.protocol_bundle_hash,
+        authority.job_id,
+        authority.attempt,
+        expected_unit_id,
+        UnitPhase::BucketShuffle,
+    );
+    actual == expected
+}
+
+fn matches_bucket_shuffle_root(
+    root: &ShuffleRunArtifactV1,
+    header: &outbe_ocomp_protocol::unit::WorkOutputHeaderV1,
+    authority: &crate::admission_catalog::AdmissionPlanAuthorityV1,
+    expected_unit_id: alloy_primitives::B256,
+) -> bool {
+    let root_subject = (
+        root.protocol_bundle_hash,
+        root.job_id,
+        root.attempt,
+        root.unit_id,
+        root.kind,
+        root.run_span.start_run,
+        root.run_span.end_run,
+    );
+    let expected_subject = (
+        authority.protocol_bundle_hash,
+        authority.job_id,
+        authority.attempt,
+        expected_unit_id,
+        ShuffleRunKindV1::Bucket,
+        0,
+        authority.primary_work_unit_count,
+    );
+    let root_coverage = (
+        root.source_coverage_root,
+        root.source_coverage_count,
+        root.source_coverage_count,
+        root.ordered_record_root,
+        root.record_count,
+        root.record_count,
+    );
+    let expected_coverage = (
+        header.source_coverage_root,
+        authority.tribute_count,
+        header.source_coverage_count,
+        header.output_coverage_root,
+        authority.tribute_count,
+        header.output_coverage_count,
+    );
+    root_subject == expected_subject && root_coverage == expected_coverage
 }

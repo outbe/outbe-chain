@@ -42,12 +42,10 @@ fn initialize_bootstrap_if_needed(metadosis: &mut MetadosisContract) -> Result<(
     }
     let active = metadosis.active_wwd.read_all()?;
     let first = *active.first().ok_or_else(|| {
-        crate::errors::storage_corruption(
-            "Metadosis bootstrap needs the genesis Worldwide Day".into(),
-        )
+        crate::errors::storage_corruption("Metadosis bootstrap needs the genesis Worldwide Day")
     })?;
     let record = metadosis.worldwide_days.get(first)?.ok_or_else(|| {
-        crate::errors::storage_corruption("genesis Worldwide Day record disappeared".into())
+        crate::errors::storage_corruption("genesis Worldwide Day record disappeared")
     })?;
     metadosis.set_bootstrap_end_time(record.lookback_end)
 }

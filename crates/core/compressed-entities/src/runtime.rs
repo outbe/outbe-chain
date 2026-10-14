@@ -101,24 +101,21 @@ pub(crate) fn read(
                 .get(entity)
                 .map_err(PrecompileError::from)?
                 .ok_or_else(|| {
-                    PrecompileError::BodyReadCorruption(format!(
+                    crate::errors::body_read_corruption(format!(
                         "committed body {entity_id} is missing from finalized parent"
                     ))
                 })?;
             charge_body_read(&storage, scope, stored.encode().len())?;
             verify_stored(entity, stored, commitment, BodyOrigin::Parent)
                 .map(Some)
-                .map_err(|error| match error {
-                    PrecompileError::BodyReadCorruption(message) => {
-                        PrecompileError::BodyReadCorruption(format!(
-                            "{message}; [CE_BODY_DIAGNOSTIC] evm_block={:?} evm_ce_root={parent_root} parent_root={:?} {} thread={:?}",
-                            storage.block_number(),
-                            scope.parent_root(),
-                            scope.diagnostic_parent_binding(),
-                            std::thread::current().id(),
-                        ))
-                    }
-                    other => other,
+                .map_err(|error| {
+                    crate::errors::enrich_body_read_corruption(
+                        error,
+                        storage.block_number(),
+                        parent_root,
+                        scope.parent_root(),
+                        &scope.diagnostic_parent_binding(),
+                    )
                 })
         }
     }
@@ -212,8 +209,7 @@ pub(crate) fn list(
 }
 
 fn calculate_commitment(entity_id: WwdEntityId, payload: &[u8]) -> Result<Commitment> {
-    body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, entity_id, payload)
-        .map_err(|error| fatal(error.to_string()))
+    body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, entity_id, payload).map_err(fatal)
 }
 
 fn current_commitment(
@@ -441,7 +437,7 @@ fn commitment_b256(value: Option<Commitment>) -> B256 {
 }
 
 fn input_error(error: impl core::fmt::Display) -> PrecompileError {
-    revert(error.to_string())
+    revert(error)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -451,18 +447,18 @@ enum BodyOrigin {
 }
 
 impl BodyOrigin {
-    fn invalid(self, message: impl Into<String>) -> PrecompileError {
+    fn invalid(self, message: impl core::fmt::Display) -> PrecompileError {
         match self {
             Self::Overlay => fatal(message),
-            Self::Parent => PrecompileError::BodyReadCorruption(message.into()),
+            Self::Parent => crate::errors::body_read_corruption(message),
         }
     }
 }
 
-fn fatal(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Fatal(message.into())
+fn fatal(message: impl core::fmt::Display) -> PrecompileError {
+    crate::errors::fatal_error(message)
 }
 
-fn revert(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Revert(message.into())
+fn revert(message: impl core::fmt::Display) -> PrecompileError {
+    crate::errors::revert_error(message)
 }

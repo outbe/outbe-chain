@@ -36,9 +36,11 @@ pub(crate) struct AdmissionAudit {
 /// not reexecution of the worker program or complete result-catalog closure.
 pub(crate) fn verify_present_admissions(
     ocomp_root: &Path,
-    expected_manifest: &outbe_ocomp_protocol::input::InputManifestV1,
-    expected_lysis_limit: U256,
-    expected_evaluation_time: u64,
+    (expected_manifest, expected_lysis_limit, expected_evaluation_time): (
+        &outbe_ocomp_protocol::input::InputManifestV1,
+        U256,
+        u64,
+    ),
     cas_limits: CasLimits,
     maximum_records: Option<u64>,
     visitor: &mut impl FnMut(&outbe_ocomp_protocol::CasObjectRefV1) -> eyre::Result<()>,
@@ -70,12 +72,12 @@ pub(crate) fn verify_present_admissions(
             &bundle,
             &limits,
         )?;
-        ensure!(
+        require(
             audit.manifest() == expected_manifest
                 && audit.plan().lysis_limit_minor == expected_lysis_limit
                 && audit.plan().logical_evaluation_time == expected_evaluation_time,
-            "local plan differs from canonical export or frozen inputs"
-        );
+            SnapshotOcompError::LocalPlanMismatch,
+        )?;
         let plan = audit.plan();
         let plan_hash = plan.plan_hash(&limits)?;
         let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
@@ -91,36 +93,48 @@ pub(crate) fn verify_present_admissions(
             let name = entry.file_name();
             let name = name
                 .to_str()
-                .ok_or_else(|| eyre::eyre!("invalid admission locator"))?;
+                .ok_or(SnapshotOcompError::InvalidAdmissionLocatorPlain)?;
             if matches!(name, "catalog.header" | "catalog.lock") {
                 continue;
             }
             let ordinal: u32 = name
                 .strip_suffix(".admission")
-                .ok_or_else(|| eyre::eyre!("unexpected admission entry {name}"))?
+                .ok_or_else(|| SnapshotOcompError::UnexpectedAdmissionEntry {
+                    name: name.to_string(),
+                })?
                 .parse()?;
-            ensure!(
+            require(
                 name == format!("{ordinal:010}.admission")
                     && ordinal < counts.expected
                     && entry.file_type()?.is_file(),
-                "invalid admission locator {name}"
-            );
-            if maximum_records.is_some_and(|maximum| u64::from(counts.present) >= maximum) {
-                return Err(Incomplete(format!(
+                SnapshotOcompError::InvalidAdmissionLocator {
+                    name: name.to_string(),
+                },
+            )?;
+            require(
+                !maximum_records.is_some_and(|maximum| u64::from(counts.present) >= maximum),
+                Incomplete(format!(
                     "present admission walk stopped after {} records; plan has {} positions",
                     counts.present, counts.expected
-                ))
-                .into());
-            }
+                )),
+            )?;
             let record = admissions.read(ordinal)?;
-            ensure!(
-                record.protocol_bundle_hash == plan.protocol_bundle_hash
-                    && record.job_id == plan.job_id
-                    && record.attempt == plan.attempt
-                    && record.plan_hash == plan_hash
-                    && !record.unit_id.is_zero(),
-                "present admission differs from plan authority at ordinal {ordinal}"
-            );
+            require(
+                (
+                    record.protocol_bundle_hash,
+                    record.job_id,
+                    record.attempt,
+                    record.plan_hash,
+                    !record.unit_id.is_zero(),
+                ) == (
+                    plan.protocol_bundle_hash,
+                    plan.job_id,
+                    plan.attempt,
+                    plan_hash,
+                    true,
+                ),
+                SnapshotOcompError::PresentAdmissionPlanMismatch { ordinal },
+            )?;
             match (
                 topology.plan_position_at(ordinal)?,
                 record.result_chunk.as_ref(),
@@ -139,7 +153,7 @@ pub(crate) fn verify_present_admissions(
                     counts.result_chunks = counts
                         .result_chunks
                         .checked_add(1)
-                        .ok_or_else(|| eyre::eyre!("result chunk count overflow"))?;
+                        .ok_or(SnapshotOcompError::ResultChunkCountOverflow)?;
                 }
                 (
                     PlannedUnitPositionV1::TreeNode {
@@ -148,14 +162,16 @@ pub(crate) fn verify_present_admissions(
                         ..
                     },
                     _,
-                ) => eyre::bail!("ROOT_REDUCE leaf lacks its exact admitted result entry"),
-                (_, Some(_)) => eyre::bail!("non-leaf admission contains a result entry"),
+                ) => return Err(SnapshotOcompError::RootReduceLeafLacksResultEntry.into()),
+                (_, Some(_)) => {
+                    return Err(SnapshotOcompError::NonLeafAdmissionHasResultEntry.into())
+                }
                 (_, None) => {
                     let spec = audit.candidate_spec_at(ordinal)?;
-                    ensure!(
+                    require(
                         record.unit_id == spec.unit_id(&limits)?,
-                        "present admission UnitId differs at ordinal {ordinal}"
-                    );
+                        SnapshotOcompError::PresentAdmissionUnitIdMismatch { ordinal },
+                    )?;
                     let object = cas.read_verified(&record.artifact_ref)?;
                     let artifact = UnitArtifactV1::decode_canonical(object.bytes(), &limits)?;
                     artifact.validate_against(&spec, &limits)?;
@@ -165,7 +181,7 @@ pub(crate) fn verify_present_admissions(
             counts.present = counts
                 .present
                 .checked_add(1)
-                .ok_or_else(|| eyre::eyre!("present admission count overflow"))?;
+                .ok_or(SnapshotOcompError::PresentAdmissionCountOverflow)?;
         }
         Ok(counts)
     };
@@ -200,7 +216,7 @@ pub(crate) fn verify_local_result(
     let finalized = job
         .finalized
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("local result comparison requires canonical finality"))?;
+        .ok_or(SnapshotOcompError::LocalResultComparisonRequiresFinality)?;
     let limits = poc_schema_limits();
     let reader = LocalLysisResultReader::open_existing(root, limits)?;
     let Some(loaded) = reader.load(finalized.job_id)? else {
@@ -217,23 +233,21 @@ pub(super) fn verify_loaded_local_result(
     let finalized = job
         .finalized
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("local result lacks canonical finality"))?;
+        .ok_or(SnapshotOcompError::LocalResultLacksFinality)?;
     let result = LysisResultV1::decode_canonical(&loaded.canonical_result, &poc_schema_limits())?;
-    ensure!(
-        result.job_id == finalized.job_id,
-        "local result differs from canonical JobId"
-    );
+    if result.job_id != finalized.job_id {
+        return Err(SnapshotOcompError::LocalResultJobIdMismatch.into());
+    }
     result.validate_finalized_intent(&job.intent)?;
     let completed = job
         .terminal
         .as_ref()
         .and_then(|terminal| terminal.completed_binding.as_ref());
-    if let Some(binding) = completed {
-        ensure!(
-            binding.job_id == finalized.job_id
-                && binding.result_digest == loaded.committed.result_digest,
-            "local result differs from canonical completed binding"
-        );
+    if completed.is_some_and(|binding| {
+        binding.job_id != finalized.job_id
+            || binding.result_digest != loaded.committed.result_digest
+    }) {
+        return Err(SnapshotOcompError::LocalResultCompletedBindingMismatch.into());
     }
     Ok(LocalResultAudit {
         result,
@@ -285,10 +299,10 @@ pub(crate) fn verify_present_local_results(
         let name = entry.file_name();
         let name = name
             .to_str()
-            .ok_or_else(|| eyre::eyre!("invalid native result filename"))?;
+            .ok_or(SnapshotOcompError::InvalidNativeResultFilename)?;
         let encoded_job = name
             .strip_suffix(".lysis-result-v1.ocb1")
-            .ok_or_else(|| eyre::eyre!("invalid native result filename"))?;
+            .ok_or(SnapshotOcompError::InvalidNativeResultFilename)?;
         let mut bytes = [0_u8; 32];
         hex::decode_to_slice(encoded_job, &mut bytes)?;
         let job_id = B256::from(bytes);
@@ -300,9 +314,11 @@ pub(crate) fn verify_present_local_results(
         let job = locate_request_job(
             state,
             view,
-            summary.logical_evaluation_height,
-            job_id,
-            WorldwideDay::new(summary.wwd),
+            (
+                summary.logical_evaluation_height,
+                job_id,
+                WorldwideDay::new(summary.wwd),
+            ),
             maximum_records,
         )?;
         let observation = verify_loaded_local_result(&job, &loaded)?;
@@ -310,11 +326,11 @@ pub(crate) fn verify_present_local_results(
         counts.results = counts
             .results
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("local result count overflow"))?;
+            .ok_or(SnapshotOcompError::LocalResultCountOverflow)?;
         counts.terminal_digests = counts
             .terminal_digests
             .checked_add(u64::from(observation.terminal_digest_checked))
-            .ok_or_else(|| eyre::eyre!("local result digest count overflow"))?;
+            .ok_or(SnapshotOcompError::LocalResultDigestCountOverflow)?;
     }
     Ok(counts)
 }

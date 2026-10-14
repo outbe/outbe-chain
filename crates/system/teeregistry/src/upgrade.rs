@@ -1,10 +1,7 @@
 //! Explicit opt-in hard retirement. Zero anchors retain historical lease semantics.
-use crate::{NodeEnclaveBindingV1, TeeRegistry};
+use crate::{errors::TeeRegistryError, NodeEnclaveBindingV1, TeeRegistry};
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_primitives::{
-    error::{PrecompileError, Result},
-    tee_attestation_v1::TeePolicyV1,
-};
+use outbe_primitives::{error::Result, tee_attestation_v1::TeePolicyV1};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EnclaveUpgradeV1 {
@@ -28,28 +25,23 @@ impl TeeRegistry<'_> {
             return if transition {
                 self.staged_successor_policy_v1()?
                     .map(|(_, policy)| policy)
-                    .ok_or_else(|| {
-                        PrecompileError::Revert("no successor V1 policy is staged".into())
-                    })
+                    .ok_or_else(|| TeeRegistryError::NoSuccessorV1PolicyStaged.into())
             } else {
                 self.active_policy_v1()
             };
         }
-        let decoded = AttestationEvidenceV1::decode_canonical(evidence).map_err(|e| {
-            PrecompileError::Revert(format!("attestation evidence is not canonical: {e}"))
-        })?;
+        let decoded = AttestationEvidenceV1::decode_canonical(evidence)
+            .map_err(TeeRegistryError::attestation_evidence_not_canonical)?;
         let hash = decoded.intent().policy_hash;
         if !self.policy_hash_admitted_v1(hash, transition)? {
-            return Err(PrecompileError::Revert(
-                "attestation targets a retired or unapproved TEE policy".into(),
-            ));
+            return Err(TeeRegistryError::AttestationTargetsRetiredOrUnapprovedPolicy.into());
         }
         if hash == self.active_v1_policy_hash.read()? {
             return self.active_policy_v1();
         }
         self.staged_successor_policy_v1()?
             .map(|(_, policy)| policy)
-            .ok_or_else(|| PrecompileError::Revert("no successor V1 policy is staged".into()))
+            .ok_or_else(|| TeeRegistryError::NoSuccessorV1PolicyStaged.into())
     }
 
     #[cfg(feature = "tee-attestation-v1")]
@@ -136,20 +128,16 @@ impl TeeRegistry<'_> {
             || mrenclave.is_zero()
             || current.measurement_rules.len() != 1
         {
-            return Err(PrecompileError::Revert(
-                "enclave upgrade requires the exact single-measurement predecessor policy".into(),
-            ));
+            return Err(TeeRegistryError::UpgradeRequiresSingleMeasurementPredecessor.into());
         }
         if current.measurement_rules[0].mrenclave == mrenclave {
-            return Err(PrecompileError::Revert(
-                "enclave upgrade must change MRENCLAVE".into(),
-            ));
+            return Err(TeeRegistryError::UpgradeMustChangeMrenclave.into());
         }
         let mut successor = current;
         successor.policy_version = successor
             .policy_version
             .checked_add(1)
-            .ok_or_else(|| PrecompileError::Revert("TEE policy version overflow".into()))?;
+            .ok_or(TeeRegistryError::TeePolicyVersionOverflow)?;
         successor.predecessor_policy_hash = predecessor;
         successor.activation_height = height;
         successor.measurement_rules[0].mrenclave = mrenclave;
@@ -236,5 +224,5 @@ fn penalty_key(proposal: U256, validator: Address) -> B256 {
 fn policy_hash(policy: &TeePolicyV1) -> Result<B256> {
     policy
         .policy_hash()
-        .map_err(|e| PrecompileError::Revert(format!("invalid TEE policy: {e}")))
+        .map_err(TeeRegistryError::invalid_tee_policy)
 }

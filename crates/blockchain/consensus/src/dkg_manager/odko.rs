@@ -65,6 +65,12 @@ impl fmt::Display for OdkoDecodeError {
 
 impl std::error::Error for OdkoDecodeError {}
 
+impl OdkoDecodeError {
+    fn invalid_output(error: impl fmt::Display) -> Self {
+        Self::InvalidOutput(error.to_string())
+    }
+}
+
 impl OdkoOutcome {
     pub fn encode(&self) -> Bytes {
         let output_bytes = commonware_codec::Encode::encode(&self.output);
@@ -96,7 +102,7 @@ impl OdkoOutcome {
             .ok_or_else(|| OdkoDecodeError::InvalidOutput("zero validator cap".into()))?;
         let output =
             Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &(max, ModeVersion::v0()))
-                .map_err(|error| OdkoDecodeError::InvalidOutput(error.to_string()))?;
+                .map_err(OdkoDecodeError::invalid_output)?;
         if !reader.is_empty() {
             return Err(OdkoDecodeError::TrailingOutputBytes);
         }

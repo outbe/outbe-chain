@@ -134,11 +134,8 @@ pub(super) enum BuildBlockOutcome {
     BoundaryUnavailable,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub(super) enum BuiltCandidatePreparationError {
-    #[error("locally built payload was not accepted by execution: {0}")]
-    Execution(String),
-}
+use crate::errors::ApplicationError;
+pub(super) use crate::errors::BuiltCandidatePreparationError;
 
 /// Import and validate a locally built candidate before advertising it.
 pub(super) async fn prepare_built_candidate(
@@ -151,7 +148,7 @@ pub(super) async fn prepare_built_candidate(
     let status = engine
         .new_payload(execution_data)
         .await
-        .map_err(|error| BuiltCandidatePreparationError::Execution(error.to_string()))?;
+        .map_err(BuiltCandidatePreparationError::from_execution_error)?;
     if !status.is_valid() {
         return Err(BuiltCandidatePreparationError::Execution(format!(
             "{status:?}"
@@ -205,7 +202,7 @@ impl ApplicationShared {
             .await?;
         self.vrf_safety
             .ensure_block_allowed(next_block_number)
-            .map_err(|error| eyre::eyre!("refusing proposal above VRF expiry: {error}"))?;
+            .map_err(ApplicationError::RefusingProposalAboveVrfExpiry)?;
 
         // Steps 3+4: Canonicalize parent as head and build next block.
         // Uses FCU-based flow. canonicalize_and_build sends FCU with payload

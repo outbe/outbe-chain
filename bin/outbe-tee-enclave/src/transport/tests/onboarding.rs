@@ -24,7 +24,7 @@ fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
         AttestationOperationV1, RegistrationIntentV1, TransitionKeyReadyProofV1,
     };
 
-    fn quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
+    fn quote(report_data: &[u8; 64]) -> crate::errors::EnclaveResult<Vec<u8>> {
         let mut quote = vec![0_u8; outbe_tee::quote::MIN_QUOTE_LEN];
         let offset = quote.len() - report_data.len();
         quote[offset..].copy_from_slice(report_data);
@@ -391,11 +391,13 @@ fn gramine_direct_dev_onboarding_is_mode_gated_and_persists_before_activation() 
         .authorize_command(&request, false, SessionAuthorityV1::LocalNodeHost)
         .is_ok());
     let response = complete_gramine_direct_dev_onboarding_ingest_response(
-        &onboarding_artifact,
-        context.intent_hash,
-        context.tribute_offer_public,
-        context.key_epoch,
-        context.tribute_offer_epoch,
+        OnboardingArtifactExpectations {
+            artifact: &onboarding_artifact,
+            expected_intent_hash: context.intent_hash,
+            expected_tribute_offer_public: context.tribute_offer_public,
+            expected_key_epoch: context.key_epoch,
+            expected_tribute_offer_epoch: context.tribute_offer_epoch,
+        },
         &target_keys,
         &target_offer_key,
         Some(&target_boot),
@@ -453,11 +455,13 @@ fn purpose_bound_target_derivation_requires_exact_manifest_context_and_nonce() {
     let derived = derive_onboarding_offer_key_v1(
         &keys,
         &manifest,
-        &artifact,
-        intent_hash,
-        offer_public,
-        3,
-        4,
+        &OnboardingArtifactExpectations {
+            artifact: &artifact,
+            expected_intent_hash: intent_hash,
+            expected_tribute_offer_public: offer_public,
+            expected_key_epoch: 3,
+            expected_tribute_offer_epoch: 4,
+        },
     )
     .unwrap();
     assert_eq!(derived.public(), offer_public);
@@ -472,11 +476,13 @@ fn purpose_bound_target_derivation_requires_exact_manifest_context_and_nonce() {
         assert!(derive_onboarding_offer_key_v1(
             &keys,
             &manifest,
-            &artifact,
-            intent_hash,
-            offer_public,
-            3,
-            4,
+            &OnboardingArtifactExpectations {
+                artifact: &artifact,
+                expected_intent_hash: intent_hash,
+                expected_tribute_offer_public: offer_public,
+                expected_key_epoch: 3,
+                expected_tribute_offer_epoch: 4,
+            },
         )
         .is_err());
     };
@@ -511,21 +517,25 @@ fn purpose_bound_target_derivation_requires_exact_manifest_context_and_nonce() {
     assert!(derive_onboarding_offer_key_v1(
         &keys,
         &manifest,
-        &artifact,
-        B256::repeat_byte(0xff),
-        offer_public,
-        3,
-        4,
+        &OnboardingArtifactExpectations {
+            artifact: &artifact,
+            expected_intent_hash: B256::repeat_byte(0xff),
+            expected_tribute_offer_public: offer_public,
+            expected_key_epoch: 3,
+            expected_tribute_offer_epoch: 4,
+        },
     )
     .is_err());
     assert!(derive_onboarding_offer_key_v1(
         &keys,
         &manifest,
-        &artifact,
-        intent_hash,
-        offer_public,
-        3,
-        5,
+        &OnboardingArtifactExpectations {
+            artifact: &artifact,
+            expected_intent_hash: intent_hash,
+            expected_tribute_offer_public: offer_public,
+            expected_key_epoch: 3,
+            expected_tribute_offer_epoch: 5,
+        },
     )
     .is_err());
 
@@ -535,11 +545,13 @@ fn purpose_bound_target_derivation_requires_exact_manifest_context_and_nonce() {
     assert!(derive_onboarding_offer_key_v1(
         &keys,
         &manifest,
-        &tampered,
-        intent_hash,
-        offer_public,
-        3,
-        4,
+        &OnboardingArtifactExpectations {
+            artifact: &tampered,
+            expected_intent_hash: intent_hash,
+            expected_tribute_offer_public: offer_public,
+            expected_key_epoch: 3,
+            expected_tribute_offer_epoch: 4,
+        },
     )
     .is_err());
 }

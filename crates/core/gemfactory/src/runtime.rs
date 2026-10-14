@@ -7,7 +7,7 @@ use outbe_oracle::api::{get_utc_day_vwap_for_iso, settlement_fx_rates, VwapSnaps
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::SCALE_1E6_U256;
@@ -238,7 +238,7 @@ fn burn_intex_into_gem_factory(
         .into(),
     )?;
     IIntexNFT1155::sendToGemFactoryCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("sendToGemFactory return undecodable".into()))
+        .map_err(|_| GemFactoryError::UndecodableReturn("sendToGemFactory return").into())
 }
 
 /// Issue one Merchant gem to a customer, draining the position's capacity.
@@ -462,7 +462,7 @@ fn accept_payment_asset(
             .into(),
     )?;
     let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
+        .map_err(|_| GemFactoryError::UndecodableReturn("assetVaultsCount"))?;
     if vaults.is_zero() {
         return Err(GemFactoryError::SettlementAssetNotRegistered { asset }.into());
     }
@@ -573,7 +573,7 @@ fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
     )?;
     IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
+        .map_err(|_| GemFactoryError::UndecodableReturn("isoCode").into())
 }
 
 /// What settling `gem_id` with `asset` costs, in which currency, and the VWAP

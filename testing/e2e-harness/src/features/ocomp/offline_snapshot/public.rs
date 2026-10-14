@@ -162,12 +162,8 @@ pub(super) fn snapshot_public_effects(
     );
 
     let proofs = snapshot_public_nod_proofs(world, generation)?;
-    let transactions = snapshot_public_transactions(
-        world,
-        cut_height,
-        through,
-        copied_queue_sequence,
-    )?;
+    let transactions =
+        snapshot_public_transactions(world, cut_height, through, copied_queue_sequence)?;
     Ok(
         serde_json::json!({"generation":generation,"completion":completed,
         "nod_proofs":proofs,"post_cut_transactions":transactions}),
@@ -200,12 +196,8 @@ pub(super) fn snapshot_observes_public_actions_checked(
         .ocomp_certified_generation
         .as_ref()
         .ok_or_else(|| eyre!("certified generation"))?;
-    let observed = snapshot_public_effects(
-        world,
-        snapshot.cut_canonical.number,
-        queue,
-        generation,
-    )?;
+    let observed =
+        snapshot_public_effects(world, snapshot.cut_canonical.number, queue, generation)?;
     std::fs::write(
         root.join("public-effects.json"),
         serde_json::to_vec_pretty(&observed)?,
@@ -229,9 +221,7 @@ impl SnapshotPublicScan<'_> {
     ) -> eyre::Result<Option<(bool, serde_json::Value)>> {
         use crate::internal::eth;
         use alloy_primitives::Address;
-        let Some(materialization) =
-            snapshot_public_kind(tx, self.copied_queue_sequence)?
-        else {
+        let Some(materialization) = snapshot_public_kind(tx, self.copied_queue_sequence)? else {
             return Ok(None);
         };
         let signer: Address = tx["from"]

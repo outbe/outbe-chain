@@ -28,7 +28,10 @@ pub enum ResolvedTeeSession {
 }
 
 impl TeeSessionMode {
-    pub fn resolve(self, policy: AttestationMode) -> Result<ResolvedTeeSession, &'static str> {
+    pub fn resolve(
+        self,
+        policy: AttestationMode,
+    ) -> Result<ResolvedTeeSession, crate::errors::ArgsError> {
         match (self, policy) {
             (Self::PolicyDefault, AttestationMode::DcapRequired)
             | (Self::ProductionNodeHost, _) => Ok(ResolvedTeeSession::ProductionNodeHost),
@@ -36,7 +39,7 @@ impl TeeSessionMode {
                 Ok(ResolvedTeeSession::Development)
             }
             (Self::Development, AttestationMode::DcapRequired) => {
-                Err("DcapRequired forbids the development enclave session")
+                Err(crate::errors::ArgsError::DcapRequiredForbidsDevSession)
             }
         }
     }
@@ -296,23 +299,20 @@ impl ConsensusArgs {
 
     fn validate_role_and_transport(&self) -> eyre::Result<()> {
         if self.txpool_pending_staleness_secs == 0 {
-            eyre::bail!("--txpool.outbe.pending-staleness-secs must be greater than zero");
+            return Err(crate::errors::ArgsError::PendingStalenessSecsZero.into());
         }
         // Follower mode (`--upstream`) is the lightweight full-node path and must
         // not be combined with validator/consensus participation. (clap's
         // `conflicts_with` also enforces this on the CLI. This check covers
         // programmatic construction and gives a clear message.)
         if self.upstream.is_some() && self.is_validator {
-            eyre::bail!("--upstream (follower mode) is mutually exclusive with --validator");
+            return Err(crate::errors::ArgsError::UpstreamMutuallyExclusiveWithValidator.into());
         }
         if self.upstream_nocertify && self.upstream.is_none() {
-            eyre::bail!("--upstream.nocertify requires --upstream");
+            return Err(crate::errors::ArgsError::UpstreamNocertifyRequiresUpstream.into());
         }
         if self.is_validator && self.signing_key.is_none() {
-            eyre::bail!(
-                "--validator requires --consensus.signing-key. \
-                 Provide the path to your BLS signing key file."
-            );
+            return Err(crate::errors::ArgsError::ValidatorRequiresSigningKey.into());
         }
         self.validate_radicle_coordination()
     }
@@ -320,16 +320,16 @@ impl ConsensusArgs {
     fn validate_radicle_coordination(&self) -> eyre::Result<()> {
         if self.is_validator {
             if self.radicle_control_socket.is_none() {
-                eyre::bail!("--validator requires --radicle.control-socket");
+                return Err(crate::errors::ArgsError::ValidatorRequiresRadicleControlSocket.into());
             }
             let status = self
                 .radicle_status_address
-                .ok_or_else(|| eyre::eyre!("--validator requires --radicle.status-address"))?;
+                .ok_or(crate::errors::ArgsError::ValidatorRequiresRadicleStatusAddress)?;
             if !status.ip().is_loopback() {
-                eyre::bail!("--radicle.status-address must be loopback-only");
+                return Err(crate::errors::ArgsError::RadicleStatusAddressNotLoopback.into());
             }
         } else if self.radicle_control_socket.is_some() || self.radicle_status_address.is_some() {
-            eyre::bail!("Radicle flags require --validator");
+            return Err(crate::errors::ArgsError::RadicleFlagsRequireValidator.into());
         }
         Ok(())
     }
@@ -365,29 +365,23 @@ impl ConsensusArgs {
         match (share, poly, output) {
             (false, false, false) | (false, true, true) | (true, true, true) => {}
             _ => {
-                eyre::bail!(
-                    "manual DKG provisioning requires either all of --consensus.signing-share, \
-                 --consensus.public-polynomial, --consensus.dkg-output (signer), or \
-                 --consensus.public-polynomial + --consensus.dkg-output without \
-                 --consensus.signing-share (verifier-join)."
-                );
+                return Err(crate::errors::ArgsError::InvalidManualDkgProvisioning.into());
             }
         }
         if self.bls_key_backend == "encrypted" && self.bls_passphrase.is_none() {
-            eyre::bail!(
-                "--bls-key-backend encrypted requires --bls-passphrase or BLS_PASSPHRASE env var."
-            );
+            return Err(crate::errors::ArgsError::EncryptedBackendRequiresPassphraseArg.into());
         }
         Ok(())
     }
 
     /// Returns the required configuration path. The node loads the document once at startup.
     pub fn offchain_data(&self) -> eyre::Result<OffchainDataArgs> {
-        let path = self.projection_storage_config.as_ref().ok_or_else(|| {
-            eyre::eyre!("offchain storage is required; provide --projection.storage-config")
-        })?;
+        let path = self
+            .projection_storage_config
+            .as_ref()
+            .ok_or(crate::errors::ArgsError::OffchainStorageRequired)?;
         if path.as_os_str().is_empty() {
-            eyre::bail!("--projection.storage-config must not be empty");
+            return Err(crate::errors::ArgsError::ProjectionStorageConfigEmpty.into());
         }
         Ok(OffchainDataArgs {
             storage_config: path.clone(),
@@ -407,9 +401,7 @@ impl ConsensusArgs {
             return Ok(Some(path.clone()));
         }
         let Some(signing_key) = &self.signing_key else {
-            return Err(eyre::eyre!(
-                "--validator requires --consensus.signing-key before deriving default --validator.evm-key"
-            ));
+            return Err(crate::errors::ArgsError::ValidatorEvmKeyRequiresSigningKey.into());
         };
         Ok(Some(
             signing_key
@@ -427,13 +419,11 @@ impl ConsensusArgs {
                 let passphrase = self
                     .bls_passphrase
                     .clone()
-                    .ok_or_else(|| eyre::eyre!("encrypted backend requires passphrase"))?;
+                    .ok_or(crate::errors::ArgsError::EncryptedBackendRequiresPassphrase)?;
                 Ok(outbe_consensus::bls::KeyBackend::Encrypted(passphrase))
             }
             "os-level" => Ok(outbe_consensus::bls::KeyBackend::OsLevel),
-            other => Err(eyre::eyre!(
-                "unknown BLS key backend: {other} (expected: plaintext, encrypted, os-level)"
-            )),
+            other => Err(crate::errors::ArgsError::UnknownBlsKeyBackend(other.to_string()).into()),
         }
     }
 }

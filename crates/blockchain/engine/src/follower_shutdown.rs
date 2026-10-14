@@ -7,7 +7,9 @@ use std::time::Duration;
 use commonware_actor::Feedback;
 use commonware_consensus::{marshal::Update, Reporter};
 use commonware_utils::acknowledgement::Exact;
-use eyre::{ensure, eyre, Result};
+#[cfg(test)]
+use eyre::eyre;
+use eyre::Result;
 use outbe_consensus::{executor::Mailbox, marshal_types::MarshalUpdate};
 use tokio::sync::oneshot;
 
@@ -56,7 +58,7 @@ impl FollowerDrainControl {
             let mut ingress = self
                 .ingress
                 .lock()
-                .map_err(|_| eyre!("follower ingress lock poisoned"))?;
+                .map_err(|_| crate::errors::FollowerShutdownError::IngressLockPoisoned)?;
             ingress.quiescing = true;
             // Dropping the sole sender closes ingress. The executor drains its
             // already accepted queue and closes its height notification stream.
@@ -70,10 +72,8 @@ impl FollowerDrainControl {
         }
         tokio::time::timeout(deadline, self.completion)
             .await
-            .map_err(|_| {
-                eyre!("follower execution/proof drain deadline exceeded before Marshal stop")
-            })?
-            .map_err(|_| eyre!("follower execution/proof drain ended without completion"))
+            .map_err(|_| crate::errors::FollowerShutdownError::DrainDeadlineExceeded)?
+            .map_err(|_| crate::errors::FollowerShutdownError::DrainEndedWithoutCompletion.into())
     }
 }
 
@@ -82,8 +82,10 @@ impl FollowerDrain {
         let mut ingress = self
             .ingress
             .lock()
-            .map_err(|_| eyre!("follower ingress lock poisoned"))?;
-        ensure!(!ingress.installed, "follower ingress already installed");
+            .map_err(|_| crate::errors::FollowerShutdownError::IngressLockPoisoned)?;
+        if ingress.installed {
+            return Err(crate::errors::FollowerShutdownError::IngressAlreadyInstalled.into());
+        }
         if ingress.quiescing {
             return Ok(None);
         }
@@ -100,16 +102,17 @@ impl FollowerDrain {
         observer: impl std::future::Future<Output = Result<()>>,
     ) -> Result<()> {
         futures::try_join!(executor, observer)?;
-        ensure!(
-            self.ingress
-                .lock()
-                .map_err(|_| eyre!("follower ingress lock poisoned"))?
-                .quiescing,
-            "follower drained without a shutdown request"
-        );
+        if !self
+            .ingress
+            .lock()
+            .map_err(|_| crate::errors::FollowerShutdownError::IngressLockPoisoned)?
+            .quiescing
+        {
+            return Err(crate::errors::FollowerShutdownError::DrainedWithoutShutdownRequest.into());
+        }
         self.completion
             .send(())
-            .map_err(|_| eyre!("follower drain owner disappeared"))
+            .map_err(|_| crate::errors::FollowerShutdownError::DrainOwnerDisappeared.into())
     }
 }
 
@@ -239,7 +242,7 @@ impl FollowerReporter {
         Ok(self
             .ingress
             .lock()
-            .map_err(|_| eyre!("follower ingress lock poisoned"))?
+            .map_err(|_| crate::errors::FollowerShutdownError::IngressLockPoisoned)?
             .quiescing)
     }
 }

@@ -1,6 +1,7 @@
 //! Node startup compatibility checks against on-chain active protocol version.
 
 use crate::constants::PROTOCOL_VERSION;
+use crate::errors::StartupCompatibilityError;
 use crate::handlers::UpgradeHandlerRegistry;
 use crate::state::ScheduledUpdateInfo;
 use crate::version::format_protocol_version;
@@ -9,12 +10,17 @@ use crate::ProtocolVersion;
 /// Returns `Ok(())` when `active_version` is not above `PROTOCOL_VERSION`.
 ///
 /// Fresh/pre-vote chains use `active_version == 0` and always pass.
-pub fn assert_binary_protocol_compatible(active_version: ProtocolVersion) -> Result<(), String> {
+pub fn assert_binary_protocol_compatible(
+    active_version: ProtocolVersion,
+) -> Result<(), StartupCompatibilityError> {
     if active_version.is_zero() || active_version <= PROTOCOL_VERSION {
         return Ok(());
     }
 
-    Err(format_binary_mismatch(PROTOCOL_VERSION, active_version))
+    Err(StartupCompatibilityError::BinaryOlderThanActive {
+        binary: PROTOCOL_VERSION,
+        active: active_version,
+    })
 }
 
 /// Emits warnings for scheduled updates whose version has no handler entry.
@@ -32,14 +38,6 @@ pub fn warn_missing_handlers_for_waiting_updates(
             );
         }
     }
-}
-
-fn format_binary_mismatch(binary: ProtocolVersion, active: ProtocolVersion) -> String {
-    format!(
-        "binary protocol version {} is older than on-chain active protocol version {}; please upgrade the binary",
-        format_protocol_version(binary),
-        format_protocol_version(active)
-    )
 }
 
 #[cfg(test)]

@@ -3,15 +3,12 @@ pub use crate::precompile::ICcaRegistry;
 pub use crate::runtime::{credis_forfeited, credis_issued};
 use crate::{
     constants::MAX_ACTIVE_CCAS,
-    errors::CcaError,
+    errors::{CcaError, CcaFatalError},
     schema::{address_day_key, CcaContract},
     state::validate_state,
 };
 use alloy_primitives::{Address, U256};
-use outbe_primitives::{
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 pub fn cca_state(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry::State> {
     Ok(CcaContract::new(storage.clone()).load(cca)?.state)
@@ -70,7 +67,7 @@ pub fn active_reward_weights(
         let cca = contract
             .active
             .at(index)?
-            .ok_or_else(|| PrecompileError::Fatal("CCA active index entry missing".into()))?;
+            .ok_or(CcaFatalError::ActiveIndexEntryMissing)?;
         let weight = contract
             .gratis_sum_per_utc_day
             .read(&address_day_key(cca, day))?;

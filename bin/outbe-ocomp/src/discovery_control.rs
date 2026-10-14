@@ -67,12 +67,15 @@ impl DiscoveryOfferRefV1 {
         if self.version != DISCOVERY_CONTROL_VERSION_V1 {
             return Err(DiscoveryControlError::UnsupportedVersion(self.version));
         }
-        if self.chain_id == 0
-            || self.genesis_hash.is_zero()
-            || self.observation_id.is_zero()
-            || self.generation == 0
-            || self.discovery_record_digest.is_zero()
-        {
+        let has_zero_scalar = self.chain_id == 0 || self.generation == 0;
+        let has_zero_digest = [
+            self.genesis_hash,
+            self.observation_id,
+            self.discovery_record_digest,
+        ]
+        .into_iter()
+        .any(|digest| digest.is_zero());
+        if has_zero_scalar || has_zero_digest {
             return Err(DiscoveryControlError::InvalidOfferRef);
         }
         Ok(())

@@ -102,11 +102,9 @@ impl LocalResultVoteAttesterV1 {
             result_digest,
         };
         let expected_signing_digest = subject.signing_digest()?;
-        let record = self.sign_once.record_or_replay(subject, |digest| {
-            self.signer
-                .sign_result_digest(digest)
-                .map_err(|error| error.to_string())
-        })?;
+        let record = self
+            .sign_once
+            .record_or_replay(subject, |digest| self.signer.sign_result_digest(digest))?;
         let vote = ResultVoteV1 {
             protocol_bundle_hash: result.protocol_bundle_hash,
             job_id: result.job_id,
@@ -142,25 +140,28 @@ impl LocalResultVoteAttesterV1 {
         result.validate_semantics(&self.limits)?;
         result.validate_finalized_intent(intent)?;
         let summary = &finalized.summary;
-        if intent.chain_id != self.identity.chain_id
-            || intent.genesis_hash != self.identity.genesis_hash
-            || intent.fork_id != self.fork_id
-            || intent.protocol_bundle_hash != self.identity.protocol_bundle_hash
-            || summary.protocol_bundle_hash != self.identity.protocol_bundle_hash
-            || summary.intent_id != intent.intent_id(&self.limits)?
-            || summary.job_id
-                != intent.job_id(
-                    summary.finalized_block_hash,
-                    summary.finalized_state_root,
-                    &self.limits,
-                )?
-            || result.job_id != summary.job_id
-        {
+        let expected_job_id = intent.job_id(
+            summary.finalized_block_hash,
+            summary.finalized_state_root,
+            &self.limits,
+        )?;
+        let matches_summary = summary.protocol_bundle_hash == self.identity.protocol_bundle_hash
+            && summary.intent_id == intent.intent_id(&self.limits)?
+            && summary.job_id == expected_job_id
+            && result.job_id == summary.job_id;
+        if !self.matches_intent_domain(intent) || !matches_summary {
             return Err(LocalResultAttestationErrorV1::Binding(
                 "finalized job, network, and result",
             ));
         }
         Ok(())
+    }
+
+    fn matches_intent_domain(&self, intent: &JobIntentV1) -> bool {
+        intent.chain_id == self.identity.chain_id
+            && intent.genesis_hash == self.identity.genesis_hash
+            && intent.fork_id == self.fork_id
+            && intent.protocol_bundle_hash == self.identity.protocol_bundle_hash
     }
 }
 

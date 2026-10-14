@@ -107,7 +107,7 @@ where
             input_lease_id: record
                 .intent
                 .input_lease_id()
-                .map_err(|error| RetentionError::Source(error.to_string()))?,
+                .map_err(RetentionError::source)?,
         })
     }
 }
@@ -358,12 +358,12 @@ where
                 candidate.block_hash,
                 candidate.intent_id,
             )
-            .map_err(|error| RetentionError::Source(error.to_string()))?;
+            .map_err(RetentionError::source)?;
         if verified.job_id != candidate_job_id(candidate)?
             || verified
                 .intent
                 .input_lease_id()
-                .map_err(|error| RetentionError::Source(error.to_string()))?
+                .map_err(RetentionError::source)?
                 != candidate.input_lease_id
         {
             return Err(RetentionError::Source(
@@ -404,11 +404,11 @@ pub(in crate::ocomp::retention) fn canonical_finalized_pin(
     let intent_id = record
         .intent
         .intent_id(&limits)
-        .map_err(|error| RetentionError::Source(error.to_string()))?;
+        .map_err(RetentionError::source)?;
     let input_lease_id = record
         .intent
         .input_lease_id()
-        .map_err(|error| RetentionError::Source(error.to_string()))?;
+        .map_err(RetentionError::source)?;
     let request_identity_mismatch =
         record.intent_height != candidate.block_number || intent_id != candidate.intent_id;
     let intent_mismatch = request_identity_mismatch
@@ -442,7 +442,7 @@ pub(in crate::ocomp::retention) fn terminal_height_from_record(
     if record
         .intent
         .input_lease_id()
-        .map_err(|error| RetentionError::Source(error.to_string()))?
+        .map_err(RetentionError::source)?
         != candidate.input_lease_id
     {
         return Err(RetentionError::Source(
