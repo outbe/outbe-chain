@@ -28,6 +28,10 @@ pub fn dispatch(
     // CredisFactory is a payable route, so the boundary credits value to this address
     // before dispatch. Refuse it for every selector except the published one.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
+    #[cfg(feature = "e2e-test")]
+    if let Some(result) = crate::test_arming::dispatch(&storage, data) {
+        return result;
+    }
     dispatch_call(
         data,
         ICredisFactory::ICredisFactoryCalls::abi_decode,

@@ -140,7 +140,7 @@ e2e-test = [
     "outbe-gem/e2e-test",
     "outbe-gemfactory/e2e-test",
     "outbe-nodfactory/e2e-test",
-    "outbe-credis/e2e-test",
+    "outbe-credisfactory/e2e-test",
 ]
 
 [package.metadata.cargo-machete]

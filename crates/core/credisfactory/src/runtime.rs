@@ -6,7 +6,9 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_credis::{CredisContract, IssueCredisParams};
+use outbe_credis::CredisContract;
+
+use crate::rules::{CredisRules, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},

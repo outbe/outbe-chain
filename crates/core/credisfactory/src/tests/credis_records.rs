@@ -8,11 +8,12 @@ use outbe_primitives::time::{
 };
 use outbe_primitives::units::SCALE_1E6_U256;
 
-use crate::errors::CredisError;
-use crate::precompile::{dispatch, ICredis};
-use crate::runtime::{calc_call_price, settlement_deadline, IssueCredisParams};
-use crate::schema::{CredisContract, CredisState};
-use crate::state::CallBins;
+use crate::rules::{calc_call_price, CredisRules, IssueCredisParams};
+use outbe_credis::errors::CredisError;
+use outbe_credis::precompile::{dispatch, ICredis};
+use outbe_credis::runtime::settlement_deadline;
+use outbe_credis::schema::{CredisContract, CredisState};
+use outbe_credis::state::CallBins;
 use outbe_primitives::call_bins;
 
 const CHAIN_ID: u64 = 1;
@@ -74,7 +75,7 @@ fn credis_provider() -> HashMapStorageProvider {
         // These tests exercise the production call terms.
         CredisContract::new(storage.clone())
             .config_profile
-            .write(crate::config::PROFILE_PROD)
+            .write(outbe_credis::config::PROFILE_PROD)
             .unwrap();
         storage
             .increase_balance(
@@ -99,7 +100,7 @@ fn prod_provider() -> HashMapStorageProvider {
     StorageHandle::enter(&mut provider, |storage| {
         CredisContract::new(storage)
             .config_profile
-            .write(crate::config::PROFILE_PROD)
+            .write(outbe_credis::config::PROFILE_PROD)
             .unwrap();
     });
     provider
@@ -208,11 +209,14 @@ fn issuance_seals_the_call_price_from_the_call_anchor() {
         assert_ne!(p.call_price_minor, calc_call_price(entry_price()).unwrap());
         assert_eq!(
             p.call_notice_period_seconds,
-            crate::constants::CALL_NOTICE_PERIOD
+            outbe_credis::constants::CALL_NOTICE_PERIOD
         );
-        assert_eq!(p.call_rate, crate::constants::CALL_RATE_PCT);
-        assert_eq!(p.call_window_seconds, crate::constants::CALL_WINDOW);
-        assert_eq!(p.call_threshold_seconds, crate::constants::CALL_THRESHOLD);
+        assert_eq!(p.call_rate, outbe_credis::constants::CALL_RATE_PCT);
+        assert_eq!(p.call_window_seconds, outbe_credis::constants::CALL_WINDOW);
+        assert_eq!(
+            p.call_threshold_seconds,
+            outbe_credis::constants::CALL_THRESHOLD
+        );
 
         // Both codes are sealed, and they are distinct: the threshold anchor is
         // the reference currency, never the issuance one the Credis is
@@ -338,7 +342,7 @@ fn worked_example_ledger_closes_exactly() {
 
         let p = credis.get_credis(id).unwrap();
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Forfeited);
-        let shown = crate::outcome(&p, at(472)).unwrap();
+        let shown = outbe_credis::outcome(&p, at(472)).unwrap();
         assert!(shown.outstanding_principal_minor.is_zero());
         assert!(shown.outstanding_gratis_minor.is_zero());
         assert_eq!(
@@ -1353,9 +1357,9 @@ fn precompile_get_credis_returns_the_full_record() {
                 decoded.call.callThreshold
             ),
             (
-                crate::constants::CALL_NOTICE_PERIOD,
-                crate::constants::CALL_WINDOW,
-                crate::constants::CALL_THRESHOLD
+                outbe_credis::constants::CALL_NOTICE_PERIOD,
+                outbe_credis::constants::CALL_WINDOW,
+                outbe_credis::constants::CALL_THRESHOLD
             )
         );
     });
@@ -1923,7 +1927,10 @@ fn token_uri_renders_the_credis_image_and_metadata() {
 
         let short = outbe_common::nft_card::short_id(id);
         assert_eq!(json["name"], format!("Credis {short}"));
-        assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
+        assert_eq!(
+            json["description"],
+            outbe_credis::constants::TOKEN_DESCRIPTION
+        );
         assert_eq!(trait_value(&json, "State").unwrap(), "Issued");
         assert_eq!(trait_value(&json, "Principal").unwrap(), 1000);
         assert_eq!(trait_value(&json, "Outstanding").unwrap(), 1000);
@@ -2025,7 +2032,7 @@ fn the_outcome_identities_hold_through_partial_settlements_and_forfeit() {
         let id = open_pos(&mut credis);
         let check = |credis: &CredisContract<'_>, now: u64| {
             let record = credis.get_credis(id).unwrap();
-            let shown = crate::outcome(&record, now).unwrap();
+            let shown = outbe_credis::outcome(&record, now).unwrap();
             assert_eq!(
                 shown.principal_paid_minor
                     + shown.outstanding_principal_minor
@@ -2122,12 +2129,12 @@ fn metadata_update_marks_call_settlement_and_forfeit() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn static_test_arming_is_rejected() {
-    use crate::test_arming::ICredisTestArming;
+    use crate::test_arming::ICredisFactoryTestArming as ICredisTestArming;
     use alloy_sol_types::SolCall;
     use outbe_primitives::error::PrecompileError;
     let mut provider = prod_provider();
     provider.set_static(true);
-    let result = dispatch(
+    let result = crate::precompile::dispatch(
         StorageHandle::new(&mut provider),
         &ICredisTestArming::closeCallNoticeForTestCall {
             credisId: U256::ONE,
@@ -2146,11 +2153,13 @@ fn static_test_arming_is_rejected() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn test_arming_backdates_and_requeues_only_a_called_credis() {
-    use crate::test_arming::ICredisTestArming;
+    use crate::test_arming::ICredisFactoryTestArming as ICredisTestArming;
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
         let id = credis.issue(params(alice())).unwrap();
-        let arm = |data: Vec<u8>| dispatch(storage.clone(), &data, alice(), U256::ZERO);
+        let arm = |data: Vec<u8>| {
+            crate::precompile::dispatch(storage.clone(), &data, alice(), U256::ZERO)
+        };
         let requeue = ICredisTestArming::closeCallNoticeForTestCall {
             credisId: id,
             deadline: at(5),
@@ -2179,7 +2188,7 @@ fn test_arming_backdates_and_requeues_only_a_called_credis() {
 
 #[test]
 fn the_profile_selector_resolves_by_network_and_rejects_unknown_values() {
-    use crate::config::{CredisParams, PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
+    use outbe_credis::config::{CredisParams, PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
     let mainnet = outbe_primitives::chain::MAINNET_CHAIN_ID;
     assert_eq!(
         CredisParams::from_selector(PROFILE_AUTO, CHAIN_ID).unwrap(),
@@ -2208,7 +2217,7 @@ fn issuance_off_mainnet_seals_the_dev_terms() {
         let mut credis = CredisContract::new(storage);
         credis
             .config_profile
-            .write(crate::config::PROFILE_AUTO)
+            .write(outbe_credis::config::PROFILE_AUTO)
             .unwrap();
         let id = open_pos(&mut credis);
         let record = credis.get_credis(id).unwrap();

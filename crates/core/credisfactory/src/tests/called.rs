@@ -12,6 +12,7 @@ use outbe_credis::{CallBins, CredisContract, CredisState};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::previous_date_key;
 
+use crate::rules::CredisRules;
 use crate::tests::common::*;
 
 /// Enough headroom before `CREATED_AT` that a full lookback window never reaches

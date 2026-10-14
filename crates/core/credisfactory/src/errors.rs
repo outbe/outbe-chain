@@ -16,6 +16,26 @@ pub enum CredisFactoryError {
     ReservationCcaMismatch,
     #[error("previous closed UTC-day VWAP is unavailable")]
     PreviousDayVwapUnavailable,
+    #[error("amount must be positive")]
+    ZeroIssueTerm,
+    #[error("pledge source is zero")]
+    InvalidSource,
+    #[error("Credis owner is zero")]
+    InvalidOwner,
+    #[error("Credis already exists")]
+    CredisAlreadyExists,
+    #[error("Credis is closed")]
+    CredisClosed,
+    #[error("payment is below the interest accrued since the last settlement")]
+    PaymentBelowAccruedInterest,
+    #[error("Credis is not called")]
+    NotCalled,
+    #[error("settlement deadline has not passed")]
+    SettlementDeadlineNotPassed,
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
+    #[error("Credis has no outstanding principal")]
+    NothingOutstanding,
 }
 
 impl From<CredisFactoryError> for PrecompileError {

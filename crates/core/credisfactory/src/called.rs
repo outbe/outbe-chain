@@ -16,6 +16,8 @@ use alloy_sol_types::SolEvent;
 
 use outbe_credis::config::CredisParams;
 use outbe_credis::{CallBins, Credis, CredisContract, CredisState};
+
+use crate::rules::CredisRules;
 use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{

@@ -32,7 +32,7 @@ const EXPIRY_BUCKET_SECS: u64 = 3_600;
 const DEV_TERMS: (u32, u32, u32) = (3 * 86_400, 2 * 86_400, 600);
 
 sol! {
-    interface ICredisTestArming {
+    interface ICredisFactoryTestArming {
         function backdateCredisForTest(uint256 credisId, uint64 issuedAt) external;
         function closeCallNoticeForTest(uint256 credisId, uint64 deadline) external;
     }
@@ -46,9 +46,9 @@ fn rate_above_call_price(world: &mut World) {
     // The call counts only days the Credis was open: stamp it behind every seeded day.
     send(
         &url,
-        CREDIS_ADDRESS,
+        CREDIS_FACTORY_ADDRESS,
         DEPLOYER_KEY,
-        &ICredisTestArming::backdateCredisForTestCall {
+        &ICredisFactoryTestArming::backdateCredisForTestCall {
             credisId: f.credis_id,
             issuedAt: head_time(world) - (u64::from(CALL_WINDOW_SEED_DAYS) + 1) * DAY,
         },
@@ -231,9 +231,9 @@ fn sweep_reaches(world: &mut World) {
     }
     send(
         &url,
-        CREDIS_ADDRESS,
+        CREDIS_FACTORY_ADDRESS,
         DEPLOYER_KEY,
-        &ICredisTestArming::closeCallNoticeForTestCall {
+        &ICredisFactoryTestArming::closeCallNoticeForTestCall {
             credisId: credis_id,
             deadline: head_time(world) - EXPIRY_BUCKET_SECS,
         },

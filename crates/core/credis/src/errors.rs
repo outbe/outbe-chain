@@ -11,28 +11,8 @@ use thiserror::Error;
 pub enum CredisError {
     #[error("Credis not found")]
     CredisNotFound,
-    #[error("Credis already exists")]
-    CredisAlreadyExists,
-    #[error("Credis is closed")]
-    CredisClosed,
-    #[error("amount must be positive")]
-    InvalidAmount,
-    #[error("pledge source is zero")]
-    InvalidSource,
-    #[error("Credis owner is zero")]
-    InvalidOwner,
     #[error("invalid Credis state value: {0}")]
     InvalidStateValue(u8),
-    #[error("payment is below the interest accrued since the last settlement")]
-    PaymentBelowAccruedInterest,
-    #[error("Credis is not called")]
-    NotCalled,
-    #[error("settlement deadline has not passed")]
-    SettlementDeadlineNotPassed,
-    #[error("settlement deadline has passed")]
-    SettlementDeadlinePassed,
-    #[error("Credis has no outstanding principal")]
-    NothingOutstanding,
     #[error("credis arithmetic overflow")]
     ArithmeticOverflow,
     #[error("index out of bounds")]

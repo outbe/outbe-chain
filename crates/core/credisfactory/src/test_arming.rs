@@ -9,11 +9,12 @@ use outbe_primitives::dispatch::ensure_mutation_allowed;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::errors::CredisError;
-use crate::schema::CredisContract;
+use outbe_credis::CredisContract;
+
+use crate::errors::CredisFactoryError;
 
 sol! {
-    interface ICredisTestArming {
+    interface ICredisFactoryTestArming {
         function backdateCredisForTest(uint256 credisId, uint64 issuedAt) external;
         function closeCallNoticeForTest(uint256 credisId, uint64 deadline) external;
     }
@@ -21,10 +22,10 @@ sol! {
 
 /// Runs a test-arming call, or returns `None` for any other calldata.
 pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Result<Bytes>> {
-    if let Ok(call) = ICredisTestArming::backdateCredisForTestCall::abi_decode(data) {
+    if let Ok(call) = ICredisFactoryTestArming::backdateCredisForTestCall::abi_decode(data) {
         return Some(backdate(storage, call.credisId, call.issuedAt));
     }
-    if let Ok(call) = ICredisTestArming::closeCallNoticeForTestCall::abi_decode(data) {
+    if let Ok(call) = ICredisFactoryTestArming::closeCallNoticeForTestCall::abi_decode(data) {
         return Some(requeue(storage, call.credisId, call.deadline));
     }
     None
@@ -45,7 +46,7 @@ fn requeue(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -> Resul
     ensure_mutation_allowed(storage)?;
     let mut credis = CredisContract::new(storage.clone());
     if credis.called_deadline.read(&credis_id)? == 0 {
-        return Err(CredisError::NotCalled.into());
+        return Err(CredisFactoryError::NotCalled.into());
     }
     credis.unqueue_called(credis_id)?;
     credis.queue_called(credis_id, deadline)?;

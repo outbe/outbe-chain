@@ -1,4 +1,5 @@
 //! Repayment, forfeiture and stake behaviour of Credis backed by a direct pledge.
+use crate::rules::CredisRules;
 use crate::{precompile::ICredisFactory, runtime, tests::common::*};
 use alloy_primitives::{b256, keccak256, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
