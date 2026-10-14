@@ -139,12 +139,14 @@ fn config_auto_profile_follows_the_network() {
     use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
 
     assert_eq!(
-        crate::config::IntexParams::for_chain_id(MAINNET_CHAIN_ID),
+        crate::config::IntexParams::from_selector(crate::config::PROFILE_AUTO, MAINNET_CHAIN_ID)
+            .unwrap(),
         crate::config::IntexParams::PROD
     );
     for chain_id in [TESTNET_CHAIN_ID, DEVNET_CHAIN_ID, 31_337] {
         assert_eq!(
-            crate::config::IntexParams::for_chain_id(chain_id),
+            crate::config::IntexParams::from_selector(crate::config::PROFILE_AUTO, chain_id)
+                .unwrap(),
             crate::config::IntexParams::DEV
         );
     }
