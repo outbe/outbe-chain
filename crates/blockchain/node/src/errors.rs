@@ -361,19 +361,23 @@ impl LocalRegistryAdmissionError {
 }
 
 impl ExternalRegistryAdmissionError {
+    fn map_reason(ctor: fn(String) -> Self, error: impl core::fmt::Display) -> Self {
+        ctor(error.to_string())
+    }
+
     #[must_use]
     pub fn slot_plan(error: impl core::fmt::Display) -> Self {
-        Self::SlotPlan(error.to_string())
+        Self::map_reason(Self::SlotPlan, error)
     }
 
     #[must_use]
     pub fn proof(error: impl core::fmt::Display) -> Self {
-        Self::Proof(error.to_string())
+        Self::map_reason(Self::Proof, error)
     }
 
     #[must_use]
     pub fn registry(error: impl core::fmt::Display) -> Self {
-        Self::Registry(error.to_string())
+        Self::map_reason(Self::Registry, error)
     }
 }
 

@@ -61,12 +61,11 @@ impl<O: AddressableManager<PublicKey = PublicKey>> PeerAdmission<O> {
                 if last.primary.keys() == peers.primary.keys()
                     && last.secondary.keys() == peers.secondary.keys() =>
             {
-                if last.primary.values() != peers.primary.values()
-                    || last.secondary.values() != peers.secondary.values()
+                if (last.primary.values() != peers.primary.values()
+                    || last.secondary.values() != peers.secondary.values())
+                    && self.oracle.overwrite(combine(&peers)) != Feedback::Ok
                 {
-                    if self.oracle.overwrite(combine(&peers)) != Feedback::Ok {
-                        return Err(PeerManagerError::P2pOracleClosed.into());
-                    }
+                    return Err(PeerManagerError::P2pOracleClosed.into());
                 }
             }
             _ => self.publish(self.next_index()?, peers.clone())?,

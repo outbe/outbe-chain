@@ -7,6 +7,7 @@ use thiserror::Error;
 /// Errors that the Tribute factory precompile returns.
 #[derive(Debug, Error)]
 #[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
 pub enum TributeFactoryError {
     #[error("TEE not configured")]
     TeeNotConfigured,

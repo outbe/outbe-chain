@@ -12,7 +12,6 @@ use commonware_consensus::types::{Height, Round};
 use commonware_runtime::Clock;
 use futures::{future::BoxFuture, FutureExt};
 use outbe_primitives::{
-    error::PrecompileError,
     projection::{ExecutionReadBudget, ExecutionReadCancelled, NodeLocalExecutionAbort},
     OutbeExecutionData,
 };
@@ -306,74 +305,5 @@ impl Verification {
 impl Event {
     fn from_progress(result: eyre::Result<()>) -> Self {
         result.map_or_else(Event::Failed, |_| Event::Changed)
-    }
-}
-
-impl ExecutionStatus {
-    fn from_engine(
-        result: Result<PayloadStatus, reth_ethereum::node::api::BeaconOnNewPayloadError>,
-        digest: Digest,
-    ) -> eyre::Result<Self> {
-        let error = match result {
-            Ok(status) => return Ok(Self::Completed(status)),
-            Err(error) => error,
-        };
-        if let reth_ethereum::node::api::BeaconOnNewPayloadError::Internal(source) = &error {
-            if let Some(cancelled) = ExecutionReadCancelled::find(source.as_ref()) {
-                return Ok(Self::Cancelled(cancelled.clone()));
-            }
-            if let Some(abort) = NodeLocalExecutionAbort::find(source.as_ref()) {
-                return Ok(Self::NodeLocalAbort(abort.clone()));
-            }
-            if let Some(reason) = find_node_local_precompile_error(source.as_ref()) {
-                return Ok(Self::NodeLocalAbort(NodeLocalExecutionAbort { reason }));
-            }
-            if let Some(validation_error) =
-                find_candidate_validation_precompile_error(source.as_ref())
-            {
-                return Ok(Self::Completed(PayloadStatus::from_status(
-                    alloy_rpc_types_engine::PayloadStatusEnum::Invalid { validation_error },
-                )));
-            }
-        }
-        Err(eyre::Report::new(error).wrap_err(format!(
-            "new_payload failed during executor verification: target={digest}"
-        )))
-    }
-}
-
-fn find_node_local_precompile_error(
-    mut error: &(dyn std::error::Error + 'static),
-) -> Option<String> {
-    loop {
-        if let Some(precompile_error) = error.downcast_ref::<PrecompileError>() {
-            if precompile_error.is_node_local() {
-                return Some(precompile_error.to_string());
-            }
-        }
-        error = error.source()?;
-    }
-}
-
-fn find_candidate_validation_precompile_error(
-    mut error: &(dyn std::error::Error + 'static),
-) -> Option<String> {
-    loop {
-        if let Some(precompile_error) = error.downcast_ref::<PrecompileError>() {
-            if matches!(
-                precompile_error,
-                PrecompileError::TransactionCeWorkLimitExceeded
-                    | PrecompileError::BlockCeWorkCapacityExhausted
-                    | PrecompileError::Revert(_)
-                    | PrecompileError::RevertBytes(_)
-                    | PrecompileError::Halt(_)
-                    | PrecompileError::OutOfGas
-                    | PrecompileError::WriteProtection
-                    | PrecompileError::BodyReadCorruption(_)
-            ) {
-                return Some(precompile_error.to_string());
-            }
-        }
-        error = error.source()?;
     }
 }

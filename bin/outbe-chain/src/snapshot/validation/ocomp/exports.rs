@@ -172,7 +172,7 @@ pub(crate) fn verify_present_discovery(
         let result = reader.visit_records(&mut |record| {
             let inspect = || -> eyre::Result<()> {
                 require(
-                    !maximum_records.is_some_and(|maximum| counts.records >= maximum),
+                    maximum_records.is_none_or(|maximum| counts.records < maximum),
                     Incomplete(format!(
                         "discovery walk stopped after {} records",
                         counts.records

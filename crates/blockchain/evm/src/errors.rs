@@ -782,6 +782,7 @@ impl From<OutbePrecompileFatalError> for String {
 
 /// Errors that occur in the context storage provider.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[allow(clippy::large_enum_variant)]
 pub enum CtxStorageError {
     #[error(
         "Metadosis mutation purpose is not entitled for this EVM call: purpose={purpose:?} binding={binding:#x} remaining={remaining:?}"

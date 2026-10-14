@@ -112,18 +112,19 @@ mod tests {
     use crate::storage::StorageHandle;
     use alloy_primitives::address;
 
-    fn with_storage<F: FnOnce(StorageHandle)>(f: F) {
+    fn with_vec<T: Storable>(slot: u64, f: impl FnOnce(StorageVec<T>)) {
         let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        f(storage);
+        let addr = address!("0x0000000000000000000000000000000000001003");
+        f(StorageVec::new(
+            U256::from(slot),
+            addr,
+            StorageHandle::new(&mut provider),
+        ));
     }
-
-    const ADDR: Address = address!("0x0000000000000000000000000000000000001003");
 
     #[test]
     fn test_empty() {
-        with_storage(|storage| {
-            let v: StorageVec<u64> = StorageVec::new(U256::ZERO, ADDR, storage);
+        with_vec::<u64>(0, |v| {
             assert_eq!(v.len().unwrap(), 0);
             assert!(v.is_empty().unwrap());
             assert_eq!(v.pop().unwrap(), None);
@@ -132,8 +133,7 @@ mod tests {
 
     #[test]
     fn test_push_get() {
-        with_storage(|storage| {
-            let v: StorageVec<u64> = StorageVec::new(U256::ZERO, ADDR, storage);
+        with_vec::<u64>(0, |v| {
             v.push(100).unwrap();
             v.push(200).unwrap();
             assert_eq!(v.len().unwrap(), 2);
@@ -145,8 +145,7 @@ mod tests {
 
     #[test]
     fn test_pop() {
-        with_storage(|storage| {
-            let v: StorageVec<u64> = StorageVec::new(U256::ZERO, ADDR, storage);
+        with_vec::<u64>(0, |v| {
             v.push(10).unwrap();
             v.push(20).unwrap();
             assert_eq!(v.pop().unwrap(), Some(20));
@@ -157,8 +156,7 @@ mod tests {
 
     #[test]
     fn test_set() {
-        with_storage(|storage| {
-            let v: StorageVec<u64> = StorageVec::new(U256::ZERO, ADDR, storage);
+        with_vec::<u64>(0, |v| {
             v.push(10).unwrap();
             v.set(0, 99).unwrap();
             assert_eq!(v.get(0).unwrap(), Some(99));
@@ -168,8 +166,7 @@ mod tests {
 
     #[test]
     fn test_read_all() {
-        with_storage(|storage| {
-            let v: StorageVec<u64> = StorageVec::new(U256::ZERO, ADDR, storage);
+        with_vec::<u64>(0, |v| {
             v.push(1).unwrap();
             v.push(2).unwrap();
             v.push(3).unwrap();
@@ -179,8 +176,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        with_storage(|storage| {
-            let v: StorageVec<u64> = StorageVec::new(U256::ZERO, ADDR, storage);
+        with_vec::<u64>(0, |v| {
             v.push(1).unwrap();
             v.push(2).unwrap();
             v.clear().unwrap();
@@ -192,8 +188,7 @@ mod tests {
 
     #[test]
     fn test_u256() {
-        with_storage(|storage| {
-            let v: StorageVec<U256> = StorageVec::new(U256::from(5u64), ADDR, storage);
+        with_vec::<U256>(5, |v| {
             v.push(U256::MAX).unwrap();
             assert_eq!(v.get(0).unwrap(), Some(U256::MAX));
         });

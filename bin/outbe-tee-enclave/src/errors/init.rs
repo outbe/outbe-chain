@@ -437,6 +437,26 @@ impl SgxSealingError {
     pub fn operation(err: impl fmt::Display) -> Self {
         Self::Operation(err.to_string())
     }
+
+    /// Alias for [`Self::operation`].
+    pub fn other(err: impl fmt::Display) -> Self {
+        Self::Operation(err.to_string())
+    }
+
+    /// Construct a missing CLI argument error.
+    pub fn missing_arg(name: impl fmt::Display) -> Self {
+        Self::Operation(format!("missing {name}"))
+    }
+
+    /// Construct an invalid CLI argument error.
+    pub fn invalid_arg(name: impl fmt::Display) -> Self {
+        Self::Operation(format!("invalid {name}"))
+    }
+
+    /// Construct an endpoint parse error.
+    pub fn endpoint(err: impl fmt::Display) -> Self {
+        Self::Operation(format!("invalid endpoint: {err}"))
+    }
 }
 
 /// Error from enclave binary CLI argument resolution and identity startup.
