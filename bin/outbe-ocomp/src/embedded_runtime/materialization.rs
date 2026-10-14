@@ -127,12 +127,12 @@ impl MaterializationJob {
             .league_fractions()
             .map_err(|error| stage("read league fractions", error))?
             .into_iter()
-            .map(|(league_id, fraction_fp)| {
-                outbe_tee::nod_materialization::LeagueFractionInputV2 {
+            .map(
+                |(league_id, fraction_fp)| outbe_tee::nod_materialization::LeagueFractionInputV2 {
                     league_id,
                     fraction_fp,
-                }
-            })
+                },
+            )
             .collect();
         let protected = prepare_protected_materialization(
             outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {

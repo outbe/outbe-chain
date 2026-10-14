@@ -10,8 +10,7 @@ use outbe_ocomp_protocol::{
     state::ActiveGenerationV1,
 };
 use outbe_primitives::{
-    addresses::METADOSIS_ADDRESS,
-    OutbeHeader, OutbePrimitives, OutbeReceipt, OutbeTxEnvelope,
+    addresses::METADOSIS_ADDRESS, OutbeHeader, OutbePrimitives, OutbeReceipt, OutbeTxEnvelope,
 };
 use reth_ethereum::provider::db::{
     database::Database,

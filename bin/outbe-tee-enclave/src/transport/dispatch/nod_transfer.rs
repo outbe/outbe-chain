@@ -1,6 +1,6 @@
 //! Bounded temporary transfer buffers, never economic authority or key caches.
 use crate::{keys::EnclaveKeys, transport::SharedTributeOfferKey};
-use alloy_primitives::{B256, keccak256};
+use alloy_primitives::{keccak256, B256};
 use outbe_tee::{
     nod_transport::{MAX_TRANSFER_BYTES, TRANSFER_CHUNK_BYTES},
     protocol::{EnclaveRequest, EnclaveResponse},

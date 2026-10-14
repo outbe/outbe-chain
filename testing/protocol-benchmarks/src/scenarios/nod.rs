@@ -1,25 +1,25 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, WwdEntityId, begin_block};
+use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
-    ListKind,
     list::{
-        OrderedListLimits, OrderedListProofTarget, ordered_list_root,
-        streaming_ordered_list_membership_proof,
+        ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits,
+        OrderedListProofTarget,
     },
     nod_materialization::{
         NodMaterializationBatchV1, NodMaterializationHeadV1, ProtectedNodMaterializationV2,
     },
     profile::poc_schema_limits,
     result::NodActionV1,
+    ListKind,
 };
-use outbe_primitives::storage::{StorageHandle, hashmap::HashMapStorageProvider};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::time::WorldwideDay;
 
 use super::support::{
-    EmptyParentBodies, capture_execution, elapsed_ns, seed_compressed_entities_genesis,
+    capture_execution, elapsed_ns, seed_compressed_entities_genesis, EmptyParentBodies,
 };
 use crate::{BenchmarkScenario, ExecutionClass, GasLedger, Observation, Profile, ScenarioMetadata};
 

@@ -56,8 +56,8 @@ use outbe_ocomp_protocol::input::{
     InputManifestV1,
 };
 use outbe_ocomp_protocol::intent::{
-    ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1,
-    JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+    ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
+    MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
     TributeInputBindingV1,
 };
 use outbe_ocomp_protocol::league_snapshot::league_snapshot_slot;
@@ -1479,10 +1479,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         &root_reduce_artifact,
         &plan,
         &manifest,
-        &[
-            output_finalize_artifact.clone(),
-            bucket_artifact.clone(),
-        ],
+        &[output_finalize_artifact.clone(), bucket_artifact.clone()],
         &bundle,
         &reader,
         &semantic_replay_inbox,
@@ -1516,10 +1513,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         &forged_root_reduce_artifact,
         &plan,
         &manifest,
-        &[
-            output_finalize_artifact.clone(),
-            bucket_artifact.clone(),
-        ],
+        &[output_finalize_artifact.clone(), bucket_artifact.clone(),],
         &bundle,
         &reader,
         &semantic_replay_inbox,

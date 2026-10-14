@@ -359,10 +359,8 @@ static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ValidatorCallHook<
     |storage, signer| active_validator_for_role(storage, signer, ValidatorDelegateRole::Oracle),
 );
 
-static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] = &[
-    &ORACLE_SUBMIT_VOTE_HOOK,
-    &HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
-];
+static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] =
+    &[&ORACLE_SUBMIT_VOTE_HOOK, &HYPERLANE_SUBMIT_CHECKPOINT_HOOK];
 
 /// Returns the Outbe system zero-fee hook registry.
 pub const fn registry() -> ZeroFeeRegistry {

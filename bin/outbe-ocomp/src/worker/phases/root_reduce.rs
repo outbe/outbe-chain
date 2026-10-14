@@ -330,7 +330,8 @@ fn execute_root_reduce_leaf(
         nominals.values().copied(),
         "root reducer tribute nominal total",
     )?;
-    if nominals.len() != usize::try_from(tribute_count).map_err(|_| WorkerError::UnitBindingMismatch)?
+    if nominals.len()
+        != usize::try_from(tribute_count).map_err(|_| WorkerError::UnitBindingMismatch)?
         || nominal_total != finalized.checked_tribute_nominal_total
     {
         return Err(WorkerError::UnitBindingMismatch);
