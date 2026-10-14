@@ -1,5 +1,5 @@
 //! Repayment, forfeiture and stake behaviour of Credis backed by a direct pledge.
-use crate::rules::CredisRules;
+use crate::rules;
 use crate::{precompile::ICredisFactory, runtime, tests::*};
 use alloy_primitives::{b256, keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
@@ -151,8 +151,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
 
             let expected = if forfeit {
                 let called_at = now_of(&storage);
-                CredisContract::new(storage.clone())
-                    .mark_called(id, called_at)
+                rules::mark_called(&mut CredisContract::new(storage.clone()), id, called_at)
                     .unwrap();
                 let expired_at = called_at + NOTICE + HOUR;
                 advance_to(&storage, expired_at);
@@ -285,9 +284,12 @@ fn issue_credis_allows_an_owner_with_an_unresolved_call() {
     let first = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost() * U256::from(2u64));
         let first = open(&storage, 1);
-        assert!(CredisContract::new(storage.clone())
-            .mark_called(first, now_of(&storage))
-            .unwrap());
+        assert!(rules::mark_called(
+            &mut CredisContract::new(storage.clone()),
+            first,
+            now_of(&storage)
+        )
+        .unwrap());
         first
     });
     provider.set_block_number(BLOCK_NUMBER + 1);
@@ -341,9 +343,12 @@ fn one_source_backs_several_credis_and_unused_pledges() {
             view_pledged(&storage, alice()),
             backing(&storage) + pledge_cost()
         );
-        CredisContract::new(storage.clone())
-            .mark_called(second, CREATED_AT)
-            .unwrap();
+        rules::mark_called(
+            &mut CredisContract::new(storage.clone()),
+            second,
+            CREATED_AT,
+        )
+        .unwrap();
         advance_to(&storage, CREATED_AT + NOTICE + 1);
         runtime::forfeit_credis(storage.clone(), second).unwrap();
         assert_eq!(
@@ -375,9 +380,9 @@ fn a_credis_settled_at_the_deadline_is_never_forfeited() {
     StorageHandle::enter(&mut provider, |storage| {
         let bystander = open(&storage, 2);
         let called_at = now_of(&storage);
-        assert!(CredisContract::new(storage.clone())
-            .mark_called(id, called_at)
-            .unwrap());
+        assert!(
+            rules::mark_called(&mut CredisContract::new(storage.clone()), id, called_at).unwrap()
+        );
         advance_to(&storage, called_at + NOTICE);
         settle_principal(&storage, alice(), id, pledge_stables());
         let after = called_at + NOTICE + DAY;
@@ -415,7 +420,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         bootstrap(&storage, pledge_cost());
         let id = open(&storage, 1);
         let mut credis = CredisContract::new(storage.clone());
-        credis.mark_called(id, CREATED_AT).unwrap();
+        rules::mark_called(&mut credis, id, CREATED_AT).unwrap();
         let deadline = outbe_credis::settlement_deadline(&credis.get_credis(id).unwrap());
         let principal = pledge_stables() / U256::from(4);
         for now in [deadline - 1, deadline] {
@@ -496,8 +501,7 @@ fn the_stake_stays_with_the_owner_through_settlement_and_forfeit() {
             assert_eq!(storage.balance(CREDIS_FACTORY_ADDRESS).unwrap(), U256::ZERO);
             if forfeit {
                 let called_at = now_of(&storage);
-                CredisContract::new(storage.clone())
-                    .mark_called(id, called_at)
+                rules::mark_called(&mut CredisContract::new(storage.clone()), id, called_at)
                     .unwrap();
                 let deadline = called_at + NOTICE + HOUR;
                 advance_to(&storage, deadline);
@@ -597,9 +601,12 @@ fn a_half_paid_call_forfeits_only_the_unpaid_backing_of_another_accounts_source(
         assert_eq!(collateral(&storage, credis_id), half);
 
         let called_at = now_of(&storage);
-        assert!(CredisContract::new(storage.clone())
-            .mark_called(credis_id, called_at)
-            .unwrap());
+        assert!(rules::mark_called(
+            &mut CredisContract::new(storage.clone()),
+            credis_id,
+            called_at
+        )
+        .unwrap());
         let deadline = outbe_credis::settlement_deadline(&record(&storage, credis_id));
         for at in [deadline - 1, deadline] {
             advance_to(&storage, at);
@@ -717,9 +724,9 @@ fn the_owners_forfeit_of_a_lapsed_call_leaves_the_sweep_nothing() {
         bootstrap(&storage, pledge_cost());
         let id = open(&storage, 1);
         let called_at = now_of(&storage);
-        assert!(CredisContract::new(storage.clone())
-            .mark_called(id, called_at)
-            .unwrap());
+        assert!(
+            rules::mark_called(&mut CredisContract::new(storage.clone()), id, called_at).unwrap()
+        );
         let lapsed = outbe_credis::settlement_deadline(&record(&storage, id)) + HOUR;
         advance_to(&storage, lapsed);
         finalize_through(&storage, lapsed);
@@ -839,9 +846,7 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
     let (called_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
         let id = open(&storage, 1);
-        CredisContract::new(storage.clone())
-            .mark_called(id, CREATED_AT)
-            .unwrap();
+        rules::mark_called(&mut CredisContract::new(storage.clone()), id, CREATED_AT).unwrap();
         let deadline = CREATED_AT + NOTICE + HOUR;
         advance_to(&storage, deadline);
         finalize_through(&storage, deadline);

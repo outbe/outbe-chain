@@ -17,7 +17,6 @@ use alloy_sol_types::SolEvent;
 use outbe_credis::config::CredisParams;
 use outbe_credis::{CallBins, Credis, CredisContract, CredisState};
 
-use crate::rules::CredisRules;
 use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
@@ -32,6 +31,7 @@ use outbe_primitives::{
 };
 
 use crate::precompile::ICredisFactory::{CallScanSkipped, SweepDaySkipped};
+use crate::rules;
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -163,7 +163,7 @@ fn call_if_breached(
             threshold_seconds: record.call_threshold_seconds,
             start_day: first_full_day(record.issued_at),
         })
-        && credis.mark_called(record.credis_id, now)?)
+        && rules::mark_called(credis, record.credis_id, now)?)
 }
 
 /// The live profile is the terms the next Credis is issued with.
