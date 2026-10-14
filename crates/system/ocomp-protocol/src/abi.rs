@@ -22,9 +22,6 @@ pub const OCOMP_EXPIRED_TOPIC0: B256 =
 pub const LYSIS_ACTIVATED_TOPIC0: B256 =
     b256!("f9f846ebfcc5895f442c47e436aeb0a86c170ad48a7863eb9f9dddb0a4492f68");
 
-pub const OCOMP_LIFECYCLE_BEGIN_SELECTOR: [u8; 4] = *b"OSE2";
-pub const OCOMP_TERMINAL_REQUEST_SELECTOR: [u8; 4] = *b"OSR2";
-
 pub const OCOMP_ACTIVATION_REJECTION_CODES: core::ops::RangeInclusive<u8> = 1..=17;
 
 /// Encodes the one canonical public ingress for a validator result vote.
