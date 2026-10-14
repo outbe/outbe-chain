@@ -3,7 +3,7 @@ import { formatUnits } from "viem";
 import { OUTBE_NETWORK } from "../../net/chains.js";
 import { networkName } from "../schemas.js";
 import { handler, ok } from "../util.js";
-import { FACTORY_ABI, INTEX_ABI } from "../../intex/registry.js";
+import { INTEX_ABI } from "../../intex/registry.js";
 import { epochIso, intexState, fromSeriesId } from "../../intex/format.js";
 import { addr, seriesMetadata, seriesQualified } from "../../intex/reads.js";
 import { PROTOCOL_DECIMALS, priced } from "../../intex/units.js";
@@ -26,13 +26,13 @@ export function registerSeriesTools(server: McpServer, deps: IntexDeps): void {
       const d = await n.client.readContract({
         address: addr(n, "intex"),
         abi: INTEX_ABI,
-        functionName: "seriesData",
+        functionName: "getIntexSeries",
         args: [series],
       });
-      // The engine owns the split. Exercised units are not on the series record.
+      // Exercised units are not on the series record.
       const counts = await n.client.readContract({
-        address: addr(n, "factory"),
-        abi: FACTORY_ABI,
+        address: addr(n, "intex"),
+        abi: INTEX_ABI,
         functionName: "seriesUnitCounts",
         args: [series],
       });

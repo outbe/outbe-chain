@@ -75,6 +75,13 @@ fn select_prod_profile(storage: &StorageHandle<'_>) {
 }
 
 /// Test ids carry a fixed USD/U pair. Only the day varies.
+fn is_series_qualified(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+) -> outbe_primitives::error::Result<bool> {
+    outbe_intex::api::is_qualified(storage, &outbe_intex::api::read_series(storage, series_id)?)
+}
+
 fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
 }

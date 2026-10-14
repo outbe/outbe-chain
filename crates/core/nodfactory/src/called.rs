@@ -38,6 +38,9 @@ use outbe_primitives::{
 use outbe_nod::state::CallBins;
 use outbe_nod::{api, precompile::INod, schema::NodContract};
 
+use crate::precompile::INodFactory;
+use crate::runtime::emit_event;
+
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 ///
 /// Never returns `Err` for missing market data. The Cycle dispatcher propagates
@@ -102,11 +105,14 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
-        self.nod.emit(INod::SweepDaySkipped {
-            sweep: CALL_SWEEP,
-            skippedDay: skipped,
-            inFlightDay: in_flight,
-        })
+        emit_event(
+            &self.nod.storage,
+            INodFactory::SweepDaySkipped {
+                sweep: CALL_SWEEP,
+                skippedDay: skipped,
+                inFlightDay: in_flight,
+            },
+        )
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
@@ -149,10 +155,13 @@ fn call_slice(
         |iso_code| CallBins(nod, iso_code),
         |iso_code| scan_terms(nod, iso_code, &params),
         |iso_code| {
-            NodContract::new(ctx.storage.clone()).emit(INod::CallScanSkipped {
-                referenceCurrency: iso_code,
-                utcDay: pinned_day,
-            })
+            emit_event(
+                &ctx.storage,
+                INodFactory::CallScanSkipped {
+                    referenceCurrency: iso_code,
+                    utcDay: pinned_day,
+                },
+            )
         },
         |iso_code, window, ceiling, budget| {
             let scan = CurrencyScan {

@@ -4,7 +4,7 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::addresses::GEM_ADDRESS;
+use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::sweep_budget::{SweepBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
@@ -394,9 +394,11 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
     });
 
     let skipped: Vec<_> = provider
-        .get_events(GEM_ADDRESS)
+        .get_events(GEM_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| IGem::CallScanSkipped::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::CallScanSkipped::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(skipped.len(), 1, "one event for the day, not one per slice");
     assert_eq!(skipped[0].referenceCurrency, USD);
@@ -526,9 +528,11 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
     });
 
     let events: Vec<_> = provider
-        .get_events(GEM_ADDRESS)
+        .get_events(GEM_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| IGem::SweepDaySkipped::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::SweepDaySkipped::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].sweep, outbe_oracle::call_sweep::CALL_SWEEP);

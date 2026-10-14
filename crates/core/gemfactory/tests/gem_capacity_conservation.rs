@@ -155,7 +155,7 @@ fn conserved(p: &mut HashMapStorageProvider, world: &World, rights: &[(U256, U25
     let expired = p
         .get_events(GEM_ADDRESS)
         .iter()
-        .filter_map(|event| outbe_gem::precompile::IGem::GemExpired::decode_log_data(event).ok())
+        .filter_map(|event| outbe_gem::precompile::IGem::GemForfeited::decode_log_data(event).ok())
         .collect::<Vec<_>>();
     assert_eq!(expired.len() as u64 + count, rights.len() as u64);
     assert_eq!(

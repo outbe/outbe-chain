@@ -59,7 +59,7 @@ pub fn dispatch(
             | tokenURI(_)
             | tokenByIndex(_)
             | tokenOfOwnerByIndex(_)
-            | nodData(_)
+            | getNod(_)
             | certifiedGeneration(_)) => dispatch_entity(storage, readers, &nod, call),
         }
     })
@@ -119,7 +119,7 @@ fn dispatch_entity(
                 .map(|item| item.nod_id.to_u256())
                 .ok_or_else(|| NodError::IndexOutOfBounds.into())
         }),
-        nodData(c) => view(c, |c| {
+        getNod(c) => view(c, |c| {
             let nod_id = WwdEntityId::from(c.nodId);
             let item =
                 api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;

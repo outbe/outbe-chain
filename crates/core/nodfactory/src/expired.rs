@@ -12,6 +12,8 @@ use outbe_primitives::{
 };
 
 use crate::called::materializing;
+use crate::precompile::INodFactory;
+use crate::runtime::emit_event;
 use outbe_nod::state::ExpiryHours;
 use outbe_nod::{api, precompile::INod, schema::NodContract};
 
@@ -98,10 +100,13 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for NodExpiry<'_, '_, P> {
 
     fn deferred(&mut self, bucket_key: B256, retry_at: u64) -> Result<()> {
         tracing::warn!(target: "outbe::nodfactory", %bucket_key, retry_at, "forfeit sweep: bucket deferred");
-        self.nod.emit(INod::ExpiryDeferred {
-            bucketKey: bucket_key,
-            retryAt: retry_at,
-        })
+        emit_event(
+            self.bodies.storage,
+            INodFactory::ExpiryDeferred {
+                bucketKey: bucket_key,
+                retryAt: retry_at,
+            },
+        )
     }
 }
 

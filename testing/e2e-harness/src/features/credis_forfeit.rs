@@ -135,8 +135,8 @@ fn pay_part(world: &mut World) {
         .min(record.outstandingGratisMinor);
     assert_receipt_event(
         &receipt,
-        CREDIS_ADDRESS,
-        &ICredis::SettlementApplied {
+        CREDIS_FACTORY_ADDRESS,
+        &ICredisFactory::SettlementApplied {
             credisId: f.credis_id,
             interestPaidMinor: interest,
             principalPaidMinor: PART,

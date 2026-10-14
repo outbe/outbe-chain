@@ -10,7 +10,9 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 
+use crate::called::emit;
 use crate::errors::CredisFactoryError;
+use crate::precompile::ICredisFactory;
 
 /// Current execution timestamp's UTC reward day key (YYYYMMDD).
 fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
@@ -286,17 +288,23 @@ impl CredisRules for CredisContract<'_> {
             }
         }
 
-        self.emit(outbe_credis::precompile::ICredis::SettlementApplied {
-            credisId: credis_id,
-            interestPaidMinor: interest,
-            principalPaidMinor: principal_paid,
-            gratisReturnedMinor: gratis_returned_minor,
-            outstandingPrincipalMinor: record.outstanding_principal_minor,
-        })?;
-        if closed {
-            self.emit(outbe_credis::precompile::ICredis::CredisSettled {
+        emit(
+            &self.storage,
+            &ICredisFactory::SettlementApplied {
                 credisId: credis_id,
-            })?;
+                interestPaidMinor: interest,
+                principalPaidMinor: principal_paid,
+                gratisReturnedMinor: gratis_returned_minor,
+                outstandingPrincipalMinor: record.outstanding_principal_minor,
+            },
+        )?;
+        if closed {
+            emit(
+                &self.storage,
+                &ICredisFactory::CredisSettled {
+                    credisId: credis_id,
+                },
+            )?;
         }
         self.emit(outbe_credis::precompile::ICredis::MetadataUpdate {
             _tokenId: credis_id,

@@ -244,8 +244,8 @@ pub(crate) fn status(storage: &StorageHandle, world: &World, gem_id: U256) -> IG
     let out = call(
         storage,
         world,
-        IGem::getGemStatusCall { gemId: gem_id }.abi_encode(),
+        IGem::getGemCall { gemId: gem_id }.abi_encode(),
     )
     .unwrap();
-    IGem::getGemStatusCall::abi_decode_returns(&out).unwrap()
+    IGem::getGemCall::abi_decode_returns(&out).unwrap()
 }

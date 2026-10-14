@@ -3,9 +3,10 @@
 //! and every CycleTick walks a slice of it.
 
 use alloy_primitives::{B256, U256};
-use outbe_gem::precompile::IGem::{
-    BatchMetadataUpdate, CallScanSkipped, GemBucketCalled, SweepDaySkipped,
-};
+use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemBucketCalled};
+
+use crate::precompile::IGemFactory::{CallScanSkipped, SweepDaySkipped};
+use crate::runtime::emit_event;
 use outbe_gem::{CallBins, CallTerms, GemContract, GemParams};
 use outbe_oracle::{
     call_sweep::{self, CallSweep, CALL_SWEEP},
@@ -80,11 +81,14 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
-        self.gem.emit(SweepDaySkipped {
-            sweep: CALL_SWEEP,
-            skippedDay: skipped,
-            inFlightDay: in_flight,
-        })
+        emit_event(
+            &self.gem.storage,
+            SweepDaySkipped {
+                sweep: CALL_SWEEP,
+                skippedDay: skipped,
+                inFlightDay: in_flight,
+            },
+        )
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
@@ -98,10 +102,13 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
             |iso_code| CallBins(gem, iso_code),
             |iso_code| scan_terms(gem, iso_code, &params),
             |iso_code| {
-                GemContract::new(ctx.storage.clone()).emit(CallScanSkipped {
-                    referenceCurrency: iso_code,
-                    utcDay: pinned_day,
-                })
+                emit_event(
+                    &ctx.storage,
+                    CallScanSkipped {
+                        referenceCurrency: iso_code,
+                        utcDay: pinned_day,
+                    },
+                )
             },
             |iso_code, window, ceiling, budget| {
                 let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, budget)?;

@@ -7,10 +7,13 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
-use outbe_gem::precompile::IGem::{ExpiryDeferred, GemExpired};
+use outbe_gem::precompile::IGem::GemForfeited;
 use outbe_gem::{api as gem_api, ExpiryHours, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
+
+use crate::precompile::IGemFactory::ExpiryDeferred;
+use crate::runtime::emit_event;
 
 /// Forfeit-burn the unpaid gems of the called buckets whose notice period closed.
 /// Returns the gems burned.
@@ -80,10 +83,13 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for GemExpiry<'_, '_, P> {
 
     fn deferred(&mut self, bucket: B256, retry_at: u64) -> Result<()> {
         tracing::warn!(target: "outbe::gemfactory", %bucket, retry_at, "expiry sweep: bucket deferred");
-        self.gem.emit(ExpiryDeferred {
-            bucketKey: bucket,
-            retryAt: retry_at,
-        })
+        emit_event(
+            &self.gem.storage,
+            ExpiryDeferred {
+                bucketKey: bucket,
+                retryAt: retry_at,
+            },
+        )
     }
 }
 
@@ -143,7 +149,7 @@ fn forfeit_member(
     gem_api::remove_gem(storage, scope, item, bucket)?;
     outbe_promislimit::PromisLimitContract::new(storage.clone())
         .add_to_total_unallocated(promis_load_minor)?;
-    gem.emit(GemExpired {
+    gem.emit(GemForfeited {
         gemId: gem_id,
         owner,
         promisLoadMinor: promis_load_minor,

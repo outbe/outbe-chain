@@ -216,7 +216,7 @@ fn settle_nod(world: &mut World, scenario: &RelayedNod) -> PaidNod {
     assert_receipt_event(
         &settled.receipt,
         addresses::NOD_FACTORY_ADDR,
-        &eth::INodFactory::NodPaid {
+        &eth::INodFactory::NodSettled {
             owner: scenario.owner,
             nodId: scenario.id.to_u256(),
             asset: scenario.asset,

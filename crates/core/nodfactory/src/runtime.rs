@@ -177,7 +177,7 @@ pub fn settle_nod(
         )?;
         emit_event(
             storage,
-            INodFactory::NodPaid {
+            INodFactory::NodSettled {
                 owner,
                 nodId: nod_id.to_u256(),
                 asset,
@@ -363,6 +363,6 @@ pub fn compute_pow_hash(nod_id: WwdEntityId, owner: Address, nonce: u64) -> [u8;
     )
 }
 
-fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
+pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
     storage.emit_event(NOD_FACTORY_ADDRESS, event.encode_log_data())
 }

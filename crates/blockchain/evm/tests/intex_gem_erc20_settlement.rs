@@ -499,7 +499,7 @@ impl World {
             Factory::Intex => {
                 let settled: Vec<_> = logs
                     .iter()
-                    .filter_map(|log| IIntexFactory::Settled::decode_log_data(&log.data).ok())
+                    .filter_map(|log| IIntexFactory::IntexSettled::decode_log_data(&log.data).ok())
                     .collect();
                 assert_eq!(settled.len(), 1);
                 assert_eq!(settled[0].owner, OWNER);
@@ -611,7 +611,7 @@ fn a_third_party_pays_and_the_units_stay_with_the_owner() {
             Factory::Gem => {
                 let gem = world.view(
                     GEM_ADDRESS,
-                    IGem::getGemStatusCall {
+                    IGem::getGemCall {
                         gemId: world.gem_id,
                     },
                 );

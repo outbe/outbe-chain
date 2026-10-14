@@ -518,24 +518,22 @@ fn a_gem_id_is_its_raw_keccak_and_the_bucket_id_carries_the_day() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn backdate_that_changes_the_day_moves_the_gem_and_mints_a_new_bucket_body() {
+    use crate::test_arming::IGemFactoryTestArming;
     use alloy_sol_types::SolCall;
-    use outbe_gem::precompile::IGemTestArming;
 
     with_storage(|storage, world| {
         let gem_id = add(storage, world, sample_params(ALICE));
         let before = item(storage, world, gem_id).unwrap();
         let issued_at = T_NOW - 3 * 86_400;
 
-        call(
-            storage,
-            world,
-            IGemTestArming::backdateGemForTestCall {
-                gemId: gem_id,
-                issuedAt: issued_at,
-            }
-            .abi_encode(),
-        )
-        .unwrap();
+        let data = IGemFactoryTestArming::backdateGemForTestCall {
+            gemId: gem_id,
+            issuedAt: issued_at,
+        }
+        .abi_encode();
+        crate::test_arming::dispatch(storage, &world.scope, &world.parent, &data)
+            .unwrap()
+            .unwrap();
 
         let after = item(storage, world, gem_id).unwrap();
         assert_eq!(after.issued_at, issued_at);
@@ -564,10 +562,21 @@ fn backdate_that_changes_the_day_moves_the_gem_and_mints_a_new_bucket_body() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn settled_for_test_issues_a_paid_body_and_counts_it_in_the_bucket() {
+    use crate::test_arming::IGemFactoryTestArming::issueSettledGemForTestCall;
+    use alloy_sol_types::SolCall;
+
     with_storage(|storage, world| {
-        let gem_id =
-            api::issue_settled_for_test(storage, &world.scope, &world.parent, sample_params(ALICE))
-                .unwrap();
+        let params = sample_params(ALICE);
+        let data = issueSettledGemForTestCall {
+            owner: params.owner,
+            promisLoadMinor: params.promis_load_minor,
+            currency: params.issuance_currency,
+        }
+        .abi_encode();
+        let out = crate::test_arming::dispatch(storage, &world.scope, &world.parent, &data)
+            .unwrap()
+            .unwrap();
+        let gem_id = issueSettledGemForTestCall::abi_decode_returns(&out).unwrap();
         let gem = item(storage, world, gem_id).unwrap();
         assert!(gem.is_settled());
         let bucket = api::get_bucket(storage, &world.scope, &world.parent, gem.bucket_id())

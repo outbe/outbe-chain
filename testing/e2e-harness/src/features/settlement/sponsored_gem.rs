@@ -211,7 +211,7 @@ fn prepare(world: &mut World) -> SponsoredGem {
     gem = eth::read_call(
         &url,
         addresses::GEM_ADDR,
-        &eth::IGem::getGemStatusCall { gemId: gem_id },
+        &eth::IGem::getGemCall { gemId: gem_id },
     )
     .expect("read the same reward Gem after qualification");
     assert_eq!(

@@ -376,7 +376,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
         .provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
+        .filter_map(|event| INodFactory::NodSettled::decode_log_data(&event.data).ok())
         .last()
         .unwrap();
     assert_eq!(paid.owner, input.owner);

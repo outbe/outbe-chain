@@ -256,7 +256,7 @@ impl PaidGem {
         for &p in ports {
             let observed = gem_view_at(
                 &world.rpc.url(p),
-                &eth::IGem::getGemStatusCall { gemId: gem_id },
+                &eth::IGem::getGemCall { gemId: gem_id },
                 height,
                 "finalized settled reward Gem",
             );

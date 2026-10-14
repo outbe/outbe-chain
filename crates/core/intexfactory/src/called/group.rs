@@ -1,3 +1,4 @@
+use outbe_intex::precompile::IIntex;
 use outbe_intex::{Group, IntexContract, IntexError, IntexState, SeriesId};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
@@ -66,14 +67,11 @@ pub(crate) fn try_call_group(
     }
 
     for &series_id in &group.members {
-        crate::runtime::emit_event(
-            storage,
-            crate::precompile::IIntexFactory::SeriesCalled {
-                seriesId: series_id.into(),
-                calledAt: called_at,
-                settlementDeadline: settlement_deadline,
-            },
-        )?;
+        IntexContract::new(storage.clone()).emit(IIntex::IntexSeriesCalled {
+            seriesId: series_id.into(),
+            calledAt: called_at,
+            settlementDeadline: settlement_deadline,
+        })?;
     }
     Ok(group.members.len() as u32)
 }

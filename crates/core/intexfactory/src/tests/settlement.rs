@@ -703,9 +703,9 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
         outbe_intex::api::record_exercised_units(&s, sid(7), owner(), 15).unwrap();
 
         // Through dispatch, so the selector and the struct encoding are covered too.
-        let out = precompile::dispatch(
+        let out = outbe_intex::precompile::dispatch(
             s.clone(),
-            &IIntexFactory::seriesUnitCountsCall {
+            &outbe_intex::precompile::IIntex::seriesUnitCountsCall {
                 seriesId: sid(7).into(),
             }
             .abi_encode(),
@@ -713,7 +713,9 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
             U256::ZERO,
         )
         .unwrap();
-        let counts = IIntexFactory::seriesUnitCountsCall::abi_decode_returns(&out).unwrap();
+        let counts =
+            outbe_intex::precompile::IIntex::seriesUnitCountsCall::abi_decode_returns(&out)
+                .unwrap();
         assert_eq!(counts.issuedUnits, 100);
         assert_eq!(counts.activeUnits, 50);
         assert_eq!(counts.settledUnits, 25);

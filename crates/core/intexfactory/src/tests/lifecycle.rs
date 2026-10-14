@@ -1559,7 +1559,7 @@ fn a_series_qualifies_on_a_closed_day_above_its_floor_from_its_first_full_day() 
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        let qualified = || runtime::is_series_qualified(&s, sid(7)).unwrap();
+        let qualified = || is_series_qualified(&s, sid(7)).unwrap();
         let close_day = |days_after_issue: u64, vwap: u64| {
             write_day_vwap(
                 &oracle,
@@ -1583,7 +1583,7 @@ fn a_series_qualifies_on_a_closed_day_above_its_floor_from_its_first_full_day() 
 }
 
 #[test]
-fn is_series_qualified_dispatch() {
+fn is_qualified_dispatch() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         write_day_vwap(
@@ -1593,9 +1593,9 @@ fn is_series_qualified_dispatch() {
             ISSUED_AT as u64 + 2 * DAY,
             U256::from(EXPECTED_FLOOR + 1),
         );
-        let out = precompile::dispatch(
+        let out = outbe_intex::precompile::dispatch(
             s.clone(),
-            &IIntexFactory::isSeriesQualifiedCall {
+            &outbe_intex::precompile::IIntex::isQualifiedCall {
                 seriesId: sid(7).into(),
             }
             .abi_encode(),
@@ -1603,7 +1603,9 @@ fn is_series_qualified_dispatch() {
             U256::ZERO,
         )
         .unwrap();
-        assert!(IIntexFactory::isSeriesQualifiedCall::abi_decode_returns(&out).unwrap());
+        assert!(
+            outbe_intex::precompile::IIntex::isQualifiedCall::abi_decode_returns(&out).unwrap()
+        );
     });
 }
 

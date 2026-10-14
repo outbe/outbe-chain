@@ -6,7 +6,8 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_credis::CredisContract;
+use outbe_credis::runtime::effective_state;
+use outbe_credis::{CredisContract, CredisState};
 
 use crate::rules::{CredisRules, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
@@ -158,6 +159,20 @@ fn collect_payment(
     }
     outbe_vaultrouter::api::deposit(storage, asset, amount)?;
     Ok(())
+}
+
+/// What paying `credis_id` off now takes: outstanding principal plus accrued interest.
+/// Zero once it is Settled or Forfeited.
+pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<U256> {
+    let record = CredisContract::new(storage.clone()).get_credis(credis_id)?;
+    let now = u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
+    match effective_state(&record, now)? {
+        CredisState::Settled | CredisState::Forfeited => Ok(U256::ZERO),
+        CredisState::Issued | CredisState::Called => record
+            .outstanding_principal_minor
+            .checked_add(CredisContract::accrued_interest(&record, now)?)
+            .ok_or_else(|| revert("payoff overflow")),
+    }
 }
 
 /// Collect payment first, then return the released collateral to the source's

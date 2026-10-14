@@ -619,10 +619,10 @@ impl Lifecycle for IntexLifecycle {
         for (series, unrealized, returned) in expired {
             assert_single_event(
                 &url,
-                addresses::INTEX_FACTORY_ADDR,
+                addresses::INTEX_ADDR,
                 from,
                 height,
-                eth::IIntexFactory::SeriesExpired {
+                eth::IIntex::IntexSeriesExpired {
                     seriesId: series,
                     forfeitedUnits: unrealized,
                     returnedPromisMinor: returned,
@@ -664,8 +664,8 @@ impl Lifecycle for IntexLifecycle {
             // The engine counts what it burned, so the series' classes stay disjoint.
             let counts = eth::read_call(
                 &url,
-                addresses::INTEX_FACTORY_ADDR,
-                &eth::IIntexFactory::seriesUnitCountsCall { seriesId: series },
+                addresses::INTEX_ADDR,
+                &eth::IIntex::seriesUnitCountsCall { seriesId: series },
             )
             .expect("series unit counts");
             assert_eq!(
@@ -1070,7 +1070,7 @@ fn public_state(url: &str, series: FixedBytes<14>) -> u8 {
     eth::read_call(
         url,
         addresses::INTEX_ADDR,
-        &eth::IIntex::seriesDataCall { seriesId: series },
+        &eth::IIntex::getIntexSeriesCall { seriesId: series },
     )
     .unwrap_or_else(|| panic!("series {series} does not read back"))
     .state
@@ -1079,8 +1079,8 @@ fn public_state(url: &str, series: FixedBytes<14>) -> u8 {
 fn is_qualified(url: &str, series: FixedBytes<14>) -> bool {
     eth::read_call(
         url,
-        addresses::INTEX_FACTORY_ADDR,
-        &eth::IIntexFactory::isSeriesQualifiedCall { seriesId: series },
+        addresses::INTEX_ADDR,
+        &eth::IIntex::isQualifiedCall { seriesId: series },
     )
     .unwrap_or_else(|| panic!("series {series} qualification does not read back"))
 }

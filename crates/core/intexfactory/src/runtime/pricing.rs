@@ -44,10 +44,6 @@ pub fn is_qualified(
     outbe_intex::api::is_qualified(storage, series)
 }
 
-pub fn is_series_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<bool> {
-    is_qualified(storage, &outbe_intex::api::read_series(storage, series_id)?)
-}
-
 /// What settling `units` of `series_id` with `asset` costs, which
 /// of the series' two currencies that asset settles on, and the VWAP snapshot an
 /// issuance-currency payment must name (zero on the reference rail). Priced exactly

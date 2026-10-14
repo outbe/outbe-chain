@@ -18,20 +18,6 @@ interface ICredis {
 
     event CredisCalled(uint256 indexed credisId, uint64 calledAt, uint64 settlementDeadline);
 
-    /// @notice One successful settlement. `interestPaidMinor` is this payment's interest.
-    ///         The Credis's `interestPaidMinor` is the sum of these payments
-    ///         across successful settlements. A reverted settlement emits nothing
-    ///         and leaves that total unchanged.
-    event SettlementApplied(
-        uint256 indexed credisId,
-        uint256 interestPaidMinor,
-        uint256 principalPaidMinor,
-        uint256 gratisReturnedMinor,
-        uint256 outstandingPrincipalMinor
-    );
-
-    event CredisSettled(uint256 indexed credisId);
-
     /// @notice Forfeiture of a called Credis. Records the principal written off.
     ///         Unpaid interest is left out of this event and out of `interestPaidMinor`.
     event CredisForfeited(

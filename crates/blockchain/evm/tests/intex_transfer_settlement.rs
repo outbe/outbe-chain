@@ -390,7 +390,7 @@ impl World {
             .journaled_state
             .logs()
             .iter()
-            .filter_map(|log| IIntexFactory::Settled::decode_log_data(&log.data).ok())
+            .filter_map(|log| IIntexFactory::IntexSettled::decode_log_data(&log.data).ok())
             .map(|event| (event.owner, event.units.to::<u64>()))
             .collect()
     }

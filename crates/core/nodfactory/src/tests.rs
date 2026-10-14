@@ -368,7 +368,7 @@ fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
         let bytes = outbe_nod::precompile::dispatch(
             storage,
             ExecutionReaders { scope, parent },
-            &INod::nodDataCall {
+            &INod::getNodCall {
                 nodId: nod_id.to_u256(),
             }
             .abi_encode(),
@@ -376,7 +376,7 @@ fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
             U256::ZERO,
         )
         .unwrap();
-        INod::nodDataCall::abi_decode_returns(&bytes).unwrap()
+        INod::getNodCall::abi_decode_returns(&bytes).unwrap()
     })
 }
 
@@ -388,14 +388,14 @@ fn dual_currency_params(owner: Address) -> NodIssueParams {
     }
 }
 
-fn paid_event(world: &World) -> INodFactory::NodPaid {
+fn paid_event(world: &World) -> INodFactory::NodSettled {
     world
         .provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
+        .filter_map(|event| INodFactory::NodSettled::decode_log_data(&event.data).ok())
         .last()
-        .expect("NodPaid event")
+        .expect("NodSettled event")
 }
 
 fn is_settled(world: &mut World, nod_id: WwdEntityId) -> bool {
