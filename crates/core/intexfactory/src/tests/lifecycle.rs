@@ -4,11 +4,11 @@ use super::*;
 fn issue_enrolls_in_call_bin() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
-        let f = IntexFactoryContract::new(s.clone());
-        let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+        let f = IntexContract::new(s.clone());
+        let bin = IntexContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
             f.call_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
+                .read(&IntexContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
@@ -69,14 +69,14 @@ pub(super) fn fill_days(
 #[test]
 fn insert_remove_call_bin_roundtrip() {
     with_factory(|s| {
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
         let trigger = U256::from(EXPECTED_TRIGGER);
-        let bin = IntexFactoryContract::price_to_bin(trigger).unwrap();
+        let bin = IntexContract::price_to_bin(trigger).unwrap();
         f.insert_call_bin(sid(11), REFERENCE_ISO, trigger).unwrap();
         f.insert_call_bin(sid(22), REFERENCE_ISO, trigger).unwrap();
         assert_eq!(
             f.call_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
+                .read(&IntexContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             2
         );
@@ -84,7 +84,7 @@ fn insert_remove_call_bin_roundtrip() {
             .unwrap();
         assert_eq!(
             f.call_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
+                .read(&IntexContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
@@ -92,7 +92,7 @@ fn insert_remove_call_bin_roundtrip() {
             .unwrap();
         assert_eq!(
             f.call_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
+                .read(&IntexContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             0
         );
@@ -103,7 +103,7 @@ fn insert_remove_call_bin_roundtrip() {
 fn try_call_marks_called_when_threshold_met() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         // All 30 window days above the trigger (threshold is 21).
@@ -123,10 +123,10 @@ fn try_call_marks_called_when_threshold_met() {
                 .unwrap(),
             outbe_intex::IntexState::Called
         );
-        let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
+        let bin = IntexContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
             f.call_bin_count
-                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
+                .read(&IntexContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             0
         );
@@ -137,7 +137,7 @@ fn try_call_marks_called_when_threshold_met() {
 fn try_call_skips_when_below_threshold() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
@@ -194,7 +194,7 @@ fn try_call_excludes_pre_issuance_days() {
             },
         )
         .unwrap();
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         // Scan only ~23 days after issuance, but set all 30 window days as
@@ -236,8 +236,8 @@ mod call_sweep {
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
     use crate::called;
-    use crate::schema::IntexFactoryContract;
     use crate::tests::owner;
+    use outbe_intex::IntexContract;
     use outbe_primitives::sweep_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 
     const CHAIN_ID: u64 = 1;
@@ -335,7 +335,7 @@ mod call_sweep {
             },
         )
         .unwrap();
-        IntexFactoryContract::new(s.clone())
+        IntexContract::new(s.clone())
             .insert_call_bin(series_id, REFERENCE_ISO, trigger)
             .unwrap();
     }
@@ -368,17 +368,17 @@ mod call_sweep {
             );
             assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
 
-            let factory = IntexFactoryContract::new(s.clone());
+            let factory = IntexContract::new(s.clone());
             let day = WorldwideDay::new(20260101);
-            let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
+            let key = IntexContract::scoped(REFERENCE_ISO, day.value());
 
             // The group left its bin and keeps its members for the expiry sweep.
             assert_eq!(factory.call_group_slot.read(&key).unwrap(), 0);
-            let bucket = IntexFactoryContract::deadline_bucket(scan_ts + 7 * DAY);
+            let bucket = IntexContract::deadline_bucket(scan_ts + 7 * DAY);
             assert_eq!(
                 factory
                     .expiry_bucket_at
-                    .read(&IntexFactoryContract::bucket_slot_key(bucket, 0))
+                    .read(&IntexContract::bucket_slot_key(bucket, 0))
                     .unwrap(),
                 key
             );
@@ -392,11 +392,7 @@ mod call_sweep {
                 SeriesId::from_word(
                     factory
                         .call_group_members
-                        .read(&IntexFactoryContract::group_member_key(
-                            REFERENCE_ISO,
-                            day,
-                            0
-                        ))
+                        .read(&IntexContract::group_member_key(REFERENCE_ISO, day, 0))
                         .unwrap()
                 ),
                 SeriesId::for_pair(day, 840, REFERENCE_ISO).unwrap()
@@ -412,16 +408,16 @@ mod call_sweep {
             s.clone(),
         );
         called::scan_and_call(&ctx).unwrap();
-        IntexFactoryContract::new(s.clone())
+        IntexContract::new(s.clone())
             .called_deadline
-            .read(&IntexFactoryContract::scoped(REFERENCE_ISO, worldwide_day))
+            .read(&IntexContract::scoped(REFERENCE_ISO, worldwide_day))
             .unwrap()
     }
 
     /// First instant a group with this deadline can be retired: the sweep works a
     /// deadline day only once that day has closed.
     fn due(deadline: u64) -> u64 {
-        IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(deadline))
+        IntexContract::bucket_end(IntexContract::deadline_bucket(deadline))
     }
 
     fn sweep_at(s: &StorageHandle<'_>, now: u64) {
@@ -519,7 +515,7 @@ mod call_sweep {
     fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId>, u64) {
         let day = WorldwideDay::new(20260101);
         let trigger = U256::from(TRIGGER);
-        let mut factory = IntexFactoryContract::new(s.clone());
+        let mut factory = IntexContract::new(s.clone());
         let mut members = Vec::new();
         for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
             let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
@@ -551,9 +547,9 @@ mod call_sweep {
     }
 
     fn group_len(s: &StorageHandle<'_>) -> u32 {
-        IntexFactoryContract::new(s.clone())
+        IntexContract::new(s.clone())
             .call_group_count
-            .read(&IntexFactoryContract::scoped(REFERENCE_ISO, 20260101))
+            .read(&IntexContract::scoped(REFERENCE_ISO, 20260101))
             .unwrap()
     }
 
@@ -561,7 +557,7 @@ mod call_sweep {
     fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<SeriesId>, u64) {
         let day = WorldwideDay::new(20260101);
         let trigger = U256::from(TRIGGER);
-        let mut factory = IntexFactoryContract::new(s.clone());
+        let mut factory = IntexContract::new(s.clone());
         let mut members = Vec::new();
         for issuance in 1..=width {
             let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
@@ -652,9 +648,8 @@ mod call_sweep {
             assert_eq!(group_len(&s), 1);
 
             registry.settled_units.write(&members[1], 0).unwrap();
-            let retry = IntexFactoryContract::bucket_end(
-                IntexFactoryContract::deadline_bucket(due(deadline)) + 1,
-            );
+            let retry =
+                IntexContract::bucket_end(IntexContract::deadline_bucket(due(deadline)) + 1);
             sweep_at(&s, retry);
             assert_eq!(unallocated(&s), U256::from(140u64) * U256::from(LOAD));
             assert_eq!(group_len(&s), 0);
@@ -676,7 +671,7 @@ mod call_sweep {
 
             // The bucket emptied, so its day left the tree rather than being handed
             // back every block.
-            let factory = IntexFactoryContract::new(s.clone());
+            let factory = IntexContract::new(s.clone());
             assert_eq!(factory.first_expiry_day().unwrap(), None);
         });
     }
@@ -739,10 +734,7 @@ mod call_sweep {
             let first = called::scan_and_call(&ctx).unwrap();
             assert_eq!(first, SWEEP_WRITES_PER_BLOCK);
             assert_ne!(
-                IntexFactoryContract::new(s.clone())
-                    .call_sweep_day
-                    .read()
-                    .unwrap(),
+                IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
                 0,
                 "the sweep stays open"
             );
@@ -752,10 +744,7 @@ mod call_sweep {
             assert_eq!(first + second, groups);
             assert_eq!(called_count(&s, days), groups);
             assert_eq!(
-                IntexFactoryContract::new(s.clone())
-                    .call_sweep_day
-                    .read()
-                    .unwrap(),
+                IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
                 0,
                 "the sweep closed"
             );
@@ -883,10 +872,7 @@ mod call_sweep {
             );
             assert_eq!(called::scan_and_call(&ctx).unwrap(), 4);
             assert_eq!(
-                IntexFactoryContract::new(s.clone())
-                    .call_sweep_day
-                    .read()
-                    .unwrap(),
+                IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
                 0
             );
         });
@@ -919,7 +905,7 @@ mod call_sweep {
             },
         )
         .unwrap();
-        IntexFactoryContract::new(s.clone())
+        IntexContract::new(s.clone())
             .insert_call_bin(series_id, REFERENCE_ISO, trigger)
             .unwrap();
     }
@@ -957,10 +943,7 @@ mod call_sweep {
                 called::run_call_slice(&ctx).unwrap();
             }
             assert_eq!(
-                IntexFactoryContract::new(s.clone())
-                    .call_sweep_day
-                    .read()
-                    .unwrap(),
+                IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
                 0,
                 "the sweep closed instead of restarting on the same groups"
             );
@@ -987,10 +970,7 @@ mod call_sweep {
             assert_eq!(called::scan_and_call(&ctx).unwrap(), 0, "nothing is called");
             assert_eq!(called_count(&s, 20260101..20260102), 0);
             assert_eq!(
-                IntexFactoryContract::new(s.clone())
-                    .call_sweep_day
-                    .read()
-                    .unwrap(),
+                IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
                 0,
                 "the sweep closed rather than retrying a currency it cannot price"
             );
@@ -1027,7 +1007,7 @@ mod call_sweep {
                 "the slice stops once its calls spent the writes"
             );
             assert_ne!(
-                IntexFactoryContract::new(s.clone())
+                IntexContract::new(s.clone())
                     .call_bin_cursor
                     .read(&REFERENCE_ISO)
                     .unwrap(),
@@ -1098,7 +1078,7 @@ mod call_sweep {
             },
         )
         .unwrap();
-        IntexFactoryContract::new(s.clone())
+        IntexContract::new(s.clone())
             .insert_call_bin(series_id, iso, trigger)
             .unwrap();
     }
@@ -1132,7 +1112,7 @@ mod call_sweep {
             // The rotation is [840, 978]. The budget was exhausted on the last one, so
             // that is where the cursor stands.
             assert_eq!(
-                IntexFactoryContract::new(s.clone())
+                IntexContract::new(s.clone())
                     .call_currency_cursor
                     .read()
                     .unwrap(),
@@ -1157,7 +1137,7 @@ mod call_sweep {
             for d in days.clone() {
                 seed_called_candidate(&s, d);
             }
-            let factory = IntexFactoryContract::new(s.clone());
+            let factory = IntexContract::new(s.clone());
 
             let ctx = BlockRuntimeContext::new(
                 BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
@@ -1224,7 +1204,7 @@ mod call_sweep {
                 .unwrap();
                 closed.push(day);
             }
-            let factory = IntexFactoryContract::new(s.clone());
+            let factory = IntexContract::new(s.clone());
             assert_eq!(factory.call_sweep_day.read().unwrap(), closed[0]);
             assert_eq!(factory.call_pending_day.read().unwrap(), closed[2]);
             (closed[0], closed[1])
@@ -1273,10 +1253,7 @@ mod call_sweep {
                 called::run_call_slice(&ctx).unwrap();
             }
             assert_eq!(
-                IntexFactoryContract::new(s.clone())
-                    .call_sweep_day
-                    .read()
-                    .unwrap(),
+                IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
                 0,
                 "the sweep closed"
             );
@@ -1313,7 +1290,7 @@ mod call_sweep {
             },
         )
         .unwrap();
-        IntexFactoryContract::new(s.clone())
+        IntexContract::new(s.clone())
             .insert_call_bin(series_id, iso, trigger)
             .unwrap();
     }
@@ -1333,8 +1310,8 @@ mod called_pstar {
     use outbe_primitives::time::WorldwideDay;
 
     use crate::called;
-    use crate::schema::IntexFactoryContract;
-    use crate::state::Group;
+    use outbe_intex::Group;
+    use outbe_intex::IntexContract;
     use outbe_oracle::call_window::CallWindow;
     use outbe_primitives::call_breach::ScanTerms;
 
@@ -1520,7 +1497,7 @@ mod called_pstar {
             let issued_at = day_start(LAST_DAY) - 10 * DAY_SECS;
             let series = seed_series(&s, issued_at as u32, U256::from(200u64));
 
-            let mut f = IntexFactoryContract::new(s.clone());
+            let mut f = IntexContract::new(s.clone());
             let window = window(&s);
             let group = Group {
                 iso_code: REFERENCE_ISO,
@@ -1531,7 +1508,8 @@ mod called_pstar {
                 called::try_call_group(
                     called::GroupCall {
                         storage: &s,
-                        factory: &mut f,
+                        intex: &mut f,
+                        factory: &crate::schema::IntexFactoryContract::new(s.clone()),
                     },
                     &group,
                     &window,
@@ -1660,5 +1638,40 @@ fn max_utc_day_vwap_since_dispatch() {
             read(outbe_primitives::time::next_date_key(closed_day)),
             U256::ZERO
         );
+    });
+}
+
+#[test]
+fn a_series_is_called_only_from_issued() {
+    with_factory(|s| {
+        outbe_intex::api::create_series(
+            &s,
+            outbe_intex::CreateSeriesParams {
+                series_id: sid(9),
+                worldwide_day: 9.into(),
+                issued_units: 100,
+                promis_load_minor: PROMIS_LOAD_MINOR,
+                entry_price_minor: U256::from(ENTRY_PRICE),
+                floor_price_minor: U256::from(EXPECTED_FLOOR),
+                call_price_minor: U256::from(EXPECTED_TRIGGER),
+                call_trigger: outbe_intex::IntexCallTrigger {
+                    call_window_seconds: CALL_WINDOW,
+                    call_threshold_seconds: CALL_THRESHOLD,
+                    call_notice_period_seconds: CALL_NOTICE_PERIOD,
+                },
+                issued_at: ISSUED_AT,
+                issuance_currency: 840,
+                reference_currency: 840,
+            },
+        )
+        .unwrap();
+        called::group::mark_called(&s, sid(9), ISSUED_AT + 10).unwrap();
+        let series = outbe_intex::api::read_series(&s, sid(9)).unwrap();
+        assert_eq!(
+            series.lifecycle_state().unwrap(),
+            outbe_intex::IntexState::Called
+        );
+        assert_eq!(series.called_at, ISSUED_AT + 10);
+        assert!(called::group::mark_called(&s, sid(9), ISSUED_AT + 20).is_err());
     });
 }

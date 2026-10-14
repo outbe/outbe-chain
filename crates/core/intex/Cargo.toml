@@ -15,6 +15,7 @@ thiserror.workspace = true
 
 [features]
 test-utils = []
+e2e-test = []
 
 [dev-dependencies]
 revm.workspace = true

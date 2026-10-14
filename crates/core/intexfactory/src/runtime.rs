@@ -10,10 +10,9 @@ use outbe_primitives::markup::marked_up;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
-use outbe_intex::{IntexState, SeriesRecord};
+use outbe_intex::{IntexContract, IntexState, SeriesRecord};
 use outbe_vaultrouter::settlement;
 
-use crate::config;
 use crate::constants::{
     INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
     ORIGIN_ROUTER_ADDRESS, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
@@ -42,8 +41,8 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
 
-    let mut factory = IntexFactoryContract::new(storage.clone());
-    let cfg = config::read_from(&factory, storage.chain_id()?)?;
+    let mut intex = IntexContract::new(storage.clone());
+    let cfg = outbe_intex::config::read(storage)?;
 
     let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)
         .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))?;
@@ -72,7 +71,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         reference_currency: params.reference_currency,
     };
     outbe_intex::api::create_series(storage, record)?;
-    factory.widen_call_terms(
+    intex.widen_call_terms(
         params.reference_currency,
         cfg.call_window_seconds,
         cfg.call_threshold_seconds,
@@ -105,7 +104,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         .collect();
 
     // Enroll into the call-price bin index the daily Called scan walks.
-    factory.insert_call_bin(
+    intex.insert_call_bin(
         params.series_id,
         params.reference_currency,
         call_price_minor,

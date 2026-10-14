@@ -39,9 +39,9 @@ fn world(sale: bool) -> HashMapStorageProvider {
         Bytes::from(vec![0; 32]),
     );
     StorageHandle::enter(&mut p, |s| {
-        outbe_intexfactory::schema::IntexFactoryContract::new(s.clone())
+        outbe_intex::IntexContract::new(s.clone())
             .config_profile
-            .write(outbe_intexfactory::config::PROFILE_PROD)
+            .write(outbe_intex::config::PROFILE_PROD)
             .unwrap();
         let pair = api::register_pair(s.clone(), AddressPair::new_coen_to(840)).unwrap();
         let oracle = OracleContract::new(s.clone());

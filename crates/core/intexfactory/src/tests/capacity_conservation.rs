@@ -1,8 +1,8 @@
 //! Realized units remain disjoint and only the unpaid remainder returns.
 use super::SeedCalledGroup;
-use crate::IntexFactoryContract;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
+use outbe_intex::IntexContract;
 use outbe_intex::{
     api,
     schema::{CreateSeriesParams, IntexCallTrigger},
@@ -54,8 +54,8 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
         api::record_settled_units(&s, id, 3).unwrap();
         api::record_exercised_units(&s, id, Address::repeat_byte(1), 1).unwrap();
         api::record_gem_factory_units(&s, id, Address::repeat_byte(1), 2).unwrap();
-        api::mark_called(&s, id, ISSUED).unwrap();
-        IntexFactoryContract::new(s.clone())
+        api::record_called(&s, id, ISSUED).unwrap();
+        IntexContract::new(s.clone())
             .seed_called_group(840, WorldwideDay::new(WWD), DEADLINE, &[id])
             .unwrap();
         assert_eq!(
@@ -94,8 +94,8 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
             units.active + units.settled + units.exercised + units.gem_factory + units.forfeited,
             10
         );
-        let key = IntexFactoryContract::scoped(840, WWD);
-        let factory = IntexFactoryContract::new(s.clone());
+        let key = IntexContract::scoped(840, WWD);
+        let factory = IntexContract::new(s.clone());
         let pending = factory.call_group_count.read(&key).unwrap();
         let returned = PromisLimitContract::new(s).get_total_unallocated().unwrap();
         if terminal {
@@ -126,7 +126,7 @@ fn partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_convert
         let units = api::unit_counts(&s, id).unwrap();
         assert_eq!((units.active, units.forfeited), (5, 0));
     });
-    let due = IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(DEADLINE));
+    let due = IntexContract::bucket_end(IntexContract::deadline_bucket(DEADLINE));
     sweep(&mut p, due).unwrap();
     ledger(&mut p, id, true);
     sweep(&mut p, due + DAY).unwrap();
@@ -143,7 +143,7 @@ fn partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_convert
 
 #[test]
 fn every_intex_expiry_write_failure_preserves_credit_debt_and_retries_exactly_once() {
-    let due = IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(DEADLINE));
+    let due = IntexContract::bucket_end(IntexContract::deadline_bucket(DEADLINE));
     let (mut baseline, _) = world();
     sweep(&mut baseline, due).unwrap();
     let mutations = baseline.clear_mutation_failure();

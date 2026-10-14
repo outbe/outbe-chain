@@ -69,7 +69,7 @@ from genesis_seed_codec import (
     GOVERNANCE_ADDRESS,
     GRATIS_ADDRESS,
     GRATIS_FACTORY_ADDRESS,
-    INTEX_FACTORY_ADDRESS,
+    INTEX_ADDRESS,
     INTEX_PROFILE_SLOT,
     ISO_MARKER,
     MARKER_CODE,
@@ -276,7 +276,7 @@ def apply_seed(
 def _seed_contract_alloc(alloc, seed, contracts_dir):
     # Seed the profile selectors (auto seeds nothing).
     for section, address, slot, label in (
-        ("intex_factory", INTEX_FACTORY_ADDRESS, INTEX_PROFILE_SLOT, "IntexFactory"),
+        ("intex_factory", INTEX_ADDRESS, INTEX_PROFILE_SLOT, "Intex"),
         ("gem_profile", GEM_ADDRESS, GEM_PROFILE_SLOT, "Gem"),
         ("nod_profile", NOD_ADDRESS, NOD_PROFILE_SLOT, "Nod"),
     ):

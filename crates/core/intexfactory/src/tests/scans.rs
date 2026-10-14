@@ -175,7 +175,7 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
             30,
             U256::from(EXPECTED_TRIGGER) + U256::from(1),
         );
-        IntexFactoryContract::new(s)
+        IntexContract::new(s)
             .call_sweep_day
             .write(last_closed_day)
             .unwrap();
@@ -198,7 +198,7 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
                 .unwrap(),
             outbe_intex::IntexState::Issued
         );
-        let f = IntexFactoryContract::new(s);
+        let f = IntexContract::new(s);
         assert_eq!(
             f.call_bin_group(REFERENCE_ISO, WorldwideDay::new(7))
                 .unwrap()
@@ -237,7 +237,7 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u32) {
         },
     )
     .unwrap();
-    IntexFactoryContract::new(s.clone())
+    IntexContract::new(s.clone())
         .insert_call_bin(sid(id), REFERENCE_ISO, U256::from(EXPECTED_TRIGGER))
         .unwrap();
 }
@@ -268,7 +268,7 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
         StorageHandle::enter(&mut storage, |s| {
             select_prod_profile(&s);
             seed_issued_at(&s, 7, issued_at);
-            let mut f = IntexFactoryContract::new(s.clone());
+            let mut f = IntexContract::new(s.clone());
 
             let oracle = OracleContract::new(s.clone());
             let pair = setup_pair(&oracle);
@@ -304,7 +304,7 @@ fn call_survives_router_failure() {
     );
     StorageHandle::enter(&mut storage, |s| {
         seed_issued(&s, 7);
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
 
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -394,7 +394,7 @@ fn terms(window_days: u32, threshold_days: u32) -> outbe_primitives::call_breach
 #[test]
 fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
     with_factory(|s| {
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
         let live_window = 28 * 24 * 3600;
         let live_threshold = 21 * 24 * 3600;
 
@@ -457,14 +457,14 @@ fn called_series(s: &StorageHandle<'_>, worldwide_day: u32) -> SeriesId {
         },
     )
     .unwrap();
-    outbe_intex::api::mark_called(s, series_id, ISSUED_AT).unwrap();
+    outbe_intex::api::record_called(s, series_id, ISSUED_AT).unwrap();
     series_id
 }
 
 #[test]
 fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
     with_factory(|s| {
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
         let now = ISSUED_AT as u64;
         let far = WorldwideDay::new(20260101);
         let near = WorldwideDay::new(20260102);
@@ -482,8 +482,8 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
         );
         crate::expired::sweep_expired(&ctx).unwrap();
 
-        let near_day = IntexFactoryContract::deadline_bucket(now + DAY);
-        let far_day = IntexFactoryContract::deadline_bucket(now + 10 * DAY);
+        let near_day = IntexContract::deadline_bucket(now + DAY);
+        let far_day = IntexContract::deadline_bucket(now + 10 * DAY);
         assert_eq!(
             f.expiry_bucket_live.read(&near_day).unwrap(),
             0,
@@ -507,12 +507,12 @@ fn a_node_local_failure_while_expiring_fails_the_sweep() {
     let mut provider = factory_provider();
     let now = ISSUED_AT as u64;
     let day = WorldwideDay::new(20260101);
-    let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
-    let due = IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(now + DAY));
+    let key = IntexContract::scoped(REFERENCE_ISO, day.value());
+    let due = IntexContract::bucket_end(IntexContract::deadline_bucket(now + DAY));
     StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
         let member = called_series(&s, day.value());
-        IntexFactoryContract::new(s.clone())
+        IntexContract::new(s.clone())
             .seed_called_group(REFERENCE_ISO, day, now + DAY, &[member])
             .unwrap();
     });
@@ -527,11 +527,11 @@ fn a_node_local_failure_while_expiring_fails_the_sweep() {
         Err(outbe_primitives::error::PrecompileError::Storage(_))
     ));
     StorageHandle::enter(&mut provider, |s| {
-        let f = IntexFactoryContract::new(s);
+        let f = IntexContract::new(s);
         assert_eq!(f.call_group_count.read(&key).unwrap(), 1);
         assert_eq!(
             f.first_expiry_day().unwrap(),
-            Some(IntexFactoryContract::deadline_bucket(now + DAY))
+            Some(IntexContract::deadline_bucket(now + DAY))
         );
     });
 }
@@ -543,11 +543,11 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
     let mut provider = factory_provider();
     let now = ISSUED_AT as u64;
     let day = WorldwideDay::new(20260101);
-    let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
-    let bucket = IntexFactoryContract::deadline_bucket(now + DAY);
+    let key = IntexContract::scoped(REFERENCE_ISO, day.value());
+    let bucket = IntexContract::deadline_bucket(now + DAY);
     StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
-        IntexFactoryContract::new(s)
+        IntexContract::new(s)
             .seed_called_group(REFERENCE_ISO, day, now + DAY, &[sid(1)])
             .unwrap();
     });
@@ -555,7 +555,7 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
     provider.fail_after_mutation_at(2);
     let result = StorageHandle::enter(&mut provider, |s| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(bucket), CHAIN_ID),
+            BlockContext::empty_for_tests(1, IntexContract::bucket_end(bucket), CHAIN_ID),
             s,
         );
         crate::expired::sweep_expired(&ctx)
@@ -566,7 +566,7 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
         Err(outbe_primitives::error::PrecompileError::Storage(_))
     ));
     StorageHandle::enter(&mut provider, |s| {
-        let f = IntexFactoryContract::new(s);
+        let f = IntexContract::new(s);
         assert_eq!(f.call_group_count.read(&key).unwrap(), 1);
         assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), 1);
         assert_eq!(f.first_expiry_day().unwrap(), Some(bucket));
@@ -580,23 +580,23 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
 #[test]
 fn a_bucket_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
     with_factory(|s| {
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
         let now = ISSUED_AT as u64;
         let day = WorldwideDay::new(20260101);
 
         f.seed_called_group(REFERENCE_ISO, day, now + DAY, &[sid(1)])
             .unwrap();
-        let bucket = IntexFactoryContract::deadline_bucket(now + DAY);
-        let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
+        let bucket = IntexContract::deadline_bucket(now + DAY);
+        let key = IntexContract::scoped(REFERENCE_ISO, day.value());
         f.called_deadline.write(&key, now + 400 * DAY).unwrap();
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(bucket), CHAIN_ID),
+            BlockContext::empty_for_tests(1, IntexContract::bucket_end(bucket), CHAIN_ID),
             s.clone(),
         );
         crate::expired::sweep_expired(&ctx).unwrap();
 
-        let later = IntexFactoryContract::deadline_bucket(now + 400 * DAY);
+        let later = IntexContract::deadline_bucket(now + 400 * DAY);
         assert_eq!(f.expiry_bucket_live.read(&bucket).unwrap(), 0);
         assert_eq!(
             f.first_expiry_day().unwrap(),
@@ -619,12 +619,12 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
     let mut provider = factory_provider();
     let now = ISSUED_AT as u64;
     let day = WorldwideDay::new(20260101);
-    let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
-    let bucket = IntexFactoryContract::deadline_bucket(now + DAY);
-    let later = IntexFactoryContract::deadline_bucket(now + 3 * DAY);
+    let key = IntexContract::scoped(REFERENCE_ISO, day.value());
+    let bucket = IntexContract::deadline_bucket(now + DAY);
+    let later = IntexContract::deadline_bucket(now + 3 * DAY);
     StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
         let member = called_series(&s, day.value());
         f.seed_called_group(REFERENCE_ISO, day, now + DAY, &[member])
             .unwrap();
@@ -640,17 +640,17 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
                 .unwrap()
         };
 
-        sweep(IntexFactoryContract::bucket_end(bucket));
+        sweep(IntexContract::bucket_end(bucket));
         assert_eq!(f.first_expiry_day().unwrap(), Some(later));
         assert_eq!(f.call_group_count.read(&key).unwrap(), 1);
         assert_eq!(unallocated(), U256::ZERO);
 
-        sweep(IntexFactoryContract::bucket_end(later));
+        sweep(IntexContract::bucket_end(later));
         assert_eq!(f.first_expiry_day().unwrap(), None);
         assert_eq!(f.call_group_count.read(&key).unwrap(), 0);
         assert_eq!(unallocated(), U256::from(PROMIS_LOAD_MINOR));
 
-        sweep(IntexFactoryContract::bucket_end(later) + DAY);
+        sweep(IntexContract::bucket_end(later) + DAY);
         assert_eq!(unallocated(), U256::from(PROMIS_LOAD_MINOR));
     });
 
@@ -661,7 +661,7 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
         .collect();
     assert_eq!(deferred.len(), 1);
     assert_eq!(deferred[0].worldwideDay, day.value());
-    assert_eq!(deferred[0].retryAt, IntexFactoryContract::bucket_end(later));
+    assert_eq!(deferred[0].retryAt, IntexContract::bucket_end(later));
     let expired = provider
         .get_events(INTEX_FACTORY_ADDRESS)
         .iter()
@@ -673,10 +673,10 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
 #[test]
 fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
     with_factory(|s| {
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
         let now = ISSUED_AT as u64;
         let deadline = now + DAY;
-        let bucket = IntexFactoryContract::deadline_bucket(deadline);
+        let bucket = IntexContract::deadline_bucket(deadline);
 
         let queued = outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK + 44;
         for index in 0..queued {
@@ -692,7 +692,7 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
                 BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
             crate::expired::sweep_expired(&ctx).unwrap();
         };
-        let due = IntexFactoryContract::bucket_end(bucket);
+        let due = IntexContract::bucket_end(bucket);
 
         sweep(due);
         let left = f.expiry_bucket_live.read(&bucket).unwrap();
@@ -728,7 +728,7 @@ fn a_bucket_wider_than_one_block_resumes_where_it_gave_out() {
 #[test]
 fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
     with_factory(|s| {
-        let mut f = IntexFactoryContract::new(s.clone());
+        let mut f = IntexContract::new(s.clone());
         let now = (ISSUED_AT as u64 / DAY) * DAY;
         let deadline = now + 600;
         let day = WorldwideDay::new(20260101);
@@ -746,7 +746,7 @@ fn a_short_notice_is_forfeited_within_the_hour_not_the_day() {
         sweep(deadline + 1);
         assert_eq!(
             f.first_expiry_day().unwrap(),
-            Some(IntexFactoryContract::deadline_bucket(deadline)),
+            Some(IntexContract::deadline_bucket(deadline)),
             "still waiting while its own bucket is open"
         );
 
@@ -783,11 +783,11 @@ fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
         // A member the registry never issued: a group-wide checkpoint would roll the
         // healthy one back with it.
         let day = WorldwideDay::new(7);
-        let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
-        let f = IntexFactoryContract::new(s.clone());
+        let key = IntexContract::scoped(REFERENCE_ISO, day.value());
+        let f = IntexContract::new(s.clone());
         f.call_group_members
             .write(
-                &IntexFactoryContract::group_member_key(REFERENCE_ISO, day, 1),
+                &IntexContract::group_member_key(REFERENCE_ISO, day, 1),
                 sid(20260999).to_word(),
             )
             .unwrap();
@@ -797,7 +797,7 @@ fn one_member_that_cannot_expire_does_not_cost_its_group_the_credit() {
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(
                 1,
-                IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(deadline)),
+                IntexContract::bucket_end(IntexContract::deadline_bucket(deadline)),
                 CHAIN_ID,
             ),
             s.clone(),
@@ -943,19 +943,18 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
 
         // A member the registry never issued cannot expire. The group must survive it.
         let day = WorldwideDay::new(7);
-        let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
-        let f = IntexFactoryContract::new(s.clone());
+        let key = IntexContract::scoped(REFERENCE_ISO, day.value());
+        let f = IntexContract::new(s.clone());
         f.call_group_members
             .write(
-                &IntexFactoryContract::group_member_key(REFERENCE_ISO, day, 1),
+                &IntexContract::group_member_key(REFERENCE_ISO, day, 1),
                 sid(20260999).to_word(),
             )
             .unwrap();
         f.call_group_count.write(&key, 2).unwrap();
 
         let deadline = f.called_deadline.read(&key).unwrap();
-        let first_pass =
-            IntexFactoryContract::bucket_end(IntexFactoryContract::deadline_bucket(deadline));
+        let first_pass = IntexContract::bucket_end(IntexContract::deadline_bucket(deadline));
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, first_pass, CHAIN_ID),
             s.clone(),
@@ -973,17 +972,13 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
             "the member that could expire returns its load"
         );
 
-        let retry_day = IntexFactoryContract::deadline_bucket(first_pass) + 1;
+        let retry_day = IntexContract::deadline_bucket(first_pass) + 1;
         assert_eq!(f.first_expiry_day().unwrap(), Some(retry_day));
         // Only the phantom stays, so the retry cannot meet the member already credited.
         assert_eq!(f.call_group_count.read(&key).unwrap(), 1);
         assert_eq!(
             f.call_group_members
-                .read(&IntexFactoryContract::group_member_key(
-                    REFERENCE_ISO,
-                    day,
-                    0
-                ))
+                .read(&IntexContract::group_member_key(REFERENCE_ISO, day, 0))
                 .unwrap(),
             sid(20260999).to_word()
         );
@@ -991,7 +986,7 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
         // The phantom goes away and the retry finishes the group.
         f.call_group_count.write(&key, 0).unwrap();
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, IntexFactoryContract::bucket_end(retry_day), CHAIN_ID),
+            BlockContext::empty_for_tests(1, IntexContract::bucket_end(retry_day), CHAIN_ID),
             s.clone(),
         );
         crate::expired::sweep_expired(&ctx).unwrap();
@@ -1020,8 +1015,5 @@ fn a_group_left_unfinished_moves_to_the_next_bucket_and_credits_once() {
     );
     assert_eq!(deferred[0].referenceCurrency, REFERENCE_ISO);
     assert_eq!(deferred[0].worldwideDay, 7);
-    assert_eq!(
-        deferred[0].retryAt,
-        IntexFactoryContract::bucket_end(retry_day)
-    );
+    assert_eq!(deferred[0].retryAt, IntexContract::bucket_end(retry_day));
 }

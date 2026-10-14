@@ -33,20 +33,6 @@ pub enum IntexFactoryError {
     FxRateStale(u16),
     #[error("caller is not the origin router")]
     NotOriginRouter,
-    #[error(
-        "currency {iso} day {worldwide_day} is indexed in bin {expected}, series priced into {got}"
-    )]
-    GroupBinMismatch {
-        iso: u16,
-        worldwide_day: outbe_primitives::time::WorldwideDay,
-        expected: u32,
-        got: u32,
-    },
-    #[error("currency {iso} day {worldwide_day} is already indexed")]
-    GroupAlreadyIndexed {
-        iso: u16,
-        worldwide_day: outbe_primitives::time::WorldwideDay,
-    },
 }
 
 impl From<outbe_common::pow::PowError> for IntexFactoryError {

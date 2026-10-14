@@ -84,18 +84,19 @@ fn issue_enrolls_series_in_dense_enumeration() {
 
 #[test]
 fn floor_and_call_derivation() {
-    let floor = outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), FLOOR_RATE).unwrap();
-    let call = outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), CALL_RATE).unwrap();
+    let floor =
+        outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), FLOOR_RATE_PCT).unwrap();
+    let call = outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), CALL_RATE_PCT).unwrap();
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
     assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
     let one = U256::from(1_000_000u64);
     assert_eq!(
-        outbe_primitives::markup::marked_up(one, FLOOR_RATE).unwrap(),
+        outbe_primitives::markup::marked_up(one, FLOOR_RATE_PCT).unwrap(),
         U256::from(1_080_000u64)
     );
     assert_eq!(
-        outbe_primitives::markup::marked_up(one, CALL_RATE).unwrap(),
+        outbe_primitives::markup::marked_up(one, CALL_RATE_PCT).unwrap(),
         U256::from(2_280_000u64)
     );
 }
@@ -103,7 +104,7 @@ fn floor_and_call_derivation() {
 #[test]
 fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
     assert_eq!(
-        IntexFactoryContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        IntexContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
         REAL_ID_SHIFT as u32
     );
 }
@@ -619,7 +620,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
         let notice = outbe_intex::api::read_series(&s, sid(7))
             .unwrap()
             .call_notice_period_seconds;
-        outbe_intex::api::mark_called(&s, sid(7), (deadline - u64::from(notice)) as u32).unwrap();
+        outbe_intex::api::record_called(&s, sid(7), (deadline - u64::from(notice)) as u32).unwrap();
     });
 
     storage.set_timestamp(U256::from(deadline));

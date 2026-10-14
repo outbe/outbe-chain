@@ -22,9 +22,9 @@ use outbe_primitives::{
 use crate::constants::{MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
-use crate::state::CallBins;
+use outbe_intex::{CallBins, IntexContract};
 
-mod group;
+pub(crate) mod group;
 
 pub(crate) use group::{try_call_group, GroupCall};
 
@@ -48,13 +48,13 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
 }
 
 struct IntexCallSweep<'storage> {
-    factory: IntexFactoryContract<'storage>,
+    intex: IntexContract<'storage>,
 }
 
 impl<'storage> IntexCallSweep<'storage> {
     fn new(ctx: &BlockRuntimeContext<'storage>) -> Self {
         Self {
-            factory: IntexFactoryContract::new(ctx.storage.clone()),
+            intex: IntexContract::new(ctx.storage.clone()),
         }
     }
 }
@@ -69,22 +69,22 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
 
     fn days(&self) -> PinnedDay<'_, 'storage> {
         PinnedDay {
-            current: &self.factory.call_sweep_day,
-            pending: &self.factory.call_pending_day,
+            current: &self.intex.call_sweep_day,
+            pending: &self.intex.call_pending_day,
         }
     }
 
     fn bins(&self, reference_currency: u16) -> CallBins<'_, 'storage> {
-        CallBins(&self.factory, reference_currency)
+        CallBins(&self.intex, reference_currency)
     }
 
     fn currency_cursor(&self) -> &Value<'storage, u32> {
-        &self.factory.call_currency_cursor
+        &self.intex.call_currency_cursor
     }
 
     fn day_skipped(&mut self, skipped: u32, in_flight: u32) -> Result<()> {
         crate::runtime::emit_event(
-            &self.factory.storage,
+            &self.intex.storage,
             crate::precompile::IIntexFactory::SweepDaySkipped {
                 sweep: CALL_SWEEP,
                 skippedDay: skipped,
@@ -94,8 +94,8 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
-        let params = crate::config::read_from(&self.factory, ctx.block.chain_id)?;
-        let index = &self.factory;
+        let params = outbe_intex::config::read(&ctx.storage)?;
+        let index = &self.intex;
         let mut called: u32 = 0;
         let finished = call_sweep::walk_day(
             ctx,
@@ -137,23 +137,25 @@ fn call_currency(
     ceiling: u32,
     budget: &mut SweepBudget,
 ) -> Result<(u32, bool)> {
-    let index = IntexFactoryContract::new(ctx.storage.clone());
-    let mut factory = IntexFactoryContract::new(ctx.storage.clone());
+    let index = IntexContract::new(ctx.storage.clone());
+    let mut intex = IntexContract::new(ctx.storage.clone());
+    let factory = IntexFactoryContract::new(ctx.storage.clone());
     let mut called: u32 = 0;
     let finished = call_bins::walk(
         &CallBins(&index, iso_code),
         ceiling,
         budget,
         |key, budget| {
-            let (_, worldwide_day) = IntexFactoryContract::unscoped(key);
-            let group = factory.call_bin_group(iso_code, worldwide_day)?;
+            let (_, worldwide_day) = IntexContract::unscoped(key);
+            let group = intex.call_bin_group(iso_code, worldwide_day)?;
             if !budget.fits_writes(group.members.len() as u32) {
                 return Ok(Visit::Stop);
             }
             call_sweep::call_entry::<IntexCallSweep>(&ctx.storage, budget, key, || {
                 let call = GroupCall {
                     storage: &ctx.storage,
-                    factory: &mut factory,
+                    intex: &mut intex,
+                    factory: &factory,
                 };
                 let applied = try_call_group(call, &group, window, ctx.block.timestamp)?;
                 called += applied;

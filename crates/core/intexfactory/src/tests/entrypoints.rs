@@ -50,48 +50,22 @@ fn dispatch_pow_difficulty_serves_the_protocol_difficulty() {
 }
 
 #[test]
-fn config_unset_resolves_by_chain_id() {
-    with_factory(|s| {
-        let f = IntexFactoryContract::new(s.clone());
-        // Undo the fixture's explicit choice: an unset selector resolves by
-        // network, and CHAIN_ID is not mainnet.
-        f.config_profile.write(crate::config::PROFILE_AUTO).unwrap();
-        assert_eq!(
-            crate::config::read(&s).unwrap(),
-            crate::config::IntexParams::DEV
-        );
-        // An explicit selector still wins over the network default.
-        f.config_profile.write(crate::config::PROFILE_PROD).unwrap();
-        assert_eq!(
-            crate::config::read(&s).unwrap(),
-            crate::config::IntexParams::PROD
-        );
-        assert_eq!(
-            crate::config::IntexParams::PROD.commit_bond_minor,
-            100_000_000u128 * 1_000_000_000_000_000_000u128
-        );
-        assert_eq!(
-            crate::config::IntexParams::DEV.commit_bond_minor,
-            100u128 * 1_000_000_000_000_000_000u128
-        );
-    });
-}
-
-#[test]
 fn config_dev_profile_drives_issuance_and_qualification() {
     with_factory(|s| {
-        let f = IntexFactoryContract::new(s.clone());
+        let f = outbe_intex::IntexContract::new(s.clone());
         // Select the dev profile through the single selector byte.
-        f.config_profile.write(crate::config::PROFILE_DEV).unwrap();
+        f.config_profile
+            .write(outbe_intex::config::PROFILE_DEV)
+            .unwrap();
         assert_eq!(
-            crate::config::read(&s).unwrap(),
-            crate::config::IntexParams::DEV
+            outbe_intex::config::read(&s).unwrap(),
+            outbe_intex::config::IntexParams::DEV
         );
 
         runtime::issue(&s, sample(7)).unwrap();
 
         // Issuance captures the dev call-trigger and dev-derived prices.
-        let dev = crate::config::IntexParams::DEV;
+        let dev = outbe_intex::config::IntexParams::DEV;
         let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
         assert_eq!(r.call_notice_period_seconds, dev.call_notice_period_seconds);
         assert_eq!(
@@ -124,44 +98,6 @@ fn config_dev_profile_drives_issuance_and_qualification() {
     });
 }
 
-#[test]
-fn config_unknown_selector_errors() {
-    with_factory(|s| {
-        let f = IntexFactoryContract::new(s.clone());
-        f.config_profile.write(99u8).unwrap();
-        assert!(crate::config::read(&s).is_err());
-    });
-}
-
-/// The network default: only mainnet runs the real timings.
-#[test]
-fn config_auto_profile_follows_the_network() {
-    use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
-
-    assert_eq!(
-        crate::config::IntexParams::from_selector(crate::config::PROFILE_AUTO, MAINNET_CHAIN_ID)
-            .unwrap(),
-        crate::config::IntexParams::PROD
-    );
-    for chain_id in [TESTNET_CHAIN_ID, DEVNET_CHAIN_ID, 31_337] {
-        assert_eq!(
-            crate::config::IntexParams::from_selector(crate::config::PROFILE_AUTO, chain_id)
-                .unwrap(),
-            crate::config::IntexParams::DEV
-        );
-    }
-}
-
-/// Pin the selector slot index: the seeder writes a raw slot, so the schema must
-/// map `config_profile` to the same one.
-#[test]
-fn config_profile_slot_matches_seeder_layout() {
-    with_factory(|s| {
-        let f = IntexFactoryContract::new(s.clone());
-        assert_eq!(f.config_profile.slot(), U256::from(5));
-    });
-}
-
 /// Slots are dense in `order` sequence, so a field inserted rather than appended moves every
 /// one after it.
 #[test]
@@ -170,34 +106,9 @@ fn intex_factory_slot_layout_is_pinned() {
         let f = IntexFactoryContract::new(s.clone());
         let slots = [
             f.mine_seq.base_slot(),
-            f.call_bin_tree_root.base_slot(),
-            f.call_bin_tree_mid.base_slot(),
-            f.call_bin_tree_leaf.base_slot(),
-            f.call_bin_count.base_slot(),
-            f.config_profile.slot(),
-            f.call_currency_cursor.slot(),
-            f.call_bin_cursor.base_slot(),
-            f.call_group_count.base_slot(),
-            f.call_group_members.base_slot(),
-            f.call_group_slot.base_slot(),
-            f.call_sweep_day.slot(),
-            f.call_bin_groups.base_slot(),
             f.notify_head.slot(),
             f.notify_tail.slot(),
             f.notify_at.base_slot(),
-            f.expiry_tree_root.slot(),
-            f.expiry_tree_mid.base_slot(),
-            f.expiry_tree_leaf.base_slot(),
-            f.called_deadline.base_slot(),
-            f.max_call_window_seconds.base_slot(),
-            f.min_call_threshold_seconds.base_slot(),
-            f.expiry_bucket_len.base_slot(),
-            f.expiry_bucket_live.base_slot(),
-            f.expiry_bucket_at.base_slot(),
-            f.called_group_slot.base_slot(),
-            f.expiry_sweep_hour.slot(),
-            f.expiry_cursor.slot(),
-            f.call_pending_day.slot(),
             f.parked_message_cursor.slot(),
             f.parked_proceeds_cursor.slot(),
             f.vwap_sent_day.slot(),

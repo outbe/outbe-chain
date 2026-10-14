@@ -11,16 +11,16 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
+use outbe_intex::{ExpiryHours, IntexContract};
+
 use crate::runtime::emit_event;
-use crate::schema::IntexFactoryContract;
-use crate::state::ExpiryHours;
 
 /// Retire every group whose settlement window has closed, earliest bucket first.
 pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<()> {
-    let queue = IntexFactoryContract::new(ctx.storage.clone());
+    let queue = IntexContract::new(ctx.storage.clone());
     let mut expiry = IntexExpiry {
         storage: &ctx.storage,
-        factory: IntexFactoryContract::new(ctx.storage.clone()),
+        intex: IntexContract::new(ctx.storage.clone()),
     };
     let mut budget = SweepBudget::per_block();
     expiry_queue::sweep(
@@ -34,7 +34,7 @@ pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<()> {
 
 struct IntexExpiry<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
-    factory: IntexFactoryContract<'storage>,
+    intex: IntexContract<'storage>,
 }
 
 /// A called group's members are its series, by their place in the group.
@@ -42,21 +42,21 @@ impl ExpiryHandler<u64> for IntexExpiry<'_, '_> {
     type Member = (u32, SeriesId);
 
     fn due(&mut self, key: u64) -> Result<Due> {
-        Ok(match self.factory.call_group_count.read(&key)? {
+        Ok(match self.intex.call_group_count.read(&key)? {
             0 => Due::Drop,
             _ => Due::Expire,
         })
     }
 
     fn member_count(&self, key: u64) -> Result<u32> {
-        self.factory.call_group_count.read(&key)
+        self.intex.call_group_count.read(&key)
     }
 
     fn member_at(&self, key: u64, index: u32) -> Result<(u32, SeriesId)> {
-        let (iso_code, worldwide_day) = IntexFactoryContract::unscoped(key);
+        let (iso_code, worldwide_day) = IntexContract::unscoped(key);
         Ok((
             index,
-            self.factory.group_member(iso_code, worldwide_day, index)?,
+            self.intex.group_member(iso_code, worldwide_day, index)?,
         ))
     }
 
@@ -79,13 +79,13 @@ impl ExpiryHandler<u64> for IntexExpiry<'_, '_> {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .add_to_total_unallocated(returned)?;
         }
-        let (iso_code, worldwide_day) = IntexFactoryContract::unscoped(key);
-        self.factory
+        let (iso_code, worldwide_day) = IntexContract::unscoped(key);
+        self.intex
             .remove_group_member(iso_code, worldwide_day, index)
     }
 
     fn deferred(&mut self, key: u64, retry_at: u64) -> Result<()> {
-        let (iso_code, worldwide_day) = IntexFactoryContract::unscoped(key);
+        let (iso_code, worldwide_day) = IntexContract::unscoped(key);
         tracing::warn!(
             target: "outbe::intexfactory",
             iso_code,

@@ -1,4 +1,4 @@
-//! Genesis-selectable parameter profile for IntexFactory: `PROD` (real timings)
+//! Genesis-selectable parameter profile for Intex: `PROD` (real timings)
 //! and `DEV` (short timings) are fixed here. A chain picks one via the
 //! `config_profile` selector byte seeded from genesis. An unset byte resolves by
 //! network, so only mainnet runs PROD.
@@ -8,13 +8,14 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18_U128;
 
 use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR, FLOOR_RATE,
+    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR,
+    FLOOR_RATE_PCT,
 };
-use crate::schema::IntexFactoryContract;
+use crate::schema::IntexContract;
 
 pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
 
-/// Resolved IntexFactory protocol parameters. Periods are seconds. Rates are
+/// Resolved Intex protocol parameters. Periods are seconds. Rates are
 /// percentage points over [`outbe_primitives::markup::PRICE_RATE_DEN`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntexParams {
@@ -33,8 +34,8 @@ impl IntexParams {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
-        call_rate: CALL_RATE,
-        floor_rate: FLOOR_RATE,
+        call_rate: CALL_RATE_PCT,
+        floor_rate: FLOOR_RATE_PCT,
         commit_bond_minor: COMMIT_BOND_MINOR,
     };
 
@@ -58,13 +59,11 @@ impl IntexParams {
     }
 }
 
+/// Resolve the profile a chain was seeded with.
 pub fn read(storage: &StorageHandle<'_>) -> Result<IntexParams> {
-    read_from(
-        &IntexFactoryContract::new(storage.clone()),
-        storage.chain_id()?,
-    )
+    read_from(&IntexContract::new(storage.clone()), storage.chain_id()?)
 }
 
-pub(crate) fn read_from(factory: &IntexFactoryContract<'_>, chain_id: u64) -> Result<IntexParams> {
-    IntexParams::from_selector(factory.config_profile.read()?, chain_id)
+pub(crate) fn read_from(intex: &IntexContract<'_>, chain_id: u64) -> Result<IntexParams> {
+    IntexParams::from_selector(intex.config_profile.read()?, chain_id)
 }

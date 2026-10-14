@@ -27,8 +27,8 @@ use std::process::Command;
 use alloy_primitives::{Address, U256};
 use outbe_evm::system_tx::{expected_begin_block_kinds, SystemTxKind};
 use outbe_gem::GemContract;
-use outbe_intexfactory::IntexFactoryContract;
-use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_FACTORY_ADDRESS};
+use outbe_intex::IntexContract;
+use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
@@ -577,7 +577,7 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
         run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
     let mut provider = HashMapStorageProvider::new(512_215);
     load_seeded_storage(&mut provider, &genesis, GEM_ADDRESS);
-    load_seeded_storage(&mut provider, &genesis, INTEX_FACTORY_ADDRESS);
+    load_seeded_storage(&mut provider, &genesis, INTEX_ADDRESS);
     load_seeded_storage(
         &mut provider,
         &genesis,
@@ -586,11 +586,11 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
 
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
-            IntexFactoryContract::new(storage.clone())
+            IntexContract::new(storage.clone())
                 .config_profile
                 .read()
                 .unwrap(),
-            outbe_intexfactory::config::PROFILE_DEV
+            outbe_intex::config::PROFILE_DEV
         );
         assert_eq!(
             outbe_nod::NodContract::new(storage.clone())

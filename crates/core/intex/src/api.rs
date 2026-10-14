@@ -1,9 +1,8 @@
 //! Public Rust-to-Rust API for the Intex module.
 //!
 //! This is the only surface IntexFactory uses to read and write the registry.
-//! The lifecycle gates mirror the Origin `IntexNFT1155` state machine
-//! (`markCalled`). Writes have no precompile dispatch, and access is
-//! Rust-to-Rust only. Thus the API needs no trusted-caller checks.
+//! IntexFactory decides every transition. Writes have no precompile dispatch, and
+//! access is Rust-to-Rust only. Thus the API needs no trusted-caller checks.
 //!
 //! The registry is a thin ledger. Its record validation is the `issued_at`
 //! existence sentinel. Other business validation (caps, defaults, zero economic
@@ -61,20 +60,14 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
     registry.create_series_record(&record)
 }
 
-/// `Issued -> Called`. Mirrors `markCalled`. `called_at` is the
-/// block timestamp that the caller supplies (deterministic, with no wall clock here).
-/// `Called` is terminal for these transitions.
-pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: u32) -> Result<()> {
+/// Records the series `Called` at `called_at`. IntexFactory decides the call.
+pub fn record_called(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    called_at: u32,
+) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     let mut record = registry.load_series(series_id)?;
-    let state = record.lifecycle_state()?;
-    if state != IntexState::Issued {
-        return Err(IntexError::InvalidState {
-            expected: IntexState::Issued as u8,
-            actual: record.state,
-        }
-        .into());
-    }
     record.state = IntexState::Called as u8;
     record.called_at = called_at;
     registry.update_series_record(&record)

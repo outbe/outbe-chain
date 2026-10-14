@@ -119,7 +119,7 @@ fn qualified_intex_projection_preserves_called_deadline_and_internal_issued_rout
                 .unwrap(),
             IntexState::Issued
         );
-        api::mark_called(&s, id, ISSUED).unwrap();
+        api::record_called(&s, id, ISSUED).unwrap();
         id
     });
     let deadline = u64::from(ISSUED) + 7 * 86_400;

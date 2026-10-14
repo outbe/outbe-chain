@@ -64,19 +64,19 @@ fn requeue_called_group(
     worldwide_day: u32,
     deadline: u64,
 ) -> Result<()> {
-    use crate::schema::IntexFactoryContract;
+    use outbe_intex::IntexContract;
     use outbe_primitives::time::WorldwideDay;
 
-    let mut factory = IntexFactoryContract::new(storage.clone());
+    let mut intex = IntexContract::new(storage.clone());
     let worldwide_day = WorldwideDay::from(worldwide_day);
-    let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
-    if factory.called_deadline.read(&key)? == 0 {
+    let key = IntexContract::scoped(iso_code, worldwide_day.value());
+    if intex.called_deadline.read(&key)? == 0 {
         return Err(outbe_primitives::error::PrecompileError::Revert(
             "closeCallNoticeForTest: no called group".into(),
         ));
     }
-    factory.remove_called_group(iso_code, worldwide_day)?;
-    factory.push_called_group(iso_code, worldwide_day, deadline)
+    intex.remove_called_group(iso_code, worldwide_day)?;
+    intex.push_called_group(iso_code, worldwide_day, deadline)
 }
 
 /// The e2e-only arming selectors. `None` leaves `data` to the published interface.

@@ -10,7 +10,6 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
-use crate::config::{self, IntexParams};
 use crate::runtime;
 use crate::schema::IssuanceParams;
 
@@ -34,13 +33,6 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<runtime::IssuanceLeg
 /// burns instead of sitting in the pot.
 pub fn finalize_empty_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
     outbe_intex::api::finalize_proceeds(storage, worldwide_day)
-}
-
-/// Resolved IntexFactory protocol parameters (genesis profile). The clearing
-/// engine (Desis) reads these at auction start to source floor%/call%/call-trigger.
-/// This keeps a single source of truth instead of hardcoded values.
-pub fn read_params(storage: &StorageHandle<'_>) -> Result<IntexParams> {
-    config::read(storage)
 }
 
 /// The `minePromis` proof-of-work check, for off-chain miners.

@@ -12,14 +12,12 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
-use crate::constants::{
-    CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE, MAX_RECIPIENTS_PER_ISSUANCE,
-    MAX_SERIES_PER_MESSAGE,
-};
+use crate::constants::{MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE};
 use crate::precompile::{self, IIntexFactory};
 use crate::runtime;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::state::Group;
+use outbe_intex::constants::{CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE_PCT};
+use outbe_intex::{Group, IntexContract};
 
 /// ISO code every fixture prices in.
 const REFERENCE_ISO: u16 = 840;
@@ -70,9 +68,9 @@ fn factory_provider() -> HashMapStorageProvider {
 /// These cases assert the PROD terms. An unset profile resolves by chain id, and
 /// the test chain is not mainnet.
 fn select_prod_profile(storage: &StorageHandle<'_>) {
-    crate::schema::IntexFactoryContract::new(storage.clone())
+    outbe_intex::IntexContract::new(storage.clone())
         .config_profile
-        .write(crate::config::PROFILE_PROD)
+        .write(outbe_intex::config::PROFILE_PROD)
         .unwrap();
 }
 
@@ -84,7 +82,7 @@ fn sid(worldwide_day: u32) -> SeriesId {
 /// Force-call one group against the protocol call window. Returns how many series moved.
 fn call_group<'s>(
     s: &StorageHandle<'s>,
-    f: &mut IntexFactoryContract<'s>,
+    f: &mut IntexContract<'s>,
     group: &Group,
     last_closed_day: u32,
     now_ts: u64,
@@ -103,9 +101,11 @@ fn call_group<'s>(
     if window.ceiling().is_none() {
         return 0;
     }
+    let factory = IntexFactoryContract::new(s.clone());
     let call = called::GroupCall {
         storage: s,
-        factory: f,
+        intex: f,
+        factory: &factory,
     };
     called::try_call_group(call, group, &window, now_ts).unwrap()
 }
@@ -138,7 +138,7 @@ trait SeedCalledGroup {
     ) -> outbe_primitives::error::Result<()>;
 }
 
-impl SeedCalledGroup for IntexFactoryContract<'_> {
+impl SeedCalledGroup for IntexContract<'_> {
     fn seed_called_group(
         &mut self,
         iso: u16,
@@ -147,10 +147,10 @@ impl SeedCalledGroup for IntexFactoryContract<'_> {
         members: &[SeriesId],
     ) -> outbe_primitives::error::Result<()> {
         use outbe_primitives::storage::types::Storable as _;
-        let key = IntexFactoryContract::scoped(iso, day.value());
+        let key = IntexContract::scoped(iso, day.value());
         for (index, series_id) in members.iter().enumerate() {
             self.call_group_members.write(
-                &IntexFactoryContract::group_member_key(iso, day, index as u32),
+                &IntexContract::group_member_key(iso, day, index as u32),
                 series_id.to_word(),
             )?;
         }

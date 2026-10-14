@@ -1,10 +1,9 @@
 //! IntexFactory: Intex issuance, settlement (settle / minePromis), and the
-//! autonomous call lifecycle. Qualification is derived from daily VWAPs and is never
-//! stored. This module owns the settlement bookkeeping and the call-price index.
+//! autonomous call lifecycle over the data Intex keeps. Qualification is derived from
+//! daily VWAPs and is never stored.
 
 pub mod api;
 pub mod called;
-pub mod config;
 pub mod constants;
 pub mod errors;
 pub(crate) mod expired;
@@ -18,8 +17,7 @@ pub(crate) mod sol_ext;
 pub(crate) mod state;
 pub mod vwap_push;
 
-pub use api::{issue, read_params};
-pub use config::IntexParams;
+pub use api::issue;
 pub use errors::IntexFactoryError;
 pub use outbe_intex::SeriesId;
 pub use runtime::to_wire_price;
