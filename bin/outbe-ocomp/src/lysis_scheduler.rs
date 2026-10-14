@@ -232,10 +232,10 @@ fn admit_output_finalize_phase(
 fn admit_producer_tree_phase(
     ctx: ProducerPhaseAdmissionContext<'_>,
 ) -> Result<AdmittedLysisUnitV1, LysisSchedulerError> {
-    if !ctx.loaded.input_chunks.is_empty() {
-        return Err(LysisSchedulerError::InputShape);
-    }
     if ctx.spec.phase == UnitPhase::BucketShuffle {
+        if !ctx.loaded.input_chunks.is_empty() {
+            return Err(LysisSchedulerError::InputShape);
+        }
         verify_lysis_shuffle_phase_replay(
             (
                 ctx.admission_position.plan_ordinal,
@@ -268,7 +268,11 @@ fn admit_producer_tree_phase(
             ctx.reported_artifact,
         ),
         (ctx.plan, ctx.manifest),
-        (&ctx.loaded.producer_artifacts, ctx.bundle),
+        (
+            &ctx.loaded.input_chunks,
+            &ctx.loaded.producer_artifacts,
+            ctx.bundle,
+        ),
         (ctx.reader, ctx.replay_inbox, ctx.limits),
     )?;
     match decode_root_reduce_output(ctx.reported_artifact.phase_payload(ctx.limits)?, ctx.limits)? {

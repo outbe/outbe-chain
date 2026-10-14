@@ -122,7 +122,7 @@ impl Fixture {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ResultCatalogFault {
     None,
-    EligibleTotal,
+    NodCarrier,
     HeaderCoverage,
     NodBoundary,
     AlternateResultChunk,

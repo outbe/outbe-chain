@@ -100,12 +100,12 @@ fn result_catalog_latches_failure_when_a_chunk_changes_after_admission() {
 }
 
 #[test]
-fn result_catalog_compares_repartitioned_eligible_totals_only_after_all_chunks() {
-    let error = result_catalog_error_for_fault(ResultCatalogFault::EligibleTotal);
+fn result_catalog_rederives_leaf_nod_carrier_from_exact_chunk_bytes() {
+    let error = result_catalog_error_for_fault(ResultCatalogFault::NodCarrier);
     assert!(matches!(
         error,
         LysisResultCatalogError::Protocol(outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-            "global eligible nominal total"
+            "result chunk ROOT_REDUCE carrier binding"
         ))
     ));
 }

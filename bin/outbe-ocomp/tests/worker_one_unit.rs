@@ -52,8 +52,8 @@ use outbe_ocomp::worker::{run_worker, WorkerConfig};
 use outbe_ocomp::worker_transport::{SupervisorWorkerDispatcherV1, SupervisorWorkerServerV1};
 use outbe_ocomp_protocol::common::{BoundedBytes, ProofBytes};
 use outbe_ocomp_protocol::input::{
-    materialize_authenticated_openings, CheckpointIdentityV1, Compression, InputChunkKind,
-    InputManifestV1,
+    materialize_authenticated_openings, AuthenticatedInputChunkV1, CheckpointIdentityV1,
+    Compression, InputChunkKind, InputManifestV1,
 };
 use outbe_ocomp_protocol::intent::{
     ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
@@ -508,7 +508,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             .expect("decode Enumerate output");
     forged_enumerated.ordered_records[0]
         .tribute
-        .nominal_amount_minor += U256::from(1);
+        .tribute_price_minor += U256::from(1);
     let forged_enumerate_artifact = UnitArtifactV1::from_canonical_output(
         &spec,
         artifact.output_header(&limits).unwrap(),
@@ -1404,7 +1404,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         plan_hash,
         plan_ref,
         published.manifest_ref,
-        vec![finalized_ref, bucket_ref],
+        vec![finalized_ref, bucket_ref, tribute_ref],
     );
     root_reduce_artifact
         .validate_against(&root_reduce_spec, &limits)
@@ -1413,6 +1413,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         (root_reduce_offset, &root_reduce_spec, &root_reduce_artifact),
         (&plan, &manifest),
         (
+            &replay_inputs,
             &[output_finalize_artifact.clone(), bucket_artifact.clone()],
             &bundle,
         ),
@@ -1448,7 +1449,8 @@ fn real_worker_processes_execute_through_output_finalize() {
         ),
         (&plan, &manifest),
         (
-            &[output_finalize_artifact.clone(), bucket_artifact.clone(),],
+            &replay_inputs,
+            &[output_finalize_artifact.clone(), bucket_artifact.clone()],
             &bundle,
         ),
         (&reader, &semantic_replay_inbox, &limits),
@@ -1484,7 +1486,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         chunk.result_chunk_hash(&limits).unwrap(),
         output_manifest_entry.result_chunk_hash
     );
-    assert_eq!(inbox.object_count().expect("count typed objects"), 3);
+    assert_eq!(inbox.object_count().expect("count typed objects"), 2);
 
     let intent = JobIntentV1 {
         chain_id: 41,
@@ -2061,6 +2063,41 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             )
             .expect("publish root reduce finalized producer");
         finalized_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+        let start = ordinal * 256;
+        let end = (start + 256).min(tribute_count);
+        let tribute_chunk = AuthenticatedInputChunkV1 {
+            protocol_bundle_hash,
+            job_id,
+            kind: InputChunkKind::Tribute,
+            ordinal,
+            canonical_records_or_openings: (start..end)
+                .map(|raw_ordinal| {
+                    let (tribute_id, owner) = identities[raw_ordinal as usize];
+                    BoundedBytes(
+                        encode_tribute_v1(&TributeBodyV1 {
+                            tribute_id,
+                            owner,
+                            worldwide_day: day,
+                            issuance_amount_minor: U256::from(1),
+                            issuance_currency: 840,
+                            nominal_amount_minor: U256::from(raw_ordinal + 1),
+                            reference_currency: 978,
+                            tribute_price_minor: U256::from(2),
+                            exclude_from_intex_issuance: raw_ordinal == 0,
+                        })
+                        .expect("encode merge Tribute body"),
+                    )
+                })
+                .collect(),
+        };
+        let mut tribute_ref = cas
+            .publish_bytes(
+                &tribute_chunk
+                    .encode_canonical(&limits)
+                    .expect("canonical merge Tribute chunk"),
+            )
+            .expect("publish merge Tribute chunk");
+        tribute_ref.expected_ocb1_kind = Some(ObjectKind::AuthenticatedInputChunkV1.tag());
         let artifact = execute_real_worker_unit(
             707 + u64::from(ordinal),
             0xa7 + u8::try_from(ordinal).expect("root reduce boot"),
@@ -2074,7 +2111,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             plan_hash,
             plan_ref.clone(),
             manifest_ref.clone(),
-            vec![finalized_ref, bucket_root_ref.clone()],
+            vec![finalized_ref, bucket_root_ref.clone(), tribute_ref],
         );
         artifact
             .validate_against(&leaf_spec, &limits)

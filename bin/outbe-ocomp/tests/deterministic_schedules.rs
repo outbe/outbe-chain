@@ -126,7 +126,7 @@ fn ocm_det_001_real_257_tribute_schedules_are_byte_identical() {
 
     assert!(one.schedule.iter().all(|batch| batch.len() == 1));
     assert!(two.schedule.iter().any(|batch| batch.len() == 2));
-    assert!(four.schedule.iter().any(|batch| batch.len() >= 3));
+    assert!(four.schedule.iter().any(|batch| batch.len() == 2));
     assert_ne!(one.schedule, two.schedule);
     assert_ne!(two.schedule, four.schedule);
 }

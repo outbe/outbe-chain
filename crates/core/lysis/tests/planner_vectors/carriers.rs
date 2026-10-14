@@ -37,7 +37,12 @@ fn enumerate_artifact_is_bounded_canonical_and_commits_raw_coverage() {
     assert_ne!(run.coverage_root().unwrap(), B256::ZERO);
 
     let encoded = encode_enumerated_run(&run, &limits).unwrap();
-    assert_eq!(decode_enumerated_run(&encoded, &limits).unwrap(), run);
+    let mut redacted = run.clone();
+    for record in &mut redacted.ordered_records {
+        record.tribute.nominal_amount_minor = U256::ZERO;
+    }
+    assert_eq!(encode_enumerated_run(&redacted, &limits).unwrap(), encoded);
+    assert_eq!(decode_enumerated_run(&encoded, &limits).unwrap(), redacted);
 
     let mut changed = encoded.clone();
     changed[24] ^= 1;

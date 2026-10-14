@@ -5,7 +5,7 @@ use outbe_lysis::program_v1::{
     result::{decode_root_reduce_output, RootReduceOutputV1},
 };
 use outbe_ocomp_protocol::{
-    input::InputManifestV1,
+    input::{AuthenticatedInputChunkV1, InputChunkRefV1, InputManifestV1},
     profile::ProtocolBundleV1,
     result::ResultChunkV1,
     unit::{
@@ -21,7 +21,7 @@ use crate::{
     },
     cas::{CasError, FilesystemCas, FilesystemCasReader},
     inbox::{WorkerInbox, WorkerInboxError},
-    lysis_phase_replay::{verify_producer_only_phase_replay, LysisPhaseReplayError},
+    lysis_phase_replay::{verify_dedicated_phase_replay, LysisPhaseReplayError},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,7 +63,8 @@ pub enum LysisResultAdoptionError {
     ReplayMismatch,
 }
 
-/// Re-executes one ROOT_REDUCE unit against exact admitted producer artifacts.
+/// Re-executes one ROOT_REDUCE unit against exact admitted producer artifacts
+/// and, for a leaf, the shard's authenticated Tribute chunk.
 ///
 /// A leaf writes its expected ResultChunkV1 only into the supervisor-owned
 /// replay inbox. Byte equality of the root artifact therefore also proves that
@@ -71,10 +72,14 @@ pub enum LysisResultAdoptionError {
 pub fn verify_lysis_root_reduce_phase_replay(
     unit: (u32, &UnitSpecV1, &UnitArtifactV1),
     authority: (&PlanCommitmentV1, &InputManifestV1),
-    producers: (&[UnitArtifactV1], &ProtocolBundleV1),
+    producers: (
+        &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
+        &[UnitArtifactV1],
+        &ProtocolBundleV1,
+    ),
     storage: (&FilesystemCasReader, &WorkerInbox, &SchemaLimits),
 ) -> Result<(), LysisResultAdoptionError> {
-    verify_producer_only_phase_replay(
+    verify_dedicated_phase_replay(
         (UnitPhase::RootReduce, "ROOT_REDUCE replay phase"),
         unit,
         authority,

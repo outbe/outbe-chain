@@ -345,8 +345,8 @@ impl ResultFixture<'_> {
         );
         if index == 1 {
             match result_fault {
-                ResultCatalogFault::EligibleTotal => {
-                    summary.eligible_nominal_total -= U256::from(1);
+                ResultCatalogFault::NodCarrier => {
+                    summary.nod_actions.tree_root = hash(0xed);
                 }
                 ResultCatalogFault::None
                 | ResultCatalogFault::HeaderCoverage
