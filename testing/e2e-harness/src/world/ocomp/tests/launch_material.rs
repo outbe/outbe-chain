@@ -2,6 +2,61 @@ use super::*;
 
 #[cfg(feature = "ocomp-integration")]
 #[test]
+fn release_ocomp_private_reader_matches_the_configured_node_session() {
+    use crate::env::TeeMode;
+
+    let mut topology = topology_with_validators(4);
+    for mode in [
+        TeeMode::MockNative,
+        TeeMode::Mock,
+        TeeMode::GramineDirect,
+        TeeMode::SgxNoAttest,
+        TeeMode::Real,
+    ] {
+        topology.cfg.tee_mode = mode;
+        let command = topology.release_role_command(2);
+        let environment = command
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            environment.get("OUTBE_OCOMP_TEE_ENDPOINT"),
+            Some(&Some(format!("127.0.0.1:{}", topology.cfg.tee_port(2))))
+        );
+        if matches!(mode, TeeMode::Real | TeeMode::SgxNoAttest) {
+            assert_eq!(
+                environment.get("OUTBE_OCOMP_TEE_SESSION_MODE"),
+                Some(&Some("production-node-host".to_owned()))
+            );
+            assert_eq!(
+                environment.get("OUTBE_OCOMP_NODE_DATA_DIR"),
+                Some(&Some(
+                    topology
+                        .cfg
+                        .validator_dir(2)
+                        .join("data")
+                        .display()
+                        .to_string()
+                ))
+            );
+        } else {
+            // None explicitly removes inherited values, not just local overrides.
+            assert_eq!(
+                environment.get("OUTBE_OCOMP_TEE_SESSION_MODE"),
+                Some(&Some("development".to_owned()))
+            );
+            assert_eq!(environment.get("OUTBE_OCOMP_NODE_DATA_DIR"), Some(&None));
+        }
+    }
+}
+
+#[cfg(feature = "ocomp-integration")]
+#[test]
 fn release_ocomp_layout_uses_the_scenario_base_and_never_the_debug_override() {
     let mut command = Command::new("outbe-ocomp");
     configure_release_layout(&mut command, Path::new("/tmp/release-e2e"), 7);

@@ -233,7 +233,6 @@ fn failed_hash_update_cannot_change_committed_native_records() {
         assert_eq!(tree.get(key).unwrap(), old_leaf);
         assert_eq!(tx.entries::<tables::CeBranches>().unwrap(), branches_before);
         assert_eq!(tx.entries::<tables::CeLeaves>().unwrap(), leaves_before);
-        drop(tree);
         // Even committing this caller-owned transaction cannot persist partial hash work.
         tx.commit().unwrap();
     }

@@ -509,9 +509,14 @@ impl Localnet {
             "--color",
             "never",
         ];
-        if matches!(self.cfg.tee_mode, crate::env::TeeMode::SgxNoAttest) {
-            args.extend(args!["--tee-session-mode", "production-node-host"]);
-        }
+        args.extend(args![
+            "--tee-session-mode",
+            if self.cfg.uses_production_node_host_session() {
+                "production-node-host"
+            } else {
+                "development"
+            }
+        ]);
         args
     }
 

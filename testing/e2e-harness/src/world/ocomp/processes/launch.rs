@@ -313,23 +313,30 @@ impl OcompTopology {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    fn release_role_command(&self, validator_index: u8) -> Command {
+    pub(in crate::world::ocomp) fn release_role_command(&self, validator_index: u8) -> Command {
         let mut command = Command::new(&self.cfg.bin_ocomp);
         configure_release_layout(&mut command, &self.cfg.dir, validator_index);
-        command
-            .env(
-                "OUTBE_OCOMP_TEE_ENDPOINT",
-                format!(
-                    "127.0.0.1:{}",
-                    self.cfg.tee_port(usize::from(validator_index))
-                ),
-            )
-            .env(
-                "OUTBE_OCOMP_NODE_DATA_DIR",
-                self.cfg
-                    .validator_dir(usize::from(validator_index))
-                    .join("data"),
-            );
+        command.env(
+            "OUTBE_OCOMP_TEE_ENDPOINT",
+            format!(
+                "127.0.0.1:{}",
+                self.cfg.tee_port(usize::from(validator_index))
+            ),
+        );
+        if self.cfg.uses_production_node_host_session() {
+            command
+                .env("OUTBE_OCOMP_TEE_SESSION_MODE", "production-node-host")
+                .env(
+                    "OUTBE_OCOMP_NODE_DATA_DIR",
+                    self.cfg
+                        .validator_dir(usize::from(validator_index))
+                        .join("data"),
+                );
+        } else {
+            command
+                .env("OUTBE_OCOMP_TEE_SESSION_MODE", "development")
+                .env_remove("OUTBE_OCOMP_NODE_DATA_DIR");
+        }
         command
     }
 
