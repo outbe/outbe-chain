@@ -56,13 +56,11 @@ fn inactive_weights_are_excluded_and_residue_stays_excess() {
         assert_eq!(claimable(&storage, ALICE), native(13));
         AgentRewardContract::new(storage.clone())
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Cca,
                 BOB,
                 U256::ZERO,
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap();
         assert_eq!(storage.balance(BOB).unwrap(), U256::ZERO);
@@ -378,13 +376,11 @@ fn deregistered_cca_claims_from_agentreward_after_withdrawing_bond() {
             .unwrap();
         AgentRewardContract::new(storage.clone())
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Cca,
                 ALICE,
                 U256::ZERO,
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap();
         assert_eq!(claimable(&storage, ALICE), U256::ZERO);
@@ -480,24 +476,20 @@ fn a_second_claim_does_not_mint_or_move_the_bond() {
         assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
         let gem_id = AgentRewardContract::new(storage.clone())
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Cca,
                 ALICE,
                 U256::ZERO,
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap();
         assert!(AgentRewardContract::new(storage.clone())
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Cca,
                 ALICE,
                 U256::ZERO,
-                USD,
-                USD
+                (USD, USD)
             )
             .is_err());
         assert_eq!(claimable(&storage, ALICE), U256::ZERO);

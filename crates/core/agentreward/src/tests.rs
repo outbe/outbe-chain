@@ -207,13 +207,11 @@ fn claiming_a_pool_mints_its_gem_and_burns_the_backing() {
 
         let gem_id = contract
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Waa,
                 alice,
                 U256::ZERO,
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap();
         assert!(!gem_id.is_zero());
@@ -252,13 +250,11 @@ fn the_sra_pool_issues_an_sra_gem_at_the_discounted_cost() {
 
         contract
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Sra,
                 alice,
                 U256::ZERO,
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap();
         let sra_gem = gem_of(&storage, world, alice);
@@ -295,13 +291,11 @@ fn claim_waa_in(
         .add_claimable_reward(RewardPool::Waa, alice, backing)
         .unwrap();
     contract.claim_reward(
-        &world.scope,
-        &world.parent,
+        world.readers(),
         RewardPool::Waa,
         alice,
         U256::ZERO,
-        issuance_currency,
-        reference_currency,
+        (issuance_currency, reference_currency),
     )
 }
 
@@ -374,13 +368,11 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
 
         let err = contract
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Waa,
                 alice,
                 U256::ZERO,
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap_err();
         assert!(err
@@ -488,13 +480,11 @@ fn a_load_whose_cost_rounds_to_zero_still_claims() {
 
         contract
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Waa,
                 alice,
                 U256::ZERO,
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap();
         assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
@@ -527,15 +517,7 @@ fn a_partial_claim_mints_only_what_was_asked_for() {
             .unwrap();
 
         contract
-            .claim_reward(
-                &world.scope,
-                &world.parent,
-                RewardPool::Waa,
-                alice,
-                taken,
-                USD,
-                USD,
-            )
+            .claim_reward(world.readers(), RewardPool::Waa, alice, taken, (USD, USD))
             .unwrap();
         assert_eq!(
             gem_of(&storage, world, alice).item.promis_load_minor,
@@ -572,13 +554,11 @@ fn claiming_more_than_the_pool_holds_is_refused() {
 
         let err = contract
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Waa,
                 alice,
                 backing + U256::from(1u64),
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap_err();
         assert!(err.to_string().contains("insufficient claimable balance"));
@@ -604,13 +584,11 @@ fn a_sub_unit_remainder_stays_claimable() {
 
         contract
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Waa,
                 alice,
                 U256::ZERO,
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap();
         // The Gem carries the convertible part. What is below one protocol unit
@@ -641,13 +619,11 @@ fn claiming_an_empty_pool_is_refused() {
 
         let err = contract
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Sra,
                 alice,
                 U256::ZERO,
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap_err();
         assert!(err.to_string().contains("no claimable balance"));
@@ -676,13 +652,11 @@ fn the_pools_are_claimed_apart() {
 
         contract
             .claim_reward(
-                &world.scope,
-                &world.parent,
+                world.readers(),
                 RewardPool::Waa,
                 alice,
                 U256::ZERO,
-                USD,
-                USD,
+                (USD, USD),
             )
             .unwrap();
         assert_eq!(
@@ -1117,8 +1091,7 @@ fn reward_timestamp_narrowing_rejects_overflow() {
         storage.set_block_timestamp(U256::MAX).unwrap();
         let error = crate::runtime::issue_reward_gem(
             &storage,
-            &world.scope,
-            &world.parent,
+            world.readers(),
             (Address::repeat_byte(1), U256::from(100)),
             GemTypes::Cca,
             (USD, USD),
