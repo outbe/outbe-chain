@@ -466,13 +466,25 @@ async fn vwap_range(
         },
     )
     .await?;
-    print_pair_metric("VWAP", base, quote, &format!("{start_time}..{end_time}"), ret);
+    print_pair_metric(
+        "VWAP",
+        base,
+        quote,
+        &format!("{start_time}..{end_time}"),
+        ret,
+    );
     Ok(())
 }
 
 async fn twaps(client: &(impl Rpc + Sync), seconds: u64) -> Result<()> {
     let ret = call_oracle(client, IOracle::getTwapsCall { lookback: seconds }).await?;
-    print_lookback_table(&"TWAP", &ret.bases, &ret.quotes, &ret.twaps, &ret.lookbackSeconds);
+    print_lookback_table(
+        "TWAP",
+        &ret.bases,
+        &ret.quotes,
+        &ret.twaps,
+        &ret.lookbackSeconds,
+    );
     Ok(())
 }
 
@@ -500,7 +512,13 @@ async fn worldwide_day_vwap(
     .await?;
 
     println!("WorldwideDay VWAP window: {start_time}..{end_time}");
-    print_lookback_table(&"VWAP", &ret.bases, &ret.quotes, &ret.vwaps, &ret.lookbackSeconds);
+    print_lookback_table(
+        "VWAP",
+        &ret.bases,
+        &ret.quotes,
+        &ret.vwaps,
+        &ret.lookbackSeconds,
+    );
     Ok(())
 }
 

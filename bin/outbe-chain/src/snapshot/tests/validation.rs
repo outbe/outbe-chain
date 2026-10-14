@@ -296,7 +296,8 @@ mod selection {
 
 mod artifact {
     use crate::snapshot::validation::{
-        run::{audit_artifact, ArtifactAudit, ValidationInputs},
+        artifact::ArtifactAudit,
+        run::{audit_artifact, ValidationInputs},
         Incomplete,
     };
     use outbe_snapshot::{

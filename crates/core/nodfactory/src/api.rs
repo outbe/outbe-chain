@@ -2,8 +2,6 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, ParentBodySource, WwdEntityId};
-#[cfg(any(test, feature = "test-utils"))]
-use outbe_ocomp_protocol::nod_materialization::NodMaterializationBatchV1;
 use outbe_ocomp_protocol::{nod_materialization::ProtectedNodMaterializationV2, SchemaLimits};
 use outbe_primitives::nod_encryption::EncryptedNodV2;
 use outbe_primitives::{error::Result, storage::StorageHandle};
@@ -13,6 +11,8 @@ use crate::runtime;
 pub use crate::runtime::{MineGratisRequest, SettleNodRequest};
 
 pub use crate::certified::{install_certified_generation, CertifiedNodGenerationV1};
+#[cfg(any(test, feature = "test-utils"))]
+pub use crate::materialization::CertifiedMaterializationRequest;
 pub use crate::materialization::NodMaterializationOutcomeV1;
 
 pub fn issue_nod(
@@ -39,9 +39,7 @@ pub fn materialize_certified_nods(
     storage: &StorageHandle<'_>,
     readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     caller: Address,
-    batch: &NodMaterializationBatchV1,
-    loads: &[U256],
-    limits: &SchemaLimits,
+    request: CertifiedMaterializationRequest<'_>,
 ) -> Result<NodMaterializationOutcomeV1> {
     crate::materialization::authorize_materializer(storage.clone(), caller)?;
     let profile = outbe_chain_constants::NodMaterializationProfileV1 {
@@ -52,7 +50,7 @@ pub fn materialize_certified_nods(
             outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
     };
     crate::materialization::materialize_certified_nods_authorized(
-        storage, readers, batch, loads, profile, limits,
+        storage, readers, request, profile,
     )
 }
 

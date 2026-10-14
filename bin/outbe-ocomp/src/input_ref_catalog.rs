@@ -576,11 +576,12 @@ impl InputRefCatalogClosureCursorV1<'_> {
         if ordinal >= self.catalog.header.input_chunk_count {
             return Err(InputRefCatalogError::UnexpectedReference { ordinal });
         }
-        self.actual_entry_count = self.actual_entry_count.checked_add(1).ok_or(
-            ProtocolError::IntegerOverflow {
-                what: "input-ref catalog count",
-            },
-        )?;
+        self.actual_entry_count =
+            self.actual_entry_count
+                .checked_add(1)
+                .ok_or(ProtocolError::IntegerOverflow {
+                    what: "input-ref catalog count",
+                })?;
         Ok(InputRefCatalogClosureStepV1::DirectoryEntryChecked)
     }
 }

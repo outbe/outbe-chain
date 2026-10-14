@@ -69,8 +69,11 @@ fn receipt_activates_lysis(
             log.address == METADOSIS_ADDRESS
                 && log.data.topics().first() == Some(&IMetadosis::LysisActivated::SIGNATURE_HASH)
                 && IMetadosis::LysisActivated::decode_log(log).is_ok_and(|event| {
-                    (event.data.intentId, event.data.jobId, event.data.resultDigest)
-                        == (intent_id, job_id, expected_digest)
+                    (
+                        event.data.intentId,
+                        event.data.jobId,
+                        event.data.resultDigest,
+                    ) == (intent_id, job_id, expected_digest)
                 })
         })
 }

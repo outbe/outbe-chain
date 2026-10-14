@@ -312,10 +312,9 @@ impl SignOnceStore {
     }
 
     fn reconcile_startup(&self) -> Result<(), SignOnceError> {
-        for (path, name) in self.read_utf8_entries(
-            "scan sign-once directory",
-            "read sign-once directory entry",
-        )? {
+        for (path, name) in
+            self.read_utf8_entries("scan sign-once directory", "read sign-once directory entry")?
+        {
             if let Some(slot_hex) = pending_slot_hex(&name) {
                 self.reconcile_pending(&path, slot_hex)?;
             } else if reservation_slot_hex(&name).is_none() && !name.ends_with(RECORD_SUFFIX) {
@@ -355,8 +354,8 @@ impl SignOnceStore {
         entry_operation: &'static str,
     ) -> Result<Vec<(PathBuf, String)>, SignOnceError> {
         let mut entries = Vec::new();
-        for entry in
-            fs::read_dir(&self.root).map_err(|source| self.io(scan_operation, &self.root, source))?
+        for entry in fs::read_dir(&self.root)
+            .map_err(|source| self.io(scan_operation, &self.root, source))?
         {
             let entry = entry.map_err(|source| self.io(entry_operation, &self.root, source))?;
             let path = entry.path();

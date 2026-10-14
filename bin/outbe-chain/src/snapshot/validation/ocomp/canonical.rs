@@ -200,7 +200,10 @@ fn load_and_verify_pins(
     view: &crate::snapshot::native::RethReadOnlyView,
     layout: &crate::snapshot::config::RequestedLayout,
     maximum_records: Option<u64>,
-) -> eyre::Result<(Vec<CanonicalPinAudit>, std::collections::BTreeMap<B256, usize>)> {
+) -> eyre::Result<(
+    Vec<CanonicalPinAudit>,
+    std::collections::BTreeMap<B256, usize>,
+)> {
     use outbe_node::ocomp::retention::{inspect_retention_journal, RetentionError};
     use std::collections::BTreeMap;
 
@@ -303,12 +306,8 @@ impl CanonicalObligationVerifier<'_> {
     ) -> eyre::Result<()> {
         let intent = job.intent.intent_id(&poc_schema_limits())?;
         if !self.checked_exports.contains(&intent) {
-            let export = verify_export_inputs(
-                &self.layout.ocomp_root,
-                job,
-                authority,
-                self.cas_limits,
-            )?;
+            let export =
+                verify_export_inputs(&self.layout.ocomp_root, job, authority, self.cas_limits)?;
             self.input_chunks = self
                 .input_chunks
                 .checked_add(export.input_chunks)
@@ -422,12 +421,8 @@ pub(crate) fn verify_canonical_obligations(
         report.as_deref_mut(),
     )?;
 
-    let (_secondary, reader, projection) = open_verified_projection_checkpoint(
-        view,
-        layout,
-        scratch_parent,
-        report.as_deref_mut(),
-    )?;
+    let (_secondary, reader, projection) =
+        open_verified_projection_checkpoint(view, layout, scratch_parent, report.as_deref_mut())?;
     let closure = verify_and_record_closure(
         view,
         layout,
@@ -479,7 +474,7 @@ pub(crate) fn verify_canonical_obligations(
         state,
         inventory.active_jobs(),
         (&pins, &pin_by_intent, projection.block_number),
-        report.as_deref_mut(),
+        report,
     )?;
     let source_leases = u64::try_from(verifier.checked_leases.len())?;
     let complete_exports = u64::try_from(verifier.checked_exports.len())?;

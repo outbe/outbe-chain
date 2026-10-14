@@ -160,11 +160,9 @@ fn seed_projection(
 fn assert_projection_present(world: &mut World, materialization_wwd: u32) {
     world
         .enter(|storage, _, _| {
-            assert!(
-                NodContract::new(storage)
-                    .ocomp_certified_generation(WorldwideDay::new(materialization_wwd))?
-                    .is_some()
-            );
+            assert!(NodContract::new(storage)
+                .ocomp_certified_generation(WorldwideDay::new(materialization_wwd))?
+                .is_some());
             Ok::<_, PrecompileError>(())
         })
         .unwrap();
@@ -224,10 +222,12 @@ fn apply(
         crate::materialization::materialize_certified_nods_authorized(
             &storage,
             ExecutionReaders { scope, parent },
-            batch,
-            &vec![U256::from(1_000); batch.actions.len()],
+            crate::materialization::CertifiedMaterializationRequest {
+                batch,
+                loads: &vec![U256::from(1_000); batch.actions.len()],
+                limits: &poc_schema_limits(),
+            },
             profile(),
-            &poc_schema_limits(),
         )
     })
 }
@@ -251,9 +251,11 @@ fn the_public_selector_rejects_a_caller_without_the_active_ocomp_role() {
                 &storage,
                 ExecutionReaders { scope, parent },
                 Address::repeat_byte(0xee),
-                &batch(&population, 0, 8),
-                &vec![U256::from(1_000); 8],
-                &poc_schema_limits(),
+                api::CertifiedMaterializationRequest {
+                    batch: &batch(&population, 0, 8),
+                    loads: &vec![U256::from(1_000); 8],
+                    limits: &poc_schema_limits(),
+                },
             )
         })
         .unwrap_err();
@@ -296,9 +298,11 @@ fn the_public_selector_accepts_only_the_delegate_of_an_active_validator() {
                 &storage,
                 ExecutionReaders { scope, parent },
                 delegate,
-                &batch(&population, 0, 8),
-                &vec![U256::from(1_000); 8],
-                &poc_schema_limits(),
+                api::CertifiedMaterializationRequest {
+                    batch: &batch(&population, 0, 8),
+                    loads: &vec![U256::from(1_000); 8],
+                    limits: &poc_schema_limits(),
+                },
             )
         })
         .unwrap();
@@ -861,10 +865,8 @@ fn tampered_encrypted_batch_and_changed_frozen_root_preserve_every_prestate() {
     assert!(apply_protected(&mut world, &carrier).is_err());
     assert_eq!(world.provider.storage, before);
     assert_eq!(world.provider.get_ordered_events(), events);
-    assert!(
-        world
-            .enter(|storage, scope, parent| nod_api::list_all(&storage, scope, parent))
-            .unwrap()
-            .is_empty()
-    );
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::list_all(&storage, scope, parent))
+        .unwrap()
+        .is_empty());
 }

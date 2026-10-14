@@ -67,7 +67,9 @@ pub fn verify_lysis_shuffle_phase_replay(
         runtime,
     ) {
         return Err(match failure {
-            LysisPhaseReplayError::Protocol(protocol) => LysisShuffleAdoptionError::Protocol(protocol),
+            LysisPhaseReplayError::Protocol(protocol) => {
+                LysisShuffleAdoptionError::Protocol(protocol)
+            }
             LysisPhaseReplayError::ReplayMismatch => LysisShuffleAdoptionError::ReplayMismatch,
             _ => LysisShuffleAdoptionError::ReplayExecutionFailed,
         });

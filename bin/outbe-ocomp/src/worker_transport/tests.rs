@@ -426,7 +426,9 @@ fn stalled_http_connection_does_not_block_health_or_status() {
     let mut stalled = std::net::TcpStream::connect(server.address())
         .expect("open deliberately incomplete HTTP connection");
     stalled
-        .write_all(b"POST /v1/workers/register HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4096\r\n")
+        .write_all(
+            b"POST /v1/workers/register HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4096\r\n",
+        )
         .expect("write incomplete HTTP headers");
 
     let client = reqwest::blocking::Client::builder()

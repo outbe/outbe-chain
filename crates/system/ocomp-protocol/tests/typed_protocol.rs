@@ -38,8 +38,7 @@ use outbe_ocomp_protocol::{
     receipts::{
         apply_event_summary_hash, desis_request_brief_hash, empty_apply_event_summary_hash,
         ActivationOutcome, AggregateActivationReceiptV1, CarryOverReceiptV1, EffectBindingV1,
-        LimitSplitDestination, NodBatchReceiptV1, RequestLimitSplitReceiptV1,
-        TributeReceiptV1,
+        LimitSplitDestination, NodBatchReceiptV1, RequestLimitSplitReceiptV1, TributeReceiptV1,
     },
     registry::{HashDomain, ListKind, ObjectKind},
     result::{

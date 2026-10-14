@@ -66,10 +66,9 @@ fn canonical_inventory_failure_precedes_missing_projection_and_local_population(
             owner
         },
         |state, source, layout, scratch| {
-            let error =
-                verify_canonical_obligations(state, source, (layout, scratch), None, None)
-                    .err()
-                    .expect("invalid canonical inventory cannot be skipped");
+            let error = verify_canonical_obligations(state, source, (layout, scratch), None, None)
+                .err()
+                .expect("invalid canonical inventory cannot be skipped");
             assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
             assert!(
                 error

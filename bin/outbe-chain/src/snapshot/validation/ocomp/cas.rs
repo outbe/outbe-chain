@@ -15,11 +15,9 @@ fn verify_cas_object_entry(
     result: &mut CasAudit,
 ) -> eyre::Result<()> {
     if maximum_objects.is_some_and(|maximum| result.objects >= maximum) {
-        return Err(Incomplete(format!(
-            "CAS scan stopped after {} objects",
-            result.objects
-        ))
-        .into());
+        return Err(
+            Incomplete(format!("CAS scan stopped after {} objects", result.objects)).into(),
+        );
     }
     ensure!(
         entry.file_type()?.is_file(),

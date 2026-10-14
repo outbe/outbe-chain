@@ -3,9 +3,9 @@ use outbe_ocomp_protocol::{
     common::BoundedBytes,
     control::{FinalizedJobSpecV1, FinalizedJobSummaryV1},
     intent::{
-        ActivationPreconditionsV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        TributeInputBindingV1,
     },
     profile::{poc_schema_limits, ProtocolBundleV1},
 };
