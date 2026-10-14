@@ -148,12 +148,11 @@ pub fn materialize_certified_nods_authorized(
     readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     batch: &NodMaterializationBatchV1,
     loads: &[U256],
-    profile: NodMaterializationProfileV1,
-    limits: &SchemaLimits,
+    rules: MaterializationRules<'_>,
 ) -> Result<NodMaterializationOutcomeV1> {
     storage.clone().with_checkpoint(|| {
-        consume_materialization_attempt(storage, profile)?;
-        materialize_after_attempt(storage, readers, batch, loads, profile, limits)
+        consume_materialization_attempt(storage, rules.profile)?;
+        materialize_after_attempt(storage, readers, batch, loads, rules)
     })
 }
 
@@ -163,10 +162,10 @@ pub(crate) fn materialize_after_attempt(
     readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     batch: &NodMaterializationBatchV1,
     loads: &[U256],
-    profile: NodMaterializationProfileV1,
-    limits: &SchemaLimits,
+    rules: MaterializationRules<'_>,
 ) -> Result<NodMaterializationOutcomeV1> {
     let ExecutionReaders { scope, parent } = readers;
+    let MaterializationRules { profile, limits } = rules;
     let nod = NodContract::new(storage.clone());
     let head = nod
         .ocomp_materialization_head()?
@@ -215,7 +214,7 @@ pub(crate) fn materialize_after_attempt(
     finish_materialization(storage, &head, verified.actions().len())
 }
 
-pub(crate) struct MaterializationRules<'a> {
+pub struct MaterializationRules<'a> {
     pub profile: NodMaterializationProfileV1,
     pub limits: &'a SchemaLimits,
 }

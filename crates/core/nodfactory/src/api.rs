@@ -33,16 +33,27 @@ pub fn mine_gratis(
     runtime::mine_gratis(storage, scope, parent, request)
 }
 
+/// A canonical certified-NOD batch, its per-Nod loads and the schema limits used to validate it.
+#[cfg(any(test, feature = "test-utils"))]
+pub struct CertifiedMaterializationRequest<'a> {
+    pub batch: &'a NodMaterializationBatchV1,
+    pub loads: &'a [U256],
+    pub limits: &'a SchemaLimits,
+}
+
 /// Authorizes and atomically applies one canonical certified-NOD batch.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn materialize_certified_nods(
     storage: &StorageHandle<'_>,
     readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     caller: Address,
-    batch: &NodMaterializationBatchV1,
-    loads: &[U256],
-    limits: &SchemaLimits,
+    request: CertifiedMaterializationRequest<'_>,
 ) -> Result<NodMaterializationOutcomeV1> {
+    let CertifiedMaterializationRequest {
+        batch,
+        loads,
+        limits,
+    } = request;
     crate::materialization::authorize_materializer(storage.clone(), caller)?;
     let profile = outbe_chain_constants::NodMaterializationProfileV1 {
         batch_subtree_height: outbe_chain_constants::get_nod_materialization_batch_subtree_height(),
@@ -52,7 +63,11 @@ pub fn materialize_certified_nods(
             outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
     };
     crate::materialization::materialize_certified_nods_authorized(
-        storage, readers, batch, loads, profile, limits,
+        storage,
+        readers,
+        batch,
+        loads,
+        crate::materialization::MaterializationRules { profile, limits },
     )
 }
 
