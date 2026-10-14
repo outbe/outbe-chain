@@ -256,6 +256,31 @@ fn quote_settlement_is_the_payoff_that_closes_the_credis() {
 }
 
 #[test]
+fn a_called_credis_quotes_its_payoff_until_the_deadline_and_nothing_after() {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let id = open(&storage, 1);
+        rules::mark_called(&mut CredisContract::new(storage.clone()), id, CREATED_AT).unwrap();
+        let quote = |storage: &StorageHandle<'_>| {
+            let data = ICredisFactory::quoteSettlementCall { credisId: id }.abi_encode();
+            let out =
+                crate::precompile::dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
+            ICredisFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap()
+        };
+        let deadline = CREATED_AT + NOTICE;
+        advance_to(&storage, deadline);
+        let interest =
+            CredisContract::accrued_interest(&record(&storage, id), now_of(&storage)).unwrap();
+        assert_eq!(quote(&storage), pledge_stables() + interest);
+
+        advance_to(&storage, deadline + 1);
+        assert!(quote(&storage).is_zero());
+    });
+    teardown();
+}
+
+#[test]
 fn settle_takes_only_what_the_credis_needs() {
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {

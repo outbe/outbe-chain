@@ -10,9 +10,14 @@ pub(crate) fn currencies(series: &outbe_intex::SeriesRecord) -> Currencies {
 
 /// `units` of a series: its entry price times its Promis load per unit.
 pub(crate) fn obligation(series: &outbe_intex::SeriesRecord, units: U256) -> Obligation {
+    series_obligation(series.entry_price_minor, series.promis_load_minor, units)
+}
+
+/// `units` at an entry price and Promis load per unit, at cost.
+fn series_obligation(entry_price_minor: U256, load_minor: U256, units: U256) -> Obligation {
     Obligation {
-        entry_price_minor: series.entry_price_minor,
-        load_minor: series.promis_load_minor,
+        entry_price_minor,
+        load_minor,
         units,
         cost_rate_pct: 100,
     }
@@ -26,12 +31,7 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     payment_decimals: u8,
 ) -> Result<U256> {
-    let obligation = Obligation {
-        entry_price_minor: product,
-        load_minor: U256::ONE,
-        units,
-        cost_rate_pct: 100,
-    };
+    let obligation = series_obligation(product, U256::ONE, units);
     outbe_common::settlement::obligation_units(&obligation, rate, payment_decimals)
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }

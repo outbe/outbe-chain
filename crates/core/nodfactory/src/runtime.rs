@@ -194,12 +194,7 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
-    let obligation = Obligation {
-        entry_price_minor,
-        load_minor: gratis_load_minor,
-        units: U256::ONE,
-        cost_rate_pct: 100,
-    };
+    let obligation = nod_obligation(entry_price_minor, gratis_load_minor);
     outbe_common::settlement::obligation_units(&obligation, rate, asset_decimals)
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
@@ -213,12 +208,20 @@ fn currencies(item: &NodItemState) -> Currencies {
 
 /// One Nod: its bucket's entry price times its Gratis load.
 fn obligation(item: &NodItemState, bucket: &NodBucketState) -> Result<Obligation> {
-    Ok(Obligation {
-        entry_price_minor: bucket.entry_price_minor,
-        load_minor: nod_api::calculation_amount(item)?,
+    Ok(nod_obligation(
+        bucket.entry_price_minor,
+        nod_api::calculation_amount(item)?,
+    ))
+}
+
+/// One Nod at its entry price and Gratis load, at cost.
+fn nod_obligation(entry_price_minor: U256, gratis_load_minor: U256) -> Obligation {
+    Obligation {
+        entry_price_minor,
+        load_minor: gratis_load_minor,
         units: U256::ONE,
         cost_rate_pct: 100,
-    })
+    }
 }
 
 /// The call terms a bucket opened at `entry_price_minor` seals: the entry marked up by

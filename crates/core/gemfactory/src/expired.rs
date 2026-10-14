@@ -36,7 +36,7 @@ pub(crate) fn sweep_expired(
 }
 
 /// One block's burns across the due hours.
-struct GemExpiry<'a, 's, P> {
+pub(crate) struct GemExpiry<'a, 's, P> {
     bodies: Bodies<'a, 's, P>,
     gem: GemContract<'s>,
     burned: u32,
@@ -94,7 +94,11 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for GemExpiry<'_, '_, P> {
 }
 
 impl<'a, 's, P: ParentBodySource> GemExpiry<'a, 's, P> {
-    fn new(ctx: &'a BlockRuntimeContext<'s>, scope: &'a ExecutionScope, parent: &'a P) -> Self {
+    pub(crate) fn new(
+        ctx: &'a BlockRuntimeContext<'s>,
+        scope: &'a ExecutionScope,
+        parent: &'a P,
+    ) -> Self {
         Self {
             bodies: Bodies {
                 storage: &ctx.storage,
